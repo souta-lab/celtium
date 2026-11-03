@@ -88,3 +88,39 @@ warm 窓の ~9 s だけ**（`worldFrames` 1,456 × 2.9 ms ≈ 4.2 s）だから�
 - KPI の比 1.166 は判定に使わない（§3、外部負荷）。
 - 「受理経路を削ってもフレームが動かない」の**理由**は未確定。render 1.85 の内訳が
   Celtium 自身の仕事で埋まっているのか、待ちで埋まっているのかは、warm 窓を狙った計測でしか決まらない。
+
+## 7. 受理経路は CPU 律速で、出荷構成では 0.31 ms/フレームしかない（leg `r57c-cpu`）
+
+`-Dceltium.vulkan.cpuSplit=true -Dceltium.vulkan.batchTimings=true` を付けた leg（validation off、
+warm 窓、`frameId=8642`・`worldFrames=5526`・`immediateOffered=1,411,334`＝163 offer/フレーム）:
+
+```
+innerWallCpu=[preflight 1220/730, append 1457/1127, groupCreate 485/264]
+CELTIUM_FRAME_STATS ms[p50=2.38 p95=3.59] loop[loopMean=2.44 tickMean=1.23 displayMean=0.10
+  renderMean=1.61 fmlMean=0.62]
+```
+
+| 区間 | wall ms/フレーム | CPU ms/フレーム | CPU 比 |
+|---|---|---|---|
+| preflight（mirror supply + prepareImmediate） | 0.141 | 0.084 | 60% |
+| append（頂点コピー） | 0.169 | 0.130 | 77% |
+| groupCreate | 0.056 | 0.031 | 54% |
+| **合計** | **0.366** | **0.245** | 67% |
+
+**受理経路は待ちではなく CPU**（60–77%）。したがって「削っても frame が動かない」の理由は待ちではない。
+
+### 理由は「round 56 の 0.28 ms は検証 ON の leg で測られていた」
+
+round 56 の削減量は `r56a-merge`（**既定 flags＝validation ON**）の
+`prepareImmediateMillis` 0.503→0.332 と `appendMillis` 0.327→0.235 から出していた（合計 −0.263 ms/フレーム）。
+同じ leg の受理は **0.57 ms/フレーム**で、出荷構成（本 leg）の **0.31 ms/フレーム**の 1.8 倍。
+validation は受理経路の中の registry/descriptor 参照を膨らませるので、**削減率を出荷構成に移すと ~0.14 ms**、
+CPU 比 67% を掛けると **~0.1 ms**。**単発 leg の雑音 0.3–0.5 ms より小さい。**
+
+**規則**: 性能の削減量は**出荷構成（validation off）の leg**で測る。受入 leg（validation ON）の ms は
+「その構成でどれだけ速くなったか」であって、出荷構成の削減量ではない。
+
+### 残る含意
+
+出荷構成の受理経路は **0.31 ms/フレーム（wall）**。全部消しても 0.31 ms で、Celeritas との差 ~0.35 ms に
+ほぼ届くが届かない。**render 1.61 の残り（1.3 ms）の中に手を入れる必要がある。**
