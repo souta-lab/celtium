@@ -55,11 +55,13 @@ packetRuns[packets=186059 runs=176346 meanPermille=1055 longest=14]
 | `packetPipelineMicros` | 7（35 回だけ） | `vkCmdBindPipeline` |
 
 **`vkCmdDrawIndexed` が 5 µs かかる。** 記録呼び出しとしては異常で、これが `grpDraw` 0.9 ms の主因である
-（496 ms / 1209 フレーム = 0.41 ms/フレーム、bind 186 ms = 0.15 ms/フレーム、残り ~0.33 ms が push と
-pipeline bind と Java 側の dedup）。
+（496 ms / 1209 フレーム = 0.41 ms/フレーム、bind 186 ms = 0.15 ms/フレーム）。**残り ~0.33 ms は未帰属**で、
+push（<1 µs/packet）と pipeline bind（35 回だけ）では説明しきれない。次の判別は
+`-Dceltium.debug.skipDrawCalls=true` の同一 leg。
 
 **packet の 47% は bind form**（`packetRuns[packets=186059]` に対し `PacketCost` が数えたのは 98,328 =
-draw form だけ）。draw form は「arena のスライス開始が stride の倍数」のときに成立し、`VulkanDynamicMesh` は
+draw form だけ。差の 87,731 が bind form という**導出**で、`BIND_FORM_BINDS` はまだ検証行に出ていない）。
+draw form は「arena のスライス開始が stride の倍数」のときに成立し、`VulkanDynamicMesh` は
 すでに `lcm(16, stride)` で確保している。**それでも半分が bind form になる理由は未特定**（owning mesh か
 retained geometry か、`layout()` が null の family か）。次の判別は `DRAW_FORM_BINDS` / `BIND_FORM_BINDS`
 を検証行に出すこと。
