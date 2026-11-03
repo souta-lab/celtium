@@ -36,38 +36,38 @@
      `celtium-world-accept`（188 mods・`qmagnet`）3対で **Celtium が 1.18–1.29×遅い**（p50 median **1.215**、
      `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-round51-2026-11-04.md)）。frameBudget は
      `gpuShare=0.01`＝CPU律速。**差は 0.52 ms**（Celtium 2.946 / Celeritas 2.427）。
-     **KPI と同じ warm 窓（400–600）の内訳**（[証拠](evidence/warm-window-split-2026-11-04.md)）: `loop` 2.28 =
-     render 1.56 + **fmlTick 0.52** + display 0.10 + tick 0.08、`passSplit` frame 1.4 = world 1.0 + gui 0.4 + hand 0.1、
-     `flush` 0.4（`winRecord` 0.3 = `wrecLoop` 0.2 + `winHead` 0.1）。**`gui` 0.4 のうち Celtium は `guiBatch` 0.1 だけ**。
+     **round 57 の再測は外部負荷で `NO_SPEED_VERDICT`**（median 1.166、[証拠](evidence/layout-fact-fast-skip-2026-11-04.md)）。
+     **Celtium の warm p50 は round 51 から 2.946 で不変**＝受理CPU −0.28 ms はフレームに現れない。
+     **warm 窓の frame 2.60–2.82 = render 1.85 + fmlTick 0.53 + display 0.25 + tick 0.07**（tickMean は tick が
+     走ったフレーム数で割る）＝**render が 71%**、Celeritas との差 ~0.35 ms はここ。
+     `passSplit` frame 1.4 = world 1.0 + gui 0.4 + hand 0.1、`flush` 0.4（`winRecord` 0.3 = `wrecLoop` 0.2 +
+     `winHead` 0.1）。**`gui` 0.4 のうち Celtium は `guiBatch` 0.1 だけ**（[証拠](evidence/warm-window-split-2026-11-04.md)）。
      pair clear は `winHead` 内（**round 54 で既定 ON**、`-Dceltium.vulkan.pairClearInPass=false` が旧経路）: 同一JAR/flagsの2本で `winHead` **141→43 µs**、frame差は未分離。**Celtium 自身 ~0.7 ms を ~0.2 ms にしないと届かない。**
      **窓の統合（sticky pass）は棄却**（[証拠](evidence/sticky-window-pass-2026-11-04.md)）: merge 2.6/フレーム成立でも
      **warm p50 2.85→11.47 ms**、窓 23.5→20.8 の代わりに **`grpDraw` 0.9→9.6 µs/group**。理由未解明、再開しない。
      **font runの行列bakeも棄却**（[証拠](evidence/font-run-bake-2026-11-04.md)）: 94 run/フレームのうち**8しか畳めない**
      （offer 238.3→230.1、group 136.5→133.5）。残り86は**intervening flush**＝順序規則。既定OFF。
-     **受理経路**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: 失敗upload 28,272はdeferralへ、`supply`の`bytes=0`は計器の欠陥。
-     実uploadは113回・3.85 ms/回＝内容hashのbyte単位ループ（[証拠](evidence/mirror-upload-census-2026-11-03.md)）。**窓flushが最大**（643 µs/フレーム）。
+     **受理経路**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: `supply`の`bytes=0`は計器の欠陥、
+     実uploadは113回（[証拠](evidence/mirror-upload-census-2026-11-03.md)）。**窓flushが最大**（643 µs/フレーム）。
      **round 42–46 の内訳は検証レイヤを測っていた**（[証拠](evidence/frame-split-conditions-2026-11-04.md)）:
      検証OFF は frame 1.4、`vkCmdDrawIndexed` は 5.0→**0.9 µs**。
      **出荷構成の世界scene実測**（[証拠](evidence/world-frame-accounting-2026-11-04.md)）: 219 offer・113.6 group・
      22.1 flush・23.1 window/フレーム、受理**3.49 µs/offer＝0.77 ms**、group draw 0.24、window 0.30、present 0.20＝
      **Celtium自身1.36 ms**。**単一項目は0.53 ms以下で、1つ消しても0.6 ms差に届かない**＝micro-optの床。
-     **受理は0.15 ms/フレーム**（round 55: decide 33+preflight 544+flush 189=766 ms/run、`parts[registry]` 834 ns/offer・memo 96%）。
 
      **窓の94%は`bindFramebuffer`**（183,841 flush 中 173,470＝33/フレーム、index上限は2/フレーム、
      [証拠](evidence/window-source-bind-2026-11-04.md)）。
      JFRは`CELTIUM_LEG_JFR`（attach）。
-     **JFRの「フォント経路8.9%」は取り下げ**（[証拠](evidence/font-timing-brackets-2026-11-03.md)）: glyph 2,456個/run、
-     captureの時計bracketは既定OFF。**warm windowはflagが要る**（`warmFromTick=400 warmToTick=600
+     **JFRの「フォント経路8.9%」は取り下げ**（[証拠](evidence/font-timing-brackets-2026-11-03.md)）。**warm windowはflagが要る**（`warmFromTick=400 warmToTick=600
      holdUntilTick=620`）。**font runを割るのはcolour witnessだけ**（[証拠](evidence/font-witness-census-2026-11-03.md)）:
      worldは94/フレーム。**colour witnessはcombine分岐だけに効く**（[証拠](evidence/font-colour-witness-narrowing-2026-11-04.md)）:
      `u_ColorR/G/B`は`u_AlphaRef<0`でのみ読まれ色は頂点毎。既定`combine`でrun 94.5→19.0・offer 221→146/フレーム、
-     **受理CPU −0.28 ms/フレーム**。**groupは115のまま**（棄却:「font runがgroupの82%」）。end-to-endは未証明。**off-target windowはframe imageを動かさない**（[証拠](evidence/off-target-frame-barriers-2026-11-03.md)）:
+     **受理CPU −0.28 ms/フレーム**。**groupは115のまま**（棄却:「font runがgroupの82%」）。**off-target windowはframe imageを動かさない**（[証拠](evidence/off-target-frame-barriers-2026-11-03.md)）:
      `winBarrier` 0.3→0.2 ms。**offerの55%がslow path**、平均3235 nsは中央値の1.6倍（先取り説は棄却、[証拠](evidence/accept-distribution-2026-11-03.md)）。
      **拒否の内訳**（[証拠](evidence/merge-refusal-census-2026-11-03.md)）: 931,838 group openのうち
-     **format 448,268（48%）**・no-mesh 190,619・texture 167,484。**formatは畳めない**（6は色をpush blockから、
-     2は頂点から取る＝頂点変換は8bit量子化）。`s9`=99 nsがmerge述語、micro-optは床。
+     **format 448,268（48%）**・no-mesh 190,619・texture 167,484。**formatは畳めない**（6は色をpush blockから、2は頂点から取る）。`s9`=99 nsがmerge述語。
      **窓**: 現行sceneは23.2/フレームで**13.0がGregTechのpost chain**（`Shaders.renderFullImageInFBO`、
-     [証拠](evidence/window-sources-2026-11-03.md)）。`rawWriteSampleGate`は発火しない。
+     [証拠](evidence/window-sources-2026-11-03.md)）。
    - **Intel: 未達**（最新 `rel-intel`: p50 0.896・p95 0.872、**p99 1.048**＝3.46 vs 3.30 ms（中央値）。kpi3 1.110→kpi5 1.051→1.048）。
      p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般、固定fpsでも残る）。棄却仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)。
    - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
