@@ -3735,6 +3735,48 @@ public final class ValidationClient {
                     worldTicks + " on=" + on + " entities=" + changed);
             celtium$requestPresentedDump(mc, "glow-" + (char) ('a' + step));
         }
+        // The sign's text, switched off for two frames after a frame that drew it: the two off frames must be identical
+        // in the text's pixels. A text still present in the first off frame is the afterimage a player reports as "the
+        // sign's text stays behind", and it is the world-pass counterpart of the tooltip's retained-glyph-run question:
+        // the sign's text is drawn by a TESR inside the world pass, through the same font capture, and no named screen
+        // can produce it.
+        // <p>
+        // on / off / off, not off / on / off. The question is whether the frame *after* a text frame still carries the
+        // text, so the two frames that must agree are both off and the first of them follows the on frame. The glow
+        // A/B's off / on / off answers "is the outline drawn"; this one answers "is it still drawn when it should not
+        // be", which is the opposite direction and needs the opposite order.
+        // <p>
+        // The sign is placed forty ticks early so its chunk and tile entity exist before the first frame is captured.
+        // The three frames themselves are stepped from the render tick, not from here: a client tick is not a frame,
+        // and during the world load the game runs several ticks per frame - the first attempt toggled the text on
+        // three consecutive ticks that were drawn as one frame, so the "on" frame never existed and the comparison
+        // measured the HUD instead. The HUD is hidden and the particles cleared for the window for the same reason:
+        // the first attempt compared whole frames and the HUD's own text and the world's particles were most of the
+        // difference, which is a scene that cannot answer the question.
+        int signTextAbTick = Integer.getInteger("celtium.validation.signTextAbTick", -1).intValue();
+        if (signTextAbTick > 0 && worldTicks >= signTextAbTick - 40 && worldTicks <= signTextAbTick + 4) {
+            // The camera is turned up at the sky for the whole window, and held there every tick because the pose is
+            // re-applied every tick. The reason is the measurement, not the look: the flat stack the scene stands on
+            // has water, lava and fire layers, whose textures animate, so a whole-frame comparison of two frames is
+            // dominated by them - measured on leg r28e, whose a-vs-c mask was 98,295 px across the lower two thirds
+            // of the frame while the sign's text is a few thousand. Against the sky (clouds are off in the seeded
+            // options, the sun is pinned) the only thing that changes between the three frames is the text.
+            mc.player.rotationPitch = -45.0F;
+            mc.player.prevRotationPitch = -45.0F;
+        }
+        if (signTextAbTick > 0 && worldTicks == signTextAbTick - 40) {
+            // Forty ticks early, and the frames are armed at the tick itself rather than here. The block update
+            // rebuilds the sign's chunk on the builder thread, and the frames right after the placement still draw
+            // the old mesh: measured on legs r28c and r28d, whose "on" frame had no sign at all while a later frame
+            // had it, so the comparison measured the sign's arrival instead of its text. Eight ticks was not enough
+            // (r28d's sign appeared on the third frame); forty is four times the observed rebuild.
+            mc.gameSettings.hideGUI = true;
+            mc.effectRenderer.clearEffects(mc.world);
+            celtium$placeSignTextScene(mc);
+        }
+        if (signTextAbTick > 0 && worldTicks == signTextAbTick && this.celtium$signTextStep < 0) {
+            this.celtium$signTextStep = 0;
+        }
         if (worldTicks >= 20 && !Boolean.getBoolean("celtium.validation.interop")) {
                 // `updateRenderer` has already run for this tick, so zeroing the flicker here affects the lightmap
                 // that the next render builds, and pinning the world time keeps the sun angle identical.
@@ -3909,6 +3951,44 @@ public final class ValidationClient {
             this.celtium$evidence.put(evidence.stage, evidence);
         }
         report.addProperty("menuCaptureIncomplete", why);
+    }
+
+    /**
+     * The sign-text A/B's three frames, one per render tick.
+     * <p>
+     * A client tick is not a frame. During the world load the game runs several ticks per frame, so the first version
+     * of this scene - which toggled the text on three consecutive ticks - set the text on and off again inside one
+     * frame's tick batch, and the frame that was drawn had the text off. The render tick fires once per frame, before
+     * the frame is drawn, so a step here is exactly one frame and the dump requested in it is written by that frame's
+     * present.
+     * <p>
+     * on / off / off: the two frames that must agree are both off, and the first of them follows the on frame. The
+     * sign is put back if the server's chunk data took it away, and every step reports the block that is actually
+     * there, so a step that measured a missing sign says so instead of reading as "no afterimage".
+     */
+    @SubscribeEvent
+    public void renderTick(TickEvent.RenderTickEvent event) {
+        if (!enabled || finished) return;
+        if (event.phase != TickEvent.Phase.START) return;
+        if (this.celtium$signTextStep < 0 || this.celtium$signTextStep > 3) return;
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.world == null || mc.player == null) return;
+        int step = this.celtium$signTextStep++;
+        if (step == 3) {
+            // The HUD comes back on the frame *after* the last dump: restoring it in the same render tick put the
+            // HUD into the third frame (measured on leg r28c, whose "off" frame carried the FPS and biome lines).
+            mc.gameSettings.hideGUI = !Boolean.getBoolean("celtium.validation.keepGui");
+            return;
+        }
+        boolean on = step == 0;
+        if (!celtium$signTextPresent(mc)) {
+            celtium$placeSignTextScene(mc);
+        }
+        int lines = celtium$setSignText(mc, on);
+        report.addProperty("signTextAb" + (char) ('a' + step),
+                worldTicks + " on=" + on + " lines=" + lines + " block=" + celtium$signTextBlock(mc)
+                        + " renderStep=" + step);
+        celtium$requestPresentedDump(mc, "signtext-" + (char) ('a' + step));
     }
 
     @SubscribeEvent
@@ -4722,6 +4802,95 @@ public final class ValidationClient {
             }
         }
         return changed;
+    }
+
+    /** The sign the sign-text scene placed, or null when it was never placed. */
+    private net.minecraft.util.math.BlockPos celtium$signTextPos;
+    /** The sign-text A/B's next render-tick step, or -1 when the scene is not armed. */
+    private int celtium$signTextStep = -1;
+
+    /**
+     * Places the sign the sign-text afterimage is measured on: in the air on the camera's own look ray, facing it,
+     * with four lines of text.
+     * <p>
+     * The first version put it on the ground, and the ground is seven blocks below the pose's eye with the camera
+     * pitched twenty degrees down: the sign was outside the view cone and the frame comparison measured the HUD's
+     * text and the world's particles instead. The position is therefore derived from the eye and the look vector -
+     * 2.5 blocks along it, with the block chosen so the text's own centre (0.833 blocks above the block's base, from
+     * {@code TileEntitySignRenderer}'s translate and the model's board) lands on the ray. The pose looks down -Z
+     * (yaw 180), so a standing sign with rotation 0 - south, its text face towards +Z - shows the text to the camera.
+     * <p>
+     * The support block is placed first: a standing sign that cannot stand is removed by the next neighbour update,
+     * and the scene would then measure a sign that is not there. The position, the block that ended up there and the
+     * number of lines the tile entity holds are all reported, because "no afterimage" on a sign that was never placed
+     * is not a measurement.
+     */
+    private void celtium$placeSignTextScene(Minecraft mc) {
+        if (mc.world == null || mc.player == null) {
+            report.addProperty("signTextScene", "no world or player");
+            return;
+        }
+        net.minecraft.util.math.Vec3d eyes = mc.player.getPositionEyes(1.0F);
+        net.minecraft.util.math.Vec3d look = mc.player.getLook(1.0F);
+        double distance = 2.5D;
+        double tx = eyes.x + look.x * distance;
+        double ty = eyes.y + look.y * distance;
+        double tz = eyes.z + look.z * distance;
+        // The text's centre is at (blockX + 0.5, blockY + 0.8333, blockZ + 0.5): the renderer translates to the
+        // block's centre and then up by 0.3333, and the text is drawn around that point.
+        net.minecraft.util.math.BlockPos pos = new net.minecraft.util.math.BlockPos(
+                (int) Math.floor(tx - 0.5D), (int) Math.floor(ty - 0.8333D), (int) Math.floor(tz - 0.5D));
+        mc.world.setBlockState(pos.down(), net.minecraft.init.Blocks.STONE.getDefaultState(), 3);
+        boolean placed = mc.world.setBlockState(pos, net.minecraft.init.Blocks.STANDING_SIGN.getDefaultState(), 3);
+        this.celtium$signTextPos = pos;
+        int lines = celtium$setSignText(mc, true);
+        report.addProperty("signTextScene", "pos=" + pos + " placed=" + placed + " lines=" + lines
+                + " block=" + celtium$signTextBlock(mc)
+                + " eye=" + String.format(java.util.Locale.ROOT, "%.3f,%.3f,%.3f", eyes.x, eyes.y, eyes.z)
+                + " look=" + String.format(java.util.Locale.ROOT, "%.3f,%.3f,%.3f", look.x, look.y, look.z));
+    }
+
+    /** {@return the block at the sign-text scene's position, or "none" when the scene never placed one}. */
+    private String celtium$signTextBlock(Minecraft mc) {
+        if (mc.world == null || this.celtium$signTextPos == null) {
+            return "none";
+        }
+        net.minecraft.block.Block block = mc.world.getBlockState(this.celtium$signTextPos).getBlock();
+        return String.valueOf(block.getRegistryName());
+    }
+
+    /** {@return whether the sign-text scene's block is still a standing sign with a tile entity}. */
+    private boolean celtium$signTextPresent(Minecraft mc) {
+        if (mc.world == null || this.celtium$signTextPos == null) {
+            return false;
+        }
+        return mc.world.getBlockState(this.celtium$signTextPos).getBlock() == net.minecraft.init.Blocks.STANDING_SIGN
+                && mc.world.getTileEntity(this.celtium$signTextPos)
+                        instanceof net.minecraft.tileentity.TileEntitySign;
+    }
+
+    /**
+     * Writes the sign's four lines, or clears them, and answers how many lines the tile entity holds.
+     * <p>
+     * The tile entity is the client's own: the text is what the TESR reads, and no packet is involved, so the toggle
+     * lands in the frame this tick draws. A missing tile entity answers zero rather than being assumed - a sign whose
+     * text never existed would make the afterimage question unanswerable, and the report has to say so.
+     */
+    private int celtium$setSignText(Minecraft mc, boolean on) {
+        if (mc.world == null || this.celtium$signTextPos == null) {
+            return 0;
+        }
+        net.minecraft.tileentity.TileEntity tile = mc.world.getTileEntity(this.celtium$signTextPos);
+        if (!(tile instanceof net.minecraft.tileentity.TileEntitySign)) {
+            return 0;
+        }
+        net.minecraft.tileentity.TileEntitySign sign = (net.minecraft.tileentity.TileEntitySign) tile;
+        String[] lines = on ? new String[] { "CELTIUM", "SIGN TEXT", "AFTERIMAGE", "PROBE" }
+                : new String[] { "", "", "", "" };
+        for (int i = 0; i < 4; i++) {
+            sign.signText[i] = new net.minecraft.util.text.TextComponentString(lines[i]);
+        }
+        return 4;
     }
 
     /**
