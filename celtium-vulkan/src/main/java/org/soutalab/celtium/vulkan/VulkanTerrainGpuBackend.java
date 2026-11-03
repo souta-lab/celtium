@@ -8156,8 +8156,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // A texture nothing has announced yet gets its one full supply here, before the preflight that refuses when no
             // mirror exists. Entity and TESR models sample their own skins and none of the upload hooks see them, so without
             // this their offers could never be accepted however correct the rest of the path was. Once per GL id.
-            org.soutalab.celtium.vulkan.VulkanGlTexture existing =
-                    boundTexture == 0 ? null : celtium$registry().get(boundTexture);
+            //
+            // The lookup is the one the fast-merge decision above already made, not a second one: nothing between the two
+            // points mutates the registry (the predicate reads the material and the stub's write epoch, and the memo is
+            // only dropped by a table write), so the answer cannot have changed. It used to be asked twice per slow-path
+            // batch - three times with the one inside prepareImmediate - and a memo miss is the whole get() body.
+            org.soutalab.celtium.vulkan.VulkanGlTexture existing = liveTextureImage;
             // Two cases, one supply: no mirror at all (entity and TESR models sample their own skins and no upload hook
             // sees them) and a mirror that has only ever received a partial write, whose content outside that patch is
             // undefined (audit A04). The second was missing, so a partially patched texture kept every batch going to GL -
@@ -8565,6 +8569,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // A framebuffer's colour attachment is published over the framebuffer's image before the capture:
                 // get() would otherwise create (or keep) an empty mirror for the name, and the group would draw from
                 // it even after the prepare published the real image (Xaero's Minimap's see-through rotation pass).
+                //
+                // The refusal below reads this field rather than asking the registry a second time for the same name:
+                // nothing between the two points mutates the table, and the field is assigned unconditionally in this
+                // branch, so the answer is the same object. It was one lookup per opened group (~112 a frame) out of
+                // the 462-569 the registry serves a frame (leg r35b-memo).
                 if (boundTexture != 0 && this.publishedFrameImages.get(boundTexture) == 0L
                         && celtium$framebufferIdentityForColorTexture(boundTexture) != Long.MIN_VALUE) {
                     celtium$publishFramebufferColorTexture(boundTexture);
@@ -8585,7 +8594,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // vertices, POSITION) was refused with "the bound texture could not be mirrored" although it samples
             // nothing, and the option description therefore had no backdrop while its text (the font's own path)
             // drew normally.
-            if (VulkanImmediateFormats.samplesTexture(formatId) && this.textureRegistry.get(boundTexture) == null) {
+            if (VulkanImmediateFormats.samplesTexture(formatId) && this.currentGroupTextureImage == null) {
                 this.immediateLastRefusal = "the bound texture could not be mirrored";
                 this.textureStats.noteTextureRefusalBeforeAccept();
                 this.immediateStatistics.noteRefusedBeforeAppend();
@@ -15091,9 +15100,13 @@ this.frameBufferOpen = false;
     private long bufferCensusOwning;
     /** {@code -Dceltium.vulkan.sortOpaque=true}: order the opaque groups by material so equal materials share a run. */
     /**
-     * Order a flush's opaque groups by material before recording them. On by default: the indirect run path below needs
-     * equal materials adjacent to form runs, and the opaque ones are the only ones safe to move. The measurement that
-     * justified it is in docs/development.md (steady window 8.13 to 6.98 ms with both switches on).
+     * Order a flush's opaque groups by material before recording them. <b>Off by default</b>, and that is the measured
+     * answer rather than an oversight: the ABBA A/B in {@code docs/verification-traps.md} (Susy world, same JAR,
+     * alternating legs) read ON 2.538 ms against OFF 2.508 ms - 1.2% worse - because the groups' push constants (the
+     * matrices) differ even when their pipeline and descriptor do not, so reordering forms no longer run and only pays
+     * the sort. The earlier "steady window 8.13 to 6.98 ms" measurement was taken with the indirect run path on as
+     * well, which is the condition the re-entry note in the traps file names. This comment said "on by default" while
+     * the field read a property that defaults to false; the code was right and the comment was stale.
      */
     private static final boolean SORT_OPAQUE = Boolean.getBoolean("celtium.vulkan.sortOpaque");
 

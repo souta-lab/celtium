@@ -46,15 +46,15 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      `celtium-world-accept`（188 mods・`qmagnet`）3対で **Celtium が 1.66–1.76×遅い**（p50 median 1.677、
      `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-world-accept-2026-11-03.md)）。frameBudget は
      `gpuShare=0.01`＝CPU律速。
-     **窓の固定費はもう主因ではない**（27.6窓/フレーム、[証拠](evidence/window-split-2026-11-03.md)）。
+     **窓の固定費は主因ではない**（[証拠](evidence/window-split-2026-11-03.md)）。
      **prepareキャッシュの負荷率76%が欠陥**（ミス9.8→1.8%、p50 −5.8%、[証拠](evidence/prepare-cache-load-2026-11-03.md)）。
-     鎖は `record`0.5＋`batch`0.8＋`present`0.2、`other`1.6 ms（3.1 p50）。Celeritas 1.79 ms 超えには鎖~0.2 ms。
+     鎖は `record`0.5＋`batch`0.8＋`present`0.2、`other`1.6 ms（3.1 p50）。Celeritas 1.79 ms 超えには~0.2 ms。
      **受理経路は実配布profileで初計測**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: offer毎に
-     `supply`3072・`prepare`1064・`registry`821 ns・52.7 offer/フレーム＝**~0.27 ms（10%）**。round29の
-     「registry 2.6 µs・supply 5.0 µs＝1.2 ms」は別sceneの値でA/Bではない。同legの**失敗upload 28,272
-     （8.1/フレーム）**は「読む物が無い」deferralへ（A/Bで0・empty 33,102）。**`supply`はuploadではなかった**:
+     `supply`3072・`prepare`1064・`registry`821 ns・52.7 offer/フレーム＝**~0.27 ms（10%）**。同legの**失敗upload 28,272**は「読む物が無い」deferralへ。**`supply`はuploadではなかった**:
      62,564呼が`bytes=0`＝serial checkで即return（[証拠](evidence/mirror-upload-census-2026-11-03.md)、A/Bで97呼・
-     画像不変）。client threadのprofile
+     画像不変）。**registryは462–569 lookup/フレーム・ミス11.6%**（memo 256、同一batchの同じ名前3回の内2回を削除、
+     [証拠](evidence/registry-memo-census-2026-11-03.md)）**窓flushが最大**（643 µs/フレーム）。
+     client threadのprofile
      （[証拠](evidence/accept-profile-jfr-2026-11-03.md)）: Celtium 43.4%・accept 19.0%・窓 9.8%・
      **最大self 3.6%**＝micro-optでは動かない。JFRは`CELTIUM_LEG_JFR`（attach）。
      **窓の削減は1件実測**: pending copyの順序flushを「offerごと」から「copy先をsampleする時だけ」へ

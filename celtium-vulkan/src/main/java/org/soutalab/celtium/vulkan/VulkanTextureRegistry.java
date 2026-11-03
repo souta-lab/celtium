@@ -70,9 +70,16 @@ public final class VulkanTextureRegistry {
     // A small direct-mapped memo (by GL name) in place of the one-entry memo: offers alternate between a few textures
     // (atlas, font, a mod's tiles) and the single entry missed on every switch - the full lookup was 8% of the offer
     // body's samples on the AMD warm profile. Any table mutation clears the whole memo, as it cleared the one entry.
-    private static final int MEMO_SLOTS = 16;
+    private static final int MEMO_SLOTS = 256;
     private final int[] memoTextureIds = celtium$emptyMemoIds();
     private final VulkanGlTexture[] memoTextures = new VulkanGlTexture[MEMO_SLOTS];
+    /**
+     * Memo hits and misses, so a leg can say whether the table is sized for the frame's live population instead of a
+     * reader inferring it from {@code parts[registry]}. A miss is not a lookup: it is the whole {@link #get(int, boolean)}
+     * body, including the announcement conversion and the capture probe.
+     */
+    private long memoHits;
+    private long memoMisses;
     /**
      * The announcement generation each memo entry was resolved at, so a hit can tell "nothing was announced for this
      * name since" from "an announcement is pending somewhere in the frame". See {@link #get(int)}.
@@ -453,6 +460,7 @@ public final class VulkanTextureRegistry {
                 + " unpublished=" + this.externalUnpublished + " supersededMirrors=" + this.externalSupersededMirrors
                 + " invalidatesIgnored=" + this.externalInvalidatesIgnored
                 + " live=" + this.externalImages.size()
+                + " memo[hits=" + this.memoHits + " misses=" + this.memoMisses + " slots=" + MEMO_SLOTS + "]"
                 + " layout[" + VulkanGlTexture.foreignLayoutSummary() + "]"
                 + " patchLevels[" + VulkanGlTexture.mirrorLevelSummary() + "]";
     }
@@ -495,8 +503,10 @@ public final class VulkanTextureRegistry {
             if (SAMPLER_CONFIRM_EARLY) {
                 remembered.confirmSamplerStateFromRecord(glTextureId);
             }
+            this.memoHits++;
             return remembered;
         }
+        this.memoMisses++;
         VulkanGlTexture texture = get(glTextureId, true);
         this.memoTextureIds[slot] = glTextureId;
         this.memoTextures[slot] = texture;
