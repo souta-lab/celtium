@@ -8225,7 +8225,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // measured as 801 format-5 refusals per run, all reading "the mirror for texture N has never received its
             // full content" - while the fix was the same full upload that was already written here.
             long supplyStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
-            if (boundTexture != 0 && (existing == null || !existing.hasFullContent())) {
+            // Whether the supply below could have replaced the wrapper this offer already resolved. Only the branch
+            // that hands a name with no complete mirror to celtium$supplyMirror can create one (imageFor); the refresh
+            // branch uploads into the wrapper it is given. The answer is what lets the preflight and the group open
+            // reuse the wrapper instead of asking the registry the same question twice more in this offer.
+            boolean wrapperMayHaveMoved = celtium$supplyMayReplaceWrapper(boundTexture,
+                    existing != null && existing.hasFullContent());
+            if (wrapperMayHaveMoved) {
                 celtium$supplyMirror(boundTexture, existing);
             }
             else if (boundTexture > 0 && boundTexture != this.atlasGlId && boundTexture != this.lightmapGlId) {
@@ -8234,7 +8240,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_SUPPLY, System.nanoTime() - supplyStart);
             this.slowPathWriteEpoch = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureWriteEpoch();
             long prepareStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
-            PreparedImmediate prepared = prepareImmediate(formatId, boundTexture, stateKey, state);
+            PreparedImmediate prepared = prepareImmediate(formatId, boundTexture, stateKey, state,
+                    liveTextureImage, !wrapperMayHaveMoved);
             if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_PREPARE, System.nanoTime() - prepareStart);
             long preflightCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
             if (BATCH_TIMINGS) this.immediateStatistics.addPrepareImmediateNanos(System.nanoTime() - preflightStart);
@@ -8316,7 +8323,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 } else if (this.currentImmediateMesh == null) {
                     this.mergeRefusal("no-mesh");
                 } else if (this.currentGroupFormatId != formatId) {
-                    this.mergeRefusal("format");
+                    // The pair, not just the fact: format is 55% of the group opens on the shipped profile (leg
+                    // r40a-census: format 448,268 of 931,838), and which transition it is decides whether anything can
+                    // be done about it. Formats 2 and 6 differ in the colour attribute - 6 takes the current colour
+                    // from the push block and 2 takes it per vertex - so they cannot share a pipeline without a
+                    // vertex conversion that would quantise the tint to eight bits. The pair says whether that is the
+                    // transition at all.
+                    this.mergeRefusal("format-" + this.currentGroupFormatId + ">" + formatId);
                 } else if (this.currentGroupTexture != boundTexture) {
                     this.mergeRefusal("texture");
                 } else if (this.currentGroupStateKey != stateKey) {
@@ -8631,11 +8644,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // nothing between the two points mutates the table, and the field is assigned unconditionally in this
                 // branch, so the answer is the same object. It was one lookup per opened group (~112 a frame) out of
                 // the 462-569 the registry serves a frame (leg r35b-memo).
+                boolean publishedHere = false;
                 if (boundTexture != 0 && this.publishedFrameImages.get(boundTexture) == 0L
                         && celtium$framebufferIdentityForColorTexture(boundTexture) != Long.MIN_VALUE) {
                     celtium$publishFramebufferColorTexture(boundTexture);
+                    publishedHere = true;
                 }
-                this.currentGroupTextureImage = celtium$registry().get(boundTexture);
+                // The wrapper this offer already resolved is the answer unless something between that lookup and here
+                // could have replaced it: the supply (only when the mirror was incomplete) and the publish above (a
+                // table write). Both are named rather than assumed, so the reuse cannot outlive its reason.
+                this.currentGroupTextureImage = (wrapperMayHaveMoved || publishedHere)
+                        ? celtium$registry().get(boundTexture)
+                        : liveTextureImage;
                 // The group's own freshness stamp, taken at the same point as its mirror: the fast merge compares this
                 // against the live serial instead of refusing on any write anywhere (see the field's javadoc).
                 this.currentGroupTextureSerial = boundTexture == 0 ? Long.MIN_VALUE
@@ -9488,6 +9508,22 @@ this.frameBufferOpen = false;
             text.append(round3(values[i]));
         }
         return text.append(']').toString();
+    }
+
+    /**
+     * {@return whether the accept path's supply branch can replace the texture wrapper the offer already resolved}.
+     * <p>
+     * The accept path resolves the bound name once, before its merge decision, and then runs one of two supplies:
+     * {@code celtium$supplyMirror} for a name with no mirror or one that has never received its full content, and
+     * {@code celtium$refreshRawWrites} otherwise. Only the first can create a wrapper ({@code imageFor}); the refresh
+     * uploads into the wrapper it is given. So the wrapper stays current exactly when the mirror was already complete,
+     * and that is the condition the preflight and the group open reuse it under.
+     * <p>
+     * Package-private and static so the rule can be pinned without a device: it is the whole justification for
+     * skipping two registry lookups per slow-path offer, and a wrong answer here would hand a group a retired wrapper.
+     */
+    static boolean celtium$supplyMayReplaceWrapper(int boundTexture, boolean mirrorComplete) {
+        return boundTexture != 0 && !mirrorComplete;
     }
 
     /**
@@ -11221,6 +11257,25 @@ this.frameBufferOpen = false;
      * reads.
      */
     PreparedImmediate prepareImmediate(int format, int textureId, long key, int[] state) {
+        return prepareImmediate(format, textureId, key, state, null, false);
+    }
+
+    /**
+     * {@link #prepareImmediate(int, int, long, int[])} with the texture's wrapper already resolved by the caller.
+     * <p>
+     * The accept path resolves the bound name before its merge decision (the predicate's identity term needs the
+     * wrapper) and the supply it runs in between never replaces a wrapper: {@code celtium$supplyMirror} creates one
+     * only when the name had none or had never received its full content, and {@code celtium$refreshRawWrites}
+     * uploads into the wrapper it is given. So for every batch whose mirror was already complete, the lookup here
+     * asked the registry the same question a second time in the same offer. The registry serves ~636 lookups a frame
+     * on the shipped profile (leg r40a-census: {@code memo[hits=4240645 misses=290341]} over 7,118 frames) for ~237
+     * offers, and a miss is the whole capture path, so the redundant ask is not free even when the memo answers it.
+     * <p>
+     * {@code liveKnown} is the caller's statement that nothing between its lookup and this call could have replaced
+     * the wrapper; when it is false the lookup happens here exactly as before.
+     */
+    PreparedImmediate prepareImmediate(int format, int textureId, long key, int[] state,
+            org.soutalab.celtium.vulkan.VulkanGlTexture knownLive, boolean liveKnown) {
         Object pass = this.lastUiPass;
         this.prepareCacheCalls++;
         // Keyed by the pass and by the texture's live wrapper key (view + generation), each held per slot. The first
@@ -11238,7 +11293,9 @@ this.frameBufferOpen = false;
         // so the answer cannot have changed: the uncached path asks the registry again only where it publishes a
         // framebuffer image, which is a table write and therefore a different question.
         boolean resolvedKnown = textureId > 0 && this.textureRegistry != null;
-        org.soutalab.celtium.vulkan.VulkanGlTexture live = resolvedKnown ? celtium$registry().get(textureId) : null;
+        org.soutalab.celtium.vulkan.VulkanGlTexture live = liveKnown
+                ? knownLive
+                : (resolvedKnown ? celtium$registry().get(textureId) : null);
         if (textureId > 0 && (live == null || !live.hasFullContent())) {
             return prepareImmediateUncached(format, textureId, key, state, live, resolvedKnown);
         }
