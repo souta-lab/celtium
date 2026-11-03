@@ -38,8 +38,9 @@
      `gpuShare=0.01`＝CPU律速。**差は 0.52 ms**（Celtium 2.946 / Celeritas 2.427）。
      **round 57 の再測は外部負荷で `NO_SPEED_VERDICT`**（median 1.166、[証拠](evidence/layout-fact-fast-skip-2026-11-04.md)）。
      **Celtium の warm p50 は round 51 から 2.946 で不変**＝受理CPU −0.28 ms はフレームに現れない。
-     **warm 窓の frame 2.60–2.82 = render 1.85 + fmlTick 0.53 + display 0.25 + tick 0.07**（tickMean は tick が
-     走ったフレーム数で割る）＝**render が 71%**、Celeritas との差 ~0.35 ms はここ。
+     **出荷構成の warm 窓: frame 2.38 = render 1.61 + fmlTick 0.62 + display 0.10 + tick 0.06**（tickMean は tick が
+     走ったフレーム数で割る）＝**render が 68%**。受理は **0.37 wall / 0.25 CPU ms**＝CPU 律速、全部消しても 0.31 ms。
+     **round 56 の −0.28 ms は validation ON の leg の値**（出荷構成では ~0.1 ms＝雑音以下）。
      `passSplit` frame 1.4 = world 1.0 + gui 0.4 + hand 0.1、`flush` 0.4（`winRecord` 0.3 = `wrecLoop` 0.2 +
      `winHead` 0.1）。**`gui` 0.4 のうち Celtium は `guiBatch` 0.1 だけ**（[証拠](evidence/warm-window-split-2026-11-04.md)）。
      pair clear は `winHead` 内（**round 54 で既定 ON**、`-Dceltium.vulkan.pairClearInPass=false` が旧経路）: 同一JAR/flagsの2本で `winHead` **141→43 µs**、frame差は未分離。**Celtium 自身 ~0.7 ms を ~0.2 ms にしないと届かない。**
@@ -47,8 +48,6 @@
      **warm p50 2.85→11.47 ms**、窓 23.5→20.8 の代わりに **`grpDraw` 0.9→9.6 µs/group**。理由未解明、再開しない。
      **font runの行列bakeも棄却**（[証拠](evidence/font-run-bake-2026-11-04.md)）: 94 run/フレームのうち**8しか畳めない**
      （offer 238.3→230.1、group 136.5→133.5）。残り86は**intervening flush**＝順序規則。既定OFF。
-     **受理経路**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: `supply`の`bytes=0`は計器の欠陥、
-     実uploadは113回（[証拠](evidence/mirror-upload-census-2026-11-03.md)）。**窓flushが最大**（643 µs/フレーム）。
      **round 42–46 の内訳は検証レイヤを測っていた**（[証拠](evidence/frame-split-conditions-2026-11-04.md)）:
      検証OFF は frame 1.4、`vkCmdDrawIndexed` は 5.0→**0.9 µs**。
      **出荷構成の世界scene実測**（[証拠](evidence/world-frame-accounting-2026-11-04.md)）: 219 offer・113.6 group・
