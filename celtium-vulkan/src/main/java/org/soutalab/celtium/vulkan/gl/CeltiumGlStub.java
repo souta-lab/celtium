@@ -4622,6 +4622,36 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
+     * {@return whether a mirror upload of this level has provably nothing to read}, so the upload would throw the
+     * capture-miss instead of filling the image.
+     * <p>
+     * The two sources {@code uploadFromGlTexture} can read are the level's own captured record and its patch backlog.
+     * When neither exists the read is refused - "the stub captured no upload for this texture level" - and the caller
+     * has no content to take. That is a fact about the level, not a failure of the upload: a name the game allocated
+     * empty and never wrote (a render target whose framebuffer the stub does not know, a texture a mod reserves and
+     * fills through a path that carries no pixels) answers this way on every bind, and asking anyway costs an
+     * exception per bind. Measured on leg {@code r33a-accept} (`celtium-world-accept`, 188 mods): 28,272 failed
+     * uploads in 1,800 frames - 15.7 a frame - with every batch still accepted, so the failures were pure cost and
+     * the picture was drawn from whatever the mirror already held.
+     * <p>
+     * A level that was allocated with no data but <em>is</em> recorded (the zero-filled render-target idiom) is not
+     * "nothing to read": the record exists and the upload takes its zeros, which is the state the mirror is meant to
+     * hold until the owner publishes. Only the absent record and the empty backlog answer true here.
+     */
+    public static boolean celtium$levelHasNothingToRead(int textureName, int level) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return true;
+        }
+        long key = texLevelKey(textureName, level);
+        if (stub.texCaptures.containsKey(key)) {
+            return false;
+        }
+        java.util.List<TexCapture> pending = stub.texPatchBacklog.get(key);
+        return pending == null || pending.isEmpty();
+    }
+
+    /**
      * {@return whether a full mirror supply for this GL name has to wait for the framebuffer that renders into it}.
      * <p>
      * The registry's lookups already defer a name that is a framebuffer's colour attachment and has no captured

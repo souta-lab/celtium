@@ -1854,11 +1854,27 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private long[] rawWriteSerialApplied = new long[4096];
     private int lazyMirrorFailures;
     /**
+     * The same total split by the site that raised it: the lazy supply, a raw write applied in place, and a coalesced
+     * raw write applied at the next window. One number could not say which of the three was failing, and the three
+     * have different repairs - a supply that cannot read is a deferral, a raw write that cannot read is a write the
+     * stub never captured. Measured on leg {@code r33a-accept}: 28,272 failures, all of them one site.
+     */
+    private int lazyMirrorSupplyFailures;
+    private int rawWriteFailures;
+    private int coalescedRawWriteFailures;
+    /**
      * Lazy supplies that did not build a mirror because the name stands for a framebuffer's colour attachment and the
      * stub holds no pixels for it. Counted apart from {@link #lazyMirrorFailures}: nothing failed to upload, the
      * content is the framebuffer's and arrives when its owner publishes the image.
      */
     private int lazyMirrorDeferrals;
+    /**
+     * Uploads skipped because the level has provably nothing to read ({@code celtium$levelHasNothingToRead}): no
+     * captured record and no patch backlog. The upload would have thrown the capture-miss, so this is the same
+     * decision without the exception - and it is counted, because "the mirror kept what it had" is a fact the picture
+     * depends on and must not be silent.
+     */
+    private int lazyMirrorEmptyDeferrals;
     /**
      * Binds where the lazy supply was skipped because the stub's level-0 write serial has not moved since the attempt
      * that failed. A texture the game allocated empty (a framebuffer attachment, say) carries no pixels for the supply
@@ -3181,7 +3197,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " last=" + this.textureCopyService.lastTextureCopyBlitRefusal() + "]"
                 + " lazyMirror[supplies=" + this.lazyMirrorSupplies + " rawWriteRefreshes=" + this.rawWriteRefreshes
                 + " skips=" + this.lazyMirrorRetrySkips
-                + " failures=" + this.lazyMirrorFailures + " deferred=" + this.lazyMirrorDeferrals + "]"
+                + " failures=" + this.lazyMirrorFailures + "(supply=" + this.lazyMirrorSupplyFailures
+                + " raw=" + this.rawWriteFailures + " coalesced=" + this.coalescedRawWriteFailures + ")"
+                + " deferred=" + this.lazyMirrorDeferrals + " empty=" + this.lazyMirrorEmptyDeferrals
+                + " last=[" + this.lastLazyMirrorFailure + "]]"
                 // What the terrain pass records per frame. The KPI's other half (terrain 4.5 ms of a 6.8 ms frame) had
                 // no per-frame shape: the counters existed as run totals, so "many small indirect draws" and "few big
                 // ones" could not be told apart from a log. These are deltas over the frames this report covers.
@@ -9532,11 +9551,19 @@ this.frameBufferOpen = false;
                     || pending.mirror.view() == 0L || !pending.mirror.celtium$ownsImage()) {
                 continue;
             }
+            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$levelHasNothingToRead(textures[i], 0)) {
+                // The write the queue recorded left no pixels the stub can read (a re-allocation with no data, or a
+                // fill through a path that carries none). The upload would throw the capture-miss; the mirror keeps
+                // what it had, which is the same picture without the exception.
+                this.lazyMirrorEmptyDeferrals++;
+                continue;
+            }
             try {
                 pending.mirror.uploadFromGlTexture(textures[i], org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
                 this.rawWriteRefreshes++;
             } catch (RuntimeException | LinkageError error) {
                 this.lazyMirrorFailures++;
+                this.coalescedRawWriteFailures++;
                 this.lastLazyMirrorFailure = textures[i] + " (coalesced raw write): " + error;
             }
         }
@@ -9581,6 +9608,15 @@ this.frameBufferOpen = false;
             org.soutalab.celtium.vulkan.CrashBreadcrumbs.note(org.soutalab.celtium.vulkan.CrashBreadcrumbs.RAW_WRITE,
                     texture, this.frameId);
         }
+        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$levelHasNothingToRead(texture, 0)) {
+            // The write moved the serial but left nothing the stub can read - a re-allocation with no data, or a fill
+            // through a path that carries no pixels. The upload would throw the capture-miss on every write; the
+            // mirror keeps the content it already holds, which is the same picture without the exception. True
+            // because there is nothing left to apply: the caller then marks the serial, so the same write is not
+            // asked about again until the content moves.
+            this.lazyMirrorEmptyDeferrals++;
+            return true;
+        }
         // Draws queued before the write sampled the old content in GL: submit them before the mirror changes, or they
         // would be recorded later against the new image. Only when one of them does sample this texture: a write that
         // lands before its own draw has nothing queued to order against, and the flush that used to run anyway was
@@ -9603,6 +9639,7 @@ this.frameBufferOpen = false;
             return true;
         } catch (RuntimeException | LinkageError error) {
             this.lazyMirrorFailures++;
+            this.rawWriteFailures++;
             this.lastLazyMirrorFailure = texture + " (raw write): " + error;
             return false;
         }
@@ -12163,6 +12200,17 @@ this.frameBufferOpen = false;
             }
             return this.textureRegistry.get(glTextureId) != null;
         }
+        // The same decision for the name that is not a known framebuffer attachment: no captured record and no patch
+        // backlog means the upload has nothing to read, and asking anyway throws the capture-miss. The serial recorded
+        // above makes the question once per content change, so a real upload or a patch backlog still supplies.
+        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$levelHasNothingToRead(glTextureId, 0)) {
+            this.lazyMirrorEmptyDeferrals++;
+            if (this.textureRegistry != null) {
+                this.textureRegistry.noteMirrorDeferred(glTextureId, size[0], size[1],
+                        "the stub holds no captured record and no patch backlog for level 0");
+            }
+            return this.textureRegistry.get(glTextureId) != null;
+        }
         if (size[0] > 0 && size[1] > 0) {
             try {
                 VulkanGlTexture created = this.textureRegistry.imageFor(glTextureId, size[0], size[1], true);
@@ -12175,6 +12223,7 @@ this.frameBufferOpen = false;
                 }
             } catch (RuntimeException | LinkageError error) {
                 this.lazyMirrorFailures++;
+                this.lazyMirrorSupplyFailures++;
                 this.lastLazyMirrorFailure = glTextureId + ": " + error;
             }
         }

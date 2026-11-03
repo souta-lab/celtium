@@ -116,4 +116,39 @@ class TextureContentSerialTest {
             restore(previous);
         }
     }
+
+    /**
+     * The predicate the upload sites ask before they ask the capture: "would this upload have anything to read".
+     * <p>
+     * It exists because the answer "no" used to be an exception per bind - 28,272 of them in one world leg, with every
+     * batch still accepted - so the two states it must separate are "no record at all" (nothing to read) and "a record
+     * that holds zeros" (something to read, and the zeros are the content the mirror is meant to hold).
+     */
+    @Test
+    void nothingToReadIsTheAbsentRecordAndNotTheZeroSurface() throws Exception {
+        Object previous = install();
+        try {
+            int texture = 501;
+            assertTrue(CeltiumGlStub.celtium$levelHasNothingToRead(texture, 0),
+                    "a name nothing has written has no record and no backlog, so an upload would throw");
+            CeltiumGlStub.celtium$glBindTexture(0x0DE1, texture);
+            CeltiumGlStub.celtium$texImage2D(0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401, 0L);
+            assertFalse(CeltiumGlStub.celtium$levelHasNothingToRead(texture, 0),
+                    "the render-target idiom records a zero surface, which the upload reads - not 'nothing'");
+            assertFalse(CeltiumGlStub.textureLevelHasGamePixels(texture, 0),
+                    "and it is still not game content, so the two questions are not the same one");
+            ByteBuffer pixels = MemoryUtil.memAlloc(8 * 8 * 4);
+            try {
+                MemoryUtil.memSet(MemoryUtil.memAddress(pixels), 0x33, 8 * 8 * 4L);
+                CeltiumGlStub.celtium$texImage2D(0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401,
+                        MemoryUtil.memAddress(pixels));
+            } finally {
+                MemoryUtil.memFree(pixels);
+            }
+            assertFalse(CeltiumGlStub.celtium$levelHasNothingToRead(texture, 0),
+                    "a real upload is content, so the upload must run");
+        } finally {
+            restore(previous);
+        }
+    }
 }
