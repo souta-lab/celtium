@@ -678,6 +678,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.terrain.setFogService(this.fogService);
         this.terrain.setConfiguration(this.configuration);
         this.terrain.setVertexStride(this.commonVertexStride);
+        celtium$installWindowSplitExitHook();
 }
 
     /**
@@ -1755,6 +1756,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * interval. Accumulated here so the next change has a number to move.
      */
     private long wsOffTargetNanos;
+    /**
+     * The off-target routing split into the five things it does.
+     * <p>
+     * The whole interval is 22 us a window on the shipped profile (13 of 23 windows are GregTech's post chain) and
+     * every sub-mark that existed - {@code pair}, {@code publish}, {@code begin} - read 0, so the cost is in the
+     * parts none of them covered: {@code ensureChainPair}'s memo, the stale-name scan, the published-name transition
+     * walk, the pair clear, and the framebuffer/extent resolution. These five name them, and their sum is checked
+     * against {@link #wsOffTargetNanos} so a part that is still uncovered shows up as a difference rather than as a
+     * silent remainder.
+     */
+    private long wsOffPairNanos;
+    private long wsOffSyncNanos;
+    private long wsOffTransitionNanos;
+    private long wsOffClearNanos;
+    private long wsOffFramebufferNanos;
     private long wsPublishNanos;
     private long wsBeginNanos;
     private long wsCommandsNanos;
@@ -7456,13 +7472,36 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * (the command buffer's begin and the stack push), {@code acquire} and {@code release} (the two barrier records).
      */
     private void celtium$printWindowSplit() {
+        String line = celtium$windowSplitLine();
+        if (line != null) {
+            System.out.println(line);
+        }
+    }
+
+    /**
+     * {@return the {@code CELTIUM_WINDOW_SPLIT} line, or {@code null} when the instrument is off or no window ran}.
+     * <p>
+     * Split out of the printer because the world's line was missing from legs that ended by process exit rather than
+     * by a world teardown: {@code celtium$releaseWorldResources} is the only caller, and a leg whose fixture quits
+     * without leaving the world never reaches it. Measured on legs r45a/r45b and again on r46a/r46b, where the menu
+     * line printed and the world's did not - so the world's off-target routing, the largest per-window item, was
+     * unreadable in exactly the legs that measure it. The shutdown hook below prints the same string through
+     * {@code FileDescriptor.out}, which is the file the process was started with and stays writable through Forge's
+     * Log4j teardown.
+     */
+    private String celtium$windowSplitLine() {
         if (!WINDOW_SPLIT || this.wsWindows <= 0L) {
-            return;
+            return null;
         }
         long windows = this.wsWindows;
-        System.out.println("[Celtium] CELTIUM_WINDOW_SPLIT windows=" + windows
+        return "[Celtium] CELTIUM_WINDOW_SPLIT windows=" + windows
                 + " route=" + (this.wsRouteNanos / windows / 1000L)
                 + " offTarget=" + (this.wsOffTargetNanos / windows / 1000L)
+                + " off[pair=" + (this.wsOffPairNanos / windows / 1000L)
+                + " sync=" + (this.wsOffSyncNanos / windows / 1000L)
+                + " trans=" + (this.wsOffTransitionNanos / windows / 1000L)
+                + " clear=" + (this.wsOffClearNanos / windows / 1000L)
+                + " fb=" + (this.wsOffFramebufferNanos / windows / 1000L) + "]"
                 + " pair=" + (this.wsPairNanos / windows / 1000L)
                 + " publish=" + (this.wsPublishNanos / windows / 1000L)
                 + " begin=" + (this.wsBeginNanos / windows / 1000L)
@@ -7471,8 +7510,46 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " release=" + (this.wsReleaseNanos / windows / 1000L)
                 + " syncScan=" + (this.postChainBridge == null ? "none" : this.postChainBridge.celtium$syncScanSummary())
                 + " (us per window; offTarget is the off-target routing before the publish, publish is inside it;"
-                + " syncScan is the stale-name scan's runs/memo hits)");
+                + " off[...] splits offTarget into ensureChainPair, the stale-name scan, the published-name"
+                + " transition walk, the pair clear and the framebuffer/extent resolution;"
+                + " syncScan is the stale-name scan's runs/memo hits)";
     }
+
+    /**
+     * Prints the window split at process exit, through the descriptor the process was started with.
+     * <p>
+     * Registered once per backend. A leg that ends by process exit never reaches {@code celtium$releaseWorldResources},
+     * and that is the leg whose world line the instrument exists for. Forge routes {@code System.out} into Log4j and
+     * Log4j's own shutdown hook stops the appenders, so the line goes to {@code FileDescriptor.out} directly - the
+     * same mechanism and the same reason as the GL stub's no-op census.
+     */
+    private void celtium$installWindowSplitExitHook() {
+        if (!WINDOW_SPLIT || this.windowSplitExitHookInstalled) {
+            return;
+        }
+        this.windowSplitExitHookInstalled = true;
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                String line = celtium$windowSplitLine();
+                if (line == null) {
+                    return;
+                }
+                try {
+                    java.io.PrintStream stream = new java.io.PrintStream(
+                            new java.io.FileOutputStream(java.io.FileDescriptor.out), true,
+                            java.nio.charset.StandardCharsets.UTF_8);
+                    stream.println(line);
+                    stream.flush();
+                } catch (RuntimeException | LinkageError error) {
+                    System.out.println(line);
+                }
+            }, "celtium-window-split"));
+        } catch (RuntimeException | LinkageError ignored) {
+            // A JVM that refuses a hook (shutting down already) must not fail the frame path.
+        }
+    }
+
+    private boolean windowSplitExitHookInstalled;
 
     public float[] celtium$mirroredModelView() {
         return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
@@ -12170,6 +12247,9 @@ this.frameBufferOpen = false;
             this.wsRouteNanos += now - this.wsMark;
             this.wsMark = now;
         }
+        // The off-target routing's own start, so its total is accumulated once at the end of the branch rather than
+        // at the publish site (which a window with no reported colour texture never reaches).
+        long wsOffTargetStart = WINDOW_SPLIT ? this.wsMark : 0L;
         if (offTarget != null) {
             try {
                 if (chainIdentity) {
@@ -12182,6 +12262,11 @@ this.frameBufferOpen = false;
                                     ? (int) fboExtent[1] : this.targetWidth,
                             fboExtent != null && fboExtent.length >= 3 && fboExtent[2] > 0
                                     ? (int) fboExtent[2] : this.targetHeight);
+                    if (WINDOW_SPLIT) {
+                        long now = System.nanoTime();
+                        this.wsOffPairNanos += now - this.wsMark;
+                        this.wsMark = now;
+                    }
                     // CELTIUM-OUTLINE-COMPOSITE: the image this pair holds was sampled last frame by whatever
                     // composites it (the game's own outline composite binds the published name), so it can be in
                     // SHADER_READ_ONLY while this pass clears it - which declares GENERAL - and then attaches it. The
@@ -12190,6 +12275,11 @@ this.frameBufferOpen = false;
                     // missing glow.
                     this.postChainBridge.celtium$syncPublishedChainOutput(chainIdentityValue,
                             offTarget.chainPairColorImage(chainIdentityValue));
+                    if (WINDOW_SPLIT) {
+                        long now = System.nanoTime();
+                        this.wsOffSyncNanos += now - this.wsMark;
+                        this.wsMark = now;
+                    }
                     // Every other published name gets the same hand-back here, before the clear and the attach: the
                     // sampling transition leaves the pair image in SHADER_READ_ONLY_OPTIMAL, and this pass begins with
                     // initialLayout GENERAL - which is VUID-vkCmdBeginRenderPass-initialLayout-00900 unless the image is
@@ -12199,6 +12289,11 @@ this.frameBufferOpen = false;
                         this.postChainBridge.celtium$transitionPublishedFrameTextures(true);
                     } finally {
                         FramePassTimings.end("winTransition");
+                    }
+                    if (WINDOW_SPLIT) {
+                        long now = System.nanoTime();
+                        this.wsOffTransitionNanos += now - this.wsMark;
+                        this.wsMark = now;
                     }
                     if (celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
                             offTarget.chainPairAcquired(chainIdentityValue),
@@ -12244,6 +12339,11 @@ this.frameBufferOpen = false;
                         }
                         celtium$noteChainPairClear("first-non-main-pass");
                     }
+                    if (WINDOW_SPLIT) {
+                        long now = System.nanoTime();
+                        this.wsOffClearNanos += now - this.wsMark;
+                        this.wsMark = now;
+                    }
                     framebuffer = ensureChainPairFramebuffer(renderPass);
                     this.passAttachedColorImage = offTarget.chainPairColorImage(chainIdentityValue);
                     // The pass's render area cannot exceed the framebuffer's - a chain pair at the game's
@@ -12262,7 +12362,17 @@ this.frameBufferOpen = false;
                     // adopt anything: SplashProgress draws the Mojang logo into its own framebuffer and composites it,
                     // so with no entry in the registry the composite samples an empty mirror and the window shows a
                     // black loading screen. Nothing is created, resized, transitioned or freed here.
-                    long[] reported = framebufferColorTexture(this.targetRegistry.currentIdentity());
+                    //
+                    // The extent is the one already resolved above: `chainIdentityValue` IS
+                    // `targetRegistry.currentIdentity()`, and nothing between the two reads mutates the stub's
+                    // framebuffer-to-colour-texture table - `ensureChainPair` creates images, it does not touch the
+                    // stub. The second lookup was a map read plus a fresh long[] per off-target window.
+                    long[] reported = fboExtent;
+                    if (WINDOW_SPLIT) {
+                        long now = System.nanoTime();
+                        this.wsOffFramebufferNanos += now - this.wsMark;
+                        this.wsMark = now;
+                    }
                     if (reported != null && reported[0] != 0L) {
                         // The image comes from the routing rule this identity's draws were accepted under, not from
                         // "the pair this pass happens to attach": two identities can be bound in one frame - the
@@ -12275,14 +12385,13 @@ this.frameBufferOpen = false;
                                 this.targetRegistry.currentIdentity(), reported);
                         if (WINDOW_SPLIT) {
                             long now = System.nanoTime();
-                            // The interval from the route mark to here is the off-target routing, and it used to be
-                            // dropped: this site reset the mark without adding it anywhere, so `pair` reported only
-                            // the tail after the publish and the routing's own cost appeared in no counter. It is the
-                            // 0.1 ms a frame winHead reports, and it is now named.
-                            this.wsOffTargetNanos += publishMark - this.wsMark;
                             this.wsPublishNanos += now - publishMark;
                             this.wsMark = now;
                         }
+                    }
+                    if (WINDOW_SPLIT) {
+                        long now = System.nanoTime();
+                        this.wsMark = now;
                     }
                 } else {
                     offTarget.ensureOffTarget(this.targetWidth, this.targetHeight);
@@ -12299,6 +12408,10 @@ this.frameBufferOpen = false;
                     }
                     framebuffer = ensureOffTargetFramebuffer(renderPass);
                     this.passAttachedColorImage = offTarget.offTargetColorImage();
+                    if (WINDOW_SPLIT) {
+                        long now = System.nanoTime();
+                        this.wsMark = now;
+                    }
                 }
             } catch (RuntimeException | LinkageError error) {
                 if (this.gpuStalled) {
@@ -12318,6 +12431,15 @@ this.frameBufferOpen = false;
                     this.windowFrameImageAttached = true;
                 }
                 framebuffer = ensureFramebuffer(renderPass);
+            }
+            if (WINDOW_SPLIT) {
+                // The interval from the route mark to here is the off-target routing, and it used to be dropped: the
+                // publish site reset the mark without adding it anywhere, so `pair` reported only the tail after the
+                // publish and the routing's own cost appeared in no counter. It is the 0.1 ms a frame winHead reports,
+                // and it is now named. Accumulated here rather than at the publish site: a window whose framebuffer
+                // reported no colour texture still paid the routing, and leaving the mark unreset made the next
+                // window's `pair` column carry it instead.
+                this.wsOffTargetNanos += this.wsMark - wsOffTargetStart;
             }
         } else {
             framebuffer = ensureFramebuffer(renderPass);
