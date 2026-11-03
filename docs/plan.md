@@ -41,9 +41,11 @@
      **出荷構成の warm 窓: frame 2.38 = render 1.61 + fmlTick 0.62 + display 0.10 + tick 0.06**（tickMean は tick が
      走ったフレーム数で割る）＝**render が 68%**。受理は **0.37 wall / 0.25 CPU ms**＝CPU 律速、全部消しても 0.31 ms。
      **round 56 の −0.28 ms は validation ON の leg の値**（出荷構成では ~0.1 ms＝雑音以下）。
-     `passSplit` frame 1.4 = world 1.0 + gui 0.4 + hand 0.1、`flush` 0.4（`winRecord` 0.3 = `wrecLoop` 0.2 +
-     `winHead` 0.1）。**`gui` 0.4 のうち Celtium は `guiBatch` 0.1 だけ**（[証拠](evidence/warm-window-split-2026-11-04.md)）。
-     pair clear は `winHead` 内（**round 54 で既定 ON**、`-Dceltium.vulkan.pairClearInPass=false` が旧経路）: 同一JAR/flagsの2本で `winHead` **141→43 µs**、frame差は未分離。**Celtium 自身 ~0.7 ms を ~0.2 ms にしないと届かない。**
+     **round 58 実測**（[証拠](evidence/render-split-and-signature-cache-2026-11-04.md)）: frame 1.2 = world 0.8 +
+     gui 0.4、`flush` 0.4 = `wrecLoop` 0.2（`grpDraw` 0.1）+ 窓の固定費 ~0.2 が8本に分散。`vkCmdDrawIndexed` **0.68 µs**、
+     pipeline bind 4,117/727,499＝dedupe は効く。**単一項目は0.2 ms以下**
+     **`gui` 0.4 のうち Celtium は `guiBatch` 0.1 だけ**（[証拠](evidence/warm-window-split-2026-11-04.md)）。
+     pair clear は `winHead` 内（**round 54 で既定 ON**、`-Dceltium.vulkan.pairClearInPass=false` が旧経路）: `winHead` **141→43 µs**、frame差は未分離。**Celtium 自身 ~0.7 ms を ~0.2 ms にしないと届かない。**
      **窓の統合（sticky pass）は棄却**（[証拠](evidence/sticky-window-pass-2026-11-04.md)）: merge 2.6/フレーム成立でも
      **warm p50 2.85→11.47 ms**、窓 23.5→20.8 の代わりに **`grpDraw` 0.9→9.6 µs/group**。理由未解明、再開しない。
      **font runの行列bakeも棄却**（[証拠](evidence/font-run-bake-2026-11-04.md)）: 94 run/フレームのうち**8しか畳めない**
