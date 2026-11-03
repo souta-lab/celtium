@@ -48,15 +48,14 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      検証ON frame 3.6 = world 2.5 + gui 1.0、grpDraw 0.9。**検証OFF（KPI と同じ構成）は frame 1.4 =
      world 1.0 + gui 0.4、flush 0.4、winRecord 0.3、grpDraw 0.1**、`vkCmdDrawIndexed` は 5.0→**0.9 µs**、
      窓の off-target routing は 22→**6 µs**。Java 側 bracket は両方 0.0。**ドロー削減の根拠は消えた。**
-     受理経路は 223 offer/フレームで **~0.36 ms（10%）**（`s10` supply+prepare 5246 ns が最大）。
-     client threadのprofile
-     （[証拠](evidence/accept-profile-jfr-2026-11-03.md)）: Celtium 43.4%・accept 19.0%・窓 9.8%・
-     **最大self 3.6%**＝micro-optでは動かない。JFRは`CELTIUM_LEG_JFR`（attach）。
+     **出荷構成の世界scene実測**（[証拠](evidence/world-frame-accounting-2026-11-04.md)）: 219 offer・113.6 group・
+     22.1 flush・23.1 window/フレーム、受理**3.49 µs/offer＝0.77 ms**、group draw 0.24、window 0.30、present 0.20＝
+     **Celtium自身1.36 ms**。**単一項目は0.53 ms以下で、1つ消しても0.6 ms差に届かない**＝micro-optの床。
+     JFRは`CELTIUM_LEG_JFR`（attach）。
      **JFRの「フォント経路8.9%」は取り下げ**（[証拠](evidence/font-timing-brackets-2026-11-03.md)）: glyph 2,456個/run
-     （0.53/frame）、captureの時計bracketは既定OFF（`-Dceltium.font.timings`）。**warm windowはflagが要る**
-     （`warmFromTick=400 warmToTick=600 holdUntilTick=620`）。**font runを割るのはcolour witnessだけ**
-     （[証拠](evidence/font-witness-census-2026-11-03.md)）: `fontRunsStarted=236`は**menu合計**（worldは94/フレーム）、
-     `-Dceltium.font.colourWitness=false`のA/Bはmenu run 284→123・frame 3.8→3.7だが**grpDrawは0.9のまま**。
+     （0.53/frame）、captureの時計bracketは既定OFF。**warm windowはflagが要る**（`warmFromTick=400 warmToTick=600
+     holdUntilTick=620`）。**font runを割るのはcolour witnessだけ**（[証拠](evidence/font-witness-census-2026-11-03.md)）:
+     worldは94/フレーム、`colourWitness=false`のA/Bはmenu run 284→123・frame 3.8→3.7だが**grpDrawは0.9のまま**。
      既定は安全側（ON）。**off-target windowはframe imageを動かさない**（[証拠](evidence/off-target-frame-barriers-2026-11-03.md)）:
      `winBarrier` 0.3→0.2 ms。**offerの55%がslow path**、`batchDist[p50<=2048 p95<=8192 p99<=16384]` 対 平均3235 ns
      ＝**平均は中央値の1.6倍**（先取り説は棄却、[証拠](evidence/accept-distribution-2026-11-03.md)）。

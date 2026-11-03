@@ -9307,6 +9307,23 @@ this.frameBufferOpen = false;
     }
 
     /**
+     * {@return the pending-index count after one group is drawn}, the accept path's flush bound.
+     * <p>
+     * The counter is the accept path's own: {@code pendingImmediateIndices} is incremented by the index count of
+     * every accepted batch and read against {@link #IMMEDIATE_FLUSH_INDICES} to bound how much geometry a window
+     * holds before it is drawn. A model-run group is drawn from the replay's instance buffer and its indices were
+     * never added at accept time, so subtracting it drove the counter negative - the baseline verify line carries
+     * {@code pendingImmediateIndices=-3168} beside {@code modelDraws=88}, and a negative counter can never reach the
+     * threshold, which is the bound the threshold exists for being dead rather than tight.
+     * <p>
+     * Static and package-private so the rule is pinned without a device: the two cases are "a group the accept path
+     * counted" and "a group it did not", and the second must leave the counter alone rather than subtract from it.
+     */
+    static int celtium$pendingIndicesAfterDraw(int pending, boolean modelRun, int indexCount) {
+        return modelRun ? pending : pending - indexCount;
+    }
+
+    /**
      * Whether the offered batch's state matches the open group term for term - the fast path's half of the group
      * predicate in {@code submitImmediateBatch}. The pipeline- and descriptor-object comparisons are implied rather
      * than repeated: the lookups those objects come from are input-keyed, so equal inputs return the same objects.
@@ -12298,7 +12315,7 @@ this.frameBufferOpen = false;
                     if (celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
                             offTarget.chainPairAcquired(chainIdentityValue),
                             this.targetRegistry.chainPairClearContentIdentity(chainIdentityValue),
-                            "chain-pair:" + Long.toHexString(chainIdentityValue), chainIdentityValue)) {
+                            chainIdentityValue)) {
                         // Outside the pass, which is where the clear and its first-use barrier belong, and once per
                         // frame per content identity: the game clears a framebuffer when it binds it, and clearing per
                         // window would erase what an earlier window of the same frame already drew there. The acquire
@@ -12399,8 +12416,7 @@ this.frameBufferOpen = false;
                     // pair. Transitioning the published image is the sampling site's job, below.
                     if (celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR,
                             offTarget.offTargetAcquired(),
-                            this.targetRegistry.pairClearContentIdentity(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR),
-                            "default-pair")) {
+                            this.targetRegistry.pairClearContentIdentity(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR))) {
                         offTarget.clearOffTarget(this.commandBuffer);
                         this.targetRegistry.notePairCleared(RenderTargetRegistry.ImageSlot.DEFAULT_PAIR,
                                 celtium$frameSerial(), this.targetRegistry.currentIdentity());
@@ -15178,12 +15194,12 @@ this.frameBufferOpen = false;
      * @return whether the caller must record the clear
      */
     boolean celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot slot, boolean acquired,
-            long contentIdentity, String pair) {
-        return celtium$pairClearNeeded(slot, acquired, contentIdentity, pair, 0L);
+            long contentIdentity) {
+        return celtium$pairClearNeeded(slot, acquired, contentIdentity, 0L);
     }
 
     boolean celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot slot, boolean acquired,
-            long contentIdentity, String pair, long pairIdentity) {
+            long contentIdentity, long pairIdentity) {
         // The frame each pair was last cleared in is the registry's now; the policy below is the backend's, because it
         // is the pair's identity collision and not the registry's business which identity may clear it.
         long clearedFrame = slot == RenderTargetRegistry.ImageSlot.CHAIN_PAIR
@@ -15197,6 +15213,11 @@ this.frameBufferOpen = false;
             return false;
         }
         this.targetStatistics.notePairClearsRefusedOtherIdentity();
+        // The label is built here rather than at the call site: it is read only by this refusal, and the call site
+        // runs once per off-target window (13 a frame on the measured world scene), so building it there spent a
+        // String concatenation and a hex conversion per window on a line that almost never prints.
+        String pair = slot == RenderTargetRegistry.ImageSlot.CHAIN_PAIR
+                ? "chain-pair:" + Long.toHexString(pairIdentity) : "default-pair";
         this.targetStatistics.setLastPairClearRefusal(pair + ": identity 0x" + Long.toHexString(this.targetRegistry.currentIdentity())
                 + " would have cleared a pair holding identity 0x" + Long.toHexString(contentIdentity)
                 + "'s content (frame serial " + celtium$frameSerial() + ")");
@@ -19701,7 +19722,14 @@ this.frameBufferOpen = false;
                             + " groupGeneration=" + (group.stamp == null ? -1 : group.stamp.targetGeneration)
                             + " borrowed=" + (group.stamp != null && group.stamp.meshBorrowed));
                 }
-                this.pendingImmediateIndices -= mesh.indexCount();
+                // Only the groups the accept path counted are subtracted here. A model-run group is drawn from the
+                // replay's own instance buffer and its indices were never added at accept time, so decrementing it
+                // drove the counter negative - measured at teardown as `pendingImmediateIndices=-3168` on the
+                // baseline line (which also carries `modelDraws=88`), and a negative counter can never reach
+                // IMMEDIATE_FLUSH_INDICES, so the bound the threshold exists for was dead. The recompute at the end
+                // of the flush already excludes model runs for the same reason; this is the other half of that rule.
+                this.pendingImmediateIndices = celtium$pendingIndicesAfterDraw(
+                        this.pendingImmediateIndices, group.modelRun != null, mesh.indexCount());
                 this.recordedImmediateGroups.add(group); // until submit success; not freed here
                 if (org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled()) {
                     // Format, texture, index count and blend: enough to name which draw a large delta belongs to.

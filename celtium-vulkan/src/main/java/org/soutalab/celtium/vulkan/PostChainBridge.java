@@ -358,7 +358,7 @@ b.frameBufferOpen = false;
         if (b.celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
                 glless.chainPairAcquired(chainIdentity),
                 b.targetRegistry.chainPairClearContentIdentity(chainIdentity),
-                "chain-pair(sync):" + Long.toHexString(chainIdentity), chainIdentity)) {
+                chainIdentity)) {
             if (glless.chainPairNeedsSelfTest(chainIdentity)) {
                 b.record(glless.chainPairSelfTest(chainIdentity, b.commandBuffer));
             } else {
