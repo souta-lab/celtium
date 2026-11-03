@@ -327,6 +327,40 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * apart without a second guess.
      */
     private static final boolean SKY_CENSUS = Boolean.getBoolean("celtium.vulkan.skyCensus");
+    /**
+     * The frame the renderer last finished, for diagnostics that run outside it (the swapchain's flicker sampler).
+     * <p>
+     * The pair the sampler compares is two presents, and a present is not a frame: the loading screen presents hundreds
+     * of frames before the world exists. Without this number a census line cannot be tied to either frame of the pair,
+     * which is exactly the correlation the sky band needs.
+     */
+    static volatile long lastFinishedFrameId;
+    /**
+     * {@code -Dceltium.vulkan.skyPoison=true}: draws the sky plane's group in magenta.
+     * <p>
+     * The plane is offered, closed and drawn every frame with the same matrices, fog and colour, and the picture still
+     * differs between two consecutive frames. A colour the scene never contains separates the two remaining shapes:
+     * magenta in both frames means the plane reaches the image and the difference is in its shading; magenta in one
+     * frame only means the draw is issued but its pixels are not there.
+     */
+    private static final boolean SKY_POISON = Boolean.getBoolean("celtium.vulkan.skyPoison");
+    /**
+     * {@code -Dceltium.vulkan.skyNoFog=true}: draws the sky plane's group with the fog selector cleared.
+     * <p>
+     * The poison above cannot separate "the plane's pixels are missing" from "the plane is drawn fully fogged", because
+     * a fully fogged plane is the fog colour whatever its own colour is. Clearing the selector can: an unfogged plane
+     * is the sky colour, so a frame that stays the fog colour is a frame whose plane never reached the image.
+     */
+    private static final boolean SKY_NO_FOG = Boolean.getBoolean("celtium.vulkan.skyNoFog");
+    /**
+     * {@code -Dceltium.vulkan.skyNoDepth=true}: draws the sky plane's group with the depth test off.
+     * <p>
+     * The plane is offered, closed and drawn every frame, and the picture says its pixels reach the image only in some
+     * frames. The depth test is the one input that can remove a draw whose command was issued: the plane is the first
+     * draw of the frame, so anything left in the depth attachment is in front of it. This switch answers whether that
+     * is what happens, without changing anything else about the draw.
+     */
+    private static final boolean SKY_NO_DEPTH = Boolean.getBoolean("celtium.vulkan.skyNoDepth");
     private static final int SKY_CENSUS_LIMIT =
             Integer.getInteger("celtium.vulkan.skyCensusLines", 200).intValue();
     private int skyCensusBatches;
@@ -334,6 +368,28 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int skyCensusLines;
     private String skyCensusFirst = "none";
     private String skyCensusLastState = "none";
+    /**
+     * The sky group as it was actually drawn, printed once per distinct state.
+     * <p>
+     * The offer census above answered "is the plane offered every frame" (yes) and left the frame-to-frame difference
+     * downstream of the offer. This half answers the two questions the offer cannot: what matrices the group that holds
+     * the plane was closed with, and whether that group reached a draw at all. A group whose model view is not the
+     * camera is drawn somewhere else entirely, which looks exactly like a missing plane in the picture - and the clear
+     * colour is the fog colour, so "not drawn" and "drawn fully fogged" are the same pixels.
+     */
+    private static final int SKY_GROUP_LIMIT =
+            Integer.getInteger("celtium.vulkan.skyGroupLines", 80).intValue();
+    private String skyGroupStateThisFrame;
+    private String skyGroupStateLast = "none";
+    private int skyGroupLines;
+    /**
+     * The sunset glow fan: {@code POSITION_COLOR}, 18 vertices, {@code GL_TRIANGLE_FAN}, drawn by
+     * {@code RenderGlobal.renderSky} at {@code RenderGlobal:1383}. It is the other candidate for the sky band - a radial
+     * gradient about the zenith - so the census counts it beside the plane rather than assuming which one the band is.
+     */
+    private int skyFanBatches;
+    private String skyFanFirst = "none";
+    private String skyFanLastState = "none";
 
     private boolean submissionPending;
     VulkanCommandBufferState commandState;
@@ -1127,6 +1183,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 if (!waitForIdle()) throw new IllegalStateException("terrain recovery fence failed");
                 check(vkResetCommandBuffer(this.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT),
                         "vkResetCommandBuffer(terrain recovery)");
+                // The reset discards the push constants the cache believes are still in this buffer.
+                VulkanPushCache.SHARED.invalidate();
                 this.commandState.reset();
                 // A mid-frame reset discards the frame buffer too: the unified flag must not
                 // describe a buffer whose next begin thinks it is still recording.
@@ -6793,6 +6851,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         this.frameSnapshotSinceBoundary = true;
         this.frameId++;
+        lastFinishedFrameId = this.frameId;
         // The frame that just ended is priced here, at the one place every per-frame counter is reset
         // (-Dceltium.vulkan.frameBudget=true; a no-op otherwise).
         FrameBudgetTimings.frameBoundary();
@@ -6813,6 +6872,28 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             this.skyCensusBatches = 0;
             this.skyCensusFirst = "none";
+            // The fan's count and first state, on the same change rule: the band is one of these two draws, and the
+            // count says whether the fan is offered every frame or only sometimes.
+            String fanState = "count=" + this.skyFanBatches + " first=[" + this.skyFanFirst + "]";
+            if (!fanState.equals(this.skyFanLastState) && this.skyCensusLines < SKY_CENSUS_LIMIT) {
+                this.skyCensusLines++;
+                System.out.println("[Celtium] CELTIUM_SKY_FAN frame=" + this.frameId + " " + fanState);
+                this.skyFanLastState = fanState;
+            }
+            this.skyFanBatches = 0;
+            this.skyFanFirst = "none";
+            // The plane's group as drawn: the matrices it was closed with and whether it reached a draw. Printed on a
+            // change of that state, which is exactly the frame-to-frame difference the picture shows.
+            if (this.skyGroupStateThisFrame != null) {
+                if (!this.skyGroupStateThisFrame.equals(this.skyGroupStateLast)
+                        && this.skyGroupLines < SKY_GROUP_LIMIT) {
+                    this.skyGroupLines++;
+                    System.out.println("[Celtium] CELTIUM_SKY_GROUP frame=" + this.frameId + " "
+                            + this.skyGroupStateThisFrame);
+                    this.skyGroupStateLast = this.skyGroupStateThisFrame;
+                }
+                this.skyGroupStateThisFrame = null;
+            }
         }
         this.immediateOffersLastFrame = this.immediateOffersThisFrame;
         this.immediateOffersThisFrame = 0;
@@ -7264,6 +7345,26 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         + " fogStart=" + this.fog.start + " fogEnd=" + this.fog.end
                         + " fogColour=(" + celtium$round3(this.fog.red) + ","
                         + celtium$round3(this.fog.green) + "," + celtium$round3(this.fog.blue) + ")"
+                        + " mvT=(" + celtium$round3(this.glModelView[12]) + ","
+                        + celtium$round3(this.glModelView[13]) + ","
+                        + celtium$round3(this.glModelView[14]) + ")"
+                        + " v0=(" + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress)) + ","
+                        + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 4L)) + ","
+                        + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 8L)) + ")";
+            }
+        }
+        if (SKY_CENSUS && formatId == 1 && vertexCount == 18 && drawMode == 6) {
+            // The sunset glow fan: one centre vertex and seventeen rim vertices, drawn as a triangle fan with a
+            // per-vertex alpha. Counted beside the plane because the band's shape - a radial gradient about the zenith -
+            // is the fan's shape as much as the plane's, and only one of the two can be the frame-to-frame difference.
+            this.skyFanBatches++;
+            if (this.skyFanBatches == 1) {
+                this.skyFanFirst = "count=" + vertexCount
+                        + " colour=(" + celtium$round3(this.immediateState.colorRed()) + ","
+                        + celtium$round3(this.immediateState.colorGreen()) + ","
+                        + celtium$round3(this.immediateState.colorBlue()) + ","
+                        + celtium$round3(this.immediateState.colorAlpha()) + ")"
+                        + " fogSelector=" + this.fog.selector()
                         + " mvT=(" + celtium$round3(this.glModelView[12]) + ","
                         + celtium$round3(this.glModelView[13]) + ","
                         + celtium$round3(this.glModelView[14]) + ")"
@@ -7793,6 +7894,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             long captureStart = BATCH_TIMINGS ? System.nanoTime() : 0;
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offCapture");
             int[] state = celtium$captureState();
+            if (SKY_NO_DEPTH && formatId == 7 && vertexCount == 676 && state.length > 3) {
+                // Diagnostic only: the same draw with the depth test removed, so the picture says whether the depth
+                // attachment is what removes it.
+                state[3] = 0;
+            }
             if (BATCH_TIMINGS) this.immediateStatistics.addCaptureStateNanos(System.nanoTime() - captureStart);
             long keyStart = BATCH_TIMINGS ? System.nanoTime() : 0;
             long stateKey = celtium$stateKey(formatId, state);
@@ -10444,6 +10550,8 @@ this.frameBufferOpen = false;
                     // No queue submission: reset the failed attempt and restore recorded groups before releasing GL's semaphore.
                     check(vkResetCommandBuffer(this.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT),
                             "vkResetCommandBuffer(abort)");
+                    // The reset discards the push constants the cache believes are still in this buffer.
+                    VulkanPushCache.SHARED.invalidate();
                     this.commandState.reset();
                 // A mid-frame reset discards the frame buffer too: the unified flag must not
                 // describe a buffer whose next begin thinks it is still recording.
@@ -17809,6 +17917,11 @@ this.frameBufferOpen = false;
             VkCommandBufferBeginInfo begin = VkCommandBufferBeginInfo.calloc(stack).sType$Default()
                     .flags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
             check(vkBeginCommandBuffer(this.commandBuffer, begin), "vkBeginCommandBuffer");
+            // A begun command buffer starts with undefined push constants, and the cache is keyed by the buffer's
+            // handle - which a reused buffer keeps across the reset. Without this the first draw of a re-recorded
+            // buffer could elide its push and be drawn with whatever the previous recording left, which is the shape
+            // of a draw that is issued, counted and leaves no pixels. The sky plane is exactly that first draw.
+            VulkanPushCache.SHARED.invalidate();
             this.commandState.begin();
             // The flag the retire drain guard reads. It was declared ("set at its begin") and only ever cleared, so
             // celtium$recordingOpen() was blind to the frame's own recording and rc.24's guard never fired - which is
@@ -18079,6 +18192,41 @@ this.frameBufferOpen = false;
                     org.soutalab.celtium.vulkan.DrawCounters.noteImmediateGroup();
                 }
                 ImmediateGroup group = groups.get(groupIndex);
+                boolean skyGroup = SKY_CENSUS && group.formatId == 7 && group.mesh != null
+                        && group.mesh.vertexCount() == 676;
+                if (skyGroup) {
+                    // The sky plane's own group, identified by the one shape only it has: POSITION, 676 vertices. The
+                    // state is taken here, before any of the skip paths below, so a group that never reaches a draw
+                    // still reports the matrices it would have been drawn with - and the missing "drawn=1" suffix is
+                    // then the answer to "was it drawn".
+                    this.skyGroupStateThisFrame = "target=" + (group.target == target)
+                            + " batches=" + group.batches
+                            + " proj=" + celtium$round3(group.projection[0]) + ","
+                            + celtium$round3(group.projection[5]) + ","
+                            + celtium$round3(group.projection[10]) + ","
+                            + celtium$round3(group.projection[14])
+                            + " mvT=(" + celtium$round3(group.modelView[12]) + ","
+                            + celtium$round3(group.modelView[13]) + ","
+                            + celtium$round3(group.modelView[14]) + ")"
+                            + " fog=" + (group.fog == null ? "none"
+                                    : ((int) group.fog[0]) + "/" + group.fog[2] + "/" + group.fog[3])
+                            // The colour and the pipeline state are the two inputs the matrices do not cover: a plane
+                            // drawn with the fog colour as its own colour is flat whatever the fog does, and a plane
+                            // whose cull or depth state moved is a different picture with identical matrices.
+                            + " colour=" + (group.color == null ? "null"
+                                    : celtium$round3(group.color[0]) + "," + celtium$round3(group.color[1]) + ","
+                                    + celtium$round3(group.color[2]) + "," + celtium$round3(group.color[3]))
+                            + " state=" + (group.state == null ? "null"
+                                    : "blend" + group.state[0] + " depthTest" + group.state[3]
+                                    + " depthWrite" + group.state[4] + " cull" + group.state[5]
+                                    + " alphaRef" + Float.intBitsToFloat(group.state[6])
+                                    + " depthFunc" + group.state[7] + " mask" + group.state[11])
+                            + " viewport=" + (group.viewportValues == null ? "null"
+                                    : group.viewportValues[0] + "," + group.viewportValues[1] + ","
+                                    + group.viewportValues[2] + "," + group.viewportValues[3])
+                            + " pipeline=" + (group.prepared == null ? "null"
+                                    : Integer.toHexString(System.identityHashCode(group.prepared.pipeline)));
+                }
                 if (group.target == target && group.modelRun == null) {
                     this.celtium$flushPendingModelRun();
                     // Anything that is not a model run binds its own pipeline and set; the model bind cache may only be
@@ -18435,6 +18583,16 @@ this.frameBufferOpen = false;
                 if (PUSH_BLOCK_CACHE && !pushBlockCached) {
                     celtium$storePushBlock(pushBlockKey, push);
                 }
+                if (skyGroup && SKY_NO_FOG) {
+                    push.putFloat(156, 0.0f); // u_FogParams.w: 0 = mode NONE
+                }
+                if (skyGroup && SKY_POISON) {
+                    // Diagnostic only: the plane's own colour slot, so the picture says whether this draw's pixels
+                    // reached the image at all.
+                    push.putFloat(116, 1.0f);
+                    push.putFloat(120, 0.0f);
+                    push.putFloat(124, 1.0f);
+                }
                 // The batch's own viewport, applied as the drawable sub-rect GL would have used. Without this the
                 // pipeline's baked-in viewport (set once per pass by setViewportAndScissor) would draw a 256x256 GUI
                 // batch across the whole target - wrong pixels, which is why the batch used to be refused instead.
@@ -18548,6 +18706,11 @@ this.frameBufferOpen = false;
                         this.genericDrawCount++;
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
+                    }
+                    if (skyGroup) {
+                        // Reached only after the draw was issued (indirect or direct), so the suffix is the fact the
+                        // offer census could not supply.
+                        this.skyGroupStateThisFrame = this.skyGroupStateThisFrame + " drawn=1";
                     }
                 }
                 if (PROBE_HIGHLIGHT_BORROW && !group.probePoisoned) {

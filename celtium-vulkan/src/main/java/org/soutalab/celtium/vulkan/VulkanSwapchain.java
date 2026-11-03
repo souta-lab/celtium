@@ -1468,7 +1468,9 @@ public final class VulkanSwapchain {
                             writeIndexedPng(this.flickerPrevious, this.width, this.height, "celtium-flicker-prev.png");
                             writeIndexedPng(pixels, this.width, this.height, "celtium-flicker-cur.png");
                         }
-                        System.out.println("[Celtium] CELTIUM_FLICKER present=" + this.flickerSeen + " changed=" + changed + "/" + count
+                        System.out.println("[Celtium] CELTIUM_FLICKER present=" + this.flickerSeen
+                                + " frame=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.lastFinishedFrameId
+                                + " changed=" + changed + "/" + count
                                 + " fraction=" + String.format(java.util.Locale.ROOT, "%.5f",
                                         (double) changed / (double) count)
                                 + " maxDelta=" + maxDelta);
