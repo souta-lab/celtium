@@ -34,8 +34,8 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
 2. **性能**（KPI flags・1280×720・vsync off/260・`world-0.7.11` instance（Xaeroなし）・3対×240 s、両GPUとも 0.1.1-alpha の jar `9feaa083`（コードは配布jar `a8bd0480`と同一、差はjar内README）＝`54b42982d`）:
    - **AMD: goal条件1を満たす**（最新 `rel-amd`: verdict NOT_SLOWER、各対のp50/p95/p99比が全て<1、中央値 0.591/0.596/0.826、p50 0.63 vs 1.06 ms）。
      **この行は scene 限定**（`world-0.7.11`・Xaeroなし・旧JAR）。現行JARを実配布profileで測ると逆:
-     `celtium-world-accept`（188 mods・`qmagnet`）3対で **Celtium が 1.36–1.39×遅い**（p50 median 1.386、
-     `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-round41-2026-11-03.md)）。frameBudget は
+     `celtium-world-accept`（188 mods・`qmagnet`）3対で **Celtium が 1.19–1.27×遅い**（p50 median **1.261**、
+     `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-round47-2026-11-04.md)）。frameBudget は
      `gpuShare=0.01`＝CPU律速。
      **memoのミスは名前のannouncement移動で、表のchurnではない**（[証拠](evidence/texture-memo-per-name-2026-11-03.md)）。
      鎖は `record`0.5＋`batch`0.5＋`present`0.2。窓の固定費は主因ではない（**3 µs/窓**、[証拠](evidence/window-split-2026-11-04.md)）。
