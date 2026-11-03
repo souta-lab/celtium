@@ -11,9 +11,7 @@
 ## 2026-10-24: 新アーキテクチャ案（2026-10-28 以降は参考扱い）
 
 設計案は [new_architecture.md](<new_architecture.md>)。**採用する**のは §12 の結論（offer ごとの Java 受理・capture・
-record 仕事を消す）だけで、順序は実測コストで並べ替える。**Stage 2（CPU culling）は後ろ・Stage 5（GPU Hi-Z）は最後**
-（AMD のフレームは解像度非依存＝CPU 律速）。**記録・提出を executor thread へ移す**案は paired KPI で採否を決める。
-移行は「一度に全部作り直さない」（設計§7）。各段で画像 gate・validation 0・paired KPI を取ってから次へ。
+record 仕事を消す）だけで、順序は実測コストで並べ替える。**記録・提出を executor thread へ移す**案は paired KPI で採否を決める。
 [archive](<history/plan-archive-2026-10-24.md>)。**影**は利用者指示により本体内は停止（既定OFF、
 [証拠](<evidence/shadow-stage-c-2026-10-24.md>)。PCF受け側は `git stash`。**再開は利用者が明示した時だけ**）。
 
@@ -56,15 +54,18 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      **JFRの「フォント経路8.9%」は取り下げ**（[証拠](evidence/font-timing-brackets-2026-11-03.md)）: glyph 2,456個/run
      （0.53/frame）、captureの時計bracketは既定OFF（`-Dceltium.font.timings`）。**warm windowはflagが要る**
      （`warmFromTick=400 warmToTick=600 holdUntilTick=620`）。同JARのidle 1 armはwarm p50 **2.873 ms**（pairedではない）。
+     **現行sceneのworld frameはfont pathが最大のgroup源**（[証拠](evidence/off-target-frame-barriers-2026-11-03.md)）:
+     `fontRunsStarted=236`・`fontQuadsAppended=236`＝**1 run 1 quad**（model groupは112–113）。`grpDraw`は
+     0.9 ms/フレーム・~2.5 µs/group（driverは~80 ns/packet）なので**fontの236 groupで~0.6 ms**。次は
+     `celtium$fontRunMatches`の16 witnessのどれがglyphごとに違うかを名指しする。**off-target windowは
+     frame imageを動かさない**（同証拠）: `winBarrier` 0.3→0.2 ms。
      **受理経路はその後低下**: 現行JARのframe budgetは `batch=0.5/0.5/0.5`（KPI legは`0.8/0.9/1.1`）、
      `record`0.5・`present`0.2は不変（[証拠](evidence/supply-decision-one-pass-2026-11-03.md)、1 arm）。
      **offer毎の分布**（[証拠](evidence/accept-distribution-2026-11-03.md)）: `batchDist[p50<=2048 p95<=8192
      p99<=16384]` 対 平均3235 ns＝**平均は中央値の1.6倍**（先取り説は棄却）。**offerの55%がslow path**。
-     merge判定の最終項をglobal epochから**そのテクスチャのserial**へ変えたが**merge率は44.63→44.71%で不変**（棄却）。
-     **拒否の内訳**（[証拠](evidence/merge-refusal-census-2026-11-03.md)）: 931,838 group openのうち
-     **format 448,268（48%）**・no-mesh 190,619・texture 167,484。**formatは畳めない**（6は色をpush blockから、
-     2は頂点から取る＝頂点変換は8bit量子化）。`offerStage`の`sN`はマークN→N+1で**`s9`=99 nsがmerge述語**、
-     コストはslow pathの`s10`1770＋`s11`1831と全offerの`s8`861（registry lookup 654、ミス6.4%）。micro-optは床。
+     merge率は44.63→44.71%で不変（棄却）。**拒否の内訳**（[証拠](evidence/merge-refusal-census-2026-11-03.md)）:
+     931,838 group openのうち**format 448,268（48%）**・no-mesh 190,619・texture 167,484。**formatは畳めない**
+     （6は色をpush blockから、2は頂点から取る＝頂点変換は8bit量子化）。`s9`=99 nsがmerge述語、micro-optは床。
      **窓**: 現行sceneは23.2/フレームで**13.0がGregTechのpost chain**（`Shaders.renderFullImageInFBO`、
      [証拠](evidence/window-sources-2026-11-03.md)）。`rawWriteSampleGate`は発火しない。**環境**: `ly`（root）が1コアの92%を占有していた（round 41に消えた）。
    - **Intel: 未達**（最新 `rel-intel`: p50 0.896・p95 0.872、**p99 1.048**＝3.46 vs 3.30 ms（中央値）。kpi3 1.110→kpi5 1.051→1.048）。
@@ -98,11 +99,11 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
 | **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない |
 | **次の標的** | **native実装へ** | — | 未着手 | ①model/immediateの共通packetとnative実行 ②lit fog **修正**（[証拠](evidence/lit-fog-2026-11-03.md)） ③state/texture/target所有の統合。影はDemonica addonへ分離、本体内は停止。 |
 
-## FPSの現状と残る道（2026-10-31実測）
+## FPSの現状と残る道
 
-- ABBA（クール・アイドル時）: Susy **1.27–1.48×**、ATM3 **~1.45×**。CPU律速。**測定はアイドル窓必須**。
-- 内訳（Susy p50）: frame 1.9 / flush 0.8（winRecord 0.5＝draw 0.2＋begin 0.1、barrier/submit各0.1）。30 windows・112 groups/frame。
-- 残差はwindow固定費とper-batch。pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
+- 現行の判定は上の表（`celtium-world-accept` 3対、p50 median **1.386**）。旧scene（Susy/ATM3）の
+  ABBA値は artifact が現ビルドと一致しないため現在判定に使わない（[archive](<history/plan-archive-2026-10-21.md>)）。
+- 残差は window 固定費と per-batch。pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
 - 棄却: bind flush延期（[罠](<verification-traps.md>)）、indirect immediate、フレーム再利用（アニメ凍結）。
 ## 撤回した前提
 

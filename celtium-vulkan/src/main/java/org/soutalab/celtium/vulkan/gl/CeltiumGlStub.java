@@ -3917,6 +3917,18 @@ public final class CeltiumGlStub implements FunctionProvider {
         return stub.pendingClears.get() == 0 ? -1 : stub.pendingClearDrawFbo;
     }
 
+    /**
+     * {@return whether a {@code glClear} is waiting to be applied to an image}.
+     * <p>
+     * The window flush asks this before it decides whether the frame image has to be moved into its attachment
+     * layout: the clear is recorded in that layout, so a window that carries one must not skip the acquire. It is a
+     * plain read of the same counter {@link #consumePendingClears()} drains, not a second bookkeeping of it.
+     */
+    public static boolean hasPendingClears() {
+        CeltiumGlStub stub = installed;
+        return stub != null && stub.pendingClears.get() != 0;
+    }
+
     /** Records a clear through the same producer used by callback dispatch. */
     /** Uniform-block introspection: no block or active uniform exists, so the integer answer is zero. */
     public static void celtium$getActiveUniformInt(int program, int index, int pname, long out) {

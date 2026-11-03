@@ -683,11 +683,46 @@ public final class GllessFrameTarget implements FrameImageTarget {
 
     @Override
     public void recordAcquireBarriers(VkCommandBuffer commandBuffer) {
-        recordLayoutBarriers(commandBuffer, false);
-        this.firstAcquire = false;
-        this.colorImageLayout = COLOR_RENDER_LAYOUT;
-        this.depthImageLayout = DEPTH_RENDER_LAYOUT;
+        recordAcquireBarriers(commandBuffer, true);
+    }
+
+    /**
+     * The acquire for a window whose pass may not attach the frame image at all.
+     * <p>
+     * An off-target window (a mod's own framebuffer, the entity outline, GregTech's bloom chain) records its pass
+     * against one of the owned pairs, so the frame image is neither attached nor written by it. The two layout
+     * barriers this method used to record unconditionally - GENERAL to the attachment layout and back - were then a
+     * matched pair around a pass that never touched the image: 26 {@code vkCmdPipelineBarrier} calls a frame on the
+     * measured scene, where 13 of 23 windows are GregTech's post chain. Skipping both leaves the image in GENERAL,
+     * which is exactly where the release leaves it, so the next window that does attach it finds the layout it
+     * expects.
+     * <p>
+     * The clear path is the one thing that still needs the attachment layout, so it is asked first: a window with a
+     * game clear pending (or an image that has never been cleared) keeps the full acquire. The caller passes the same
+     * answer to {@link #recordReleaseBarriers(VkCommandBuffer, boolean)}, so the two are always a pair.
+     *
+     * @param frameImageAttached whether this window's pass attaches the frame image (or a clear needs its layout)
+     */
+    public void recordAcquireBarriers(VkCommandBuffer commandBuffer, boolean frameImageAttached) {
+        if (frameImageAttached) {
+            recordLayoutBarriers(commandBuffer, false);
+            this.firstAcquire = false;
+            this.colorImageLayout = COLOR_RENDER_LAYOUT;
+            this.depthImageLayout = DEPTH_RENDER_LAYOUT;
+        }
         applyGameClears(commandBuffer);
+    }
+
+    /**
+     * {@return whether this window's acquire has to move the frame image into its attachment layout}.
+     * <p>
+     * True when the image has never been cleared (the first attachment loads it) or when a game clear is waiting to
+     * be applied to it - {@link #applyGameClears} records its clear in the attachment layout, so a window that skips
+     * the acquire must not be one that carries a clear. The answer is read before the window records, because the
+     * release has to make the same decision.
+     */
+    public boolean frameImageAcquireNeeded() {
+        return this.neverCleared || org.soutalab.celtium.vulkan.gl.CeltiumGlStub.hasPendingClears();
     }
 
     /**
@@ -1071,8 +1106,23 @@ public final class GllessFrameTarget implements FrameImageTarget {
 
     @Override
     public void recordReleaseBarriers(VkCommandBuffer commandBuffer) {
-        recordLayoutBarriers(commandBuffer, true);
-        this.colorImageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        recordReleaseBarriers(commandBuffer, true);
+    }
+
+    /**
+     * The release that matches {@link #recordAcquireBarriers(VkCommandBuffer, boolean)}.
+     * <p>
+     * With {@code frameImageAttached} false the acquire recorded no layout barrier, so the image is still in GENERAL
+     * and there is nothing to hand back: recording the release anyway would declare COLOR_RENDER_LAYOUT as its source
+     * layout, which is the VUID-vkCmdPipelineBarrier-oldLayout-01197 the pair exists to avoid. The depth image's
+     * layout is unchanged either way - both of its barriers name the attachment layout - so only the bookkeeping
+     * line stays.
+     */
+    public void recordReleaseBarriers(VkCommandBuffer commandBuffer, boolean frameImageAttached) {
+        if (frameImageAttached) {
+            recordLayoutBarriers(commandBuffer, true);
+            this.colorImageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        }
         // Depth stays in its attachment layout across windows: moving it to GENERAL and back at every window would
         // resolve HiZ each time on the hardware this layout exists for.
         this.depthImageLayout = DEPTH_RENDER_LAYOUT;

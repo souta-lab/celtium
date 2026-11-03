@@ -10491,13 +10491,24 @@ this.frameBufferOpen = false;
         if (countGroupsForTarget(this.targetRegistry.currentIdentity()) == 0) return; // others remain owned in the queue
         boolean offTarget = !this.targetRegistry.currentIsMain();
         long identity = this.targetRegistry.currentIdentity();
-        this.immediateWindowBusy = true;
         // BH-26: the owner state a recording consumes lives on the GL-less frame target, while this field is the
         // FrameImageTarget interface - so the handle is resolved once here and both rollback sites use it. On the
         // bridge (real GL) the target is not a GllessFrameTarget and both calls are skipped, which is correct: there
         // is no owner state to put back.
         GllessFrameTarget gllessTarget = this.frameTarget instanceof GllessFrameTarget
                 ? (GllessFrameTarget) this.frameTarget : null;
+        // Whether this window's pass will attach the frame image. An off-target window records its pass against one
+        // of the owned pairs, so the frame image's acquire/release pair would be two layout barriers around a pass
+        // that never touches it - 26 vkCmdPipelineBarrier calls a frame on the measured scene, 13 of whose 23 windows
+        // are GregTech's post chain. The predicate is the same one recordImmediateOnlyPass uses to pick the
+        // framebuffer, and it is asked of the target because a pending game clear is recorded in the attachment
+        // layout: a window that carries one keeps the full acquire. The release reads the same field, so the two are
+        // always a pair even when the off-target path falls back to the frame image mid-record.
+        boolean offTargetPass = offTarget && identity != 0L && offTargetTarget() != null;
+        boolean frameImageAttached = gllessTarget == null || !offTargetPass
+                || gllessTarget.frameImageAcquireNeeded();
+        this.windowFrameImageAttached = frameImageAttached;
+        this.immediateWindowBusy = true;
         // One snapshot instance serves every window flush; its chain arrays grow only when more pairs appear.
         org.soutalab.celtium.vulkan.FramePassTimings.begin("windowSetup");
         GllessFrameTarget.RecordingSnapshot recordingSnapshot;
@@ -10787,7 +10798,11 @@ this.frameBufferOpen = false;
                             org.soutalab.celtium.vulkan.FramePassTimings.end("wfpMiddle");
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winBarrier");
                             gpuMark("pre-acq2");
-                            this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+                            if (gllessTarget != null) {
+                                gllessTarget.recordAcquireBarriers(this.commandBuffer, frameImageAttached);
+                            } else {
+                                this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+                            }
                             gpuMark("acq2");
                             org.soutalab.celtium.vulkan.FramePassTimings.end("winBarrier");
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winRecord");
@@ -10802,7 +10817,12 @@ this.frameBufferOpen = false;
                             this.windowRecordsByArm[arm]++;
                             org.soutalab.celtium.vulkan.FramePassTimings.end("winRecord");
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winBarrier");
-                            this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+                            if (gllessTarget != null) {
+                                gllessTarget.recordReleaseBarriers(this.commandBuffer,
+                                        this.windowFrameImageAttached);
+                            } else {
+                                this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+                            }
                             org.soutalab.celtium.vulkan.FramePassTimings.end("winBarrier");
                         } catch (RuntimeException | LinkageError recordError) {
                             if (gllessTarget != null) {
@@ -12174,6 +12194,15 @@ this.frameBufferOpen = false;
                 }
                 this.lastOffTargetFailure = describe(error);
                 record("off-target pass refused, drawing into the frame image instead: " + describe(error));
+                // The acquire this window skipped has to be recorded here, before the pass that now attaches the
+                // frame image: the image is in GENERAL and the pass declares the attachment layout, which is
+                // VUID-vkCmdBeginRenderPass-initialLayout-00900 without it. The release reads the same field, so the
+                // pair stays matched. Rare by construction (the off-target path is the one that just failed), so the
+                // barrier it costs is not on the measured path.
+                if (!this.windowFrameImageAttached && this.frameTarget instanceof GllessFrameTarget gllessFallback) {
+                    gllessFallback.recordAcquireBarriers(this.commandBuffer, true);
+                    this.windowFrameImageAttached = true;
+                }
                 framebuffer = ensureFramebuffer(renderPass);
             }
         } else {
@@ -14674,6 +14703,18 @@ this.frameBufferOpen = false;
 
 
     private void setViewportAndScissor(MemoryStack stack) {
+        // Both are dynamic state, and dynamic state is not reset by vkCmdBeginRenderPass: within one command buffer
+        // the values a previous window set are still in force. The trackers below already hold what the buffer has
+        // (they are reset to their never-matching sentinels at beginCommands), so a window that wants the same
+        // viewport and scissor as the last one emits nothing. On the measured scene that is 46 vkCmdSet* calls a
+        // frame - two per window over 23 windows, of which 13 are GregTech's post chain at the same full-frame
+        // extent.
+        if (this.passVpX == 0 && this.passVpY == 0 && this.passVpW == this.targetWidth
+                && this.passVpH == this.targetHeight && this.passScX == 0 && this.passScY == 0
+                && this.passScW == this.targetWidth && this.passScH == this.targetHeight) {
+            this.immediateStatistics.noteStateSkipsViewport();
+            return;
+        }
         org.lwjgl.vulkan.VkViewport.Buffer viewport = org.lwjgl.vulkan.VkViewport.calloc(1, stack);
         // Positive height: see vulkanProjection() for why the Vulkan convention is used unchanged.
         viewport.get(0).x(0.0f).y(0.0f).width(this.targetWidth).height(this.targetHeight)
@@ -18209,6 +18250,15 @@ this.frameBufferOpen = false;
      */
     boolean frameBufferOpen;
     /**
+     * Whether the window being recorded moved the frame image into its attachment layout.
+     * <p>
+     * The acquire is recorded before the pass and the release after it, but only the pass knows which framebuffer it
+     * ended up attaching: an off-target window skips both barriers, and the off-target path's own fallback (a refused
+     * pair) attaches the frame image instead and records the acquire there. This field is how the release learns what
+     * the acquire actually did, so the two can never disagree about the image's layout.
+     */
+    private boolean windowFrameImageAttached = true;
+    /**
      * Whether a frame's recordings are coalesced into one open frame buffer and submitted once at the frame
      * boundary. OFF by default: with it the flush wall time falls from 3.82 to 2.35-2.41 ms per frame (AMD RX 6400,
      * 4.55 flushes/frame) and queue submissions per frame from 12.7 to 4.6, but the E2E 1.93a pack produces
@@ -19212,6 +19262,14 @@ this.frameBufferOpen = false;
                         this.genericDrawCount++;
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
+                    }
+                    if (indirectConsumed) {
+                        // The bracket has to close on both paths. It used to close only inside the direct branch, so
+                        // a group the indirect path consumed left grpDraw open and the next group's begin restarted
+                        // it - the reported grpDraw then held the whole remainder of the loop, which is how a
+                        // 112-group frame read 1.0 ms (8.9 us a group) against the ~2.5 us the same loop measures
+                        // when every group takes the direct path.
+                        org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
                     }
                     if (skyGroup) {
                         // Reached only after the draw was issued (indirect or direct), so the suffix is the fact the
