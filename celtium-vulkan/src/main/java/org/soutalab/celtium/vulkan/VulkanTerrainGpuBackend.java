@@ -315,6 +315,25 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             Boolean.getBoolean("celtium.vulkan.worldMatrixCensus");
     private boolean worldMatrixCensusDone;
 
+    /**
+     * {@code -Dceltium.vulkan.skyCensus=true}: one line per frame whose count of sky-sized {@code POSITION} batches
+     * changed, with the first one's colour, fog and first vertex.
+     * <p>
+     * The sky band measured in round 29 differs between two consecutive frames of a still camera: one frame carries the
+     * fog ramp from the sky colour to the fog colour, the next is the fog colour everywhere - which is also the clear
+     * colour, so "the dome was not drawn" and "the dome was drawn fully fogged" look identical in the picture. The dome
+     * is a 13x13 grid of quads (676 vertices, {@code RenderGlobal.renderSky}) and the horizon plane is the same size, so
+     * a per-frame count of batches in that size band, with the state each was offered under, is what tells those two
+     * apart without a second guess.
+     */
+    private static final boolean SKY_CENSUS = Boolean.getBoolean("celtium.vulkan.skyCensus");
+    private static final int SKY_CENSUS_LIMIT =
+            Integer.getInteger("celtium.vulkan.skyCensusLines", 200).intValue();
+    private int skyCensusBatches;
+    private int skyCensusLastCount = -1;
+    private int skyCensusLines;
+    private String skyCensusFirst = "none";
+
     private boolean submissionPending;
     VulkanCommandBufferState commandState;
     private long activeImmediateTarget;
@@ -6776,6 +6795,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // The frame that just ended is priced here, at the one place every per-frame counter is reset
         // (-Dceltium.vulkan.frameBudget=true; a no-op otherwise).
         FrameBudgetTimings.frameBoundary();
+        if (SKY_CENSUS) {
+            // Printed only when the count moved: a frame that offers the same sky-sized batches as the one before it
+            // says nothing new, and the transition is the whole question (drawn every frame, or only sometimes).
+            if (this.skyCensusBatches != this.skyCensusLastCount && this.skyCensusLines < SKY_CENSUS_LIMIT) {
+                this.skyCensusLines++;
+                System.out.println("[Celtium] CELTIUM_SKY_FRAME frame=" + this.frameId
+                        + " skySizedPositionBatches=" + this.skyCensusBatches
+                        + " first=[" + this.skyCensusFirst + "]");
+                this.skyCensusLastCount = this.skyCensusBatches;
+            }
+            this.skyCensusBatches = 0;
+            this.skyCensusFirst = "none";
+        }
         this.immediateOffersLastFrame = this.immediateOffersThisFrame;
         this.immediateOffersThisFrame = 0;
         // Third trigger for the counter summary: a fixture that exits without tearing its world down never reaches the
@@ -7211,6 +7243,28 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.immediateLastRefusal = "isolation: format " + formatId + " refused by property";
             this.immediateStatistics.noteRefusedBeforeAppend();
             return false;
+        }
+        if (SKY_CENSUS && formatId == 7 && vertexCount >= 600 && vertexCount <= 1000) {
+            // The sky dome and the horizon plane are both 676 vertices; nothing else in the frame is in this band.
+            // Recorded at the offer, which is where the group takes its colour and its fog snapshot.
+            this.skyCensusBatches++;
+            if (this.skyCensusBatches == 1) {
+                this.skyCensusFirst = "count=" + vertexCount
+                        + " colour=(" + celtium$round3(this.immediateState.colorRed()) + ","
+                        + celtium$round3(this.immediateState.colorGreen()) + ","
+                        + celtium$round3(this.immediateState.colorBlue()) + ","
+                        + celtium$round3(this.immediateState.colorAlpha()) + ")"
+                        + " fogSelector=" + this.fog.selector()
+                        + " fogStart=" + this.fog.start + " fogEnd=" + this.fog.end
+                        + " fogColour=(" + celtium$round3(this.fog.red) + ","
+                        + celtium$round3(this.fog.green) + "," + celtium$round3(this.fog.blue) + ")"
+                        + " mvT=(" + celtium$round3(this.glModelView[12]) + ","
+                        + celtium$round3(this.glModelView[13]) + ","
+                        + celtium$round3(this.glModelView[14]) + ")"
+                        + " v0=(" + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress)) + ","
+                        + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 4L)) + ","
+                        + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 8L)) + ")";
+            }
         }
         // Cleared at entry so a refusal always carries its own reason. It used to keep whatever the previous call left -
         // a successful batch sets "none" - so 886 format-2 refusals per run were tallied under a reason that described the
@@ -9100,7 +9154,7 @@ this.frameBufferOpen = false;
         }
     }
 
-    static String round3(float value) {
+    static String celtium$round3(float value) {
         return String.valueOf(Math.round(value * 1000.0f) / 1000.0f);
     }
 
@@ -14086,8 +14140,8 @@ this.frameBufferOpen = false;
                 + " boundIdentity=0x" + Long.toHexString(this.targetRegistry.currentIdentity())
                 + " boundIsMain=" + this.targetRegistry.currentIsMain()
                 + " mask=0x" + Integer.toHexString(mask)
-                + " colour=(" + celtium$round3(rgba[0]) + "," + celtium$round3(rgba[1]) + "," + celtium$round3(rgba[2])
-                + "," + celtium$round3(rgba[3]) + ") depth=" + (float) depth
+                + " colour=(" + round3(rgba[0]) + "," + round3(rgba[1]) + "," + round3(rgba[2])
+                + "," + round3(rgba[3]) + ") depth=" + (float) depth
                 + " meaning=[" + ("frame".equals(route)
                         ? "the game cleared its own main framebuffer; the delivered image is cleared with this colour"
                         : "the game cleared another framebuffer; its owned pair carries this clear, not the frame image")
@@ -14104,7 +14158,7 @@ this.frameBufferOpen = false;
     }
 
     /** Three decimals, the precision the renderer's own state lines use. */
-    static float celtium$round3(float value) {
+    static float round3(float value) {
         return (float) (Math.round(value * 1000.0D) / 1000.0D);
     }
 

@@ -73,6 +73,11 @@ public final class VulkanTextureRegistry {
     private static final int MEMO_SLOTS = 16;
     private final int[] memoTextureIds = celtium$emptyMemoIds();
     private final VulkanGlTexture[] memoTextures = new VulkanGlTexture[MEMO_SLOTS];
+    /**
+     * The announcement generation each memo entry was resolved at, so a hit can tell "nothing was announced for this
+     * name since" from "an announcement is pending somewhere in the frame". See {@link #get(int)}.
+     */
+    private final int[] memoAnnouncedGenerations = new int[MEMO_SLOTS];
 
     private static int[] celtium$emptyMemoIds() {
         int[] ids = new int[MEMO_SLOTS];
@@ -80,12 +85,10 @@ public final class VulkanTextureRegistry {
         return ids;
     }
 
-    private int lastMemoId = Integer.MIN_VALUE;
-
     private void celtium$dropMemo() {
-        this.lastMemoId = Integer.MIN_VALUE;
         java.util.Arrays.fill(this.memoTextureIds, Integer.MIN_VALUE);
         java.util.Arrays.fill(this.memoTextures, null);
+        java.util.Arrays.fill(this.memoAnnouncedGenerations, 0);
     }
     /**
      * Images this registry does not own, published under a GL name so the immediate path can sample them.
@@ -464,7 +467,7 @@ public final class VulkanTextureRegistry {
     }
 
     public VulkanGlTexture get(int glTextureId) {
-        // A one-entry memo over the map lookup: the callers resolve the same name several times in a row (the JFR
+        // A direct-mapped memo over the map lookup: the callers resolve the same name several times in a row (the JFR
         // census showed get() calling get() with the same argument, and the draw path asks once per group), and the map
         // is a boxed HashMap. Any mutation of the table drops the memo, so it cannot answer a stale name.
         //
@@ -473,27 +476,31 @@ public final class VulkanTextureRegistry {
         // and so drops no memo. Remembering it is how a texture that arrived after its first sample stayed refused
         // for the rest of the run; the full lookup answers it again and the deferral gate keeps that from costing a
         // capture per lookup.
+        //
+        // The memo used to be trusted only while *no* announcement was pending anywhere (`announcedImages.isEmpty()`),
+        // which in a world scene is never: one animated texture re-announced every frame kept every other name on the
+        // full lookup, and the accept path measured that lookup at 2.6 us an offer (round 29, parts[registry]). The
+        // question the gate was really asking is per name, so it is asked per name now: the entry records the
+        // announcement generation it was resolved at, and a hit requires that generation to be unchanged and the name
+        // not to be stale. A new announcement for *this* name moves the generation; an announcement for another name
+        // does not, which is the whole win. `invalidateRenderedTexture` removes the announced image without moving the
+        // generation, so the stale set is the second half of the same check.
         int slot = glTextureId & (MEMO_SLOTS - 1);
         VulkanGlTexture remembered = this.memoTextureIds[slot] == glTextureId ? this.memoTextures[slot] : null;
-        if (remembered != null) {
-            if (glTextureId == this.lastMemoId) {
-                // The same name as the previous ask: answered as the one-entry memo did, with no further work.
-                return remembered;
+        if (remembered != null
+                && this.memoAnnouncedGenerations[slot] == announcedGenerationOfInt(glTextureId)
+                && (this.staleIds.isEmpty() || !this.staleIds.contains(glTextureId))) {
+            // The one step of the full lookup that can change with no table mutation: the sampler parameters the game
+            // set after the upload. Asked of the remembered texture directly - a version compare otherwise.
+            if (SAMPLER_CONFIRM_EARLY) {
+                remembered.confirmSamplerStateFromRecord(glTextureId);
             }
-            if (this.announcedImages.isEmpty()) {
-                this.lastMemoId = glTextureId;
-                // The one step of the full lookup that can change with no table mutation: the sampler parameters the
-                // game set after the upload. Asked of the remembered texture directly - a version compare otherwise.
-                if (SAMPLER_CONFIRM_EARLY) {
-                    remembered.confirmSamplerStateFromRecord(glTextureId);
-                }
-                return remembered;
-            }
+            return remembered;
         }
         VulkanGlTexture texture = get(glTextureId, true);
         this.memoTextureIds[slot] = glTextureId;
         this.memoTextures[slot] = texture;
-        this.lastMemoId = glTextureId;
+        this.memoAnnouncedGenerations[slot] = announcedGenerationOfInt(glTextureId);
         return texture;
     }
 
