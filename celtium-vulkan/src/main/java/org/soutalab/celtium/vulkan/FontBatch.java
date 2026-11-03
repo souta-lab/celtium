@@ -566,6 +566,27 @@ public final class FontBatch {
         celtium$flushPendingFontBatch("state-change");
     }
 
+    /**
+     * The matrix boundary for a run whose glyphs carry their own transform (the owner's bake): the capture's held
+     * glyphs are appended - they were drawn under the matrix that is current right now, and appending them now bakes
+     * them with it - and the run itself is <em>not</em> submitted, because a modelView change cannot alter what its
+     * vertices already encode.
+     * <p>
+     * This is the whole point of the bake: the per-string {@code pushMatrix/translate/popMatrix} brackets are matrix
+     * changes, so without it every string is its own run, its own offer and its own group.
+     */
+    public void celtium$fontMatrixBoundaryBaked() {
+        Runnable hook = this.preFlush;
+        if (hook == null) {
+            return;
+        }
+        try {
+            hook.run();
+        } catch (Throwable ignored) {
+            // A capture-side failure must not take the boundary down with it.
+        }
+    }
+
     /** The current colour as four quantised bytes packed into one long: the run's colour witness. */
     private static long celtium$fontColourBits(FontRunState view) {
         // Packed as four bytes, not as float bit patterns: the first version shifted each 32-bit pattern by 48/32/16/0

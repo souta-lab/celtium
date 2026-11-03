@@ -1818,7 +1818,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // drawn with the function of its submission for every quad - the same hole the reference closed.
             @Override public int alphaFuncSelector() { return VulkanTerrainGpuBackend.this.immediateState.alphaFunc(); }
             @Override public float[] projection() { return VulkanTerrainGpuBackend.this.glProjection; }
-            @Override public float[] modelView() { return VulkanTerrainGpuBackend.this.glModelView; }
+            // The bake's other half: a run whose glyphs carry the modelView records the identity, so the per-string
+            // translate is no longer part of the run's identity and two strings with the same colour, texture, state
+            // and projection join one run. The projection stays in the key - it is not baked.
+            @Override public float[] modelView() {
+                return VulkanTerrainGpuBackend.this.fontBakeActive
+                        ? FONT_IDENTITY_MODELVIEW : VulkanTerrainGpuBackend.this.glModelView;
+            }
             // The draw state the batch path reads at *submit* time and the coalesced run key has to see at *append*
             // time (task-66): a run held across a state change is submitted under the state the second pass has, not
             // the one the first quad was appended with. Vanilla's tooltip is the measured case - Forge brackets it
@@ -2417,6 +2423,50 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * flush this run must first pull in whatever the capture is still holding.
      */
     private Runnable fontPreFlush;
+
+    /**
+     * Whether a glyph segment's modelView is baked into its positions, so one font run can span the per-string
+     * {@code pushMatrix/translate/popMatrix} brackets.
+     * <p>
+     * <b>Default off, and the measurement is why.</b> The hypothesis was that the per-string translate is what splits
+     * the font run - 94 runs a frame carrying 1.2 quads each on the shipped world profile - and that removing the
+     * matrix from the run's identity would coalesce them. It does not: leg r53b-bakeon (same JAR, same scene, same
+     * flags, only this switch differing from r53a-bakeoff) measured {@code immediateOffered} 238.3 -> 230.1 a frame and
+     * {@code immediateGroupsDrawn} 136.5 -> 133.5, i.e. 8 of the 94 runs coalesced. The other 86 are flushed by an
+     * intervening submission - the HUD interleaves text with other quads - which is an ordering rule the bake cannot
+     * touch. The frame interval moved 3.06 -> 3.89 ms, but the whole of that is the frame budget's {@code other}
+     * bracket (the game's own work, 1.6 -> 2.1 ms) while the renderer's own brackets are unchanged (record 0.5 -> 0.6,
+     * batch 0.4 -> 0.4), so it is drift between two sequential runs rather than this change.
+     * <p>
+     * The mechanism is kept because it is correct on its own and because the condition for re-opening it is now named:
+     * a scene where the font runs are <em>not</em> interleaved with other draws, or a change that lets a run be
+     * reordered past a non-overlapping draw. {@code -Dceltium.vulkan.fontBake=true} turns it on.
+     */
+    private static final boolean FONT_BAKE = Boolean.parseBoolean(
+            System.getProperty("celtium.vulkan.fontBake", "false"));
+
+    /** The modelView a baked run records: the transform is in the vertices, so the group carries none. */
+    private static final float[] FONT_IDENTITY_MODELVIEW = {
+            1.0F, 0.0F, 0.0F, 0.0F,
+            0.0F, 1.0F, 0.0F, 0.0F,
+            0.0F, 0.0F, 1.0F, 0.0F,
+            0.0F, 0.0F, 0.0F, 1.0F};
+
+    /** The bake's own scratch: one segment at a time, grown to the largest segment seen. */
+    private java.nio.ByteBuffer fontBakeScratch;
+    private long fontBakeScratchAddress;
+    private long fontBakedSegments;
+    private long fontBakedVertices;
+    /**
+     * Whether the glyphs the capture and the pending run hold carry their modelView in their positions.
+     * <p>
+     * Set by the last {@link #celtium$fontAppend}, and read in two places: the run's recorded modelView (the identity
+     * when baked, so the per-string translate is not part of the run's identity) and the matrix boundary (a baked run
+     * is not split by a modelView change). It is a field rather than a fresh question about the live matrix because the
+     * two are not the same question: a run opened while the matrix was bakeable must keep the identity even after the
+     * game has moved to a rotated one, or the flush would submit it under a transform it was never appended under.
+     */
+    private boolean fontBakeActive;
 
     /** Registers the capture's pre-flush hook; invoked with {@code null} to clear it. */
     public void celtium$setFontPreFlush(Runnable hook) {
@@ -7356,9 +7406,120 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     public boolean celtium$fontAppend(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
             int vertexCount, int drawMode) {
+        if (FONT_BAKE) {
+            // The bake reads glModelView, so the mirror has to be in it first: the same capture the ordinary batch path
+            // performs, and the same two array copies. Without it a run opened while the mirror had moved would record
+            // the previous batch's matrix - which is exactly the state the run key's matricesDirty term refuses.
+            if (this.matricesDirty) {
+                captureGlMatrices();
+                this.matricesDirty = false;
+            }
+            boolean bake = vertexAddress != 0L && vertexCount > 0 && vertexStride >= 12 && celtium$fontBakeable();
+            if (bake) {
+                long baked = celtium$bakeFontSegment(vertexAddress, vertexStride, vertexCount);
+                if (baked != 0L) {
+                    vertexAddress = baked;
+                } else {
+                    bake = false;
+                }
+            }
+            this.fontBakeActive = bake;
+        }
         // The pending run, its boundary rule and the retention queue moved to FontBatch (R3b).
         return this.fontBatch.celtium$fontAppend(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount,
                 drawMode);
+    }
+
+    /**
+     * Whether a glyph segment may have the live modelView baked into its positions, which is what lets one font run
+     * span the per-string {@code pushMatrix/translate/popMatrix} brackets.
+     * <p>
+     * The run key carries the modelView, so a matrix change is a run boundary: every HUD string is drawn under its own
+     * translate, so the run is flushed once per string. Measured on the shipped world profile (leg r52f-sticky,
+     * 2365 frames): {@code fontRunsStarted=221565} against {@code fontQuadsAppended=265707} - 94 runs a frame carrying
+     * 1.2 quads each, and every run is an offer through the accept path (~3.5 us) and a group of its own.
+     * <p>
+     * Baking removes the matrix from the run's identity: the positions carry the transform, the run's recorded
+     * modelView is the identity, and the group's own key is the identity too - so consecutive strings with the same
+     * colour, texture, state and projection join one run and one group. The bake is legal exactly where
+     * {@link #celtium$axisAlignedModelView} holds, which is the same condition
+     * {@link VulkanDynamicMesh#copyVerticesTransformed} already bakes under for pre-transformed groups, and the
+     * textured family's vertex shader applies the projection only - the modelView reaches the GPU solely through the
+     * baked positions. Fog is excluded because it is computed from view-space distance, which the bake would move.
+     */
+    private boolean celtium$fontBakeable() {
+        return celtium$fontBakeable(FONT_BAKE, this.fog.enabled, this.glModelView);
+    }
+
+    /**
+     * The bake decision itself, without the device: {@code true} when the switch is on, fog is off and the modelView is
+     * the translate/scale/flip shape the diagonal product reproduces exactly.
+     * <p>
+     * Package-private and static so the table can be pinned without a device, the same rule the other accept-path
+     * predicates follow. The three inputs are the whole state the decision has, and the cases that matter are the two
+     * refusals: a rotated matrix (the diagonal product would drop its off-axis terms) and fog (the shader computes it
+     * from view-space distance, which the bake would move).
+     */
+    static boolean celtium$fontBakeable(boolean bakeSwitch, boolean fogEnabled, float[] modelView) {
+        if (!bakeSwitch || fogEnabled || modelView == null || modelView.length < 16) {
+            return false;
+        }
+        return modelView[1] == 0.0F && modelView[2] == 0.0F && modelView[3] == 0.0F
+                && modelView[4] == 0.0F && modelView[6] == 0.0F && modelView[7] == 0.0F
+                && modelView[8] == 0.0F && modelView[9] == 0.0F && modelView[11] == 0.0F
+                && modelView[15] == 1.0F;
+    }
+
+    /**
+     * Copies one glyph segment into the bake scratch with the live modelView applied to its positions.
+     * <p>
+     * The diagonal product is exact for the shape {@link #celtium$axisAlignedModelView} admits - the dropped terms are
+     * exact zeroes - so the bytes are the ones the shader would have computed. Everything after the position (the
+     * texture coordinates and the packed colour) is copied verbatim, which is the same split
+     * {@link VulkanDynamicMesh#copyVerticesTransformed} uses.
+     *
+     * @return the scratch address holding the baked segment, or 0 when the scratch could not be grown
+     */
+    private long celtium$bakeFontSegment(long source, int stride, int count) {
+        long bytes = (long) stride * (long) count;
+        if (bytes <= 0L || bytes > Integer.MAX_VALUE) {
+            return 0L;
+        }
+        if (this.fontBakeScratch == null || this.fontBakeScratch.capacity() < bytes) {
+            int capacity = Integer.highestOneBit((int) Math.max(bytes, 4096L) - 1) << 1;
+            try {
+                this.fontBakeScratch = java.nio.ByteBuffer.allocateDirect(capacity)
+                        .order(java.nio.ByteOrder.nativeOrder());
+            } catch (OutOfMemoryError error) {
+                this.fontBakeScratch = null;
+                this.fontBakeScratchAddress = 0L;
+                return 0L;
+            }
+            this.fontBakeScratchAddress = org.lwjgl.system.MemoryUtil.memAddress(this.fontBakeScratch);
+        }
+        float[] m = this.glModelView;
+        float m00 = m[0], m11 = m[5], m22 = m[10], tx = m[12], ty = m[13], tz = m[14];
+        long target = this.fontBakeScratchAddress;
+        for (int i = 0; i < count; i++) {
+            long from = source + (long) i * stride;
+            long to = target + (long) i * stride;
+            org.lwjgl.system.MemoryUtil.memPutFloat(to,
+                    m00 * org.lwjgl.system.MemoryUtil.memGetFloat(from) + tx);
+            org.lwjgl.system.MemoryUtil.memPutFloat(to + 4,
+                    m11 * org.lwjgl.system.MemoryUtil.memGetFloat(from + 4) + ty);
+            org.lwjgl.system.MemoryUtil.memPutFloat(to + 8,
+                    m22 * org.lwjgl.system.MemoryUtil.memGetFloat(from + 8) + tz);
+            org.lwjgl.system.MemoryUtil.memCopy(from + 12, to + 12, (long) stride - 12L);
+        }
+        this.fontBakedSegments++;
+        this.fontBakedVertices += count;
+        return target;
+    }
+
+    /** {@return the bake census, so a leg can tell "the bake never fired" from "it fired and changed nothing"}. */
+    public String celtium$fontBakeSummary() {
+        return "fontBakedSegments=" + this.fontBakedSegments + " fontBakedVertices=" + this.fontBakedVertices
+                + " fontBake=" + (FONT_BAKE ? "on" : "off");
     }
 
     /**
@@ -7378,6 +7539,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         float[] savedProjection = this.fontRunProjectionScratch;
         float[] savedModelView = this.fontRunModelViewScratch;
         int savedUnit = this.immediateState.activeTextureUnit();
+        // The run's matrices are installed below and the mirror's "moved since the last capture" flag is cleared for
+        // the submission, so the flag has to come back exactly as it was: the saved matrices are the ones the mirror
+        // had, and if it had moved they are stale - leaving the flag clear would hand the next batch a stale matrix.
+        boolean savedMatricesDirty = this.matricesDirty;
         try {
             // The run's texture must land on unit 0 - the sampler the group's shader reads and the unit
             // boundTextureName() reports. bindTexture writes the ACTIVE unit, and a flush that happens while the
@@ -7398,6 +7563,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.immediateState.alphaFuncReference(run.alphaRef);
             System.arraycopy(run.projection, 0, this.glProjection, 0, 16);
             System.arraycopy(run.modelView, 0, this.glModelView, 0, 16);
+            // The run's matrices are the ones it was appended under, so the mirror's "moved since the last capture"
+            // flag must not make the submission below re-capture the live ones over them. It could: a matrix operation
+            // between the append and this flush sets the flag, and submitImmediateBatchBody captures on it - which
+            // would draw the run with a transform it was never appended under. With the bake on this is the normal
+            // case rather than a corner, because a baked run deliberately survives the per-string matrix brackets.
+            this.matricesDirty = false;
             // The sink's contract is that a refused run comes back as false so FontBatch can retain it and offer it
             // again at the next flush - {@link FontBatch.RunSink}'s own doc: "a refused run that is dropped is text
             // drawn by nobody". This returned true unconditionally, so the retention queue could only ever be entered
@@ -7435,10 +7606,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.immediateState.alphaFuncReference(savedAlphaRef);
             System.arraycopy(savedProjection, 0, this.glProjection, 0, 16);
             System.arraycopy(savedModelView, 0, this.glModelView, 0, 16);
+            this.matricesDirty = savedMatricesDirty;
         }
     }
 
     private void celtium$fontMatrixBoundary() {
+        // A baked run carries its transform in the vertices, so a modelView change is not a boundary for it: the next
+        // segment is baked with the new matrix and joins the same run. The projection is still in the run key, so a
+        // projection change flushes at the next append - and the flush submits with the run's own projection, which is
+        // why the run's matrices are installed by celtium$submitFontRun rather than read from the live mirror.
+        //
+        // The capture's own buffer is still drained here: its glyphs were drawn under the matrix that is current right
+        // now, and appending them now bakes them with it. Only the run's submission is skipped.
+        if (FONT_BAKE && this.fontBakeActive) {
+            this.fontBatch.celtium$fontMatrixBoundaryBaked();
+            return;
+        }
         this.fontBatch.celtium$fontMatrixBoundary();
     }
 

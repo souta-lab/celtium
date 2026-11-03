@@ -6,12 +6,12 @@
 
 ## Windows/NVIDIA報告への優先対応（2026-10-29）
 
-- **FBO/copy**: raw採用ID・8個制限・削除・逆引き・範囲、copy送信順とlayoutを修正。window copyはGPUのscratchで矩形内alphaを1にして既定有効。範囲・12画像・削除順・部分copy画素・scratch resizeはAMD/Intel成功、同期validationエラー0。Bloom画素やWindows受入ではない。## 2026-10-24: 新アーキテクチャ案（2026-10-28 以降は参考扱い）
+- **FBO/copy**: raw採用ID・8個制限・削除・逆引き・範囲、copy送信順とlayoutを修正。AMD/Intel成功・validation 0。Bloom画素やWindows受入ではない。
 
-設計案は [new_architecture.md](<new_architecture.md>)。**採用する**のは §12 の結論（offer ごとの Java 受理・capture・
-record 仕事を消す）だけで、順序は実測コストで並べ替える。**記録・提出を executor thread へ移す**案は paired KPI で採否を決める。
-[archive](<history/plan-archive-2026-10-24.md>)。**影**は本体内停止（既定OFF、[証拠](<evidence/shadow-stage-c-2026-10-24.md>)、
-利用者の明示時のみ再開）。
+## 2026-10-24: 新アーキテクチャ案（2026-10-28 以降は参考扱い）
+
+[new_architecture.md](<new_architecture.md>) の**§12 の結論**（offer ごとの Java 受理・capture・record 仕事を消す）だけを採用し、
+順序は実測コストで並べ替える。**影**は本体内停止（既定OFF、[証拠](<evidence/shadow-stage-c-2026-10-24.md>)）。
 
 ## 次の作業単位（2026-10-25 改訂・利用者の実プレイ報告に対応）
 
@@ -43,6 +43,8 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      pair clear は `winHead` 内の ~0.1 ms（既定 OFF）。**Celtium 自身 ~0.7 ms を ~0.2 ms にしないと届かない。**
      **窓の統合（sticky pass）は棄却**（[証拠](evidence/sticky-window-pass-2026-11-04.md)）: merge 2.6/フレーム成立でも
      **warm p50 2.85→11.47 ms**、窓 23.5→20.8 の代わりに **`grpDraw` 0.9→9.6 µs/group**（group 数不変）。理由未解明、再開しない。
+     **font runの行列bakeも棄却**（[証拠](evidence/font-run-bake-2026-11-04.md)）: 94 run/フレームのうち**8しか畳めない**
+     （offer 238.3→230.1、group 136.5→133.5）。残り86は**intervening flush**＝順序規則で、行列は原因ではない。既定OFF。
      **受理経路は実配布profileで初計測**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: 52.7 offer/フレームで
      **~0.27 ms（10%）**。同legの**失敗upload 28,272**は「読む物が無い」deferralへ。**`supply`の`bytes=0`は計器の欠陥**（`fullUploadBytes`が未加算）:
      実uploadは113回・3.85 ms/回、中身は内容hashのbyte単位ループ（[証拠](evidence/mirror-upload-census-2026-11-03.md)）。**registryは462–569 lookup/フレーム・ミス11.6%**（memo 256、同一batchの同じ名前3回の内2回を削除、

@@ -1497,7 +1497,8 @@ public final class CeltiumFontGlyphCapture {
         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                 org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
-            return vulkan.celtium$fontRetentionSummary() + " " + vulkan.celtium$fontStateSummary();
+            return vulkan.celtium$fontRetentionSummary() + " " + vulkan.celtium$fontStateSummary()
+                    + " " + vulkan.celtium$fontBakeSummary();
         }
         return "retainedRuns=0 retainedQuads=0 retainedPendingRuns=0 retainedPendingBytes=0 retainedDroppedRuns=0"
                 + " retainedDroppedQuads=0 retainedControlDrops=0 fontRunRefusals=0 (no coalescing backend)";
