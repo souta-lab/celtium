@@ -37,23 +37,24 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      `celtium-world-accept`（188 mods・`qmagnet`）3対で **Celtium が 1.19–1.27×遅い**（p50 median **1.261**、
      `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-round47-2026-11-04.md)）。frameBudget は
      `gpuShare=0.01`＝CPU律速。
-     **memoのミスは名前のannouncement移動で、表のchurnではない**（[証拠](evidence/texture-memo-per-name-2026-11-03.md)）。
-     鎖は `record`0.5＋`batch`0.5＋`present`0.2。窓headの0.1 msはstale-name走査のmemo外れ（**修正**、[証拠](evidence/stale-name-scan-memo-2026-11-04.md)）。
-     **窓1枚の最大項目はpair clear 19 µs**（12枚/フレーム、[証拠](evidence/window-offer-split-2026-11-04.md)）。
+     鎖は `record`0.4＋`batch`0.4＋`present`0.1。窓headの0.1 msはstale-name走査のmemo外れ（**修正**、[証拠](evidence/stale-name-scan-memo-2026-11-04.md)）。
+     **フレームは tick 1 + render 1.3、present 0**（[証拠](evidence/frame-loop-split-2026-11-04.md)）: `loop` は
+     `tickMean=1 renderMean=1 displayMean=0 syncMean=0`、`passSplit` は frame 1.3 = world 0.9 + gui 0.4、
+     `flush` 0.4（`winRecord` 0.3 = `wrecLoop` 0.2 + `grpDraw` 0.1、`winHead` 0.1、**`winBarrier` 0.0**）。
+     **障壁と present は測って 0**。pair clear は `winHead` 内の ~0.1 ms（`pairClearInPass`、AMD 0.1 ms、既定 OFF）。
      **受理経路は実配布profileで初計測**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: 52.7 offer/フレームで
      **~0.27 ms（10%）**。同legの**失敗upload 28,272**は「読む物が無い」deferralへ。**`supply`の`bytes=0`は計器の欠陥**（`fullUploadBytes`が未加算）:
-     実uploadは113回・3.85 ms/回で、その中身は内容hashのbyte単位ループ（[証拠](evidence/mirror-upload-census-2026-11-03.md)）。**registryは462–569 lookup/フレーム・ミス11.6%**（memo 256、同一batchの同じ名前3回の内2回を削除、
+     実uploadは113回・3.85 ms/回、中身は内容hashのbyte単位ループ（[証拠](evidence/mirror-upload-census-2026-11-03.md)）。**registryは462–569 lookup/フレーム・ミス11.6%**（memo 256、同一batchの同じ名前3回の内2回を削除、
      [証拠](evidence/registry-memo-census-2026-11-03.md)）**窓flushが最大**（643 µs/フレーム）。
      **round 42–46 の内訳は検証レイヤを測っていた**（[証拠](evidence/frame-split-conditions-2026-11-04.md)）:
-     検証ON frame 3.6 = world 2.5 + gui 1.0、grpDraw 0.9。**検証OFF（KPI と同じ構成）は frame 1.4 =
-     world 1.0 + gui 0.4、flush 0.4、winRecord 0.3、grpDraw 0.1**、`vkCmdDrawIndexed` は 5.0→**0.9 µs**、
-     窓の off-target routing は 22→**6 µs**。Java 側 bracket は両方 0.0。**ドロー削減の根拠は消えた。**
+     検証ON frame 3.6 = world 2.5 + gui 1.0。**検証OFF は frame 1.4**、`vkCmdDrawIndexed` は 5.0→**0.9 µs**、
+     窓の off-target routing は 22→**6 µs**。
      **出荷構成の世界scene実測**（[証拠](evidence/world-frame-accounting-2026-11-04.md)）: 219 offer・113.6 group・
      22.1 flush・23.1 window/フレーム、受理**3.49 µs/offer＝0.77 ms**、group draw 0.24、window 0.30、present 0.20＝
      **Celtium自身1.36 ms**。**単一項目は0.53 ms以下で、1つ消しても0.6 ms差に届かない**＝micro-optの床。
      JFRは`CELTIUM_LEG_JFR`（attach）。
-     **JFRの「フォント経路8.9%」は取り下げ**（[証拠](evidence/font-timing-brackets-2026-11-03.md)）: glyph 2,456個/run
-     （0.53/frame）、captureの時計bracketは既定OFF。**warm windowはflagが要る**（`warmFromTick=400 warmToTick=600
+     **JFRの「フォント経路8.9%」は取り下げ**（[証拠](evidence/font-timing-brackets-2026-11-03.md)）: glyph 2,456個/run、
+     captureの時計bracketは既定OFF。**warm windowはflagが要る**（`warmFromTick=400 warmToTick=600
      holdUntilTick=620`）。**font runを割るのはcolour witnessだけ**（[証拠](evidence/font-witness-census-2026-11-03.md)）:
      worldは94/フレーム、`colourWitness=false`のA/Bはmenu run 284→123・frame 3.8→3.7だが**grpDrawは0.9のまま**。
      既定は安全側（ON）。**off-target windowはframe imageを動かさない**（[証拠](evidence/off-target-frame-barriers-2026-11-03.md)）:
