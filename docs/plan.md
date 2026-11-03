@@ -32,15 +32,15 @@ vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（G
    | 20 FPS | 体感200fps超（ログ上限修正後）。**残りはスパイク** |
    | 入world直後 約3秒の強いラグ | **縮小・qmagnetではCeleritas同等**: 未使用chunk dispatcherのbuilder 61個（~610 MB）→1個（`99e1daf77`）。最初60tickの50ms超フレーム Celtium 1.67–1.95 s / Celeritas 1.67–1.79 s。残りは共通のchunk packet・class load。利用者の3秒は未再現 |
    | スパイク・移動時の体感lag | 移動中はterrainのocclusion探索がclient threadの28%（同期実行）→ **探索をsearch threadへ（既定）**、AMD飛行p50 1.03–1.34→0.74–0.89 ms・validation 0。同条件のCeleritasは0.78 ms・16 ms超0枚、Celtium同期は2–3枚。入室停止は未帰属。計器: `flightBlocksPerSecond`・`warmSpikes` |
-   | 視点移動で隠れた海底/洞窟が一瞬見える・GVCのmob/機体が見えない | **修正（実機確認待ち）**: 非同期探索の結果を、視点が変わったフレームだけ描画前にjoin（`22d8d84e4`）。Modのclient-array display list・直接の`GL11.glColor*`/`glDepthMask`・lit時ITEM形式（`eeb6b1d0e`、A4がCeleritas参照と一致）。A4のserver crashはMod側の不具合→`scripts/fix_gvcr2_a4.py` |
-   | 殴られたentityが赤い箱 | **修正**: combine中もalphaテストを維持（帽子レイヤの透明部が赤く塗られていた） |
+   | 視点移動で隠れた海底/洞窟が一瞬見える・GVCのmob/機体が見えない | **修正（実機確認待ち）**: 非同期探索の結果を、視点が変わったフレームだけ描画前にjoin（`22d8d84e4`）。Modのclient-array display list・直接の`GL11.glColor*`/`glDepthMask`・lit時ITEM形式（`eeb6b1d0e`）。A4のserver crashはMod側→`scripts/fix_gvcr2_a4.py` |
+   | 殴られたentityが赤い箱 | **修正**: combine中もalphaテストを維持（帽子レイヤの透明部が赤塗り） |
    | 色付きガラスのチカチカ | **修正（実機確認待ち）**: 半透明terrainパスが背面cullなしで描いていた（ガラスの裏面が2層目として合成、視点で順序が変わる）→vanilla同様に背面cull（`5f75fc009`、参照比で~20–25暗かった差が解消、[画像](evidence/2026-10-28-stained-glass-backfaces.png)） |
-   | F3+T が重い | reload自体が 2.24 s（Celeritas 2.05 s）。差は font atlas の再upload → pack不変なら保持（`6d056197d`）。reload後のframeは正常 |
-   | Xaero's Minimap（クラッシュ・真っ暗・位置ずれ・透け） | **修正**: PBO map/unpack、raw FBO/raw matrixの経路、tile upload（Devin）、mod FBO同士のsample（空mirrorより公開を優先・self-compositeは同一imageだけ）。AMD/Intel world PASSED・validation 0、Celeritas参照と同じ絵 |
-   | ワールド退出後ボタン無し | **未再現**（既定・日本語・1920×1080で表示）。手順差の手掛かり待ち |
-   | ロード画面 | **Forgeのsplashと同じ画面**（ロゴ・メモリ・進捗・Forgeロゴ・splash.properties）をnative描画（`3ebd22e90`） |
-   | ログ量 | **タグごと16行で上限**（`CeltiumLogLimiter`） |
-   | E2E 1.93a（Cleanroom 0.7） | Intelの読込SIGSEGVと疎なatlas描画拒否は修正候補で各1回通過。最終jarはE2E未再検証、画像比較未成立（[証拠](evidence/e2e-cleanroom07-2026-10-26.md)） |
+   | F3+T が重い | reload自体 2.24 s（Celeritas 2.05 s）。差は font atlas の再upload → pack不変なら保持（`6d056197d`）。reload後のframeは正常 |
+   | Xaero's Minimap（クラッシュ・真っ暗・位置ずれ・透け） | **修正**: PBO map/unpack、raw FBO/raw matrix、tile upload、mod FBO同士のsample（空mirrorより公開優先・self-compositeは同一imageだけ）。AMD/Intel world PASSED・validation 0、Celeritas参照と同じ絵 |
+   | ワールド退出後ボタン無し | **未再現**（既定・日本語・1920×1080）。手順差の手掛かり待ち |
+   | ロード画面 | **Forgeのsplashと同じ画面**（ロゴ・メモリ・進捗・Forgeロゴ）をnative描画（`3ebd22e90`） |
+   | ログ量 | **タグごと16行上限**（`CeltiumLogLimiter`） |
+   | E2E 1.93a（Cleanroom 0.7） | Intelの読込SIGSEGVと疎なatlas描画拒否は修正候補で各1回通過。最終jarは未再検証・画像比較未成立（[証拠](evidence/e2e-cleanroom07-2026-10-26.md)） |
    | vanilla post shader・発光outline | **native描画**（creeper/spider: `12a45471f`、outline合成: `ef807429c`。AMD/Intel world PASSED・validation 0。outlineはwithin-run A/Bで実測＝[証拠](evidence/glow-outline-2026-11-03.md): 2669px・対照0・noise 3.69%・`postChains=1`） |
    texture environment・空framebuffer初期化・公開cache・material寿命の整理は [実装と検証](evidence/native-texture-owner-2026-10-25.md)。
 2. **性能**（KPI flags・1280×720・vsync off/260・`world-0.7.11` instance（Xaeroなし）・3対×240 s、両GPUとも 0.1.1-alpha の jar `9feaa083`（コードは配布jar `a8bd0480`と同一、差はjar内README）＝`54b42982d`）:
@@ -51,14 +51,13 @@ vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（G
      `gpuShare=0.01`＝CPU律速、Celtium側 bracket は `record`0.6＋`batch`0.9＋`present`0.4 ms。
      **窓の固定費はもう主因ではない**（27.6窓/フレーム、[証拠](evidence/window-split-2026-11-03.md)）。
      **prepareキャッシュの負荷率76%が欠陥**（ミス9.8→1.8%、p50 −5.8%、[証拠](evidence/prepare-cache-load-2026-11-03.md)）。
-     鎖は `record`0.5＋`batch`0.8＋`present`0.2、`other`1.6 ms（3.1 p50）。Celeritas 1.79 ms 超えには**鎖~0.2 ms**。
-     **次の性能単位は記録の client thread 外への移動**（§12）か offer/窓の削減。client threadのprofile
+     鎖は `record`0.5＋`batch`0.8＋`present`0.2、`other`1.6 ms（3.1 p50）。Celeritas 1.79 ms 超えには鎖~0.2 ms。
+     **次の性能単位は受理経路の2呼び出し**（offer毎に `registry` 2.6 µs・`supply` 5.0 µs＝合計~1.2 ms/frame、[証拠](evidence/flicker-still-scene-2026-11-03.md)）で、§12より先。client threadのprofile
      （[証拠](evidence/accept-profile-jfr-2026-11-03.md)）: Celtium 43.4%・accept 19.0%・窓 9.8%・
      **最大self 3.6%**＝micro-optでは動かない。JFRは`CELTIUM_LEG_JFR`（attach）。
-     **窓の削減は1件実測**: pending copyの順序flushを「offerごと」から「そのbatchがcopy先をsampleする時だけ」へ
-     （`-Dceltium.vulkan.rawWriteSampleGate`、既定ON）。同一JAR・同一sceneのpaired setで **36.02→27.59窓/フレーム
-     （−23.4%）**、siteのflush 17497→6884、validation 0・拒否0・画像gate両arm PASSED
-     （[証拠](evidence/raw-write-sample-gate-2026-11-03.md)）。p50 −4.5%は±7%内＝速度は主張しない。
+     **窓の削減は1件実測**: pending copyの順序flushを「offerごと」から「copy先をsampleする時だけ」へ
+     （`rawWriteSampleGate`、既定ON）。同一JAR・同一sceneで **36.02→27.59窓/フレーム（−23.4%）**、validation 0・
+     拒否0・画像gate両arm PASSED（[証拠](evidence/raw-write-sample-gate-2026-11-03.md)）。p50 −4.5%は±7%内。
    - **Intel: 未達**（最新 `rel-intel`: p50 0.896・p95 0.872、**p99 1.048**＝3.46 vs 3.30 ms（中央値）。kpi3 1.110→kpi5 1.051→1.048）。
      p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般に分布、固定fpsでも残る）。棄却した仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)（GC・client thread CPU・safepoint・非同期探索は末尾）。
    - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
@@ -80,14 +79,14 @@ vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（G
 | 優先・項目 | 実装/判定 | AMD | Intel | 根拠と残り |
 |---|---|---|---|---|
 
-| **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤測定済み** | 実機報告＋画面 | ②未実行 | ①パノラマ ②エンドポータル（texgen） ③F2黒スクショ（`nglGetTexImage`） ④ガラスちらつき（背面cull `5f75fc009`） ⑤残像＝静止0差分・tooltipの動きは連続3フレーム残留0（[証拠](evidence/tooltip-motion-2026-11-02.md)）、mod FBO bind中も欠落・残像0（[証拠](evidence/tooltip-mod-fbo-2026-11-03.md)）、看板の文字も0（[証拠](evidence/sign-text-afterimage-2026-11-03.md)） |
+| **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤測定済み** | 実機報告＋画面 | ②未実行 | ①パノラマ ②エンドポータル（texgen） ③F2黒スクショ（`nglGetTexImage`） ④ガラスちらつき（背面cull `5f75fc009`） ⑤残像＝静止0差分・tooltipの動きは連続3フレーム残留0（[証拠](evidence/tooltip-motion-2026-11-02.md)）、mod FBO bind中も0（[証拠](evidence/tooltip-mod-fbo-2026-11-03.md)）、看板の文字も0（[証拠](evidence/sign-text-afterimage-2026-11-03.md)）、⑥静止sceneの連続2フレームは**空の帯だけ14.7%差**（maxDelta 37・地形/手は0、[証拠](evidence/flicker-still-scene-2026-11-03.md)） |
 
 
 | **画質（4画面＋QMAGNET）** | **settings画素一致・worldは16階調超 0.97/1.05 %（AMD/Intel）。menu背景は両GPU確認済み** | 両GPU PASSED・clean | 実測 | [証拠](evidence/image-quality-2026-10-28.md)・[menu](evidence/menu-capture-2026-11-02.md)・[legacy既定ON](evidence/legacy-immediate-default-2026-11-02.md)。修正: 半透明cull・lit clamp・Forgeブロックモデル・legacy既定ON・atlas実寸・色同期・menu背景。残り: 遠い壁1面の陰影勾配、loadingは参照なし。**creative tab の item icon と hover slotのhighlight を修正**（[highlight](evidence/creative-highlight-line-pipeline-2026-11-02.md)）。**creative grid は現行JARで参照一致**（[検証](evidence/creative-grid-verified-2026-11-03.md): mean\|A-B\| 1.17・cell 最大 2.04、旧 19/24 が >6）|
 | **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（v0.0.14-alpha・AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | v0.0.14-alpha `90a7c505…` は qmagnet world で AMD/Intel PASSED・validation 0・画像gate一致。0.6.13（GLFW/LWJGL 3.4.1）はSDL3不在を検出して版を名指しで拒否 |
 | **巨大pack互換（E2E-E 1.87.3）** | **AMD: fixture PASSED・validation 0（`e2ee-amd-c4`）、Intel未実行。残課題は[証拠](evidence/e2e-cleanroom07-2026-10-26.md)の末尾** | AMD | 未実行 | Cleanroom 0.7差はlocal置換と上流PR（`8f121acfb`）。残りは証拠ファイルへ。 |
 
-| **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない（2026-10-30: `celtium.vulkan.glless`とGL bridgeを削除） |
+| **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない（2026-10-30: `glless`とGL bridgeを削除） |
 | **次の標的** | **native実装へ** | — | 未着手 | ①model/immediateの共通packetとnative実行 ②~~非instance lit fog~~ **修正**（lit ITEMのfog block 224/240・256B・device contract 256、[証拠](evidence/lit-fog-2026-11-03.md): within-run A/Bで10,355画素が `w=0.12–0.77` のfog混合・残差p50 0.29/255、gate PASSED） ③state/texture/target所有の統合。影はDemonica addonへ分離、本体内は停止。 |
 
 ## FPSの現状と残る道（2026-10-31実測）

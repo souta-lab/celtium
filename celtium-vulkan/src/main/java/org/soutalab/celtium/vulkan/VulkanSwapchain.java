@@ -284,6 +284,24 @@ public final class VulkanSwapchain {
     }
     private int flickerSeen;
     /**
+     * Whether the fixture has armed the flicker pair ({@code -Dceltium.debug.flickerArm}).
+     * <p>
+     * The present-count rule this replaces could not say which scene it sampled: the loading screen presents hundreds
+     * of frames before the world exists, so the same count is the world on one pack and the splash on another. The
+     * fixture sets the property at a world tick it chose, and the next two presents are the pair.
+     */
+    private boolean flickerArmed;
+    /**
+     * Whether this run arms the pair from the fixture ({@code -Dceltium.debug.flickerArm} is defined at all).
+     * <p>
+     * Defined-but-false means "the fixture will set it at a tick", and then the present-count rule must not sample
+     * first: its two readbacks would be spent on the loading screen and its worst-pair count would suppress the armed
+     * pair's dump. A run that does not define the property keeps the present-count rule exactly as it was.
+     */
+    private static final boolean FLICKER_ARM_ONLY = System.getProperty("celtium.debug.flickerArm") != null;
+    /** How many presented frames have been counted, for the arm line and the present-count rule. */
+    private long presentCount;
+    /**
      * Per-stage wall nanos inside {@link #presentImage}: the acquire, the diagnostic readback (whose own submit waits
      * on a fence) and the queue present. The present runs between updateRenderer and the swap, outside every frame
      * bracket, so a frame-interval gap needs these to say which stage the renderer's wait actually lives in.
@@ -1391,10 +1409,33 @@ public final class VulkanSwapchain {
             // compared. A still camera whose two frames differ over large areas is the flicker a player reports, and it
             // can only come from something that changes between frames (draw order, a rebuilt mesh, an alternating
             // sample). Two full readbacks, so it is a diagnostic switch, not a default.
+            this.presentCount++;
             // The first frames are the loading screen, where a difference says nothing about the world: sample after
             // the world has been up for a while (present count, not a timer, so two legs sample the same frames).
-            boolean flickerDue = FLICKER_SAMPLE && this.flickerSamples < 2 * FLICKER_PAIRS && ++this.flickerSeen > FLICKER_FROM
-                    && (this.flickerPrevious != null || (this.flickerSeen - FLICKER_FROM) % Math.max(1, FLICKER_EVERY) == 1);
+            //
+            // A present count is not a scene, though. The loading screen presents hundreds of frames before the world
+            // exists, and how many depends on the pack, so a fixed count lands in the world on one profile and on the
+            // loading screen on another - and a pair taken on the loading screen measures the splash, not the world.
+            // The fixture therefore arms the pair at a world tick it chooses (`-Dceltium.debug.flickerArm`, set from
+            // the tick handler), and the next two presents are the pair. The property is read once per present, not
+            // per offer, and only while the switch is on; without it the present-count rule above is unchanged.
+            if (FLICKER_SAMPLE && !this.flickerArmed && Boolean.getBoolean("celtium.debug.flickerArm")) {
+                this.flickerArmed = true;
+                this.flickerSeen = 0;
+                this.flickerSamples = 0;
+                this.flickerPrevious = null;
+                // The dump writes the worst pair seen, and the present-count rule may already have sampled the loading
+                // screen before the arm: leaving that pair's count here would suppress the armed pair's dump whenever
+                // the world is quieter than the splash, which is the case this instrument exists for.
+                this.flickerWorstChanged = -1L;
+                System.out.println("[Celtium] CELTIUM_FLICKER_ARMED present=" + this.presentCount);
+            }
+            boolean flickerDue = FLICKER_SAMPLE && this.flickerSamples < 2 * FLICKER_PAIRS
+                    && (FLICKER_ARM_ONLY
+                            ? this.flickerArmed
+                            : this.flickerArmed || (++this.flickerSeen > FLICKER_FROM
+                                    && (this.flickerPrevious != null
+                                            || (this.flickerSeen - FLICKER_FROM) % Math.max(1, FLICKER_EVERY) == 1)));
             if (flickerDue) {
                 int[] pixels = readBackBlock(this.context, image, this.format, this.width, this.height, 0, 0,
                         this.width, this.height);

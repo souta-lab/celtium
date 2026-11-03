@@ -7647,7 +7647,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             celtium$flushBeforeRefusal();
             return false;
         }
+        long expandStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
         int[] indices = VulkanImmediateDrawer.expandIndices(drawMode, vertexCount);
+        if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_EXPAND, System.nanoTime() - expandStart);
         if (indices == null) {
             this.immediateLastRefusal = "topology " + drawMode + " has no expansion";
             // S10 is a GL-fallback rule: under GL-less the refused batch is drawn by nobody, so there is
@@ -7660,11 +7662,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // projection (it is installed by LWJGL 2's GLU utility class, outside the transforming loader -
             // matrixChannels=persp:0), while reading them on the render thread with the GL context current needs no
             // cooperation from any class and gives exactly what Minecraft is drawing with.
+            long matrixCaptureStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
             if (this.matricesDirty) {
                 captureGlMatrices();
                 this.matricesDirty = false;
                 compareMirroredAndLiveMatrices();
             }
+            if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_MATRIX, System.nanoTime() - matrixCaptureStart);
             int boundTexture = this.immediateState.boundTextureName();
             if (boundTexture != 0) {
                 // GL samples a never-allocated texture as black; draw it with a 1x1 black mirror instead of refusing the
@@ -7676,8 +7680,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // (name, level)), so asking for them separately hashed the same key twice on every offer. Measured on
                 // the accept profile (leg r45b-accept, client thread, 1824 samples): the pair is ~0.2% of the frame,
                 // small but paid on each of ~220 offers.
+                long extentStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
                 boolean hasExtent = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelExtent(
                         boundTexture, 0, this.textureExtentScratch);
+                if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_EXTENT, System.nanoTime() - extentStart);
                 // Either dimension missing is "no extent": a valid upload records both, so a record with one zero
                 // cannot describe a surface. The test used to require both to be zero, which would let a half-record
                 // through to the sampler.
@@ -7834,8 +7840,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // The registry keeps a one-entry memo keyed by the GL name, so resolving the same name twice in a row is a
             // field compare rather than a second hash - which is why this asks directly instead of threading the earlier
             // lookup through.
+            long registryStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
             org.soutalab.celtium.vulkan.VulkanGlTexture liveTextureImage =
                     boundTexture == 0 ? null : celtium$registry().get(boundTexture);
+            if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_REGISTRY, System.nanoTime() - registryStart);
             // Mark here unconditionally: the existing stage-9 mark sits inside a refusal-only branch, so the
             // interval that follows it averaged across whichever batches happened to mark both ends and read as an
             // artefact. From this point the marks measure the group decision and the append, which is where the accept
@@ -7889,14 +7897,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // undefined (audit A04). The second was missing, so a partially patched texture kept every batch going to GL -
             // measured as 801 format-5 refusals per run, all reading "the mirror for texture N has never received its
             // full content" - while the fix was the same full upload that was already written here.
+            long supplyStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
             if (boundTexture != 0 && (existing == null || !existing.hasFullContent())) {
                 celtium$supplyMirror(boundTexture, existing);
             }
             else if (boundTexture > 0 && boundTexture != this.atlasGlId && boundTexture != this.lightmapGlId) {
                 celtium$refreshRawWrites(boundTexture, existing);
             }
+            if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_SUPPLY, System.nanoTime() - supplyStart);
             this.slowPathWriteEpoch = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureWriteEpoch();
+            long prepareStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
             PreparedImmediate prepared = prepareImmediate(formatId, boundTexture, stateKey, state);
+            if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_PREPARE, System.nanoTime() - prepareStart);
             long preflightCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
             if (BATCH_TIMINGS) this.immediateStatistics.addPrepareImmediateNanos(System.nanoTime() - preflightStart);
             if (preflightCpuStart >= 0 && preflightCpuEnd >= 0) this.preflightCpuNanos += preflightCpuEnd - preflightCpuStart;
@@ -14707,11 +14719,45 @@ this.frameBufferOpen = false;
     private long acceptPreflightNanos;
     private long acceptTailNanos;
 
+    /**
+     * The accept path's two unnamed spans, split so the next optimisation is named rather than guessed.
+     * <p>
+     * The offer-stage marks say the region between stage 8 and stage 9 costs ~2.2 us and the preflight ~6.8 us, but
+     * neither interval has a named owner: the state capture and the key inside the first are measured at ~0.2 us
+     * together, and the preflight's own `prepare` bracket covers the mirror supply, the raw-write refresh and the
+     * material resolution as one number. These six counters split exactly those intervals - the topology expansion, the
+     * matrix capture, the texture-extent lookup and the registry lookup in the first; the mirror supply and the
+     * material resolution in the second - so a leg can say which call owns the microseconds instead of a reader
+     * inferring it from the code. Filled only with {@code -Dceltium.vulkan.batchTimings=true}.
+     */
+    private final long[] acceptPartsNanos = new long[6];
+    private final long[] acceptPartsCounts = new long[6];
+    private static final int PART_EXPAND = 0;
+    private static final int PART_MATRIX = 1;
+    private static final int PART_EXTENT = 2;
+    private static final int PART_REGISTRY = 3;
+    private static final int PART_SUPPLY = 4;
+    private static final int PART_PREPARE = 5;
+
+    private void celtium$noteAcceptPart(int part, long nanos) {
+        if (BATCH_TIMINGS) {
+            this.acceptPartsNanos[part] += nanos;
+            this.acceptPartsCounts[part]++;
+        }
+    }
+
     /** {@return the accept path's three spans, in milliseconds, for the frame statistics}. */
     private String acceptSpanSummary() {
+        StringBuilder parts = new StringBuilder(" parts[");
+        String[] names = {"expand", "matrix", "extent", "registry", "supply", "prepare"};
+        for (int i = 0; i < names.length; i++) {
+            if (i > 0) parts.append(' ');
+            parts.append(names[i]).append('=').append(this.acceptPartsCounts[i] == 0L ? 0L
+                    : this.acceptPartsNanos[i] / this.acceptPartsCounts[i]);
+        }
         return "accept[decideMs=" + (this.acceptDecideNanos / 1000000L)
                 + " preflightMs=" + (this.acceptPreflightNanos / 1000000L)
-                + " tailMs=" + (this.acceptTailNanos / 1000000L) + "]";
+                + " tailMs=" + (this.acceptTailNanos / 1000000L) + "]" + parts.append(']');
     }
     private final long[][] offerStageDeltas = new long[16][2];
 

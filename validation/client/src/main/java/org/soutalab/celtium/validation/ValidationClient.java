@@ -3777,6 +3777,36 @@ public final class ValidationClient {
         if (signTextAbTick > 0 && worldTicks == signTextAbTick && this.celtium$signTextStep < 0) {
             this.celtium$signTextStep = 0;
         }
+        // The flicker pair, armed at a world tick instead of at a present count.
+        // <p>
+        // The user's report is "blocks flicker / structures appear in the air", and the honest measurement of it is
+        // two consecutive presented frames of a scene that cannot change by itself: a still camera, a stack of solid
+        // blocks (no water, lava or fire, whose textures animate), the HUD hidden, the particles cleared, the clouds
+        // off and the world time pinned. Anything that differs between the two frames is then something the renderer
+        // did differently on the second one - draw order, a rebuilt mesh, an alternating sample - which is exactly the
+        // flicker. The pair is taken by the swapchain (`-Dceltium.debug.flickerSample`), and this switch only says
+        // *when*: the present-count rule the swapchain had could not tell the loading screen from the world, because
+        // how many frames the splash presents depends on the pack.
+        // <p>
+        // The scene is set up here rather than in the swapchain because only the fixture knows the tick: the HUD is
+        // hidden, the world's particles are cleared, and the camera is left at the pose the run pinned (the flat stack
+        // is under it, so the frame holds terrain and sky and nothing that moves).
+        int flickerArmTick = Integer.getInteger("celtium.validation.flickerArmTick", -1).intValue();
+        if (flickerArmTick > 0 && worldTicks == flickerArmTick) {
+            mc.gameSettings.hideGUI = true;
+            mc.effectRenderer.clearEffects(mc.world);
+            // The view is left in first person on purpose. Third person would remove the first-person hand - the one
+            // thing in a still scene that moves by itself, because its position is a function of the frame's partial
+            // tick - but it also moves the camera off the pose, and the fixture's own picture assertion requires the
+            // frame to be drawn from the pose's eye (measured on leg r29g: "the renderer drew this picture from
+            // x=0.50 y=14.99 z=4.26, not from the pose's eye x=0.50 y=13.62 z=0.50"). The hand is therefore part of
+            // what this scene measures, and a leg that wants it gone has to hide it without moving the camera.
+            System.setProperty("celtium.debug.flickerArm", "true");
+            report.addProperty("flickerArmedAtTick", Integer.valueOf(worldTicks));
+            report.addProperty("flickerArmPose", mc.player.posX + "," + mc.player.posY + "," + mc.player.posZ
+                    + " yaw=" + mc.player.rotationYaw + " pitch=" + mc.player.rotationPitch);
+            report.addProperty("flickerArmThirdPerson", Integer.valueOf(mc.gameSettings.thirdPersonView));
+        }
         if (worldTicks >= 20 && !Boolean.getBoolean("celtium.validation.interop")) {
                 // `updateRenderer` has already run for this tick, so zeroing the flicker here affects the lightmap
                 // that the next render builds, and pinning the world time keeps the sun angle identical.
