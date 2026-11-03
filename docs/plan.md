@@ -12,13 +12,10 @@
 ## 2026-10-24: 新アーキテクチャ案（2026-10-28 以降は参考扱い）
 
 設計案は [new_architecture.md](<new_architecture.md>)。**採用する**のは §12 の結論（offer ごとの Java 受理・capture・
-record 仕事を消す）だけで、順序は実測コストで並べ替える（leg `tickjfr-celtium-2`・JAR `652075c9…`・AMD・world・
-validation off・warm 窓の client thread サンプル692）: block entity 描画 34%（end portal 14.6%・看板 6.8%）、
-即時 window の記録 30%、受理経路 `submitGeometryBatch` 10%、アニメ texture 転送待ち 3.6%（修正済み）、tick 以外の
-vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（GPU Hi-Z）は最後**（AMD のフレームは解像度非依存
-＝CPU 律速）。**記録・提出を executor thread へ移す**案は paired KPI で採否を決める。移行は「一度に全部作り直さない」
-（設計§7）。各段で画像 gate・validation 0・paired KPI を取ってから次へ。
-2026-10-24 の実測ダイジェストは [archive](<history/plan-archive-2026-10-24.md>)（当時の値。現在の判定には使わない）。
+record 仕事を消す）だけで、順序は実測コストで並べ替える。**Stage 2（CPU culling）は後ろ・Stage 5（GPU Hi-Z）は最後**
+（AMD のフレームは解像度非依存＝CPU 律速）。**記録・提出を executor thread へ移す**案は paired KPI で採否を決める。
+移行は「一度に全部作り直さない」（設計§7）。各段で画像 gate・validation 0・paired KPI を取ってから次へ。当時の値は
+[archive](<history/plan-archive-2026-10-24.md>)（現在の判定には使わない）。
 
 - **影**: 利用者指示により本体内は停止。stage (a)–(d計器) は commit 済み・**既定OFF**（[証拠](<evidence/shadow-stage-c-2026-10-24.md>)）。
   PCF受け側は `git stash`（leg `shadowpcf-amd-1` PASSED、視覚効果は未確認）。**再開は利用者が明示した時だけ。**
@@ -52,7 +49,10 @@ vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（G
      **窓の固定費はもう主因ではない**（27.6窓/フレーム、[証拠](evidence/window-split-2026-11-03.md)）。
      **prepareキャッシュの負荷率76%が欠陥**（ミス9.8→1.8%、p50 −5.8%、[証拠](evidence/prepare-cache-load-2026-11-03.md)）。
      鎖は `record`0.5＋`batch`0.8＋`present`0.2、`other`1.6 ms（3.1 p50）。Celeritas 1.79 ms 超えには鎖~0.2 ms。
-     **次の性能単位は受理経路の2呼び出し**（offer毎に `registry` 2.6 µs・`supply` 5.0 µs＝合計~1.2 ms/frame、[証拠](evidence/flicker-still-scene-2026-11-03.md)）で、§12より先。client threadのprofile
+     **受理経路は実配布profileで初計測**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: offer毎に
+     `supply`3072・`prepare`1064・`registry`821 ns・52.7 offer/フレーム＝**~0.27 ms（10%）**。round29の
+     「registry 2.6 µs・supply 5.0 µs＝1.2 ms」は別sceneの値でA/Bではない。同legの**失敗upload 28,272
+     （8.1/フレーム）**は「読む物が無い」deferralへ（A/Bで0・empty 33,102）。残る最大は`supply`＝upload 15.9/フレーム。client threadのprofile
      （[証拠](evidence/accept-profile-jfr-2026-11-03.md)）: Celtium 43.4%・accept 19.0%・窓 9.8%・
      **最大self 3.6%**＝micro-optでは動かない。JFRは`CELTIUM_LEG_JFR`（attach）。
      **窓の削減は1件実測**: pending copyの順序flushを「offerごと」から「copy先をsampleする時だけ」へ
