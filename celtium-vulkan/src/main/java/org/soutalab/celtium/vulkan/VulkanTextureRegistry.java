@@ -199,6 +199,18 @@ public final class VulkanTextureRegistry {
                     + height + " (" + why + ")");
         }
     }
+
+    /**
+     * {@return whether {@link #noteMirrorDeferred} would print}, so a caller can skip the extent it only supplies for
+     * that line.
+     * <p>
+     * The lazy supply used to read the level's extent - two stub map lookups and a fresh {@code int[2]} - on every
+     * attempt, to fill a line that prints six times in a run. The deferral itself needs no size: nothing is created,
+     * and the owner that publishes the image supplies its own extent.
+     */
+    boolean wantsMirrorDeferredLine() {
+        return this.mirrorDeferredLines < 6;
+    }
     private int imageUploads;
     /** Transfers the image refused because the content was already there. */
     private int imageUploadsSkipped;

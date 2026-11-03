@@ -130,4 +130,73 @@ class FramebufferColorAttachmentTest {
     assertFalse(CeltiumGlStub.celtium$mirrorWaitsForFramebuffer(false, false, false),
             "a name that no framebuffer owns is supplied as before");
   }
+
+  /**
+   * The one-pass decision answers exactly what the two predicates it replaced answered, in the same order.
+   * <p>
+   * The lazy supply used to ask {@code celtium$mirrorWaitsForFramebuffer} and then {@code celtium$levelHasNothingToRead},
+   * which read the same two capture records through nine map lookups between them. The combined query reads them once,
+   * so the thing that can go wrong is the order or the truth table - and that is what this pins, on the real stub, in
+   * every state the two rules distinguish: nothing written, a zero surface, a real upload, and a framebuffer's colour
+   * attachment with and without captured content.
+   */
+  @Test void theOnePassDecisionMatchesTheTwoPredicatesItReplaced() throws Exception {
+    var ctor = CeltiumGlStub.class.getDeclaredConstructor();
+    ctor.setAccessible(true);
+    var installed = CeltiumGlStub.class.getDeclaredField("installed");
+    installed.setAccessible(true);
+    Object previous = installed.get(null);
+    installed.set(null, ctor.newInstance());
+    try {
+      int plain = 300;
+      assertEquals(CeltiumGlStub.SUPPLY_NOTHING_TO_READ, CeltiumGlStub.celtium$supplyDecision(plain, 0),
+              "a name nothing has written has no record and no backlog");
+      assertTrue(CeltiumGlStub.celtium$levelHasNothingToRead(plain, 0), "the predicate it replaced agrees");
+
+      CeltiumGlStub.celtium$glBindTexture(0x0DE1, plain);
+      CeltiumGlStub.celtium$texImage2D(0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401, 0L);
+      assertEquals(CeltiumGlStub.SUPPLY_NOW, CeltiumGlStub.celtium$supplyDecision(plain, 0),
+              "the zero surface is a record the upload reads, so it is not 'nothing to read'");
+      assertFalse(CeltiumGlStub.celtium$levelHasNothingToRead(plain, 0), "the predicate it replaced agrees");
+
+      java.nio.ByteBuffer pixels = org.lwjgl.system.MemoryUtil.memAlloc(8 * 8 * 4);
+      try {
+        org.lwjgl.system.MemoryUtil.memSet(org.lwjgl.system.MemoryUtil.memAddress(pixels), 0x21, 8 * 8 * 4L);
+        CeltiumGlStub.celtium$texImage2D(0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401,
+                org.lwjgl.system.MemoryUtil.memAddress(pixels));
+      } finally {
+        org.lwjgl.system.MemoryUtil.memFree(pixels);
+      }
+      assertEquals(CeltiumGlStub.SUPPLY_NOW, CeltiumGlStub.celtium$supplyDecision(plain, 0),
+              "a real upload is content");
+
+      // The attachment half: a name that is a framebuffer's colour attachment with no captured game pixels.
+      int attachment = 301;
+      CeltiumGlStub.celtium$bindFramebuffer(0x8CA9, 11);
+      CeltiumGlStub.celtium$framebufferTexture2D(0x8CA9, 0x8CE0, 0x0DE1, attachment, 0);
+      assertEquals(CeltiumGlStub.SUPPLY_WAIT_FRAMEBUFFER, CeltiumGlStub.celtium$supplyDecision(attachment, 0),
+              "an attachment with nothing captured waits for the owner that publishes it");
+      assertTrue(CeltiumGlStub.celtium$mirrorWaitsForFramebuffer(attachment), "the predicate it replaced agrees");
+
+      // The framebuffer rule is asked first, so an attachment that also has nothing to read answers "wait", not
+      // "nothing to read": the two deferrals are counted apart and the reason line differs.
+      assertTrue(CeltiumGlStub.celtium$levelHasNothingToRead(attachment, 0),
+              "and it also has nothing to read, which is why the order is the thing being pinned");
+
+      CeltiumGlStub.celtium$glBindTexture(0x0DE1, attachment);
+      java.nio.ByteBuffer attachmentPixels = org.lwjgl.system.MemoryUtil.memAlloc(4 * 4 * 4);
+      try {
+        org.lwjgl.system.MemoryUtil.memSet(org.lwjgl.system.MemoryUtil.memAddress(attachmentPixels), 0x55, 4 * 4 * 4L);
+        CeltiumGlStub.celtium$texImage2D(0x0DE1, 0, 0x8058, 4, 4, 0, 0x1908, 0x1401,
+                org.lwjgl.system.MemoryUtil.memAddress(attachmentPixels));
+      } finally {
+        org.lwjgl.system.MemoryUtil.memFree(attachmentPixels);
+      }
+      assertEquals(CeltiumGlStub.SUPPLY_NOW, CeltiumGlStub.celtium$supplyDecision(attachment, 0),
+              "a captured game upload is content, so the attachment is supplied rather than deferred");
+      assertFalse(CeltiumGlStub.celtium$mirrorWaitsForFramebuffer(attachment), "the predicate it replaced agrees");
+    } finally {
+      installed.set(null, previous);
+    }
+  }
 }

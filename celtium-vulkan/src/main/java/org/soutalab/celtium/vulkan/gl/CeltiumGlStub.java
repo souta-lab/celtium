@@ -4702,6 +4702,49 @@ public final class CeltiumGlStub implements FunctionProvider {
         return colourAttachment && !pendingPatches && !gamePixels;
     }
 
+    /** {@link #celtium$supplyDecision}: the level holds content a full upload can read. */
+    public static final int SUPPLY_NOW = 0;
+    /** {@link #celtium$supplyDecision}: a framebuffer's colour attachment with nothing captured; its owner publishes. */
+    public static final int SUPPLY_WAIT_FRAMEBUFFER = 1;
+    /** {@link #celtium$supplyDecision}: no captured record and no patch backlog, so the upload would throw. */
+    public static final int SUPPLY_NOTHING_TO_READ = 2;
+
+    /**
+     * {@return which of the three supply outcomes this level has}, in one pass over the two capture maps.
+     * <p>
+     * The lazy supply asked the same two maps through three separate predicates - {@link #textureUploadSerial} (two
+     * gets), {@link #celtium$mirrorWaitsForFramebuffer} (the framebuffer record plus two more gets on the same key) and
+     * {@link #celtium$levelHasNothingToRead} (a {@code containsKey} and a second backlog get) - so one decision cost
+     * nine map lookups on a path the accept census puts at 1.8 us per slow-path offer. The three facts the two rules
+     * read are the same two records, so they are read once here and the rules are applied in the order the caller
+     * applied them: the framebuffer deferral first, then "nothing to read".
+     * <p>
+     * The two older predicates stay: the registry's own lookup branches and the raw-write paths ask them one at a
+     * time, and this method is the caller that asked all of them.
+     *
+     * @param textureName the GL texture name the bound batch samples
+     * @param level       the mip level
+     */
+    public static int celtium$supplyDecision(int textureName, int level) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || textureName <= 0) {
+            return SUPPLY_NOTHING_TO_READ;
+        }
+        long key = texLevelKey(textureName, level);
+        TexCapture capture = stub.texCaptures.get(key);
+        java.util.List<TexCapture> pending = stub.texPatchBacklog.get(key);
+        boolean pendingPatches = pending != null && !pending.isEmpty();
+        boolean gamePixels = capture != null && capture.gamePixels;
+        if (celtium$mirrorWaitsForFramebuffer(celtium$framebufferForColorTexture(textureName) != 0,
+                pendingPatches, gamePixels)) {
+            return SUPPLY_WAIT_FRAMEBUFFER;
+        }
+        if (capture == null && !pendingPatches) {
+            return SUPPLY_NOTHING_TO_READ;
+        }
+        return SUPPLY_NOW;
+    }
+
     /**
      * One line of capture diagnostics: the levels currently holding pixels, how many came from a full image, a
      * sub-image patch or an undefined level allocated with no data and zero-filled (the shape the game gives its

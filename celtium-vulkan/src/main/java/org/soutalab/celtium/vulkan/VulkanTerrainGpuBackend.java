@@ -6664,7 +6664,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     + " image=0x" + Long.toHexString(image) + " size=" + width + "x" + height
                     + " main=" + isMain);
         }
-        return this.textureRegistry.get(glTextureName) != null;
+        // "An image was published for this name", not "the registry holds an entry for it". Every caller that needs
+        // the wrapper asks the registry itself right after this returns (the accept path and the prepare path both
+        // do), and the two that ignore the answer are the window head and the group open - so the lookup here was a
+        // full registry resolution (memo miss included, 931 ns on the accept census) per published window, for an
+        // answer nobody read. The window head is 2.8 us and this was a third of it.
+        return true;
     }
 
     /** The colour texture name standing for a framebuffer identity, or 0 when none was reported. */
@@ -11280,14 +11285,22 @@ this.frameBufferOpen = false;
             // No mirror under this name: if it is a framebuffer's colour attachment, the image that framebuffer draws
             // into is what it stands for (see celtium$publishFramebufferColorTexture). Resolved here, where a bound
             // name becomes a descriptor, so every sampling path gets the same rule.
-            if (!celtium$publishFramebufferColorTexture(textureId)) {
+            boolean published = celtium$publishFramebufferColorTexture(textureId);
+            if (!published) {
                 // Not one of the framebuffers the vanilla hooks report. A mod's own render target is created with raw
                 // GL, so the stub records its colour attachment instead (CELTIUM_RAW_FBO) - and this is where that
                 // record becomes the same publication the vanilla path makes. Measured need: 62-89 batches per run in
                 // the 268-mod E2E pack read "texture=506 (no mirror for this GL id)".
-                celtium$adoptRawFramebufferColorTexture(textureId);
+                //
+                // The second publish is asked only when the adoption recorded something: a name that is neither a
+                // reported framebuffer nor a raw one answers the same "no identity" both times, and the pair of calls
+                // was two full resolutions (the identity, the attachment record, the level parameters) per offer for
+                // an answer that could not have changed.
+                if (celtium$adoptRawFramebufferColorTexture(textureId)) {
+                    published = celtium$publishFramebufferColorTexture(textureId);
+                }
             }
-            if (celtium$publishFramebufferColorTexture(textureId)) {
+            if (published) {
                 texture = this.textureRegistry.get(textureId);
             }
         }
@@ -12248,7 +12261,10 @@ this.frameBufferOpen = false;
         if (glTextureId < this.lazySupplySerialByTexture.length && this.lazySupplySerialRecorded[glTextureId]
                 && this.lazySupplySerialByTexture[glTextureId] == writeSerial) {
             this.lazyMirrorRetrySkips++;
-            return this.textureRegistry.get(glTextureId) != null;
+            // Nothing between the caller's lookup and here mutates the registry, so the answer is the one the caller
+            // already holds. It used to be asked again - a full registry lookup (memo miss included) per retry skip,
+            // on a path the accept census puts at 1.8 us per slow-path offer.
+            return existing != null;
         }
         if (glTextureId >= this.lazySupplySerialByTexture.length) {
             int grown = Math.max(glTextureId + 1, this.lazySupplySerialByTexture.length * 2);
@@ -12257,32 +12273,31 @@ this.frameBufferOpen = false;
         }
         this.lazySupplySerialByTexture[glTextureId] = writeSerial;
         this.lazySupplySerialRecorded[glTextureId] = true;
-        int[] size = textureSize(glTextureId);
+        // One pass over the two capture maps for the whole decision. The three predicates this replaces read the same
+        // two records - the level's capture and its patch backlog - through nine map lookups between them.
+        int decision = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$supplyDecision(glTextureId, 0);
         // The registry defers a name that stands for a framebuffer's colour attachment in both of its lookup branches;
         // this direct imageFor() was the one path that built the empty mirror first, then asked the capture for pixels
         // the stub does not hold. The image and its sampler are superseded (and retired) when the owner publishes, and
         // the failed upload was counted as a supply failure although there was nothing a supply could read. Deferring
         // here makes the answer the same one the lookups give; the serial recorded above means the decision is asked
         // once per content change, and a real game upload or patch backlog still supplies as before.
-        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$mirrorWaitsForFramebuffer(glTextureId)) {
+        if (decision == org.soutalab.celtium.vulkan.gl.CeltiumGlStub.SUPPLY_WAIT_FRAMEBUFFER) {
             this.lazyMirrorDeferrals++;
-            if (this.textureRegistry != null) {
-                this.textureRegistry.noteMirrorDeferred(glTextureId, size[0], size[1],
-                        "the stub holds no captured pixels for it; the owner publishes it");
-            }
-            return this.textureRegistry.get(glTextureId) != null;
+            celtium$noteMirrorDeferred(glTextureId,
+                    "the stub holds no captured pixels for it; the owner publishes it");
+            return existing != null;
         }
         // The same decision for the name that is not a known framebuffer attachment: no captured record and no patch
         // backlog means the upload has nothing to read, and asking anyway throws the capture-miss. The serial recorded
         // above makes the question once per content change, so a real upload or a patch backlog still supplies.
-        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$levelHasNothingToRead(glTextureId, 0)) {
+        if (decision == org.soutalab.celtium.vulkan.gl.CeltiumGlStub.SUPPLY_NOTHING_TO_READ) {
             this.lazyMirrorEmptyDeferrals++;
-            if (this.textureRegistry != null) {
-                this.textureRegistry.noteMirrorDeferred(glTextureId, size[0], size[1],
-                        "the stub holds no captured record and no patch backlog for level 0");
-            }
-            return this.textureRegistry.get(glTextureId) != null;
+            celtium$noteMirrorDeferred(glTextureId,
+                    "the stub holds no captured record and no patch backlog for level 0");
+            return existing != null;
         }
+        int[] size = textureSize(glTextureId);
         if (size[0] > 0 && size[1] > 0) {
             try {
                 VulkanGlTexture created = this.textureRegistry.imageFor(glTextureId, size[0], size[1], true);
@@ -12293,13 +12308,31 @@ this.frameBufferOpen = false;
                 if (existing != null) {
                     this.immediateStatistics.notePartialMirrorsCompleted();
                 }
+                // The upload succeeded, so the registry holds this name: the lookup that used to follow is the answer
+                // this branch already has.
+                return true;
             } catch (RuntimeException | LinkageError error) {
                 this.lazyMirrorFailures++;
                 this.lazyMirrorSupplyFailures++;
                 this.lastLazyMirrorFailure = glTextureId + ": " + error;
             }
         }
-        return this.textureRegistry.get(glTextureId) != null;
+        return existing != null;
+    }
+
+    /**
+     * The bounded deferred-mirror notice, with the extent read only when the line will print.
+     * <p>
+     * The deferral creates nothing, so the size is not part of the decision - it is a column of a line that prints six
+     * times in a run. Reading it on every attempt cost two stub map lookups and a fresh {@code int[2]} on the accept
+     * path's supply bracket.
+     */
+    private void celtium$noteMirrorDeferred(int glTextureId, String why) {
+        if (this.textureRegistry == null || !this.textureRegistry.wantsMirrorDeferredLine()) {
+            return;
+        }
+        int[] size = textureSize(glTextureId);
+        this.textureRegistry.noteMirrorDeferred(glTextureId, size[0], size[1], why);
     }
 
     /** Moves the open group into the flush list together with the matrices it was built with. */
