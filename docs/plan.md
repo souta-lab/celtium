@@ -58,14 +58,15 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      （`warmFromTick=400 warmToTick=600 holdUntilTick=620`）。同JARのidle 1 armはwarm p50 **2.873 ms**（pairedではない）。
      **受理経路はその後低下**: 現行JARのframe budgetは `batch=0.5/0.5/0.5`（KPI legは`0.8/0.9/1.1`）、
      `record`0.5・`present`0.2は不変（[証拠](evidence/supply-decision-one-pass-2026-11-03.md)、1 arm）。
-     offer stageは `s10`1043・`s11`861・`s8`755 ns/offer。**offer毎の分布**（[証拠](evidence/accept-distribution-2026-11-03.md)）:
-     `batchDist[p50<=2048 p95<=8192 p99<=16384 max=173698761]` 対 平均3235 ns＝**平均は中央値の1.6倍**（先取り説は棄却）。
-     ただし**offerの55%がslow path**（`fastMergedBatches` 44.6%、`partCalls`でsupply/prepareが51%）。merge判定の最終項を
-     global epochから**そのテクスチャのserial**へ変えたが**merge率は44.63→44.71%で不変**＝その項は拘束せず（棄却）。
-     次は`-Dceltium.vulkan.mergeCensus=true`で拒否理由を読む。**環境**: `ly`（root）が**1コアの92%を1日13時間**占有＝全legの`externalCpuCores` 0.9の正体。
-     **窓の削減は1件実測**: pending copyの順序flushを「offerごと」から「copy先をsampleする時だけ」へ
-     （`rawWriteSampleGate`、既定ON）。同一JAR・同一sceneで **36.02→27.59窓/フレーム（−23.4%）**、validation 0・
-     拒否0・画像gate両arm PASSED（[証拠](evidence/raw-write-sample-gate-2026-11-03.md)）。p50 −4.5%は±7%内。
+     **offer毎の分布**（[証拠](evidence/accept-distribution-2026-11-03.md)）: `batchDist[p50<=2048 p95<=8192
+     p99<=16384]` 対 平均3235 ns＝**平均は中央値の1.6倍**（先取り説は棄却）。**offerの55%がslow path**。
+     merge判定の最終項をglobal epochから**そのテクスチャのserial**へ変えたが**merge率は44.63→44.71%で不変**（棄却）。
+     **拒否の内訳**（[証拠](evidence/merge-refusal-census-2026-11-03.md)）: 931,838 group openのうち
+     **format 448,268（48%）**・no-mesh 190,619・texture 167,484。**formatは畳めない**（6は色をpush blockから、
+     2は頂点から取る＝頂点変換は8bit量子化）。`offerStage`の`sN`はマークN→N+1で**`s9`=99 nsがmerge述語**、
+     コストはslow pathの`s10`1770＋`s11`1831と全offerの`s8`861（registry lookup 654、ミス6.4%）。micro-optは床。
+     **窓**: `rawWriteSampleGate`（既定ON）で36.02→27.59窓/フレーム（[証拠](evidence/raw-write-sample-gate-2026-11-03.md)）。
+     現行sceneは23.4窓/フレームでgateは発火しない。**環境**: `ly`（root）が**1コアの92%を1日13時間**占有＝全legの`externalCpuCores` 0.9の正体。
    - **Intel: 未達**（最新 `rel-intel`: p50 0.896・p95 0.872、**p99 1.048**＝3.46 vs 3.30 ms（中央値）。kpi3 1.110→kpi5 1.051→1.048）。
      p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般に分布、固定fpsでも残る）。棄却した仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)（GC・client thread CPU・safepoint・非同期探索は末尾）。
    - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
@@ -95,7 +96,7 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
 | **巨大pack互換（E2E-E 1.87.3）** | **AMD: fixture PASSED・validation 0、Intel未実行** | AMD | 未実行 | Cleanroom 0.7差はlocal置換と上流PR（`8f121acfb`）。残りは[証拠](evidence/e2e-cleanroom07-2026-10-26.md)末尾へ。 |
 
 | **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない |
-| **次の標的** | **native実装へ** | — | 未着手 | ①model/immediateの共通packetとnative実行 ②~~非instance lit fog~~ **修正**（[証拠](evidence/lit-fog-2026-11-03.md): within-run A/Bで10,355画素がfog混合・残差p50 0.29/255） ③state/texture/target所有の統合。影はDemonica addonへ分離、本体内は停止。 |
+| **次の標的** | **native実装へ** | — | 未着手 | ①model/immediateの共通packetとnative実行 ②lit fog **修正**（[証拠](evidence/lit-fog-2026-11-03.md)） ③state/texture/target所有の統合。影はDemonica addonへ分離、本体内は停止。 |
 
 ## FPSの現状と残る道（2026-10-31実測）
 
@@ -103,7 +104,6 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
 - 内訳（Susy p50）: frame 1.9 / flush 0.8（winRecord 0.5＝draw 0.2＋begin 0.1、barrier/submit各0.1）。30 windows・112 groups/frame。
 - 残差はwindow固定費とper-batch。pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
 - 棄却: bind flush延期（[罠](<verification-traps.md>)）、indirect immediate、フレーム再利用（アニメ凍結）。
-
 ## 撤回した前提
 
 [archive](<history/plan-archive-2026-10-21.md>) の「2026-10-24 移動」節（KPI 2.29x・draw数・GC主因 等。再入条件つき）。
