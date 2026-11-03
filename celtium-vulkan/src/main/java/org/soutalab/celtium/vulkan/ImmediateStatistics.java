@@ -34,7 +34,7 @@ public final class ImmediateStatistics {
     private long groupsStaleWorldEpoch;
     private long immediateDepthBiasedGroups;
     private long immediateDrawSiteLogged;
-    private int immediateFlushes;
+    private int immediateGroupsFlushed;
     private long immediateGroupsClosed;
     private long immediateGroupsDiscarded;
     private long immediateGroupsDrawn;
@@ -448,19 +448,19 @@ public final class ImmediateStatistics {
         return this.immediateDrawSiteLogged;
     }
 
-    /** Records one immediateFlushes. */
-    void noteImmediateFlushes() {
-        this.immediateFlushes++;
+    /** Records one immediateGroupsFlushed. */
+    void noteImmediateGroupsFlushed() {
+        this.immediateGroupsFlushed++;
     }
 
-    /** Sets immediateFlushes. */
-    void setImmediateFlushes(int value) {
-        this.immediateFlushes = value;
+    /** Sets immediateGroupsFlushed. */
+    void setImmediateGroupsFlushed(int value) {
+        this.immediateGroupsFlushed = value;
     }
 
-    /** {@return immediateFlushes}. */
-    int immediateFlushes() {
-        return this.immediateFlushes;
+    /** {@return immediateGroupsFlushed}. */
+    int immediateGroupsFlushed() {
+        return this.immediateGroupsFlushed;
     }
 
     /** Records one immediateGroupsClosed. */

@@ -440,7 +440,7 @@ final class BackendDiagnostics {
                 + " acquireOutOfDate=" + (b.swapchain != null ? b.swapchain.acquireOutOfDate() : -1)
                 + " retiredFlushes=" + b.submissionStatistics.retiredFlushes() + " retire=" + VulkanRetireQueue.describe()
                 + " lastFrameAccepted=" + b.immediateStatistics.lastFrameAccepted() + " lastFrameDrawn=" + b.immediateStatistics.lastFrameDrawn()
-                + " immediateTaken=" + b.immediateStatistics.immediateTaken() + " immediateFlushes=" + b.immediateStatistics.immediateFlushes()
+                + " immediateTaken=" + b.immediateStatistics.immediateTaken() + " immediateGroupsFlushed=" + b.immediateStatistics.immediateGroupsFlushed()
                 + " rawWriteGate=[skips=" + b.rawWriteGateSkips + " flushes=" + b.rawWriteGateFlushes + "]"
                 + " immediateGroupsClosed=" + b.immediateStatistics.immediateGroupsClosed()
                 + " immediateMaxGroupVertices=" + b.immediateStatistics.immediateMaxGroupVertices()
@@ -503,8 +503,11 @@ final class BackendDiagnostics {
                 // increment it; it is empty today, and printing every id is what says so rather than a list that
                 // stops at 5.
                 // The group lifecycle at the end of the run: what the queue did with what it accepted.
-                // immediateFlushes is incremented beside immediateGroupsDrawn, so both count groups drawn - closed
-                // minus drawn is the number that reached no pipeline, and the pending/recorded/retired sizes are what
+                // immediateGroupsFlushed is incremented beside immediateGroupsDrawn, so both count groups drawn -
+                // the key was called immediateFlushes until round 49, which read as a window count and was not one:
+                // the real flush count is actualFlushes (22.1 a frame on the world scene against 113.6 groups). The
+                // rename is the whole change; closed minus drawn is the number that reached no pipeline, and the
+                // pending/recorded/retired sizes are what
                 // is still held. immediateGroupsKeptForOtherTargets, immediateDeferredNextFrame and
                 // immediateRefusedWindowBudget are printed because they name the three ways a group can be held back;
                 // reading them here is what makes a zero that cannot move (no increment site) visible as such.

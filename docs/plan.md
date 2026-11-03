@@ -38,8 +38,8 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-round47-2026-11-04.md)）。frameBudget は
      `gpuShare=0.01`＝CPU律速。
      **memoのミスは名前のannouncement移動で、表のchurnではない**（[証拠](evidence/texture-memo-per-name-2026-11-03.md)）。
-     鎖は `record`0.5＋`batch`0.5＋`present`0.2。窓の固定費は主因ではない（**3 µs/窓**、[証拠](evidence/window-split-2026-11-04.md)）。
-     窓headの0.1 msはstale-name走査のmemo外れ（**修正、`winRecord`0.4→0.3**、[証拠](evidence/stale-name-scan-memo-2026-11-04.md)）。
+     鎖は `record`0.5＋`batch`0.5＋`present`0.2。窓headの0.1 msはstale-name走査のmemo外れ（**修正**、[証拠](evidence/stale-name-scan-memo-2026-11-04.md)）。
+     **窓1枚の最大項目はpair clear 19 µs**（12枚/フレーム、[証拠](evidence/window-offer-split-2026-11-04.md)）。
      **受理経路は実配布profileで初計測**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: 52.7 offer/フレームで
      **~0.27 ms（10%）**。同legの**失敗upload 28,272**は「読む物が無い」deferralへ。**`supply`の`bytes=0`は計器の欠陥**（`fullUploadBytes`が未加算）:
      実uploadは113回・3.85 ms/回で、その中身は内容hashのbyte単位ループ（[証拠](evidence/mirror-upload-census-2026-11-03.md)）。**registryは462–569 lookup/フレーム・ミス11.6%**（memo 256、同一batchの同じ名前3回の内2回を削除、

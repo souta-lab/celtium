@@ -707,6 +707,65 @@ public final class VulkanDynamicMesh {
     // ------------------------------------------------------------------ writing, in either mode
 
     /**
+     * The stride {@link #sliceAlignment} was computed for, or {@code -1} before the first ask.
+     * <p>
+     * Keyed on the stride rather than invalidated at every {@code layout} assignment: the field is written in four
+     * places (the initialiser, {@link #begin}, and the two {@code copyVertices} paths that pin
+     * {@code Layout.positionOnly(stride)}), and a cache that has to be told about each of them is a cache that will
+     * one day be stale. Comparing the stride is one int compare and cannot be.
+     */
+    private int sliceAlignmentStride = -1;
+
+    /** The slice-start alignment for {@link #sliceAlignmentStride}; see {@link #celtium$sliceAlignment()}. */
+    private long sliceAlignment = 16L;
+
+    /**
+     * {@return the alignment a slice start must satisfy for the current layout}.
+     * <p>
+     * The slice start is what the draw call binds at, so it is aligned to the layout's own stride as well as to the
+     * 4-byte attribute rule: a start that is a whole number of vertices lets the cheap draw form carry the offset in
+     * the command instead of re-binding the buffer per group. The value is {@code lcm(16, stride)}, which is
+     * {@code 16 / gcd(16, stride) * stride}.
+     * <p>
+     * It used to be computed inline in {@link #vertexWriteAddress} on every append - a Euclid loop of two long
+     * remainders, ~20-30 ns, on each of the ~220 offers a frame. The answer depends only on the stride, which changes
+     * when the mesh is re-begun for another layout and at no other time, so it is computed once per stride here.
+     */
+    private long celtium$sliceAlignment() {
+        Layout current = this.layout;
+        int stride = current == null ? 0 : current.stride;
+        if (stride == this.sliceAlignmentStride) {
+            return this.sliceAlignment;
+        }
+        long alignment = celtium$sliceAlignmentFor(stride);
+        this.sliceAlignmentStride = stride;
+        this.sliceAlignment = alignment;
+        return alignment;
+    }
+
+    /**
+     * {@return {@code lcm(16, stride)}, or 16 when the stride says nothing}.
+     * <p>
+     * The pure half of {@link #celtium$sliceAlignment()}, package-private and static so the rule is pinned without a
+     * device: the cases that matter are the strides the immediate layouts actually use (12, 20, 24, 28, 32, 36) and
+     * the degenerate ones (0, negative, 16 itself).
+     */
+    static long celtium$sliceAlignmentFor(int stride) {
+        long alignment = 16L;
+        if (stride > 0) {
+            long g = alignment;
+            long b = stride;
+            while (b != 0L) {
+                long r = g % b;
+                g = b;
+                b = r;
+            }
+            alignment = alignment / g * stride;
+        }
+        return alignment;
+    }
+
+    /**
      * {@return the address {@code length} bytes are written at, {@code byteOffset} into the vertex stream}.
      * <p>
      * In arena mode a reservation that does not fit promotes this mesh to buffers it owns
@@ -718,19 +777,7 @@ public final class VulkanDynamicMesh {
             // The slice start is what the draw call binds at, so it is aligned to the layout's own stride as well as to
             // the 4-byte attribute rule: a start that is a whole number of vertices lets the cheap draw form carry the
             // offset in the command instead of re-binding the buffer per group.
-            long alignment = 16L;
-            if (this.layout != null && this.layout.stride > 0) {
-                long stride = this.layout.stride;
-                long g = alignment;
-                long b = stride;
-                while (b != 0L) {
-                    long r = g % b;
-                    g = b;
-                    b = r;
-                }
-                alignment = alignment / g * stride;
-            }
-            long address = this.frameRegion.vertexAddressAt(byteOffset, length, alignment);
+            long address = this.frameRegion.vertexAddressAt(byteOffset, length, celtium$sliceAlignment());
             if (address != 0L) {
                 return address;
             }

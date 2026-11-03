@@ -1351,7 +1351,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Histogram-ish spread: under 5µs / 5-50 / 50-200 / tail, so the average can be read against the mass. */
     int immediateSubmitUnder5, immediateSubmit5to50, immediateSubmit50to200;
     /**
-     * What a tail call carried: a queue flush (immediateFlushes moved), a lazy texture mirror supply
+     * What a tail call carried: a queue flush (immediateGroupsFlushed moved), a lazy texture mirror supply
      * (lazyMirrorSupplies moved), both, or neither (GC pause, JIT deopt, shader compile - the residue).
      */
     int tailCarriedFlush, tailCarriedSupply, tailCarriedBoth, tailCarriedNeither;
@@ -7752,7 +7752,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // which the reports already treat as a missing measurement.
         boolean timeBatch = BATCH_TIMINGS || org.soutalab.celtium.vulkan.FrameBudgetTimings.enabled();
         long submitStart = timeBatch ? System.nanoTime() : 0L;
-        this.submitFlushesAtEntry = this.immediateStatistics.immediateFlushes();
+        this.submitFlushesAtEntry = this.immediateStatistics.immediateGroupsFlushed();
         this.submitSuppliesAtEntry = this.lazyMirrorSupplies;
         try {
             boolean taken = submitImmediateBatchTimed(vertexFormat, vertexStride, formatId, vertexAddress,
@@ -7772,7 +7772,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 if (submitNanos > 200_000) {
                     this.immediateSubmitTailCalls++;
                     this.immediateStatistics.addImmediateSubmitTailNanos(submitNanos);
-                    boolean carriedFlush = this.immediateStatistics.immediateFlushes() != this.submitFlushesAtEntry;
+                    boolean carriedFlush = this.immediateStatistics.immediateGroupsFlushed() != this.submitFlushesAtEntry;
                     boolean carriedSupply = this.lazyMirrorSupplies != this.submitSuppliesAtEntry;
                     if (carriedFlush && carriedSupply) this.tailCarriedBoth++;
                     else if (carriedFlush) this.tailCarriedFlush++;
@@ -9018,7 +9018,7 @@ this.frameBufferOpen = false;
             if (this.immediateStatistics.immediateTaken() == 500) {
                 // One-shot snapshot of what happens to accepted batches: a batch counts as accepted only when GL's own
                 // draw was cancelled, so anything accepted and not drawn is lost geometry.
-                record("immediate flush snapshot at 500 accepted: flushes=" + this.immediateStatistics.immediateFlushes()
+                record("immediate flush snapshot at 500 accepted: flushes=" + this.immediateStatistics.immediateGroupsFlushed()
                         + " drawn=" + this.immediateStatistics.immediateGroupsDrawn() + " discarded=" + this.immediateStatistics.immediateGroupsDiscarded()
                         + " keptForOtherTargets=" + this.immediateStatistics.immediateGroupsKeptForOtherTargets()
                         + " noPipeline=" + this.immediateFlushNoPipeline
@@ -19678,7 +19678,7 @@ this.frameBufferOpen = false;
                     // target is not the main identity as they are drawn, which is what its name says.
                     this.targetStatistics.noteOffTargetDrawn();
                 }
-                this.immediateStatistics.noteImmediateFlushes();
+                this.immediateStatistics.noteImmediateGroupsFlushed();
                 this.frameDrawn++;
                 celtium$noteGroupDrawnAtSite(group.batches);
                 if (group.formatId >= 0 && group.formatId < this.drawnByFormat.length) {

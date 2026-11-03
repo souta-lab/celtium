@@ -778,7 +778,7 @@ final class ModelReplay {
         b.immediateStatistics.noteGroupDrawCount();
         b.immediateStatistics.addImmediateRecordedBatches(batches);
         b.immediateStatistics.noteImmediateGroupsDrawn();
-        b.immediateStatistics.noteImmediateFlushes();
+        b.immediateStatistics.noteImmediateGroupsFlushed();
         b.frameDrawn++;
         b.drawnByFormat[VulkanImmediateFormats.ITEM] += batches;
         b.recordedImmediateGroups.add(group);
