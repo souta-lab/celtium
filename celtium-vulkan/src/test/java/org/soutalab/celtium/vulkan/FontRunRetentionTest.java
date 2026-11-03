@@ -34,7 +34,7 @@ class FontRunRetentionTest {
     private static final int VERTICES = 4;
 
     /** The state view the batch reads: one main target, one texture, no stall. */
-    private static final class State implements FontBatch.FontRunState {
+    private static class State implements FontBatch.FontRunState {
         long targetIdentity = 1L;
 
         @Override public boolean stalled() { return false; }
@@ -52,6 +52,15 @@ class FontRunRetentionTest {
         @Override public float alphaFuncReference() { return 0.0F; }
         @Override public float[] projection() { return IDENTITY; }
         @Override public float[] modelView() { return IDENTITY; }
+    }
+
+    /** The same view with the two values a test moves: the colour and the alpha comparison function. */
+    private static final class MutableState extends State {
+        float red = 1.0F;
+        int alphaFunc;
+
+        @Override public float colorRed() { return this.red; }
+        @Override public int alphaFuncSelector() { return this.alphaFunc; }
     }
 
     private static final float[] IDENTITY = {
@@ -84,6 +93,26 @@ class FontRunRetentionTest {
             }
         }
         throw new AssertionError("no field " + key + " in " + summary);
+    }
+
+    /**
+     * One witness's count out of {@code colourWitness=true by[colour=1 modelView=0]}. The entries sit inside the
+     * brackets, so the plain {@link #field} splitter (which expects top-level {@code key=value} tokens) cannot read
+     * them; a witness that never fired is absent and reads as 0.
+     */
+    private static long witnessCount(String summary, String name) {
+        int open = summary.indexOf("by[");
+        int close = summary.indexOf(']', open);
+        if (open < 0 || close < 0) {
+            throw new AssertionError("no witness census in " + summary);
+        }
+        for (String part : summary.substring(open + 3, close).split(" ")) {
+            int equals = part.indexOf('=');
+            if (equals > 0 && part.substring(0, equals).equals(name)) {
+                return Long.parseLong(part.substring(equals + 1));
+            }
+        }
+        return 0L;
     }
 
     /** Appends one quad's worth of vertices and returns whether the batch took them. */
@@ -170,6 +199,64 @@ class FontRunRetentionTest {
                     "nothing survives the frame boundary");
             assertEquals(1L, field(batch.celtium$fontRetentionSummary(), "retainedDroppedRuns"),
                     "the loss is counted, not silent");
+        } finally {
+            MemoryUtil.memFree(buffer);
+        }
+    }
+
+    /**
+     * The witness census names the value that closed the run, and it names the colour for a colour change.
+     * <p>
+     * The census exists because the run count alone cannot say what to fold: the world frame starts one run per string
+     * segment, and the only way to merge two segments is to know which of the seventeen witnesses differed. On the
+     * measured scene every witness-closed run was closed by the colour, so this pins that the counter attributes a
+     * colour change to the colour and not to a neighbour.
+     */
+    @Test
+    void theWitnessCensusNamesTheColourForAColourChange() {
+        FontBatch batch = new FontBatch();
+        MutableState state = new MutableState();
+        Sink sink = new Sink();
+        batch.celtium$setFontRunState(state);
+        batch.celtium$setFontRunSink(sink);
+        java.nio.ByteBuffer buffer = MemoryUtil.memAlloc(VERTICES * STRIDE);
+        long address = MemoryUtil.memAddress(buffer);
+        try {
+            assertTrue(append(batch, address), "the first quad opens a run");
+            state.red = 0.25F;
+            assertTrue(append(batch, address), "the second quad opens a new run");
+            assertEquals(1L, witnessCount(batch.celtium$fontWitnessSummary(), "colour"),
+                    "the colour change is what closed the first run");
+            assertEquals(0L, witnessCount(batch.celtium$fontWitnessSummary(), "modelView"),
+                    "the matrices did not change, so they are not blamed");
+            assertEquals(2L, field(batch.celtium$fontBatchSummary(), "fontRunsStarted"),
+                    "two runs, one per colour");
+        } finally {
+            MemoryUtil.memFree(buffer);
+        }
+    }
+
+    /**
+     * The alpha comparison function is part of the key. It travels with the reference into the group's captured state
+     * and into the push block, so a run held across a change of the function would be drawn with the function of its
+     * submission for every quad - the hole the reference and the draw state were put in the key to close.
+     */
+    @Test
+    void theAlphaFunctionIsPartOfTheRunKey() {
+        FontBatch batch = new FontBatch();
+        MutableState state = new MutableState();
+        Sink sink = new Sink();
+        batch.celtium$setFontRunState(state);
+        batch.celtium$setFontRunSink(sink);
+        java.nio.ByteBuffer buffer = MemoryUtil.memAlloc(VERTICES * STRIDE);
+        long address = MemoryUtil.memAddress(buffer);
+        try {
+            assertTrue(append(batch, address));
+            state.alphaFunc = 0x0203;
+            assertTrue(append(batch, address));
+            assertEquals(1L, witnessCount(batch.celtium$fontWitnessSummary(), "alphaFunc"),
+                    "the function change closed the run");
+            assertEquals(2L, field(batch.celtium$fontBatchSummary(), "fontRunsStarted"));
         } finally {
             MemoryUtil.memFree(buffer);
         }

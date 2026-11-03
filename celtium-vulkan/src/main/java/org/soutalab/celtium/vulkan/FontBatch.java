@@ -80,6 +80,17 @@ public final class FontBatch {
 
         float alphaFuncReference();
 
+        /**
+         * The alpha comparison function (the GL enum), which the group captures with the reference and the push block
+         * carries at offset 100. It was not in the run key: a run held across a change of the function was drawn with
+         * the function of its <em>submission</em> for every quad, which is the same hole the reference and the draw
+         * state were put in the key to close. The default is 0, the shaders' "test disabled" value, so a state view
+         * that does not answer it keeps the old behaviour exactly.
+         */
+        default int alphaFuncSelector() {
+            return 0;
+        }
+
         /** The current projection matrix, 16 floats. */
         float[] projection();
 
@@ -252,6 +263,36 @@ public final class FontBatch {
     private static final int MAX_RETAINED_RUNS = 64;
     private static final int MAX_RETAINED_BYTES = 4 * 1024 * 1024;
 
+    /**
+     * Whether the current colour is part of the run key.
+     * <p>
+     * The colour is <em>per vertex</em> for every font run: the glyph capture writes the live colour into the quad's
+     * four bytes, the textured vertex stage passes {@code a_Color} through unchanged, and the fragment stage reads
+     * {@code v_Color}. The push block's {@code u_ColorR/G/B} is read only by the GL_COMBINE branch, which is selected
+     * by a <em>negative</em> alpha reference - a state no text draw uses. So for a run whose alpha reference is
+     * non-negative the colour the group is submitted under cannot reach the picture, and a run may span a colour
+     * change.
+     * <p>
+     * It stays in the key by default because the witness was made correct for a reason and the reason was not
+     * recorded as a picture: the first version packed float bit patterns and produced 0 for almost every colour, so
+     * runs merged across colour changes including the shadow pass and its light pass, and the fix was to make the
+     * witness match the bytes. {@code -Dceltium.font.colourWitness=false} is the A/B arm that asks whether the merge
+     * is visible; the default is the side that has been accepted.
+     */
+    private static final boolean COLOUR_WITNESS = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.font.colourWitness", "true"));
+
+    /**
+     * Which witness closed the run, one slot per comparison in {@link #celtium$fontRunMatches}, in the order the
+     * method compares them. The question this answers is the one the run count raises: the world frame starts one run
+     * per string segment, and the only way to fold two segments is to know which of the sixteen values differs
+     * between them. Incremented once per closed run (94 a frame on the measured world scene), so it costs nothing.
+     */
+    private static final String[] WITNESS_NAMES = {"formatId", "stride", "drawMode", "texture", "colour",
+            "alphaTest", "alphaRef", "alphaFunc", "depthTest", "depthWrite", "blend", "cull", "colorMask", "scissor",
+            "target", "projection", "modelView"};
+    private final int[] witnessMismatches = new int[WITNESS_NAMES.length];
+
     /** The run's vertices, owned by this batch and grown as needed; the font's own buffer is copied into it. */
     private ByteBuffer pendingVertices;
     private int pendingBytesUsed;
@@ -267,6 +308,8 @@ public final class FontBatch {
     private long pendingColorBits;
     private boolean pendingAlphaTest;
     private float pendingAlphaRef;
+    /** The alpha comparison function the open run was started under; see {@link FontRunState#alphaFuncSelector()}. */
+    private int pendingAlphaFunc;
     /**
      * The draw state the run will be submitted under, as read when the run was started. The owner's batch path reads
      * the live state when it builds the group, so a run held across a change of any of these is drawn with the wrong
@@ -434,6 +477,7 @@ public final class FontBatch {
             long colourBits = celtium$fontColourBits(view);
             boolean alphaTest = view.alphaTestEnabled();
             float alphaRef = view.alphaFuncReference();
+            int alphaFunc = view.alphaFuncSelector();
             boolean depthTest = view.depthTestEnabled();
             boolean depthWrite = view.depthWriteEnabled();
             boolean blend = view.blendEnabled();
@@ -442,7 +486,9 @@ public final class FontBatch {
             long scissorKey = view.scissorKey();
             if (this.pendingActive
                     && !celtium$fontRunMatches(formatId, vertexStride, drawMode, texture, colourBits, alphaTest,
-                            alphaRef, depthTest, depthWrite, blend, cull, colorMask, scissorKey, view)) {
+                            alphaRef, alphaFunc, depthTest, depthWrite, blend, cull, colorMask, scissorKey, view)) {
+                celtium$noteWitnessMismatch(formatId, vertexStride, drawMode, texture, colourBits, alphaTest,
+                        alphaRef, alphaFunc, depthTest, depthWrite, blend, cull, colorMask, scissorKey, view);
                 if (celtium$drawStateDiffers(depthTest, depthWrite, blend, cull, colorMask, scissorKey)) {
                     this.flushedDrawState++;
                 }
@@ -457,6 +503,7 @@ public final class FontBatch {
                 this.pendingColorBits = colourBits;
                 this.pendingAlphaTest = alphaTest;
                 this.pendingAlphaRef = alphaRef;
+                this.pendingAlphaFunc = alphaFunc;
                 this.pendingDepthTest = depthTest;
                 this.pendingDepthWrite = depthWrite;
                 this.pendingBlend = blend;
@@ -537,9 +584,9 @@ public final class FontBatch {
     }
 
     private boolean celtium$fontRunMatches(int formatId, int stride, int drawMode, int texture, long colourBits,
-                                           boolean alphaTest, float alphaRef, boolean depthTest, boolean depthWrite,
-                                           boolean blend, int cull, int colorMask, long scissorKey,
-                                           FontRunState view) {
+                                           boolean alphaTest, float alphaRef, int alphaFunc, boolean depthTest,
+                                           boolean depthWrite, boolean blend, int cull, int colorMask,
+                                           long scissorKey, FontRunState view) {
         // The matrix pair is part of the witness, exactly as it is for the normal path's group key: a run that spans a
         // matrix change is drawn with one matrix for all of its quads. Leaving it out was measured as the garbled
         // menu - the button labels, the rotated splash text and the copyright line came out as blocks while the
@@ -552,14 +599,82 @@ public final class FontBatch {
         // disableDepth/enableDepth bracket and the main pass is submitted after it.
         return this.pendingFormatId == formatId && this.pendingStride == stride
                 && this.pendingDrawMode == drawMode && this.pendingTexture == texture
-                && this.pendingColorBits == colourBits && this.pendingAlphaTest == alphaTest
+                && (!COLOUR_WITNESS || this.pendingColorBits == colourBits) && this.pendingAlphaTest == alphaTest
                 && Float.compare(this.pendingAlphaRef, alphaRef) == 0
+                && this.pendingAlphaFunc == alphaFunc
                 && this.pendingDepthTest == depthTest && this.pendingDepthWrite == depthWrite
                 && this.pendingBlend == blend && this.pendingCull == cull
                 && this.pendingColorMask == colorMask && this.pendingScissorKey == scissorKey
                 && this.pendingTargetIdentity == view.targetIdentity()
                 && java.util.Arrays.equals(this.pendingProjection, view.projection())
                 && java.util.Arrays.equals(this.pendingModelView, view.modelView());
+    }
+
+    /**
+     * Counts which witness closed the run, in the same order {@link #celtium$fontRunMatches} compares them, and stops
+     * at the first difference: the run was closed by that one, and the ones after it were never asked.
+     */
+    private void celtium$noteWitnessMismatch(int formatId, int stride, int drawMode, int texture, long colourBits,
+                                             boolean alphaTest, float alphaRef, int alphaFunc, boolean depthTest,
+                                             boolean depthWrite, boolean blend, int cull, int colorMask,
+                                             long scissorKey, FontRunState view) {
+        int slot;
+        if (this.pendingFormatId != formatId) {
+            slot = 0;
+        } else if (this.pendingStride != stride) {
+            slot = 1;
+        } else if (this.pendingDrawMode != drawMode) {
+            slot = 2;
+        } else if (this.pendingTexture != texture) {
+            slot = 3;
+        } else if (COLOUR_WITNESS && this.pendingColorBits != colourBits) {
+            slot = 4;
+        } else if (this.pendingAlphaTest != alphaTest) {
+            slot = 5;
+        } else if (Float.compare(this.pendingAlphaRef, alphaRef) != 0) {
+            slot = 6;
+        } else if (this.pendingAlphaFunc != alphaFunc) {
+            slot = 7;
+        } else if (this.pendingDepthTest != depthTest) {
+            slot = 8;
+        } else if (this.pendingDepthWrite != depthWrite) {
+            slot = 9;
+        } else if (this.pendingBlend != blend) {
+            slot = 10;
+        } else if (this.pendingCull != cull) {
+            slot = 11;
+        } else if (this.pendingColorMask != colorMask) {
+            slot = 12;
+        } else if (this.pendingScissorKey != scissorKey) {
+            slot = 13;
+        } else if (this.pendingTargetIdentity != view.targetIdentity()) {
+            slot = 14;
+        } else if (!java.util.Arrays.equals(this.pendingProjection, view.projection())) {
+            slot = 15;
+        } else {
+            slot = 16;
+        }
+        this.witnessMismatches[slot]++;
+    }
+
+    /**
+     * The witness census, for a leg to read: how many runs each witness closed. Deliberately not part of
+     * {@link #celtium$fontBatchSummary()}: that string is quoted by past acceptances and compared byte for byte.
+     */
+    public String celtium$fontWitnessSummary() {
+        StringBuilder out = new StringBuilder(160).append("colourWitness=").append(COLOUR_WITNESS).append(" by[");
+        boolean first = true;
+        for (int i = 0; i < this.witnessMismatches.length; i++) {
+            if (this.witnessMismatches[i] == 0) {
+                continue;
+            }
+            if (!first) {
+                out.append(' ');
+            }
+            first = false;
+            out.append(WITNESS_NAMES[i]).append('=').append(this.witnessMismatches[i]);
+        }
+        return out.append(']').toString();
     }
 
     /** Whether the difference that closed the run was in the draw state rather than in colour/texture/matrices. */

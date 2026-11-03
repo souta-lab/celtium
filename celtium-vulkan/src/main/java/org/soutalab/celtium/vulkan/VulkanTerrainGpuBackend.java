@@ -1751,6 +1751,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             @Override public float colorAlpha() { return VulkanTerrainGpuBackend.this.immediateState.colorAlpha(); }
             @Override public boolean alphaTestEnabled() { return VulkanTerrainGpuBackend.this.immediateState.alphaTestEnabled(); }
             @Override public float alphaFuncReference() { return VulkanTerrainGpuBackend.this.immediateState.alphaFuncReference(); }
+            // The comparison function travels with the reference: the group captures both (state[14] and state[6]) and
+            // the push block carries both (offset 100 and 112), so a run held across a change of the function would be
+            // drawn with the function of its submission for every quad - the same hole the reference closed.
+            @Override public int alphaFuncSelector() { return VulkanTerrainGpuBackend.this.immediateState.alphaFunc(); }
             @Override public float[] projection() { return VulkanTerrainGpuBackend.this.glProjection; }
             @Override public float[] modelView() { return VulkanTerrainGpuBackend.this.glModelView; }
             // The draw state the batch path reads at *submit* time and the coalesced run key has to see at *append*
@@ -7393,6 +7397,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.fontRunCensusPrinted = true;
         System.out.println("[Celtium] CELTIUM_FONT_RUN_CENSUS " + celtium$fontRetentionSummary()
                 + " " + celtium$fontStateSummary());
+        // Which witness closed each run. The world frame starts one run per string segment, and folding two segments
+        // needs the name of the value that differs between them; the census is one increment per closed run.
+        System.out.println("[Celtium] CELTIUM_FONT_WITNESS_CENSUS " + this.fontBatch.celtium$fontWitnessSummary());
         // The glyph capture's own counters, at the same point and for the same reason: its shutdown-hook line is not
         // in the log, so without this a leg cannot say how many glyphs a frame drew or what they cost.
         java.util.function.Supplier<String> capture = this.fontCaptureSummary;

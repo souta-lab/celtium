@@ -6,14 +6,13 @@
 
 ## Windows/NVIDIA報告への優先対応（2026-10-29）
 
-- **未解決**: Supersymmetryの最初の `VK_ERROR_DEVICE_LOST`。RC5のFence reset修正は後続AV対策で根本解決の証拠ではない。async presentは維持。
 - **FBO/copy**: raw採用ID・8個制限・削除・逆引き・範囲、copy送信順とlayoutを修正。window copyはGPUのscratchで矩形内alphaを1にして既定有効。範囲・12画像・削除順・部分copy画素・scratch resizeはAMD/Intel成功、同期validationエラー0。Bloom画素やWindows受入ではない。
 ## 2026-10-24: 新アーキテクチャ案（2026-10-28 以降は参考扱い）
 
 設計案は [new_architecture.md](<new_architecture.md>)。**採用する**のは §12 の結論（offer ごとの Java 受理・capture・
 record 仕事を消す）だけで、順序は実測コストで並べ替える。**記録・提出を executor thread へ移す**案は paired KPI で採否を決める。
-[archive](<history/plan-archive-2026-10-24.md>)。**影**は利用者指示により本体内は停止（既定OFF、
-[証拠](<evidence/shadow-stage-c-2026-10-24.md>)。PCF受け側は `git stash`。**再開は利用者が明示した時だけ**）。
+[archive](<history/plan-archive-2026-10-24.md>)。**影**は本体内停止（既定OFF、[証拠](<evidence/shadow-stage-c-2026-10-24.md>)。
+**再開は利用者が明示した時だけ**）。
 
 
 ## 次の作業単位（2026-10-25 改訂・利用者の実プレイ報告に対応）
@@ -54,11 +53,12 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      **JFRの「フォント経路8.9%」は取り下げ**（[証拠](evidence/font-timing-brackets-2026-11-03.md)）: glyph 2,456個/run
      （0.53/frame）、captureの時計bracketは既定OFF（`-Dceltium.font.timings`）。**warm windowはflagが要る**
      （`warmFromTick=400 warmToTick=600 holdUntilTick=620`）。同JARのidle 1 armはwarm p50 **2.873 ms**（pairedではない）。
-     **現行sceneのworld frameはfont pathが最大のgroup源**（[証拠](evidence/off-target-frame-barriers-2026-11-03.md)）:
-     `fontRunsStarted=236`・`fontQuadsAppended=236`＝**1 run 1 quad**（model groupは112–113）。`grpDraw`は
-     0.9 ms/フレーム・~2.5 µs/group（driverは~80 ns/packet）なので**fontの236 groupで~0.6 ms**。次は
-     `celtium$fontRunMatches`の16 witnessのどれがglyphごとに違うかを名指しする。**off-target windowは
-     frame imageを動かさない**（同証拠）: `winBarrier` 0.3→0.2 ms。
+     **font runを割るのはcolour witnessだけ**（[証拠](evidence/font-witness-census-2026-11-03.md)）: 旧記述の
+     `fontRunsStarted=236`は**menu合計**（worldは`118407`/1254 frame＝94/フレーム）、`fontQuadsAppended`は
+     **append呼び出し数**。censusは`by[colour=142]`＝witnessで閉じたrunは全部colour。
+     `-Dceltium.font.colourWitness=false`のA/Bはmenu run 284→123・frame 3.8→3.7・gui 1.1→1.0だが
+     **grpDrawは0.9のまま**＝group数比例ではない。既定は安全側（ON）。**off-target windowはframe imageを
+     動かさない**（[証拠](evidence/off-target-frame-barriers-2026-11-03.md)）: `winBarrier` 0.3→0.2 ms。
      **受理経路はその後低下**: 現行JARのframe budgetは `batch=0.5/0.5/0.5`（KPI legは`0.8/0.9/1.1`）、
      `record`0.5・`present`0.2は不変（[証拠](evidence/supply-decision-one-pass-2026-11-03.md)、1 arm）。
      **offer毎の分布**（[証拠](evidence/accept-distribution-2026-11-03.md)）: `batchDist[p50<=2048 p95<=8192
@@ -104,7 +104,8 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
 - 現行の判定は上の表（`celtium-world-accept` 3対、p50 median **1.386**）。旧scene（Susy/ATM3）の
   ABBA値は artifact が現ビルドと一致しないため現在判定に使わない（[archive](<history/plan-archive-2026-10-21.md>)）。
 - 残差は window 固定費と per-batch。pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
-- 棄却: bind flush延期（[罠](<verification-traps.md>)）、indirect immediate、フレーム再利用（アニメ凍結）。
+- 棄却: bind flush延期（[罠](<verification-traps.md>)）、indirect immediate、フレーム再利用（アニメ凍結）、
+  **group数∝grpDraw**（font run 2.3×減で不変、[証拠](evidence/font-witness-census-2026-11-03.md)）。
 ## 撤回した前提
 
 [archive](<history/plan-archive-2026-10-21.md>) の「2026-10-24 移動」節（KPI 2.29x・draw数・GC主因 等。再入条件つき）。
