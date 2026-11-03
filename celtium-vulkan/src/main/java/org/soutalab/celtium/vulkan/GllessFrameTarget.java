@@ -207,6 +207,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return this.latchedGameClears + this.liveGameClears;
     }
 
+    /** Colour clears only: the ones that erase what was drawn before them. See {@link #colourClearsApplied()}. */
+    private int colourClears;
+
     /** Frames the backend saw start without any clear in between; counted at the frame boundary and reported here. */
     private long framesWithNoClear;
 
@@ -961,7 +964,22 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         value, range);
             }
             recordClearToAttachment(command, color, depth);
+            if (color) {
+                this.colourClears++;
+            }
         }
+    }
+
+    /**
+     * How many of this image's clears named the colour buffer.
+     * <p>
+     * The frame's colour clear is the one that erases whatever was drawn before it, and the sky plane is the frame's
+     * first draw: a colour clear that lands after it leaves the clear colour in the sky band, which is the fog colour -
+     * the same value a fully fogged plane would have. The count beside the draw is what tells those apart without a
+     * second guess, and it is cumulative like {@link #clearsApplied()} so a caller compares two readings.
+     */
+    public int colourClearsApplied() {
+        return this.colourClears;
     }
 
     /**

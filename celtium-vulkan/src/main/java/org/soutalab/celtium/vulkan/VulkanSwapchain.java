@@ -268,6 +268,31 @@ public final class VulkanSwapchain {
     private static final int FLICKER_EVERY = Integer.getInteger("celtium.debug.flickerEvery", 30).intValue();
     private long flickerWorstChanged = -1L;
 
+    /**
+     * {@return the mean colour of one row of a presented frame}, in picture order (row 0 is the top).
+     * <p>
+     * The flicker pair's difference is the sky band, and the band's colour is what says which of the two shapes it is: a
+     * row near the top of a frame that carries the plane's fog ramp is the sky colour mixed toward the fog colour, and
+     * the same row of a frame whose plane's pixels are absent is the clear colour - which is the fog colour, so the
+     * count alone cannot tell them apart and the colour can.
+     */
+    private static String skyRowMean(int[] pixels, int width, int height, int row) {
+        if (pixels == null || width <= 0 || height <= 0 || pixels.length < width * height) {
+            return "none";
+        }
+        int y = Math.max(0, Math.min(height - 1, row));
+        long red = 0L;
+        long green = 0L;
+        long blue = 0L;
+        for (int x = 0; x < width; x++) {
+            int value = pixels[y * width + x];
+            red += (value >> 16) & 0xFF;
+            green += (value >> 8) & 0xFF;
+            blue += value & 0xFF;
+        }
+        return "(" + (red / width) + "," + (green / width) + "," + (blue / width) + ")";
+    }
+
     /** Writes an ARGB block to {@code <name>} in the game directory; diagnostic only. */
     private static void writeIndexedPng(int[] pixels, int width, int height, String name) {
         if (pixels == null || width <= 0 || height <= 0 || pixels.length < width * height) {
@@ -1473,7 +1498,15 @@ public final class VulkanSwapchain {
                                 + " changed=" + changed + "/" + count
                                 + " fraction=" + String.format(java.util.Locale.ROOT, "%.5f",
                                         (double) changed / (double) count)
-                                + " maxDelta=" + maxDelta);
+                                + " maxDelta=" + maxDelta
+                                // The band the difference is in, as a colour per frame: the two frames' own sky rows
+                                // beside the count say whether the flat frame is the clear colour (the plane's pixels
+                                // absent) or the fog colour of a plane drawn fully fogged, without a second leg.
+                                + " prevSky=" + skyRowMean(this.flickerPrevious, this.width, this.height, 4)
+                                + " curSky=" + skyRowMean(pixels, this.width, this.height, 4)
+                                + " prevSkyMid=" + skyRowMean(this.flickerPrevious, this.width, this.height,
+                                        this.height / 4)
+                                + " curSkyMid=" + skyRowMean(pixels, this.width, this.height, this.height / 4));
                         this.flickerPrevious = null;
                     }
                 }

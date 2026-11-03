@@ -390,6 +390,36 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int skyFanBatches;
     private String skyFanFirst = "none";
     private String skyFanLastState = "none";
+    /**
+     * {@code -Dceltium.vulkan.skyFrameProbe=<n>}: for the frames from n on (bounded), read the frame image's sky band at
+     * the frame boundary and print it beside the number of sky draws the frame issued.
+     * <p>
+     * The offer census says the plane is offered every frame, the group census says it is drawn every frame, and the
+     * picture says its pixels are in one frame of a pair and not in the next. Those three can only all be true if the
+     * loss is downstream of the draw, and the two candidates are the frame image and the present. This probe reads the
+     * frame image itself, so the frame whose picture is flat is named: a flat frame image means the draw's pixels never
+     * reached the image the present blits, and a gradient frame image beside a flat presented frame means the blit or
+     * the present is where they went.
+     * <p>
+     * The band is the picture's top rows, which are the image's last rows: the frame image is in GL texture order (row 0
+     * is the picture's bottom), the same order {@code readImageRectangle} returns.
+     */
+    private static final long SKY_FRAME_PROBE = Long.getLong("celtium.vulkan.skyFrameProbe", -1L).longValue();
+    private static final int SKY_FRAME_PROBE_LIMIT =
+            Integer.getInteger("celtium.vulkan.skyFrameProbeLimit", 24).intValue();
+    private int skyFrameProbeLines;
+    /** Sky draws issued in the frame that is running; the probe prints it for the frame that just ended. */
+    private int skyDrawsThisFrame;
+    /**
+     * The same band read from the frame image immediately before the present blits it.
+     * <p>
+     * The boundary probe reads the image the frame left behind; this one reads it in the present that serves it. The two
+     * together separate "the frame image never held the sky" from "it held it and the blit or the present lost it", which
+     * is the only remaining pair of shapes for a draw that is issued, counted and absent from the picture.
+     */
+    private int skyPresentProbeLines;
+    /** Lines of the per-draw probe, bounded like the other two. */
+    private int skyDrawProbeLines;
 
     private boolean submissionPending;
     VulkanCommandBufferState commandState;
@@ -6850,6 +6880,41 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             gllessFrame.setPresentLag(this.presentLagMax, this.presentLagOne, this.presentLagMore);
         }
         this.frameSnapshotSinceBoundary = true;
+        // The frame image as the frame that just ended left it, before the next frame's clear can touch it. Read here
+        // rather than at the present because the present reads the swapchain image: the two together are what says
+        // whether a flat picture was already flat in the image the blit copies from.
+        if (SKY_FRAME_PROBE >= 0L && this.frameId >= SKY_FRAME_PROBE
+                && this.skyFrameProbeLines < SKY_FRAME_PROBE_LIMIT
+                && this.frameTarget != null && this.frameTarget.colorImage() != 0L) {
+            this.skyFrameProbeLines++;
+            int[] framePixels = celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,
+                    this.targetWidth, this.targetHeight);
+            System.out.println("[Celtium] CELTIUM_SKY_FRAME_PROBE frame=" + this.frameId
+                    + " skyDraws=" + this.skyDrawsThisFrame
+                    + " windows=" + this.immediateStatistics.immediateWindowsThisFrame()
+                    + " colourClears=" + (offTargetTarget() == null ? -1 : offTargetTarget().colourClearsApplied())
+                    + " " + celtium$skyBandSignature(framePixels, this.targetWidth, this.targetHeight));
+            // The first probed frame as a picture, so the band's numbers can be checked against the image they came
+            // from: a row mean cannot say whether the sky is a gradient, a flat field, or a picture shifted vertically.
+            if (this.skyFrameProbeLines == 1 && framePixels != null) {
+                java.nio.ByteBuffer rgba = org.lwjgl.system.MemoryUtil.memAlloc(
+                        this.targetWidth * this.targetHeight * 4);
+                try {
+                    for (int index = 0; index < framePixels.length; index++) {
+                        int value = framePixels[index];
+                        rgba.put(index * 4, (byte) ((value >> 16) & 0xFF));
+                        rgba.put(index * 4 + 1, (byte) ((value >> 8) & 0xFF));
+                        rgba.put(index * 4 + 2, (byte) (value & 0xFF));
+                        rgba.put(index * 4 + 3, (byte) ((value >>> 24) & 0xFF));
+                    }
+                    VulkanGlTexture.dumpStageImageAsPicture("skyprobe-frame-" + this.frameId, rgba,
+                            this.targetWidth, this.targetHeight);
+                } finally {
+                    org.lwjgl.system.MemoryUtil.memFree(rgba);
+                }
+            }
+        }
+        this.skyDrawsThisFrame = 0;
         this.frameId++;
         lastFinishedFrameId = this.frameId;
         // The frame that just ended is priced here, at the one place every per-frame counter is reset
@@ -15333,6 +15398,41 @@ this.frameBufferOpen = false;
     }
 
     /**
+     * The sky band of a read-back frame image, as the mean of the picture's top rows and of two rows further down.
+     * <p>
+     * The band is where the two frames of a still scene differ, and its shape is the whole question: a gradient from the
+     * sky colour at the top to the fog colour at the horizon is the plane drawn with the world's fog, and one flat value
+     * equal to the clear colour is the plane's pixels absent. Three rows rather than one, because a single row cannot
+     * tell a gradient from a flat band that happens to match one of its ends.
+     * <p>
+     * The image is in GL texture order - row 0 is the picture's bottom - so the picture's top rows are the last ones.
+     */
+    private static String celtium$skyBandSignature(int[] pixels, int width, int height) {
+        if (pixels == null || width <= 0 || height <= 0 || pixels.length < width * height) {
+            return "skyBand=none";
+        }
+        return "skyBand[top=" + celtium$rowMean(pixels, width, height, height - 4)
+                + " quarter=" + celtium$rowMean(pixels, width, height, height - height / 4)
+                + " middle=" + celtium$rowMean(pixels, width, height, height / 2)
+                + " bottom=" + celtium$rowMean(pixels, width, height, 4) + "]";
+    }
+
+    /** {@return the mean colour of one image row}, in the image's own row order. */
+    private static String celtium$rowMean(int[] pixels, int width, int height, int row) {
+        int y = Math.max(0, Math.min(height - 1, row));
+        long red = 0L;
+        long green = 0L;
+        long blue = 0L;
+        for (int x = 0; x < width; x++) {
+            int value = pixels[y * width + x];
+            red += (value >> 16) & 0xFF;
+            green += (value >> 8) & 0xFF;
+            blue += value & 0xFF;
+        }
+        return "(" + (red / width) + "," + (green / width) + "," + (blue / width) + ")";
+    }
+
+    /**
      * The centre and the corner of a read-back rectangle as numbers.
      * <p>
      * The splash's logo is centred and dark on a white field, so a centre well below the corner is the picture and a
@@ -16372,6 +16472,19 @@ this.frameBufferOpen = false;
                 record(presentLine);
             }
             long presentImageStartedNanos = System.nanoTime();
+            // The frame image as the blit is about to read it, in the present that serves it: the boundary probe reads
+            // the same image one frame later, and a difference between the two is the frame's own draws landing after
+            // the present rather than before it.
+            if (SKY_FRAME_PROBE >= 0L && this.skyPresentProbeLines < SKY_FRAME_PROBE_LIMIT
+                    && this.frameTarget.colorImage() != 0L) {
+                this.skyPresentProbeLines++;
+                int[] presentFramePixels = celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,
+                        this.targetWidth, this.targetHeight);
+                System.out.println("[Celtium] CELTIUM_SKY_PRESENT_PROBE present=" + (this.framePresentedFromVulkan + 1)
+                        + " frame=" + this.frameId
+                        + " skyDraws=" + this.skyDrawsThisFrame
+                        + " " + celtium$skyBandSignature(presentFramePixels, this.targetWidth, this.targetHeight));
+            }
             this.lastPresentResult = this.swapchain.presentImage(this.frameTarget.colorImage(),
                     presentSourceLayout, this.targetWidth, this.targetHeight, org.lwjgl.vulkan.VK10.VK_NULL_HANDLE,
                     org.lwjgl.vulkan.VK10.VK_NULL_HANDLE, org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);            this.frameTarget.noteColorImageLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
@@ -18192,13 +18305,17 @@ this.frameBufferOpen = false;
                     org.soutalab.celtium.vulkan.DrawCounters.noteImmediateGroup();
                 }
                 ImmediateGroup group = groups.get(groupIndex);
-                boolean skyGroup = SKY_CENSUS && group.formatId == 7 && group.mesh != null
+                // The sky plane's own group, identified by the one shape only it has: POSITION, 676 vertices. The
+                // predicate is not gated on the census: the poison and no-fog switches below are diagnostics of this
+                // same group, and gating them on a second property meant a leg that set only the switch changed
+                // nothing at all - the shape a diagnostic must never have, because "no change in the picture" then
+                // reads as "the hypothesis is wrong" when the switch was never consulted.
+                boolean skyGroup = group.formatId == 7 && group.mesh != null
                         && group.mesh.vertexCount() == 676;
-                if (skyGroup) {
-                    // The sky plane's own group, identified by the one shape only it has: POSITION, 676 vertices. The
-                    // state is taken here, before any of the skip paths below, so a group that never reaches a draw
-                    // still reports the matrices it would have been drawn with - and the missing "drawn=1" suffix is
-                    // then the answer to "was it drawn".
+                if (skyGroup && SKY_CENSUS) {
+                    // The state is taken here, before any of the skip paths below, so a group that never reaches a
+                    // draw still reports the matrices it would have been drawn with - and the missing "drawn=1"
+                    // suffix is then the answer to "was it drawn".
                     this.skyGroupStateThisFrame = "target=" + (group.target == target)
                             + " batches=" + group.batches
                             + " proj=" + celtium$round3(group.projection[0]) + ","
@@ -18710,7 +18827,30 @@ this.frameBufferOpen = false;
                     if (skyGroup) {
                         // Reached only after the draw was issued (indirect or direct), so the suffix is the fact the
                         // offer census could not supply.
-                        this.skyGroupStateThisFrame = this.skyGroupStateThisFrame + " drawn=1";
+                        if (SKY_CENSUS) {
+                            this.skyGroupStateThisFrame = this.skyGroupStateThisFrame + " drawn=1";
+                        }
+                        // Counted for the frame probe: the frame image's own sky band beside the number of draws that
+                        // were issued for it is what separates "the draw never happened" from "it happened and the
+                        // image does not hold it".
+                        this.skyDrawsThisFrame++;
+                        // Where in the frame the plane is drawn: a draw that lands before the frame's own clear is
+                        // erased by it, and the picture then shows the clear colour - which is the fog colour, the same
+                        // value a fully fogged plane would have. The clear count is the frame target's, so this says
+                        // whether the clear had already been applied when the plane's command was recorded.
+                        if (SKY_FRAME_PROBE >= 0L && this.frameId >= SKY_FRAME_PROBE
+                                && this.skyDrawProbeLines < SKY_FRAME_PROBE_LIMIT) {
+                            this.skyDrawProbeLines++;
+                            GllessFrameTarget probeTarget = offTargetTarget();
+                            System.out.println("[Celtium] CELTIUM_SKY_DRAW frame=" + this.frameId
+                                    + " clears=" + (probeTarget == null ? -1 : probeTarget.clearsApplied())
+                                    + " colourClears=" + (probeTarget == null ? -1 : probeTarget.colourClearsApplied())
+                                    + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame()
+                                    + " inPass=" + this.commandState.inRenderPass()
+                                    + " target=" + (group.target == target)
+                                    + " batches=" + group.batches
+                                    + " vertices=" + (group.mesh == null ? -1 : group.mesh.vertexCount()));
+                        }
                     }
                 }
                 if (PROBE_HIGHLIGHT_BORROW && !group.probePoisoned) {
