@@ -570,13 +570,34 @@ b.frameBufferOpen = false;
     private long[] cachedPairIdentities = new long[0];
 
     /**
-     * The key {@link #celtium$syncPublishedChainOutput}'s stale-name scan last completed for: the identity, the pair
-     * image it saw, and the publication version. The scan re-points names whose image died with a recreated pair, so
-     * it can only find one when one of those three moved.
+     * The pair generation each identity's stale-name scan last completed for, and the publication version it saw.
+     * <p>
+     * The scan re-points names whose image died with a recreated pair, so it can only find one when that identity's
+     * pair was recreated or the publication set moved. The key used to be the identity and the pair's colour image,
+     * which is the same thing only while one identity is bound: the measured world scene binds thirteen of
+     * GregTech's post-chain framebuffers a frame, so the key missed on every window and the scan walked all published
+     * names (38) with two boxed-key lookups each, thirteen times a frame. That is the whole of {@code winHead}'s
+     * 0.1 ms a frame, and it is a scan that could not have found anything - no pair was recreated between those
+     * windows. The generation is the counter that moves when one is, and it is per identity, so a window for one
+     * framebuffer cannot consume the scan another framebuffer still needs.
      */
-    private long syncScanIdentity = Long.MIN_VALUE;
-    private long syncScanImage;
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap syncScanGenerations =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
     private long syncScanVersion = Long.MIN_VALUE;
+    /** The frame target's pair-generation total when the memo was last used, so a new target clears it. */
+    private long syncScanTotal = Long.MIN_VALUE;
+    /**
+     * How many times the stale-name scan actually walked the published set, and how many windows the memo answered
+     * instead. The pair is what makes "the memo hits" a measurement rather than a reading of the code: the scan is
+     * the only per-window work in the off-target routing that is proportional to the published-name count.
+     */
+    private long syncScanRuns;
+    private long syncScanSkips;
+
+    /** {@return the stale-name scan's runs and memo hits, as {@code runs/skips}}. */
+    String celtium$syncScanSummary() {
+        return this.syncScanRuns + "/" + this.syncScanSkips;
+    }
 
     private void celtium$rebuildPublishedCache() {
         java.util.List<Integer> names = new java.util.ArrayList<Integer>();
@@ -859,11 +880,23 @@ b.frameBufferOpen = false;
             // The scan below walks every published name and asks two boxed-key lookups of each, and it runs on every
             // off-target window (13 a frame on the measured world scene) - which is where winHead's 0.1 ms a frame
             // comes from. What it looks for is a name whose image died with a recreated pair, so it can only find one
-            // when the pair's image or the publication set moved. Both are in the key; when neither has, the scan
-            // would find nothing again and is skipped.
+            // when that identity's pair was recreated or the publication set moved. Both are counters, and both are in
+            // the key; when neither has moved the scan would find nothing again and is skipped. The key used to be the
+            // identity and the pair's colour image, which misses on every window of a frame that binds thirteen
+            // different framebuffers - the scan then ran thirteen times for a question whose answer could not change.
             long publications = b.publishedTextures.publishedVersion();
-            if (identity == this.syncScanIdentity && chainPairColorImage == this.syncScanImage
+            GllessFrameTarget scanTarget = b.offTargetTarget();
+            long generation = scanTarget == null ? -1L : scanTarget.chainPairGeneration(identity);
+            long total = scanTarget == null ? -1L : scanTarget.chainPairGenerationTotal();
+            if (total < this.syncScanTotal) {
+                // A new frame target: its generations start over, so a memo from the previous one would say "already
+                // scanned" for a pair that has just been created. The total is monotonic within one target.
+                this.syncScanGenerations.clear();
+            }
+            this.syncScanTotal = total;
+            if (this.syncScanGenerations.get(identity) == generation
                     && publications == this.syncScanVersion) {
+                this.syncScanSkips++;
                 if (b.publishedChainOutput == null) {
                     return;
                 }
@@ -876,9 +909,9 @@ b.frameBufferOpen = false;
                 b.publishedChainOutput.ensureGeneralLayout(b.commandBuffer);
                 return;
             }
-            this.syncScanIdentity = identity;
-            this.syncScanImage = chainPairColorImage;
+            this.syncScanGenerations.put(identity, generation);
             this.syncScanVersion = publications;
+            this.syncScanRuns++;
             GllessFrameTarget liveTarget = b.offTargetTarget();
             long liveImage = liveTarget == null ? 0L : liveTarget.chainPairColorImage(identity);
             long liveView = liveTarget == null ? 0L : liveTarget.chainPairColorView(identity);

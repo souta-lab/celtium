@@ -6,14 +6,12 @@
 
 ## Windows/NVIDIA報告への優先対応（2026-10-29）
 
-- **FBO/copy**: raw採用ID・8個制限・削除・逆引き・範囲、copy送信順とlayoutを修正。window copyはGPUのscratchで矩形内alphaを1にして既定有効。範囲・12画像・削除順・部分copy画素・scratch resizeはAMD/Intel成功、同期validationエラー0。Bloom画素やWindows受入ではない。
-## 2026-10-24: 新アーキテクチャ案（2026-10-28 以降は参考扱い）
+- **FBO/copy**: raw採用ID・8個制限・削除・逆引き・範囲、copy送信順とlayoutを修正。window copyはGPUのscratchで矩形内alphaを1にして既定有効。範囲・12画像・削除順・部分copy画素・scratch resizeはAMD/Intel成功、同期validationエラー0。Bloom画素やWindows受入ではない。## 2026-10-24: 新アーキテクチャ案（2026-10-28 以降は参考扱い）
 
 設計案は [new_architecture.md](<new_architecture.md>)。**採用する**のは §12 の結論（offer ごとの Java 受理・capture・
 record 仕事を消す）だけで、順序は実測コストで並べ替える。**記録・提出を executor thread へ移す**案は paired KPI で採否を決める。
-[archive](<history/plan-archive-2026-10-24.md>)。**影**は本体内停止（既定OFF、[証拠](<evidence/shadow-stage-c-2026-10-24.md>)。
-**再開は利用者が明示した時だけ**）。
-
+[archive](<history/plan-archive-2026-10-24.md>)。**影**は本体内停止（既定OFF、[証拠](<evidence/shadow-stage-c-2026-10-24.md>)、
+利用者の明示時のみ再開）。
 
 ## 次の作業単位（2026-10-25 改訂・利用者の実プレイ報告に対応）
 
@@ -25,8 +23,7 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
    | スパイク・移動時の体感lag | 移動中はterrainのocclusion探索がclient threadの28%（同期実行）→ **探索をsearch threadへ（既定）**、AMD飛行p50 1.03–1.34→0.74–0.89 ms・validation 0。同条件のCeleritasは0.78 ms・16 ms超0枚。入室停止は未帰属 |
    | 視点移動で隠れた海底/洞窟が一瞬見える・GVCのmob/機体が見えない | **修正（実機確認待ち）**: 非同期探索の結果を、視点が変わったフレームだけ描画前にjoin（`22d8d84e4`）。Modのclient-array display list・直接の`GL11.glColor*`/`glDepthMask`・lit時ITEM形式（`eeb6b1d0e`）。A4のserver crashはMod側→`scripts/fix_gvcr2_a4.py` |
    | 殴られたentityが赤い箱 | **修正**: combine中もalphaテストを維持（帽子レイヤの透明部が赤塗り） |
-   | 色付きガラスのチカチカ | **修正（実機確認待ち）**: 半透明terrainパスが背面cullなしで描いていた→vanilla同様に背面cull（`5f75fc009`、参照比で~20–25暗かった差が解消、[画像](evidence/2026-10-28-stained-glass-backfaces.png)） |
-   | F3+T が重い | reload自体 2.24 s（Celeritas 2.05 s）。差は font atlas の再upload → pack不変なら保持（`6d056197d`）。reload後のframeは正常 |
+   | 色付きガラスのチカチカ | **修正（実機確認待ち）**: 半透明terrainパスが背面cullなしで描いていた→vanilla同様に背面cull（`5f75fc009`、参照比で~20–25暗かった差が解消、[画像](evidence/2026-10-28-stained-glass-backfaces.png)） |   | F3+T が重い | reload自体 2.24 s（Celeritas 2.05 s）。差は font atlas の再upload → pack不変なら保持（`6d056197d`）。reload後のframeは正常 |
    | Xaero's Minimap（クラッシュ・真っ暗・位置ずれ・透け） | **修正**: PBO map/unpack、raw FBO/raw matrix、tile upload、mod FBO同士のsample（空mirrorより公開優先・self-compositeは同一imageだけ）。AMD/Intel world PASSED・validation 0、Celeritas参照と同じ絵 |
    | ワールド退出後ボタン無し | **未再現**（既定・日本語・1920×1080）。手順差の手掛かり待ち |
    | ロード画面 | **Forgeのsplashと同じ画面**（ロゴ・メモリ・進捗・Forgeロゴ）をnative描画（`3ebd22e90`） |
@@ -42,6 +39,7 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      `gpuShare=0.01`＝CPU律速。
      **memoのミスは名前のannouncement移動で、表のchurnではない**（[証拠](evidence/texture-memo-per-name-2026-11-03.md)）。
      鎖は `record`0.5＋`batch`0.5＋`present`0.2。窓の固定費は主因ではない（**3 µs/窓**、[証拠](evidence/window-split-2026-11-04.md)）。
+     窓headの0.1 msはstale-name走査のmemo外れ（**修正、`winRecord`0.4→0.3**、[証拠](evidence/stale-name-scan-memo-2026-11-04.md)）。
      **受理経路は実配布profileで初計測**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: 52.7 offer/フレームで
      **~0.27 ms（10%）**。同legの**失敗upload 28,272**は「読む物が無い」deferralへ。**`supply`はuploadではなかった**:
      62,564呼が`bytes=0`＝serial checkで即return（[証拠](evidence/mirror-upload-census-2026-11-03.md)、A/Bで97呼・
@@ -97,24 +95,21 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
 | **巨大pack互換（E2E-E 1.87.3）** | **AMD: fixture PASSED・validation 0、Intel未実行** | AMD | 未実行 | Cleanroom 0.7差はlocal置換と上流PR（`8f121acfb`）。残りは[証拠](evidence/e2e-cleanroom07-2026-10-26.md)末尾へ。 |
 
 | **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない |
-| **次の標的** | **native実装へ** | — | 未着手 | ①model/immediateの共通packetとnative実行 ②lit fog **修正**（[証拠](evidence/lit-fog-2026-11-03.md)） ③state/texture/target所有の統合。影はDemonica addonへ分離、本体内は停止。 |
+| **次の標的** | **native実装へ** | — | 未着手 | ①model/immediate共通packetのnative実行 ②lit fog **修正**（[証拠](evidence/lit-fog-2026-11-03.md)） ③state/texture/target所有の統合。 |
 
 ## FPSの現状と残る道
 
 - 現行の判定は上の表（`celtium-world-accept` 3対、p50 median **1.386**）。旧scene（Susy/ATM3）の
   ABBA値は artifact が現ビルドと一致しないため現在判定に使わない（[archive](<history/plan-archive-2026-10-21.md>)）。
 - 残差は window 固定費と per-batch。pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
-- 棄却: bind flush延期（[罠](<verification-traps.md>)）、indirect immediate、フレーム再利用（アニメ凍結）、
+- 棄却: bind flush延期（2026-10-31、2回ともRADV SIGSEGV、[罠](<verification-traps.md>)）、indirect immediate、フレーム再利用（アニメ凍結）、
   **group数∝grpDraw**（font run 2.3×減で不変、[証拠](evidence/font-witness-census-2026-11-03.md)）。
-## 撤回した前提
+
+## 撤回した前提・未確定（数値を前提にしない）
 
 [archive](<history/plan-archive-2026-10-21.md>) の「2026-10-24 移動」節（KPI 2.29x・draw数・GC主因 等。再入条件つき）。
-**bind時のflush延期**（2026-10-31、2回ともRADV SIGSEGV）の再入条件は[検証の罠](<verification-traps.md>)。
-
-## 未確定（数値を前提にしない）
-
 - GPU pass時間・present/readback・アップロード量・GC・フレーム内訳の旧値は、artifact/区間が現ビルドと一致しないため参考値にも使わない。
-- validation clean・`exitCode=0`・色数gateは、それぞれ描画不存在・正しい絵・画像一致を証明しない。
+- validation clean・`exitCode=0`・色数gateは、描画不存在・正しい絵・画像一致をそれぞれ証明しない。
 
 ## 更新と参照
 

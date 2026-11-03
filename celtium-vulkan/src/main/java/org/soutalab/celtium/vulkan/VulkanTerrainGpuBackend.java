@@ -1744,6 +1744,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final boolean WINDOW_SPLIT = Boolean.getBoolean("celtium.vulkan.windowSplit");
     private long wsRouteNanos;
     private long wsPairNanos;
+    /**
+     * The off-target routing's own time, between the route mark and the publish mark.
+     * <p>
+     * It used to be in no counter at all: the publish site reset {@link #wsMark} after adding the publish interval,
+     * so everything from the route mark to the publish - {@code ensureChainPair}, the stale-name scan,
+     * {@code transitionPublishedFrameTextures(true)}, the pair clear, the framebuffer lookup and
+     * {@code framebufferColorTexture} - was dropped. The reported {@code pair=0} was therefore not "the pair is
+     * free", it was "the pair's cost is unmeasured", and the 0.1 ms a frame {@code winHead} reports is exactly this
+     * interval. Accumulated here so the next change has a number to move.
+     */
+    private long wsOffTargetNanos;
     private long wsPublishNanos;
     private long wsBeginNanos;
     private long wsCommandsNanos;
@@ -7451,13 +7462,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         long windows = this.wsWindows;
         System.out.println("[Celtium] CELTIUM_WINDOW_SPLIT windows=" + windows
                 + " route=" + (this.wsRouteNanos / windows / 1000L)
+                + " offTarget=" + (this.wsOffTargetNanos / windows / 1000L)
                 + " pair=" + (this.wsPairNanos / windows / 1000L)
                 + " publish=" + (this.wsPublishNanos / windows / 1000L)
                 + " begin=" + (this.wsBeginNanos / windows / 1000L)
                 + " commands=" + (this.wsCommandsNanos / windows / 1000L)
                 + " acquire=" + (this.wsAcquireNanos / windows / 1000L)
                 + " release=" + (this.wsReleaseNanos / windows / 1000L)
-                + " (us per window; publish is inside pair)");
+                + " syncScan=" + (this.postChainBridge == null ? "none" : this.postChainBridge.celtium$syncScanSummary())
+                + " (us per window; offTarget is the off-target routing before the publish, publish is inside it;"
+                + " syncScan is the stale-name scan's runs/memo hits)");
     }
 
     public float[] celtium$mirroredModelView() {
@@ -12261,6 +12275,11 @@ this.frameBufferOpen = false;
                                 this.targetRegistry.currentIdentity(), reported);
                         if (WINDOW_SPLIT) {
                             long now = System.nanoTime();
+                            // The interval from the route mark to here is the off-target routing, and it used to be
+                            // dropped: this site reset the mark without adding it anywhere, so `pair` reported only
+                            // the tail after the publish and the routing's own cost appeared in no counter. It is the
+                            // 0.1 ms a frame winHead reports, and it is now named.
+                            this.wsOffTargetNanos += publishMark - this.wsMark;
                             this.wsPublishNanos += now - publishMark;
                             this.wsMark = now;
                         }
