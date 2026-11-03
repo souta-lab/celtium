@@ -264,7 +264,7 @@ public final class FontBatch {
     private static final int MAX_RETAINED_BYTES = 4 * 1024 * 1024;
 
     /**
-     * Whether the current colour is part of the run key.
+     * The colour witness's mode, and the only switch over it.
      * <p>
      * The colour is <em>per vertex</em> for every font run: the glyph capture writes the live colour into the quad's
      * four bytes, the textured vertex stage passes {@code a_Color} through unchanged, and the fragment stage reads
@@ -273,14 +273,40 @@ public final class FontBatch {
      * non-negative the colour the group is submitted under cannot reach the picture, and a run may span a colour
      * change.
      * <p>
-     * It stays in the key by default because the witness was made correct for a reason and the reason was not
-     * recorded as a picture: the first version packed float bit patterns and produced 0 for almost every colour, so
-     * runs merged across colour changes including the shadow pass and its light pass, and the fix was to make the
-     * witness match the bytes. {@code -Dceltium.font.colourWitness=false} is the A/B arm that asks whether the merge
-     * is visible; the default is the side that has been accepted.
+     * {@code combine} (the default) is that rule: the colour is compared only where the push block's colour can reach
+     * the picture. {@code all} is the previous behaviour and the A/B arm - it compares the colour on every run, which
+     * is the side the earlier acceptance was taken on. {@code off} removes the witness everywhere, including the
+     * combine branch where the push colour <em>is</em> read, and exists only as a diagnostic control.
+     * <p>
+     * The merge {@code combine} buys is the one the {@code off} arm measured (menu runs 284 -> 123, frame 3.8 ->
+     * 3.7 ms) without the one case that arm gets wrong.
      */
-    private static final boolean COLOUR_WITNESS = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.font.colourWitness", "true"));
+    private static final String COLOUR_WITNESS_MODE = System.getProperty("celtium.font.colourWitness", "combine")
+            .trim().toLowerCase(java.util.Locale.ROOT);
+
+    /**
+     * Whether a run's colour has to match for the next glyph to join it.
+     * <p>
+     * Under {@code combine} the answer is "only under the combine": {@code immediate_tex_color.frag} multiplies the
+     * sample by the <em>vertex</em> colour and reads {@code u_ColorR/G/B} only inside
+     * {@code if (u_AlphaRef < 0.0)}, the GL_COMBINE branch a negative alpha reference selects. Every other branch -
+     * the alpha test and the no-test path - never reads the push colour, so a run that spans a colour change draws
+     * each quad with its own vertex colour and the picture is the one a run per colour would have produced.
+     * <p>
+     * The alpha reference is compared by the key on its own line, so a run can never span a change of the branch: when
+     * the reference moves the run closes there whether or not the colour was compared. That is what makes this
+     * narrowing safe rather than a bet - the only runs whose key loses the colour are the ones whose submission colour
+     * the fragment stage cannot read.
+     */
+    static boolean celtium$colourWitnessNeeded(String mode, float alphaReference) {
+        if ("off".equals(mode) || "false".equals(mode)) {
+            return false;
+        }
+        if ("all".equals(mode) || "true".equals(mode)) {
+            return true;
+        }
+        return alphaReference < 0.0F;
+    }
 
     /**
      * Which witness closed the run, one slot per comparison in {@link #celtium$fontRunMatches}, in the order the
@@ -620,7 +646,8 @@ public final class FontBatch {
         // disableDepth/enableDepth bracket and the main pass is submitted after it.
         return this.pendingFormatId == formatId && this.pendingStride == stride
                 && this.pendingDrawMode == drawMode && this.pendingTexture == texture
-                && (!COLOUR_WITNESS || this.pendingColorBits == colourBits) && this.pendingAlphaTest == alphaTest
+                && (!celtium$colourWitnessNeeded(COLOUR_WITNESS_MODE, alphaRef) || this.pendingColorBits == colourBits)
+                && this.pendingAlphaTest == alphaTest
                 && Float.compare(this.pendingAlphaRef, alphaRef) == 0
                 && this.pendingAlphaFunc == alphaFunc
                 && this.pendingDepthTest == depthTest && this.pendingDepthWrite == depthWrite
@@ -648,7 +675,7 @@ public final class FontBatch {
             slot = 2;
         } else if (this.pendingTexture != texture) {
             slot = 3;
-        } else if (COLOUR_WITNESS && this.pendingColorBits != colourBits) {
+        } else if (celtium$colourWitnessNeeded(COLOUR_WITNESS_MODE, alphaRef) && this.pendingColorBits != colourBits) {
             slot = 4;
         } else if (this.pendingAlphaTest != alphaTest) {
             slot = 5;
@@ -683,7 +710,11 @@ public final class FontBatch {
      * {@link #celtium$fontBatchSummary()}: that string is quoted by past acceptances and compared byte for byte.
      */
     public String celtium$fontWitnessSummary() {
-        StringBuilder out = new StringBuilder(160).append("colourWitness=").append(COLOUR_WITNESS).append(" by[");
+        // The mode, not just a boolean: "combine" is the shipped narrowing, "all" is the arm that compares the colour
+        // on every run, and "off" is the arm that never does. A leg that reads only a boolean cannot tell the shipped
+        // rule from the arm that removes it under the combine as well.
+        StringBuilder out = new StringBuilder(160).append("colourWitness=")
+                .append(COLOUR_WITNESS_MODE).append(" by[");
         boolean first = true;
         for (int i = 0; i < this.witnessMismatches.length; i++) {
             if (this.witnessMismatches[i] == 0) {

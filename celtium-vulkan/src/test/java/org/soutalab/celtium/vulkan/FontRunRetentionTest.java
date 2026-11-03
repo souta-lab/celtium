@@ -54,13 +54,15 @@ class FontRunRetentionTest {
         @Override public float[] modelView() { return IDENTITY; }
     }
 
-    /** The same view with the two values a test moves: the colour and the alpha comparison function. */
+    /** The same view with the three values a test moves: the colour, the alpha function and the alpha reference. */
     private static final class MutableState extends State {
         float red = 1.0F;
         int alphaFunc;
+        float alphaRef;
 
         @Override public float colorRed() { return this.red; }
         @Override public int alphaFuncSelector() { return this.alphaFunc; }
+        @Override public float alphaFuncReference() { return this.alphaRef; }
     }
 
     private static final float[] IDENTITY = {
@@ -73,6 +75,7 @@ class FontRunRetentionTest {
     /** Records every run it is offered, with a checksum of the bytes, and refuses while {@link #refuse} is set. */
     private static final class Sink implements FontBatch.RunSink {
         final List<Long> checksums = new ArrayList<Long>();
+        final List<Integer> vertexCounts = new ArrayList<Integer>();
         boolean refuse;
 
         @Override public boolean submit(FontBatch.Run run) {
@@ -81,6 +84,7 @@ class FontRunRetentionTest {
                 sum = (sum * 31L) + (MemoryUtil.memGetByte(run.address + i) & 0xFF);
             }
             this.checksums.add(Long.valueOf(sum));
+            this.vertexCounts.add(Integer.valueOf(run.vertexCount));
             return !this.refuse;
         }
     }
@@ -205,17 +209,22 @@ class FontRunRetentionTest {
     }
 
     /**
-     * The witness census names the value that closed the run, and it names the colour for a colour change.
+     * The witness census names the value that closed the run, and under the combine it names the colour.
      * <p>
      * The census exists because the run count alone cannot say what to fold: the world frame starts one run per string
      * segment, and the only way to merge two segments is to know which of the seventeen witnesses differed. On the
      * measured scene every witness-closed run was closed by the colour, so this pins that the counter attributes a
      * colour change to the colour and not to a neighbour.
+     * <p>
+     * The reference is negative here on purpose: that is the GL_COMBINE branch, the only one whose fragment stage reads
+     * the push block's colour, and therefore the only one where a colour change has to close the run. The non-combine
+     * case is {@link #aColourChangeMergesWhenThePushColourCannotReachThePicture}.
      */
     @Test
     void theWitnessCensusNamesTheColourForAColourChange() {
         FontBatch batch = new FontBatch();
         MutableState state = new MutableState();
+        state.alphaRef = -0.5F;
         Sink sink = new Sink();
         batch.celtium$setFontRunState(state);
         batch.celtium$setFontRunSink(sink);
@@ -234,6 +243,63 @@ class FontRunRetentionTest {
         } finally {
             MemoryUtil.memFree(buffer);
         }
+    }
+
+    /**
+     * A colour change does <em>not</em> close the run when the push colour cannot reach the picture.
+     * <p>
+     * {@code immediate_tex_color.frag} multiplies the sample by the vertex colour and reads {@code u_ColorR/G/B} only
+     * inside {@code if (u_AlphaRef < 0.0)}. Every text draw has a non-negative reference, so its colour is per vertex
+     * and a run may span a colour change: the quads keep their own colours and the picture is the one a run per colour
+     * would have produced. This is the merge the {@code -Dceltium.font.colourWitness=false} arm measured (menu runs
+     * 284 -> 123), applied only where it is provably invisible.
+     */
+    @Test
+    void aColourChangeMergesWhenThePushColourCannotReachThePicture() {
+        FontBatch batch = new FontBatch();
+        MutableState state = new MutableState();
+        Sink sink = new Sink();
+        batch.celtium$setFontRunState(state);
+        batch.celtium$setFontRunSink(sink);
+        java.nio.ByteBuffer buffer = MemoryUtil.memAlloc(VERTICES * STRIDE);
+        long address = MemoryUtil.memAddress(buffer);
+        try {
+            assertTrue(append(batch, address), "the first quad opens a run");
+            state.red = 0.25F;
+            assertTrue(append(batch, address), "the second quad joins the same run");
+            assertEquals(0L, witnessCount(batch.celtium$fontWitnessSummary(), "colour"),
+                    "the colour is not a witness outside the combine");
+            assertEquals(1L, field(batch.celtium$fontBatchSummary(), "fontRunsStarted"),
+                    "one run holds both colours");
+            batch.celtium$flushPendingFontBatch("state-change");
+            assertEquals(1, sink.checksums.size(), "the merged run reached the sink once");
+            // Two quads plus the strip's two degenerate separator vertices: a strip of 4N vertices draws 4N-2
+            // triangles, so the second quad's vertices would otherwise connect to the first quad's last vertex.
+            assertEquals(2L * VERTICES + 2L, sink.vertexCounts.get(0).longValue(),
+                    "the merged run carries both quads' vertices");
+        } finally {
+            MemoryUtil.memFree(buffer);
+        }
+    }
+
+    /**
+     * The narrowing itself: under the shipped {@code combine} mode the colour is a witness only under the combine,
+     * {@code all} keeps the previous behaviour, and {@code off} removes it everywhere. A run can never span a change
+     * of the branch, because the alpha reference is compared by the key on its own line - so the only runs that lose
+     * the colour are the ones whose submission colour the fragment stage cannot read.
+     */
+    @Test
+    void theColourWitnessIsNeededOnlyUnderTheCombine() {
+        assertFalse(FontBatch.celtium$colourWitnessNeeded("combine", 0.0F),
+                "the alpha test path never reads the push colour");
+        assertFalse(FontBatch.celtium$colourWitnessNeeded("combine", 0.1F),
+                "a positive reference is the alpha test path too");
+        assertTrue(FontBatch.celtium$colourWitnessNeeded("combine", -0.5F),
+                "a negative reference selects the combine, which reads it");
+        assertTrue(FontBatch.celtium$colourWitnessNeeded("all", 0.0F),
+                "the A/B arm compares the colour on every run");
+        assertFalse(FontBatch.celtium$colourWitnessNeeded("off", -0.5F),
+                "the diagnostic control removes the witness even under the combine");
     }
 
     /**

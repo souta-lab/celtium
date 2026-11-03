@@ -6,12 +6,11 @@
 
 ## Windows/NVIDIA報告への優先対応（2026-10-29）
 
-- **FBO/copy**: raw採用ID・8個制限・削除・逆引き・範囲、copy送信順とlayoutを修正。AMD/Intel成功・validation 0。Bloom画素やWindows受入ではない。
+- **FBO/copy**: raw採用ID・8個制限・削除・逆引き・範囲、copy送信順とlayoutを修正。AMD/Intel成功・validation 0。
 
-## 2026-10-24: 新アーキテクチャ案（2026-10-28 以降は参考扱い）
+## 2026-10-24: 新アーキテクチャ案（参考扱い）
 
-[new_architecture.md](<new_architecture.md>) の**§12 の結論**（offer ごとの Java 受理・capture・record 仕事を消す）だけを採用し、
-順序は実測コストで並べ替える。**影**は本体内停止（既定OFF、[証拠](<evidence/shadow-stage-c-2026-10-24.md>)）。
+[new_architecture.md](<new_architecture.md>) の**§12**（offer毎の受理・capture・recordを消す）だけ採用。**影**は本体内停止（既定OFF、[証拠](<evidence/shadow-stage-c-2026-10-24.md>)）。
 
 ## 次の作業単位（2026-10-25 改訂・利用者の実プレイ報告に対応）
 
@@ -53,14 +52,16 @@
      22.1 flush・23.1 window/フレーム、受理**3.49 µs/offer＝0.77 ms**、group draw 0.24、window 0.30、present 0.20＝
      **Celtium自身1.36 ms**。**単一項目は0.53 ms以下で、1つ消しても0.6 ms差に届かない**＝micro-optの床。
      **受理は0.15 ms/フレーム**（round 55: decide 33+preflight 544+flush 189=766 ms/run、`parts[registry]` 834 ns/offer・memo 96%）。
+
      **窓の94%は`bindFramebuffer`**（183,841 flush 中 173,470＝33/フレーム、index上限は2/フレーム、
      [証拠](evidence/window-source-bind-2026-11-04.md)）。
      JFRは`CELTIUM_LEG_JFR`（attach）。
      **JFRの「フォント経路8.9%」は取り下げ**（[証拠](evidence/font-timing-brackets-2026-11-03.md)）: glyph 2,456個/run、
      captureの時計bracketは既定OFF。**warm windowはflagが要る**（`warmFromTick=400 warmToTick=600
      holdUntilTick=620`）。**font runを割るのはcolour witnessだけ**（[証拠](evidence/font-witness-census-2026-11-03.md)）:
-     worldは94/フレーム、`colourWitness=false`のA/Bはmenu run 284→123・frame 3.8→3.7だが**grpDrawは0.9のまま**。
-     既定は安全側（ON）。**off-target windowはframe imageを動かさない**（[証拠](evidence/off-target-frame-barriers-2026-11-03.md)）:
+     worldは94/フレーム。**colour witnessはcombine分岐だけに効く**（[証拠](evidence/font-colour-witness-narrowing-2026-11-04.md)）:
+     `u_ColorR/G/B`は`u_AlphaRef<0`でのみ読まれ色は頂点毎。既定`combine`でrun 94.5→19.0・offer 221→146/フレーム、
+     **受理CPU −0.28 ms/フレーム**。**groupは115のまま**（棄却:「font runがgroupの82%」）。end-to-endは未証明。**off-target windowはframe imageを動かさない**（[証拠](evidence/off-target-frame-barriers-2026-11-03.md)）:
      `winBarrier` 0.3→0.2 ms。**offerの55%がslow path**、平均3235 nsは中央値の1.6倍（先取り説は棄却、[証拠](evidence/accept-distribution-2026-11-03.md)）。
      **拒否の内訳**（[証拠](evidence/merge-refusal-census-2026-11-03.md)）: 931,838 group openのうち
      **format 448,268（48%）**・no-mesh 190,619・texture 167,484。**formatは畳めない**（6は色をpush blockから、
