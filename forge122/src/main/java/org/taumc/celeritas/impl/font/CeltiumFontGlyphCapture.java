@@ -346,6 +346,23 @@ public final class CeltiumFontGlyphCapture {
      */
     private static final boolean FAST_PATH = !"false".equalsIgnoreCase(
             System.getProperty("celtium.font.fastPath", "true"));
+    /**
+     * {@code -Dceltium.font.timings=true}: keep the capture's own per-glyph clock brackets on.
+     * <p>
+     * <b>Off by default, and that is a measured decision.</b> The brackets ({@code openWindow}, {@code closeWindow},
+     * the four immediate-call hooks, {@code beginGlyph}/{@code endGlyph}, {@code beginString}/{@code endString},
+     * {@code beginRenderString}/{@code endRenderString} and the submit) exist to split the F3 overlay's frame cost,
+     * and they were unconditional. A glyph is one window, one begin, four texcoord calls, four vertex calls, one end
+     * and one close - so the brackets cost <b>26 {@code System.nanoTime()} pairs per glyph</b>, and the JFR census of
+     * the shipping configuration puts the font path at 8.9% of a 2.88 ms world frame with the pack's HUD drawing text
+     * every frame. At the 17 ns a {@code nanoTime} costs on this host that is ~440 ns a glyph of pure instrumentation,
+     * which is more than the capture's own work per glyph.
+     * <p>
+     * The counters stay unconditional: they are field increments, and the summary's counts are what the acceptance
+     * legs read. Only the millisecond columns depend on this switch, and the summary says {@code timings=off} when
+     * they are zero for that reason rather than because nothing was drawn.
+     */
+    private static final boolean TIMINGS = Boolean.getBoolean("celtium.font.timings");
     /** Glyphs drawn by {@link #fastDefaultGlyph} rather than through vanilla's body, and the texture re-binds it needed. */
     private static long fastGlyphs;
     private static long fontTextureRebinds;
@@ -397,6 +414,10 @@ public final class CeltiumFontGlyphCapture {
      *                which of them it exercised.
      */
     public static void openWindow(boolean unicode) {
+        if (!TIMINGS) {
+            openWindowBody(unicode);
+            return;
+        }
         long started = System.nanoTime();
         try {
             openWindowBody(unicode);
@@ -788,24 +809,32 @@ public final class CeltiumFontGlyphCapture {
 
     /** Opens the vanilla glyph method's own bracket. Called from the mixin's HEAD injection. */
     public static void beginGlyph() {
-        glyphStartNanos = System.nanoTime();
+        if (TIMINGS) {
+            glyphStartNanos = System.nanoTime();
+        }
         glyphCalls++;
     }
 
     /** Closes it. Called from the mixin's RETURN injection, after {@link #closeWindow()}. */
     public static void endGlyph() {
-        glyphNanos += System.nanoTime() - glyphStartNanos;
+        if (TIMINGS) {
+            glyphNanos += System.nanoTime() - glyphStartNanos;
+        }
     }
 
     /** Opens the per-character loop's bracket. Called from {@code func_180455_b}'s HEAD injection. */
     public static void beginRenderString() {
-        renderStringStartNanos = System.nanoTime();
+        if (TIMINGS) {
+            renderStringStartNanos = System.nanoTime();
+        }
         renderStringCalls++;
     }
 
     /** Closes it. Called from {@code func_180455_b}'s RETURN injection. */
     public static void endRenderString() {
-        renderStringNanos += System.nanoTime() - renderStringStartNanos;
+        if (TIMINGS) {
+            renderStringNanos += System.nanoTime() - renderStringStartNanos;
+        }
         flushBufferedQuads(null);
     }
 
@@ -910,6 +939,8 @@ public final class CeltiumFontGlyphCapture {
             vulkan.celtium$setFontPreFlush(CeltiumFontGlyphCapture::bufferedPreFlush);
             // The same wiring for the cheap question: whether this capture is holding glyphs at all.
             vulkan.celtium$setFontCaptureWork(CeltiumFontGlyphCapture::hasBufferedQuads);
+            // And the counters, so a leg can read them: the shutdown hook's line is not in the log.
+            vulkan.celtium$setFontCaptureSummary(CeltiumFontGlyphCapture::summary);
             bufferedHookBackend = backend;
         }
     }
@@ -926,17 +957,27 @@ public final class CeltiumFontGlyphCapture {
 
     /** Opens the string bracket. Called from {@code func_175065_a}'s HEAD injection. */
     public static void beginString() {
-        stringStartNanos = System.nanoTime();
+        if (TIMINGS) {
+            stringStartNanos = System.nanoTime();
+        }
         stringCalls++;
     }
 
     /** Closes it. Called from {@code func_175065_a}'s RETURN injection. */
     public static void endString() {
-        stringNanos += System.nanoTime() - stringStartNanos;
+        if (TIMINGS) {
+            stringNanos += System.nanoTime() - stringStartNanos;
+        }
     }
 
     /** Closes the window. Called on the glyph method's normal return, and after the glyph's own {@code glEnd}. */
     public static void closeWindow() {
+        if (!TIMINGS) {
+            window = false;
+            armed = false;
+            reset();
+            return;
+        }
         long started = System.nanoTime();
         try {
             window = false;
@@ -956,6 +997,10 @@ public final class CeltiumFontGlyphCapture {
 
     /** {@code GlStateManager.glBegin}: the mode the sequence will be drawn with. */
     public static void immediateBegin(int glMode) {
+        if (!TIMINGS) {
+            immediateBeginBody(glMode);
+            return;
+        }
         long started = System.nanoTime();
         try {
             immediateBeginBody(glMode);
@@ -979,6 +1024,10 @@ public final class CeltiumFontGlyphCapture {
 
     /** {@code GlStateManager.glTexCoord2f}. */
     public static void immediateTexCoord(float s, float t) {
+        if (!TIMINGS) {
+            immediateTexCoordBody(s, t);
+            return;
+        }
         long started = System.nanoTime();
         try {
             immediateTexCoordBody(s, t);
@@ -1002,6 +1051,10 @@ public final class CeltiumFontGlyphCapture {
 
     /** {@code GlStateManager.glVertex3f}. */
     public static void immediateVertex(float x, float y, float z) {
+        if (!TIMINGS) {
+            immediateVertexBody(x, y, z);
+            return;
+        }
         long started = System.nanoTime();
         try {
             immediateVertexBody(x, y, z);
@@ -1228,7 +1281,7 @@ public final class CeltiumFontGlyphCapture {
                     + "," + positionY[0] + ")-(" + positionX[2] + "," + positionY[2] + ") " + matrices());
         }
         boolean taken;
-        long submitStarted = System.nanoTime();
+        long submitStarted = TIMINGS ? System.nanoTime() : 0L;
         try {
             // task-59: the backend owns a pending run and appends this quad to it, so a string's glyphs go out in a
             // handful of calls instead of one per character (the user's session measured 1,012,751 calls and 47,246 ms
@@ -1243,7 +1296,9 @@ public final class CeltiumFontGlyphCapture {
             refuse("submit-threw", String.valueOf(error));
             return;
         } finally {
-            submitNanos += System.nanoTime() - submitStarted;
+            if (TIMINGS) {
+                submitNanos += System.nanoTime() - submitStarted;
+            }
         }
         if (taken) {
             accepted++;
@@ -1409,6 +1464,7 @@ public final class CeltiumFontGlyphCapture {
                 + " renderStringCalls=" + renderStringCalls
                 + " fastGlyphs=" + fastGlyphs
                 + " fontTextureRebinds=" + fontTextureRebinds
+                + " timings=" + (TIMINGS ? "on" : "off")
                 + " reasons=" + REFUSALS + " modes=" + modeCensusSummary() + " " + batchSummary();
     }
 

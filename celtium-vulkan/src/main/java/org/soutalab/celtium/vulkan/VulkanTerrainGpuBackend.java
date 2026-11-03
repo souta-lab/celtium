@@ -2361,6 +2361,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     public void celtium$setFontCaptureWork(java.util.function.BooleanSupplier probe) {
         this.fontBatch.celtium$setFontCaptureWork(probe);
     }
+
+    /**
+     * The glyph capture's own counter summary, wired by the capture so a leg can read it.
+     * <p>
+     * The capture prints {@code CELTIUM_FONT_GLYPH_SUMMARY} from a JVM shutdown hook, and a shutdown hook's stdout is
+     * not in the log (measured on leg {@code r39a-gate}: the line appears in no file of the run). That left the font
+     * path's size unreadable from a leg even though the JFR census attributes 8.9% of a world frame to it - so "the
+     * font path is cheap" and "no leg could see the font path" were the same absence. This is the same summary at the
+     * one point a leg is guaranteed to reach while the log is still open: world teardown.
+     */
+    private java.util.function.Supplier<String> fontCaptureSummary;
+
+    /** Registers the capture's summary supplier; invoked with {@code null} to clear it. */
+    public void celtium$setFontCaptureSummary(java.util.function.Supplier<String> supplier) {
+        this.fontCaptureSummary = supplier;
+    }
     /** The matrix pair the open run was started under; a change flushes it, as the normal path's group key does. */
     /** How each coalesced run was flushed: by an intervening submission, a boundary, or a state change. */
     /** Glyph quads appended to a run and runs started, so "batched" is a quantity and not a claim. */
@@ -7326,6 +7342,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.fontRunCensusPrinted = true;
         System.out.println("[Celtium] CELTIUM_FONT_RUN_CENSUS " + celtium$fontRetentionSummary()
                 + " " + celtium$fontStateSummary());
+        // The glyph capture's own counters, at the same point and for the same reason: its shutdown-hook line is not
+        // in the log, so without this a leg cannot say how many glyphs a frame drew or what they cost.
+        java.util.function.Supplier<String> capture = this.fontCaptureSummary;
+        if (capture != null) {
+            try {
+                System.out.println("[Celtium] CELTIUM_FONT_GLYPH_CENSUS " + capture.get());
+            } catch (RuntimeException | LinkageError error) {
+                System.out.println("[Celtium] CELTIUM_FONT_GLYPH_CENSUS unavailable: " + describe(error));
+            }
+        }
     }
     public float[] celtium$mirroredModelView() {
         return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
@@ -7521,7 +7547,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         this.immediateOfferCount++;
         this.immediateOffersThisFrame++;
-        long submitStart = System.nanoTime();
+        // The batch's own clock pair is read only by a run that asked for one of the two instruments that consume it:
+        // the batch-timing summary and the frame budget's `batch` column. It used to be unconditional, which put two
+        // nanoTime reads on every offered batch of every run - ~34 ns of a ~3.6 us batch, and the same defect the
+        // font capture's per-glyph brackets had (26 reads a glyph). With neither instrument on, the counters read 0,
+        // which the reports already treat as a missing measurement.
+        boolean timeBatch = BATCH_TIMINGS || org.soutalab.celtium.vulkan.FrameBudgetTimings.enabled();
+        long submitStart = timeBatch ? System.nanoTime() : 0L;
         this.submitFlushesAtEntry = this.immediateStatistics.immediateFlushes();
         this.submitSuppliesAtEntry = this.lazyMirrorSupplies;
         try {
@@ -7535,24 +7567,26 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             return taken;
         } finally {
-            long submitNanos = System.nanoTime() - submitStart;
-            this.immediateSubmitNanos += submitNanos;
-            FrameBudgetTimings.addBatch(submitNanos);
-            if (submitNanos > 200_000) {
-                this.immediateSubmitTailCalls++;
-                this.immediateStatistics.addImmediateSubmitTailNanos(submitNanos);
-                boolean carriedFlush = this.immediateStatistics.immediateFlushes() != this.submitFlushesAtEntry;
-                boolean carriedSupply = this.lazyMirrorSupplies != this.submitSuppliesAtEntry;
-                if (carriedFlush && carriedSupply) this.tailCarriedBoth++;
-                else if (carriedFlush) this.tailCarriedFlush++;
-                else if (carriedSupply) this.tailCarriedSupply++;
-                else this.tailCarriedNeither++;
-            } else if (submitNanos > 50_000) {
-                this.immediateSubmit50to200++;
-            } else if (submitNanos > 5_000) {
-                this.immediateSubmit5to50++;
-            } else {
-                this.immediateSubmitUnder5++;
+            if (timeBatch) {
+                long submitNanos = System.nanoTime() - submitStart;
+                this.immediateSubmitNanos += submitNanos;
+                FrameBudgetTimings.addBatch(submitNanos);
+                if (submitNanos > 200_000) {
+                    this.immediateSubmitTailCalls++;
+                    this.immediateStatistics.addImmediateSubmitTailNanos(submitNanos);
+                    boolean carriedFlush = this.immediateStatistics.immediateFlushes() != this.submitFlushesAtEntry;
+                    boolean carriedSupply = this.lazyMirrorSupplies != this.submitSuppliesAtEntry;
+                    if (carriedFlush && carriedSupply) this.tailCarriedBoth++;
+                    else if (carriedFlush) this.tailCarriedFlush++;
+                    else if (carriedSupply) this.tailCarriedSupply++;
+                    else this.tailCarriedNeither++;
+                } else if (submitNanos > 50_000) {
+                    this.immediateSubmit50to200++;
+                } else if (submitNanos > 5_000) {
+                    this.immediateSubmit5to50++;
+                } else {
+                    this.immediateSubmitUnder5++;
+                }
             }
         }
     }
