@@ -34,14 +34,13 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
 2. **性能**（KPI flags・1280×720・vsync off/260・`world-0.7.11` instance（Xaeroなし）・3対×240 s、両GPUとも 0.1.1-alpha の jar `9feaa083`（コードは配布jar `a8bd0480`と同一、差はjar内README）＝`54b42982d`）:
    - **AMD: goal条件1を満たす**（最新 `rel-amd`: verdict NOT_SLOWER、各対のp50/p95/p99比が全て<1、中央値 0.591/0.596/0.826、p50 0.63 vs 1.06 ms）。
      **この行は scene 限定**（`world-0.7.11`・Xaeroなし・旧JAR）。現行JARを実配布profileで測ると逆:
-     `celtium-world-accept`（188 mods・`qmagnet`）3対で **Celtium が 1.19–1.27×遅い**（p50 median **1.261**、
-     `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-round47-2026-11-04.md)）。frameBudget は
-     `gpuShare=0.01`＝CPU律速。
-     鎖は `record`0.4＋`batch`0.4＋`present`0.1。窓headの0.1 msはstale-name走査のmemo外れ（**修正**、[証拠](evidence/stale-name-scan-memo-2026-11-04.md)）。
-     **KPI と同じ warm 窓（400–600）の実測**（[証拠](evidence/warm-window-split-2026-11-04.md)）: `frameIntervalWarmP50Ms`
-     **2.852**（round 47 の 2.989、Celeritas 2.349）。`loop` 2.28 = render 1.56 + **fmlTick 0.52** + display 0.10 + tick 0.08、
-     `passSplit` frame 1.4 = world 1.0 + gui 0.4 + hand 0.1、`flush` 0.4（`winRecord` 0.3 = `wrecLoop` 0.2 + `winHead` 0.1）。
-     **`gui` 0.4 のうち Celtium は `guiBatch` 0.1 だけ**（残りはゲームのHUD）。pair clear は `winHead` 内の ~0.1 ms（既定 OFF）。
+     `celtium-world-accept`（188 mods・`qmagnet`）3対で **Celtium が 1.18–1.29×遅い**（p50 median **1.215**、
+     `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-round51-2026-11-04.md)）。frameBudget は
+     `gpuShare=0.01`＝CPU律速。**差は 0.52 ms**（Celtium 2.946 / Celeritas 2.427）。
+     **KPI と同じ warm 窓（400–600）の内訳**（[証拠](evidence/warm-window-split-2026-11-04.md)）: `loop` 2.28 =
+     render 1.56 + **fmlTick 0.52** + display 0.10 + tick 0.08、`passSplit` frame 1.4 = world 1.0 + gui 0.4 + hand 0.1、
+     `flush` 0.4（`winRecord` 0.3 = `wrecLoop` 0.2 + `winHead` 0.1）。**`gui` 0.4 のうち Celtium は `guiBatch` 0.1 だけ**。
+     pair clear は `winHead` 内の ~0.1 ms（既定 OFF）。**Celtium 自身 ~0.7 ms を ~0.2 ms にしないと届かない。**
      **受理経路は実配布profileで初計測**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: 52.7 offer/フレームで
      **~0.27 ms（10%）**。同legの**失敗upload 28,272**は「読む物が無い」deferralへ。**`supply`の`bytes=0`は計器の欠陥**（`fullUploadBytes`が未加算）:
      実uploadは113回・3.85 ms/回、中身は内容hashのbyte単位ループ（[証拠](evidence/mirror-upload-census-2026-11-03.md)）。**registryは462–569 lookup/フレーム・ミス11.6%**（memo 256、同一batchの同じ名前3回の内2回を削除、
@@ -97,7 +96,7 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
 
 ## FPSの現状と残る道
 
-- 現行の判定は上の表（`celtium-world-accept` 3対、p50 median **1.261**）。旧scene（Susy/ATM3）の
+- 現行の判定は上の表（`celtium-world-accept` 3対、p50 median **1.215**）。旧scene（Susy/ATM3）の
   ABBA値は artifact が現ビルドと一致しないため現在判定に使わない（[archive](<history/plan-archive-2026-10-21.md>)）。
 - 残差は window 固定費と per-batch。pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
 - 棄却: bind flush延期（2026-10-31、2回ともRADV SIGSEGV、[罠](<verification-traps.md>)）、indirect immediate、フレーム再利用（アニメ凍結）、
