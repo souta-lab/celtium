@@ -40,8 +40,8 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
 2. **性能**（KPI flags・1280×720・vsync off/260・`world-0.7.11` instance（Xaeroなし）・3対×240 s、両GPUとも 0.1.1-alpha の jar `9feaa083`（コードは配布jar `a8bd0480`と同一、差はjar内README）＝`54b42982d`）:
    - **AMD: goal条件1を満たす**（最新 `rel-amd`: verdict NOT_SLOWER、各対のp50/p95/p99比が全て<1、中央値 0.591/0.596/0.826、p50 0.63 vs 1.06 ms）。
      **この行は scene 限定**（`world-0.7.11`・Xaeroなし・旧JAR）。現行JARを実配布profileで測ると逆:
-     `celtium-world-accept`（188 mods・`qmagnet`）3対で **Celtium が 1.66–1.76×遅い**（p50 median 1.677、
-     `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-world-accept-2026-11-03.md)）。frameBudget は
+     `celtium-world-accept`（188 mods・`qmagnet`）3対で **Celtium が 1.36–1.39×遅い**（p50 median 1.386、
+     `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-round41-2026-11-03.md)）。frameBudget は
      `gpuShare=0.01`＝CPU律速。
      **memoのミスは名前のannouncement移動で、表のchurnではない**（[証拠](evidence/texture-memo-per-name-2026-11-03.md)）。
      鎖は `record`0.5＋`batch`0.5＋`present`0.2。窓の固定費は主因ではない。
@@ -65,8 +65,8 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      **format 448,268（48%）**・no-mesh 190,619・texture 167,484。**formatは畳めない**（6は色をpush blockから、
      2は頂点から取る＝頂点変換は8bit量子化）。`offerStage`の`sN`はマークN→N+1で**`s9`=99 nsがmerge述語**、
      コストはslow pathの`s10`1770＋`s11`1831と全offerの`s8`861（registry lookup 654、ミス6.4%）。micro-optは床。
-     **窓**: `rawWriteSampleGate`（既定ON）で36.02→27.59窓/フレーム（[証拠](evidence/raw-write-sample-gate-2026-11-03.md)）。
-     現行sceneは23.4窓/フレームでgateは発火しない。**環境**: `ly`（root）が**1コアの92%を1日13時間**占有＝全legの`externalCpuCores` 0.9の正体。
+     **窓**: 現行sceneは23.2/フレームで**13.0がGregTechのpost chain**（`Shaders.renderFullImageInFBO`、
+     [証拠](evidence/window-sources-2026-11-03.md)）。`rawWriteSampleGate`は発火しない。**環境**: `ly`（root）が1コアの92%を占有していた（round 41に消えた）。
    - **Intel: 未達**（最新 `rel-intel`: p50 0.896・p95 0.872、**p99 1.048**＝3.46 vs 3.30 ms（中央値）。kpi3 1.110→kpi5 1.051→1.048）。
      p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般に分布、固定fpsでも残る）。棄却した仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)（GC・client thread CPU・safepoint・非同期探索は末尾）。
    - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
