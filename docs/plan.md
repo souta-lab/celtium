@@ -2,7 +2,7 @@
 
 開発ベース **0.1.4-alpha-rc.26**（[build定義](<../build-1122/build.gradle.kts>)）。Windows検証用プレリリースは **v0.1.4-alpha-rc.26**（2026-10-30、[release notes](<releases/0.1.4-alpha-rc.26.md>)）。これまでの性能検証は本文に記載した 0.1.1-alpha を基準とする。
 2026-10-30 改訂。**過去の性能値・根因断定・完了宣言を前提にしない。**
-製品の出口は [goal.md](<goal.md>)。[new_architecture.md](<new_architecture.md>) は参考の設計案で拘束しない（利用者指示 2026-10-28）。実測が勝ればそちらを採る。
+製品の出口は [goal.md](<goal.md>)。[new_architecture.md](<new_architecture.md>) は参考の設計案で拘束しない。実測が勝ればそちらを採る。
 
 ## Windows/NVIDIA報告への優先対応（2026-10-29）
 
@@ -13,10 +13,9 @@
 設計案は [new_architecture.md](<new_architecture.md>)。**採用する**のは §12 の結論（offer ごとの Java 受理・capture・
 record 仕事を消す）だけで、順序は実測コストで並べ替える。**Stage 2（CPU culling）は後ろ・Stage 5（GPU Hi-Z）は最後**
 （AMD のフレームは解像度非依存＝CPU 律速）。**記録・提出を executor thread へ移す**案は paired KPI で採否を決める。
-移行は「一度に全部作り直さない」（設計§7）。各段で画像 gate・validation 0・paired KPI を取ってから次へ。当時の値は
-[archive](<history/plan-archive-2026-10-24.md>)（現在の判定には使わない）。**影**は利用者指示により本体内は停止
-（stage (a)–(d計器) は commit 済み・既定OFF、[証拠](<evidence/shadow-stage-c-2026-10-24.md>)。PCF受け側は `git stash`。
-**再開は利用者が明示した時だけ**）。
+移行は「一度に全部作り直さない」（設計§7）。各段で画像 gate・validation 0・paired KPI を取ってから次へ。
+[archive](<history/plan-archive-2026-10-24.md>)。**影**は利用者指示により本体内は停止（既定OFF、
+[証拠](<evidence/shadow-stage-c-2026-10-24.md>)。PCF受け側は `git stash`。**再開は利用者が明示した時だけ**）。
 
 
 ## 次の作業単位（2026-10-25 改訂・利用者の実プレイ報告に対応）
@@ -26,10 +25,10 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
    |---|---|
    | 20 FPS | 体感200fps超（ログ上限修正後）。**残りはスパイク** |
    | 入world直後 約3秒の強いラグ | **縮小・qmagnetではCeleritas同等**: 未使用chunk dispatcherのbuilder 61個（~610 MB）→1個（`99e1daf77`）。最初60tickの50ms超フレーム Celtium 1.67–1.95 s / Celeritas 1.67–1.79 s。残りは共通のchunk packet・class load。利用者の3秒は未再現 |
-   | スパイク・移動時の体感lag | 移動中はterrainのocclusion探索がclient threadの28%（同期実行）→ **探索をsearch threadへ（既定）**、AMD飛行p50 1.03–1.34→0.74–0.89 ms・validation 0。同条件のCeleritasは0.78 ms・16 ms超0枚。入室停止は未帰属。計器: `flightBlocksPerSecond`・`warmSpikes` |
+   | スパイク・移動時の体感lag | 移動中はterrainのocclusion探索がclient threadの28%（同期実行）→ **探索をsearch threadへ（既定）**、AMD飛行p50 1.03–1.34→0.74–0.89 ms・validation 0。同条件のCeleritasは0.78 ms・16 ms超0枚。入室停止は未帰属 |
    | 視点移動で隠れた海底/洞窟が一瞬見える・GVCのmob/機体が見えない | **修正（実機確認待ち）**: 非同期探索の結果を、視点が変わったフレームだけ描画前にjoin（`22d8d84e4`）。Modのclient-array display list・直接の`GL11.glColor*`/`glDepthMask`・lit時ITEM形式（`eeb6b1d0e`）。A4のserver crashはMod側→`scripts/fix_gvcr2_a4.py` |
    | 殴られたentityが赤い箱 | **修正**: combine中もalphaテストを維持（帽子レイヤの透明部が赤塗り） |
-   | 色付きガラスのチカチカ | **修正（実機確認待ち）**: 半透明terrainパスが背面cullなしで描いていた（ガラスの裏面が2層目として合成）→vanilla同様に背面cull（`5f75fc009`、参照比で~20–25暗かった差が解消、[画像](evidence/2026-10-28-stained-glass-backfaces.png)） |
+   | 色付きガラスのチカチカ | **修正（実機確認待ち）**: 半透明terrainパスが背面cullなしで描いていた→vanilla同様に背面cull（`5f75fc009`、参照比で~20–25暗かった差が解消、[画像](evidence/2026-10-28-stained-glass-backfaces.png)） |
    | F3+T が重い | reload自体 2.24 s（Celeritas 2.05 s）。差は font atlas の再upload → pack不変なら保持（`6d056197d`）。reload後のframeは正常 |
    | Xaero's Minimap（クラッシュ・真っ暗・位置ずれ・透け） | **修正**: PBO map/unpack、raw FBO/raw matrix、tile upload、mod FBO同士のsample（空mirrorより公開優先・self-compositeは同一imageだけ）。AMD/Intel world PASSED・validation 0、Celeritas参照と同じ絵 |
    | ワールド退出後ボタン無し | **未再現**（既定・日本語・1920×1080）。手順差の手掛かり待ち |
@@ -59,6 +58,11 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      bracket（26 `nanoTime`/glyph、無条件）は既定OFF（`-Dceltium.font.timings`）。**warm windowはflagが要る**
      （`warmFromTick=400 warmToTick=600 holdUntilTick=620` 無しはtick ~330で終わり`frameIntervalWarmP50Ms=-1`）。
      同JARのidle 1 armはwarm p50 **2.873 ms**（pairedではない）。
+     **受理経路はその後低下**: 現行JARのframe budgetは `batch=0.5/0.5/0.5`（KPI legは`0.8/0.9/1.1`）、
+     `record`0.5・`present`0.2は不変（[証拠](evidence/supply-decision-one-pass-2026-11-03.md)、1 arm）。
+     offer stageは `s10`（merge判定）1043・`s11`861・`s8`755 ns/offerで**merge判定が最大の名前付き項目**。
+     `supply`判定は`celtium$supplyDecision`で2 record 1 passに（9 lookup→5・registry get 3回削除）。
+     **速度は主張しない**（同legの`supply`2560 nsはr34cの1792より高く、leg全体が遅い＝外部core 0.9と整合）。
      **窓の削減は1件実測**: pending copyの順序flushを「offerごと」から「copy先をsampleする時だけ」へ
      （`rawWriteSampleGate`、既定ON）。同一JAR・同一sceneで **36.02→27.59窓/フレーム（−23.4%）**、validation 0・
      拒否0・画像gate両arm PASSED（[証拠](evidence/raw-write-sample-gate-2026-11-03.md)）。p50 −4.5%は±7%内。
@@ -66,32 +70,32 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般に分布、固定fpsでも残る）。棄却した仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)（GC・client thread CPU・safepoint・非同期探索は末尾）。
    - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
    - 過去の棄却（barrier省略・texture跨ぎmerge・1 submit・glthread）は[証拠](evidence/intel-gap-2026-10-26.md)。
-3. **native 状態・実行**: cull の面と winding・`GL_VIEWPORT_BIT`・`GL_LIGHTING_BIT` の部分復元・font run の拒否保持・no-op census は出荷経路で発火しない→生きた描画census `CELTIUM_GL_SURFACE_DRAWING`・display-list census は id<512 のみ→総量/id を報告（entity arm modelDraws=5545・拒否0）。証拠は `evidence/{cull-face,viewport-attrib,lighting-attrib,font-run-refusal,noop-census-unreachable,display-list-census}-2026-11-03.md`。glint画素/inventory・actor較正は未対応（[native-fog](evidence/native-fog-2026-10-26.json)・[model-run](evidence/model-run-2026-10-27.json)）。
+3. **native 状態・実行**: cull の面と winding・`GL_VIEWPORT_BIT`・`GL_LIGHTING_BIT` の部分復元・font run の拒否保持・no-op census は出荷経路で発火しない→生きた描画census `CELTIUM_GL_SURFACE_DRAWING`・display-list census は id<512 のみ→総量/id を報告（entity arm modelDraws=5545・拒否0）。証拠は `evidence/{cull-face,viewport-attrib,lighting-attrib,font-run-refusal,noop-census-unreachable,display-list-census}-2026-11-03.md`。glint画素/inventory・actor較正は未対応。
 
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
-   Demonica の実体（pinned commit の README より）: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
+   Demonica の実体: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
    Actinium から fork し terrain renderer は持たない。**Cleanroom の OpenGL context 上で動く**ため、Celtium では
-   「Celeritas との接続面（terrain 描画・pack pipeline・GLSM）」を **Celtium の Vulkan 経路との接続面に置き換える**作業になる。
-   **別成果物（addon jar）**として実装し、Celtium core には取り込まない。
+   「Celeritas との接続面（terrain 描画・pack pipeline・GLSM）」を **Vulkan 経路との接続面に置き換える**作業になる。
+   **別成果物（addon jar）**として実装し、core には取り込まない。
 5. **本体の影scaffoldとshaderpack frontendは削除済み**（2026-10-27、旧アーキテクチャ削除）。影とpackはDemonica addonで実装する。
 6. **ライセンス**: Demonica 本体は **AGPL-3.0**（〜0.4.0 は GPL-3.0）。Angelica/Iris 由来部分は LGPL-3.0、Actinium 由来は GPL-3.0、
    glsl-transformer は AGPL-3.0。**fork するなら fork 側も AGPL-3.0 になり、Celtium core とは別リポジトリ/別jarで境界を保つ**。
-   LGPL 部分のチェリーピックはクレジット明記で可能（利用者指示③）。GLSM の丸ごと持ち込みはしない。
+   LGPL 部分のチェリーピックはクレジット明記で可能。GLSM の丸ごと持ち込みはしない。
 
 ## 現在の優先順
 
 | 優先・項目 | 実装/判定 | AMD | Intel | 根拠と残り |
 |---|---|---|---|---|
 
-| **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤測定済み** | 実機報告＋画面 | ②未実行 | ①パノラマ ②エンドポータル ③F2黒スクショ（`nglGetTexImage`） ④ガラスちらつき（`5f75fc009`） ⑤残像＝静止0差分・tooltipの動きは連続3フレーム残留0（[証拠](evidence/tooltip-motion-2026-11-02.md)）、mod FBO bind中も0（[証拠](evidence/tooltip-mod-fbo-2026-11-03.md)）、看板の文字も0（[証拠](evidence/sign-text-afterimage-2026-11-03.md)）、⑥空の帯は**一度きりの遷移**＝損失は**記録側**（[証拠](evidence/sky-band-one-transition-2026-11-03.md)） |
+| **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤測定済み** | 実機報告＋画面 | ②未実行 | ①パノラマ ②エンドポータル ③F2黒スクショ（`nglGetTexImage`） ④ガラスちらつき（`5f75fc009`） ⑤残像＝静止0差分・tooltipの動きは連続3フレーム残留0（[証拠](evidence/tooltip-motion-2026-11-02.md)）・mod FBO bind中0（[証拠](evidence/tooltip-mod-fbo-2026-11-03.md)）・看板の文字0（[証拠](evidence/sign-text-afterimage-2026-11-03.md)）、⑥空の帯は**一度きりの遷移**＝損失は**記録側**（[証拠](evidence/sky-band-one-transition-2026-11-03.md)） |
 
 
-| **画質（4画面＋QMAGNET）** | **settings画素一致・worldは16階調超 0.97/1.05 %（AMD/Intel）。menu背景は両GPU確認済み** | 両GPU PASSED・clean | 実測 | [証拠](evidence/image-quality-2026-10-28.md)・[menu](evidence/menu-capture-2026-11-02.md)・[legacy既定ON](evidence/legacy-immediate-default-2026-11-02.md)。修正: 半透明cull・lit clamp・Forgeブロックモデル・legacy既定ON・atlas実寸・色同期・menu背景。残り: 遠い壁1面の陰影勾配、loadingは参照なし。**creative tab の item icon と hover slotのhighlight を修正**（[highlight](evidence/creative-highlight-line-pipeline-2026-11-02.md)）。**creative grid は現行JARで参照一致**（[検証](evidence/creative-grid-verified-2026-11-03.md): mean\|A-B\| 1.17）|
+| **画質（4画面＋QMAGNET）** | **settings画素一致・worldは16階調超 0.97/1.05 %（AMD/Intel）。menu背景は両GPU確認済み** | 両GPU PASSED・clean | 実測 | [証拠](evidence/image-quality-2026-10-28.md)・[menu](evidence/menu-capture-2026-11-02.md)・[legacy既定ON](evidence/legacy-immediate-default-2026-11-02.md)。修正: 半透明cull・lit clamp・Forgeブロックモデル・legacy既定ON・atlas実寸・色同期・menu背景。残り: 遠い壁1面の陰影勾配、loadingは参照なし。**creative tab の item icon と hover slotのhighlight を修正**（[highlight](evidence/creative-highlight-line-pipeline-2026-11-02.md)）。**creative grid は現行JARで参照一致**（[検証](evidence/creative-grid-verified-2026-11-03.md)）|
 | **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（v0.0.14-alpha・AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | v0.0.14-alpha `90a7c505…` は qmagnet world で AMD/Intel PASSED・validation 0・画像gate一致。0.6.13（GLFW/LWJGL 3.4.1）はSDL3不在を検出して版を名指しで拒否 |
-| **巨大pack互換（E2E-E 1.87.3）** | **AMD: fixture PASSED・validation 0（`e2ee-amd-c4`）、Intel未実行。残課題は[証拠](evidence/e2e-cleanroom07-2026-10-26.md)の末尾** | AMD | 未実行 | Cleanroom 0.7差はlocal置換と上流PR（`8f121acfb`）。残りは証拠ファイルへ。 |
+| **巨大pack互換（E2E-E 1.87.3）** | **AMD: fixture PASSED・validation 0、Intel未実行** | AMD | 未実行 | Cleanroom 0.7差はlocal置換と上流PR（`8f121acfb`）。残りは[証拠](evidence/e2e-cleanroom07-2026-10-26.md)末尾へ。 |
 
-| **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない（2026-10-30: `glless`とGL bridgeを削除） |
-| **次の標的** | **native実装へ** | — | 未着手 | ①model/immediateの共通packetとnative実行 ②~~非instance lit fog~~ **修正**（lit ITEMのfog block 224/240・256B・device contract 256、[証拠](evidence/lit-fog-2026-11-03.md): within-run A/Bで10,355画素が `w=0.12–0.77` のfog混合・残差p50 0.29/255、gate PASSED） ③state/texture/target所有の統合。影はDemonica addonへ分離、本体内は停止。 |
+| **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない |
+| **次の標的** | **native実装へ** | — | 未着手 | ①model/immediateの共通packetとnative実行 ②~~非instance lit fog~~ **修正**（[証拠](evidence/lit-fog-2026-11-03.md): within-run A/Bで10,355画素がfog混合・残差p50 0.29/255） ③state/texture/target所有の統合。影はDemonica addonへ分離、本体内は停止。 |
 
 ## FPSの現状と残る道（2026-10-31実測）
 
