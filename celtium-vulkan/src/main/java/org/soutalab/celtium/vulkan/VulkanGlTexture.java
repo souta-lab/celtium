@@ -1175,6 +1175,7 @@ public final class VulkanGlTexture {
             // One level, one layer: the off-target image has no chain, and a range that named levels the view does
             // not cover would be the same class of error the mirror's own layout bookkeeping was written to avoid.
             barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            this.context.celtium$beforeBarrier(address);
             vkCmdPipelineBarrier(commandBuffer, WORKING_STAGES, WORKING_STAGES, 0, null, null, barrier);
         }
         // The barrier is in the command buffer now, so the transition is pending: it becomes fact when this command

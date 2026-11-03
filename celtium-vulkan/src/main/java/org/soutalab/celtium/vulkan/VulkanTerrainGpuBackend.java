@@ -637,6 +637,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // so it installs the probe here, before any resource can be deleted.
         context.celtium$setRecordingOpenProbe(() -> this.frameBufferOpen || this.immediateWindowBusy
                 || this.commandState.recording());
+        // A barrier cannot be recorded inside a render pass, and the sticky window pass leaves one open across
+        // windows. Every barrier site in the renderer asks this hook first, and it closes the pass only when the
+        // barrier is going into the frame's own recording - a one-shot copy buffer's barriers are left alone.
+        context.celtium$setBeforeBarrierHook(this::celtium$beforeBarrierRecorded);
         // Deferred destroys are tagged with the submission sequence and only run once a later sequence has been
         // confirmed, which is what makes tearing down a pipeline/pool used by a pending submission legal.
         context.celtium$setSequenceSources(this.scheduler::submitSequence, this.scheduler::completedSubmitSequence);
@@ -3858,6 +3862,37 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Reused by the window flush for its recording snapshot; see GllessFrameTarget.snapshotRecording(reuse). */
     private org.soutalab.celtium.vulkan.GllessFrameTarget.RecordingSnapshot windowRecordingSnapshot;
     boolean immediateWindowBusy;
+    /**
+     * {@code -Dceltium.vulkan.stickyWindowPass=true}: keep the frame image's window pass open across consecutive
+     * windows instead of closing it at the end of every one.
+     * <p>
+     * A window is the renderer's most expensive unit: 23.5 of them a frame on the shipped profile, ~19 us of recording
+     * each, and the whole flush is 0.4 ms of a 1.4 ms frame. Most of that is fixed cost per window - the begin/end
+     * render pass pair, the frame image's acquire/release round trip, the target routing and the submission
+     * bookkeeping - while the average window carries only six groups. The pass is over the same framebuffer with the
+     * same attachment layout every time, so closing it and immediately reopening it for the next window is work with
+     * no observable effect: the groups of the next window can be recorded into the pass that is already open, which is
+     * exactly what the in-pass ordering flush ({@code drawPendingImmediate} while {@code commandState.inRenderPass()})
+     * already does inside one window.
+     * <p>
+     * Off by default while it is being validated: the pass may only stay open while nothing else needs to record
+     * outside one, so {@link #celtium$closeStickyPass()} is called from every entry point that starts a different
+     * recording segment ({@code beginCommands}), records a copy ({@code celtium$applyPendingRawWrites}) or hands the
+     * frame image to its owner ({@code celtium$finishFrameBuffer}). A close ends the pass and records the release
+     * barrier the merged windows skipped, so the image's tracked layout is the one the next acquire names.
+     */
+    private static final boolean STICKY_WINDOW_PASS = Boolean.getBoolean("celtium.vulkan.stickyWindowPass");
+    /** Whether the frame image's window pass is still open for the next window to record into. */
+    private boolean stickyPassOpen;
+    /** The render pass the open sticky pass was begun with; a window whose pass differs cannot merge into it. */
+    private long stickyPassRenderPass;
+    /** The target identity the open sticky pass draws into. */
+    private long stickyPassTarget;
+    /** Windows recorded into a pass an earlier window opened, and passes closed by {@link #celtium$closeStickyPass()}. */
+    long stickyWindowsMerged;
+    long stickyPassCloses;
+    /** Passes closed because a barrier was about to be recorded into the frame's own recording. */
+    long stickyBarrierCloses;
     /**
      * A real frame identity (audit S11).
      * <p>
@@ -9915,6 +9950,9 @@ this.frameBufferOpen = false;
         if (!COALESCE_RAW_WRITES || this.pendingRawWrites.isEmpty()) {
             return;
         }
+        // A copy and its barrier cannot be recorded inside a render pass, and this is the one place the frame's own
+        // buffer carries them: a sticky window pass still open here is closed first.
+        celtium$closeStickyPass();
         if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
             org.soutalab.celtium.vulkan.CrashBreadcrumbs.note(org.soutalab.celtium.vulkan.CrashBreadcrumbs.COALESCED_COPY,
                     this.pendingRawWrites.size(), this.frameId);
@@ -10393,6 +10431,9 @@ this.frameBufferOpen = false;
         if (!this.frameBufferOpen) {
             return;
         }
+        // The frame's own submission is the last thing that may not happen inside a render pass: a sticky window pass
+        // still open here is closed (and its release barrier recorded) before the buffer is ended and queued.
+        celtium$closeStickyPass();
         GpuPassTimingReport.printIfDue(this.frameId, this.passTimings, this.immediatePassGpuNanos, this.frameGpuNanos,
                 this.frameHeadNanos, this.frameTailNanos, this.windowGpuCount, this.windowGpuMainNanos,
                 this.windowGpuOffNanos, this.windowGpuMaxNanos, this.gpuMarkTimeline);
@@ -10418,6 +10459,9 @@ this.frameBufferOpen = false;
         this.fog.tracePeriodically(this.frameId);
         try {
             flushPendingBeforeGlDraw();
+            // The frame boundary is the end of the merge window: the draw bench and the mirror request below record
+            // into the frame's buffer, and neither may land inside a render pass the last window left open.
+            celtium$closeStickyPass();
             celtium$applyPendingRawWrites();
             // After the frame's own recording and inside the still-open frame buffer: N bind+draw calls on a real mesh,
             // which is the only way to price the command itself without the rest of the frame in the way.
@@ -10563,7 +10607,15 @@ this.frameBufferOpen = false;
             FramePassTimings.begin("flush");
             if (guiFlush) FramePassTimings.begin("guiFlush");
             try {
-                if (this.commandState != null && this.commandState.inRenderPass()) {
+                if (this.stickyPassOpen && celtium$queueHoldsOtherTarget(this.stickyPassTarget)) {
+                    // Groups for another framebuffer cannot be drawn into the open pass, and leaving them queued is
+                    // not free: the accept path's group-match scan walks the queue, so a queue that keeps a hundred
+                    // undrawable groups makes every offer quadratic. Measured on leg r52d-sticky, where the pass was
+                    // held open across the whole frame: batch 56.8 ms a frame against 0.4, and 2 fps. Closing here
+                    // gives those groups the window they need; the main target's groups merge as before.
+                    celtium$closeStickyPass();
+                }
+                if (this.commandState != null && this.commandState.inRenderPass() && !this.stickyPassOpen) {
                     // An ordering flush: the batch that is about to be refused is drawn by GL, so what is already
                     // accepted has to reach the image first, inside the pass that is already open.
                     this.immediateDrawSite = "order-flush-in-pass";
@@ -10685,6 +10737,35 @@ this.frameBufferOpen = false;
         // is no owner state to put back.
         GllessFrameTarget gllessTarget = this.frameTarget instanceof GllessFrameTarget
                 ? (GllessFrameTarget) this.frameTarget : null;
+        if (celtium$stickyMergeAllowed(STICKY_WINDOW_PASS, this.stickyPassOpen, gllessTarget != null, offTarget,
+                identity == this.stickyPassTarget, renderPassHandle == this.stickyPassRenderPass,
+                gllessTarget != null && gllessTarget.frameImageAcquireNeeded(),
+                this.targetRegistry.replacementInProgress())) {
+            // The frame image's pass is still open from the previous window: this window's groups are recorded into
+            // it. No begin/end render pass pair, no frame-image acquire/release round trip, no target routing and no
+            // submission of its own - the fixed cost that made a window ~19 us for six groups. The pass is over the
+            // same framebuffer with the same attachment layout, so the picture is the one the two windows would have
+            // produced separately; only the commands that separate them are gone.
+            //
+            // frameImageAcquireNeeded() is the one condition that is not about identity: the acquire is also where a
+            // latched game clear is applied, so a window that carries one must not be merged - the clear would then
+            // land after the draws it has to erase.
+            this.immediateWindowBusy = true;
+            try {
+                this.immediateDrawSite = "sticky-window";
+                org.soutalab.celtium.vulkan.FramePassTimings.begin("winRecord");
+                drawPendingImmediate(Long.valueOf(this.stickyPassTarget));
+                org.soutalab.celtium.vulkan.FramePassTimings.end("winRecord");
+                this.stickyWindowsMerged++;
+            } finally {
+                this.immediateWindowBusy = false;
+            }
+            return;
+        }
+        // Not a merge: whatever this window is about to record needs a pass of its own, so the open one is closed
+        // first - before frameTarget.beginFrame() and before beginCommands(), which would otherwise close it after the
+        // target's own bookkeeping had already run.
+        celtium$closeStickyPass();
         // Whether this window's pass will attach the frame image. An off-target window records its pass against one
         // of the owned pairs, so the frame image's acquire/release pair would be two layout barriers around a pass
         // that never touches it - 26 vkCmdPipelineBarrier calls a frame on the measured scene, 13 of whose 23 windows
@@ -11019,11 +11100,17 @@ this.frameBufferOpen = false;
                             if (WINDOW_SPLIT) {
                                 this.wsMark = System.nanoTime();
                             }
-                            if (gllessTarget != null) {
-                                gllessTarget.recordReleaseBarriers(this.commandBuffer,
-                                        this.windowFrameImageAttached);
-                            } else {
-                                this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+                            // A window that left its pass open has not handed the image back yet: the release is the
+                            // close's job (celtium$closeStickyPass), and recording it here would both end the pass
+                            // through the barrier hook and put two release barriers around one pass - measured on leg
+                            // r52c-sticky as stickyWindowsMerged=0 with stickyBarrierCloses=23852 and a 5.7 ms frame.
+                            if (!this.stickyPassOpen) {
+                                if (gllessTarget != null) {
+                                    gllessTarget.recordReleaseBarriers(this.commandBuffer,
+                                            this.windowFrameImageAttached);
+                                } else {
+                                    this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+                                }
                             }
                             if (WINDOW_SPLIT) {
                                 long now = System.nanoTime();
@@ -12222,6 +12309,91 @@ this.frameBufferOpen = false;
         return summary.toString().trim();
     }
 
+    /**
+     * Closes the sticky window pass if one is open: ends the render pass and records the release barrier the merged
+     * windows skipped.
+     * <p>
+     * Called from every entry point that is about to record something a render pass cannot hold - a new recording
+     * segment ({@code beginCommands}), a copy ({@code celtium$applyPendingRawWrites}) or the frame's own submission
+     * ({@code celtium$finishFrameBuffer}) - and from the window path itself when the next window is not a merge. The
+     * release barrier is the half of the window's acquire/release pair that the merge deferred: without it the frame
+     * image's tracked layout would still say "attachment" while the image is in whatever the pass left it in, and the
+     * next acquire would name the wrong old layout. A command buffer that was reset under the flag (the frame
+     * recovery path) has no open pass to end, so the flag is cleared without recording.
+     */
+    private void celtium$closeStickyPass() {
+        if (!this.stickyPassOpen) {
+            return;
+        }
+        this.stickyPassOpen = false;
+        this.stickyPassCloses++;
+        if (this.commandState == null || !this.commandState.inRenderPass()) {
+            return;
+        }
+        vkCmdEndRenderPass(this.commandBuffer);
+        this.commandState.endPass();
+        org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
+        if (this.frameTarget instanceof GllessFrameTarget glless) {
+            glless.recordReleaseBarriers(this.commandBuffer, this.windowFrameImageAttached);
+        } else if (this.frameTarget != null) {
+            this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+        }
+    }
+
+    /**
+     * The barrier hook: a barrier is about to be recorded into {@code commandBufferAddress}.
+     * <p>
+     * A barrier cannot be recorded inside a render pass unless the pass declares a self-dependency, and the sticky
+     * window pass leaves one open across windows on purpose. So a barrier that lands in the frame's own recording
+     * while that pass is open closes it first - which is the same thing the window path does when the next window is
+     * not a merge, just discovered one call earlier. A barrier going into any other command buffer (a one-shot copy
+     * buffer, the swapchain's own) is not this recording's business and is left alone.
+     */
+    /**
+     * {@return whether the queue holds a group for a framebuffer other than {@code target}}.
+     * <p>
+     * The sticky window pass can only draw the target it was begun for, so a queued group for another framebuffer is
+     * undrawable until the pass closes. The scan is linear in the queue, which is the same order the accept path's
+     * group match already pays; it runs only while a sticky pass is open and only when a flush has work to do.
+     */
+    private boolean celtium$queueHoldsOtherTarget(long target) {
+        java.util.List<ImmediateGroup> groups = this.immediateGroups;
+        for (int i = 0; i < groups.size(); i++) {
+            if (groups.get(i).target != target) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void celtium$beforeBarrierRecorded(long commandBufferAddress) {
+        if (!this.stickyPassOpen || this.commandBuffer == null
+                || this.commandBuffer.address() != commandBufferAddress) {
+            return;
+        }
+        this.stickyBarrierCloses++;
+        celtium$closeStickyPass();
+    }
+
+    /**
+     * The decision table for merging a window into the pass an earlier window left open.
+     * <p>
+     * Eight answers, each of which is a way the merge would be wrong rather than slow: the switch is off; no pass is
+     * open; the target is not the GL-less frame target (the bridge has no owner state to keep consistent); the window
+     * is for another framebuffer; it is for another identity; it needs a different render pass (and therefore a
+     * different framebuffer); its acquire is needed - which is also where a latched game clear is applied, so merging
+     * would put the clear after the draws it has to erase; or a framebuffer replacement is in progress.
+     * <p>
+     * Extracted so the table can be exercised without a device: the merge itself needs a GPU, but "which windows may
+     * merge" is arithmetic, and a green test here is not evidence that a merge happened.
+     */
+    static boolean celtium$stickyMergeAllowed(boolean stickyEnabled, boolean passOpen, boolean gllessTarget,
+            boolean offTarget, boolean sameTarget, boolean sameRenderPass, boolean acquireNeeded,
+            boolean replacementInProgress) {
+        return stickyEnabled && passOpen && gllessTarget && !offTarget && sameTarget && sameRenderPass
+                && !acquireNeeded && !replacementInProgress;
+    }
+
     private void recordImmediateOnlyPass(MemoryStack stack, VulkanTerrainPipeline terrain) {
         // Everything this method does before the window's prefix: the target routing, the pair clear, the begin-info.
         // winRecord is 0.5 ms a frame over 35.8 windows and winPrefix/winPassEnd were added to split the remainder;
@@ -12664,7 +12836,25 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.FramePassTimings.end("wrecLoop");
         // The pass close on its own (see winPrefix): the unnamed remainder of a window is either its prefix or this.
         FramePassTimings.begin("winPassEnd");
-        vkCmdEndRenderPass(this.commandBuffer);
+        // STICKY_WINDOW_PASS: the next window over this same framebuffer can record into this pass, so it is left
+        // open. The conditions are the ones that make "the next window" the same pass: the window draws into the
+        // frame image (an off-target window attaches a pair and needs its own pass), the unified frame buffer is open
+        // (otherwise this window is submitted here and the pass cannot outlive it), and the device is not stalled.
+        // The predicate is currentIsMain(), not windowIdentity: on the world scene the main framebuffer's identity is
+        // not 0, and gating on 0 kept the pass open exactly once in the whole run (stickyWindowsMerged=0 on leg
+        // r52b-sticky) - the same identity-versus-main confusion the routing comment above warns about.
+        boolean keepPassOpen = STICKY_WINDOW_PASS && this.targetRegistry.currentIsMain() && offTarget == null
+                && this.frameBufferOpen && !this.gpuStalled
+                && this.frameTarget instanceof GllessFrameTarget;
+        if (keepPassOpen) {
+            this.stickyPassOpen = true;
+            this.stickyPassRenderPass = renderPass;
+            this.stickyPassTarget = this.activeImmediateTarget;
+        } else {
+            vkCmdEndRenderPass(this.commandBuffer);
+            this.commandState.endPass();
+            org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
+        }
         FramePassTimings.end("winPassEnd");
         gpuMark("win-end");
         if (windowSlot >= 0) {
@@ -12672,8 +12862,6 @@ this.frameBufferOpen = false;
                     (windowSlot * 2) + 1);
             this.immediatePassTimed = true;
         }
-        this.commandState.endPass();
-        org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
     }
 
     /** Adds one frame fence wait's duration to the totals, so the frame's own serialisation is a number. */
@@ -18730,6 +18918,11 @@ this.frameBufferOpen = false;
     }
 
     void beginCommands() {
+        // A new recording segment is about to start - the terrain pass, an off-target window, a standalone clear - and
+        // a render pass left open by the sticky window path cannot hold any of them. Closing it here, before the
+        // frame-buffer reuse below, is what keeps "the pass is open" true only while the next thing recorded is
+        // another window over the same framebuffer.
+        celtium$closeStickyPass();
         if (this.frameBufferOpen) {
             // The frame's buffer is still recording: a later segment (window, terrain pass) continues into it
             // without paying the slot wait, the reset/begin pair, the query reset or the indirect-page rebind -

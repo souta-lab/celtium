@@ -3541,6 +3541,32 @@ public final class VulkanContext {
         this.recordingOpenProbe = probe;
     }
 
+    /**
+     * Called immediately before a {@code vkCmdPipelineBarrier} is recorded into a command buffer, with that buffer's
+     * address.
+     * <p>
+     * A barrier cannot be recorded inside a render pass unless the pass declares a self-dependency, and the sticky
+     * window pass ({@code -Dceltium.vulkan.stickyWindowPass}) deliberately leaves one open across windows. Every
+     * barrier site therefore has to be able to say "close that pass first", and this is the one place they can all
+     * reach: the backend installs a hook that closes the pass only when the address is the frame's own recording, so a
+     * one-shot copy buffer's barriers are unaffected. Measured: without it, the first menu frame recorded one
+     * {@code VUID-vkCmdPipelineBarrier-None-07889}.
+     */
+    private java.util.function.LongConsumer beforeBarrierHook;
+
+    /** Installs the hook {@link #celtium$beforeBarrier(long)} calls; see {@link #beforeBarrierHook}. */
+    public void celtium$setBeforeBarrierHook(java.util.function.LongConsumer hook) {
+        this.beforeBarrierHook = hook;
+    }
+
+    /** Tells the renderer a barrier is about to be recorded into {@code commandBufferAddress}. */
+    public void celtium$beforeBarrier(long commandBufferAddress) {
+        java.util.function.LongConsumer hook = this.beforeBarrierHook;
+        if (hook != null) {
+            hook.accept(commandBufferAddress);
+        }
+    }
+
     private int pipelineDestroyLogs;
     private int pipelineDestroysWhileRecording;
 

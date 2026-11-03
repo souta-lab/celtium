@@ -41,6 +41,8 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      render 1.56 + **fmlTick 0.52** + display 0.10 + tick 0.08、`passSplit` frame 1.4 = world 1.0 + gui 0.4 + hand 0.1、
      `flush` 0.4（`winRecord` 0.3 = `wrecLoop` 0.2 + `winHead` 0.1）。**`gui` 0.4 のうち Celtium は `guiBatch` 0.1 だけ**。
      pair clear は `winHead` 内の ~0.1 ms（既定 OFF）。**Celtium 自身 ~0.7 ms を ~0.2 ms にしないと届かない。**
+     **窓の統合（sticky pass）は棄却**（[証拠](evidence/sticky-window-pass-2026-11-04.md)）: merge 2.6/フレーム成立でも
+     **warm p50 2.85→11.47 ms**、窓 23.5→20.8 の代わりに **`grpDraw` 0.9→9.6 µs/group**（group 数不変）。理由未解明、再開しない。
      **受理経路は実配布profileで初計測**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: 52.7 offer/フレームで
      **~0.27 ms（10%）**。同legの**失敗upload 28,272**は「読む物が無い」deferralへ。**`supply`の`bytes=0`は計器の欠陥**（`fullUploadBytes`が未加算）:
      実uploadは113回・3.85 ms/回、中身は内容hashのbyte単位ループ（[証拠](evidence/mirror-upload-census-2026-11-03.md)）。**registryは462–569 lookup/フレーム・ミス11.6%**（memo 256、同一batchの同じ名前3回の内2回を削除、
@@ -67,7 +69,7 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般に分布、固定fpsでも残る）。棄却した仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)（GC・client thread CPU・safepoint・非同期探索は末尾）。
    - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
    - 過去の棄却（barrier省略・texture跨ぎmerge・1 submit・glthread）は[証拠](evidence/intel-gap-2026-10-26.md)。
-3. **native 状態・実行**: cull の面と winding・`GL_VIEWPORT_BIT`・`GL_LIGHTING_BIT` の部分復元・font run の拒否保持・no-op census は出荷経路で発火しない→生きた描画census `CELTIUM_GL_SURFACE_DRAWING`・display-list census は id<512 のみ→総量/id を報告（entity arm modelDraws=5545・拒否0）。証拠は `evidence/{cull-face,viewport-attrib,lighting-attrib,font-run-refusal,noop-census-unreachable,display-list-census}-2026-11-03.md`。glint画素/inventory・actor較正は未対応。
+3. **native 状態・実行**: cull の面と winding・`GL_VIEWPORT_BIT`・`GL_LIGHTING_BIT` の部分復元・font run の拒否保持・no-op census は出荷経路で発火しない→生きた描画census `CELTIUM_GL_SURFACE_DRAWING`・display-list census は id<512 のみ→総量/id を報告（entity arm modelDraws=5545・拒否0）。証拠は `evidence/*-2026-11-03.md`。glint画素/inventory・actor較正は未対応。
 
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
