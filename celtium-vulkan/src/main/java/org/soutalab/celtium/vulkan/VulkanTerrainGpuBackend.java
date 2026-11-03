@@ -2639,6 +2639,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private org.soutalab.celtium.vulkan.VulkanGlTexture currentGroupTextureImage;
 
     /**
+     * The stub's upload serial for the open group's texture, captured where the group's mirror was resolved.
+     * <p>
+     * The fast merge used to gate on {@code CeltiumGlStub.textureWriteEpoch()} alone, and that epoch is <em>global</em>:
+     * every texture write anywhere moves it. The question the merge actually asks is whether the group's own texture was
+     * written since its mirror was taken, and in a world scene the global epoch moves constantly - water, lava, fire,
+     * chests and every animated mob re-upload something every frame - so the merge was refused for writes to textures
+     * the group does not sample. Measured on leg {@code r39a-dist}: 894,800 of 2,005,142 offers merged (44.6%), and
+     * {@code partCalls} shows the slow path's supply and prepare running on 51% of offers.
+     * <p>
+     * The per-texture serial is the same fact the supply path itself uses ({@code textureUploadSerial} is two map gets),
+     * and it is read only when the global epoch moved, so the common case stays one field compare.
+     */
+    private long currentGroupTextureSerial = Long.MIN_VALUE;
+
+    /**
      * The one descriptor set a converted window binds, with every texture it draws in one array (section 11.6). Created
      * on the first accepted batch that names a texture; null when the device cannot index such an array, which keeps the
      * per-group sets and is reported as {@code textureArray=false}.
@@ -3207,7 +3222,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " fps[p50=" + String.format(java.util.Locale.ROOT, "%.1f", 1e9 / Math.max(1L, p50)) + "] "
                 + org.soutalab.celtium.vulkan.FrameCoordinator.submitQueueSummary()
                 + " " + org.soutalab.celtium.vulkan.VulkanContext.batchedSubmitSummary()
-                + (BATCH_TIMINGS ? offerStageNanosSummary() + " " + acceptSpanSummary() : "")
+                + (BATCH_TIMINGS ? offerStageNanosSummary() + " " + acceptSpanSummary() + " "
+                        + batchDistSummary() : "")
                 + " append[ms=" + (this.immediateStatistics.appendNanos() / 1000000L) + "]"
                 + " prepare[nanos=" + this.immediateStatistics.prepareImmediateNanos()
                 + " calls=" + this.immediateStatistics.prepareImmediateCalls()
@@ -7607,6 +7623,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             if (BATCH_TIMINGS) {
                 long took = System.nanoTime() - batchStartedNanos;
                 this.immediateStatistics.addSubmitBatchNanos(took);
+                celtium$noteBatchDuration(took);
                 long checks = this.batchCheckNanos;
                 if (checks > 0L && checks <= took) {
                     this.immediateStatistics.addBatchChecksNanos(checks);
@@ -8166,10 +8183,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     && ((formatId != 1 && formatId != 3 && formatId != 5)
                             || this.lightmapTexture == this.currentGroupLightmapImage)
                     && celtium$groupMaterialMatches(formatId)
-                    // No texture written since the last batch took the slow path, which is where raw GL writes are
-                    // brought into the mirror (and the queue flushed ahead of them): a write between two batches of
-                    // one texture must not be merged past.
-                    && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureWriteEpoch() == this.slowPathWriteEpoch;
+                    // No write to *this group's* texture since its mirror was taken, which is where raw GL writes are
+                    // brought into the mirror (and the queue flushed ahead of them): a write between two batches of one
+                    // texture must not be merged past. The global epoch is the cheap first gate; when it moved, the
+                    // group's own serial decides, because a write to another texture cannot stale this group's mirror.
+                    && celtium$groupTextureUnchanged(boundTexture);
             if (fastMerged) {
                 this.immediateStatistics.noteFastMergedBatches();
             }
@@ -8618,6 +8636,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     celtium$publishFramebufferColorTexture(boundTexture);
                 }
                 this.currentGroupTextureImage = celtium$registry().get(boundTexture);
+                // The group's own freshness stamp, taken at the same point as its mirror: the fast merge compares this
+                // against the live serial instead of refusing on any write anywhere (see the field's javadoc).
+                this.currentGroupTextureSerial = boundTexture == 0 ? Long.MIN_VALUE
+                        : org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadSerial(boundTexture, 0);
                 // Not registered in the shared texture array: no immediate pipeline reads an array index (the model
                 // instance runs register their own textures), so registering every group's texture was a lookup per
                 // group for nothing - and it filled the array's fixed capacity with GUI, font and mod tile textures
@@ -9040,6 +9062,44 @@ this.frameBufferOpen = false;
         boolean affine = this.glModelView[3] == 0.0f && this.glModelView[7] == 0.0f
                 && this.glModelView[11] == 0.0f && this.glModelView[15] == 1.0f;
         return affine && (formatId == 1 || formatId == 2 || formatId == 6);
+    }
+
+    /**
+     * Whether the open group's texture has been written since its mirror was taken - the fast merge's freshness term.
+     * <p>
+     * The global write epoch answers this for the whole process, and it is the cheap gate: when it has not moved, no
+     * texture anywhere was written and the answer is yes without a lookup. When it has moved, the question is still
+     * about one texture, and the group's own serial is the fact that decides it. The old form refused the merge on any
+     * write anywhere, which in a world scene is every frame - water, lava, fire and every animated mob re-upload
+     * something - so the merge was lost to writes the group does not sample.
+     * <p>
+     * A group with no texture ({@code boundTexture == 0}) has no serial to compare and keeps the global answer: its
+     * batches sample nothing, so a write cannot stale them, but the epoch gate is what the slow path recorded and
+     * changing that for the textureless case is not what this fixes.
+     */
+    private boolean celtium$groupTextureUnchanged(int boundTexture) {
+        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureWriteEpoch() == this.slowPathWriteEpoch) {
+            return true;
+        }
+        return celtium$groupTextureUnchanged(false, boundTexture, this.currentGroupTextureSerial,
+                boundTexture == 0 ? Long.MIN_VALUE
+                        : org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadSerial(boundTexture, 0));
+    }
+
+    /**
+     * The freshness decision itself, without the stub: {@code true} when the group's mirror is still the one the live
+     * texture would supply.
+     * <p>
+     * Package-private and static so the table can be pinned without a device. The three inputs are the whole state the
+     * decision has, and the case that matters is the third: the global epoch moved (some texture was written) but this
+     * group's own serial did not, which is the merge the old form threw away.
+     */
+    static boolean celtium$groupTextureUnchanged(boolean epochUnchanged, int boundTexture, long groupSerial,
+            long liveSerial) {
+        if (epochUnchanged) {
+            return true;
+        }
+        return boundTexture != 0 && groupSerial == liveSerial;
     }
 
     /**
@@ -15133,6 +15193,69 @@ this.frameBufferOpen = false;
         }
     }
 
+    /**
+     * The accept path's per-offer duration as a log2 histogram, beside the mean the other counters report.
+     * <p>
+     * Every accept-path number this project has quoted for ten rounds is a <em>mean</em>: {@code parts[registry]},
+     * {@code offerStages[s10]}, {@code batchTimings[nanosPerOffer total]}. A mean over a short interval on a host with
+     * an unrelated process holding a core is not a cost - one preemption of 100 us inside a 300 ns body moves the mean
+     * by 100 us/n, and at ~665,000 offers a run a 1% preemption rate at 100 us adds ~1 us to every one of them. The
+     * stage-8 interval is the proof that this is not hypothetical: its body is a stride compare, two format compares
+     * and a null check, and it measures 755 ns.
+     * <p>
+     * So the mean is reported with the distribution it came from. Bucket {@code b} holds durations in
+     * {@code [2^(b-1), 2^b)} nanoseconds, so the percentile bounds are exact upper bounds rather than interpolations:
+     * {@code p50<=1024} with {@code max=1234567} says the median offer is a microsecond and the mean is a tail, and
+     * {@code p50<=1024} with {@code max=4096} says the microsecond is real work. One array increment per offer, and
+     * only under {@link #BATCH_TIMINGS}.
+     */
+    private final long[] batchDistBuckets = new long[65];
+    private long batchDistMax;
+    private long batchDistCount;
+
+    private void celtium$noteBatchDuration(long nanos) {
+        this.batchDistCount++;
+        if (nanos > this.batchDistMax) {
+            this.batchDistMax = nanos;
+        }
+        // 0 lands in bucket 0; a positive duration lands in the bucket of its highest set bit, so bucket b covers
+        // [2^(b-1), 2^b) and the array needs 65 slots for the 2^63 case.
+        this.batchDistBuckets[nanos <= 0L ? 0 : 64 - Long.numberOfLeadingZeros(nanos)]++;
+    }
+
+    /**
+     * {@return the duration at or below which {@code percent} of the samples fall}, from a log2 histogram.
+     * <p>
+     * Static and package-private so the arithmetic is testable without a device: a percentile that silently reads the
+     * wrong bucket would make the distribution as misleading as the mean it is meant to check.
+     */
+    static long celtium$batchDistPercentile(long[] buckets, long count, int percent) {
+        if (count <= 0L || percent <= 0) {
+            return 0L;
+        }
+        long target = (count * percent + 99L) / 100L;
+        long seen = 0L;
+        for (int bucket = 0; bucket < buckets.length; bucket++) {
+            seen += buckets[bucket];
+            if (seen >= target) {
+                // Bucket 0 is "0 ns"; bucket b's exclusive upper bound is 2^b, and 2^63 does not fit a positive long.
+                return bucket == 0 ? 0L : bucket >= 63 ? Long.MAX_VALUE : (1L << bucket);
+            }
+        }
+        return Long.MAX_VALUE;
+    }
+
+    /** {@return the accept path's per-offer distribution, in nanoseconds, for the batch-timing line}. */
+    String batchDistSummary() {
+        if (this.batchDistCount == 0L) {
+            return "batchDist[none]";
+        }
+        return "batchDist[p50<=" + celtium$batchDistPercentile(this.batchDistBuckets, this.batchDistCount, 50)
+                + " p95<=" + celtium$batchDistPercentile(this.batchDistBuckets, this.batchDistCount, 95)
+                + " p99<=" + celtium$batchDistPercentile(this.batchDistBuckets, this.batchDistCount, 99)
+                + " max=" + this.batchDistMax + " n=" + this.batchDistCount + "]";
+    }
+
     /** {@return the accept path's three spans, in milliseconds, for the frame statistics}. */
     private String acceptSpanSummary() {
         StringBuilder parts = new StringBuilder(" parts[");
@@ -15142,9 +15265,17 @@ this.frameBufferOpen = false;
             parts.append(names[i]).append('=').append(this.acceptPartsCounts[i] == 0L ? 0L
                     : this.acceptPartsNanos[i] / this.acceptPartsCounts[i]);
         }
+        // The sample count each mean was taken over. Without it a part that runs on the slow path only (supply,
+        // prepare: ~6 a frame) and one that runs on every offer (~53 a frame) print the same shape, and a leg-to-leg
+        // comparison of the two means reads as a regression when it is a different population.
+        StringBuilder calls = new StringBuilder(" partCalls[");
+        for (int i = 0; i < names.length; i++) {
+            if (i > 0) calls.append(' ');
+            calls.append(this.acceptPartsCounts[i]);
+        }
         return "accept[decideMs=" + (this.acceptDecideNanos / 1000000L)
                 + " preflightMs=" + (this.acceptPreflightNanos / 1000000L)
-                + " tailMs=" + (this.acceptTailNanos / 1000000L) + "]" + parts.append(']');
+                + " tailMs=" + (this.acceptTailNanos / 1000000L) + "]" + parts.append(']') + calls.append(']');
     }
     private final long[][] offerStageDeltas = new long[16][2];
 

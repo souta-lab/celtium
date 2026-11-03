@@ -44,25 +44,25 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-world-accept-2026-11-03.md)）。frameBudget は
      `gpuShare=0.01`＝CPU律速。
      **memoのミスは名前のannouncement移動で、表のchurnではない**（[証拠](evidence/texture-memo-per-name-2026-11-03.md)）。
-     鎖は `record`0.5＋`batch`0.6＋`present`0.1。render bracket 1.5（flush 0.5・gui 0.4・terrain 0.1）＝3.1 p50の残り1.6はrenderer外で、窓の固定費は主因ではない。Celeritas 1.79 ms 超えには~0.2 ms。
-     **受理経路は実配布profileで初計測**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: offer毎に
-     `supply`3072・`prepare`1064・`registry`821 ns・52.7 offer/フレーム＝**~0.27 ms（10%）**。同legの**失敗upload 28,272**は「読む物が無い」deferralへ。**`supply`はuploadではなかった**:
+     鎖は `record`0.5＋`batch`0.5＋`present`0.2。窓の固定費は主因ではない。
+     **受理経路は実配布profileで初計測**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: 52.7 offer/フレームで
+     **~0.27 ms（10%）**。同legの**失敗upload 28,272**は「読む物が無い」deferralへ。**`supply`はuploadではなかった**:
      62,564呼が`bytes=0`＝serial checkで即return（[証拠](evidence/mirror-upload-census-2026-11-03.md)、A/Bで97呼・
      画像不変）。**registryは462–569 lookup/フレーム・ミス11.6%**（memo 256、同一batchの同じ名前3回の内2回を削除、
      [証拠](evidence/registry-memo-census-2026-11-03.md)）**窓flushが最大**（643 µs/フレーム）。
      client threadのprofile
      （[証拠](evidence/accept-profile-jfr-2026-11-03.md)）: Celtium 43.4%・accept 19.0%・窓 9.8%・
      **最大self 3.6%**＝micro-optでは動かない。JFRは`CELTIUM_LEG_JFR`（attach）。
-     **JFRの「フォント経路8.9%」は取り下げ**（[証拠](evidence/font-timing-brackets-2026-11-03.md)）: teardownの
-     `CELTIUM_FONT_GLYPH_CENSUS` は1 runで **glyph 2,456個**（0.53/frame）。captureの時計
-     bracket（26 `nanoTime`/glyph、無条件）は既定OFF（`-Dceltium.font.timings`）。**warm windowはflagが要る**
-     （`warmFromTick=400 warmToTick=600 holdUntilTick=620` 無しはtick ~330で終わり`frameIntervalWarmP50Ms=-1`）。
-     同JARのidle 1 armはwarm p50 **2.873 ms**（pairedではない）。
+     **JFRの「フォント経路8.9%」は取り下げ**（[証拠](evidence/font-timing-brackets-2026-11-03.md)）: glyph 2,456個/run
+     （0.53/frame）、captureの時計bracketは既定OFF（`-Dceltium.font.timings`）。**warm windowはflagが要る**
+     （`warmFromTick=400 warmToTick=600 holdUntilTick=620`）。同JARのidle 1 armはwarm p50 **2.873 ms**（pairedではない）。
      **受理経路はその後低下**: 現行JARのframe budgetは `batch=0.5/0.5/0.5`（KPI legは`0.8/0.9/1.1`）、
      `record`0.5・`present`0.2は不変（[証拠](evidence/supply-decision-one-pass-2026-11-03.md)、1 arm）。
-     offer stageは `s10`（merge判定）1043・`s11`861・`s8`755 ns/offerで**merge判定が最大の名前付き項目**。
-     `supply`判定は`celtium$supplyDecision`で2 record 1 passに（9 lookup→5・registry get 3回削除）。
-     **速度は主張しない**（同legの`supply`2560 nsはr34cの1792より高く、leg全体が遅い＝外部core 0.9と整合）。
+     offer stageは `s10`1043・`s11`861・`s8`755 ns/offer。**offer毎の分布**（[証拠](evidence/accept-distribution-2026-11-03.md)）:
+     `batchDist[p50<=2048 p95<=8192 p99<=16384 max=173698761]` 対 平均3235 ns＝**平均は中央値の1.6倍**（先取り説は棄却）。
+     ただし**offerの55%がslow path**（`fastMergedBatches` 44.6%、`partCalls`でsupply/prepareが51%）。merge判定の最終項を
+     global epochから**そのテクスチャのserial**へ変えたが**merge率は44.63→44.71%で不変**＝その項は拘束せず（棄却）。
+     次は`-Dceltium.vulkan.mergeCensus=true`で拒否理由を読む。**環境**: `ly`（root）が**1コアの92%を1日13時間**占有＝全legの`externalCpuCores` 0.9の正体。
      **窓の削減は1件実測**: pending copyの順序flushを「offerごと」から「copy先をsampleする時だけ」へ
      （`rawWriteSampleGate`、既定ON）。同一JAR・同一sceneで **36.02→27.59窓/フレーム（−23.4%）**、validation 0・
      拒否0・画像gate両arm PASSED（[証拠](evidence/raw-write-sample-gate-2026-11-03.md)）。p50 −4.5%は±7%内。
