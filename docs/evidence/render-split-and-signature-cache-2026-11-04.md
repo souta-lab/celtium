@@ -94,3 +94,32 @@ monotonicity of the version.
 - `scripts/cpu-contract/transformer-route-verify.sh` — called=241 failed=0, classes 87/0, colour 32/32,
   texcoord 64/64, query 8/8.
 - Legs: `r58a-split` PASSED (measurement), `r58b-cache` PASSED (the change).
+
+## 6. The paired KPI is valid for the first time since round 51 (leg set `r58kpi`)
+
+Round 57's KPI was `NO_SPEED_VERDICT` because it started with the Gradle/Kotlin daemons still busy
+(`externalCpuCores=0.649` against a 0.5 limit). This one was started after `./gradlew --stop` and a
+settled load average, and the guard passed:
+
+`initialBusyCores=0.042`, `initialLoadAverage=0.165`, `externalCpuCores=0.079` (limit 0.5).
+
+| rep | Celtium p50 | Celeritas p50 | ratio |
+|---|---|---|---|
+| 1 | 2.642 | 2.325 | 1.136 |
+| 2 | 2.843 | 2.344 | 1.213 |
+| 3 | 2.761 | 2.349 | 1.175 |
+| **median** | 2.761 | 2.344 | **1.175** |
+
+`verdict=SLOWER`, `goalCondition=NOT_MET`, p50/p95/p99 median ratios **1.175 / 1.252 / 1.267**.
+Renderer `de8ed2e7…` (this round's build), fixture `0e90c988…`, reference Celeritas `567dcf8a…`,
+3 pairs × 240 s, warm window ticks 400–600, AMD RX 6400.
+
+**This is the number the completion condition needs, and it says the FPS goal is not met.** It is also
+the first valid paired verdict since round 51 (1.215), so the honest reading is that the gap is real and
+roughly 0.42 ms of frame interval, not an artefact of the measurement.
+
+The first attempt at this KPI was `UNCALIBRATED_PRESENTED_IMAGE` because `CELTIUM_LEG_SEED_OPTIONS` was
+not exported to the KPI process: the legs then ran with the instance's own `options.txt` (a different
+GUI scale) and the scene key did not match. The KPI must be started with
+`CELTIUM_LEG_SEED_OPTIONS=$PWD/.celtium-work/options/guiScale3.txt` in its environment, exactly like a
+single leg.

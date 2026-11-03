@@ -36,11 +36,11 @@
      `celtium-world-accept`（188 mods・`qmagnet`）3対で **Celtium が 1.18–1.29×遅い**（p50 median **1.215**、
      `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-round51-2026-11-04.md)）。frameBudget は
      `gpuShare=0.01`＝CPU律速。**差は 0.52 ms**（Celtium 2.946 / Celeritas 2.427）。
-     **round 57 の再測は外部負荷で `NO_SPEED_VERDICT`**（median 1.166、[証拠](evidence/layout-fact-fast-skip-2026-11-04.md)）。
-     **Celtium の warm p50 は round 51 から 2.946 で不変**＝受理CPU −0.28 ms はフレームに現れない。
+     **round 58 の paired 再測は有効**（median **1.175**、`SLOWER`、負荷 0.079/0.5、[証拠](evidence/render-split-and-signature-cache-2026-11-04.md)）。
+     **warm p50 は round 51 の 2.946 から動かず**＝受理CPU −0.28 ms はフレームに現れない。
      **出荷構成の warm 窓: frame 2.38 = render 1.61 + fmlTick 0.62 + display 0.10 + tick 0.06**（tickMean は tick が
      走ったフレーム数で割る）＝**render が 68%**。受理は **0.37 wall / 0.25 CPU ms**＝CPU 律速、全部消しても 0.31 ms。
-     **round 56 の −0.28 ms は validation ON の leg の値**（出荷構成では ~0.1 ms＝雑音以下）。
+     **round 56 の −0.28 ms は validation ON の leg の値**（出荷構成では ~0.1 ms）。
      **round 58 実測**（[証拠](evidence/render-split-and-signature-cache-2026-11-04.md)）: frame 1.2 = world 0.8 +
      gui 0.4、`flush` 0.4 = `wrecLoop` 0.2（`grpDraw` 0.1）+ 窓の固定費 ~0.2 が8本に分散。`vkCmdDrawIndexed` **0.68 µs**、
      pipeline bind 4,117/727,499＝dedupe は効く。**単一項目は0.2 ms以下**
