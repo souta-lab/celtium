@@ -594,6 +594,39 @@ b.frameBufferOpen = false;
     private long syncScanRuns;
     private long syncScanSkips;
 
+    /**
+     * Names the attach-side hand-back skipped because they stand for an image this pass does not attach.
+     * <p>
+     * The narrowing's own measurement: the walk is proportional to the published-name count and runs once per
+     * off-target window, so the count of names it no longer visits is the size of the change.
+     */
+    private long attachNarrowedSkips;
+
+    /** {@return the attach-side hand-back's skipped names}, for the window split's line. */
+    long celtium$attachNarrowedSkips() {
+        return this.attachNarrowedSkips;
+    }
+
+    /**
+     * Whether the published-name walk has to visit one name.
+     * <p>
+     * The sampling side always does: it is the direction that has to cover every name a draw in the pass might sample,
+     * and that set is not known at the walk. The attach side only has to visit the names whose image the pass is about
+     * to attach - the hand-back exists to satisfy {@code VUID-vkCmdBeginRenderPass-initialLayout-00900} for that one
+     * image - so a name over another image is skipped. {@code attachImage == 0} means the caller did not name an
+     * image, and the walk keeps its old, unconditional behaviour.
+     * <p>
+     * Static and package-private so the rule is testable without a device: the walk itself needs a GPU, but "which
+     * names may be skipped" is arithmetic, and a green test here is not evidence that a transition happened.
+     *
+     * @param general     {@code true} for the attach-side hand-back
+     * @param attachImage the image the pass attaches, or 0 when the caller did not narrow
+     * @param publishedImage the image the published name stands for, 0 when it has none
+     */
+    static boolean celtium$attachHandBackNeeded(boolean general, long attachImage, long publishedImage) {
+        return !general || attachImage == 0L || publishedImage == attachImage;
+    }
+
     /** {@return the stale-name scan's runs and memo hits, as {@code runs/skips}}. */
     String celtium$syncScanSummary() {
         return this.syncScanRuns + "/" + this.syncScanSkips;
@@ -627,6 +660,25 @@ b.frameBufferOpen = false;
     }
 
     void celtium$transitionPublishedFrameTextures(boolean general) {
+        celtium$transitionPublishedFrameTextures(general, 0L);
+    }
+
+    /**
+     * The same walk, narrowed on the attach side to the names that stand for the image the pass is about to attach.
+     * <p>
+     * The hand-back exists for one reason: the pass declares {@code GENERAL} for attachment 0, so every published name
+     * whose image that pass attaches has to be moved back before {@code vkCmdBeginRenderPass}
+     * ({@code VUID-vkCmdBeginRenderPass-initialLayout-00900}). A name published over a <em>different</em> image is not
+     * attached by this pass and is not moved by it, so handing it back is a transition nothing asked for - and the walk
+     * that records it runs once per off-target window, over every published name (38 at the end of the measured run).
+     * <p>
+     * The sampling side ({@code general == false}) is unchanged: it is the direction that has to cover every name a
+     * draw in the pass might sample, and that set is not known here.
+     *
+     * @param general     {@code true} for the attach-side hand-back, {@code false} for the sampling-side transition
+     * @param attachImage the image the pass is about to attach, or 0 to hand back every published name as before
+     */
+    void celtium$transitionPublishedFrameTextures(boolean general, long attachImage) {
         if (b.publishedTextures.isEmptyPublished() || b.commandBuffer == null) {
             return;
         }
@@ -651,6 +703,14 @@ b.frameBufferOpen = false;
             long publishedImageHandleValue = this.cachedImages[cachedIndex];
             long publishedImageIdentity = this.cachedPairIdentities[cachedIndex];
             boolean pairImageName = publishedImageIdentity != Long.MIN_VALUE;
+            if (!celtium$attachHandBackNeeded(general, attachImage, publishedImageHandleValue)) {
+                // The hand-back is the attach's own precondition: only the names that stand for the image this pass
+                // attaches have to be in GENERAL for it. A name over another image is not attached here and is not
+                // moved here, so the transition would be one nothing asked for. Counted, so "the walk was narrowed"
+                // is a measurement rather than a reading of the code.
+                this.attachNarrowedSkips++;
+                continue;
+            }
             // The sampling side must not move the image this pass is about to attach: the pass declares GENERAL for
             // attachment 0, and the transition to SHADER_READ_ONLY_OPTIMAL right before vkCmdBeginRenderPass is
             // VUID-vkCmdBeginRenderPass-initialLayout-00900. The attach-side hand-back (the `true` direction) already

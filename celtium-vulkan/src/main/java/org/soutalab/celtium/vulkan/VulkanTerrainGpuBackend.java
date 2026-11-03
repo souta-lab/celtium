@@ -7706,6 +7706,29 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /**
+     * Prints the window split from the frame boundary, every {@link #WINDOW_SPLIT_REPORT_FRAMES} frames.
+     * <p>
+     * The world teardown print and the shutdown hook both failed to deliver the world's line on leg {@code r55a-split}:
+     * the only line in the log was the menu phase's ({@code windows=361}), so the per-window split of the phase that
+     * actually costs 0.4 ms a frame was unreadable in the leg that asked for it. The frame boundary is a point the log
+     * always holds, and the counters are cumulative, so a periodic print is a running average rather than a window -
+     * which is what the per-window numbers are for.
+     */
+    private void celtium$reportWindowSplitIfDue() {
+        if (!WINDOW_SPLIT) {
+            return;
+        }
+        if (++this.windowSplitReportFrames % WINDOW_SPLIT_REPORT_FRAMES != 0L) {
+            return;
+        }
+        celtium$printWindowSplit();
+    }
+
+    /** How often the window split is printed from the frame boundary; see {@link #celtium$reportWindowSplitIfDue()}. */
+    private static final long WINDOW_SPLIT_REPORT_FRAMES = 600L;
+    private long windowSplitReportFrames;
+
+    /**
      * {@return the {@code CELTIUM_WINDOW_SPLIT} line, or {@code null} when the instrument is off or no window ran}.
      * <p>
      * Split out of the printer because the world's line was missing from legs that ended by process exit rather than
@@ -7736,10 +7759,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " acquire=" + (this.wsAcquireNanos / windows / 1000L)
                 + " release=" + (this.wsReleaseNanos / windows / 1000L)
                 + " syncScan=" + (this.postChainBridge == null ? "none" : this.postChainBridge.celtium$syncScanSummary())
+                + " attachNarrowed=" + (this.postChainBridge == null ? 0L
+                        : this.postChainBridge.celtium$attachNarrowedSkips())
                 + " (us per window; offTarget is the off-target routing before the publish, publish is inside it;"
                 + " off[...] splits offTarget into ensureChainPair, the stale-name scan, the published-name"
                 + " transition walk, the pair clear and the framebuffer/extent resolution;"
-                + " syncScan is the stale-name scan's runs/memo hits)";
+                + " syncScan is the stale-name scan's runs/memo hits;"
+                + " attachNarrowed is the names the attach-side hand-back skipped because this pass does not"
+                + " attach their image)";
     }
 
     /**
@@ -10632,6 +10659,7 @@ this.frameBufferOpen = false;
                 this.frameHeadNanos, this.frameTailNanos, this.windowGpuCount, this.windowGpuMainNanos,
                 this.windowGpuOffNanos, this.windowGpuMaxNanos, this.gpuMarkTimeline);
         celtium$reportFlushReasons(false);
+        celtium$reportWindowSplitIfDue();
         DrawCounters.reportIfDue(this.frameId);
         this.frameCoordinator.celtium$finishFrameBuffer(true);
     }
@@ -12686,7 +12714,10 @@ this.frameBufferOpen = false;
                     // moved back first. The two VUIDs are one lifecycle: sampled -> read-only, attached -> general.
                     FramePassTimings.begin("winTransition");
                     try {
-                        this.postChainBridge.celtium$transitionPublishedFrameTextures(true);
+                        // Narrowed to the image this pass is about to attach: the hand-back is that attach's own
+                        // precondition, and a name published over another image is neither attached nor moved here.
+                        this.postChainBridge.celtium$transitionPublishedFrameTextures(true,
+                                offTarget.chainPairColorImage(chainIdentityValue));
                     } finally {
                         FramePassTimings.end("winTransition");
                     }

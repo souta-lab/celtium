@@ -45,16 +45,16 @@
      **warm p50 2.85→11.47 ms**、窓 23.5→20.8 の代わりに **`grpDraw` 0.9→9.6 µs/group**。理由未解明、再開しない。
      **font runの行列bakeも棄却**（[証拠](evidence/font-run-bake-2026-11-04.md)）: 94 run/フレームのうち**8しか畳めない**
      （offer 238.3→230.1、group 136.5→133.5）。残り86は**intervening flush**＝順序規則。既定OFF。
-     **受理経路は実配布profileで初計測**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: 52.7 offer/フレームで
-     **~0.27 ms（10%）**。同legの**失敗upload 28,272**は「読む物が無い」deferralへ。**`supply`の`bytes=0`は計器の欠陥**（`fullUploadBytes`が未加算）:
-     実uploadは113回・3.85 ms/回、中身は内容hashのbyte単位ループ（[証拠](evidence/mirror-upload-census-2026-11-03.md)）。**registryは462–569 lookup/フレーム・ミス11.6%**（memo 256、同一batchの同じ名前3回の内2回を削除、
-     [証拠](evidence/registry-memo-census-2026-11-03.md)）**窓flushが最大**（643 µs/フレーム）。
+     **受理経路**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: 失敗upload 28,272はdeferralへ、`supply`の`bytes=0`は計器の欠陥。
+     実uploadは113回・3.85 ms/回＝内容hashのbyte単位ループ（[証拠](evidence/mirror-upload-census-2026-11-03.md)）。**窓flushが最大**（643 µs/フレーム）。
      **round 42–46 の内訳は検証レイヤを測っていた**（[証拠](evidence/frame-split-conditions-2026-11-04.md)）:
      検証OFF は frame 1.4、`vkCmdDrawIndexed` は 5.0→**0.9 µs**。
      **出荷構成の世界scene実測**（[証拠](evidence/world-frame-accounting-2026-11-04.md)）: 219 offer・113.6 group・
      22.1 flush・23.1 window/フレーム、受理**3.49 µs/offer＝0.77 ms**、group draw 0.24、window 0.30、present 0.20＝
      **Celtium自身1.36 ms**。**単一項目は0.53 ms以下で、1つ消しても0.6 ms差に届かない**＝micro-optの床。
-     **受理の0.77 msはflushを含む**（round 54 `accept[flushMs]`）＝受理自身~0.4 ms。
+     **受理は0.15 ms/フレーム**（round 55: decide 33+preflight 544+flush 189=766 ms/run、`parts[registry]` 834 ns/offer・memo 96%）。
+     **窓の94%は`bindFramebuffer`**（183,841 flush 中 173,470＝33/フレーム、index上限は2/フレーム、
+     [証拠](evidence/window-source-bind-2026-11-04.md)）。
      JFRは`CELTIUM_LEG_JFR`（attach）。
      **JFRの「フォント経路8.9%」は取り下げ**（[証拠](evidence/font-timing-brackets-2026-11-03.md)）: glyph 2,456個/run、
      captureの時計bracketは既定OFF。**warm windowはflagが要る**（`warmFromTick=400 warmToTick=600
