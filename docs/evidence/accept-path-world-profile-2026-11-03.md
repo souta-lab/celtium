@@ -80,7 +80,7 @@ Same profile, same flags, same 240 s, only the JAR differs.
 | `presentedNonBackgroundFraction` | 0.990197 | 0.989702 |
 | `presentedVerticalBands` | 720 | 720 |
 | `presentedImageVerdict` | PASSED | PASSED |
-| validation | `passes=445 errors=0`, 0 VUID | `passes=118408 errors=0`, 0 VUID |
+| validation | `passes=95867 errors=0`, 0 VUID | `passes=118408 errors=0`, 0 VUID |
 | refusals | 0 | 0 |
 
 7.8 deferrals a frame against the 8.1 failures a frame the old JAR raised: the same events, without the exception.
