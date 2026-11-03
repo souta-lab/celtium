@@ -6564,6 +6564,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (identity == Long.MIN_VALUE) {
             return identity;
         }
+        return celtium$validateColorTextureIdentity(glTextureName, identity);
+    }
+
+    /**
+     * The size check half of {@link #celtium$framebufferIdentityForColorTexture}, for a caller that already resolved
+     * the identity.
+     * <p>
+     * The window head knows the identity - it is the target the pass is about to draw into - and it has already read
+     * that identity's recorded attachment to size the pass. Asking the reverse map for the identity it just used, and
+     * then the forward map for the attachment it already holds, was two lookups per off-target window (13 a frame on
+     * the shipped profile) for an answer the caller had. The check itself stays: it is what stops a deleted
+     * framebuffer's colour name from being taken for the next texture that reuses the name.
+     */
+    private long celtium$validateColorTextureIdentity(int glTextureName, long identity) {
         // The association is by name, and a name outlives its texture: a mod's framebuffer colour texture deleted
         // through raw GL leaves the record, and the name's next owner - ATM3's 8192x4096 block atlas - was then taken
         // for that framebuffer's image, its mirror superseded by the framebuffer's and the terrain drawn black. A name
@@ -6623,7 +6637,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (identity == Long.MIN_VALUE) {
             return false;
         }
-        long[] reported = framebufferColorTexture(identity);
+        return celtium$publishFramebufferColorTexture(glTextureName, identity, framebufferColorTexture(identity));
+    }
+
+    /**
+     * The same publication for a caller that already resolved the identity and its recorded attachment.
+     * <p>
+     * The window head is that caller: it read the identity from the target registry and the attachment to size the
+     * pass, so the reverse lookup and the forward lookup the one-argument form does were both re-asking questions it
+     * had answered. The size check still runs ({@link #celtium$validateColorTextureIdentity}), because that is the
+     * rule that keeps a reused GL name from being taken for a deleted framebuffer's attachment.
+     */
+    private boolean celtium$publishFramebufferColorTexture(int glTextureName, long knownIdentity, long[] knownReported) {
+        long identity = celtium$validateColorTextureIdentity(glTextureName, knownIdentity);
+        if (identity == Long.MIN_VALUE) {
+            return false;
+        }
+        long[] reported = knownReported != null ? knownReported : framebufferColorTexture(identity);
         int width = reported == null || reported[1] <= 0 ? this.targetWidth : (int) reported[1];
         int height = reported == null || reported[2] <= 0 ? this.targetHeight : (int) reported[2];
         boolean isMain = identity == this.targetRegistry.mainIdentity() || identity == this.gameFramebufferIdentity
@@ -12117,7 +12147,8 @@ this.frameBufferOpen = false;
                         // textures over one image made framebufferRender's quad sample the main framebuffer's
                         // white-cleared picture instead of the splash's. Main goes to the frame image, identity 0 to
                         // the default pair, every other non-main identity to the chain pair.
-                        celtium$publishFramebufferColorTexture((int) reported[0]);
+                        celtium$publishFramebufferColorTexture((int) reported[0],
+                                this.targetRegistry.currentIdentity(), reported);
                     }
                 } else {
                     offTarget.ensureOffTarget(this.targetWidth, this.targetHeight);
@@ -13467,8 +13498,28 @@ this.frameBufferOpen = false;
         return true;
     }
 
-    /** Prints the flush-reason census with the verification summary, which is known to reach the log. */
+    /**
+     * Prints the flush-reason census with the verification summary, which is known to reach the log.
+     * <p>
+     * The two halves have different prices and are therefore gated differently. {@code CELTIUM_FLUSH_SOURCES} is the
+     * stack-walk census ({@code -Dceltium.vulkan.flushReasonCensus}), which pays a {@code getStackTrace} per flush and
+     * is why it is opt-in. {@code CELTIUM_FLUSH_SITES} is the twelve-slot counter {@link #celtium$noteFlushSite} keeps
+     * on every call site, which costs one array increment and is always on - so it is printed whenever it holds
+     * anything, and a leg no longer needs the expensive census to say which sites opened its windows. Measured on leg
+     * {@code r41a-census}: the stack-walk census named the same sites the counters already had, at 13 post-chain
+     * windows a frame, so the free half is the half a round should read first.
+     */
     private void celtium$reportFlushReasonsForSummary() {
+        StringBuilder sites = new StringBuilder();
+        for (int i = 0; i < this.flushSiteCounts.length; i++) {
+            if (this.flushSiteCounts[i] > 0) {
+                sites.append(' ').append(i < FLUSH_SITE_NAMES.length ? FLUSH_SITE_NAMES[i] : String.valueOf(i))
+                        .append('=').append(this.flushSiteCounts[i]);
+            }
+        }
+        if (sites.length() > 0) {
+            System.out.println("[Celtium] CELTIUM_FLUSH_SITES" + sites);
+        }
         if (!FLUSH_REASON_CENSUS || this.flushReasons.isEmpty()) {
             return;
         }
@@ -13479,14 +13530,6 @@ this.frameBufferOpen = false;
         for (int i = 0; i < rows.size() && i < 12; i++) {
             line.append(' ').append(rows.get(i).getKey()).append('=').append(rows.get(i).getValue());
         }
-        StringBuilder sites = new StringBuilder();
-        for (int i = 0; i < this.flushSiteCounts.length; i++) {
-            if (this.flushSiteCounts[i] > 0) {
-                sites.append(' ').append(i < FLUSH_SITE_NAMES.length ? FLUSH_SITE_NAMES[i] : String.valueOf(i))
-                        .append('=').append(this.flushSiteCounts[i]);
-            }
-        }
-        System.out.println("[Celtium] CELTIUM_FLUSH_SITES" + sites);
         System.out.println("[Celtium] CELTIUM_FLUSH_SOURCES total=" + this.flushReasonCount + " [" + line + "]");
         record("flush sources total=" + this.flushReasonCount + " [" + line + "]");
     }
