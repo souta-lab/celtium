@@ -333,6 +333,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int skyCensusLastCount = -1;
     private int skyCensusLines;
     private String skyCensusFirst = "none";
+    private String skyCensusLastState = "none";
 
     private boolean submissionPending;
     VulkanCommandBufferState commandState;
@@ -6798,12 +6799,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (SKY_CENSUS) {
             // Printed only when the count moved: a frame that offers the same sky-sized batches as the one before it
             // says nothing new, and the transition is the whole question (drawn every frame, or only sometimes).
-            if (this.skyCensusBatches != this.skyCensusLastCount && this.skyCensusLines < SKY_CENSUS_LIMIT) {
+            // Printed when the count moved *or* the state the batch was offered under moved: the count alone said the
+            // dome is offered every frame, so the frame-to-frame difference has to be in the fog or the colour.
+            if ((this.skyCensusBatches != this.skyCensusLastCount
+                    || !this.skyCensusFirst.equals(this.skyCensusLastState))
+                    && this.skyCensusLines < SKY_CENSUS_LIMIT) {
                 this.skyCensusLines++;
                 System.out.println("[Celtium] CELTIUM_SKY_FRAME frame=" + this.frameId
                         + " skySizedPositionBatches=" + this.skyCensusBatches
                         + " first=[" + this.skyCensusFirst + "]");
                 this.skyCensusLastCount = this.skyCensusBatches;
+                this.skyCensusLastState = this.skyCensusFirst;
             }
             this.skyCensusBatches = 0;
             this.skyCensusFirst = "none";
