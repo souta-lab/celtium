@@ -147,4 +147,40 @@ class ForeignLayoutLedgerTest {
         VulkanGlTexture.abandonLayoutRecording(commandBuffer, "end of test");
     }
 
+    /**
+     * The fast path the published-name walk takes: the shared fact answers "already in the wanted layout" only while
+     * no open recording holds a pending transition for the image.
+     * <p>
+     * The failure this catches is the one that would make the walk cheap by lying: trusting {@code confirmed} while a
+     * recording has asked for another layout. The submission carrying that request wins, so the image would be in a
+     * layout the descriptor does not declare - the VUID-vkCmdDraw-None-09600 class of fault.
+     */
+    @Test
+    void theFastPathTrustsTheFactOnlyWhileNoRecordingHasAPendingTransition() {
+        long commandBuffer = 0x6000L;
+        long image = 0xABCD0005L;
+        VulkanGlTexture.ForeignLayoutState state = VulkanGlTexture.declareForeignImage(image,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        assertTrue(VulkanGlTexture.celtium$layoutSettled(state, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+                "nothing has asked for another layout, so the fact is the whole truth");
+        assertTrue(!VulkanGlTexture.celtium$layoutSettled(state, VK_IMAGE_LAYOUT_GENERAL),
+                "a different wanted layout is never settled");
+
+        VulkanGlTexture.beginLayoutRecording(commandBuffer, "test frame");
+        record(commandBuffer, image, VK_IMAGE_LAYOUT_GENERAL);
+        assertTrue(!VulkanGlTexture.celtium$layoutSettled(state, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+                "a pending hand-back means the ledger still has to be read, even though the fact says sampled");
+        VulkanGlTexture.commitLayoutRecording(commandBuffer);
+        assertTrue(VulkanGlTexture.celtium$layoutSettled(state, VK_IMAGE_LAYOUT_GENERAL),
+                "the accepted hand-back is fact, so the fast path answers again");
+
+        // An abandoned recording drops its request, so the fact is the truth again.
+        VulkanGlTexture.beginLayoutRecording(commandBuffer, "test frame 2");
+        record(commandBuffer, image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        assertTrue(!VulkanGlTexture.celtium$layoutSettled(state, VK_IMAGE_LAYOUT_GENERAL));
+        VulkanGlTexture.abandonLayoutRecording(commandBuffer, "end of test");
+        assertTrue(VulkanGlTexture.celtium$layoutSettled(state, VK_IMAGE_LAYOUT_GENERAL),
+                "an abandoned recording leaves no pending transition behind");
+    }
+
 }

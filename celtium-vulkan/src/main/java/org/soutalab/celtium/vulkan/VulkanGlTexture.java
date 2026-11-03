@@ -467,6 +467,14 @@ public final class VulkanGlTexture {
     /** Layout handshakes recorded and skipped for shared images, so a run says whether the caller's calls arrived. */
     private static long foreignLayoutTransitions;
     private static long foreignLayoutSkips;
+    /**
+     * Skips answered from the shared fact alone, without reading the ledger.
+     * <p>
+     * Counted apart from {@link #foreignLayoutSkips} because the two say different things: a ledger skip means the
+     * image was already in the layout in this recording, a fast skip means nothing had asked for another layout at
+     * all. The published-name walk is the caller that reaches this hundreds of times a frame.
+     */
+    private static long foreignLayoutFastSkips;
     /** Recordings whose submission was accepted, and recordings that were dropped with their transitions rolled back. */
     private static long foreignLayoutCommits;
     private static long foreignLayoutAbandons;
@@ -504,6 +512,17 @@ public final class VulkanGlTexture {
         /** Wrappers naming this image; the fact is dropped when the last of them is deleted. */
         int wrappers;
         int confirmed;
+        /**
+         * How many open recordings hold a pending transition for this image.
+         * <p>
+         * This is what makes {@link #confirmed} the whole truth: while it is zero, no recording has asked for a layout
+         * the image is not in yet, so a caller that wants {@code confirmed} can answer without reading the ledger. It
+         * is maintained under the class monitor by the three methods that create and retire pending entries
+         * ({@link #noteForeignTransition}, {@link #commitLayoutRecording}, {@link #abandonLayoutRecording}) and read
+         * without it by {@link #celtium$layoutSettled}, which is why it is volatile: the render thread is the only
+         * writer, and a reader that saw a stale zero would skip a barrier the image still needs.
+         */
+        volatile int openPending;
 
         ForeignLayoutState(long image, int confirmed) {
             this.image = image;
@@ -552,6 +571,7 @@ public final class VulkanGlTexture {
     public static String foreignLayoutSummary() {
         synchronized (VulkanGlTexture.class) {
             return "transitions=" + foreignLayoutTransitions + " skips=" + foreignLayoutSkips
+                    + " fastSkips=" + foreignLayoutFastSkips
                     + " commits=" + foreignLayoutCommits + " abandons=" + foreignLayoutAbandons
                     + " dropped=" + foreignLayoutDroppedTransitions + " open=" + RECORDINGS.size()
                     + " unbound=" + foreignLayoutUnbound + " declaredMismatches=" + foreignLayoutDeclaredMismatches;
@@ -595,6 +615,15 @@ public final class VulkanGlTexture {
                 // transitions are dropped and the layouts stay where the last accepted submission left them.
                 foreignLayoutDroppedTransitions += previous.pending.size();
                 foreignLayoutAbandons++;
+                // The dropped barriers leave no pending transition behind, so the images they named may trust the
+                // shared fact again (see ForeignLayoutState.openPending).
+                for (it.unimi.dsi.fastutil.longs.Long2ObjectMap.Entry<int[]> entry
+                        : previous.pending.long2ObjectEntrySet()) {
+                    ForeignLayoutState state = FOREIGN_STATES.get(entry.getLongKey());
+                    if (state != null && state.openPending > 0) {
+                        state.openPending--;
+                    }
+                }
                 System.out.println("[Celtium] CELTIUM_SHARED_LAYOUT_ABANDON cmd=0x" + Long.toHexString(commandBuffer)
                         + " token=" + previous.id + " dropped=" + previous.pending.size()
                         + " reason=[a new recording began before this one was confirmed: " + label + "]"
@@ -638,6 +667,9 @@ public final class VulkanGlTexture {
                     continue;
                 }
                 state.confirmed = entry.getValue()[1];
+                if (state.openPending > 0) {
+                    state.openPending--;
+                }
                 applied++;
             }
             foreignLayoutCommits++;
@@ -674,6 +706,15 @@ public final class VulkanGlTexture {
             foreignLayoutAbandons++;
             if (!recording.pending.isEmpty()) {
                 foreignLayoutDroppedTransitions += recording.pending.size();
+                // The dropped barriers never execute, so the images they named have no pending transition left: the
+                // fast path in transitionForeignLayout may trust `confirmed` for them again.
+                for (it.unimi.dsi.fastutil.longs.Long2ObjectMap.Entry<int[]> entry
+                        : recording.pending.long2ObjectEntrySet()) {
+                    ForeignLayoutState state = FOREIGN_STATES.get(entry.getLongKey());
+                    if (state != null && state.openPending > 0) {
+                        state.openPending--;
+                    }
+                }
             }
             System.out.println("[Celtium] CELTIUM_SHARED_LAYOUT_ABANDON cmd=0x" + Long.toHexString(address)
                     + " token=" + recording.id + " dropped=" + recording.pending.size()
@@ -695,6 +736,15 @@ public final class VulkanGlTexture {
             ForeignLayoutState state = FOREIGN_STATES.get(key);
             if (state == null) {
                 state = new ForeignLayoutState(image, declaredLayout);
+                // A handle can be reused once the image it named was destroyed, and a recording opened before this
+                // declaration may still hold a pending transition for that handle. Counting those here keeps
+                // openPending exact, so the fast path in transitionForeignLayout cannot skip a barrier the ledger
+                // would record. Only the first declaration of an image pays for the scan.
+                for (LayoutRecording recording : RECORDINGS.values()) {
+                    if (recording.pending.containsKey(key)) {
+                        state.openPending++;
+                    }
+                }
                 FOREIGN_STATES.put(key, state);
             } else if (state.confirmed != declaredLayout) {
                 foreignLayoutDeclaredMismatches++;
@@ -752,6 +802,21 @@ public final class VulkanGlTexture {
     }
 
     /**
+     * Whether the shared fact alone answers "the image is already in {@code wanted}".
+     * <p>
+     * True only when the accepted layout is {@code wanted} <em>and</em> no open recording holds a pending transition
+     * for the image: a pending entry means some command buffer has asked for a different layout, and that request wins
+     * when its submission is accepted, so the ledger still has to be read. The two facts are read without the class
+     * monitor - {@code confirmed} is written under it and {@code openPending} is volatile - which is what makes this
+     * the cheap form of {@link #foreignTransitionFrom} for a caller that only needs the skip decision.
+     * <p>
+     * Device-free and package-private so the rule can be tested without a GPU, like the rest of the ledger.
+     */
+    static boolean celtium$layoutSettled(ForeignLayoutState state, int wanted) {
+        return state != null && state.openPending == 0 && state.confirmed == wanted;
+    }
+
+    /**
      * Decides the {@code oldLayout} of a barrier that must leave a foreign image in {@code wanted}.
      * <p>
      * Pure: it changes nothing, so a barrier whose recording then fails leaves the ledger exactly as it was and the
@@ -805,15 +870,18 @@ public final class VulkanGlTexture {
                             + " commitLayoutRecording around the submission to bind it) count=" + foreignLayoutUnbound);
                 }
             }
-            recording.pending.put(key, new int[] {from, to});
+            int[] previous = recording.pending.put(key, new int[] {from, to});
+            ForeignLayoutState state = FOREIGN_STATES.get(key);
+            if (previous == null && state != null) {
+                // A second transition for the same image in one recording replaces the entry rather than adding one:
+                // the pair of barriers executes in order, so only the last one decides the layout the recording leaves.
+                state.openPending++;
+            }
             if (unboundOut != null) {
                 unboundOut[0] = recording.unbound;
             }
-            if (recording.unbound) {
-                ForeignLayoutState state = FOREIGN_STATES.get(key);
-                if (state != null) {
-                    state.confirmed = to;
-                }
+            if (recording.unbound && state != null) {
+                state.confirmed = to;
             }
         }
     }
@@ -1146,6 +1214,14 @@ public final class VulkanGlTexture {
     private void transitionForeignLayout(VkCommandBuffer commandBuffer, int newLayout) {
         if (commandBuffer == null || commandBuffer.address() == 0L) {
             throw new IllegalArgumentException("A shared image layout transition needs a command buffer");
+        }
+        if (celtium$layoutSettled(this.foreignState, newLayout)) {
+            // The accepted layout is the wanted one and no open recording has asked for another, so the ledger's
+            // answer is "skip" without the two map lookups and the monitor. This is the path the published-name walk
+            // takes 500-odd times a frame: every name it visits is already in the layout the walk wants, and the
+            // walk's cost was the ledger read, not the decision.
+            foreignLayoutFastSkips++;
+            return;
         }
         final long address = commandBuffer.address();
         boolean[] unbound = new boolean[1];
