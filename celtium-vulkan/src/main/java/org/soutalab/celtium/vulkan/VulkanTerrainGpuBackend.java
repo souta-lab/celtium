@@ -9684,8 +9684,67 @@ this.frameBufferOpen = false;
     static final int SIGNATURE_CULL_FACE = 19;
     static final int SIGNATURE_FRONT_FACE = 20;
 
+    /**
+     * The last signature captured, and the three versions that decide whether it can be reused.
+     * <p>
+     * The capture reads twenty-one inputs, two of them through a hash map, and it runs on every offer (~220 a frame).
+     * Every one of those inputs is owned by a version that moves when it moves: {@link VulkanGlState#stateVersion()}
+     * folds the wrapper's own fields and the raster mirror, {@link NativeTextureEnvironment#version()} covers the two
+     * environment parameters, and the window-target bit is the identity the registry already tracks. So "all three
+     * versions are the ones the cached signature was taken under" is exactly "the signature is the same", and the
+     * capture can be skipped rather than repeated.
+     * <p>
+     * The contract is the one {@code VulkanGlState.stateVersion} documents and {@code StateSignatureVersionContractTest}
+     * checks input by input: a setter that moved a signature input without moving its version would make this cache
+     * serve a stale signature, which is a wrong pipeline rather than a slow frame. That is why the test enumerates the
+     * inputs instead of trusting the comment.
+     * <p>
+     * The cached array is a copy, not the scratch: {@code celtium$stateSignature} is also called with the model
+     * replay's own arrays ({@code ModelReplay}), and a hit has to fill those too.
+     */
+    private final int[] celtium$signatureCache = new int[ModelReplayFastPath.SIGNATURE];
+    private long celtium$signatureCacheState = -1L;
+    private long celtium$signatureCacheEnvironment = -1L;
+    private int celtium$signatureCacheWindowTarget = -1;
+    private long celtium$signatureCacheHits;
+    private long celtium$signatureCacheMisses;
+
+    /** {@return the signature-cache hits and misses, for the verification summary}. */
+    String celtium$signatureCacheSummary() {
+        return this.celtium$signatureCacheHits + "/" + this.celtium$signatureCacheMisses;
+    }
+
+    /**
+     * Whether the cached signature was taken under exactly these three keys.
+     * <p>
+     * Extracted so the arithmetic can be exercised without a device: the capture itself needs the live state objects,
+     * but "which keys make a hit" is a comparison, and a green test here is not evidence that a capture was skipped.
+     * The initial cache is {@code (-1, -1, -1)}, which no live key can equal: both version counters start at zero and
+     * only increase, and the window-target bit is 0 or 1.
+     */
+    static boolean celtium$signatureCacheHit(long stateVersion, long environmentVersion, int windowTarget,
+            long cachedStateVersion, long cachedEnvironmentVersion, int cachedWindowTarget) {
+        return stateVersion == cachedStateVersion
+                && environmentVersion == cachedEnvironmentVersion
+                && windowTarget == cachedWindowTarget;
+    }
+
     /** Fills {@code out} with the raw inputs of the state capture: see {@link #celtium$stateFromSignature}. */
     void celtium$stateSignature(int[] out) {
+        long stateVersion = this.immediateState.stateVersion();
+        NativeTextureEnvironment currentEnvironment = NativeTextureEnvironment.current();
+        long environmentVersion = currentEnvironment.version();
+        int windowTarget = this.targetRegistry.currentIdentity() == 0L ? 1 : 0;
+        if (celtium$signatureCacheHit(stateVersion, environmentVersion, windowTarget,
+                this.celtium$signatureCacheState, this.celtium$signatureCacheEnvironment,
+                this.celtium$signatureCacheWindowTarget)) {
+            this.celtium$signatureCacheHits++;
+            if (out != this.celtium$signatureCache) {
+                System.arraycopy(this.celtium$signatureCache, 0, out, 0, ModelReplayFastPath.SIGNATURE);
+            }
+            return;
+        }
+        this.celtium$signatureCacheMisses++;
         boolean blend = this.immediateState.blendEnabled();
         out[SIGNATURE_BLEND] = blend ? 1 : 0;
         // The GL values, not the Vulkan ones: the mapping is pure, so comparing what the game asked for is as strong
@@ -9707,10 +9766,16 @@ this.frameBufferOpen = false;
         out[SIGNATURE_DEPTH_WRITE] = this.immediateState.depthMask() ? 1 : 0;
         out[SIGNATURE_DEPTH_FUNC] = this.immediateState.depthFunc();
         out[SIGNATURE_LIGHTING] = this.immediateState.lightingEnabled() ? 1 : 0;
-        NativeTextureEnvironment environment = NativeTextureEnvironment.current();
+        NativeTextureEnvironment environment = currentEnvironment;
         out[SIGNATURE_ENV_MODE] = environment.unitParameter(0, NativeTextureEnvironment.MODE);
         out[SIGNATURE_ENV_RGB] = environment.unitParameter(0, NativeTextureEnvironment.RGB);
-        out[SIGNATURE_WINDOW_TARGET] = this.targetRegistry.currentIdentity() == 0L ? 1 : 0;
+        out[SIGNATURE_WINDOW_TARGET] = windowTarget;
+        // The cache is filled from what was just written, not from the inputs again: a hit has to reproduce exactly the
+        // bytes this capture produced, and re-reading the inputs would be the capture it exists to avoid.
+        System.arraycopy(out, 0, this.celtium$signatureCache, 0, ModelReplayFastPath.SIGNATURE);
+        this.celtium$signatureCacheState = stateVersion;
+        this.celtium$signatureCacheEnvironment = environmentVersion;
+        this.celtium$signatureCacheWindowTarget = windowTarget;
     }
 
     /**

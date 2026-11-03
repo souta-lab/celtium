@@ -118,6 +118,10 @@ final class BackendDiagnostics {
                 + " stateSkipsDepthBias=" + b.immediateStatistics.stateSkipsDepthBias()
                 + " cullEnabledGroups=" + b.immediateStatistics.cullEnabledGroups()
                 + " cullDisabledGroups=" + b.immediateStatistics.cullDisabledGroups()
+                // The signature cache's hit rate: the capture it replaces is twenty-one inputs and two hash lookups on
+                // every offer, so "how often the versions answered for it" is the number that says whether the cache
+                // is doing anything on this scene. hits/misses, printed rather than inferred.
+                + " stateSignatureCache=" + b.celtium$signatureCacheSummary()
                 // BH-11 and BH-12's counters, at the same place as BH-08's. acceptance found
                 // immediateDepthBiasedGroups declared and incremented with zero print sites, so "the bias was
                 // applied" had no evidence in any artifact; the narrowed-line total had the same gap (only the

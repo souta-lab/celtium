@@ -186,8 +186,12 @@ public final class VulkanImmediatePipeline {
             vkCmdPushConstants(commandBuffer, this.pipelineLayout,
                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, clamped);
             this.pushCache.remember(commandBuffer.address(), this.pipelineLayout, clamped);
-        PacketCost.notePush(PacketCost.endPush(pushStart));
         }
+        // The bracket closes on both paths. It used to close inside the `if`, so a packet whose push the cache skipped
+        // left its start unanswered and the next packet's close attributed everything since to "push" - the same
+        // unbalanced-bracket defect the accept path's offMerge had, and the reason packetPushMicros read 0 while
+        // packetPushMillis was non-zero.
+        PacketCost.notePush(PacketCost.endPush(pushStart));
         // The mesh binds its own streams at their own offsets and draws: an owning mesh binds at 0, a frame-arena
         // borrow at its slice offset. Keeping the three calls in one place is what stops a variant from binding a
         // slice at 0 and drawing another group's vertices (OPT-05).
