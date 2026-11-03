@@ -30,6 +30,22 @@ class FrameBudgetTimingsTest {
     }
 
     @Test
+    void aRingIsReadThroughItsOwnCursor() {
+        // The present-interval ring advances with presentIntervals, not with the frame ring's `written`. Reading it
+        // through the frame cursor is not an error - it returns slots the other ring wrote, which are zero - and that
+        // is what printed intervalMs[0.0/0.0/0.0] for a run with 211 presents. This pins the cursor rule.
+        long[] ring = new long[8];
+        ring[0] = 5_000_000L;
+        ring[1] = 6_000_000L;
+        long[] correct = FrameBudgetTimings.window(ring, 2, 2);
+        assertEquals(5_000_000L, correct[0], "the present ring's own cursor reads the two samples it wrote");
+        assertEquals(6_000_000L, correct[1]);
+        long[] wrong = FrameBudgetTimings.window(ring, 2, 0);
+        assertEquals(0L, wrong[0], "the frame cursor reads slots 6 and 7, which the present ring never wrote");
+        assertEquals(0L, wrong[1]);
+    }
+
+    @Test
     void otherIsTheUnaccountedRemainder() {
         long[] sample = FrameBudgetTimings.split(16_000_000L, 1_000_000L, 4_000_000L, 300_000L, 200_000L, 0L,
                 100_000L, 9_000_000L);

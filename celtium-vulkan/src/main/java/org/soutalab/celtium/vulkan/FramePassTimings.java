@@ -92,7 +92,12 @@ public final class FramePassTimings {
             // The slow path's own section: the mirror supply and the pipeline/descriptor preparation, between the merge
             // decision and the group open. It sat inside `batch` and inside no named part of it, so the JFR profile's
             // 19.0% `submitGeometryBatch` had its other half (beside the window flush) unattributed.
-            "offPreflight"};
+            "offPreflight",
+            // The HUD's share of the two renderer paths, measured only while the `gui` bracket is open: `guiBatch` is
+            // the accept path (which contains `guiFlush`) and `guiFlush` is the window recording it triggers. The
+            // `gui` bracket is 0.4 ms of the frame, and without these two names "the HUD costs 0.4 ms" cannot be split
+            // into the game's own HUD work and ours - measured, ours is 0.1 of it.
+            "guiBatch", "guiFlush"};
 
     private static final int CAPACITY = 512;
 

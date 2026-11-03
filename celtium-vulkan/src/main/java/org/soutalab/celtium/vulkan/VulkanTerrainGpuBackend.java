@@ -7760,6 +7760,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // font capture's per-glyph brackets had (26 reads a glyph). With neither instrument on, the counters read 0,
         // which the reports already treat as a missing measurement.
         boolean timeBatch = BATCH_TIMINGS || org.soutalab.celtium.vulkan.FrameBudgetTimings.enabled();
+        // The HUD's own share of the accept path: the `gui` bracket is the whole overlay, and this says how much of it
+        // is this renderer's per-batch work rather than the game's. One static-field read when the HUD is not drawing.
+        boolean guiBatch = org.soutalab.celtium.vulkan.FramePassTimings.guiSectionActive();
+        if (guiBatch) org.soutalab.celtium.vulkan.FramePassTimings.begin("guiBatch");
         long submitStart = timeBatch ? System.nanoTime() : 0L;
         this.submitFlushesAtEntry = this.immediateStatistics.immediateGroupsFlushed();
         this.submitSuppliesAtEntry = this.lazyMirrorSupplies;
@@ -7774,6 +7778,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             return taken;
         } finally {
+            if (guiBatch) org.soutalab.celtium.vulkan.FramePassTimings.end("guiBatch");
             if (timeBatch) {
                 long submitNanos = System.nanoTime() - submitStart;
                 this.immediateSubmitNanos += submitNanos;
@@ -10553,8 +10558,10 @@ this.frameBufferOpen = false;
         this.immediateStatistics.noteActualFlushes();
         long flushStartedNanos = BATCH_TIMINGS ? System.nanoTime() : 0;
         long flushCpuStartedNanos = BATCH_TIMINGS ? threadCpuNanos() : -1L;
+        boolean guiFlush = FramePassTimings.guiSectionActive();
         try {
             FramePassTimings.begin("flush");
+            if (guiFlush) FramePassTimings.begin("guiFlush");
             try {
                 if (this.commandState != null && this.commandState.inRenderPass()) {
                     // An ordering flush: the batch that is about to be refused is drawn by GL, so what is already
@@ -10569,6 +10576,7 @@ this.frameBufferOpen = false;
                     celtium$applyPendingRawWrites();
                 }
             } finally {
+                if (guiFlush) FramePassTimings.end("guiFlush");
                 FramePassTimings.end("flush");
             }
             this.immediateStatistics.noteOrderPreservingFlushes();
@@ -13827,6 +13835,12 @@ this.frameBufferOpen = false;
      */
     public boolean printCounterSummaryNow(String trigger) {
         celtium$printVerificationSummary(trigger, false);
+        // The per-frame split's session summary, for the same reason the counter summary is printed here: world
+        // teardown is skipped by a fixture that exits with its world still loaded, and the teardowns that do run
+        // happen before the measured world has drawn a frame - measured on leg r50c, where both teardown summaries
+        // read frames=0 while the periodic lines in the same log reached frames=960. The fixture is the component
+        // that knows the run is ending while the log is alive, so the last summary is the one it asks for.
+        FrameBudgetTimings.printSummary();
         return true;
     }
 

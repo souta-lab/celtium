@@ -470,9 +470,11 @@ public final class GameLoopTiming {
 
     // Snapshots for summaryDelta: the readings the previous call ended at, so the next one reports the frames in
     // between rather than the run's average - which startup loading dominates and later measurements cannot use.
-    private static long deltaTickCount, deltaTickMillis, deltaLoopCount, deltaLoopMillis, deltaDisplayMillis,
-            deltaBlitMillis, deltaSyncMillis, deltaRenderMillis, deltaSchedMillis, deltaWrapperMillis,
-            deltaToastMillis, deltaFmlMillis;
+    // Nanoseconds, not milliseconds: the millisecond accumulators truncated each delta before it was divided, so a
+    // 1.9 ms tick and a 1.0 ms tick both printed as "tickMean=1" and the KPI's warm window could not be split at all.
+    private static long deltaTickCount, deltaTickNanos, deltaLoopCount, deltaLoopNanos, deltaDisplayNanos,
+            deltaBlitNanos, deltaSyncNanos, deltaRenderNanos, deltaSchedNanos, deltaWrapperNanos,
+            deltaToastNanos, deltaFmlNanos;
 
     /**
      * {@return the loop's shares for the frames since the previous call}, which is the steady state: the run-wide
@@ -482,42 +484,56 @@ public final class GameLoopTiming {
     public static synchronized String summaryDelta() {
         long tickCountNow = tickCount.get();
         long loopCountNow = loopCount.get();
-        long tickMillisNow = totalMillis();
-        long loopMillisNow = loopTotalMillis();
-        long displayNow = displayUpdateTotalMillis();
-        long blitNow = blitTotalMillis();
-        long syncNow = syncTotalMillis();
-        long renderNow = renderNanos.get() / 1_000_000L;
-        long schedNow = scheduledNanos.get() / 1_000_000L;
-        long wrapperNow = renderWrapperNanos.get() / 1_000_000L;
-        long toastNow = toastNanos.get() / 1_000_000L;
-        long fmlNow = fmlTickNanos.get() / 1_000_000L;
+        long tickNanosNow = tickNanos.get();
+        long loopNanosNow = loopNanos.get();
+        long displayNow = displayUpdateNanos.get();
+        long blitNow = blitNanos.get();
+        long syncNow = syncNanos.get();
+        long renderNow = renderNanos.get();
+        long schedNow = scheduledNanos.get();
+        long wrapperNow = renderWrapperNanos.get();
+        long toastNow = toastNanos.get();
+        long fmlNow = fmlTickNanos.get();
         long frames = loopCountNow - deltaLoopCount;
         long tickFrames = tickCountNow - deltaTickCount;
         String line = "frames=" + frames
-                + " loopMean=" + mean(loopMillisNow - deltaLoopMillis, frames)
-                + " tickMean=" + mean(tickMillisNow - deltaTickMillis, tickFrames)
-                + " displayMean=" + mean(displayNow - deltaDisplayMillis, frames)
-                + " blitMean=" + mean(blitNow - deltaBlitMillis, frames)
-                + " syncMean=" + mean(syncNow - deltaSyncMillis, frames)
-                + " renderMean=" + mean(renderNow - deltaRenderMillis, frames)
-                + " schedMean=" + mean(schedNow - deltaSchedMillis, frames)
-                + " wrapperMean=" + mean(wrapperNow - deltaWrapperMillis, frames)
-                + " toastMean=" + mean(toastNow - deltaToastMillis, frames)
-                + " fmlMean=" + mean(fmlNow - deltaFmlMillis, frames);
+                + " loopMean=" + meanMillis(loopNanosNow - deltaLoopNanos, frames)
+                + " tickMean=" + meanMillis(tickNanosNow - deltaTickNanos, tickFrames)
+                + " displayMean=" + meanMillis(displayNow - deltaDisplayNanos, frames)
+                + " blitMean=" + meanMillis(blitNow - deltaBlitNanos, frames)
+                + " syncMean=" + meanMillis(syncNow - deltaSyncNanos, frames)
+                + " renderMean=" + meanMillis(renderNow - deltaRenderNanos, frames)
+                + " schedMean=" + meanMillis(schedNow - deltaSchedNanos, frames)
+                + " wrapperMean=" + meanMillis(wrapperNow - deltaWrapperNanos, frames)
+                + " toastMean=" + meanMillis(toastNow - deltaToastNanos, frames)
+                + " fmlMean=" + meanMillis(fmlNow - deltaFmlNanos, frames);
         deltaTickCount = tickCountNow;
         deltaLoopCount = loopCountNow;
-        deltaTickMillis = tickMillisNow;
-        deltaLoopMillis = loopMillisNow;
-        deltaDisplayMillis = displayNow;
-        deltaBlitMillis = blitNow;
-        deltaSyncMillis = syncNow;
-        deltaRenderMillis = renderNow;
-        deltaSchedMillis = schedNow;
-        deltaWrapperMillis = wrapperNow;
-        deltaToastMillis = toastNow;
-        deltaFmlMillis = fmlNow;
+        deltaTickNanos = tickNanosNow;
+        deltaLoopNanos = loopNanosNow;
+        deltaDisplayNanos = displayNow;
+        deltaBlitNanos = blitNow;
+        deltaSyncNanos = syncNow;
+        deltaRenderNanos = renderNow;
+        deltaSchedNanos = schedNow;
+        deltaWrapperNanos = wrapperNow;
+        deltaToastNanos = toastNow;
+        deltaFmlNanos = fmlNow;
         return line;
+    }
+
+    /**
+     * {@return the mean of one delta in milliseconds with two decimals}.
+     * <p>
+     * The integer {@link #mean} is right for the run-wide summary, whose numbers are tens of milliseconds; it is wrong
+     * for the per-window delta, where the whole question is whether a 1.4 ms tick is 1.4 or 1.9. The delta is taken in
+     * nanoseconds and only the printed value is rounded.
+     */
+    private static String meanMillis(long nanos, long count) {
+        if (count <= 0L) {
+            return "0.00";
+        }
+        return String.format(java.util.Locale.ROOT, "%.2f", nanos / (double) count / 1_000_000.0D);
     }
 
     private static long mean(long total, long count) {

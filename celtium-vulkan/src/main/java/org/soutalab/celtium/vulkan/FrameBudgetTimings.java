@@ -215,14 +215,14 @@ public final class FrameBudgetTimings {
             int count = Math.min(REPORT_EVERY_FRAMES, Math.min(presentIntervals, CAPACITY));
             System.out.println("[Celtium] CELTIUM_PRESENT_INTERVAL presents=" + presentIntervals
                     + " window=" + count
-                    + " intervalMs[" + triple(presentIntervalRing, count) + "]"
-                    + " fps=" + presentRate(presentIntervalRing, count));
+                    + " intervalMs[" + triple(presentIntervalRing, count, presentIntervals) + "]"
+                    + " fps=" + presentRate(presentIntervalRing, count, presentIntervals));
         }
     }
 
     /** {@return} frames per second implied by a window's median interval as {@code p50}}. */
-    private static String presentRate(long[] ring, int count) {
-        long[] copy = window(ring, count);
+    private static String presentRate(long[] ring, int count, int cursor) {
+        long[] copy = window(ring, count, cursor);
         long median = percentile(copy, 0.50D);
         if (median <= 0L) {
             return "0.0";
@@ -302,10 +302,13 @@ public final class FrameBudgetTimings {
         // renderer-comparison leg wants the frame period without the split's tax, and a split leg still wants both.
         if (presentIntervals > 0) {
             int presentCount = Math.min(presentIntervals, CAPACITY);
+            // The present ring has its own write cursor. Reading it through the frame ring's cursor (the static
+            // `written`) is what printed intervalMs[0.0/0.0/0.0] for a run with 211 presents: the slots it read were
+            // never written by markPresent.
             System.out.println("[Celtium] CELTIUM_PRESENT_INTERVAL_SUMMARY presents=" + presentIntervals
                     + " window=" + presentCount
-                    + " intervalMs[" + triple(presentIntervalRing, presentCount) + "]"
-                    + " fps=" + presentRate(presentIntervalRing, presentCount));
+                    + " intervalMs[" + triple(presentIntervalRing, presentCount, presentIntervals) + "]"
+                    + " fps=" + presentRate(presentIntervalRing, presentCount, presentIntervals));
         }
         if (!ENABLED) {
             return;
@@ -363,7 +366,18 @@ public final class FrameBudgetTimings {
 
     /** {@return one ring's p50/p95/worst in milliseconds as {@code p50/p95/worst}}. */
     private static String triple(long[] ring, int count) {
-        long[] copy = window(ring, count);
+        return triple(ring, count, written);
+    }
+
+    /**
+     * {@return one ring's p50/p95/worst, read through the ring's own write cursor}.
+     * <p>
+     * The frame rings advance with {@code written}; the present-interval ring advances with {@code presentIntervals}.
+     * A ring read through the wrong cursor returns the slots the other ring wrote, which is how a run with 211
+     * presents printed {@code intervalMs[0.0/0.0/0.0]}.
+     */
+    static String triple(long[] ring, int count, int cursor) {
+        long[] copy = window(ring, count, cursor);
         return ms(percentile(copy, 0.50D)) + "/" + ms(percentile(copy, 0.95D)) + "/" + ms(copy[copy.length - 1]);
     }
 
@@ -390,9 +404,20 @@ public final class FrameBudgetTimings {
 
     /** Copies the last {@code count} samples of a ring into a sorted array. */
     private static long[] window(long[] ring, int count) {
+        return window(ring, count, written);
+    }
+
+    /**
+     * Copies the last {@code count} samples of a ring whose write cursor is {@code cursor} into a sorted array.
+     * <p>
+     * Package-private so the cursor rule is testable without a GPU: the present-interval ring is the one ring that
+     * does not advance with {@code written}, and reading it through the frame cursor is a silent zero, not an error.
+     */
+    static long[] window(long[] ring, int count, int cursor) {
         long[] copy = new long[count];
+        int capacity = ring.length;
         for (int i = 0; i < count; i++) {
-            copy[i] = ring[(written - count + i + CAPACITY) % CAPACITY];
+            copy[i] = ring[(cursor - count + i + capacity) % capacity];
         }
         Arrays.sort(copy);
         return copy;
