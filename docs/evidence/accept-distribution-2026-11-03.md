@@ -12,7 +12,7 @@ handoff assumed.
 `finally` under `-Dceltium.vulkan.batchTimings=true` (one array increment per offer). Bucket `b` holds
 `[2^(b-1), 2^b)` nanoseconds, so each percentile is an exact **upper bound** rather than an interpolation:
 `p50<=2048` with `max=4096` says the microsecond is real work, `p50<=2048` with `max=173698761` says the mean is a
-tail. `BatchDurationDistributionTest` pins the bucket mapping, the upper-bound rule, that a 2% tail does not move the
+tail. `BatchDurationDistributionTest` (5 tests) pins the bucket mapping, the upper-bound rule, that a 2% tail does not move the
 median, and that the 2^63 bucket saturates instead of going negative.
 
 `acceptSpanSummary` also prints `partCalls[...]` now: the sample count each `parts[...]` mean was taken over. Without
