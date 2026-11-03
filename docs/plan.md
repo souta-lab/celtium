@@ -40,11 +40,11 @@
      **KPI と同じ warm 窓（400–600）の内訳**（[証拠](evidence/warm-window-split-2026-11-04.md)）: `loop` 2.28 =
      render 1.56 + **fmlTick 0.52** + display 0.10 + tick 0.08、`passSplit` frame 1.4 = world 1.0 + gui 0.4 + hand 0.1、
      `flush` 0.4（`winRecord` 0.3 = `wrecLoop` 0.2 + `winHead` 0.1）。**`gui` 0.4 のうち Celtium は `guiBatch` 0.1 だけ**。
-     pair clear は `winHead` 内の ~0.1 ms（既定 OFF）。**Celtium 自身 ~0.7 ms を ~0.2 ms にしないと届かない。**
+     pair clear は `winHead` 内（**round 54 で既定 ON**、`-Dceltium.vulkan.pairClearInPass=false` が旧経路）: 同一JAR/flagsの2本で `winHead` **141→43 µs**、frame差は未分離。**Celtium 自身 ~0.7 ms を ~0.2 ms にしないと届かない。**
      **窓の統合（sticky pass）は棄却**（[証拠](evidence/sticky-window-pass-2026-11-04.md)）: merge 2.6/フレーム成立でも
-     **warm p50 2.85→11.47 ms**、窓 23.5→20.8 の代わりに **`grpDraw` 0.9→9.6 µs/group**（group 数不変）。理由未解明、再開しない。
+     **warm p50 2.85→11.47 ms**、窓 23.5→20.8 の代わりに **`grpDraw` 0.9→9.6 µs/group**。理由未解明、再開しない。
      **font runの行列bakeも棄却**（[証拠](evidence/font-run-bake-2026-11-04.md)）: 94 run/フレームのうち**8しか畳めない**
-     （offer 238.3→230.1、group 136.5→133.5）。残り86は**intervening flush**＝順序規則で、行列は原因ではない。既定OFF。
+     （offer 238.3→230.1、group 136.5→133.5）。残り86は**intervening flush**＝順序規則。既定OFF。
      **受理経路は実配布profileで初計測**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: 52.7 offer/フレームで
      **~0.27 ms（10%）**。同legの**失敗upload 28,272**は「読む物が無い」deferralへ。**`supply`の`bytes=0`は計器の欠陥**（`fullUploadBytes`が未加算）:
      実uploadは113回・3.85 ms/回、中身は内容hashのbyte単位ループ（[証拠](evidence/mirror-upload-census-2026-11-03.md)）。**registryは462–569 lookup/フレーム・ミス11.6%**（memo 256、同一batchの同じ名前3回の内2回を削除、
@@ -54,21 +54,21 @@
      **出荷構成の世界scene実測**（[証拠](evidence/world-frame-accounting-2026-11-04.md)）: 219 offer・113.6 group・
      22.1 flush・23.1 window/フレーム、受理**3.49 µs/offer＝0.77 ms**、group draw 0.24、window 0.30、present 0.20＝
      **Celtium自身1.36 ms**。**単一項目は0.53 ms以下で、1つ消しても0.6 ms差に届かない**＝micro-optの床。
+     **受理の0.77 msはflushを含む**（round 54 `accept[flushMs]`）＝受理自身~0.4 ms。
      JFRは`CELTIUM_LEG_JFR`（attach）。
      **JFRの「フォント経路8.9%」は取り下げ**（[証拠](evidence/font-timing-brackets-2026-11-03.md)）: glyph 2,456個/run、
      captureの時計bracketは既定OFF。**warm windowはflagが要る**（`warmFromTick=400 warmToTick=600
      holdUntilTick=620`）。**font runを割るのはcolour witnessだけ**（[証拠](evidence/font-witness-census-2026-11-03.md)）:
      worldは94/フレーム、`colourWitness=false`のA/Bはmenu run 284→123・frame 3.8→3.7だが**grpDrawは0.9のまま**。
      既定は安全側（ON）。**off-target windowはframe imageを動かさない**（[証拠](evidence/off-target-frame-barriers-2026-11-03.md)）:
-     `winBarrier` 0.3→0.2 ms。**offerの55%がslow path**、`batchDist[p50<=2048 p95<=8192 p99<=16384]` 対 平均3235 ns
-     ＝**平均は中央値の1.6倍**（先取り説は棄却、[証拠](evidence/accept-distribution-2026-11-03.md)）。
+     `winBarrier` 0.3→0.2 ms。**offerの55%がslow path**、平均3235 nsは中央値の1.6倍（先取り説は棄却、[証拠](evidence/accept-distribution-2026-11-03.md)）。
      **拒否の内訳**（[証拠](evidence/merge-refusal-census-2026-11-03.md)）: 931,838 group openのうち
      **format 448,268（48%）**・no-mesh 190,619・texture 167,484。**formatは畳めない**（6は色をpush blockから、
      2は頂点から取る＝頂点変換は8bit量子化）。`s9`=99 nsがmerge述語、micro-optは床。
      **窓**: 現行sceneは23.2/フレームで**13.0がGregTechのpost chain**（`Shaders.renderFullImageInFBO`、
      [証拠](evidence/window-sources-2026-11-03.md)）。`rawWriteSampleGate`は発火しない。
    - **Intel: 未達**（最新 `rel-intel`: p50 0.896・p95 0.872、**p99 1.048**＝3.46 vs 3.30 ms（中央値）。kpi3 1.110→kpi5 1.051→1.048）。
-     p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般に分布、固定fpsでも残る）。棄却した仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)（GC・client thread CPU・safepoint・非同期探索は末尾）。
+     p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般、固定fpsでも残る）。棄却仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)。
    - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
    - 過去の棄却（barrier省略・texture跨ぎmerge・1 submit・glthread）は[証拠](evidence/intel-gap-2026-10-26.md)。
 3. **native 状態・実行**: cull の面と winding・`GL_VIEWPORT_BIT`・`GL_LIGHTING_BIT` の部分復元・font run の拒否保持・no-op census は出荷経路で発火しない→生きた描画census `CELTIUM_GL_SURFACE_DRAWING`・display-list census は id<512 のみ→総量/id を報告（entity arm modelDraws=5545・拒否0）。証拠は `evidence/*-2026-11-03.md`。glint画素/inventory・actor較正は未対応。

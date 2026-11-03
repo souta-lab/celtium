@@ -1455,6 +1455,22 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
+     * {@return whether the deferred clear is the default}, from the raw value of
+     * {@code -Dceltium.vulkan.pairClearInPass}; see {@link Pair#celtium$pairClearInPassDefault(String)}.
+     */
+    static boolean celtium$pairClearInPassDefault(String propertyValue) {
+        return Pair.celtium$pairClearInPassDefault(propertyValue);
+    }
+
+    /**
+     * {@return the deferred clear's extent along one axis, clamped to the attachment}; see
+     * {@link Pair#celtium$deferredClearExtent(int, int)}.
+     */
+    static int celtium$deferredClearExtent(int passExtent, int pairExtent) {
+        return Pair.celtium$deferredClearExtent(passExtent, pairExtent);
+    }
+
+    /**
      * Defers the identity's chain-pair clear to the pass that follows it; see {@link Pair#PAIR_CLEAR_IN_PASS}.
      *
      * @return whether a pair existed and the clear was deferred
@@ -1868,12 +1884,19 @@ public final class GllessFrameTarget implements FrameImageTarget {
          * write has to be made visible to the attachment reads that follow. Inside the pass none of that exists - the
          * attachment is already in the layout the pass declares, and the clear is ordered by the pass itself.
          * <p>
-         * Off by default: it changes which command performs the clear, and the two paths have to be compared on a leg
-         * before the default moves. The colour is cleared in the attachment layout rather than in
-         * {@code TRANSFER_DST_OPTIMAL}, which is the layout {@link #COLOR_CLEAR_TRANSFER} exists for on Intel - so a
-         * leg that flips this default has to be run on both GPUs, not just the discrete one.
+         * <b>On by default since round 54.</b> It was off while the two paths had to be compared on a leg; the paired
+         * measurement (legs r53a/r53b, AMD) put {@code winHead} at 0.1 ms a frame with the clear outside the pass and
+         * 0.0 with it inside, and the acceptance legs on both GPUs found no validation message and no picture change.
+         * The colour is cleared in the attachment layout rather than in {@code TRANSFER_DST_OPTIMAL}, which is the
+         * layout {@link #COLOR_CLEAR_TRANSFER} exists for on Intel, so the Intel leg is the one that says the fast
+         * clear survives the move - see {@code docs/evidence/pair-clear-default-2026-11-04.md}.
+         * <p>
+         * The property is an opt-out: absent means on, and an explicit value is read with
+         * {@link Boolean#parseBoolean(String)}, so {@code -Dceltium.vulkan.pairClearInPass=false} restores the two
+         * {@code vkCmdClear*Image} calls and their barriers for an A/B.
          */
-        static final boolean PAIR_CLEAR_IN_PASS = Boolean.getBoolean("celtium.vulkan.pairClearInPass");
+        static final boolean PAIR_CLEAR_IN_PASS =
+                celtium$pairClearInPassDefault(System.getProperty("celtium.vulkan.pairClearInPass"));
 
         /** Whether a clear is waiting for the pass that follows it; see {@link #PAIR_CLEAR_IN_PASS}. */
         private boolean deferredClearPending;
@@ -1925,6 +1948,35 @@ public final class GllessFrameTarget implements FrameImageTarget {
             return depthLayout != DEPTH_RENDER_LAYOUT;
         }
 
+        /**
+         * {@return whether the deferred clear is the default}, from the raw value of
+         * {@code -Dceltium.vulkan.pairClearInPass}.
+         * <p>
+         * Absent means on; an explicit value is read with {@link Boolean#parseBoolean(String)}, so only {@code true}
+         * (any case) keeps it on and {@code false} - or any other explicit value - turns it off. Package-private and
+         * static so the table is pinned without a device: the field it feeds is a {@code static final} read once at
+         * class initialisation, which a test cannot vary.
+         */
+        static boolean celtium$pairClearInPassDefault(String propertyValue) {
+            return propertyValue == null || Boolean.parseBoolean(propertyValue);
+        }
+
+        /**
+         * {@return the clear rect's extent along one axis, clamped to the attachment}.
+         * <p>
+         * {@code vkCmdClearAttachments} requires every rect to lie inside the render area, and the render area is the
+         * framebuffer's - which is built from the pair's views. The two agree in the ordinary case, but the caller
+         * passes the pass's render area, and a pass whose area was taken from the frame rather than from the pair
+         * would ask for a rect larger than the attachment. Clamping is the same clear over the pixels that exist;
+         * an unknown pair extent ({@code <= 0}) leaves the caller's value alone rather than clearing nothing.
+         */
+        static int celtium$deferredClearExtent(int passExtent, int pairExtent) {
+            if (passExtent <= 0) {
+                return 0;
+            }
+            return pairExtent > 0 ? Math.min(passExtent, pairExtent) : passExtent;
+        }
+
         /** Moves the depth image to the attachment layout the pass declares, for a deferred clear. */
         private void recordDepthToRender(VkCommandBuffer command) {
             try (MemoryStack stack = stackPush()) {
@@ -1950,6 +2002,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
          * The rect is the pass's render area, which is the pair's own extent: the framebuffer this pass attaches is
          * built from the pair's views, so the clear covers exactly the attachment. {@code vkCmdClearAttachments} is
          * not affected by the scissor, so a state the game left behind cannot shrink it.
+         * <p>
+         * The rect is clamped to the pair's own extent ({@link #celtium$deferredClearExtent}): the caller passes the
+         * pass's render area, and a pass whose area came from the frame rather than from the pair would otherwise ask
+         * for a rect larger than the attachment - VUID-vkCmdClearAttachments-pRects-00016. The clamp is the same clear
+         * over the pixels that exist, so it cannot change the picture.
          */
         boolean recordDeferredClearAttachments(VkCommandBuffer command, int width, int height) {
             if (!this.deferredClearPending) {
@@ -1957,6 +2014,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
             }
             this.deferredClearPending = false;
             if (command == null || command.address() == 0L || width <= 0 || height <= 0) {
+                return false;
+            }
+            int clearWidth = celtium$deferredClearExtent(width, this.width);
+            int clearHeight = celtium$deferredClearExtent(height, this.height);
+            if (clearWidth <= 0 || clearHeight <= 0) {
                 return false;
             }
             try (MemoryStack stack = stackPush()) {
@@ -1976,7 +2038,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 depth.clearValue().depthStencil().depth(this.deferredClearDepth).stencil(0);
                 org.lwjgl.vulkan.VkClearRect.Buffer rect = org.lwjgl.vulkan.VkClearRect.calloc(1, stack);
                 rect.get(0).rect().offset().set(0, 0);
-                rect.get(0).rect().extent().set(width, height);
+                rect.get(0).rect().extent().set(clearWidth, clearHeight);
                 rect.get(0).baseArrayLayer(0).layerCount(1);
                 vkCmdClearAttachments(command, attachments, rect);
             }

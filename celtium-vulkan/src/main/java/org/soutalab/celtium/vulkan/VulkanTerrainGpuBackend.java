@@ -9190,6 +9190,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             this.immediateStatistics.noteFrameAccepted();
             if (IMMEDIATE_WINDOWS_ENABLED && this.pendingImmediateIndices >= IMMEDIATE_FLUSH_INDICES) {
+                // The window flush is recorded *inside* the accept call, so `immediateSubmitNanos` - the number the
+                // plan read as "the accept path is 0.77 ms a frame" - contains it. The flush is already measured on
+                // its own (`flush`, `winRecord`), so counting it here as well made the accept path look like the
+                // frame's largest item when a third of it was the window it triggered. This bracket is the split:
+                // acceptSpanSummary's flushMs is the part of the accept average that belongs to the flush.
+                long acceptFlushStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
                 try {
                     FramePassTimings.begin("flush");
                     try { flushImmediateWindow(); }
@@ -9234,6 +9240,11 @@ this.frameBufferOpen = false;
                     record("window flush failed at frame " + this.frameId + " (" + this.lastWindowFlushFailure
                             + "); retained " + retainedBatches + " accepted batches, none dropped, the next frame retries"
                             + " (windowFlushFailures=" + this.targetStatistics.windowFlushFailures() + ")");
+                }
+                finally {
+                    // Counted on both paths: a flush that threw still spent the time, and leaving it out would make
+                    // the accept average look cheaper exactly on the legs where the flush is expensive.
+                    if (acceptFlushStart != 0L) this.acceptFlushNanos += System.nanoTime() - acceptFlushStart;
                 }
             }
             if (this.immediateStatistics.immediateBatchesOffered() % 500 == 0 && VulkanDiagnostics.enabled()) {
@@ -16003,6 +16014,17 @@ this.frameBufferOpen = false;
     private long acceptDecideNanos;
     private long acceptPreflightNanos;
     private long acceptTailNanos;
+    /**
+     * The part of the accept path's own clock that belongs to the window flush it triggered.
+     * <p>
+     * {@code immediateSubmitNanos} brackets the whole accept call, and the accept call is where the index bound
+     * ({@link #IMMEDIATE_FLUSH_INDICES}) is checked and {@code flushImmediateWindow} runs. The flush is measured on
+     * its own as {@code flush}/{@code winRecord}, so counting it inside the accept average as well made the accept
+     * path read as the frame's largest single item (0.77 ms of 1.36) when a third of that was the window it started.
+     * Subtracting this from the accept total is what separates "the offer costs 2.5 us" from "the offer costs 1.7 us
+     * and the window it triggered costs the rest".
+     */
+    private long acceptFlushNanos;
 
     /**
      * The accept path's two unnamed spans, split so the next optimisation is named rather than guessed.
@@ -16113,7 +16135,10 @@ this.frameBufferOpen = false;
         }
         return "accept[decideMs=" + (this.acceptDecideNanos / 1000000L)
                 + " preflightMs=" + (this.acceptPreflightNanos / 1000000L)
-                + " tailMs=" + (this.acceptTailNanos / 1000000L) + "]" + parts.append(']') + calls.append(']');
+                + " tailMs=" + (this.acceptTailNanos / 1000000L)
+                // The window flush the accept call triggered, which immediateSubmitNanos also contains. Subtract it
+                // from the accept total before calling the accept path the frame's largest item.
+                + " flushMs=" + (this.acceptFlushNanos / 1000000L) + "]" + parts.append(']') + calls.append(']');
     }
     private final long[][] offerStageDeltas = new long[16][2];
 

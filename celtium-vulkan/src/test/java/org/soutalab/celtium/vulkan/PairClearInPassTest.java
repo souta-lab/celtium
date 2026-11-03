@@ -2,6 +2,7 @@ package org.soutalab.celtium.vulkan;
 
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -46,5 +47,36 @@ class PairClearInPassTest {
         assertTrue(GllessFrameTarget.celtium$deferredClearNeedsDepthBarrier(
                         org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL),
                 "GENERAL is not the layout the pass declares");
+    }
+
+    @Test
+    void theClearIsInsideThePassUnlessThePropertySaysOtherwise() {
+        // Round 54 moved the default: the paired measurement put winHead at 0.1 ms a frame with the clear outside the
+        // pass and 0.0 with it inside. The property is an opt-out, so an absent value is the new default and only an
+        // explicit false restores the two vkCmdClear*Image calls and their barriers.
+        assertTrue(GllessFrameTarget.celtium$pairClearInPassDefault(null),
+                "absent means on: the default is the clear inside the pass");
+        assertTrue(GllessFrameTarget.celtium$pairClearInPassDefault("true"));
+        assertTrue(GllessFrameTarget.celtium$pairClearInPassDefault("TRUE"),
+                "Boolean.parseBoolean ignores case");
+        assertFalse(GllessFrameTarget.celtium$pairClearInPassDefault("false"),
+                "the opt-out has to reach the old path, or the A/B cannot be run");
+        assertFalse(GllessFrameTarget.celtium$pairClearInPassDefault("0"),
+                "an explicit value is read as a boolean, so anything but true is off");
+    }
+
+    @Test
+    void theClearRectNeverExceedsTheAttachment() {
+        // vkCmdClearAttachments requires every rect inside the render area. The caller passes the pass's render area;
+        // the attachment is the pair's. They agree in the ordinary case, and the clamp is what keeps a pass whose area
+        // came from the frame from asking for a rect larger than the image.
+        assertEquals(256, GllessFrameTarget.celtium$deferredClearExtent(256, 256),
+                "the ordinary case is unchanged");
+        assertEquals(256, GllessFrameTarget.celtium$deferredClearExtent(1280, 256),
+                "a frame-sized pass over a 256x256 pair clears the pair, not the frame");
+        assertEquals(1280, GllessFrameTarget.celtium$deferredClearExtent(1280, 0),
+                "an unknown pair extent leaves the caller's value alone rather than clearing nothing");
+        assertEquals(0, GllessFrameTarget.celtium$deferredClearExtent(0, 256),
+                "an empty pass area clears nothing");
     }
 }
