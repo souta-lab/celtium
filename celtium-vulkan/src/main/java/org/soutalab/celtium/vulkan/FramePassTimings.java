@@ -472,7 +472,16 @@ public final class FramePassTimings {
         if (written == 0) return "frames=0 (the instrument did not measure; enabled=" + enabled() + ")";
         int n = Math.min(written, CAPACITY);
         StringBuilder text = new StringBuilder("clock=").append(CPU_CLOCK && THREAD_CPU_SUPPORTED ? "cpu" : "wall")
-                .append(" frames=").append(n);
+                .append(" frames=").append(n)
+                // The conditions the split was measured under, on the split itself. The Khronos validation layer is a
+                // measurement switch, not a mode, and it is not free: the runner's own note records it costing 6.6 ms
+                // of an 11.0 ms frame on the standard scene, and the per-present readback another 16% of the client
+                // thread. The paired KPI runs with both off, so a split taken with either on describes a different
+                // frame - rounds 42-46 read one as the KPI's shape and spent five rounds on the bracket it inflated.
+                .append(" conditions[validation=")
+                .append(Boolean.getBoolean("celtium.vulkan.validation") ? "on" : "off")
+                .append(" readback=").append(Boolean.getBoolean("celtium.vulkan.presentReadback") ? "on" : "off")
+                .append(']');
         text.append(" frame[p50=").append(ms(percentile(frameTotals, n, 0.50)))
                 .append(" p95=").append(ms(percentile(frameTotals, n, 0.95)))
                 .append(" worst=").append(ms(worst(frameTotals, n))).append(']');

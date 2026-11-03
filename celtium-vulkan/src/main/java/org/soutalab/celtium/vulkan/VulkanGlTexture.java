@@ -1248,6 +1248,28 @@ public final class VulkanGlTexture {
      * spent proving there was nothing to do.
      */
     private static long fullUploadSkips;
+    /**
+     * Where a full upload's wall time goes, so the 3.85 ms a call the census reports can be attributed.
+     * <p>
+     * The three parts are the only ones that can plausibly own it and they have different owners: {@code read} is the
+     * stub's captured level (a copy out of the stub's own buffer), {@code hash} is this class's content digest, and
+     * {@code copy} is the staging write plus the recorded copy and mip chain. The digest was a byte-at-a-time FNV loop
+     * over the whole level - 1.05 million dependent multiplies for a 512x512 - and the census's {@code skips=0} says it
+     * has never once paid for itself on the measured scene, so the split is what decides whether it stays.
+     */
+    private static long fullUploadReadNanos;
+    private static long fullUploadHashNanos;
+    private static long fullUploadCopyNanos;
+    /**
+     * The bytes the current call actually committed to the image, so the census can report them.
+     * <p>
+     * {@link #fullUploadBytes} was declared and read but never assigned, so every census line this project has printed
+     * said {@code bytes=0} - and a conclusion was drawn from it ("the supply part is not uploads, they return at the
+     * serial check"). The count and the millis on the same line contradict that: 113 calls at 3.85 ms each is 435 ms of
+     * real work. Set in {@link #commitFullUpload} and consumed by the caller's finally, so a call that returns early or
+     * throws contributes nothing.
+     */
+    private long committedUploadBytes;
     // Int-keyed: this is written once per full upload and read by the census summary. Writes already happen under the
     // class lock, so the maps need no concurrency of their own.
     private static final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap fullUploadsByGlId =
@@ -1287,6 +1309,9 @@ public final class VulkanGlTexture {
                 .append(" bytes=").append(fullUploadBytes)
                 .append(" millis=").append(fullUploadNanos / 1000000L)
                 .append(" skips=").append(fullUploadSkips)
+                .append(" parts[read=").append(fullUploadReadNanos / 1000000L)
+                .append(" hash=").append(fullUploadHashNanos / 1000000L)
+                .append(" copy=").append(fullUploadCopyNanos / 1000000L).append(']')
                 .append(" byGlId=[");
         // Largest first and bounded: the question is which textures dominate, and a run with a hundred mirrored
         // names would otherwise put a hundred entries on a line printed every 120 frames.
@@ -1411,7 +1436,11 @@ public final class VulkanGlTexture {
         if (stubCaptureMissing && !pendingPatches.isEmpty()) {
             level = null;
         } else {
+            long readStart = System.nanoTime();
             level = readGlLevel0(glTextureId, glTextureTarget); // throws the honest capture-miss when there is none
+            synchronized (VulkanGlTexture.class) {
+                fullUploadReadNanos += System.nanoTime() - readStart;
+            }
         }
         try {
             // A captured record may be a patch into a level the stub sized but could not hold at full extent
@@ -1515,9 +1544,14 @@ public final class VulkanGlTexture {
                 // image cannot be sized, so this is the same honest miss as an absent capture.
                 throw captureMiss(glTextureId, 0, "backlog patches exist but the level's extent was never recorded");
             }
-            long hash = 1469598103934665603L;
-            for (int i = 0; i < level.width * level.height * BYTES_PER_PIXEL; i++) {
-                hash = (hash ^ (level.pixels.get(i) & 0xFF)) * 1099511628211L;
+            long hashStart = System.nanoTime();
+            // The same eight-bytes-a-step digest the announcement path already uses. This path kept the byte-at-a-time
+            // loop, which is the one the JFR put ~5% of the client thread in on the other caller: a 512x512 level is
+            // 1.05 million dependent multiplies, and the census's skips=0 says the digest has never skipped anything on
+            // the measured scene, so its whole cost was being paid to prove there was nothing to skip.
+            long hash = hashUploadSlice(level.pixels, level.width * level.height * BYTES_PER_PIXEL);
+            synchronized (VulkanGlTexture.class) {
+                fullUploadHashNanos += System.nanoTime() - hashStart;
             }
             if (this.lastPixelHashValid && hash == lastPixelHash && level.width == width && level.height == height) {
                 // The content is identical to what is already on the device: skip the copy, the command buffer and
@@ -1548,7 +1582,11 @@ public final class VulkanGlTexture {
                     + " recreated=" + recreated);
             // A failed or partially recorded replacement must not keep a digest claiming old GPU contents.
             invalidateUploadCache();
+            long copyStart = System.nanoTime();
             copyToImage(level.pixels, level.width, level.height, 0);
+            synchronized (VulkanGlTexture.class) {
+                fullUploadCopyNanos += System.nanoTime() - copyStart;
+            }
             commitFullUpload(hash, uploadSerial);
             dumpMirrorPixels(glTextureId);
             if (!level.owned) {
@@ -1570,12 +1608,17 @@ public final class VulkanGlTexture {
         }
         } finally {
             long celtium$elapsed = System.nanoTime() - celtium$uploadStart;
+            // The bytes this call committed, not the running total: the per-id map used to add the cumulative figure,
+            // so its second entry for a name was already wrong even before the total was found to be dead.
+            long celtium$bytes = this.committedUploadBytes;
+            this.committedUploadBytes = 0L;
             synchronized (VulkanGlTexture.class) {
                 fullUploads++;
                 fullUploadNanos += celtium$elapsed;
+                fullUploadBytes += celtium$bytes;
                 fullUploadsByGlId.put(celtium$uploadGlId, fullUploadsByGlId.get(celtium$uploadGlId) + 1);
                 fullUploadBytesByGlId.put(celtium$uploadGlId,
-                        fullUploadBytesByGlId.get(celtium$uploadGlId) + fullUploadBytes);
+                        fullUploadBytesByGlId.get(celtium$uploadGlId) + celtium$bytes);
             }
         }
     }
@@ -2198,6 +2241,9 @@ public final class VulkanGlTexture {
         this.lastPixelHashValid = true;
         this.lastUploadSerial = uploadSerial;
         this.fullContentArrived = true;
+        // The image's own extent, which is what the copy just wrote: the level was recreated to it above when the two
+        // disagreed, so reading it here is the size the device now holds rather than the size the capture claimed.
+        this.committedUploadBytes = (long) this.width * (long) this.height * BYTES_PER_PIXEL;
     }
 
     public boolean uploadFromImage(int pixelWidth, int pixelHeight, java.nio.ByteBuffer rgba) {

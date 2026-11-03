@@ -41,14 +41,13 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
      鎖は `record`0.5＋`batch`0.5＋`present`0.2。窓の固定費は主因ではない（**3 µs/窓**、[証拠](evidence/window-split-2026-11-04.md)）。
      窓headの0.1 msはstale-name走査のmemo外れ（**修正、`winRecord`0.4→0.3**、[証拠](evidence/stale-name-scan-memo-2026-11-04.md)）。
      **受理経路は実配布profileで初計測**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: 52.7 offer/フレームで
-     **~0.27 ms（10%）**。同legの**失敗upload 28,272**は「読む物が無い」deferralへ。**`supply`はuploadではなかった**:
-     62,564呼が`bytes=0`＝serial checkで即return（[証拠](evidence/mirror-upload-census-2026-11-03.md)、A/Bで97呼・
-     画像不変）。**registryは462–569 lookup/フレーム・ミス11.6%**（memo 256、同一batchの同じ名前3回の内2回を削除、
+     **~0.27 ms（10%）**。同legの**失敗upload 28,272**は「読む物が無い」deferralへ。**`supply`の`bytes=0`は計器の欠陥**（`fullUploadBytes`が未加算）:
+     実uploadは113回・3.85 ms/回で、その中身は内容hashのbyte単位ループ（[証拠](evidence/mirror-upload-census-2026-11-03.md)）。**registryは462–569 lookup/フレーム・ミス11.6%**（memo 256、同一batchの同じ名前3回の内2回を削除、
      [証拠](evidence/registry-memo-census-2026-11-03.md)）**窓flushが最大**（643 µs/フレーム）。
-     **フレームの内訳は閉じた**（[証拠](evidence/frame-accounting-and-packet-split-2026-11-04.md)）: frame 3.6 =
-     world 2.5 + gui 1.0、world 2.5 = flush 2.0 + terrain 0.3、flush 2.0 = winRecord 1.7 + winBarrier 0.2、
-     winRecord 1.7 = wrecLoop 1.1 + winHead 0.4、wrecLoop 1.1 = **grpDraw 0.9（25%）** + grpPrep/rcViewport 0.2。
-     **最大は描画呼び出し**で、packet は `vkCmdDrawIndexed` **5.0 µs** + bind 1.9 µs（47% が bind form）。
+     **round 42–46 の内訳は検証レイヤを測っていた**（[証拠](evidence/frame-split-conditions-2026-11-04.md)）:
+     検証ON frame 3.6 = world 2.5 + gui 1.0、grpDraw 0.9。**検証OFF（KPI と同じ構成）は frame 1.4 =
+     world 1.0 + gui 0.4、flush 0.4、winRecord 0.3、grpDraw 0.1**、`vkCmdDrawIndexed` は 5.0→**0.9 µs**、
+     窓の off-target routing は 22→**6 µs**。Java 側 bracket は両方 0.0。**ドロー削減の根拠は消えた。**
      受理経路は 223 offer/フレームで **~0.36 ms（10%）**（`s10` supply+prepare 5246 ns が最大）。
      client threadのprofile
      （[証拠](evidence/accept-profile-jfr-2026-11-03.md)）: Celtium 43.4%・accept 19.0%・窓 9.8%・
