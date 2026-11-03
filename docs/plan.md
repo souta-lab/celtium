@@ -79,7 +79,7 @@ vanilla 約6%（対象外）。**Stage 2（CPU culling）は後ろ・Stage 5（G
 | 優先・項目 | 実装/判定 | AMD | Intel | 根拠と残り |
 |---|---|---|---|---|
 
-| **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤測定済み** | 実機報告＋画面 | ②未実行 | ①パノラマ ②エンドポータル（texgen） ③F2黒スクショ（`nglGetTexImage`） ④ガラスちらつき（背面cull `5f75fc009`） ⑤残像＝静止0差分・tooltipの動きは連続3フレーム残留0（[証拠](evidence/tooltip-motion-2026-11-02.md)）、mod FBO bind中も0（[証拠](evidence/tooltip-mod-fbo-2026-11-03.md)）、看板の文字も0（[証拠](evidence/sign-text-afterimage-2026-11-03.md)）、⑥静止sceneの連続2フレームは**空の帯だけ14.7%差**（maxDelta 37・地形/手は0、[証拠](evidence/flicker-still-scene-2026-11-03.md)） |
+| **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤測定済み** | 実機報告＋画面 | ②未実行 | ①パノラマ ②エンドポータル ③F2黒スクショ（`nglGetTexImage`） ④ガラスちらつき（`5f75fc009`） ⑤残像＝静止0差分・tooltipの動きは連続3フレーム残留0（[証拠](evidence/tooltip-motion-2026-11-02.md)）、mod FBO bind中も0（[証拠](evidence/tooltip-mod-fbo-2026-11-03.md)）、看板の文字も0（[証拠](evidence/sign-text-afterimage-2026-11-03.md)）、⑥空の帯は**一度きりの遷移**で、frame image と presented は一致＝損失は**記録側**（[証拠](evidence/sky-band-one-transition-2026-11-03.md)） |
 
 
 | **画質（4画面＋QMAGNET）** | **settings画素一致・worldは16階調超 0.97/1.05 %（AMD/Intel）。menu背景は両GPU確認済み** | 両GPU PASSED・clean | 実測 | [証拠](evidence/image-quality-2026-10-28.md)・[menu](evidence/menu-capture-2026-11-02.md)・[legacy既定ON](evidence/legacy-immediate-default-2026-11-02.md)。修正: 半透明cull・lit clamp・Forgeブロックモデル・legacy既定ON・atlas実寸・色同期・menu背景。残り: 遠い壁1面の陰影勾配、loadingは参照なし。**creative tab の item icon と hover slotのhighlight を修正**（[highlight](evidence/creative-highlight-line-pipeline-2026-11-02.md)）。**creative grid は現行JARで参照一致**（[検証](evidence/creative-grid-verified-2026-11-03.md): mean\|A-B\| 1.17・cell 最大 2.04、旧 19/24 が >6）|
