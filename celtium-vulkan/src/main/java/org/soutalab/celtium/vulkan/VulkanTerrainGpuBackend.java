@@ -1779,6 +1779,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private long wsWindows;
     private long wsMark;
 
+    /**
+     * The chain-pair identity whose clear the routing deferred to the pass that follows it, or 0 when none is waiting.
+     * <p>
+     * Only set with {@code -Dceltium.vulkan.pairClearInPass=true}; see
+     * {@code GllessFrameTarget.Pair.PAIR_CLEAR_IN_PASS}. The pass that consumes it is recorded unconditionally a few
+     * statements later in the same method, so the window between the two is a handful of field reads.
+     */
+    private long pendingChainPairClear;
+
     /** The model domain's fragments of the verification line (refactoring plan R2, stage 2). */
     final ModelStatistics modelStats = new ModelStatistics(this.modelGeometry);
 
@@ -12339,6 +12348,15 @@ this.frameBufferOpen = false;
                                     (latchedMask & 0x4000) != 0, true);
                             offTarget.applyGameClearToChainPair(chainIdentityValue, this.commandBuffer,
                                     latchedMask, latchedColour, latchedDepth);
+                        } else if (GllessFrameTarget.celtium$pairClearInPass()
+                                && offTarget.deferChainPairClear(chainIdentityValue, this.commandBuffer)) {
+                            // The clear is recorded inside the pass below, as one vkCmdClearAttachments: the two
+                            // barriers and the two vkCmdClear*Image calls it replaces are the window's largest named
+                            // item (see GllessFrameTarget.Pair.PAIR_CLEAR_IN_PASS). The pass that follows always
+                            // begins - this method records it unconditionally after the routing - so the deferral has
+                            // exactly one consumer, and the fallback branch below records the ordinary clear if the
+                            // routing fails before that pass is begun.
+                            this.pendingChainPairClear = chainIdentityValue;
                         } else {
                             offTarget.clearChainPair(chainIdentityValue, this.commandBuffer);
                         }
@@ -12445,6 +12463,16 @@ this.frameBufferOpen = false;
                 if (!this.windowFrameImageAttached && this.frameTarget instanceof GllessFrameTarget gllessFallback) {
                     gllessFallback.recordAcquireBarriers(this.commandBuffer, true);
                     this.windowFrameImageAttached = true;
+                }
+                if (this.pendingChainPairClear != 0L) {
+                    // The pass below attaches the frame image, not the pair the routing deferred a clear for, so the
+                    // deferred clear has no consumer here: record it the ordinary way, outside the pass, and drop the
+                    // deferral. The pair is cleared either way; only the command that performs it differs.
+                    GllessFrameTarget deferredOwner = offTargetTarget();
+                    if (deferredOwner != null) {
+                        deferredOwner.clearChainPair(this.pendingChainPairClear, this.commandBuffer);
+                    }
+                    this.pendingChainPairClear = 0L;
                 }
                 framebuffer = ensureFramebuffer(renderPass);
             }
@@ -12576,6 +12604,19 @@ this.frameBufferOpen = false;
         FramePassTimings.begin("winBeginPass");
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         FramePassTimings.end("winBeginPass");
+        if (this.pendingChainPairClear != 0L) {
+            // The pair clear the routing deferred (GllessFrameTarget.Pair.PAIR_CLEAR_IN_PASS): one
+            // vkCmdClearAttachments inside the pass, in place of two vkCmdClear*Image calls and the two barriers that
+            // make them legal outside it. Recorded before the viewport and the draws, which is the order the clear had
+            // when it was recorded outside the pass.
+            long deferredClearIdentity = this.pendingChainPairClear;
+            this.pendingChainPairClear = 0L;
+            GllessFrameTarget deferredOwner = offTargetTarget();
+            if (deferredOwner != null) {
+                deferredOwner.recordChainPairDeferredClear(deferredClearIdentity, this.commandBuffer,
+                        passWidth, passHeight);
+            }
+        }
         this.activeImmediateTarget = this.targetRegistry.currentIdentity();
         this.commandState.beginPass(this.activeImmediateTarget);
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(true);

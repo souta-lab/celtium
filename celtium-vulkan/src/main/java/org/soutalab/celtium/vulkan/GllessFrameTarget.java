@@ -32,6 +32,7 @@ import static org.lwjgl.vulkan.VK10.VK_SHARING_MODE_EXCLUSIVE;
 import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
 import static org.lwjgl.vulkan.VK10.vkAllocateMemory;
 import static org.lwjgl.vulkan.VK10.vkBindImageMemory;
+import static org.lwjgl.vulkan.VK10.vkCmdClearAttachments;
 import static org.lwjgl.vulkan.VK10.vkCmdClearColorImage;
 import static org.lwjgl.vulkan.VK10.vkCmdClearDepthStencilImage;
 import static org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier;
@@ -1430,6 +1431,56 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
+     * {@return whether a pair clear is recorded inside the pass that follows it}.
+     * <p>
+     * The switch lives on {@code Pair} because that is the class whose clear it changes; this accessor is what the
+     * backend and the test read, because {@code Pair} is private to this class.
+     */
+    static boolean celtium$pairClearInPass() {
+        return Pair.PAIR_CLEAR_IN_PASS;
+    }
+
+    /**
+     * {@return whether a deferred clear has to move the depth to the attachment layout first}.
+     * <p>
+     * Package-private and static so the rule is pinned without a device; see
+     * {@link Pair#celtium$deferredClearNeedsDepthBarrier(int)}.
+     */
+    static boolean celtium$deferredClearNeedsDepthBarrier(int depthLayout) {
+        return Pair.celtium$deferredClearNeedsDepthBarrier(depthLayout);
+    }
+
+    /**
+     * Defers the identity's chain-pair clear to the pass that follows it; see {@link Pair#PAIR_CLEAR_IN_PASS}.
+     *
+     * @return whether a pair existed and the clear was deferred
+     */
+    public boolean deferChainPairClear(long identity, VkCommandBuffer command) {
+        Pair pair = existingChainPair(identity);
+        if (pair == null) {
+            return false;
+        }
+        pair.deferClear(command);
+        return true;
+    }
+
+    /** {@return whether the identity's chain pair is waiting for a deferred clear}. */
+    public boolean chainPairHasDeferredClear(long identity) {
+        Pair pair = existingChainPair(identity);
+        return pair != null && pair.hasDeferredClear();
+    }
+
+    /**
+     * Records the identity's deferred chain-pair clear inside the pass that has just begun.
+     *
+     * @return whether a clear was waiting
+     */
+    public boolean recordChainPairDeferredClear(long identity, VkCommandBuffer command, int width, int height) {
+        Pair pair = existingChainPair(identity);
+        return pair != null && pair.recordDeferredClearAttachments(command, width, height);
+    }
+
+    /**
      * A game's own {@code glClear} against the identity's pair, with the colour and depth the game latched.
      * <p>
      * Recorded at the point the clear was consumed, which keeps it between the draws before it and the draws after it
@@ -1740,6 +1791,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
         private float[] clearColourFloats;
 
         private void clear(VkCommandBuffer command) {
+            // A recorded clear supersedes a deferred one: the two are the same clear, and leaving the flag set would
+            // make the next pass clear an image it does not attach.
+            this.deferredClearPending = false;
             checkAlive();
             if (command == null || command.address() == 0L) {
                 throw new IllegalArgumentException(this.label + " pair clear needs a command buffer");
@@ -1799,6 +1853,132 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
 
         /**
+         * {@code -Dceltium.vulkan.pairClearInPass=true}: record the pair's once-per-frame clear as one
+         * {@code vkCmdClearAttachments} inside the pass that follows it, instead of two {@code vkCmdClear*Image} calls
+         * and the two barriers that make them legal.
+         * <p>
+         * Why: the window split put the pair clear at 19 us a window against 12 us for the command-buffer begin and
+         * 10 us for the acquire, and the world scene clears 12 pairs a frame (GregTech's bloom chain binds a mip
+         * pyramid of framebuffers). The clear is outside the pass because {@code vkCmdClear*Image} requires it, and
+         * that is what costs the barriers: the image has to be moved to a transfer layout and back, and the transfer
+         * write has to be made visible to the attachment reads that follow. Inside the pass none of that exists - the
+         * attachment is already in the layout the pass declares, and the clear is ordered by the pass itself.
+         * <p>
+         * Off by default: it changes which command performs the clear, and the two paths have to be compared on a leg
+         * before the default moves. The colour is cleared in the attachment layout rather than in
+         * {@code TRANSFER_DST_OPTIMAL}, which is the layout {@link #COLOR_CLEAR_TRANSFER} exists for on Intel - so a
+         * leg that flips this default has to be run on both GPUs, not just the discrete one.
+         */
+        static final boolean PAIR_CLEAR_IN_PASS = Boolean.getBoolean("celtium.vulkan.pairClearInPass");
+
+        /** Whether a clear is waiting for the pass that follows it; see {@link #PAIR_CLEAR_IN_PASS}. */
+        private boolean deferredClearPending;
+        private final float[] deferredClearColour = new float[4];
+        private float deferredClearDepth;
+
+        /** {@return whether a clear is waiting for the pass that follows it}. */
+        boolean hasDeferredClear() {
+            return this.deferredClearPending;
+        }
+
+        /**
+         * Records everything the deferred clear needs before the pass begins, and defers the clear itself.
+         * <p>
+         * The acquire is the same one {@link #clear} records. The depth's layout is the one thing that can still need
+         * a barrier: a pair that was just created is in {@code TRANSFER_DST_OPTIMAL} after its acquire, and the pass
+         * declares the attachment layout, so the move has to happen before {@code vkCmdBeginRenderPass}. In the steady
+         * state the depth is already in the attachment layout (the pass's own finalLayout leaves it there), so this
+         * records nothing at all.
+         */
+        void deferClear(VkCommandBuffer command) {
+            checkAlive();
+            if (command == null || command.address() == 0L) {
+                throw new IllegalArgumentException(this.label + " pair clear needs a command buffer");
+            }
+            if (!exists()) {
+                throw new IllegalStateException("ensure must run before the " + this.label + " pair is cleared");
+            }
+            if (!this.acquired) {
+                recordAcquire(command);
+                this.acquired = true;
+            }
+            if (celtium$deferredClearNeedsDepthBarrier(this.depthLayout)) {
+                recordDepthToRender(command);
+            }
+            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(this.deferredClearColour);
+            this.deferredClearDepth = (float) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth();
+            this.deferredClearPending = true;
+            this.clears++;
+        }
+
+        /**
+         * {@return whether a deferred clear has to move the depth to the attachment layout first}.
+         * <p>
+         * Package-private and static so the rule is pinned without a device: the pass declares the attachment layout
+         * as its initialLayout, and a clear recorded inside it cannot change that.
+         */
+        static boolean celtium$deferredClearNeedsDepthBarrier(int depthLayout) {
+            return depthLayout != DEPTH_RENDER_LAYOUT;
+        }
+
+        /** Moves the depth image to the attachment layout the pass declares, for a deferred clear. */
+        private void recordDepthToRender(VkCommandBuffer command) {
+            try (MemoryStack stack = stackPush()) {
+                VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
+                barrier.get(0).sType$Default().image(this.depthImage)
+                        .oldLayout(this.depthLayout).newLayout(DEPTH_RENDER_LAYOUT)
+                        .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                        .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                        .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                                | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+                barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+                vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barrier);
+                this.depthLayout = DEPTH_RENDER_LAYOUT;
+            }
+        }
+
+        /**
+         * Records the deferred clear inside the pass that has just begun, and returns whether one was waiting.
+         * <p>
+         * The rect is the pass's render area, which is the pair's own extent: the framebuffer this pass attaches is
+         * built from the pair's views, so the clear covers exactly the attachment. {@code vkCmdClearAttachments} is
+         * not affected by the scissor, so a state the game left behind cannot shrink it.
+         */
+        boolean recordDeferredClearAttachments(VkCommandBuffer command, int width, int height) {
+            if (!this.deferredClearPending) {
+                return false;
+            }
+            this.deferredClearPending = false;
+            if (command == null || command.address() == 0L || width <= 0 || height <= 0) {
+                return false;
+            }
+            try (MemoryStack stack = stackPush()) {
+                org.lwjgl.vulkan.VkClearAttachment.Buffer attachments =
+                        org.lwjgl.vulkan.VkClearAttachment.calloc(2, stack);
+                org.lwjgl.vulkan.VkClearAttachment colour = attachments.get(0);
+                colour.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
+                colour.colorAttachment(0);
+                colour.clearValue().color()
+                        .float32(0, this.deferredClearColour[0])
+                        .float32(1, this.deferredClearColour[1])
+                        .float32(2, this.deferredClearColour[2])
+                        .float32(3, this.deferredClearColour[3]);
+                org.lwjgl.vulkan.VkClearAttachment depth = attachments.get(1);
+                depth.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
+                depth.colorAttachment(0);
+                depth.clearValue().depthStencil().depth(this.deferredClearDepth).stencil(0);
+                org.lwjgl.vulkan.VkClearRect.Buffer rect = org.lwjgl.vulkan.VkClearRect.calloc(1, stack);
+                rect.get(0).rect().offset().set(0, 0);
+                rect.get(0).rect().extent().set(width, height);
+                rect.get(0).baseArrayLayer(0).layerCount(1);
+                vkCmdClearAttachments(command, attachments, rect);
+            }
+            return true;
+        }
+
+        /**
          * {@link #clear} with explicit values and a mask, for a game-issued {@code glClear} replayed mid-recording.
          * <p>
          * Same barriers, same acquire-before-clear order; the colour and depth are the ones latched when the game
@@ -1806,6 +1986,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
          * once-per-frame clear this may run several times in one frame - the game's own ordering, not a policy.
          */
         private void clearWith(VkCommandBuffer command, int mask, float[] rgba, double depthValue) {
+            this.deferredClearPending = false;
             checkAlive();
             if (command == null || command.address() == 0L) {
                 throw new IllegalArgumentException(this.label + " pair clear needs a command buffer");
@@ -1851,6 +2032,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
          * this frame.
          */
         private void clearDepthOnly(VkCommandBuffer command) {
+            this.deferredClearPending = false;
             checkAlive();
             if (command == null || command.address() == 0L) {
                 throw new IllegalArgumentException(this.label + " pair clear needs a command buffer");
