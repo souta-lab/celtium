@@ -603,6 +603,20 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final java.util.concurrent.atomic.AtomicInteger identicalPatches =
             new java.util.concurrent.atomic.AtomicInteger();
     /**
+     * Whole images ({@code glTexImage2D} with data) whose converted bytes were identical to the record the level
+     * already held. The whole-image half of the rule {@link #identicalPatches} applies to patches: GL's content did
+     * not change, so the level's serial must not either, and a mirror that already holds that serial skips a
+     * re-supply of bytes it has.
+     * <p>
+     * The case this exists for is a mod that re-uploads a texture it did not change - a render target re-declared
+     * every frame, a GUI sheet re-sent on a resize that did not resize. Before this, every such call published a new
+     * record and took a new serial, so the mirror re-read and re-copied the whole image for nothing. Measured on leg
+     * {@code r33b-empty} (`celtium-world-accept`, 188 mods): {@code rawWriteRefreshes=52853} over 3,486 world frames,
+     * 15.2 uploads a frame at ~9 us each, and the supply part is 60% of the accept path.
+     */
+    private final java.util.concurrent.atomic.AtomicInteger identicalFullImages =
+            new java.util.concurrent.atomic.AtomicInteger();
+    /**
      * The unpack state {@code glPixelStorei} set. Conversion reads rows where GL would read them: assuming tight rows
      * while the game asked for a row length or a row skip would store a sheared image instead of a missing one.
      */
@@ -4731,6 +4745,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 + " full=" + stub.fullCaptures.get()
                 + " patches=" + stub.subCaptures.get()
                 + " identicalPatches=" + stub.identicalPatches.get()
+                + " identicalFull=" + stub.identicalFullImages.get()
                 + " undefined=" + stub.undefinedExtents.get()
                 + " unconverted=" + stub.unconvertedUploads.get()
                 + " backlog=" + backlogPatches + "/" + stub.texPatchBytes + "B@" + (topName >>> 16)
@@ -7927,10 +7942,49 @@ public final class CeltiumGlStub implements FunctionProvider {
             this.unconvertedUploads.incrementAndGet();
             return;
         }
+        long key = texLevelKey(targetName, level);
+        TexCapture previous = this.texCaptures.get(key);
+        if (previous != null && previous.gamePixels && previous.x == 0 && previous.y == 0
+                && previous.width == width && previous.height == extentHeight
+                && previous.data.capacity() == rgba.capacity()
+                && sameBytes(previous.data, rgba, rgba.capacity())) {
+            // The same whole image, uploaded again. GL's content did not change, so the level's serial must not
+            // either: the serial is what makes a mirror re-supply, and a re-supply of identical bytes is pure cost.
+            // This is the whole-image half of the rule the patch path already applies (OPT-21); the record is left
+            // as it is, so a reader polling the level still sees one whole image.
+            this.identicalFullImages.incrementAndGet();
+            return;
+        }
         // Publishing a new record instead of rewriting the old one, so a reader polling the level sees one whole image.
-        this.texCaptures.put(texLevelKey(targetName, level),
+        this.texCaptures.put(key,
                 new TexCapture(width, extentHeight, rgba, true, this.texUploadSerial.incrementAndGet()));
         this.fullCaptures.incrementAndGet();
+    }
+
+    /**
+     * {@return whether two native buffers hold the same bytes}, compared a word at a time.
+     * <p>
+     * LWJGL's {@code MemoryUtil} has no {@code memcmp} in the version this builds against, and the alternatives
+     * allocate: {@code Arrays.equals} needs two byte arrays, which for a 512x512 image is a megabyte of garbage per
+     * upload. The word loop reads the same memory the conversion just wrote, so it is one extra pass over the image -
+     * the same order as the conversion pass the caller already paid - and it is what lets an unchanged whole image
+     * keep its serial instead of forcing a mirror to re-copy bytes it already holds.
+     */
+    private static boolean sameBytes(ByteBuffer a, ByteBuffer b, int length) {
+        long left = memAddress(a);
+        long right = memAddress(b);
+        int i = 0;
+        for (; i + 8 <= length; i += 8) {
+            if (MemoryUtil.memGetLong(left + i) != MemoryUtil.memGetLong(right + i)) {
+                return false;
+            }
+        }
+        for (; i < length; i++) {
+            if (MemoryUtil.memGetByte(left + i) != MemoryUtil.memGetByte(right + i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

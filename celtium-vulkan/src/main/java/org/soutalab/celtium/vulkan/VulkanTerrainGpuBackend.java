@@ -1848,6 +1848,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * every minimap tile was drawn transparent.
      */
     private int rawWriteRefreshes;
+    /**
+     * Raw writes whose mirror already held the level's current serial, so no upload was asked for.
+     * <p>
+     * Counted apart from {@link #rawWriteRefreshes} because the two used to be one number and it read as "15.9
+     * uploads a world frame" when the truth was "15.9 calls, none of which uploaded anything": the mirror's own
+     * serial check answered every one of them. The name of the counter is now what it counts.
+     */
+    private int rawWriteAlreadyCurrent;
     /** Per GL id: the stub's write epoch when the texture's write serial was last compared, so a quiet frame costs one read. */
     private long[] rawWriteEpochChecked = new long[4096];
     /** Per GL id: the write serial the mirror was last refreshed for. */
@@ -3196,11 +3204,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " copyBlit[refusals=" + this.textureCopyService.textureCopyBlitRefusals()
                 + " last=" + this.textureCopyService.lastTextureCopyBlitRefusal() + "]"
                 + " lazyMirror[supplies=" + this.lazyMirrorSupplies + " rawWriteRefreshes=" + this.rawWriteRefreshes
+                + " current=" + this.rawWriteAlreadyCurrent
                 + " skips=" + this.lazyMirrorRetrySkips
                 + " failures=" + this.lazyMirrorFailures + "(supply=" + this.lazyMirrorSupplyFailures
                 + " raw=" + this.rawWriteFailures + " coalesced=" + this.coalescedRawWriteFailures + ")"
                 + " deferred=" + this.lazyMirrorDeferrals + " empty=" + this.lazyMirrorEmptyDeferrals
                 + " last=[" + this.lastLazyMirrorFailure + "]]"
+                // Which textures the supply part of the accept path is actually paying for. The count alone could not
+                // say: `rawWriteRefreshes` is 11-12 a world frame on the shipped profile and the supply part is 60% of
+                // the accept path, but "a mod re-declaring a texture it did not change" (now suppressed by the stub's
+                // whole-image serial rule) and "a small patch landing in a large record" (which this class pays for by
+                // re-copying the whole record) are different defects with different repairs. The per-GL-id counts and
+                // the wall time in uploadFromGlTexture name which one it is, on the same line as the frame it costs.
+                + " mirrorUploads[" + org.soutalab.celtium.vulkan.VulkanGlTexture.fullUploadSummary() + "]"
                 // What the terrain pass records per frame. The KPI's other half (terrain 4.5 ms of a 6.8 ms frame) had
                 // no per-frame shape: the counters existed as run totals, so "many small indirect draws" and "few big
                 // ones" could not be told apart from a log. These are deltas over the frames this report covers.
@@ -9607,6 +9623,19 @@ this.frameBufferOpen = false;
         if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
             org.soutalab.celtium.vulkan.CrashBreadcrumbs.note(org.soutalab.celtium.vulkan.CrashBreadcrumbs.RAW_WRITE,
                     texture, this.frameId);
+        }
+        // The mirror already holds this level's current content, so the upload would return at its own serial check -
+        // and that check is not free. Measured on leg r34b-census (`celtium-world-accept`, 188 mods, AMD RX 6400):
+        // 62,564 calls that uploaded nothing (`mirrorUploads[count=62564 bytes=0 skips=0]`) at 7.2 us each, 0.107 ms
+        // of a 2.59 ms world frame - 4% of the frame spent proving there was nothing to do. Every one of them was a
+        // GL name past RAW_WRITE_TRACKED_IDS, which has no per-name memo and therefore asks on every offer that binds
+        // it; GregTech's bloom allocates a texture a frame and lands there. Asking the mirror first is the same
+        // question the upload asks, one call earlier, and it is the only place that knows the answer for a name the
+        // arrays do not cover.
+        if (mirror.celtium$holdsSerial(
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadSerial(texture, 0))) {
+            this.rawWriteAlreadyCurrent++;
+            return true;
         }
         if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$levelHasNothingToRead(texture, 0)) {
             // The write moved the serial but left nothing the stub can read - a re-allocation with no data, or a fill

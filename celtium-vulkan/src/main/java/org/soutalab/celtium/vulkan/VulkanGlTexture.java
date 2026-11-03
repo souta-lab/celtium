@@ -95,6 +95,19 @@ public final class VulkanGlTexture {
     private static int UPLOAD_EXTENT_LOGS;
     /** How many CELTIUM_MIRROR_RECREATE lines this process has printed. */
     private static int RECREATE_LOGS;
+    /**
+     * How many {@code CELTIUM_MIRROR_UPLOAD} lines this process has printed, and the bound.
+     * <p>
+     * The question the line answers is "which textures pay for the whole-record re-supply". The accept path's supply
+     * part is 60% of its cost and it is 15.2 uploads a world frame on the shipped profile, but a count cannot say
+     * whether those are a mod re-declaring a texture it did not change (a defect the stub's serial now suppresses) or
+     * a small patch landing in a large record (a cost this class pays by re-copying the whole record). The two have
+     * different repairs, so the census names the GL id, the level's extent, the record's extent and the backlog depth
+     * for the first few uploads of a run.
+     */
+    private static int MIRROR_UPLOAD_LOGS;
+    private static final int MIRROR_UPLOAD_LOG_LIMIT =
+            Integer.getInteger("celtium.vulkan.mirrorUploadLog", 24).intValue();
 
     private static final int IMAGE_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
 
@@ -312,6 +325,22 @@ public final class VulkanGlTexture {
      * call - and every call for a texture the stub has never seen - on the old read-and-hash path.
      */
     private long lastUploadSerial = -1L;
+
+    /**
+     * {@return whether this image already holds the level content the stub's serial names}.
+     * <p>
+     * The same question {@link #uploadFromGlTexture} asks at its head, offered to the caller that would otherwise
+     * make the call to have it answered. A caller that can ask it first saves the whole call - the breadcrumb, the
+     * clock read, the ownership check, the two poison lookups, the serial lookup and the census update under the
+     * class lock - for a name it already knows is current. {@link Long#MIN_VALUE} (no record at all) is never
+     * "current": the upload has to run to discover that, and the caller's own deferral decides what to do with it.
+     * <p>
+     * The announced path ({@link #uploadFromImage}) deliberately stores -1 here, so a mirror filled by an
+     * announcement never answers true for a captured serial it did not take.
+     */
+    boolean celtium$holdsSerial(long serial) {
+        return serial != Long.MIN_VALUE && serial == this.lastUploadSerial;
+    }
 
     /**
      * Per-level write provenance, which is what makes "which levels did this write touch" a number rather than a
@@ -1212,6 +1241,13 @@ public final class VulkanGlTexture {
     private static long fullUploads;
     private static long fullUploadBytes;
     private static long fullUploadNanos;
+    /**
+     * Calls that got past the serial check and then found the captured bytes identical to what the image already
+     * holds, so no copy was recorded. Counted apart from {@link #fullUploads} because the two answer different
+     * questions: the call count is what the accept path pays for the check, and this is how much of that check was
+     * spent proving there was nothing to do.
+     */
+    private static long fullUploadSkips;
     // Int-keyed: this is written once per full upload and read by the census summary. Writes already happen under the
     // class lock, so the maps need no concurrency of their own.
     private static final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap fullUploadsByGlId =
@@ -1250,9 +1286,17 @@ public final class VulkanGlTexture {
         text.append("count=").append(fullUploads)
                 .append(" bytes=").append(fullUploadBytes)
                 .append(" millis=").append(fullUploadNanos / 1000000L)
+                .append(" skips=").append(fullUploadSkips)
                 .append(" byGlId=[");
+        // Largest first and bounded: the question is which textures dominate, and a run with a hundred mirrored
+        // names would otherwise put a hundred entries on a line printed every 120 frames.
+        java.util.List<it.unimi.dsi.fastutil.ints.Int2IntMap.Entry> rows =
+                new java.util.ArrayList<it.unimi.dsi.fastutil.ints.Int2IntMap.Entry>(
+                        fullUploadsByGlId.int2IntEntrySet());
+        rows.sort((a, b) -> Integer.compare(b.getIntValue(), a.getIntValue()));
         boolean first = true;
-        for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry entry : fullUploadsByGlId.int2IntEntrySet()) {
+        for (int i = 0; i < rows.size() && i < 8; i++) {
+            it.unimi.dsi.fastutil.ints.Int2IntMap.Entry entry = rows.get(i);
             if (!first) {
                 text.append(' ');
             }
@@ -1381,6 +1425,19 @@ public final class VulkanGlTexture {
                     GL_TEXTURE_HEIGHT);
             if (extentW > 0 && extentH > 0
                     && (level == null || level.width != extentW || level.height != extentH)) {
+                if (MIRROR_UPLOAD_LOGS < MIRROR_UPLOAD_LOG_LIMIT) {
+                    MIRROR_UPLOAD_LOGS++;
+                    System.out.println("[Celtium] CELTIUM_MIRROR_UPLOAD glTexture=" + glTextureId
+                            + " level=" + extentW + "x" + extentH
+                            + " record=" + (level == null
+                                    ? "backlog"
+                                    : level.width + "x" + level.height
+                                            + (level.width == extentW && level.height == extentH
+                                                    ? "(whole)" : "(patch)"))
+                            + " backlog=" + pendingPatches.size()
+                            + " serial=" + uploadSerial
+                            + " (a whole-record re-supply; the census says which textures pay for it)");
+                }
                 if (extentW != this.width || extentH != this.height) {
                     recreateImageResources(extentW, extentH);
                 }
@@ -1469,6 +1526,9 @@ public final class VulkanGlTexture {
                 // The bytes are already present; remember a newer capture serial as well, so unchanged
                 // captures do not pay for the same full-image hash on every lookup.
                 this.lastUploadSerial = uploadSerial;
+                synchronized (VulkanGlTexture.class) {
+                    fullUploadSkips++;
+                }
                 return;
             }
             dumpForDebugging(glTextureId, level);

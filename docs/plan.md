@@ -41,18 +41,20 @@ record 仕事を消す）だけで、順序は実測コストで並べ替える�
    | vanilla post shader・発光outline | **native描画**（creeper/spider: `12a45471f`、outline合成: `ef807429c`。AMD/Intel world PASSED・validation 0。outlineはwithin-run A/Bで実測＝[証拠](evidence/glow-outline-2026-11-03.md): 2669px・対照0・noise 3.69%・`postChains=1`） |
    texture environment・空framebuffer初期化・公開cache・material寿命の整理は [実装と検証](evidence/native-texture-owner-2026-10-25.md)。
 2. **性能**（KPI flags・1280×720・vsync off/260・`world-0.7.11` instance（Xaeroなし）・3対×240 s、両GPUとも 0.1.1-alpha の jar `9feaa083`（コードは配布jar `a8bd0480`と同一、差はjar内README）＝`54b42982d`）:
-   - **AMD: goal条件1を満たす**（最新 `rel-amd`: verdict NOT_SLOWER、各対のp50/p95/p99比が全て<1、中央値 0.591/0.596/0.826、p50 0.63 vs 1.06 ms。前回 `kpi5` 0.622/0.619/0.811）。
+   - **AMD: goal条件1を満たす**（最新 `rel-amd`: verdict NOT_SLOWER、各対のp50/p95/p99比が全て<1、中央値 0.591/0.596/0.826、p50 0.63 vs 1.06 ms）。
      **この行は scene 限定**（`world-0.7.11`・Xaeroなし・旧JAR）。現行JARを実配布profileで測ると逆:
      `celtium-world-accept`（188 mods・`qmagnet`）3対で **Celtium が 1.66–1.76×遅い**（p50 median 1.677、
      `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-world-accept-2026-11-03.md)）。frameBudget は
-     `gpuShare=0.01`＝CPU律速、Celtium側 bracket は `record`0.6＋`batch`0.9＋`present`0.4 ms。
+     `gpuShare=0.01`＝CPU律速。
      **窓の固定費はもう主因ではない**（27.6窓/フレーム、[証拠](evidence/window-split-2026-11-03.md)）。
      **prepareキャッシュの負荷率76%が欠陥**（ミス9.8→1.8%、p50 −5.8%、[証拠](evidence/prepare-cache-load-2026-11-03.md)）。
      鎖は `record`0.5＋`batch`0.8＋`present`0.2、`other`1.6 ms（3.1 p50）。Celeritas 1.79 ms 超えには鎖~0.2 ms。
      **受理経路は実配布profileで初計測**（[証拠](evidence/accept-path-world-profile-2026-11-03.md)）: offer毎に
      `supply`3072・`prepare`1064・`registry`821 ns・52.7 offer/フレーム＝**~0.27 ms（10%）**。round29の
      「registry 2.6 µs・supply 5.0 µs＝1.2 ms」は別sceneの値でA/Bではない。同legの**失敗upload 28,272
-     （8.1/フレーム）**は「読む物が無い」deferralへ（A/Bで0・empty 33,102）。残る最大は`supply`＝upload 15.9/フレーム。client threadのprofile
+     （8.1/フレーム）**は「読む物が無い」deferralへ（A/Bで0・empty 33,102）。**`supply`はuploadではなかった**:
+     62,564呼が`bytes=0`＝serial checkで即return（[証拠](evidence/mirror-upload-census-2026-11-03.md)、A/Bで97呼・
+     画像不変）。client threadのprofile
      （[証拠](evidence/accept-profile-jfr-2026-11-03.md)）: Celtium 43.4%・accept 19.0%・窓 9.8%・
      **最大self 3.6%**＝micro-optでは動かない。JFRは`CELTIUM_LEG_JFR`（attach）。
      **窓の削減は1件実測**: pending copyの順序flushを「offerごと」から「copy先をsampleする時だけ」へ

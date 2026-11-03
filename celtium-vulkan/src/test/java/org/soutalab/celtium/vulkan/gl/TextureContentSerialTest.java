@@ -151,4 +151,48 @@ class TextureContentSerialTest {
             restore(previous);
         }
     }
+
+    /**
+     * A whole image re-uploaded unchanged must not move the serial, and one that changed must.
+     * <p>
+     * The serial is what makes a mirror re-supply, and a re-supply of identical bytes is pure cost: the shipped
+     * profile pays 15.2 of them a world frame at ~9 us each. The patch path already had this rule (OPT-21); this is
+     * the whole-image half, and the two states it must separate are "the same bytes again" (no serial) and "one byte
+     * different" (a new serial, because the mirror's image is now stale).
+     */
+    @Test
+    void aWholeImageUploadedAgainUnchangedDoesNotMoveTheSerial() throws Exception {
+        Object previous = install();
+        try {
+            int texture = 502;
+            CeltiumGlStub.celtium$glBindTexture(0x0DE1, texture);
+            ByteBuffer pixels = MemoryUtil.memAlloc(8 * 8 * 4);
+            try {
+                MemoryUtil.memSet(MemoryUtil.memAddress(pixels), 0x41, 8 * 8 * 4L);
+                CeltiumGlStub.celtium$texImage2D(0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401,
+                        MemoryUtil.memAddress(pixels));
+                long first = CeltiumGlStub.textureUploadSerial(texture, 0);
+                assertNotEquals(Long.MIN_VALUE, first, "the first upload is content and takes a serial");
+
+                // The same bytes again: GL's content did not change, so neither may the serial.
+                CeltiumGlStub.celtium$texImage2D(0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401,
+                        MemoryUtil.memAddress(pixels));
+                assertEquals(first, CeltiumGlStub.textureUploadSerial(texture, 0),
+                        "an identical whole image is not a write to the level's content");
+                assertTrue(CeltiumGlStub.textureLevelHasGamePixels(texture, 0),
+                        "and the record it kept is still game content");
+
+                // One byte different: the mirror's image is stale, so the serial has to move.
+                MemoryUtil.memPutByte(MemoryUtil.memAddress(pixels) + 17L, (byte) 0x42);
+                CeltiumGlStub.celtium$texImage2D(0x0DE1, 0, 0x8058, 8, 8, 0, 0x1908, 0x1401,
+                        MemoryUtil.memAddress(pixels));
+                assertTrue(CeltiumGlStub.textureUploadSerial(texture, 0) > first,
+                        "a changed whole image is a write, so the mirror must re-supply");
+            } finally {
+                MemoryUtil.memFree(pixels);
+            }
+        } finally {
+            restore(previous);
+        }
+    }
 }
