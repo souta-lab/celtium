@@ -8485,15 +8485,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             if (BATCH_TIMINGS) this.immediateStatistics.addMatrixCopyNanos(System.nanoTime() - matrixCopyStart);
             long captureStart = BATCH_TIMINGS ? System.nanoTime() : 0;
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offCapture");
-            int[] state = celtium$captureState();
-            if (SKY_NO_DEPTH && formatId == 7 && vertexCount == 676 && state.length > 3) {
+            // The key is cached on the same three versions the signature is (round 58) plus the layout id: the key is
+            // a pure function of the signature and the id, so "the versions and the id are the ones the key was taken
+            // under" is exactly "the key is the same". A hit skips the sixteen-int mapping, the hash and the per-offer
+            // census, and leaves the scratch array stale - the slow path materialises it below, which is the only
+            // place that reads the values.
+            int[] state = this.celtium$stateScratch;
+            long stateKey = celtium$offerStateKey(formatId);
+            if (BATCH_TIMINGS) this.immediateStatistics.addStateKeyNanos(System.nanoTime() - captureStart);
+            if (SKY_NO_DEPTH && formatId == 7 && vertexCount == 676) {
                 // Diagnostic only: the same draw with the depth test removed, so the picture says whether the depth
-                // attachment is what removes it.
+                // attachment is what removes it. It edits the captured values, so it needs them materialised.
+                celtium$materializeOfferState();
                 state[3] = 0;
+                stateKey = celtium$stateKey(formatId, state);
             }
-            if (BATCH_TIMINGS) this.immediateStatistics.addCaptureStateNanos(System.nanoTime() - captureStart);
-            long keyStart = BATCH_TIMINGS ? System.nanoTime() : 0;
-            long stateKey = celtium$stateKey(formatId, state);
             org.soutalab.celtium.vulkan.FramePassTimings.end("offCapture");
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offPrepare");
             // A bound-texture term was tried here and reverted: the reuse predicate already compares
@@ -8504,7 +8510,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // The hash itself never sets it: see celtium$stateKey, which masks it for exactly this reason.
                 stateKey |= LINE_KEY_BIT;
             }
-            if (BATCH_TIMINGS) this.immediateStatistics.addStateKeyNanos(System.nanoTime() - keyStart);
             // A batch drawn by a shader cannot be reproduced by this renderer's immediate pipeline, and taking it was
             // expensive in a way the frame showed: Minecraft's post-process chain (ShaderGroup) draws several
             // full-screen passes with real programs, each of which mirrored its source texture - measured at 898
@@ -8681,6 +8686,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_SUPPLY, System.nanoTime() - supplyStart);
             this.slowPathWriteEpoch = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureWriteEpoch();
+            // The slow path is the only reader of the captured values, and the key cache may have left the scratch
+            // array stale: materialise it here, once, before the preflight and the group open both read it.
+            celtium$materializeOfferState();
             long prepareStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
             PreparedImmediate prepared = prepareImmediate(formatId, boundTexture, stateKey, state,
                     liveTextureImage, !wrapperMayHaveMoved);
@@ -9161,6 +9169,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // of the two append paths they take.
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offAppend");
             if (BATCH_REUSE_CENSUS) {
+                // The census hashes the captured values, so it needs them materialised even on a fast merge.
+                celtium$materializeOfferState();
                 celtium$noteBatchReuse(vertexAddress, vertexCount, vertexStride, formatId, drawMode, state);
             }
             boolean appended = retained != null || (this.currentGroupPreTransformed
@@ -9911,6 +9921,112 @@ this.frameBufferOpen = false;
         celtium$stateFromSignature(signature, state);
         celtium$noteStateStatistics(state, signature[SIGNATURE_COLOR_MASK]);
         return state;
+    }
+
+    /**
+     * The offer path's state key, cached on the three versions the signature is cached on plus the layout id.
+     * <p>
+     * {@link #celtium$stateKey} hashes the layout id and the sixteen mapped integers, and the mapping
+     * ({@link #celtium$stateFromSignature}) is a pure function of the signature. The signature is itself a pure
+     * function of {@code VulkanGlState.stateVersion()}, {@code NativeTextureEnvironment.version()} and the
+     * window-target bit - the contract round 58 established and {@code StateSignatureVersionContractTest} enumerates
+     * input by input. So the key is a pure function of those three versions and the layout id, and a cache keyed on
+     * all four is exactly as sound as the signature cache: a hit cannot serve a key the capture would not have
+     * produced.
+     * <p>
+     * <b>The layout id is in the key, and that was measured rather than assumed.</b> The first form of this cache
+     * keyed on the three versions only and hashed on every offer, on the argument that the id alternates between
+     * offers and would throw away hits to save a cheap hash. Legs {@code r59a-us} (four keys) and {@code r59b-us}
+     * (three keys) are the same scene and flags on the same GPU, and the bracket that holds this work read
+     * {@code offCapture} 17.8 us against 18.4 us a frame: the hash is ~31 ns, not the ~20 ns the argument assumed, and
+     * 0.303 x 31 ns costs more than the 0.084 extra hits save. The two runs are not a controlled A/B (different
+     * sessions, so different world content), so the direction is what is claimed and the margin is inside the
+     * measurement's resolution - but the arithmetic above is what decides it, and it favours four keys.
+     * <p>
+     * What a hit skips is the mapping, the hash and the per-offer census ({@link #celtium$noteStateStatistics}), and
+     * what it leaves behind is a <em>stale</em> {@link #celtium$stateScratch}: the values are only read by the slow
+     * path, which calls {@link #celtium$materializeOfferState} before it uses them. That is also why the census moved
+     * here from the capture: it counts groups, and its counters are named {@code *Groups}, so counting it once per
+     * group rather than once per offer is what makes the names true.
+     */
+    private long celtium$offerStateKey(int formatId) {
+        long stateVersion = this.immediateState.stateVersion();
+        NativeTextureEnvironment currentEnvironment = NativeTextureEnvironment.current();
+        long environmentVersion = currentEnvironment.version();
+        int windowTarget = this.targetRegistry.currentIdentity() == 0L ? 1 : 0;
+        if (celtium$stateKeyCacheHit(stateVersion, environmentVersion, windowTarget, formatId,
+                this.celtium$keyCacheState, this.celtium$keyCacheEnvironment, this.celtium$keyCacheWindowTarget,
+                this.celtium$keyCacheFormat, this.celtium$keyCacheValid)) {
+            this.celtium$keyCacheHits++;
+            this.celtium$offerStateFresh = false;
+            return this.celtium$keyCacheKey;
+        }
+        this.celtium$keyCacheMisses++;
+        this.celtium$offerStateFresh = false;
+        celtium$materializeOfferState();
+        long key = celtium$stateKey(formatId, this.celtium$stateScratch);
+        this.celtium$keyCacheKey = key;
+        this.celtium$keyCacheState = stateVersion;
+        this.celtium$keyCacheEnvironment = environmentVersion;
+        this.celtium$keyCacheWindowTarget = windowTarget;
+        this.celtium$keyCacheFormat = formatId;
+        this.celtium$keyCacheValid = true;
+        return key;
+    }
+
+    /**
+     * Whether the cached key was taken under exactly these four keys.
+     * <p>
+     * Extracted so the arithmetic can be exercised without a device, the same shape as
+     * {@link #celtium$signatureCacheHit}: the capture needs the live state objects, but "which keys make a hit" is a
+     * comparison, and a green test here is not evidence that a capture was skipped. The initial cache is invalid, so
+     * no live key can match it - a live key can legitimately be {@code (0, 0, 0, 0)} on the first offer of a session.
+     */
+    static boolean celtium$stateKeyCacheHit(long stateVersion, long environmentVersion, int windowTarget,
+            int formatId, long cachedStateVersion, long cachedEnvironmentVersion, int cachedWindowTarget,
+            int cachedFormat, boolean cachedValid) {
+        return cachedValid
+                && stateVersion == cachedStateVersion
+                && environmentVersion == cachedEnvironmentVersion
+                && windowTarget == cachedWindowTarget
+                && formatId == cachedFormat;
+    }
+
+    /**
+     * Fills {@link #celtium$stateScratch} with the state the cached key names, and counts it.
+     * <p>
+     * Called by the key resolution's miss branch (which needs the values to hash) and by the slow path (which reads
+     * them). Idempotent: the flag says whether the array already holds the state the current key was taken under, so
+     * a slow path that follows a miss pays nothing.
+     */
+    private void celtium$materializeOfferState() {
+        if (this.celtium$offerStateFresh) {
+            return;
+        }
+        long started = BATCH_TIMINGS ? System.nanoTime() : 0L;
+        int[] signature = this.celtium$stateSignature;
+        celtium$stateSignature(signature);
+        celtium$stateFromSignature(signature, this.celtium$stateScratch);
+        celtium$noteStateStatistics(this.celtium$stateScratch, signature[SIGNATURE_COLOR_MASK]);
+        this.celtium$offerStateFresh = true;
+        if (BATCH_TIMINGS) this.immediateStatistics.addCaptureStateNanos(System.nanoTime() - started);
+    }
+
+    /** The cached offer key and the four keys it was taken under; see {@link #celtium$offerStateKey}. */
+    private long celtium$keyCacheKey;
+    private long celtium$keyCacheState = -1L;
+    private long celtium$keyCacheEnvironment = -1L;
+    private int celtium$keyCacheWindowTarget = -1;
+    private int celtium$keyCacheFormat = -1;
+    private boolean celtium$keyCacheValid;
+    private long celtium$keyCacheHits;
+    private long celtium$keyCacheMisses;
+    /** Whether {@link #celtium$stateScratch} holds the state the current offer key was taken under. */
+    private boolean celtium$offerStateFresh;
+
+    /** {@return the offer state-key cache's hits and misses, for the verification summary}. */
+    String celtium$stateKeyCacheSummary() {
+        return this.celtium$keyCacheHits + "/" + this.celtium$keyCacheMisses;
     }
 
     /**

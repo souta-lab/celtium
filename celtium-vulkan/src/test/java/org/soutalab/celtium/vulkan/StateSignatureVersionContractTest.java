@@ -158,6 +158,55 @@ class StateSignatureVersionContractTest {
                 + "); the signature cache would serve a stale signature for it");
     }
 
+    /**
+     * The offer key cache's predicate: a hit needs the three versions <em>and</em> the layout id, and any one of them
+     * moving is a miss.
+     * <p>
+     * The key is {@code celtium$stateKey(formatId, state)}, a hash of the layout id and the sixteen mapped integers,
+     * and the mapping is a pure function of the signature. So the key is a pure function of the three versions and the
+     * id, and this predicate is the whole of the cache's correctness: a hit that was not exact would serve a key the
+     * capture would not have produced, which is a wrong pipeline rather than a slow frame. The layout id is a fourth
+     * key here because the same state under two layouts is two different keys - the signature cache does not carry it
+     * and would answer "hit" for both.
+     * <p>
+     * The id is in the key because it was measured: legs {@code r59a-us} (four keys) and {@code r59b-us} (three keys)
+     * put {@code offCapture} at 17.8 us against 18.4 us a frame, so the hash the three-key form pays on every offer
+     * costs more than the extra hits it buys. The assertion below is what keeps the fourth key from being dropped
+     * again on the argument that it "only" costs hit rate.
+     */
+    @Test
+    void theKeyCacheHitsOnlyWhenAllFourKeysAreUnchanged() {
+        assertTrue(VulkanTerrainGpuBackend.celtium$stateKeyCacheHit(7L, 3L, 1, 2, 7L, 3L, 1, 2, true));
+        assertFalse(VulkanTerrainGpuBackend.celtium$stateKeyCacheHit(8L, 3L, 1, 2, 7L, 3L, 1, 2, true),
+                "state version moved");
+        assertFalse(VulkanTerrainGpuBackend.celtium$stateKeyCacheHit(7L, 4L, 1, 2, 7L, 3L, 1, 2, true),
+                "environment moved");
+        assertFalse(VulkanTerrainGpuBackend.celtium$stateKeyCacheHit(7L, 3L, 0, 2, 7L, 3L, 1, 2, true),
+                "window target moved");
+        assertFalse(VulkanTerrainGpuBackend.celtium$stateKeyCacheHit(7L, 3L, 1, 6, 7L, 3L, 1, 2, true),
+                "layout id moved");
+        // The initial cache is invalid rather than "taken under -1": a live key can legitimately be (0, 0, 0, 0) on the
+        // first offer of a session, so the flag is what says "nothing cached yet".
+        assertFalse(VulkanTerrainGpuBackend.celtium$stateKeyCacheHit(0L, 0L, 0, 0, -1L, -1L, -1, -1, false));
+    }
+
+    /**
+     * The key is a function of the layout id as well as the state: two layouts with the same state must not share a
+     * key, or a group opened for one would take the other's pipeline.
+     */
+    @Test
+    void theKeySeparatesLayoutsWithTheSameState() {
+        int[] state = new int[16];
+        state[0] = 1;
+        state[3] = 1;
+        state[5] = 1;
+        long first = VulkanTerrainGpuBackend.celtium$stateKey(2, state);
+        long second = VulkanTerrainGpuBackend.celtium$stateKey(6, state);
+        assertTrue(first != second, "layouts 2 and 6 produced the same key: " + first);
+        assertEquals(first, VulkanTerrainGpuBackend.celtium$stateKey(2, state.clone()),
+                "the same layout and state must produce the same key");
+    }
+
     /** The version is monotonic, which is what makes "unchanged" a safe answer for "the same signature". */
     @Test
     void theVersionNeverGoesBackwards() {

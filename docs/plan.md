@@ -41,9 +41,15 @@
      **出荷構成の warm 窓: frame 2.38 = render 1.61 + fmlTick 0.62 + display 0.10 + tick 0.06**（tickMean は tick が
      走ったフレーム数で割る）＝**render が 68%**。受理は **0.37 wall / 0.25 CPU ms**＝CPU 律速、全部消しても 0.31 ms。
      **round 56 の −0.28 ms は validation ON の leg の値**（出荷構成では ~0.1 ms）。
+     **round 59 実測（µs 分解能）**（[証拠](evidence/pass-split-micros-2026-11-04.md)）: frame 2019 = world 1592 +
+     gui 392。`flush` 486 = `winRecord` 364 = `wrecLoop` 244（`grpDraw` **128**＝209 group×0.61 µs）＋窓の固定費。
+     **「固定費は8本に分散」は棄却**: 8本＝150 µs で、`winSubmit` 43・`winBarrier` 31・`winBeginPass` 28 の**3本で67%**。
+     `winSubmit` は `vkQueueSubmit` ではない（実 submit 3.4回/フレーム、窓36枚）。`winRecord` の未帰属は 52 µs。
+     受理経路は段で **s8 893 / s10 690 / s11 870 / s13 696 ns/offer**、名前付き bracket は 507 ns/offer だけ＝
+     **~2.6 µs/offer が未帰属**でここが最大の的。`stateKeyCache` は 21.9%（4キー形）で**効果は測定限界以下**。
      **round 58 実測**（[証拠](evidence/render-split-and-signature-cache-2026-11-04.md)）: frame 1.2 = world 0.8 +
-     gui 0.4、`flush` 0.4 = `wrecLoop` 0.2（`grpDraw` 0.1）+ 窓の固定費 ~0.2 が8本に分散。`vkCmdDrawIndexed` **0.68 µs**、
-     pipeline bind 4,117/727,499＝dedupe は効く。**単一項目は0.2 ms以下**
+     gui 0.4、`flush` 0.4 = `wrecLoop` 0.2（`grpDraw` 0.1）。`vkCmdDrawIndexed` **0.68 µs**、
+     pipeline bind 4,117/727,499＝dedupe は効く。
      **`gui` 0.4 のうち Celtium は `guiBatch` 0.1 だけ**（[証拠](evidence/warm-window-split-2026-11-04.md)）。
      pair clear は `winHead` 内（**round 54 で既定 ON**、`-Dceltium.vulkan.pairClearInPass=false` が旧経路）: `winHead` **141→43 µs**、frame差は未分離。**Celtium 自身 ~0.7 ms を ~0.2 ms にしないと届かない。**
      **窓の統合（sticky pass）は棄却**（[証拠](evidence/sticky-window-pass-2026-11-04.md)）: merge 2.6/フレーム成立でも
@@ -52,19 +58,16 @@
      （offer 238.3→230.1、group 136.5→133.5）。残り86は**intervening flush**＝順序規則。既定OFF。
      **round 42–46 の内訳は検証レイヤを測っていた**（[証拠](evidence/frame-split-conditions-2026-11-04.md)）:
      検証OFF は frame 1.4、`vkCmdDrawIndexed` は 5.0→**0.9 µs**。
-     **出荷構成の世界scene実測**（[証拠](evidence/world-frame-accounting-2026-11-04.md)）: 219 offer・113.6 group・
-     22.1 flush・23.1 window/フレーム、受理**3.49 µs/offer＝0.77 ms**、group draw 0.24、window 0.30、present 0.20＝
-     **Celtium自身1.36 ms**。**単一項目は0.53 ms以下で、1つ消しても0.6 ms差に届かない**＝micro-optの床。
+     **出荷構成の世界scene**（[証拠](evidence/world-frame-accounting-2026-11-04.md)）: 219 offer・113.6 group・
+     22.1 flush・23.1 window/フレーム、受理 3.49 µs/offer、present 0.20 ms。
 
      **窓の94%は`bindFramebuffer`**（183,841 flush 中 173,470＝33/フレーム、index上限は2/フレーム、
      [証拠](evidence/window-source-bind-2026-11-04.md)）。
-     JFRは`CELTIUM_LEG_JFR`（attach）。
-     **JFRの「フォント経路8.9%」は取り下げ**（[証拠](evidence/font-timing-brackets-2026-11-03.md)）。**warm windowはflagが要る**（`warmFromTick=400 warmToTick=600
-     holdUntilTick=620`）。**font runを割るのはcolour witnessだけ**（[証拠](evidence/font-witness-census-2026-11-03.md)）:
-     worldは94/フレーム。**colour witnessはcombine分岐だけに効く**（[証拠](evidence/font-colour-witness-narrowing-2026-11-04.md)）:
-     `u_ColorR/G/B`は`u_AlphaRef<0`でのみ読まれ色は頂点毎。既定`combine`でrun 94.5→19.0・offer 221→146/フレーム、
-     **受理CPU −0.28 ms/フレーム**。**groupは115のまま**（棄却:「font runがgroupの82%」）。**off-target windowはframe imageを動かさない**（[証拠](evidence/off-target-frame-barriers-2026-11-03.md)）:
-     `winBarrier` 0.3→0.2 ms。**offerの55%がslow path**、平均3235 nsは中央値の1.6倍（先取り説は棄却、[証拠](evidence/accept-distribution-2026-11-03.md)）。
+     JFRは`CELTIUM_LEG_JFR`（attach）。**warm windowはflagが要る**（`warmFromTick=400 warmToTick=600 holdUntilTick=620`）。
+     **colour witnessはcombine分岐だけに効く**（[証拠](evidence/font-colour-witness-narrowing-2026-11-04.md)）:
+     既定`combine`でrun 94.5→19.0・offer 221→146/フレーム、**受理CPU −0.28 ms**（validation ON の値）。
+     **groupは115のまま**（棄却:「font runがgroupの82%」）。**off-target windowはframe imageを動かさない**（[証拠](evidence/off-target-frame-barriers-2026-11-03.md)）。
+     **offerの55%がslow path**（[証拠](evidence/accept-distribution-2026-11-03.md)）。
      **拒否の内訳**（[証拠](evidence/merge-refusal-census-2026-11-03.md)）: 931,838 group openのうち
      **format 448,268（48%）**・no-mesh 190,619・texture 167,484。**formatは畳めない**（6は色をpush blockから、2は頂点から取る）。`s9`=99 nsがmerge述語。
      **窓**: 現行sceneは23.2/フレームで**13.0がGregTechのpost chain**（`Shaders.renderFullImageInFBO`、
@@ -93,7 +96,7 @@
 | **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤測定済み** | 実機報告＋画面 | ②未実行 | ①パノラマ ②エンドポータル ③F2黒スクショ（`nglGetTexImage`） ④ガラスちらつき（`5f75fc009`） ⑤残像＝静止0差分・tooltipの動きは連続3フレーム残留0（[証拠](evidence/tooltip-motion-2026-11-02.md)）・mod FBO bind中0（[証拠](evidence/tooltip-mod-fbo-2026-11-03.md)）・看板の文字0（[証拠](evidence/sign-text-afterimage-2026-11-03.md)）、⑥空の帯は**一度きりの遷移**＝損失は**記録側**（[証拠](evidence/sky-band-one-transition-2026-11-03.md)） |
 
 
-| **画質（4画面＋QMAGNET）** | **settings画素一致・worldは16階調超 0.97/1.05 %（AMD/Intel）。menu背景は両GPU確認済み** | 両GPU PASSED・clean | 実測 | [証拠](evidence/image-quality-2026-10-28.md)・[menu](evidence/menu-capture-2026-11-02.md)・[legacy既定ON](evidence/legacy-immediate-default-2026-11-02.md)。修正: 半透明cull・lit clamp・Forgeブロックモデル・legacy既定ON・atlas実寸・色同期・menu背景。残り: 遠い壁1面の陰影勾配、loadingは参照なし。**creative tab の item icon と hover slotのhighlight を修正**（[highlight](evidence/creative-highlight-line-pipeline-2026-11-02.md)）。**creative grid は現行JARで参照一致**（[検証](evidence/creative-grid-verified-2026-11-03.md)）|
+| **画質（4画面＋QMAGNET）** | **settings画素一致・worldは16階調超 0.97/1.05 %（AMD/Intel）。menu背景は両GPU確認済み** | 両GPU PASSED・clean | 実測 | [証拠](evidence/image-quality-2026-10-28.md)・[menu](evidence/menu-capture-2026-11-02.md)。残り: 遠い壁1面の陰影勾配、loadingは参照なし。**creative tab の item icon と hover slotのhighlight を修正**（[highlight](evidence/creative-highlight-line-pipeline-2026-11-02.md)）。**creative grid は現行JARで参照一致**（[検証](evidence/creative-grid-verified-2026-11-03.md)）|
 | **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（v0.0.14-alpha・AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | v0.0.14-alpha `90a7c505…` は qmagnet world で AMD/Intel PASSED・validation 0・画像gate一致。0.6.13（GLFW/LWJGL 3.4.1）はSDL3不在を検出して版を名指しで拒否 |
 | **巨大pack互換（E2E-E 1.87.3）** | **AMD: fixture PASSED・validation 0、Intel未実行** | AMD | 未実行 | Cleanroom 0.7差はlocal置換と上流PR（`8f121acfb`）。残りは[証拠](evidence/e2e-cleanroom07-2026-10-26.md)末尾へ。 |
 

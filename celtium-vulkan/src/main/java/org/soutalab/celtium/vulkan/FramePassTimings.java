@@ -420,7 +420,7 @@ public final class FramePassTimings {
         if (written == 0) return "not measured yet";
         int n = Math.min(written, CAPACITY);
         return "p50=" + ms(percentile(frameTotals, n, 0.50)) + " p95=" + ms(percentile(frameTotals, n, 0.95))
-                + " worst=" + ms(worst(frameTotals, n)) + " ms";
+                + " worst=" + ms(worst(frameTotals, n)) + " " + unit();
     }
 
     /**
@@ -477,6 +477,7 @@ public final class FramePassTimings {
         if (written == 0) return "frames=0 (the instrument did not measure; enabled=" + enabled() + ")";
         int n = Math.min(written, CAPACITY);
         StringBuilder text = new StringBuilder("clock=").append(CPU_CLOCK && THREAD_CPU_SUPPORTED ? "cpu" : "wall")
+                .append(" unit=").append(unit())
                 .append(" frames=").append(n)
                 // The conditions the split was measured under, on the split itself. The Khronos validation layer is a
                 // measurement switch, not a mode, and it is not free: the runner's own note records it costing 6.6 ms
@@ -520,7 +521,23 @@ public final class FramePassTimings {
         return max;
     }
 
+    /**
+     * {@code -Dceltium.vulkan.passSplitMicros=true}: print the split in microseconds instead of milliseconds.
+     * <p>
+     * The millisecond form rounds to 0.1 ms, so every bracket under 50 us reads 0.0 and cannot be ranked. Round 58's
+     * split left eight window brackets - {@code winHead}, {@code winPublish}, {@code winBeginPass}, {@code winPassEnd},
+     * {@code winSubmit}, {@code winBarrier}, {@code wfpBegin}, {@code wfpMiddle} - all at 0.0 while their sum was
+     * ~0.2 ms a frame, which is exactly the resolution the next decision needs and exactly what 0.1 ms cannot give.
+     * The unit is printed beside the frame count so a microsecond line can never be read as a millisecond one.
+     */
+    private static final boolean MICROS = Boolean.getBoolean("celtium.vulkan.passSplitMicros");
+
+    /** {@return the unit the split is printed in, for the line's own label}. */
+    public static String unit() {
+        return MICROS ? "us" : "ms";
+    }
+
     private static String ms(long nanos) {
-        return String.format(java.util.Locale.ROOT, "%.1f", nanos / 1_000_000.0D);
+        return String.format(java.util.Locale.ROOT, "%.1f", MICROS ? nanos / 1_000.0D : nanos / 1_000_000.0D);
     }
 }

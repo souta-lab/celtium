@@ -122,6 +122,11 @@ final class BackendDiagnostics {
                 // every offer, so "how often the versions answered for it" is the number that says whether the cache
                 // is doing anything on this scene. hits/misses, printed rather than inferred.
                 + " stateSignatureCache=" + b.celtium$signatureCacheSummary()
+                // The offer key cache's hit rate, beside the signature cache's: a hit skips the sixteen-int mapping,
+                // the hash and the per-offer census, and leaves the scratch array for the slow path to materialise.
+                // The two rates differ because this key also carries the layout id, which changes between offers the
+                // signature does not.
+                + " stateKeyCache=" + b.celtium$stateKeyCacheSummary()
                 // BH-11 and BH-12's counters, at the same place as BH-08's. acceptance found
                 // immediateDepthBiasedGroups declared and incremented with zero print sites, so "the bias was
                 // applied" had no evidence in any artifact; the narrowed-line total had the same gap (only the
