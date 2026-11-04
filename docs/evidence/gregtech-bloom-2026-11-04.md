@@ -351,3 +351,11 @@ the GL reference and until libshaderc ships.
 Latent issue found on the way, not changed here: the existing prefix call
 `celtium$queuedForTargetUsesPublished(this.activeImmediateTarget)` (the published chain output's sampled-layout
 transition) reads the same stale field.
+
+### Round 9b: the same stale read in the existing prefix calls, fixed
+
+Both existing calls `celtium$queuedForTargetUsesPublished(this.activeImmediateTarget)` (the immediate-only window and
+the terrain pass) ran before that field is assigned for the pass, so they asked about the previous pass's target.
+They now ask `targetRegistry.currentIdentity()`. Renderer `f4f1993d…`: glow-outline A/B leg `r45-glow` (the
+re-run recipe of glow-outline-2026-11-03.md) **verdict=PASS**, outline 2723 px (0.295%), control 28/7, noise 3.51%,
+validation 0; `r44-world-intel` (Intel UHD 630, world-accept) PASSED, validation 0, gpuRequirementMet=true.

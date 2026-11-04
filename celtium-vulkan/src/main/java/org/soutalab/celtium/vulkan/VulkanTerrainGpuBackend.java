@@ -14003,7 +14003,9 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("winPrefix");
         try {
         if (this.publishedChainOutput != null
-                && celtium$queuedForTargetUsesPublished(this.activeImmediateTarget)) {
+                // This pass's own target: activeImmediateTarget is assigned only where the pass begins, below, so here it
+                // still named the previous pass's target (found 2026-11-05 through the mod-program read barrier).
+                && celtium$queuedForTargetUsesPublished(this.targetRegistry.currentIdentity())) {
             // The immediate pipelines declare SHADER_READ_ONLY_OPTIMAL in their descriptors while the published
             // outline image can be in GENERAL here: an off-target pass hands it back before attaching it, and a frame
             // in which the chain did not run never moves it forward. The transition belongs to the submission that
@@ -15809,7 +15811,9 @@ this.frameBufferOpen = false;
                     timestampSlot * 2);
         }
         if (this.publishedChainOutput != null
-                && celtium$queuedForTargetUsesPublished(this.activeImmediateTarget)) {
+                // This pass's own target: activeImmediateTarget is assigned only where the pass begins, below, so here it
+                // still named the previous pass's target (found 2026-11-05 through the mod-program read barrier).
+                && celtium$queuedForTargetUsesPublished(this.targetRegistry.currentIdentity())) {
             // The immediate pipelines declare SHADER_READ_ONLY_OPTIMAL in their descriptors while the published
             // outline image can be in GENERAL here: an off-target pass hands it back before attaching it, and a frame
             // in which the chain did not run never moves it forward. The transition belongs to the submission that
