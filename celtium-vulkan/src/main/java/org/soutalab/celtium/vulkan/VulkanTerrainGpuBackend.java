@@ -3585,6 +3585,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Lab switch: {@code false} refuses the mod-program passes whose target is the game's framebuffer. */
     private static final boolean MOD_PROGRAMS_TO_MAIN =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramsToMain", "true"));
+    /**
+     * {@code -Dceltium.vulkan.terrainToBoundTarget=true}: draw a terrain pass into the bound mod framebuffer's chain pair
+     * instead of the game's framebuffer when a non-main framebuffer is bound (GTCEu's Bloom layer). Off by default until
+     * a leg compares it with the GL reference; the pair's depth is its own, not the game's, so a bloom block behind a
+     * wall still enters the mask.
+     */
+    private static final boolean TERRAIN_TO_BOUND_TARGET = Boolean.getBoolean("celtium.vulkan.terrainToBoundTarget");
+    private long terrainPassesToBoundTarget;
     /** {@code -Dceltium.debug.modProgramTrace=N}: log the record order of mod-program passes for N frames from 300. */
     private static final int MOD_TRACE_FRAMES = Integer.getInteger("celtium.debug.modProgramTrace", 0).intValue();
     private int modTraceLines;
@@ -15798,9 +15806,29 @@ this.frameBufferOpen = false;
         gpuMark("acq4");
 
         long renderPass = pipeline.renderPass();
+        long terrainFramebuffer = ensureFramebuffer(renderPass);
+        if (TERRAIN_TO_BOUND_TARGET && !this.targetRegistry.currentIsMain()) {
+            // A mod that binds its own framebuffer around renderBlockLayer wants that layer in it: GTCEu renders its
+            // Bloom layer into bloomFBO and builds the bloom mask from it, which stays empty (no halo) while the terrain
+            // pass always draws into the game's framebuffer. The chain pair of the bound framebuffer is attached with
+            // the same render pass the immediate windows already use for it.
+            GllessFrameTarget pairOwner = offTargetTarget();
+            long identity = this.targetRegistry.currentIdentity();
+            if (pairOwner != null && pairOwner.chainPairMatches(identity, this.targetWidth, this.targetHeight)) {
+                long pairFramebuffer = ensureChainPairFramebuffer(renderPass);
+                if (pairFramebuffer != 0L) {
+                    terrainFramebuffer = pairFramebuffer;
+                    this.terrainPassesToBoundTarget++;
+                    if (this.terrainPassesToBoundTarget <= 4) {
+                        System.out.println("[Celtium] CELTIUM_TERRAIN_BOUND_TARGET pass=" + pass.name() + " identity=0x"
+                                + Long.toHexString(identity) + " frame=" + this.frameId);
+                    }
+                }
+            }
+        }
         begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
                 .renderPass(renderPass)
-                .framebuffer(ensureFramebuffer(renderPass));
+                .framebuffer(terrainFramebuffer);
         begin.renderArea().offset().set(0, 0);
         begin.renderArea().extent().set(this.targetWidth, this.targetHeight);
         timestampSlot = this.timestampsUsable && this.timestampSlots < WINDOW_SLOT_BASE
