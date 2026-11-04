@@ -339,6 +339,7 @@ read, outside the pass, only for windows that carry a mod pass) fixes the world:
 | `r42-gt` | `d2f6be19…` | `modPrograms=true` (+ libshaderc for the leg) | **PASSED**, validationMessageCount=0, world 7012 colours, black 0.011492 |
 | `r42-gt` | same | `modProgramReadback=true` | the copy's input centre pixel read **(135,50,9,255)** at the moment the copy runs |
 | `r42-world` | same | default (off) | PASSED, validation 0 |
+| `r43-gt-intel` | same | `modPrograms=true`, Intel UHD 630 | **PASSED**, validationMessageCount=0, gpuRequirementMet=true, black 0.010242, 16 distinct passes drawn |
 
 ![modPrograms on](gregtech-mod-programs-on-2026-11-05.png)
 
