@@ -113,6 +113,14 @@ dependencies {
     modEmbedDependencies("org.lwjgl:lwjgl-vulkan:${rootProject.findProperty("celtium_mod_lwjgl_version")}") {
         isTransitive = false
     }
+    // The shaderc *Java binding* (no natives), for a mod's own GLSL programs (ModShaderCompiler). Cleanroom's mod
+    // class loader does not see jars added to the launcher classpath (measured 2026-11-05, leg r15-gt:
+    // ClassNotFoundException for org.lwjgl.util.shaderc.Shaderc with the jar on -cp), so the binding is embedded the
+    // way lwjgl-vulkan is. Without libshaderc the binding fails its own load and the programs stay refused; whether
+    // the natives ship is a separate distribution decision.
+    modEmbedDependencies("org.lwjgl:lwjgl-shaderc:${rootProject.findProperty("celtium_mod_lwjgl_version")}") {
+        isTransitive = false
+    }
     val lombokVersion = rootProject.findProperty("lombok_version").toString()
     compileOnly("org.projectlombok:lombok:${lombokVersion}")
     annotationProcessor("org.projectlombok:lombok:${lombokVersion}")

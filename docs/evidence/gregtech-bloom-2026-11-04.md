@@ -161,3 +161,24 @@ classes / 0 failures, `:celtium-vulkan:test` green.
 
 What remains for the bloom: run the batch natively (pipeline from the SPIR-V, the block packed from the recorded
 values, samplers resolved from texture units to native images, the mod framebuffer as target) and ship shaderc.
+
+## Round 7: the programs compile to SPIR-V inside the game
+
+`ModShaderCompiler` compiles both lowered stages at link when LWJGL's shaderc binding and native load
+(`CELTIUM_MOD_PROGRAM_LINKED ... compiled=`). Cleanroom's mod class loader does not see a jar added to the launcher
+classpath (leg `r15-gt`: `ClassNotFoundException: org.lwjgl.util.shaderc.Shaderc` with the jar on `-cp`), so the
+**binding classes** are embedded like lwjgl-vulkan's; the **native library is not shipped** (distribution decision).
+
+Leg `r16-gt` (renderer `eb6a8656…`, fixture `22fcf3e0…`, AMD RX 6400, scene=gregtech, natives supplied to the leg
+only with `-Dorg.lwjgl.librarypath=<dir with libshaderc.so from lwjgl-shaderc-3.4.3-natives-linux>`): PASSED,
+validationMessageCount=0, gpuRequirementMet=true; every linked program compiled, the four bloom programs among them:
+
+```
+CELTIUM_MOD_PROGRAM_LINKED program=23812 compiled=true spirvBytes=1500 lowered=true samplers=1 uniformBytes=0
+CELTIUM_MOD_PROGRAM_LINKED program=23841 compiled=true spirvBytes=2908 lowered=true samplers=1 uniformBytes=32
+CELTIUM_MOD_PROGRAM_LINKED program=23842 compiled=true spirvBytes=2612 lowered=true samplers=5 uniformBytes=16
+CELTIUM_MOD_PROGRAM_LINKED program=23843 compiled=true spirvBytes=2584 lowered=true samplers=2 uniformBytes=16
+```
+
+Without the native (every ordinary install today) the line reads `compiled=false compileFailure=shaderc unavailable`
+and `CELTIUM_MOD_SHADERC available=false reason=...` names why, once.

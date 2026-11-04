@@ -41,6 +41,9 @@ dependencies {
     // so the compile classpath keeps GLFW until the surface is moved to SDL explicitly.
     compileOnly 'org.lwjgl:lwjgl-glfw'
     compileOnly 'org.lwjgl:lwjgl-sdl'
+    // A mod's GLSL program is compiled at link time when shaderc is present (ModShaderCompiler checks for it and
+    // reports when it is not); it is not bundled until its distribution is decided.
+    compileOnly 'org.lwjgl:lwjgl-shaderc'
     compileOnly 'com.google.code.gson:gson:2.10.1'
     // The mod's core API exposes joml matrices. They are relocated into the mod's own namespace by the shadow
     // step, and this module goes through that same step, so it compiles against the original coordinates.

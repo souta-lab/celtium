@@ -32,6 +32,10 @@ public final class ModProgramRegistry {
         final Map<String, float[]> floatValues = new HashMap<>();
         final Map<String, int[]> intValues = new HashMap<>();
         int uniformWrites;
+        /** The compiled stages, when shaderc was available at link; null otherwise. */
+        byte[] vertexSpirv;
+        byte[] fragmentSpirv;
+        String compileFailure;
 
         Program(int id) {
             this.id = id;
@@ -54,12 +58,31 @@ public final class ModProgramRegistry {
         public int uniformWrites() {
             return this.uniformWrites;
         }
+
+        /** {@return whether both stages are compiled to SPIR-V} and the program could therefore run natively. */
+        public boolean compiled() {
+            return this.vertexSpirv != null && this.fragmentSpirv != null;
+        }
+
+        public byte[] vertexSpirv() {
+            return this.vertexSpirv;
+        }
+
+        public byte[] fragmentSpirv() {
+            return this.fragmentSpirv;
+        }
+
+        /** {@return why the program has no SPIR-V}: shaderc's message, its absence, or the lowering's failure. */
+        public String compileFailure() {
+            return this.compileFailure;
+        }
     }
 
     private static final Map<Integer, String> SHADER_SOURCES = new HashMap<>();
     private static final Map<Integer, Program> PROGRAMS = new HashMap<>();
     /** Uniform writes to a location no linked program names: counted, so a lost value is visible. */
     private static int unmatchedUniformWrites;
+    private static boolean reportedUnavailable;
 
     private ModProgramRegistry() {
     }
@@ -106,7 +129,32 @@ public final class ModProgramRegistry {
                 mapName(p, sampler.name());
             }
         }
+        p.vertexSpirv = null;
+        p.fragmentSpirv = null;
+        p.compileFailure = p.lowered.ok() ? null : "not lowered";
+        if (p.lowered.ok()) {
+            if (!ModShaderCompiler.available()) {
+                p.compileFailure = "shaderc unavailable";
+                if (!reportedUnavailable) {
+                    reportedUnavailable = true;
+                    System.out.println("[Celtium] CELTIUM_MOD_SHADERC available=false reason="
+                            + ModShaderCompiler.unavailableReason());
+                }
+            } else {
+                try {
+                    p.vertexSpirv = ModShaderCompiler.compile(p.lowered.vertex(), true);
+                    p.fragmentSpirv = ModShaderCompiler.compile(p.lowered.fragment(), false);
+                } catch (RuntimeException failure) {
+                    p.vertexSpirv = null;
+                    p.fragmentSpirv = null;
+                    p.compileFailure = failure.getMessage();
+                }
+            }
+        }
         System.out.println("[Celtium] CELTIUM_MOD_PROGRAM_LINKED program=" + program
+                + " compiled=" + p.compiled()
+                + (p.compiled() ? " spirvBytes=" + (p.vertexSpirv.length + p.fragmentSpirv.length)
+                        : " compileFailure=" + p.compileFailure)
                 + (p.lowered.ok()
                         ? " lowered=true samplers=" + p.lowered.samplers().size() + " uniformBytes="
                                 + p.lowered.uniformBlockSize() + " vertex=" + (vertex == null ? "fixed-function" : "own")
