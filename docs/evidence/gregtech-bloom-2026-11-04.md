@@ -309,3 +309,17 @@ black, when the same pipeline path writes correct pixels into pairs (the combine
 left are the target (the game's framebuffer, drawn in the frame's main pass) and what the game's framebuffer window
 does after this group. Next: dump the game's colour right after the copy's window, and repeat the copy into a pair
 instead of the game's framebuffer.
+
+### Round 8f: the copy outputs black because it reads black; no pair is recreated, nothing is rolled back
+
+| leg | change | result |
+|---|---|---|
+| `r37-gt` | `modProgramAdditive=true` (the blend-off copy drawn ONE+ONE instead) | world normal, not saturated (black 0.007, PASSED): **the copy reads black** at the moment it runs |
+| `r38-gt` | chain-pair generation logged per pass | 61 -> 72 during the first frame's lazy creation, then constant: **no pair is recreated** |
+| `r38-gt` | rollback / stale counters | 2-3 rollbacks per run, 0 stale groups: no per-frame re-recording |
+
+Established: the copy is recorded after `bloom_combine` in the same order the game issued them, samples the published
+chain-pair image of the combine's own framebuffer in GENERAL, adds nothing when drawn additively, and that image holds
+the right scene at present. Not established: what the image holds *at the copy*. The repository's
+`celtium.debug.sampleWindowImages` is declared but never read, so the next unit is a real mid-frame readback of a
+sampled pair (one pixel, copied to a host buffer before the copy's window and read after the frame fence).

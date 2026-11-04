@@ -3679,6 +3679,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return celtium$modFailure(programId, "no sampler set could be allocated");
         }
         long[] targetColour = framebufferColorTexture(this.currentFramebufferIdentity);
+        GllessFrameTarget pairOwner = offTargetTarget();
+        inputs.append(" pairGen=").append(pairOwner == null ? -1L : pairOwner.chainPairGenerationTotal());
         celtium$reportModProgram(programId, true, "inputs=[" + inputs.toString().trim() + "] target=0x"
                 + Long.toHexString(this.currentFramebufferIdentity) + " targetColourTex="
                 + (targetColour == null ? -1 : targetColour[0]) + " targetIsMain="

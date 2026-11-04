@@ -211,6 +211,12 @@ public final class VulkanModProgramPipeline {
                     .sType$Default().depthTestEnable(depthOn && like.celtium$depthTest())
                     .depthWriteEnable(depthOn && like.celtium$depthWrite()).depthCompareOp(like.celtium$depthCompareOp());
             VulkanColorBlendState colorBlend = like.celtium$colorBlend();
+            if (FORCE_ADDITIVE_OPAQUE && !colorBlend.blend()) {
+                // Lab: a blend-off pass drawn additively instead, so a black result says "it read black" and a
+                // saturated one says "it read the picture and the output was lost" (round 8f of the bloom evidence).
+                colorBlend = VulkanColorBlendState.of(true, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE,
+                        VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE, VK_BLEND_OP_ADD, VK_BLEND_OP_ADD, 0xF);
+            }
             VkPipelineColorBlendAttachmentState.Buffer blendAttachment = VkPipelineColorBlendAttachmentState.calloc(1, stack);
             blendAttachment.get(0).blendEnable(colorBlend.blend())
                     .srcColorBlendFactor(colorBlend.srcColor()).dstColorBlendFactor(colorBlend.dstColor())
@@ -378,6 +384,7 @@ public final class VulkanModProgramPipeline {
         mesh.bindAndDraw(commandBuffer, bindCache);
     }
 
+    private static final boolean FORCE_ADDITIVE_OPAQUE = Boolean.getBoolean("celtium.vulkan.modProgramAdditive");
     private static final boolean SKIP_DRAW_CALL = Boolean.getBoolean("celtium.vulkan.modProgramSkipDraw");
 
     public int samplerCount() {
