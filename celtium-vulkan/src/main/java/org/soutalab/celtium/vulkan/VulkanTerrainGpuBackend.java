@@ -3576,9 +3576,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * so the default keeps refusing until that is understood. See docs/evidence/gregtech-bloom-2026-11-04.md.
      */
     private static final boolean MOD_PROGRAMS = Boolean.getBoolean("celtium.vulkan.modPrograms");
+    /** Lab switch: {@code -Dceltium.vulkan.modProgramsOpaqueToMain=false} refuses blend-off passes into it. */
+    private static final boolean MOD_PROGRAMS_REFUSE_OPAQUE_MAIN =
+            "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramsOpaqueToMain", "true"));
     /** Lab switch: {@code false} refuses the mod-program passes whose target is the game's framebuffer. */
     private static final boolean MOD_PROGRAMS_TO_MAIN =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramsToMain", "true"));
+    /** {@code -Dceltium.debug.modProgramTrace=N}: log the record order of mod-program passes for N frames from 300. */
+    private static final int MOD_TRACE_FRAMES = Integer.getInteger("celtium.debug.modProgramTrace", 0).intValue();
+    private int modTraceLines;
     /** Lab switch: {@code false} refuses the mod-program passes that sample the game's own colour image. */
     private static final boolean MOD_PROGRAMS_SAMPLE_MAIN =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramsSampleMain", "true"));
@@ -3654,7 +3660,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     .append(this.mainFramebufferColorNames.contains(Integer.valueOf(name)) ? "(main)" : "")
                     .append(this.publishedFrameImages.get(name) != 0L ? "(fb)" : "")
                     .append("{fbo=0x").append(Long.toHexString(celtium$framebufferIdentityForColorTexture(name)))
-                    .append(" img=0x").append(Long.toHexString(this.publishedFrameImages.get(name))).append('}');
+                    .append(" img=0x").append(Long.toHexString(this.publishedFrameImages.get(name)))
+                    .append(" wimg=0x").append(Long.toHexString(texture.image()))
+                    .append(" own=").append(texture.celtium$ownsImage())
+                    .append(" layout=").append(texture.samplingLayout()).append('}');
+        }
+        if (MOD_PROGRAMS_REFUSE_OPAQUE_MAIN && !like.celtium$colorBlend().blend()
+                && this.currentFramebufferIdentity == this.targetRegistry.mainIdentity()) {
+            return celtium$modFailure(programId, "a blend-off pass into the game's framebuffer and "
+                    + "-Dceltium.vulkan.modProgramsOpaqueToMain=false refuses that");
         }
         if (!MOD_PROGRAMS_TO_MAIN && this.currentFramebufferIdentity == this.targetRegistry.mainIdentity()) {
             return celtium$modFailure(programId, "the pass draws into the game's framebuffer and "
@@ -3669,10 +3683,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + Long.toHexString(this.currentFramebufferIdentity) + " targetColourTex="
                 + (targetColour == null ? -1 : targetColour[0]) + " targetIsMain="
                 + (this.currentFramebufferIdentity == this.targetRegistry.mainIdentity())
-                + " blend=" + like.celtium$colorBlend().blend() + " depthTest=" + like.celtium$depthTest()
+                + " blend=" + like.celtium$colorBlend().blend() + "(" + like.celtium$colorBlend().srcColor() + ","
+                + like.celtium$colorBlend().dstColor() + "," + like.celtium$colorBlend().srcAlpha() + ","
+                + like.celtium$colorBlend().dstAlpha() + ") glBlend=" + this.immediateState.blendSrcRgb() + ","
+                + this.immediateState.blendDstRgb() + " depthTest=" + like.celtium$depthTest()
                 + " depthWrite=" + like.celtium$depthWrite());
+        String label = MOD_TRACE_FRAMES > 0 ? "program=" + programId + " offeredFrame=" + this.frameId
+                + " target=0x" + Long.toHexString(this.currentFramebufferIdentity) + " inputs=[" + inputs.toString().trim()
+                + "]" : null;
         return new PreparedImmediate(new VulkanModProgramPipeline.Draw(pipeline,
-                VulkanModProgramPipeline.packUniforms(program), set), set, 0L);
+                VulkanModProgramPipeline.packUniforms(program), set, label), set, 0L);
     }
 
     /**
@@ -3684,6 +3704,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private VulkanGlTexture celtium$modSamplerTexture(int name) {
         VulkanTextureRegistry registry = celtium$registry();
         VulkanGlTexture texture = registry.get(name);
+        if (texture != null && this.publishedFrameImages.get(name) != 0L) {
+            // Already the framebuffer's own image (the wrapper is the published one: r34-gt logged wimg == img for
+            // every sampler), so there is nothing to publish again. Not a fix for the black world - r33-gt was black
+            // with this in place - only a lookup that does not repeat the publication.
+            return texture;
+        }
         boolean unpublishedAttachment = texture != null && this.publishedFrameImages.get(name) == 0L
                 && celtium$framebufferIdentityForColorTexture(name) != Long.MIN_VALUE;
         if (texture == null || !texture.hasFullContent() || unpublishedAttachment) {
@@ -20969,6 +20995,16 @@ this.frameBufferOpen = false;
                         if (BATCH_TIMINGS) this.particleDrawNanos += System.nanoTime() - variantStart;
                         this.particleDrawCount++;
                     } else if (pipeline instanceof VulkanModProgramPipeline.Draw value) {
+                        if (value.label != null && this.modTraceLines < 400 && this.frameId >= 300
+                                && this.frameId < 300 + MOD_TRACE_FRAMES) {
+                            // The order the passes are *recorded* in, against the order they were offered in (the
+                            // label carries the offer's frame): a copy recorded before the pass that fills its
+                            // source reads that source's previous contents.
+                            this.modTraceLines++;
+                            System.out.println("[Celtium] CELTIUM_MOD_DRAW_ORDER recordFrame=" + this.frameId
+                                    + " seq=" + this.modTraceLines + " groupTarget=0x" + Long.toHexString(group.target)
+                                    + " " + value.label);
+                        }
                         value.draw(this.commandBuffer, mesh, this.immediateBindCache);
                     } else {
                         ((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push, this.immediateBindCache);

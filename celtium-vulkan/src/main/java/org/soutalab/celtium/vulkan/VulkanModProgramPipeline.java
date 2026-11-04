@@ -37,11 +37,14 @@ public final class VulkanModProgramPipeline {
         final VulkanModProgramPipeline pipeline;
         final ByteBuffer uniforms;
         final long samplerSet;
+        /** What this pass reads and writes, for the record-order trace; never read by the draw. */
+        public final String label;
 
-        Draw(VulkanModProgramPipeline pipeline, ByteBuffer uniforms, long samplerSet) {
+        Draw(VulkanModProgramPipeline pipeline, ByteBuffer uniforms, long samplerSet, String label) {
             this.pipeline = pipeline;
             this.uniforms = uniforms;
             this.samplerSet = samplerSet;
+            this.label = label;
         }
 
         public void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, long[] bindCache) {
@@ -367,8 +370,15 @@ public final class VulkanModProgramPipeline {
             vkCmdPushConstants(commandBuffer, this.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                     0, view);
         }
+        if (SKIP_DRAW_CALL) {
+            // Lab: every bind of the pass without its pixels, to tell "the pass's pixels are wrong" from "the pass
+            // leaves state behind that breaks what is drawn after it".
+            return;
+        }
         mesh.bindAndDraw(commandBuffer, bindCache);
     }
+
+    private static final boolean SKIP_DRAW_CALL = Boolean.getBoolean("celtium.vulkan.modProgramSkipDraw");
 
     public int samplerCount() {
         return this.samplerCount;

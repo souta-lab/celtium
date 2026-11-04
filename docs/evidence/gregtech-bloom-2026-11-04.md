@@ -287,3 +287,25 @@ Leading hypothesis, not yet measured: **recording order**. Black is exactly what
 pair (0,0,0,0) produces, so the copy into the game's framebuffer executes after the pair's clear and before
 `bloom_combine` writes it. Next: log the window sequence (target, first/last group, clear-in-pass) for one frame of
 the scene and check where the IMAGE_F group into the game's framebuffer lands relative to the combine window.
+
+### Round 8e: the last copy's pixels are black; order, factors, layout and a read barrier are not why
+
+All with `modPrograms=true` on the GTCEu scene, AMD:
+
+| leg | change | world black | reading |
+|---|---|---|---|
+| `r28-gt` | `pairClearInPass=false` | 0.787 | the in-pass pair clear is not it |
+| `r29-gt` | `modProgramTrace=2` | — | passes are **recorded in offer order**; combine targets ping-pong (0x7926e986 / 0x2c54065d) and the copy reads the current one |
+| `r30-gt` | blend factors logged | — | copy = blend off; first pass (6,7,1,0) = GL's 770/771; DST_ALPHA pass (8,0,8,0) = GL's 772/0 |
+| `r31-gt` | `modProgramsOpaqueToMain=false` (refuse only the blend-off copy) | **0.006, PASSED** | the copy is the only culprit |
+| `r32-gt` | `modProgramSkipDraw=true` (all binds, no draw call) | **0.007, PASSED** | the copy's **pixels** are black; it leaves no broken state behind |
+| `r34-gt` | wrapper image logged | — | descriptor image == published pair image for every sampler, layout GENERAL |
+| `r35-gt` | global barrier (colour/transfer write -> fragment read) before windows carrying a mod pass | 0.787 | not a missing barrier; removed again |
+
+Default (off), renderer `a5b27643…`: `r36-gt` and `r36-world` PASSED, validation 0.
+
+Still open: why a blend-off pass into the game's framebuffer that samples a pair which holds the scene at present writes
+black, when the same pipeline path writes correct pixels into pairs (the combine's output is right). The differences
+left are the target (the game's framebuffer, drawn in the frame's main pass) and what the game's framebuffer window
+does after this group. Next: dump the game's colour right after the copy's window, and repeat the copy into a pair
+instead of the game's framebuffer.
