@@ -3569,6 +3569,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             Integer.getInteger("celtium.vulkan.alphaFuncOverride", 0).intValue();
     private int currentGroupTexture;
     private long currentGroupStateKey;
+    /** The key of the group before the current one, kept only for the merge census's A-B-A count. */
+    private int censusPrevGroupFormatId = -1;
+    private int censusPrevGroupTexture = -1;
+    private long censusPrevGroupStateKey;
     /** Pipelines per (format, blend, depth, cull) combination; the drawing state decides which one a group needs. */
     private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediatePipeline> immediatePipelineCache =
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
@@ -9333,6 +9337,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     } else {
                         this.mergeRefusal("open-other");
                     }
+                    // The ceiling of a second open group: an opening whose key equals the group *before* the closing
+                    // one is an A-B-A alternation a two-slot design could have merged. Counted by order freedom,
+                    // because only opaque, depth-tested, depth-writing batches can be moved past the B group without
+                    // changing the picture. "xtab-" keys are outside the refusal sum.
+                    if (this.currentImmediateMesh != null) {
+                        boolean aba = this.censusPrevGroupFormatId == formatId
+                                && this.censusPrevGroupTexture == boundTexture
+                                && this.censusPrevGroupStateKey == stateKey;
+                        boolean orderFree = !this.immediateState.blendEnabled()
+                                && this.immediateState.depthTestEnabled() && this.immediateState.depthMask();
+                        this.mergeRefusal("xtab-open-" + (aba ? "aba" : "new") + (orderFree ? "-opaque" : "-ordered"));
+                    }
+                    // A window boundary (no open mesh) ends the alternation: the next A cannot merge across a flush.
+                    this.censusPrevGroupFormatId = this.currentImmediateMesh == null ? -1 : this.currentGroupFormatId;
+                    this.censusPrevGroupTexture = this.currentGroupTexture;
+                    this.censusPrevGroupStateKey = this.currentGroupStateKey;
                 }
                 // Assigned after the census: it compares the closing group's format and texture with this batch's, and
                 // assigning first made those two terms never differ - every opening fell into open-state-key or

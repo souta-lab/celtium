@@ -26,3 +26,26 @@ Totals: `groupCreateCount=774,379` (113/frame), format refusals 431k (63/frame; 
   between them. The blended 33.7/frame cannot be reordered.
 
 Re-entry: if a later census shows same-texture format alternations, or the blended share collapses.
+
+## A-B-A openings: the real ceiling of a second open group
+
+Leg `r9-aba` (renderer `86c33dcb…`, fixture `22fcf3e0…`, same profile and flags, 7913 frames, PASSED). Each group
+opening is compared with the group *before* the closing one (reset at every window boundary): equal key
+(format, texture, state key) is an A-B-A alternation that a design keeping two groups open could have merged.
+
+| opening | count | per frame |
+|---|---|---|
+| `xtab-open-aba-opaque` | 134,344 | **17.0** |
+| `xtab-open-aba-ordered` (blend on, or no depth test/write) | 235,817 | **29.8** |
+| `xtab-open-new-opaque` | 74,663 | 9.4 |
+| `xtab-open-new-ordered` | 496,619 | 62.8 |
+
+`groupCreateCount=941,443` (119/frame).
+
+- An opaque-only second slot merges at most **17 of 119** openings (14%), and even that is not order-safe in
+  general: moving A past B is invisible only if B cannot be seen through or over A (B blended or untested would now
+  land on top of A).
+- The larger share is the ordered A-B-A (29.8/frame, mostly GUI). Reordering it is invisible exactly when B's
+  screen rectangle does not overlap A's - the ImmediatelyFast idea. A bounding box per batch (min/max during the
+  vertex copy) would make the merge decision local and exact for the ortho GUI pass; the ceiling is 47 of 119.
+  Not built yet.
