@@ -8,10 +8,6 @@
 
 - **FBO/copy**: raw採用ID・8個制限・削除・逆引き・範囲、copy送信順とlayoutを修正。AMD/Intel成功・validation 0。
 
-## 2026-10-24: 新アーキテクチャ案（参考扱い）
-
-[new_architecture.md](<new_architecture.md>) の**§12**（offer毎の受理・capture・recordを消す）だけ採用。**影**は本体内停止（既定OFF、[証拠](<evidence/shadow-stage-c-2026-10-24.md>)）。
-
 ## 次の作業単位（2026-10-25 改訂・利用者の実プレイ報告に対応）
 
 1. **実プレイ報告の状況**（利用者: 体感200fps＋スパイク、描画バグは少ない）
@@ -49,18 +45,19 @@
      `captureState` 98・`checks` 61）。prepare キャッシュの詰め直しは**効果が測定限界以下**だった。
      **round 59 実測（µs 分解能）**（[証拠](evidence/pass-split-micros-2026-11-04.md)）: `flush` 486 = `winRecord` 364 =
      `wrecLoop` 244（`grpDraw` 128）。**「固定費は8本に分散」は棄却**（`winSubmit` 43・`winBarrier` 31・`winBeginPass` 28
-     の3本で67%）。`winSubmit` は `vkQueueSubmit` ではない。`stateKeyCache` は 21.9% で**効果は測定限界以下**。
+     の3本で67%）。
+     **round 63**: `stateKeyCache` を id ごとの 16 スロットにしたが **hit 率は 21.9% のまま**（`stateVersion` が支配的で
+     format は原因でなかった）。未出力だった hit/miss を verify 行に載せた（[証拠](evidence/offer-key-cache-slots-2026-11-04.md)）。
      **round 58 実測**（[証拠](evidence/render-split-and-signature-cache-2026-11-04.md)）: `vkCmdDrawIndexed` **0.68 µs**、
      pipeline bind 4,117/727,499＝dedupe は効く。**`gui` のうち Celtium は `guiBatch` だけ**。
-     pair clear は `winHead` 内（**round 54 で既定 ON**、`-Dceltium.vulkan.pairClearInPass=false` が旧経路）: `winHead` **141→43 µs**、frame差は未分離。**Celtium 自身 ~0.7 ms を ~0.2 ms にしないと届かない。**
+     pair clear は `winHead` 内（**round 54 で既定 ON**、`-Dceltium.vulkan.pairClearInPass=false` が旧経路）: `winHead` **141→43 µs**、frame差は未分離。
      **窓の統合（sticky pass）は棄却**（[証拠](evidence/sticky-window-pass-2026-11-04.md)）: **warm p50 2.85→11.47 ms**、
      窓 23.5→20.8 の代わりに **`grpDraw` 0.9→9.6 µs/group**。理由未解明、再開しない。
      **font runの行列bakeも棄却**（[証拠](evidence/font-run-bake-2026-11-04.md)）: 94 run/フレームのうち**8しか畳めない**。既定OFF。
      **round 42–46 の内訳は検証レイヤを測っていた**（[証拠](evidence/frame-split-conditions-2026-11-04.md)）: 検証OFF は frame 1.4。
-     **「窓の95%は`glClear`」は棄却**（round 61、[証拠](evidence/clear-order-flush-2026-11-04.md)）: clear の 83% は main で、
-     最大の呼び手は ModularUI `Stencil#reset`（mask 0x400＝stencil、**本レンダラは未実装**）。stencil のみの clear と
-     「clear 自身の image に pending が無い」clear の flush を落とすと **clear-order flush 呼び出しの 71% が消える**が、
-     **窓/フレームは 35.7→36.6 で動かない**（`clearOrderFlushes` は*呼び出し*を数え、大半は早期 return していた）。
+     **「窓の95%は`glClear`」は棄却**（round 61、[証拠](evidence/clear-order-flush-2026-11-04.md)）: clear の 83% は main、
+     最大の呼び手は ModularUI `Stencil#reset`（mask 0x400＝stencil、**未実装**）。flush 呼び出しの 71% を落としても
+     **窓/フレームは 35.7→36.6 で動かない**。**窓を開けているのは framebuffer bind**（`flushReasons`: `noteRenderTarget`=65%）。
      **窓を開けているのは framebuffer bind**（`r61e-sites` の `flushReasons`: `noteRenderTarget`=33,260/50,857＝65%、
      clear=9,959＝20%、`flushSiteCounts=bind-framebuffer=53146`）。次は「bind の target 変更 flush は本当に要るか」。
      JFRは`CELTIUM_LEG_JFR`（attach）。**warm windowはflagが要る**（`warmFromTick=400 warmToTick=600 holdUntilTick=620`）。
@@ -80,9 +77,8 @@
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
    Demonica の実体は **Iris の shader pipeline + Angelica の GLSM + 互換層**で、Actinium から fork し terrain renderer を持たない。
    Celtium では「Celeritas との接続面（terrain 描画・pack pipeline・GLSM）」を **Vulkan 経路との接続面に置き換える**作業になる。
-   **別成果物（addon jar）**として実装し、core には取り込まない。
-5. **本体の影scaffoldとshaderpack frontendは削除済み**（2026-10-27）。影とpackはDemonica addonで実装する。
-6. **ライセンス**: Demonica 本体は **AGPL-3.0**（〜0.4.0 は GPL-3.0）。Angelica/Iris 由来は LGPL-3.0、Actinium 由来は GPL-3.0、
+   **別成果物（addon jar）**として実装し、core には取り込まない。本体の影scaffoldとshaderpack frontendは削除済み（2026-10-27）。
+5. **ライセンス**: Demonica 本体は **AGPL-3.0**（〜0.4.0 は GPL-3.0）。Angelica/Iris 由来は LGPL-3.0、Actinium 由来は GPL-3.0、
    glsl-transformer は AGPL-3.0。**fork 側も AGPL-3.0 になり、Celtium core とは別リポジトリ/別jarで境界を保つ**。
    LGPL 部分のチェリーピックはクレジット明記で可能。GLSM の丸ごと持ち込みはしない。
 
@@ -103,9 +99,12 @@
 
 ## FPSの現状と残る道
 
-- 現行の判定は上の表（`celtium-world-accept` 3対、p50 median **1.215**）。旧scene（Susy/ATM3）の
-  ABBA値は artifact が現ビルドと一致しないため現在判定に使わない（[archive](<history/plan-archive-2026-10-21.md>)）。
-- 残差は **clear が開ける窓**と per-batch（round 60）。pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
+- 現行の判定は **round 63 の paired 3対: p50 median 1.279（SLOWER・`NOT_MET`）**（[証拠](evidence/offer-key-cache-slots-2026-11-04.md)）。
+  **round 58 の 1.175 より悪化**。Celeritas は 2.325→2.335 ms で不変、**Celtium だけ 2.642→2.988 ms（+13.1%）**。
+  遅くなったのは**窓の記録**（`windowRecordMillis`/窓 18.46→20.94 µs、+13.4%）だが窓は 23.5→21.4 と減っており、
+  frame 全体が一様に遅い形。**原因未確定＝round 64 の主題**。旧scene（Susy/ATM3）の ABBA値は artifact が
+  現ビルドと一致しないため現在判定に使わない（[archive](<history/plan-archive-2026-10-21.md>)）。
+- pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
 - 棄却: bind flush延期（2026-10-31、2回ともRADV SIGSEGV、[罠](<verification-traps.md>)）、indirect immediate、フレーム再利用（アニメ凍結）、
   **group数∝grpDraw**（font run 2.3×減で不変、[証拠](evidence/font-witness-census-2026-11-03.md)）。
 
@@ -114,7 +113,6 @@
 [archive](<history/plan-archive-2026-10-21.md>) の「2026-10-24 移動」節（KPI 2.29x・draw数・GC主因 等。再入条件つき）。
 - GPU pass時間・present/readback・アップロード量・GC・フレーム内訳の旧値は、artifact/区間が現ビルドと一致しないため参考値にも使わない。
 - validation clean・`exitCode=0`・色数gateは、描画不存在・正しい絵・画像一致をそれぞれ証明しない。
-- 旧計器の「窓の94%は`bindFramebuffer`」「offerの55%がslow path」は別sceneの値（round 60 で置換済み）。
 
 ## 更新と参照
 

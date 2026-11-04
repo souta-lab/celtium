@@ -32,6 +32,11 @@ final class BackendDiagnostics {
                 + " " + (b.modelInstances == null ? "modelInstances[absent failed=" + b.modelInstancesFailed + "]"
                         : b.modelInstances.describe())
                 + " textureIndex=hit" + b.textureIndexHits + "/miss" + b.textureIndexMisses
+                // The offer state-key cache's hit rate. It was collected and never printed, so "the key is cached"
+                // could not be told from "the cache misses on every offer" - and the cache was a single entry keyed on
+                // the layout id, which is exactly the shape that misses on a format alternation. Printed here so the
+                // next leg answers it with a number instead of a reading of the code.
+                + " stateKeyCache=hit" + b.celtium$stateKeyCacheSummary()
                 + " orderPreservingFlushes=" + b.immediateStatistics.orderPreservingFlushes()
                 + " actualFlushes=" + b.immediateStatistics.actualFlushes()
                 + " actualFlushMillis=" + (b.immediateStatistics.actualFlushNanos() / 1000000L)

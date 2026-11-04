@@ -10100,24 +10100,48 @@ this.frameBufferOpen = false;
         NativeTextureEnvironment currentEnvironment = NativeTextureEnvironment.current();
         long environmentVersion = currentEnvironment.version();
         int windowTarget = this.targetRegistry.currentIdentity() == 0L ? 1 : 0;
+        // One slot per layout id. The cache used to be a single entry, and the layout id is part of the key (see the
+        // javadoc above), so a format switch could never hit: the entry that would have answered was the one the
+        // previous offer overwrote. The merge census says format alternation is 63% of the group opens on the shipped
+        // profile, which is the same statement about the offer stream - consecutive offers frequently carry different
+        // ids - so the single entry was thrashing on exactly the pattern the census measured. Indexing by the id keeps
+        // the id in the identity (a slot only answers for the id stored in it) and stops one layout evicting another.
+        int slot = celtium$offerKeyCacheSlot(formatId);
         if (celtium$stateKeyCacheHit(stateVersion, environmentVersion, windowTarget, formatId,
-                this.celtium$keyCacheState, this.celtium$keyCacheEnvironment, this.celtium$keyCacheWindowTarget,
-                this.celtium$keyCacheFormat, this.celtium$keyCacheValid)) {
+                this.celtium$keyCacheStates[slot], this.celtium$keyCacheEnvironments[slot],
+                this.celtium$keyCacheWindowTargets[slot], this.celtium$keyCacheFormats[slot],
+                this.celtium$keyCacheValids[slot])) {
             this.celtium$keyCacheHits++;
             this.celtium$offerStateFresh = false;
-            return this.celtium$keyCacheKey;
+            return this.celtium$keyCacheKeys[slot];
         }
         this.celtium$keyCacheMisses++;
         this.celtium$offerStateFresh = false;
         celtium$materializeOfferState();
         long key = celtium$stateKey(formatId, this.celtium$stateScratch);
-        this.celtium$keyCacheKey = key;
-        this.celtium$keyCacheState = stateVersion;
-        this.celtium$keyCacheEnvironment = environmentVersion;
-        this.celtium$keyCacheWindowTarget = windowTarget;
-        this.celtium$keyCacheFormat = formatId;
-        this.celtium$keyCacheValid = true;
+        this.celtium$keyCacheKeys[slot] = key;
+        this.celtium$keyCacheStates[slot] = stateVersion;
+        this.celtium$keyCacheEnvironments[slot] = environmentVersion;
+        this.celtium$keyCacheWindowTargets[slot] = windowTarget;
+        this.celtium$keyCacheFormats[slot] = formatId;
+        this.celtium$keyCacheValids[slot] = true;
         return key;
+    }
+
+    /**
+     * The offer state-key cache slot a layout id uses.
+     * <p>
+     * Sixteen slots, indexed by the low four bits of the id, and the id is stored in the slot and compared on every
+     * lookup - so the index is a hint and the comparison is the identity. Every layout the table maps is below sixteen
+     * ({@link VulkanImmediateFormats#COUNT}), so in practice no two ids share a slot; an id outside that range would
+     * share one and simply miss more often, never answer wrongly.
+     * <p>
+     * Extracted so the property that matters can be asserted without a device: the two ids the merge census names as
+     * the dominant alternation (2 and 6, 52% of the format splits) must not land in the same slot, or the change would
+     * be a rename of the single entry rather than a fix for it.
+     */
+    static int celtium$offerKeyCacheSlot(int formatId) {
+        return formatId & (OFFER_KEY_CACHE_SLOTS - 1);
     }
 
     /**
@@ -10158,13 +10182,20 @@ this.frameBufferOpen = false;
         if (BATCH_TIMINGS) this.immediateStatistics.addCaptureStateNanos(System.nanoTime() - started);
     }
 
-    /** The cached offer key and the four keys it was taken under; see {@link #celtium$offerStateKey}. */
-    private long celtium$keyCacheKey;
-    private long celtium$keyCacheState = -1L;
-    private long celtium$keyCacheEnvironment = -1L;
-    private int celtium$keyCacheWindowTarget = -1;
-    private int celtium$keyCacheFormat = -1;
-    private boolean celtium$keyCacheValid;
+    /**
+     * The offer state-key cache, one slot per layout id; see {@link #celtium$offerStateKey}.
+     * <p>
+     * Parallel arrays rather than an entry object: a lookup reads the slot's six fields and the answer, and the arrays
+     * are small enough that the whole table is a handful of cache lines. The slot is chosen by the id and the id is
+     * compared, so a slot never answers for a layout it was not filled with.
+     */
+    private static final int OFFER_KEY_CACHE_SLOTS = 16;
+    private final long[] celtium$keyCacheKeys = new long[OFFER_KEY_CACHE_SLOTS];
+    private final long[] celtium$keyCacheStates = new long[OFFER_KEY_CACHE_SLOTS];
+    private final long[] celtium$keyCacheEnvironments = new long[OFFER_KEY_CACHE_SLOTS];
+    private final int[] celtium$keyCacheWindowTargets = new int[OFFER_KEY_CACHE_SLOTS];
+    private final int[] celtium$keyCacheFormats = new int[OFFER_KEY_CACHE_SLOTS];
+    private final boolean[] celtium$keyCacheValids = new boolean[OFFER_KEY_CACHE_SLOTS];
     private long celtium$keyCacheHits;
     private long celtium$keyCacheMisses;
     /** Whether {@link #celtium$stateScratch} holds the state the current offer key was taken under. */

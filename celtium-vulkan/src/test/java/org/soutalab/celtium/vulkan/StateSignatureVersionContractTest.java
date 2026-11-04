@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -188,6 +189,35 @@ class StateSignatureVersionContractTest {
         // The initial cache is invalid rather than "taken under -1": a live key can legitimately be (0, 0, 0, 0) on the
         // first offer of a session, so the flag is what says "nothing cached yet".
         assertFalse(VulkanTerrainGpuBackend.celtium$stateKeyCacheHit(0L, 0L, 0, 0, -1L, -1L, -1, -1, false));
+    }
+
+    /**
+     * The cache is one slot per layout id, so a format switch cannot evict the entry that would have answered.
+     * <p>
+     * The cache used to be a single entry and the layout id is part of the key, so the two facts together meant a
+     * format switch always missed: the entry that could have answered was the one the previous offer overwrote. The
+     * merge census puts format alternation at 63% of the group opens on the shipped profile, which is the same
+     * statement about the offer stream - consecutive offers frequently carry different ids - so the single entry was
+     * thrashing on exactly the pattern the census measured.
+     * <p>
+     * The assertion is the one that decides whether this is a fix or a rename: the two ids the census names as the
+     * dominant alternation (2 and 6, 52% of the format splits) must land in different slots. The second half checks
+     * that every mapped layout gets its own slot, so no pair of ids the table can produce collides.
+     */
+    @Test
+    void theKeyCacheGivesEachLayoutItsOwnSlot() {
+        assertNotEquals(VulkanTerrainGpuBackend.celtium$offerKeyCacheSlot(2),
+                VulkanTerrainGpuBackend.celtium$offerKeyCacheSlot(6),
+                "the dominant format alternation must not share a slot");
+        java.util.Set<Integer> slots = new java.util.HashSet<>();
+        for (int id = 0; id < VulkanImmediateFormats.COUNT; id++) {
+            assertTrue(slots.add(VulkanTerrainGpuBackend.celtium$offerKeyCacheSlot(id)),
+                    "layout id " + id + " shares a slot with a lower id");
+        }
+        // The slot is a hint, not the identity: the id is stored in the slot and compared, so an id outside the table
+        // may share a slot and can only miss more often, never answer for another layout.
+        assertEquals(VulkanTerrainGpuBackend.celtium$offerKeyCacheSlot(2),
+                VulkanTerrainGpuBackend.celtium$offerKeyCacheSlot(2 + 16));
     }
 
     /**
