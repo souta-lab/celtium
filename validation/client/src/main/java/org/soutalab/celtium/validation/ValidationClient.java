@@ -1700,48 +1700,55 @@ public final class ValidationClient {
      * The GregTech CE Unofficial scene's floors, measured on a GL-bridge reference run of this scene at its own pose.
      * <p>
      * Reference (GL bridge, Celeritas 2.5.0-dev, fresh game directory, {@code scene=gregtech}, 1280x720, camera
-     * x=0.5 y=6.0 z=0.5 yaw=180 pitch=15, guiScale=3, leg {@code r2-gtref} 2026-11-04 17:09, fixture
-     * {@code cdc8389c…}): the world frame is {@code screenshots/celtium-validation-world.png} and the machine GUI
+     * x=0.5 y=6.0 z=0.5 yaw=180 pitch=15, guiScale=3, leg {@code r3-gtref2} 2026-11-04 18:03, fixture
+     * {@code 30feaa40…}): the world frame is {@code screenshots/celtium-validation-world.png} and the machine GUI
      * frame is {@code screenshots/celtium-validation.png} (the GL bridge's own screenshots). Measured: world frame
-     * distinctColours=6756 nonBackgroundFraction=0.879401 verticalBands=714 blackFraction=0.011492
-     * backgroundColour=0xB3CFFF; machine GUI frame distinctColours=8429 nonBackgroundFraction=0.880439
-     * verticalBands=710 blackFraction=0.01803 backgroundColour=0xFF7706, screen=ModularUIGui.
+     * distinctColours=19349 nonBackgroundFraction=0.902789 verticalBands=720 blackFraction=0.009129
+     * backgroundColour=0xB3CFFF; machine GUI frame distinctColours=9350 nonBackgroundFraction=0.880439
+     * verticalBands=720 blackFraction=0.01803 backgroundColour=0xFF7706, screen=ModularUIGui. The reference carries
+     * the lamp row (4 GT lamps with BLOOM+LIGHT on the casing row), which is why its world frame has more distinct
+     * colours than the r2-gtref one (6756): the lamps' emissive overlay and its halo are in the picture.
      * <p>
      * The two stages are different pictures and get their own floors, as the video settings scene's do. The floors
-     * are the project's usual margins: {@code nonBackgroundFraction >= 0.45} is 51% of the measured 0.879/0.880 (a
-     * frame where the ground and the machines did not draw is mostly the 0xB3CFFF sky), {@code verticalBands >= 280}
-     * is 39% of the measured 714/710 (a flat or untextured frame is far below), and the black ceilings are the
-     * measured value plus 0.05 (0.06 world, 0.07 GUI), the same rule the terrain scene uses. No panel floors: the
-     * machine screen is judged as a picture of the screen, not against the video settings panel's rectangle.
+     * are the project's usual margins: {@code nonBackgroundFraction >= 0.45} is 50% of the measured 0.903 (world) and
+     * 51% of 0.880 (GUI) - a frame where the ground and the machines did not draw is mostly the 0xB3CFFF sky -
+     * {@code verticalBands >= 280} is 39% of the measured 720 (a flat or untextured frame is far below), and the black
+     * ceilings are the measured value plus 0.05 (0.06 world, 0.07 GUI), the same rule the terrain scene uses. No
+     * panel floors: the machine screen is judged as a picture of the screen, not against the video settings panel's
+     * rectangle.
      * <p>
-     * The candidate run of the same fixture and pose (leg {@code r2-gt4}, Celtium) measured world
-     * 6399/0.881848/714/0.005646 and GUI 9858/0.880439/710/0.017993 - the same frame within the margins, which is
-     * what makes these floors a gate rather than a copy of one arm.
+     * The candidate run of the same fixture and pose (leg {@code r3-gt4}, Celtium) measured world
+     * 7019/0.885949/714/0.011492 and GUI 9879/0.880439/710/0.017993 - the same frame within the margins, which is
+     * what makes these floors a gate rather than a copy of one arm. The candidate's world frame is the one place the
+     * two arms differ by eye: the reference's lamps glow (bloom halo, near-white fraction 0.128 in the band above
+     * them) and Celtium's do not (0.028) - the floors do not encode that difference, and the picture is where it is
+     * read (docs/evidence/gregtech-lamp-bloom-2026-11-04.png).
      */
     private static SceneGate celtium$gregtechGate() {
-        String runs = "gl-bridge r2-gtref (2026-11-04 17:09), scene=gregtech at x=0.5 y=6.0 z=0.5 yaw=180 pitch=15,"
+        String runs = "gl-bridge r3-gtref2 (2026-11-04 18:03), scene=gregtech at x=0.5 y=6.0 z=0.5 yaw=180 pitch=15,"
                 + " 1280x720, guiScale=3, world frame=screenshots/celtium-validation-world.png and machine GUI"
                 + " frame=screenshots/celtium-validation.png (the GL bridge's own screenshots),"
-                + " screen=gregtech.api.gui.impl.ModularUIGui at the GUI capture";
-        String numbers = "world frame: distinctColours=6756 nonBackgroundFraction=0.879401 verticalBands=714"
-                + " blackFraction=0.011492 backgroundColour=0xB3CFFF; machine GUI frame: distinctColours=8429"
-                + " nonBackgroundFraction=0.880439 verticalBands=710 blackFraction=0.01803 backgroundColour=0xFF7706."
-                + " The Celtium run of the same fixture and pose (r2-gt4) measured world 6399/0.881848/714/0.005646"
-                + " and GUI 9858/0.880439/710/0.017993";
-        String margin = "world: nonBackgroundFraction>=0.45 = 51% of the measured 0.879401, verticalBands>=280 = 39% of"
-                + " the measured 714, blackFraction<=0.06 = the measured 0.011492 + 0.05; GUI:"
+                + " screen=gregtech.api.gui.impl.ModularUIGui at the GUI capture; this reference carries the lamp row"
+                + " (4 GT lamps with BLOOM+LIGHT on the casing row), which the r2-gtref numbers did not";
+        String numbers = "world frame: distinctColours=19349 nonBackgroundFraction=0.902789 verticalBands=720"
+                + " blackFraction=0.009129 backgroundColour=0xB3CFFF; machine GUI frame: distinctColours=9350"
+                + " nonBackgroundFraction=0.880439 verticalBands=720 blackFraction=0.01803 backgroundColour=0xFF7706."
+                + " The Celtium run of the same fixture and pose (r3-gt4) measured world 7019/0.885949/714/0.011492"
+                + " and GUI 9879/0.880439/710/0.017993";
+        String margin = "world: nonBackgroundFraction>=0.45 = 50% of the measured 0.902789, verticalBands>=280 = 39% of"
+                + " the measured 720, blackFraction<=0.06 = the measured 0.009129 + 0.05; GUI:"
                 + " nonBackgroundFraction>=0.45 = 51% of the measured 0.880439, verticalBands>=280 = 39% of the"
-                + " measured 710, blackFraction<=0.07 = the measured 0.01803 + 0.05. No panel floors: the machine"
+                + " measured 720, blackFraction<=0.07 = the measured 0.01803 + 0.05. No panel floors: the machine"
                 + " screen is not the video settings panel";
         String reference = "gl-bridge " + runs + ": " + numbers + " -> floors distinctColours>16,"
                 + " nonBackgroundFraction>=0.45, verticalBands>=280, blackFraction<=0.06 (world) and 0.07 (GUI);"
                 + " margin: " + margin;
-        String guiNumbers = "machine GUI frame: distinctColours=8429 nonBackgroundFraction=0.880439 verticalBands=710"
+        String guiNumbers = "machine GUI frame: distinctColours=9350 nonBackgroundFraction=0.880439 verticalBands=720"
                 + " blackFraction=0.01803 backgroundColour=0xFF7706 (the Celtium run of the same fixture measured"
-                + " 9858/0.880439/710/0.017993)";
+                + " 9879/0.880439/710/0.017993)";
         String guiMargin = "nonBackgroundFraction>=0.45 = 51% of the measured 0.880439; verticalBands>=280 = 39% of"
-                + " the measured 710; blackFraction<=0.07 = the measured 0.01803 + 0.05";
-        String guiSource = "gl-bridge r2-gtref (2026-11-04 17:09), scene=gregtech, machine GUI frame"
+                + " the measured 720; blackFraction<=0.07 = the measured 0.01803 + 0.05";
+        String guiSource = "gl-bridge r3-gtref2 (2026-11-04 18:03), scene=gregtech, machine GUI frame"
                 + " screenshots/celtium-validation.png, screen=gregtech.api.gui.impl.ModularUIGui";
         String guiReference = "gl-bridge " + guiSource + ": " + guiNumbers + " -> gui floors"
                 + " nonBackgroundFraction>=0.45, verticalBands>=280, blackFraction<=0.07; margin: " + guiMargin;
@@ -3667,6 +3674,18 @@ public final class ValidationClient {
                 report.addProperty("gregtechStageItemPipeName", celtium$gregtechItemPipeName);
                 report.addProperty("gregtechStageItemPipeRenderType", celtium$gregtechItemPipeRenderType);
                 report.addProperty("gregtechStageCasingName", celtium$gregtechCasingName);
+                report.addProperty("gregtechStageCableMaterial", celtium$gregtechCableMaterial);
+                report.addProperty("gregtechStageFluidPipeMaterial", celtium$gregtechFluidPipeMaterial);
+                report.addProperty("gregtechStageItemPipeMaterial", celtium$gregtechItemPipeMaterial);
+                report.addProperty("gregtechStageLamps", Integer.valueOf(celtium$gregtechLamps));
+                report.addProperty("gregtechStageLampName", celtium$gregtechLampName);
+                report.addProperty("gregtechStageLampState", celtium$gregtechLampState);
+                report.addProperty("gregtechStageBloomLayer", celtium$gregtechBloomLayer);
+                report.addProperty("gregtechStageBloomLayerInValues",
+                        Boolean.valueOf(celtium$gregtechBloomLayerInValues));
+                report.addProperty("gregtechStageShadersSupported",
+                        Boolean.valueOf(celtium$gregtechShadersSupported));
+                report.addProperty("gregtechStageBloomFbo", celtium$gregtechBloomFbo);
             }
             if (worldTicks >= 60 && !celtium$entitiesSpawned && Boolean.getBoolean("celtium.validation.keepEntities")) {
                 celtium$entitiesSpawned = true;
@@ -12674,6 +12693,28 @@ public final class ValidationClient {
     private String celtium$gregtechItemPipeRenderType = "none";
     private String celtium$gregtechCasingName = "none";
     /**
+     * The material each pipe row was placed with, as {@code name=0xRRGGBB}.
+     * <p>
+     * A GTCEu pipe's colour is its material's RGB ({@code PipeRenderer} multiplies the white pipe texture by
+     * {@code Material.getMaterialRGB()}), and the block's sub-block list is a {@code HashMap<Material, ...>} whose
+     * iteration order is the identity hash order - so the "first" sub-block is a different material in every JVM.
+     * The item pipe row measured lavender in one run and cream in the next with the same fixture and the same pose;
+     * the material is what makes the picture comparable, so it is reported and the selection is pinned.
+     */
+    private String celtium$gregtechCableMaterial = "none";
+    private String celtium$gregtechFluidPipeMaterial = "none";
+    private String celtium$gregtechItemPipeMaterial = "none";
+    /** The lamp row: GTCEu's lamps draw an emissive overlay in a BlockRenderLayer the mod adds to the enum. */
+    private int celtium$gregtechLamps;
+    private String celtium$gregtechLampName = "none";
+    private String celtium$gregtechLampState = "none";
+    private String celtium$gregtechBloomLayer = "none";
+    private boolean celtium$gregtechBloomLayerInValues;
+    /** Whether the GL surface advertises shaders: GTCEu's bloom composite is skipped when it does not. */
+    private boolean celtium$gregtechShadersSupported;
+    /** GTCEu's bloom framebuffer, as {@code WxH texture=id}, or {@code none} when the composite never ran. */
+    private String celtium$gregtechBloomFbo = "none";
+    /**
      * The machine positions the stage placed, in placement order, as {@code {x, y, z}} triples. The GUI stage opens
      * the first one: a machine's screen is reached through its tile entity, so the position is what the opener needs,
      * and reading it back from the placement is what keeps the opener and the picture about the same block.
@@ -12820,6 +12861,9 @@ public final class ValidationClient {
         celtium$gregtechFluidPipeRenderType = celtium$renderType(fluidPipe);
         celtium$gregtechItemPipeName = celtium$blockName(itemPipe);
         celtium$gregtechItemPipeRenderType = celtium$renderType(itemPipe);
+        celtium$gregtechCableMaterial = celtium$pipeMaterial(cable, celtium$firstSubBlock(cable));
+        celtium$gregtechFluidPipeMaterial = celtium$pipeMaterial(fluidPipe, celtium$firstSubBlock(fluidPipe));
+        celtium$gregtechItemPipeMaterial = celtium$pipeMaterial(itemPipe, celtium$firstSubBlock(itemPipe));
         int[] cableX = {-6, -5, -4, -3, -2, 5, 6};
         for (int x : cableX) {
             if (celtium$placeGregtechBlock(world, cable, px + x, groundY, pz - 6, placer)) {
@@ -12879,10 +12923,189 @@ public final class ValidationClient {
         celtium$gregtechPipes = pipes;
         celtium$gregtechCables = cables;
         celtium$gregtechCasings = casings;
+        celtium$placeGregtechLamps(world, px, pz, groundY);
         celtium$gregtechStageResult = "placed=" + placed + " failed=" + failed + " tileEntities=" + tileEntities
                 + " machines=" + machines + " invalidMachines=" + invalidMachines + " pipes=" + pipes
-                + " cables=" + cables + " casings=" + casings + " groundY=" + groundY + " at=" + px + "," + pz;
+                + " cables=" + cables + " casings=" + casings + " lamps=" + celtium$gregtechLamps
+                + " groundY=" + groundY + " at=" + px + "," + pz;
         System.out.println("[Celtium] CELTIUM_GREGTECH_STAGE " + celtium$gregtechStageResult);
+    }
+
+    /**
+     * The lamp row: the one GTCEu producer that draws in a {@code BlockRenderLayer} the mod adds to the enum.
+     * <p>
+     * {@code BloomEffectUtil.init()} calls {@code EnumHelper.addEnum(BlockRenderLayer.class, "BLOOM", ...)}, and
+     * {@code BlockLamp.canRenderInLayer} answers true for that layer when the lamp is lit and its {@code BLOOM}
+     * property is set. The layer is then rendered by GTCEu's own hook in {@code EntityRenderer.renderWorldPass}
+     * ({@code BloomEffectUtil.renderBloomBlockLayer}), which calls back into {@code RenderGlobal.renderBlockLayer}
+     * with the custom layer. A native renderer that only knows the four vanilla layers drops the overlay and the
+     * lamp reads as a plain coloured cube, so the row is placed where the picture can show which happened.
+     * <p>
+     * The state is built from the block's own {@code BLOOM}/{@code LIGHT} properties rather than from a metadata
+     * value: the metadata packs four flags and the mapping is the block's business, not the fixture's.
+     */
+    private void celtium$placeGregtechLamps(net.minecraft.world.World world, int px, int pz, int groundY) {
+        net.minecraft.block.Block lamp = null;
+        for (net.minecraft.block.Block block : net.minecraft.block.Block.REGISTRY) {
+            if (block == null) {
+                continue;
+            }
+            net.minecraft.util.ResourceLocation name = block.getRegistryName();
+            if (name != null && "gregtech".equals(name.getNamespace())
+                    && "BlockLamp".equals(block.getClass().getSimpleName())) {
+                lamp = block;
+                break;
+            }
+        }
+        celtium$gregtechLampName = celtium$blockName(lamp);
+        celtium$gregtechBloomLayer = celtium$bloomLayerName();
+        celtium$gregtechBloomLayerInValues = celtium$bloomLayerInValues(celtium$gregtechBloomLayer);
+        celtium$gregtechShadersSupported = net.minecraft.client.renderer.OpenGlHelper.shadersSupported;
+        celtium$gregtechBloomFbo = celtium$bloomFbo();
+        if (lamp == null) {
+            return;
+        }
+        net.minecraft.block.state.IBlockState state = lamp.getDefaultState();
+        state = celtium$withBool(lamp, state, "BLOOM", true);
+        state = celtium$withBool(lamp, state, "LIGHT", true);
+        celtium$gregtechLampState = "BLOOM=" + celtium$boolProperty(state, "BLOOM")
+                + " LIGHT=" + celtium$boolProperty(state, "LIGHT")
+                + " INVERTED=" + celtium$boolProperty(state, "INVERTED")
+                + " POWERED=" + celtium$boolProperty(state, "POWERED");
+        int lamps = 0;
+        // On top of the casing row, so the emissive overlay is against the sky rather than against the grass the
+        // machines already cover.
+        for (int i = 0; i < 4; i++) {
+            net.minecraft.util.math.BlockPos pos = new net.minecraft.util.math.BlockPos(px - 6 + i, groundY + 2, pz - 10);
+            try {
+                if (world.setBlockState(pos, state, 3)) {
+                    lamps++;
+                }
+            } catch (Throwable error) {
+                celtium$gregtechFailed++;
+            }
+        }
+        celtium$gregtechLamps = lamps;
+    }
+
+    /** Sets one boolean property by name, or returns the state unchanged when the block has no such property. */
+    private static net.minecraft.block.state.IBlockState celtium$withBool(net.minecraft.block.Block block,
+            net.minecraft.block.state.IBlockState state, String property, boolean value) {
+        try {
+            Object prop = block.getClass().getField(property).get(null);
+            if (prop instanceof net.minecraft.block.properties.IProperty) {
+                @SuppressWarnings("unchecked")
+                net.minecraft.block.properties.IProperty<Boolean> boolProp =
+                        (net.minecraft.block.properties.IProperty<Boolean>) prop;
+                return state.withProperty(boolProp, Boolean.valueOf(value));
+            }
+        } catch (Throwable unreadable) {
+            // A block without that property keeps the state it has.
+        }
+        return state;
+    }
+
+    /** Reads one boolean property by name, for the report: {@code unreadable} when the block does not carry it. */
+    private static String celtium$boolProperty(net.minecraft.block.state.IBlockState state, String property) {
+        try {
+            for (net.minecraft.block.properties.IProperty<?> prop : state.getProperties().keySet()) {
+                // The property's own name is lower case ("bloom"), the block's field is upper case (BLOOM): the
+                // report is read against the field name, so the comparison ignores case.
+                if (prop.getName().equalsIgnoreCase(property)) {
+                    return String.valueOf(state.getProperties().get(prop));
+                }
+            }
+        } catch (Throwable unreadable) {
+            return "unreadable";
+        }
+        return "absent";
+    }
+
+    /** The custom layer GTCEu added to {@code BlockRenderLayer}, by name, or {@code none}. */
+    private static String celtium$bloomLayerName() {
+        try {
+            Class<?> util = Class.forName("gregtech.client.utils.BloomEffectUtil");
+            Object layer = util.getMethod("getRealBloomLayer").invoke(null);
+            return layer == null ? "none" : String.valueOf(layer);
+        } catch (Throwable unreadable) {
+            return "unreadable: " + unreadable;
+        }
+    }
+
+    /**
+     * GTCEu's bloom framebuffer, as {@code WxH texture=id}, or {@code none}.
+     * <p>
+     * The framebuffer is created lazily by {@code BloomEffectUtil.renderBloomInternal} the first time the bloom layer
+     * is composited, so its presence is the evidence that the composite path ran at all - and its size is the evidence
+     * that it was resized to the window rather than left at a stale one.
+     */
+    private static String celtium$bloomFbo() {
+        try {
+            Class<?> util = Class.forName("gregtech.client.utils.BloomEffectUtil");
+            Object fbo = util.getMethod("getBloomFBO").invoke(null);
+            if (fbo == null) {
+                return "none";
+            }
+            // The runtime names are SRG (field_147621_c is the width in the decompiled source); both spellings are
+            // tried so the report works under either remap.
+            int width = celtium$intField(fbo, "framebufferWidth", "field_147621_c");
+            int height = celtium$intField(fbo, "framebufferHeight", "field_147618_d");
+            int texture = celtium$intField(fbo, "framebufferTexture", "field_147617_g");
+            return width + "x" + height + " texture=" + texture;
+        } catch (Throwable unreadable) {
+            return "unreadable: " + unreadable;
+        }
+    }
+
+    /** One int field of an object, trying each name in turn; {@code -1} when none is readable. */
+    private static int celtium$intField(Object owner, String... names) {
+        for (String name : names) {
+            try {
+                return ((Integer) owner.getClass().getField(name).get(owner)).intValue();
+            } catch (Throwable unreadable) {
+                // try the next spelling
+            }
+        }
+        return -1;
+    }
+
+    /** Whether the layer GTCEu names is one {@code BlockRenderLayer.values()} returns: a layer outside it is never built. */
+    private static boolean celtium$bloomLayerInValues(String name) {
+        if (name == null || name.isEmpty() || "none".equals(name)) {
+            return false;
+        }
+        for (net.minecraft.util.BlockRenderLayer layer : net.minecraft.util.BlockRenderLayer.values()) {
+            if (String.valueOf(layer).equals(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The material a GTCEu pipe or cable item carries, as {@code name=0xRRGGBB}, or {@code none}.
+     * <p>
+     * The pipe's colour is the material's RGB, so a picture of a pipe row is only comparable between runs when the
+     * material is the same. The block's sub-block list is a {@code HashMap} keyed by {@code Material}, which has no
+     * {@code hashCode} of its own: its iteration order is the identity hash order and therefore differs between JVMs.
+     * That is how the item pipe row came out lavender in one run and cream in the next with the same fixture.
+     */
+    private static String celtium$pipeMaterial(net.minecraft.block.Block block, net.minecraft.item.ItemStack stack) {
+        if (block == null || stack == null || stack.isEmpty()) {
+            return "none";
+        }
+        try {
+            Object material = block.getClass().getMethod("getItemMaterial", net.minecraft.item.ItemStack.class)
+                    .invoke(block, stack);
+            if (material == null) {
+                return "none";
+            }
+            String name = String.valueOf(material.getClass().getMethod("getName").invoke(material));
+            int rgb = ((Integer) material.getClass().getMethod("getMaterialRGB").invoke(material)).intValue();
+            return name + "=0x" + String.format("%06X", Integer.valueOf(rgb & 0xFFFFFF));
+        } catch (Throwable unreadable) {
+            return "unreadable: " + unreadable;
+        }
     }
 
     /**
@@ -12915,24 +13138,43 @@ public final class ValidationClient {
     }
 
     /**
-     * The first item stack the block offers in the creative search tab: for a GTCEu pipe that is the first material,
-     * which is what {@code onBlockPlacedBy} reads to set the tile entity's material. A stack built by hand with
-     * metadata 0 is not the same thing - it named a material the pipe type does not carry, and the row that had
-     * rendered before the hook was added went blank.
+     * The sub-block the scene places: the one with the lowest item id and metadata, not the first one the list yields.
+     * <p>
+     * For a GTCEu pipe that is the material with the lowest registry id, which is what {@code onBlockPlacedBy} reads to
+     * set the tile entity's material. A stack built by hand with metadata 0 is not the same thing - it named a
+     * material the pipe type does not carry, and the row that had rendered before the hook was added went blank.
+     * <p>
+     * The order matters and used to be the list's own: {@code BlockMaterialPipe.getSubBlocks} iterates a
+     * {@code HashMap<Material, ...>}, {@code Material} has no {@code hashCode}, and the identity hash order differs
+     * between JVMs - so the same fixture placed a different material (and therefore a different colour) in every run.
+     * Sorting by (item id, metadata) is stable across runs and across locales.
      */
     private static net.minecraft.item.ItemStack celtium$firstSubBlock(net.minecraft.block.Block block) {
         try {
             net.minecraft.util.NonNullList<net.minecraft.item.ItemStack> stacks = net.minecraft.util.NonNullList.create();
             block.getSubBlocks(net.minecraft.creativetab.CreativeTabs.SEARCH, stacks);
+            net.minecraft.item.ItemStack best = null;
             for (net.minecraft.item.ItemStack stack : stacks) {
-                if (!stack.isEmpty()) {
-                    return stack;
+                if (stack.isEmpty()) {
+                    continue;
                 }
+                if (best == null || celtium$subBlockOrder(stack) < celtium$subBlockOrder(best)) {
+                    best = stack;
+                }
+            }
+            if (best != null) {
+                return best;
             }
         } catch (Throwable ignored) {
             // A block whose sub-block list cannot be built falls back to its plain item below.
         }
         return new net.minecraft.item.ItemStack(net.minecraft.item.Item.getItemFromBlock(block), 1, 0);
+    }
+
+    /** A stable sort key for a sub-block: item registry id in the high half, metadata in the low half. */
+    private static long celtium$subBlockOrder(net.minecraft.item.ItemStack stack) {
+        int itemId = net.minecraft.item.Item.getIdFromItem(stack.getItem());
+        return ((long) itemId << 32) | (stack.getMetadata() & 0xFFFFFFFFL);
     }
 
     /**

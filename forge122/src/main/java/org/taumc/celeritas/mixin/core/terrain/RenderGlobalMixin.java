@@ -42,6 +42,17 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
     /** How often the chunk-layer entry point ran; see the note on renderBlockLayer. */
     private int celtium$blockLayerCalls;
 
+    /**
+     * The layers this entry point has been asked for, by name, in first-seen order.
+     * <p>
+     * The four vanilla layers are not the whole set: GTCEu adds a {@code BLOOM} constant to
+     * {@code BlockRenderLayer} ({@code EnumHelper.addEnum}) and renders it by calling back into
+     * {@code RenderGlobal.renderBlockLayer} from its own hook in {@code EntityRenderer.renderWorldPass}. A layer that
+     * never reaches this method is a layer the native renderer cannot draw, and the log line is what separates "the
+     * mod never asked" from "the renderer dropped it".
+     */
+    private final java.util.Set<String> celtium$blockLayersSeen = new java.util.LinkedHashSet<String>();
+
     @Shadow
     @Final
     private Map<Integer, DestroyBlockProgress> damagedBlocks;
@@ -234,9 +245,10 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         // renderBlockLayer by name, and yet the terrain draws. Either this entry point is alive (and only the entity
         // and TESR injections are dead) or the terrain comes in somewhere else - and one number settles which.
         celtium$blockLayerCalls++;
-        if (celtium$blockLayerCalls <= 3) {
-            System.out.println("[Celtium] CELTIUM_BLOCKLAYER calls=" + celtium$blockLayerCalls
-                    + " layer=" + blockLayerIn + " pass=" + pass);
+        if (celtium$blockLayersSeen.add(String.valueOf(blockLayerIn))) {
+            System.out.println("[Celtium] CELTIUM_BLOCKLAYER layer=" + blockLayerIn
+                    + " name=" + blockLayerIn.name() + " pass=" + pass
+                    + " calls=" + celtium$blockLayerCalls + " layers=" + celtium$blockLayersSeen.size());
         }
         RenderDevice.enterManagedCode();
 

@@ -37,6 +37,23 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
 
     /** Bounded report countdown for the render lists. */
     private int celtium$listReportCountdown;
+
+    /**
+     * The layers whose geometry has been reported once, by name.
+     * <p>
+     * A custom layer (GTCEu adds {@code BLOOM} to {@code BlockRenderLayer}) reaches {@code drawChunkLayer} whether or
+     * not any section was built for it: the pass exists because the render-pass configuration creates one for every
+     * enum constant, and the draw is a no-op when the lists hold no geometry for that pass. The two cases look the
+     * same in a picture - nothing appears - so the first draw of each layer reports whether the lists carry the pass.
+     */
+    private final java.util.Set<String> celtium$layerGeometryReported = new java.util.HashSet<String>();
+
+    /** Draws seen per layer, so the geometry census waits for a world that has been built rather than the loading screen. */
+    private final java.util.Map<String, Integer> celtium$layerDrawCounts =
+            new java.util.HashMap<String, Integer>();
+
+    /** The draw at which each layer's geometry is reported: after the first frames, when the lists hold the terrain. */
+    private static final int LAYER_GEOMETRY_REPORT_DRAW = 120;
     public record TileEntityRenderContext(Map<Integer, DestroyBlockProgress> damagedBlocks, float partialTicks) {}
 
     /**
@@ -128,6 +145,7 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
     @Override
     public void drawChunkLayer(BlockRenderLayer renderLayer, double x, double y, double z) {
         this.celtium$reportTrackerState();
+        this.celtium$reportLayerGeometry(renderLayer);
 
         // Measured 2026-10-15 (leg gv-cohort-fru7): visible=83 while no draw reached the backend, so the question
         // is whether the render lists the backend iterates are empty. SectionCollector.visit adds a section to a
@@ -167,6 +185,52 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
         super.drawChunkLayer(renderLayer, x, y, z);
 
         GlStateManager.resetColor();
+    }
+
+    /**
+     * Reports, once per layer, whether the render lists carry the passes that layer maps to.
+     * <p>
+     * {@code SortedRenderLists.hasPass} answers from the regions' own pass sets, which are filled from build results -
+     * so a false here means no section was built with geometry for that pass, and a true means the geometry exists and
+     * the question moves to the draw. The layer name is the key because the enum is extended at runtime (GTCEu's
+     * {@code BLOOM}) and a name is what a log reader can match against the mod.
+     */
+    private void celtium$reportLayerGeometry(BlockRenderLayer renderLayer) {
+        String name = renderLayer.name();
+        if (this.celtium$layerGeometryReported.contains(name)) {
+            return;
+        }
+        Integer count = this.celtium$layerDrawCounts.get(name);
+        int draws = count == null ? 0 : count.intValue();
+        if (draws < LAYER_GEOMETRY_REPORT_DRAW) {
+            this.celtium$layerDrawCounts.put(name, Integer.valueOf(draws + 1));
+            return;
+        }
+        try {
+            var manager = this.getRenderSectionManager();
+            if (manager == null) {
+                return;
+            }
+            var lists = manager.getRenderLists();
+            // The first draws of a world are the loading screen's empty lists: reporting there says "no geometry" for
+            // every layer and settles nothing. The count above waits for the world; this checks the lists are carrying
+            // regions at all before the pass flags are believed.
+            if (lists.getNumRegions() == 0) {
+                return;
+            }
+            this.celtium$layerGeometryReported.add(name);
+            var passes = manager.getRenderPassConfiguration().vanillaRenderStages().get(renderLayer);
+            StringBuilder report = new StringBuilder();
+            if (passes != null) {
+                for (var pass : passes) {
+                    report.append(pass).append('=').append(lists.hasPass(pass)).append(' ');
+                }
+            }
+            System.out.println("[Celtium] CELTIUM_LAYER_GEOMETRY layer=" + renderLayer
+                    + " regions=" + lists.getNumRegions() + " passes=[" + report.toString().trim() + "]");
+        } catch (Throwable error) {
+            System.out.println("[Celtium] CELTIUM_LAYER_GEOMETRY unavailable: " + error);
+        }
     }
 
     public static CameraState captureCameraState(double ticks) {
