@@ -40,7 +40,7 @@
      frame 1322 = world 861 + gui 421 + hand 50。**85% は Celtium の即時経路**（受理 161 offer × 4024 ns ＝ 648 µs
      ＋ `flush` 392 ＋ `guiFlush` 81）。単位は **offer 160.8 / group 131.9 / 窓 23.4**。
      **format 交替は texture も必ず違う**（同texture 0件、[証拠](evidence/format-alternation-xtab-2026-11-04.md)）→ layout 統合は棄却。A-B-A のうち**矩形が B と重ならないのは 28/115 group**（見積 ~0.11 ms）→ 次は**矩形が重ならない時だけ前の group へ合流**（ImmediatelyFast 型）。
-     受理経路は 889 ns/offer だけ名前付きで **3135 ns が未帰属**（`prepare` 493・`stateKey` 199）。
+     受理経路の async-profiler 内訳（[証拠](evidence/accept-path-asprof-2026-11-04.md)）: 受理は client の 13.7%、最大は行列 bake 14.6%・突出した葉なし。
      **round 59 実測（µs 分解能）**（[証拠](evidence/pass-split-micros-2026-11-04.md)）: `flush` 486 = `winRecord` 364 =
      `wrecLoop` 244（`grpDraw` 128）。**「固定費は8本に分散」は棄却**（`winSubmit` 43・`winBarrier` 31・`winBeginPass` 28
      の3本で67%）。
