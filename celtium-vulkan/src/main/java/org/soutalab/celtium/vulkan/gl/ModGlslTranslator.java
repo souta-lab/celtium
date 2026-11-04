@@ -22,8 +22,9 @@ import java.util.regex.Pattern;
  * <ul>
  * <li>{@code attribute} -> {@code layout(location=N) in}, N in declaration order; {@code varying} -> matched
  * {@code out}/{@code in} locations by name across the two stages.</li>
- * <li>Every non-sampler {@code uniform} -> one std140 block at set 0 binding 0, with the byte offset of each member, so
- * the values {@code glUniform*} recorded can be packed. Samplers -> combined image samplers at bindings 1..n.</li>
+ * <li>Every non-sampler {@code uniform} -> one std140 push-constant block (at most {@link #MAX_PUSH_BYTES}), with the
+ * byte offset of each member, so the values {@code glUniform*} recorded can be packed. Samplers -> combined image
+ * samplers at set 0, bindings 0..n-1.</li>
  * <li>{@code gl_FragColor}/{@code gl_FragData[0]} -> an output at location 0; {@code texture2D}, {@code texture2DLod}
  * -> {@code texture}, {@code textureLod}.</li>
  * <li>The fixed-function inputs mods still read: {@code gl_Vertex}, {@code gl_Color}, {@code gl_MultiTexCoord0},
@@ -31,8 +32,8 @@ import java.util.regex.Pattern;
  * {@code ftransform()}, and the {@code gl_TexCoord[0]}/{@code gl_FrontColor} varyings. They become ordinary
  * attributes, uniforms and varyings with {@code celtium_} names, listed in the result like the mod's own.</li>
  * </ul>
- * The user {@code main} is renamed and called from a generated one, which is where the clip-space convention is fixed
- * up: Vulkan's y points down and its depth range is [0, 1].
+ * The user {@code main} is renamed and called from a generated one, which is where the clip depth is remapped to
+ * Vulkan's [0, 1]; y is left as GL has it, because the renderer keeps images in GL's row order.
  */
 public final class ModGlslTranslator {
 
@@ -109,13 +110,9 @@ public final class ModGlslTranslator {
         vertex = lowerBuiltins(vertex, vertexDecls, true);
         fragment = lowerBuiltins(fragment, fragmentDecls, false);
 
-        // Vulkan's fragment origin is the upper left, GL's the lower left: a stage that reads gl_FragCoord gets the GL
-        // value back from the target height, which the pass supplies as a hidden uniform.
-        boolean fragCoord = fragment.matches("(?s).*\\bgl_FragCoord\\b.*");
-        if (fragCoord) {
-            fragment = fragment.replaceAll("\\bgl_FragCoord\\b", "celtium_FragCoord");
-            fragmentDecls.add(new Declaration("uniform", "float", TARGET_HEIGHT, 0));
-        }
+        // gl_FragCoord needs no fix-up: this renderer keeps images in GL's row order (row 0 at the bottom: the
+        // projection only has its depth remapped and viewports keep GL's y), so Vulkan's upper-left origin counts the
+        // same rows GL's lower-left origin does.
         Map<String, Declaration> uniforms = new LinkedHashMap<>();
         for (List<Declaration> stage : List.of(vertexDecls, fragmentDecls)) {
             for (Declaration d : stage) {
@@ -137,7 +134,7 @@ public final class ModGlslTranslator {
                 if (d.arrayLength != 0) {
                     throw new IllegalArgumentException("sampler arrays are not lowered: " + d.name);
                 }
-                samplers.add(new SamplerBinding(glName(d.name), d.type, 1 + samplers.size()));
+                samplers.add(new SamplerBinding(glName(d.name), d.type, samplers.size()));
                 continue;
             }
             int[] layout = std140(d.type, d.arrayLength);
@@ -146,6 +143,10 @@ public final class ModGlslTranslator {
             offset += layout[1];
         }
         int blockSize = align(offset, 16);
+        if (blockSize > MAX_PUSH_BYTES) {
+            throw new IllegalArgumentException("uniform block of " + blockSize + " bytes exceeds the " + MAX_PUSH_BYTES
+                    + "-byte push-constant floor");
+        }
 
         List<Attribute> attributes = new ArrayList<>();
         for (Declaration d : vertexDecls) {
@@ -169,7 +170,7 @@ public final class ModGlslTranslator {
 
         StringBuilder common = new StringBuilder();
         if (!members.isEmpty()) {
-            common.append("layout(std140, set = 0, binding = 0) uniform CeltiumModUniforms {\n");
+            common.append("layout(push_constant, std140) uniform CeltiumModUniforms {\n");
             for (UniformMember m : members) {
                 common.append("    ").append(m.type).append(' ').append(glslName(m.name))
                         .append(m.arrayLength > 0 ? "[" + m.arrayLength + "]" : "").append(";\n");
@@ -203,9 +204,6 @@ public final class ModGlslTranslator {
             location += locationsFor(d.type) * Math.max(1, d.arrayLength);
         }
         fs.append("layout(location = 0) out vec4 celtium_FragColor;\n");
-        if (fragCoord) {
-            fs.append("vec4 celtium_FragCoord;\n");
-        }
 
         vertex = renameMain(vertex, "vertex");
         fragment = renameMain(fragment, "fragment");
@@ -218,22 +216,14 @@ public final class ModGlslTranslator {
         fragment = lowerTextureCalls(fragment);
 
         vs.append(vertex).append("\nvoid main() {\n    celtium_user_main();\n")
-                // GL clip space has y up and depth in [-1, 1]; Vulkan's has y down and depth in [0, 1].
-                .append("    gl_Position.y = -gl_Position.y;\n")
+                // GL's clip depth is [-1, 1], Vulkan's [0, 1]. y is not flipped: like every other pass here the image
+                // keeps GL's row order (VulkanTerrainGpuBackend.remapClipDepth remaps depth only).
                 .append("    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;\n}\n");
-        fs.append(fragment).append("\nvoid main() {\n");
-        if (fragCoord) {
-            fs.append("    celtium_FragCoord = vec4(gl_FragCoord.x, ").append(TARGET_HEIGHT)
-                    .append(" - gl_FragCoord.y, gl_FragCoord.z, gl_FragCoord.w);\n");
-        }
-        fs.append("    celtium_user_main();\n}\n");
+        fs.append(fragment).append("\nvoid main() {\n    celtium_user_main();\n}\n");
         return new Result(vs.toString(), fs.toString(), Collections.unmodifiableList(attributes),
                 Collections.unmodifiableList(members), blockSize, Collections.unmodifiableList(samplers),
                 Collections.unmodifiableList(varyings), null);
     }
-
-    /** The hidden uniform a stage reading {@code gl_FragCoord} needs: the target's height in pixels. */
-    public static final String TARGET_HEIGHT = "celtium_TargetHeight";
 
     /**
      * Words a {@code #version 110/120} source may use as names that GLSL 450 reserves (measured: GTCEu's
@@ -265,6 +255,13 @@ public final class ModGlslTranslator {
     private static String glslName(String glName) {
         return RESERVED_IN_450.contains(glName) ? RENAMED + glName : glName;
     }
+
+    /**
+     * The uniform block travels as push constants with std140 offsets: 128 bytes is the size every Vulkan device
+     * guarantees, and it holds every GTCEu program (the largest, battery.frag, is exactly 128). A bigger block is
+     * refused with its size rather than given a buffer whose lifetime nothing here manages.
+     */
+    public static final int MAX_PUSH_BYTES = 128;
 
     private static String strip(String source) {
         if (source == null) {

@@ -56,8 +56,8 @@ class ModGlslTranslatorTest {
         assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
         assertEquals(List.of(new ModGlslTranslator.Attribute("position", "vec2", 0)), result.attributes());
         assertEquals(List.of("uv"), result.varyings());
-        assertEquals(List.of(new ModGlslTranslator.SamplerBinding("first", "sampler2D", 1),
-                new ModGlslTranslator.SamplerBinding("second", "sampler2D", 2)), result.samplers());
+        assertEquals(List.of(new ModGlslTranslator.SamplerBinding("first", "sampler2D", 0),
+                new ModGlslTranslator.SamplerBinding("second", "sampler2D", 1)), result.samplers());
         // std140: float at 0, vec2s at 8 and 16, the float[5] array at 32 with a 16-byte stride.
         assertEquals(List.of(new ModGlslTranslator.UniformMember("strength", "float", 0, 0, 4),
                 new ModGlslTranslator.UniformMember("texel", "vec2", 0, 8, 8),
