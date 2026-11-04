@@ -4,10 +4,6 @@
 2026-10-30 改訂。**過去の性能値・根因断定・完了宣言を前提にしない。**
 製品の出口は [goal.md](<goal.md>)。[new_architecture.md](<new_architecture.md>) は参考の設計案で拘束しない。実測が勝ればそちらを採る。
 
-## Windows/NVIDIA報告への優先対応（2026-10-29）
-
-- **FBO/copy**: raw採用ID・8個制限・削除・逆引き・範囲、copy送信順とlayoutを修正。AMD/Intel成功・validation 0。
-
 ## 次の作業単位（2026-10-25 改訂・利用者の実プレイ報告に対応）
 
 1. **実プレイ報告の状況**（利用者: 体感200fps＋スパイク、描画バグは少ない）
@@ -82,7 +78,7 @@
 | **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | v0.0.14-alpha `90a7c505…` は qmagnet world で AMD/Intel PASSED・validation 0・画像gate一致。0.6.13（GLFW/LWJGL 3.4.1）はSDL3不在を検出して版を名指しで拒否 |
 | **巨大pack互換（E2E-E 1.87.3）** | **AMD: fixture PASSED・validation 0、Intel未実行** | AMD | 未実行 | Cleanroom 0.7差はlocal置換と上流PR（`8f121acfb`）。残りは[証拠](evidence/e2e-cleanroom07-2026-10-26.md)末尾へ。 |
 
-| **Mod自前のGLSL program** | **拒否・計数まで（`51f57cded`）。実行は未実装** | GTCEu scene PASSED・validation 0 | PASSED・validation 0（r7-gt-intel） | `glUseProgram` に route が無く program が常に0→GTCEu bloom の全画面quadが世界投影で描かれていた。現在は program ごとに拒否（4本、全て `Shaders.renderFullImageInFBO`）。bloom は欠落のまま。次: 実行時 GLSL→SPIR-V（[証拠](evidence/gregtech-bloom-2026-11-04.md)） |
+| **Mod自前のGLSL program** | **拒否・計数まで（`51f57cded`）。実行は未実装** | GTCEu scene PASSED・validation 0 | PASSED・validation 0（r7-gt-intel） | `glUseProgram` に route が無く program が常に0→GTCEu bloom の全画面quadが世界投影で描かれていた。現在は program ごとに拒否（4本、全て `Shaders.renderFullImageInFBO`）。bloom は欠落のまま。GTCEu の shader 14/14 は GLSL 450 へ変換・shaderc で compile 可（`ModGlslTranslator`）。次: stub の source/uniform 保持→native 実行（[証拠](evidence/gregtech-bloom-2026-11-04.md)） |
 | **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない |
 | **次の標的** | **native実装へ** | — | 未着手 | ①model/immediate共通packetのnative実行 ②lit fog **修正**（[証拠](evidence/lit-fog-2026-11-03.md)） ③state/texture/target所有の統合。 |
 

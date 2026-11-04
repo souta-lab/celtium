@@ -117,3 +117,21 @@ and the same three lines for programs 23916, 23917 and 23918: four GTCEu bloom p
 the vanilla post chain is cancelled at `ShaderGroup.render` HEAD and never calls `useShader`). The lamps are still a
 plain white box - the bloom stays missing until mod GLSL is compiled and run natively (goal.md, 2026-11-04) - but the
 gap is now counted per program instead of being drawn as a different picture.
+
+## Round 5: the programs can be lowered to Vulkan GLSL (not yet executed)
+
+`ModGlslTranslator` lowers a mod's legacy program (vertex + fragment, or fragment-only with a synthesized
+fixed-function vertex stage) to GLSL 450: attribute/varying locations, one std140 block for the non-sampler
+uniforms with each member's offset, sampler bindings, `gl_FragColor`/`gl_FragData[0]`, `texture2D*`, the
+fixed-function inputs (`gl_Vertex`, `gl_Color`, `gl_MultiTexCoord0`, `gl_ModelViewProjectionMatrix`, `ftransform()`,
+`gl_TexCoord[0]`, `gl_FrontColor`), names GLSL 450 reserves (GTCEu's `blackhole.frag` calls its sampler `texture`),
+GL's lower-left `gl_FragCoord` (a hidden `celtium_TargetHeight` uniform) and the clip-space convention.
+
+`ModGlslTranslatorTest` compiles the output with shaderc (Vulkan 1.2). Run against GTCEu 2.8.10's own shaders
+(extracted locally, `CELTIUM_MOD_SHADER_DIR`, not committed): **14 of 14 lowered and compiled for both stages**,
+including the seven the bloom chain uses (`image`, `down_sampling`, `up_sampling`, `blur`, `seperable_blur`,
+`bloom_combine`, `composite`). Full `:celtium-vulkan:test`: 426 tests, 0 failures.
+
+Still missing for the bloom to appear: the stub has to keep the sources and `glUniform*` values per program, the
+backend has to build a pipeline from the SPIR-V and run the batch into the mod's framebuffer, and the shipped jar has
+to carry shaderc's natives (distribution decision, see the report of 2026-11-04).

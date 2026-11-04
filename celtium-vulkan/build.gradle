@@ -67,6 +67,9 @@ dependencies {
     // was what the load failure actually said once the diagnosis printed the cause chain instead of the first message.
     testRuntimeOnly 'org.lwjgl:lwjgl:' + lwjglVersion + ':natives-linux'
     testImplementation 'org.lwjgl:lwjgl-vulkan'
+    // Mod GLSL lowering (ModGlslTranslatorTest) is checked by compiling its output with the real compiler.
+    testImplementation 'org.lwjgl:lwjgl-shaderc'
+    testRuntimeOnly 'org.lwjgl:lwjgl-shaderc:' + lwjglVersion + ':natives-linux'
     testImplementation 'com.google.code.gson:gson:2.10.1'
     // The replay transform's composition is matrix arithmetic, and its unit tests have to be able to check it; the
     // mod still gets joml from the installation (compileOnly above) and nothing is bundled by this.
