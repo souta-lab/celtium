@@ -533,7 +533,21 @@ public final class ValidationClient {
          * Any other dimension the fixture is asked to travel to (dimension 2 and up). Recorded by name and dimension
          * and gated as uncalibrated for the same reason as {@link #END}.
          */
-        OTHER_DIMENSION("otherDimension", false, false);
+        OTHER_DIMENSION("otherDimension", false, false),
+        /**
+         * The GregTech CE Unofficial showcase: the blocks a GTCEu pack draws through paths the flat scene never
+         * reaches. The flat world's blocks are vanilla, so the terrain pass, the item pass and the TESR pass were only
+         * ever exercised on vanilla models. GTCEu draws its machines through {@code MetaTileEntityTESR} (a CCL
+         * {@code CCRenderState} batch over the vanilla {@code BufferBuilder}), its cables and pipes through baked
+         * models whose quads come from CCL's {@code CCModel}, and its casings through ordinary baked models - three
+         * different producers feeding the same native passes. The scene places one row of each in front of the camera
+         * so a frame can show which of them reached the picture, and the report carries the placed/tile-entity counts
+         * so "nothing was placed" cannot read as "nothing was drawn".
+         * <p>
+         * Uncalibrated until a GL reference run of this scene exists: the picture is held to the smoke test, its
+         * identity, the frame binding and the camera pose, and the verdict is {@code UNCALIBRATED_PRESENTED_IMAGE}.
+         */
+        GREGTECH("gregtech", false, false);
 
         final String name;
         /** Whether this scene drives a GUI screen and takes a second capture with it open. */
@@ -1316,6 +1330,13 @@ public final class ValidationClient {
             // the plants, the water, the item frames and the command-block contraption are all in view at once.
             return new CameraPose(217.5D, 48.0D, 217.5D, 180.0F, 10.0F);
         }
+        if (scene == Scene.GREGTECH) {
+            // Standing two blocks above the clean flat world's grass (surface y=3, blocks at y=4) and looking down 15
+            // degrees at the showcase rows the stage builds at z=-6..-10: the front row (cables and pipes) is 6.5
+            // blocks out, the machine row 8.5, and the raised casing row 10.5, so all three sit inside the 70-degree
+            // vertical field of view instead of the back rows hiding behind the front ones.
+            return new CameraPose(0.5D, 6.0D, 0.5D, 180.0F, 15.0F);
+        }
         return new CameraPose(0.5D, 12.0D, 0.5D, 180.0F, 20.0F);
     }
 
@@ -1392,6 +1413,7 @@ public final class ValidationClient {
                 return celtium$videoSettingsGate();
             case END:
             case OTHER_DIMENSION:
+            case GREGTECH:
                 return celtium$uncalibratedGate(scene);
             case TERRAIN:
             default:
@@ -1682,7 +1704,7 @@ public final class ValidationClient {
      * than failed: the key differs, so no floor of that scene describes that picture.
      */
     private static String celtium$calibrationKey(Scene scene, CameraPose pose, int guiScale) {
-        String stack = System.getProperty("celtium.validation.worldLayers", celtium$DEFAULT_WORLD_LAYERS);
+        String stack = System.getProperty("celtium.validation.worldLayers", celtium$sceneWorldLayers(scene));
         int sweep = Integer.getInteger("celtium.validation.blockSweep", 0).intValue();
         StringBuilder key = new StringBuilder();
         key.append("scene=").append(scene.name);
@@ -1802,6 +1824,21 @@ public final class ValidationClient {
             "3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass,minecraft:water,minecraft:lava,minecraft:fire,"
             + "minecraft:leaves,minecraft:stained_glass,minecraft:chest,minecraft:enchanting_table;1;";
 
+    /**
+     * The GTCEu showcase's flat world: clean ground only.
+     * <p>
+     * The default stack's water, lava, fire and leaves sit at y=4..10, which is exactly where the showcase rows go;
+     * a machine placed inside the lava layer would be a picture of the lava, not of the machine. The showcase needs a
+     * surface and nothing else, so its scene names its own stack rather than inheriting the acceptance world's.
+     */
+    private static final String celtium$GREGTECH_WORLD_LAYERS =
+            "3;minecraft:bedrock,2*minecraft:dirt,minecraft:grass;1;";
+
+    /** The flat world's layers for a scene: the GTCEu showcase stands on clean ground, every other scene on the default. */
+    private static String celtium$sceneWorldLayers(Scene scene) {
+        return scene == Scene.GREGTECH ? celtium$GREGTECH_WORLD_LAYERS : celtium$DEFAULT_WORLD_LAYERS;
+    }
+
 
     /**
      * The flat world's layers, as the superflat generator string.
@@ -1817,7 +1854,7 @@ public final class ValidationClient {
      */
     private final String celtium$saveSlot = System.getProperty("celtium.validation.saveSlot");
     private final String celtium$worldLayers = System.getProperty("celtium.validation.worldLayers",
-            celtium$DEFAULT_WORLD_LAYERS);
+            celtium$sceneWorldLayers(celtium$scene));
     private boolean celtium$rejoinPending;
     private boolean commandsRun;
     private boolean finished;
@@ -3519,6 +3556,29 @@ public final class ValidationClient {
                     && Boolean.getBoolean("celtium.validation.shadowStage")) {
                 celtium$shadowStageBuilt = true;
                 celtium$buildShadowStage(mc);
+            }
+            if (worldTicks >= 60 && !celtium$gregtechStageBuilt && celtium$scene == Scene.GREGTECH) {
+                celtium$gregtechStageBuilt = true;
+                celtium$buildGregtechStage(mc);
+            }
+            if (celtium$gregtechStageBuilt && worldTicks == 70) {
+                // The stage is placed on the server thread; its counters are read here, on the client tick, so the
+                // report is written by one thread. A run that never reaches tick 62 still says the stage was requested.
+                report.addProperty("gregtechStage", celtium$gregtechStageResult);
+                report.addProperty("gregtechStagePlaced", Integer.valueOf(celtium$gregtechPlaced));
+                report.addProperty("gregtechStageFailed", Integer.valueOf(celtium$gregtechFailed));
+                report.addProperty("gregtechStageTileEntities", Integer.valueOf(celtium$gregtechTileEntities));
+                report.addProperty("gregtechStageMachines", Integer.valueOf(celtium$gregtechMachines));
+                report.addProperty("gregtechStagePipes", Integer.valueOf(celtium$gregtechPipes));
+                report.addProperty("gregtechStageCables", Integer.valueOf(celtium$gregtechCables));
+                report.addProperty("gregtechStageCasings", Integer.valueOf(celtium$gregtechCasings));
+                report.addProperty("gregtechStageCableName", celtium$gregtechCableName);
+                report.addProperty("gregtechStageCableRenderType", celtium$gregtechCableRenderType);
+                report.addProperty("gregtechStageFluidPipeName", celtium$gregtechFluidPipeName);
+                report.addProperty("gregtechStageFluidPipeRenderType", celtium$gregtechFluidPipeRenderType);
+                report.addProperty("gregtechStageItemPipeName", celtium$gregtechItemPipeName);
+                report.addProperty("gregtechStageItemPipeRenderType", celtium$gregtechItemPipeRenderType);
+                report.addProperty("gregtechStageCasingName", celtium$gregtechCasingName);
             }
             if (worldTicks >= 60 && !celtium$entitiesSpawned && Boolean.getBoolean("celtium.validation.keepEntities")) {
                 celtium$entitiesSpawned = true;
@@ -12237,5 +12297,279 @@ public final class ValidationClient {
         }
         mc.player.setPositionAndRotation(px + 0.5D, groundY + 8.0D, pz + 8.5D, 180.0F, 35.0F);
         System.out.println("[Celtium] CELTIUM_SHADOW_STAGE blocks=" + built + " at=" + px + "," + groundY + "," + pz);
+    }
+
+    /** Whether the GTCEu showcase stage has been requested; the placement itself runs on the server thread. */
+    private boolean celtium$gregtechStageBuilt;
+    /** What the server-side placement did, read by the client tick and written into the report. */
+    private String celtium$gregtechStageResult = "not built";
+    private int celtium$gregtechPlaced;
+    private int celtium$gregtechFailed;
+    private int celtium$gregtechTileEntities;
+    private int celtium$gregtechMachines;
+    private int celtium$gregtechPipes;
+    private int celtium$gregtechCables;
+    private int celtium$gregtechCasings;
+    /** Which block each row used, and the render type the block itself reports: a cube where a wire belongs is a
+     *  different finding from a wire that was never drawn, and the name is what tells them apart. */
+    private String celtium$gregtechCableName = "none";
+    private String celtium$gregtechCableRenderType = "none";
+    private String celtium$gregtechFluidPipeName = "none";
+    private String celtium$gregtechFluidPipeRenderType = "none";
+    private String celtium$gregtechItemPipeName = "none";
+    private String celtium$gregtechItemPipeRenderType = "none";
+    private String celtium$gregtechCasingName = "none";
+
+    /**
+     * Builds the GTCEu showcase: the blocks a GregTech pack draws through paths the flat scene never reaches.
+     * <p>
+     * The flat world's blocks are vanilla, so the terrain pass, the item pass and the TESR pass were only ever
+     * exercised on vanilla models. GregTech CE Unofficial draws its machines through {@code MetaTileEntityTESR} (a CCL
+     * {@code CCRenderState} batch over the vanilla {@code BufferBuilder}), its cables and pipes through baked models
+     * whose quads come from CCL's {@code CCModel}, and its casings through ordinary baked models - three different
+     * producers feeding the same native passes. The scene places one row of each in front of the camera so a frame can
+     * show which of them reached the picture.
+     * <p>
+     * The placement runs on the <b>server</b> thread, not on {@code mc.world}: a machine's block state does not carry
+     * the machine id ({@code BlockMachine.getStateFromMeta} only sets {@code OPAQUE}), so the tile entity is what names
+     * the machine, and the tile entity is created by the block's own {@code onBlockPlacedBy} with the item stack a
+     * player would have used. A client-side {@code setBlockState} would leave an empty holder that draws nothing and
+     * would read as "the renderer dropped the machine".
+     * <p>
+     * Nothing is asserted about the result: the report carries the placed/failed/tile-entity counts, and the picture is
+     * read by eye. The scene is uncalibrated until a GL reference run of it exists.
+     */
+    private void celtium$buildGregtechStage(final net.minecraft.client.Minecraft mc) {
+        final net.minecraft.server.integrated.IntegratedServer server = mc.getIntegratedServer();
+        if (server == null || mc.player == null) {
+            celtium$gregtechStageResult = "no integrated server";
+            return;
+        }
+        final java.util.UUID playerId = mc.player.getUniqueID();
+        final int px = (int) Math.floor(mc.player.posX);
+        final int pz = (int) Math.floor(mc.player.posZ);
+        try {
+            server.addScheduledTask(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        celtium$placeGregtechStage(server, playerId, px, pz);
+                    } catch (Throwable error) {
+                        celtium$gregtechStageResult = "failed: " + error;
+                    }
+                }
+            });
+        } catch (Throwable error) {
+            celtium$gregtechStageResult = "could not schedule the placement: " + error;
+        }
+    }
+
+    /** The server-thread half of {@link #celtium$buildGregtechStage}: place the rows and record what happened. */
+    private void celtium$placeGregtechStage(net.minecraft.server.MinecraftServer server, java.util.UUID playerId,
+            int px, int pz) {
+        net.minecraft.world.WorldServer world = server.worlds[0];
+        net.minecraft.entity.player.EntityPlayerMP placer = server.getPlayerList().getPlayerByUUID(playerId);
+        int groundY = world.getHeight(px, pz - 8);
+        int placed = 0;
+        int failed = 0;
+        int tileEntities = 0;
+        int machines = 0;
+        int pipes = 0;
+        int cables = 0;
+        int casings = 0;
+        // The machine row: the block whose renderer is MetaTileEntityTESR. Metas 0..12 are the steam machines the
+        // registry assigns first (boilers, extractor, macerator, compressor, hammer, furnace, alloy smelter, rock
+        // breaker), every one of them a TESR-drawn cube rather than a baked model.
+        net.minecraft.block.Block machine = net.minecraft.block.Block.REGISTRY.getObject(
+                new net.minecraft.util.ResourceLocation("gregtech", "machine"));
+        if (machine != null) {
+            for (int meta = 0; meta < 13; meta++) {
+                net.minecraft.util.math.BlockPos pos = new net.minecraft.util.math.BlockPos(px - 6 + meta, groundY, pz - 8);
+                try {
+                    net.minecraft.block.state.IBlockState state = machine.getStateFromMeta(meta);
+                    if (!world.setBlockState(pos, state, 3)) {
+                        failed++;
+                        continue;
+                    }
+                    placed++;
+                    machines++;
+                    if (placer != null) {
+                        net.minecraft.item.ItemStack stack = new net.minecraft.item.ItemStack(
+                                net.minecraft.item.Item.getItemFromBlock(machine), 1, meta);
+                        machine.onBlockPlacedBy(world, pos, state, placer, stack);
+                    }
+                    if (world.getTileEntity(pos) != null) {
+                        tileEntities++;
+                    }
+                } catch (Throwable error) {
+                    failed++;
+                }
+            }
+        }
+        // The pipe and cable rows: one block of each family, laid as a line so the pipe model's connection quads are
+        // exercised rather than a lone segment. The families are found by class name because the registry names are
+        // per material and size (gregtech:cable, gregtech:fluid_pipe_*, ...) and the scene wants the family, not a
+        // particular material. The namespace check is not decoration: the first class-name match in registry order was
+        // littletiles:ltsinglecable, so the "cable" row was LittleTiles' full-cube cable and the picture read as a
+        // GTCEu cable drawn as a cube. A family is a GTCEu block or it is not this scene's subject.
+        net.minecraft.block.Block cable = null;
+        net.minecraft.block.Block fluidPipe = null;
+        net.minecraft.block.Block itemPipe = null;
+        for (net.minecraft.block.Block block : net.minecraft.block.Block.REGISTRY) {
+            if (block == null) {
+                continue;
+            }
+            net.minecraft.util.ResourceLocation name = block.getRegistryName();
+            if (name == null || !"gregtech".equals(name.getNamespace())) {
+                continue;
+            }
+            String cls = block.getClass().getName();
+            if (cable == null && cls.contains("BlockCable")) {
+                cable = block;
+            } else if (fluidPipe == null && cls.contains("BlockFluidPipe")) {
+                fluidPipe = block;
+            } else if (itemPipe == null && cls.contains("BlockItemPipe")) {
+                itemPipe = block;
+            }
+        }
+        celtium$gregtechCableName = celtium$blockName(cable);
+        celtium$gregtechCableRenderType = celtium$renderType(cable);
+        celtium$gregtechFluidPipeName = celtium$blockName(fluidPipe);
+        celtium$gregtechFluidPipeRenderType = celtium$renderType(fluidPipe);
+        celtium$gregtechItemPipeName = celtium$blockName(itemPipe);
+        celtium$gregtechItemPipeRenderType = celtium$renderType(itemPipe);
+        int[] cableX = {-6, -5, -4, -3, -2, 5, 6};
+        for (int x : cableX) {
+            if (celtium$placeGregtechBlock(world, cable, px + x, groundY, pz - 6, placer)) {
+                placed++;
+                cables++;
+            } else {
+                failed++;
+            }
+        }
+        for (int x = -1; x <= 1; x++) {
+            if (celtium$placeGregtechBlock(world, fluidPipe, px + x, groundY, pz - 6, placer)) {
+                placed++;
+                pipes++;
+            } else {
+                failed++;
+            }
+        }
+        for (int x = 2; x <= 4; x++) {
+            if (celtium$placeGregtechBlock(world, itemPipe, px + x, groundY, pz - 6, placer)) {
+                placed++;
+                pipes++;
+            } else {
+                failed++;
+            }
+        }
+        // The casing row, raised one block so it is visible over the machine row: the ordinary baked models a GTCEu
+        // pack is mostly built from.
+        java.util.List<net.minecraft.block.Block> casingBlocks = new java.util.ArrayList<net.minecraft.block.Block>();
+        for (net.minecraft.block.Block block : net.minecraft.block.Block.REGISTRY) {
+            if (block == null) {
+                continue;
+            }
+            net.minecraft.util.ResourceLocation name = block.getRegistryName();
+            if (name != null && "gregtech".equals(name.getNamespace())
+                    && block.getClass().getSimpleName().contains("Casing")) {
+                casingBlocks.add(block);
+            }
+        }
+        for (int i = 0; i < 13 && i < casingBlocks.size(); i++) {
+            net.minecraft.util.math.BlockPos pos = new net.minecraft.util.math.BlockPos(px - 6 + i, groundY + 1, pz - 10);
+            world.setBlockState(pos.down(), net.minecraft.init.Blocks.STONE.getDefaultState(), 3);
+            if (celtium$placeGregtechBlock(world, casingBlocks.get(i), pos.getX(), pos.getY(), pos.getZ(), placer)) {
+                placed++;
+                casings++;
+                if (i == 0) {
+                    celtium$gregtechCasingName = celtium$blockName(casingBlocks.get(i));
+                }
+            } else {
+                failed++;
+            }
+        }
+        celtium$gregtechPlaced = placed;
+        celtium$gregtechFailed = failed;
+        celtium$gregtechTileEntities = tileEntities;
+        celtium$gregtechMachines = machines;
+        celtium$gregtechPipes = pipes;
+        celtium$gregtechCables = cables;
+        celtium$gregtechCasings = casings;
+        celtium$gregtechStageResult = "placed=" + placed + " failed=" + failed + " tileEntities=" + tileEntities
+                + " machines=" + machines + " pipes=" + pipes + " cables=" + cables + " casings=" + casings
+                + " groundY=" + groundY + " at=" + px + "," + pz;
+        System.out.println("[Celtium] CELTIUM_GREGTECH_STAGE " + celtium$gregtechStageResult);
+    }
+
+    /**
+     * Places one block on the server world and runs the block's own placement hook, the way an item placement does.
+     * <p>
+     * The hook is not optional for GTCEu's pipes and cables: their tile entity's material is set by
+     * {@code BlockMaterialPipe.setTileEntityData} from the item stack's metadata, and a pipe whose material is null
+     * draws nothing - the cable renderer returns before it builds a model. A bare {@code setBlockState} therefore
+     * produced a row of invisible cables that read as a renderer fault; the same row is invisible under the GL
+     * reference too, which is what named the fixture as the cause.
+     */
+    private static boolean celtium$placeGregtechBlock(net.minecraft.world.World world, net.minecraft.block.Block block,
+            int x, int y, int z, net.minecraft.entity.EntityLivingBase placer) {
+        if (block == null) {
+            return false;
+        }
+        try {
+            net.minecraft.util.math.BlockPos pos = new net.minecraft.util.math.BlockPos(x, y, z);
+            net.minecraft.block.state.IBlockState state = block.getDefaultState();
+            if (!world.setBlockState(pos, state, 3)) {
+                return false;
+            }
+            if (placer != null) {
+                block.onBlockPlacedBy(world, pos, state, placer, celtium$firstSubBlock(block));
+            }
+            return true;
+        } catch (Throwable error) {
+            return false;
+        }
+    }
+
+    /**
+     * The first item stack the block offers in the creative search tab: for a GTCEu pipe that is the first material,
+     * which is what {@code onBlockPlacedBy} reads to set the tile entity's material. A stack built by hand with
+     * metadata 0 is not the same thing - it named a material the pipe type does not carry, and the row that had
+     * rendered before the hook was added went blank.
+     */
+    private static net.minecraft.item.ItemStack celtium$firstSubBlock(net.minecraft.block.Block block) {
+        try {
+            net.minecraft.util.NonNullList<net.minecraft.item.ItemStack> stacks = net.minecraft.util.NonNullList.create();
+            block.getSubBlocks(net.minecraft.creativetab.CreativeTabs.SEARCH, stacks);
+            for (net.minecraft.item.ItemStack stack : stacks) {
+                if (!stack.isEmpty()) {
+                    return stack;
+                }
+            }
+        } catch (Throwable ignored) {
+            // A block whose sub-block list cannot be built falls back to its plain item below.
+        }
+        return new net.minecraft.item.ItemStack(net.minecraft.item.Item.getItemFromBlock(block), 1, 0);
+    }
+
+    /** A block's registry name, or its class name when the registry has none: the report has to name what it placed. */
+    private static String celtium$blockName(net.minecraft.block.Block block) {
+        if (block == null) {
+            return "none";
+        }
+        net.minecraft.util.ResourceLocation name = block.getRegistryName();
+        return name == null ? block.getClass().getSimpleName() : name.toString();
+    }
+
+    /** The render type the block itself reports: MODEL means a baked model is drawn, INVISIBLE means a TESR owns it. */
+    private static String celtium$renderType(net.minecraft.block.Block block) {
+        if (block == null) {
+            return "none";
+        }
+        try {
+            return String.valueOf(block.getRenderType(block.getDefaultState()));
+        } catch (Throwable error) {
+            return "error: " + error;
+        }
     }
 }
