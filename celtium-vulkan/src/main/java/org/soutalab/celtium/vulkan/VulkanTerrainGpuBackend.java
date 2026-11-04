@@ -3573,6 +3573,63 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int censusPrevGroupFormatId = -1;
     private int censusPrevGroupTexture = -1;
     private long censusPrevGroupStateKey;
+    /** Census-only NDC rectangles (minX, minY, maxX, maxY): the batch being offered and the open group's union. */
+    private final float[] censusBatchRect = new float[4];
+    private final float[] censusCurrentGroupRect = {Float.MAX_VALUE, Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE};
+
+    /**
+     * The batch's rectangle in normalised device coordinates, from its positions (three floats at offset 0 in every
+     * immediate layout) through the current projection and model view. A vertex behind the eye (w <= 0) makes the
+     * rectangle the whole screen, so the census can only under-count disjoint batches, never over-count them.
+     */
+    private void celtium$censusBatchRect(long address, int stride, int count, float[] out) {
+        celtium$rectEmpty(out);
+        float[] p = this.glProjection;
+        float[] m = this.glModelView;
+        int limit = Math.min(count, 4096);
+        for (int i = 0; i < limit; i++) {
+            long v = address + (long) i * stride;
+            float x = org.lwjgl.system.MemoryUtil.memGetFloat(v);
+            float y = org.lwjgl.system.MemoryUtil.memGetFloat(v + 4);
+            float z = org.lwjgl.system.MemoryUtil.memGetFloat(v + 8);
+            float ex = m[0] * x + m[4] * y + m[8] * z + m[12];
+            float ey = m[1] * x + m[5] * y + m[9] * z + m[13];
+            float ez = m[2] * x + m[6] * y + m[10] * z + m[14];
+            float ew = m[3] * x + m[7] * y + m[11] * z + m[15];
+            float cx = p[0] * ex + p[4] * ey + p[8] * ez + p[12] * ew;
+            float cy = p[1] * ex + p[5] * ey + p[9] * ez + p[13] * ew;
+            float cw = p[3] * ex + p[7] * ey + p[11] * ez + p[15] * ew;
+            if (!(cw > 1.0e-6f)) {
+                out[0] = -Float.MAX_VALUE; out[1] = -Float.MAX_VALUE; out[2] = Float.MAX_VALUE; out[3] = Float.MAX_VALUE;
+                return;
+            }
+            float nx = cx / cw;
+            float ny = cy / cw;
+            if (nx < out[0]) out[0] = nx;
+            if (ny < out[1]) out[1] = ny;
+            if (nx > out[2]) out[2] = nx;
+            if (ny > out[3]) out[3] = ny;
+        }
+        if (count > limit) {
+            out[0] = -Float.MAX_VALUE; out[1] = -Float.MAX_VALUE; out[2] = Float.MAX_VALUE; out[3] = Float.MAX_VALUE;
+        }
+    }
+
+    static void celtium$rectEmpty(float[] r) {
+        r[0] = Float.MAX_VALUE; r[1] = Float.MAX_VALUE; r[2] = -Float.MAX_VALUE; r[3] = -Float.MAX_VALUE;
+    }
+
+    static void celtium$rectUnion(float[] into, float[] add) {
+        if (add[0] < into[0]) into[0] = add[0];
+        if (add[1] < into[1]) into[1] = add[1];
+        if (add[2] > into[2]) into[2] = add[2];
+        if (add[3] > into[3]) into[3] = add[3];
+    }
+
+    /** Closed rectangles: touching edges count as overlap, because a shared edge pixel can be covered by both. */
+    static boolean celtium$rectsOverlap(float[] a, float[] b) {
+        return a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3];
+    }
     /** Pipelines per (format, blend, depth, cull) combination; the drawing state decides which one a group needs. */
     private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediatePipeline> immediatePipelineCache =
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
@@ -9348,7 +9405,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         boolean orderFree = !this.immediateState.blendEnabled()
                                 && this.immediateState.depthTestEnabled() && this.immediateState.depthMask();
                         this.mergeRefusal("xtab-open-" + (aba ? "aba" : "new") + (orderFree ? "-opaque" : "-ordered"));
+                        if (aba) {
+                            // Whether moving this batch back into A is invisible: it is when its screen rectangle does not
+                            // meet B's (the closing group), because nothing B drew can then be over or under it.
+                            celtium$censusBatchRect(vertexAddress, vertexStride, vertexCount, this.censusBatchRect);
+                            this.mergeRefusal("xtab-aba-" + (celtium$rectsOverlap(this.censusBatchRect,
+                                    this.censusCurrentGroupRect) ? "overlap" : "disjoint")
+                                    + (orderFree ? "-opaque" : "-ordered"));
+                        }
                     }
+                    // The opening group starts its own union; the append below adds this batch.
+                    celtium$rectEmpty(this.censusCurrentGroupRect);
                     // A window boundary (no open mesh) ends the alternation: the next A cannot merge across a flush.
                     this.censusPrevGroupFormatId = this.currentImmediateMesh == null ? -1 : this.currentGroupFormatId;
                     this.censusPrevGroupTexture = this.currentGroupTexture;
@@ -9563,6 +9630,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // question it answers (how much of this work repeats frame to frame) is about the offers, not about which
             // of the two append paths they take.
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offAppend");
+            if (MERGE_CENSUS && retained == null) {
+                // The open group's screen rectangle, the union of every batch it took (fast merge or not): what an
+                // A-B-A opening has to stay clear of to be merged back into A without changing the picture.
+                celtium$censusBatchRect(vertexAddress, vertexStride, vertexCount, this.censusBatchRect);
+                celtium$rectUnion(this.censusCurrentGroupRect, this.censusBatchRect);
+            }
             if (BATCH_REUSE_CENSUS) {
                 // The census hashes the captured values, so it needs them materialised even on a fast merge.
                 celtium$materializeOfferState();

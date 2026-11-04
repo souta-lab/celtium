@@ -49,3 +49,21 @@ opening is compared with the group *before* the closing one (reset at every wind
   screen rectangle does not overlap A's - the ImmediatelyFast idea. A bounding box per batch (min/max during the
   vertex copy) would make the merge decision local and exact for the ortho GUI pass; the ceiling is 47 of 119.
   Not built yet.
+
+## How many A-B-A openings stay clear of B on screen
+
+Leg `r10-rect` (renderer `047b51c1…`, fixture `22fcf3e0…`, same profile and flags, 7816 frames, PASSED). For each
+A-B-A opening the batch's NDC rectangle (positions through the current projection and model view; a vertex with
+w <= 0 or a batch over 4096 vertices counts as the whole screen) is tested against the union rectangle of the closing
+group B. Closed rectangles: a shared edge counts as overlap.
+
+| A-B-A opening | count | per frame |
+|---|---|---|
+| `xtab-aba-disjoint-opaque` | 109,405 | 14.0 |
+| `xtab-aba-disjoint-ordered` | 110,319 | 14.1 |
+| `xtab-aba-overlap-ordered` | 101,091 | 12.9 |
+| `xtab-aba-overlap-opaque` | 21,717 | 2.8 |
+
+`groupCreateCount=898,083` (114.9/frame). **28.1 openings a frame (24%) could be merged back into A without any
+change to the picture**, because nothing in B is over or under them. At ~0.9 us of recording plus ~3 us of slow-path
+accept per group that is an estimated ~0.11 ms a frame - about a fifth of the 0.52 ms gap to Celeritas, not all of it.
