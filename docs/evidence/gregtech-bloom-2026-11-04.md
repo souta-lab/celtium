@@ -206,3 +206,27 @@ Steps, each separately verifiable on the gregtech scene:
    reference vs ~171 / 0.028 now) are the acceptance numbers, on both GPUs, validation 0.
 
 Distribution: libshaderc for Windows and Linux (~4 MB each) has to ship for any of this to run outside a leg.
+
+## Round 8: native execution, opt-in — every pass draws, the passes into the game's framebuffer blacken the world
+
+`VulkanModProgramPipeline` draws a mod program's batch inside the immediate path's group machinery: render state
+copied from the variant the batch would have used, the program's SPIR-V, its std140 uniforms as push constants, and a
+sampler set resolved from the texture units its sampler uniforms name (framebuffer colour textures resolved to the
+framebuffer's published image, as `prepareImmediateUncached` does for unit 0). Opt-in:
+`-Dceltium.vulkan.modPrograms=true` (and libshaderc present).
+
+GTCEu's sequence (`BloomEffectUtil.renderBloomBlockLayer`, javap): bloom layer into `bloomFBO`; `IMAGE_F` draws
+`bloomFBO` onto the game's framebuffer; the game's framebuffer is drawn back into `bloomFBO` (blend `DST_ALPHA`);
+`BloomEffect.renderUnreal` (down/up sampling, blur, `composite`, `bloom_combine` reading the game's colour 482);
+`IMAGE_F` draws the result onto the game's framebuffer.
+
+| leg | setting | result |
+|---|---|---|
+| `r17-gt`..`r20-gt` | modPrograms on | all four programs `CELTIUM_MOD_PROGRAM_DRAWN` (inputs resolved, e.g. `blurTexture1..5=unit0..4`, `buffer_a=unit0:tex482(main)(fb)`), validationMessageCount=0, **world black** (`FAILED_PRESENTED_IMAGE`, black fraction 0.79) |
+| `r21-gt` | on, `modProgramsToMain=false` (passes into the game's framebuffer refused) | PASSED, world 6977 colours, black 0.011492 — pixel-normal |
+| `r22-gt`, `r22-world` | default (off), renderer `718d372e…` | PASSED, validation 0 (both) |
+
+So the black comes from the `IMAGE_F` passes into the game's framebuffer. Not yet separated: (A) `bloom_combine`
+samples the game's colour before the world's own draws have reached that image, so the result written back is black;
+(B) the full-screen quad's depth write (the copied render state) hides the terrain drawn after it. Next measurement:
+dump `bloomFBO` and the combine target after the passes, and repeat with depth write forced off for mod passes.

@@ -3569,6 +3569,137 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             Integer.getInteger("celtium.vulkan.alphaFuncOverride", 0).intValue();
     private int currentGroupTexture;
     private long currentGroupStateKey;
+    /**
+     * Whether a mod's own program draws the batches it can. <b>Opt-in</b> ({@code -Dceltium.vulkan.modPrograms=true}):
+     * on the GTCEu scene every bloom pass draws with validation clean, but the passes into the game's framebuffer turn
+     * the whole world black (legs r17-r20-gt; r21-gt with {@code modProgramsToMain=false} is PASSED and pixel-normal),
+     * so the default keeps refusing until that is understood. See docs/evidence/gregtech-bloom-2026-11-04.md.
+     */
+    private static final boolean MOD_PROGRAMS = Boolean.getBoolean("celtium.vulkan.modPrograms");
+    /** Lab switch: {@code false} refuses the mod-program passes whose target is the game's framebuffer. */
+    private static final boolean MOD_PROGRAMS_TO_MAIN =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramsToMain", "true"));
+    /** The open group is a mod program's draw: nothing else may merge into it, and it into nothing. */
+    private boolean currentGroupIsModProgram;
+    private final java.util.Map<String, VulkanModProgramPipeline> modProgramPipelines = new java.util.HashMap<>();
+    private final java.util.Set<Integer> modProgramReported = new java.util.HashSet<>();
+    private String lastModProgramFailure = "none";
+
+    /** {@return the registry's program when this batch can be drawn with it}, or null to refuse as before. */
+    private org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program celtium$executableModProgram(int program,
+                                                                                                    int formatId) {
+        if (!MOD_PROGRAMS) {
+            return null;
+        }
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program p =
+                org.soutalab.celtium.vulkan.gl.ModProgramRegistry.program(program);
+        String reason = VulkanModProgramPipeline.unsupported(p, formatId);
+        if (reason != null) {
+            celtium$reportModProgram(program, false, reason);
+            return null;
+        }
+        return p;
+    }
+
+    /**
+     * {@return the prepared draw for a mod program}: a pipeline with the render state of {@code standard} (what the
+     * batch would have been drawn with), the program's packed uniforms, and its samplers resolved from the texture
+     * units their uniforms name. Null, with {@link #lastModProgramFailure}, when any of that is missing.
+     */
+    private PreparedImmediate celtium$modPrepared(org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program program,
+                                                  int programId, int formatId, PreparedImmediate standard) {
+        if (!(standard.pipeline instanceof VulkanImmediateTexturePipeline like)) {
+            return celtium$modFailure(programId, "the batch's own variant is "
+                    + standard.pipeline.getClass().getSimpleName() + ", not a textured one");
+        }
+        String key = System.identityHashCode(program.vertexSpirv()) + "/" + System.identityHashCode(program.fragmentSpirv())
+                + "/" + formatId + "/" + System.identityHashCode(like);
+        VulkanModProgramPipeline pipeline = this.modProgramPipelines.get(key);
+        if (pipeline == null) {
+            try {
+                pipeline = VulkanModProgramPipeline.create(this.context, program, formatId, like);
+            } catch (RuntimeException | LinkageError failure) {
+                return celtium$modFailure(programId, "pipeline: " + failure.getMessage());
+            }
+            this.modProgramPipelines.put(key, pipeline);
+        }
+        VulkanGlTexture[] textures = new VulkanGlTexture[pipeline.samplerCount()];
+        StringBuilder inputs = new StringBuilder();
+        for (int i = 0; i < textures.length; i++) {
+            org.soutalab.celtium.vulkan.gl.ModGlslTranslator.SamplerBinding sampler = pipeline.samplers().get(i);
+            int[] unitValue = program.ints(sampler.name());
+            int unit = unitValue == null || unitValue.length == 0 ? 0 : unitValue[0];
+            int name = this.immediateState.boundTextureName(unit);
+            VulkanGlTexture texture = name > 0 ? celtium$modSamplerTexture(name) : null;
+            if (texture == null || texture.view() == 0L) {
+                return celtium$modFailure(programId, "sampler " + sampler.name() + " (unit " + unit + ", texture "
+                        + name + ") has no native image");
+            }
+            if (celtium$samplesCurrentTargetColor(name)) {
+                // The pass would read the image it is drawing into: inside one Vulkan render pass that is a feedback
+                // loop whose result is undefined (measured: leg r17-gt drew the whole world black). Refused until the
+                // target is snapshotted before the pass.
+                return celtium$modFailure(programId, "sampler " + sampler.name() + " (unit " + unit + ", texture "
+                        + name + ") is the colour image of the framebuffer being drawn into");
+            }
+            textures[i] = texture;
+            inputs.append(' ').append(sampler.name()).append("=unit").append(unit).append(":tex").append(name)
+                    .append(this.mainFramebufferColorNames.contains(Integer.valueOf(name)) ? "(main)" : "")
+                    .append(this.publishedFrameImages.get(name) != 0L ? "(fb)" : "");
+        }
+        if (!MOD_PROGRAMS_TO_MAIN && this.currentFramebufferIdentity == this.targetRegistry.mainIdentity()) {
+            return celtium$modFailure(programId, "the pass draws into the game's framebuffer and "
+                    + "-Dceltium.vulkan.modProgramsToMain=false refuses that");
+        }
+        long set = pipeline.samplerSet(textures);
+        if (textures.length > 0 && set == 0L) {
+            return celtium$modFailure(programId, "no sampler set could be allocated");
+        }
+        celtium$reportModProgram(programId, true, "inputs=[" + inputs.toString().trim() + "] target=0x"
+                + Long.toHexString(this.currentFramebufferIdentity) + " targetIsMain="
+                + (this.currentFramebufferIdentity == this.targetRegistry.mainIdentity())
+                + " blend=" + like.celtium$colorBlend().blend());
+        return new PreparedImmediate(new VulkanModProgramPipeline.Draw(pipeline,
+                VulkanModProgramPipeline.packUniforms(program), set), set, 0L);
+    }
+
+    /**
+     * The image a mod program samples for a GL texture name, resolved the way {@code prepareImmediateUncached} resolves
+     * the unit-0 texture: a framebuffer colour texture is the framebuffer's own image, published under the name, not
+     * the CPU mirror the registry may also hold for it (that mirror is empty - measured: leg r19-gt sampled GTCEu's
+     * bloom framebuffer through it and composited black over the whole world).
+     */
+    private VulkanGlTexture celtium$modSamplerTexture(int name) {
+        VulkanTextureRegistry registry = celtium$registry();
+        VulkanGlTexture texture = registry.get(name);
+        boolean unpublishedAttachment = texture != null && this.publishedFrameImages.get(name) == 0L
+                && celtium$framebufferIdentityForColorTexture(name) != Long.MIN_VALUE;
+        if (texture == null || !texture.hasFullContent() || unpublishedAttachment) {
+            boolean published = celtium$publishFramebufferColorTexture(name);
+            if (!published && celtium$adoptRawFramebufferColorTexture(name)) {
+                published = celtium$publishFramebufferColorTexture(name);
+            }
+            if (published) {
+                texture = registry.get(name);
+            }
+        }
+        return texture;
+    }
+
+    private PreparedImmediate celtium$modFailure(int programId, String reason) {
+        this.lastModProgramFailure = reason;
+        celtium$reportModProgram(programId, false, reason);
+        return null;
+    }
+
+    /** One line per program and outcome: which programs draw natively, and why the others do not. */
+    private void celtium$reportModProgram(int program, boolean drawn, String detail) {
+        if (this.modProgramReported.add(Integer.valueOf(drawn ? program : -program - 1))) {
+            System.out.println("[Celtium] CELTIUM_MOD_PROGRAM_" + (drawn ? "DRAWN" : "NOT_DRAWN") + " program=" + program
+                    + " " + detail);
+        }
+    }
+
     /** The key of the group before the current one, kept only for the merge census's A-B-A count. */
     private int censusPrevGroupFormatId = -1;
     private int censusPrevGroupTexture = -1;
@@ -8955,7 +9086,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.immediateStatistics.noteBatchTimed();
             }
             this.immediateStatistics.noteProgramQueryCount();
-            if (boundProgram != 0) {
+            // A mod's own program that the stub lowered and compiled is drawn, not refused (VulkanModProgramPipeline).
+            org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program modDrawProgram =
+                    boundProgram != 0 && boundProgram != Integer.MIN_VALUE ? celtium$executableModProgram(boundProgram, formatId)
+                            : null;
+            if (boundProgram != 0 && modDrawProgram == null) {
                 // 8 is the entity layout: position, texture, colour and a normal the shaders do not read.
                 celtium$offerStage(9);
         if (formatId == 8 && !this.entityProgramLogged) {
@@ -9050,6 +9185,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offMerge");
             long acceptDecideStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
             boolean fastMerged = retained == null && this.currentImmediateMesh != null
+                    && modDrawProgram == null && !this.currentGroupIsModProgram
                     && this.currentGroupFormatId == formatId
                     && this.currentGroupTexture == boundTexture
                     && this.currentGroupStateKey == stateKey
@@ -9138,6 +9274,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.immediateStatistics.noteRefusedBeforeAppend();
                 flushPendingBeforeGlDraw();
                 return false;
+            }
+            if (modDrawProgram != null) {
+                prepared = celtium$modPrepared(modDrawProgram, boundProgram, formatId, prepared);
+                if (prepared == null) {
+                    this.immediateLastRefusal = "mod program: " + this.lastModProgramFailure;
+                    this.immediateStatistics.noteRefusedBeforeAppend();
+                    flushPendingBeforeGlDraw();
+                    return false;
+                }
             }
             // Stage 11 marks the end of the preflight: the pipeline and descriptor are decided.
             celtium$offerStage(11);
@@ -9432,6 +9577,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // assigning first made those two terms never differ - every opening fell into open-state-key or
                 // open-other (leg census-amd: 360k open-other, 0 open-format, 0 open-texture).
                 this.currentGroupFormatId = formatId;
+                this.currentGroupIsModProgram = modDrawProgram != null;
                 this.currentGroupTexture = boundTexture;
                 this.currentGroupStateKey = stateKey;
                 // The group's own copy of the captured state. Without this the field stayed at its initialised
@@ -20807,6 +20953,8 @@ this.frameBufferOpen = false;
                         value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
                         if (BATCH_TIMINGS) this.particleDrawNanos += System.nanoTime() - variantStart;
                         this.particleDrawCount++;
+                    } else if (pipeline instanceof VulkanModProgramPipeline.Draw value) {
+                        value.draw(this.commandBuffer, mesh, this.immediateBindCache);
                     } else {
                         ((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push, this.immediateBindCache);
                         if (BATCH_TIMINGS) this.genericDrawNanos += System.nanoTime() - variantStart;

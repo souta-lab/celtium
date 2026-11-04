@@ -633,6 +633,26 @@ public final class VulkanImmediateTexturePipeline {
      * be inlined in the binding and read the three flags in an order that made {@code POSITION_NORMAL} unwritable without a
      * fourth branch.
      */
+    /**
+     * The render state this variant was built with, for a pipeline that has to draw the same batch under a mod's own
+     * program ({@link VulkanModProgramPipeline}): same render pass, blend, depth and cull, different shaders.
+     */
+    long celtium$renderPassHandle() {
+        return this.renderPass;
+    }
+
+    boolean celtium$depthTest() {
+        return this.depthTest;
+    }
+
+    boolean celtium$depthWrite() {
+        return this.depthWrite;
+    }
+
+    int celtium$cull() {
+        return this.cull;
+    }
+
     private int vertexStride() {
         if (this.explicitStride != 0) {
             return this.explicitStride;
