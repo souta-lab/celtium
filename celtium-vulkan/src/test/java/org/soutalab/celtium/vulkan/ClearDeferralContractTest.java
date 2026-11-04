@@ -76,4 +76,23 @@ class ClearDeferralContractTest {
         assertFalse(VulkanTerrainGpuBackend.celtium$clearNamesOwnedAttachment(0x0400), "stencil only");
         assertFalse(VulkanTerrainGpuBackend.celtium$clearNamesOwnedAttachment(0x0000), "nothing");
     }
+
+    /**
+     * The carried-clear match: the pending mask is consumed only when it names exactly the clear the queue carried.
+     * <p>
+     * The two decisions have to agree, because a "carry" skips the ordering flush and the clear's own route is then the
+     * only thing that orders it. A reservation that no clear consumed must not answer for a later one - the values it
+     * holds are the earlier clear's - and a pending mask that carries a bit the reservation does not name belongs to a
+     * clear this route did not carry, so consuming it would drop that clear.
+     */
+    @Test
+    void consumesOnlyTheClearTheQueueCarried() {
+        assertTrue(VulkanTerrainGpuBackend.celtium$carriedClearMatches(0x4100, 0x4100), "exact");
+        assertTrue(VulkanTerrainGpuBackend.celtium$carriedClearMatches(0x4100, 0x4000), "colour half of a carried pair");
+        assertTrue(VulkanTerrainGpuBackend.celtium$carriedClearMatches(0x4100, 0x0100), "depth half of a carried pair");
+        assertFalse(VulkanTerrainGpuBackend.celtium$carriedClearMatches(0x4000, 0x4100), "a depth bit nobody carried");
+        assertFalse(VulkanTerrainGpuBackend.celtium$carriedClearMatches(0x0100, 0x4000), "a colour bit nobody carried");
+        assertFalse(VulkanTerrainGpuBackend.celtium$carriedClearMatches(0, 0x4100), "no reservation");
+        assertFalse(VulkanTerrainGpuBackend.celtium$carriedClearMatches(0, 0), "no reservation, no clear");
+    }
 }

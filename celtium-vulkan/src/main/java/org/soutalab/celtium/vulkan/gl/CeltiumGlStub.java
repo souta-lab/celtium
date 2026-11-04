@@ -4314,19 +4314,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private void recordClear(int mask) {
-        // GL's clear obeys the colour write mask: a pass that clears depth with every colour channel masked off - the
-        // fancy-cloud depth-only pass does exactly that through GlStateManager.colorMask - must not erase the image's
-        // colour. The latch, the pending mask and every replay read this value, so the masking belongs at this one
-        // choke point. A partial mask cannot be expressed by an attachment clear and still clears the colour.
-        if (this.raster.colorMask() == 0) {
-            mask &= ~0x4000;
-        }
-        // The depth half of the same rule: glClear honours glDepthMask, and the game's depth writes are mirrored on the
-        // backend (a GlStateManager.depthMask hook), not here, so the answer comes from there at the moment the clear is
-        // issued. A pass that disabled depth writes and then cleared must not have the frame image's depth erased.
-        if (!depthWritesEnabled()) {
-            mask &= ~0x0100;
-        }
+        mask = celtium$effectiveClearMask(mask);
         // The routing owner, not raw name 0, distinguishes the game's main framebuffer from other targets.
         this.pendingClearDrawFbo = this.drawFbo;
         this.pendingClearIsMain = this.drawFramebufferIsMain;
@@ -4367,7 +4355,21 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         int pendingMask = mask;
         this.pendingClears.getAndUpdate(previous -> previous | pendingMask);
-        if (!this.drawFramebufferIsMain) {
+        if (this.drawFramebufferIsMain) {
+            // The main framebuffer's clear can be carried by the draw queue instead of by the latch: the backend
+            // attached it to the last queued group of the frame image when the ordering flush was asked for
+            // (VulkanTerrainGpuBackend.flushBeforeClear), and this consumes the pending mask so the latch and the
+            // window acquire do not apply the same clear a second time. A mask the backend did not carry is left
+            // pending, so the frame machinery still applies it at the next pass begin.
+            try {
+                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                    vulkan.celtium$takeCarriedMainClear(mask);
+                }
+            } catch (RuntimeException | LinkageError ignored) {
+                // The pending mask stays set, so the next bind's latch still carries the clear as before.
+            }
+        } else {
             // A non-main framebuffer's clear has no other carrier: the latch only runs on the next vanilla
             // bindFramebuffer, and a readback that binds by raw GL name never trips it - measured as a
             // framebufferClear() whose drawn quad survived through glReadPixels. Recording it at the clear call
@@ -4382,6 +4384,34 @@ public final class CeltiumGlStub implements FunctionProvider {
                 // The pending mask stays set, so the next bind's latch still carries the clear as before.
             }
         }
+    }
+
+    /**
+     * The mask a {@code glClear} actually erases, after the two write-mask rules GL applies to it.
+     * <p>
+     * GL's clear obeys the colour write mask: a pass that clears depth with every colour channel masked off - the
+     * fancy-cloud depth-only pass does exactly that through {@code GlStateManager.colorMask} - must not erase the
+     * image's colour. The latch, the pending mask and every replay read this value, so the masking belongs at this one
+     * choke point. A partial mask cannot be expressed by an attachment clear and still clears the colour.
+     * <p>
+     * The depth half is the same rule: {@code glClear} honours {@code glDepthMask}, and the game's depth writes are
+     * mirrored on the backend (a {@code GlStateManager.depthMask} hook), not here, so the answer comes from there at the
+     * moment the clear is issued. A pass that disabled depth writes and then cleared must not have the frame image's
+     * depth erased.
+     * <p>
+     * Extracted because two callers have to agree on it: {@link #recordClear} applies it, and the backend's
+     * {@code flushBeforeClear} asks it before it decides whether the queue can carry the clear - a reservation made
+     * with the raw mask would not match the mask the clear is recorded with, and the clear would then be applied
+     * twice.
+     */
+    public static int celtium$effectiveClearMask(int mask) {
+        if (installed != null && installed.raster.colorMask() == 0) {
+            mask &= ~0x4000;
+        }
+        if (!depthWritesEnabled()) {
+            mask &= ~0x0100;
+        }
+        return mask;
     }
 
     private void recordClearColor(float red, float green, float blue, float alpha) {

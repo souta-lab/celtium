@@ -6310,6 +6310,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.immediateStatistics.noteClearOrderFlushes();
             return;
         }
+        if (celtium$carryMainClearInQueue(mask)) {
+            // The clear rides the queue instead of opening a window for it: the pending groups and the clear are
+            // recorded in one pass, in GL's own order (draws, then the clear that erases them). See
+            // {@link #celtium$carryMainClearInQueue}.
+            this.immediateStatistics.noteClearOrderFlushes();
+            return;
+        }
         if (CLEAR_SKIP_FLUSH && !celtium$clearNeedsOrderingFlush()) {
             this.clearOrderSkipped++;
             this.immediateStatistics.noteClearOrderFlushes();
@@ -6317,6 +6324,215 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         flushPendingBeforeGlDraw();
         this.immediateStatistics.noteClearOrderFlushes();
+    }
+
+    /**
+     * {@code -Dceltium.vulkan.mainClearInQueue}: carry the main framebuffer's {@code glClear} in the draw queue.
+     * <p>
+     * The clear-order flush exists for one rule (audit S10): what the renderer already accepted has to reach the image
+     * before the clear erases it. For the main framebuffer that rule was implemented by <em>submitting</em> the pending
+     * groups - a window of their own - and then letting the frame machinery clear at the next pass begin. Two passes
+     * where one would do, and the window is the expensive half: measured on leg {@code r63kpi-celtium-r1}, 20.4
+     * windows a frame at 20.94 us each, of which {@code clearOrderFlushes} 28.4 calls a frame leave 8.1 that actually
+     * flush.
+     * <p>
+     * The queue already expresses the order the rule needs: a group carries the clears that arrived after it
+     * ({@code ImmediateGroup.postClears}), and the window records them as one {@code vkCmdClearAttachments} between the
+     * draws before and after - the route the non-main framebuffers have used since {@code celtium$gameClear} was
+     * written. So the main clear can ride the same carrier, and the flush it used to force is not needed at all.
+     * <p>
+     * The two decisions have to agree, because a "carry" here skips the flush and the clear's own route is then the
+     * only thing that orders it. They are made in one place: this method attaches the clear to the last queued group of
+     * the main image and records the mask it carried, and {@link #celtium$takeCarriedMainClear} - called by the stub
+     * once the clear has been OR'd into its pending mask - consumes that mask so the latch and the acquire do not apply
+     * the same clear a second time. A mask that does not match the reservation is left pending, so a clear this method
+     * did not carry still reaches the frame by the route it always had.
+     */
+    private static final boolean MAIN_CLEAR_IN_QUEUE =
+            Boolean.parseBoolean(System.getProperty("celtium.vulkan.mainClearInQueue", "false"));
+
+    /** Main-framebuffer clears carried by the queue instead of by a window of their own. */
+    long mainClearsQueued;
+    /** {@return main-framebuffer clears carried by the queue}, so the window saving can be priced. */
+    public long mainClearsQueuedCount() {
+        return this.mainClearsQueued;
+    }
+
+    /** The mask of the main clear the queue is carrying, or 0 when none is reserved. */
+    private int mainClearCarriedMask;
+    /** The colour the carried clear was issued with; the stub's own record, copied out before it can be reused. */
+    private final float[] mainClearCarriedRgba = new float[4];
+    /** The depth the carried clear was issued with. */
+    private double mainClearCarriedDepth;
+
+    /**
+     * {@return whether the main framebuffer's clear can ride the queue}, the predicate behind
+     * {@link #MAIN_CLEAR_IN_QUEUE}.
+     * <p>
+     * Every term is a reason the queue cannot carry it:
+     * <ul>
+     * <li>the switch is off, or the mask names neither colour nor depth (nothing to carry);</li>
+     * <li>a window is being recorded - the bridge's GL state restore must not recurse into the queue;</li>
+     * <li>a scissor is active - {@code vkCmdClearAttachments} is clipped by it, and GL's {@code glClear} is clipped by
+     *     the same rectangle, so the two agree only when the rectangle is the whole attachment. The measured scene
+     *     never enables the scissor ({@code scissorCalls=0}), so this refuses rather than reproduces the clip;</li>
+     * <li>the GL bridge has no pair queue, or coalesced raw writes are pending (the flush records those, and a copy
+     *     into the texture the clear covers is an ordering the queue does not express);</li>
+     * <li>no group of the main image is queued - then there is nothing to carry the clear and the latch is the route.</li>
+     * </ul>
+     */
+    private boolean celtium$queueCanCarryMainClear(int mask) {
+        if (!MAIN_CLEAR_IN_QUEUE) {
+            return false;
+        }
+        if ((mask & CLEAR_ORDER_MASK) == 0) {
+            this.mainClearRefusedNoMask++;
+            return false;
+        }
+        if (this.immediateWindowBusy) {
+            this.mainClearRefusedBusy++;
+            return false;
+        }
+        if (!org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$drawFramebufferIsMain()) {
+            // Only the main framebuffer's clear has the frame image as its target. A mod's framebuffer clear is carried
+            // by its own group (celtium$gameClear), and carrying it here would record it against the frame image.
+            this.mainClearRefusedForeign++;
+            return false;
+        }
+        if (this.rasterState.scissorTest() && this.rasterState.scissorCalled()) {
+            this.mainClearRefusedScissor++;
+            return false;
+        }
+        if (offTargetTarget() == null) {
+            this.mainClearRefusedNoTarget++;
+            return false;
+        }
+        if (COALESCE_RAW_WRITES && !this.pendingRawWrites.isEmpty()) {
+            this.mainClearRefusedRawWrites++;
+            return false;
+        }
+        // The frame image is the main identity and identity 0 alike: `routeLabelForBinding` sends both into it, and a
+        // group's target is whichever of the two was current when it opened. Matching only the main identity missed
+        // every group opened under 0 - measured as `mainClearsQueued=0` on the first leg with the route enabled.
+        long main = this.targetRegistry.mainIdentity();
+        if (this.currentGroupUsed && (this.currentGroupTarget == main || this.currentGroupTarget == 0L)) {
+            return true;
+        }
+        for (int i = this.immediateGroups.size() - 1; i >= 0; i--) {
+            long target = this.immediateGroups.get(i).target;
+            if (target == main || target == 0L) {
+                return true;
+            }
+        }
+        this.mainClearRefusedNoGroup++;
+        return false;
+    }
+
+    /** Why {@link #celtium$queueCanCarryMainClear} refused, one counter per reason, so a leg names the blocker. */
+    long mainClearRefusedNoMask;
+    long mainClearRefusedBusy;
+    long mainClearRefusedForeign;
+    long mainClearRefusedScissor;
+    long mainClearRefusedNoTarget;
+    long mainClearRefusedRawWrites;
+    long mainClearRefusedNoGroup;
+
+    /** {@return the refusal census, so a leg that carries nothing says which guard stopped it}. */
+    String mainClearRefusalSummary() {
+        return "noMask=" + this.mainClearRefusedNoMask + " busy=" + this.mainClearRefusedBusy
+                + " foreign=" + this.mainClearRefusedForeign
+                + " scissor=" + this.mainClearRefusedScissor + " noTarget=" + this.mainClearRefusedNoTarget
+                + " rawWrites=" + this.mainClearRefusedRawWrites + " noGroup=" + this.mainClearRefusedNoGroup;
+    }
+
+    /**
+     * Attaches the main framebuffer's clear to the last queued group of the main image, so the window that records
+     * that group records the clear after its draws.
+     * <p>
+     * The values are the ones the clear was issued with ({@link CeltiumGlStub#mainClearValues}), not the live
+     * {@code glClearColor}: the frame machinery learned that lesson already - a {@code framebufferClear} sets its own
+     * colour before clearing another target, so the live read gave the world frame a black clear.
+     *
+     * @return whether the clear was carried
+     */
+    private boolean celtium$carryMainClearInQueue(int mask) {
+        int effective = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$effectiveClearMask(mask);
+        if (this.mainClearCarriedMask != 0) {
+            if (this.mainClearCarriedMask == effective) {
+                // The same glClear reaches this method twice (GlStateManager.clear's own hook and the glClear it
+                // issues), and the first call already attached it. Attaching it again would record two clears.
+                return true;
+            }
+            // A reservation no clear consumed: carrying this one with the earlier clear's values would erase the wrong
+            // colour, so it is dropped and the decision is made again.
+            this.mainClearCarriedMask = 0;
+        }
+        if (!celtium$queueCanCarryMainClear(effective)) {
+            return false;
+        }
+        long main = this.targetRegistry.mainIdentity();
+        if (this.currentGroupUsed && (this.currentGroupTarget == main || this.currentGroupTarget == 0L)) {
+            // The clear's queue position is "after everything offered so far", and an open group has no place in the
+            // queue to carry it yet - the same close the non-main route performs.
+            closeCurrentImmediateGroup();
+        }
+        float[] rgba = this.mainClearCarriedRgba;
+        double depth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mainClearValues(rgba);
+        if (Double.isNaN(depth)) {
+            depth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth();
+        }
+        for (int i = this.immediateGroups.size() - 1; i >= 0; i--) {
+            ImmediateGroup group = this.immediateGroups.get(i);
+            if (group.target == main || group.target == 0L) {
+                if (group.postClears == null) {
+                    group.postClears = new java.util.ArrayList<QueuedClear>(2);
+                }
+                group.postClears.add(new QueuedClear(effective, rgba, depth));
+                this.mainClearCarriedMask = effective;
+                this.mainClearCarriedDepth = depth;
+                this.mainClearsQueued++;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Consumes the stub's pending clear mask when the queue carried this clear, so the latch and the window acquire do
+     * not apply it a second time.
+     * <p>
+     * Called by {@link CeltiumGlStub#recordClear} after it has OR'd the clear into the pending mask. An exact match is
+     * required: a mask that also carries a clear this method did not carry is left pending, and the frame machinery
+     * applies it at the next pass begin - which is the order GL gives it anyway, because that clear came later.
+     *
+     * @return whether the mask was consumed
+     */
+    public boolean celtium$takeCarriedMainClear(int mask) {
+        int carried = this.mainClearCarriedMask;
+        if (!celtium$carriedClearMatches(carried, mask)) {
+            return false;
+        }
+        this.mainClearCarriedMask = 0;
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.consumePendingClears();
+        return true;
+    }
+
+    /**
+     * Whether the pending mask is exactly the clear the queue carried.
+     * <p>
+     * Extracted so the rule can be pinned without a device, the same shape as the other decision tables here. It is a
+     * containment test rather than an equality one because the stub ORs the mask: a clear of colour+depth that follows
+     * a depth-only clear of the same frame leaves {@code 0x4100} pending, and the carried clear is still the one that
+     * has to be consumed. A mask carrying a bit the reservation does not name belongs to a clear this method did not
+     * carry, and consuming it would drop that clear - so it is left pending for the frame machinery.
+     */
+    static boolean celtium$carriedClearMatches(int carriedMask, int clearMask) {
+        return carriedMask != 0 && (carriedMask & clearMask) == clearMask;
+    }
+
+    /** Drops a reservation that no clear consumed, so a later clear cannot be carried with an earlier one's values. */
+    void celtium$forgetCarriedMainClear() {
+        this.mainClearCarriedMask = 0;
     }
 
     /**
@@ -7311,6 +7527,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         this.skyDrawsThisFrame = 0;
         this.frameId++;
+        // A main-clear reservation that no clear consumed must not survive into the next frame: the clear it named was
+        // attached to a group of the frame that just ended, and carrying a later clear with its values would erase the
+        // wrong colour.
+        this.mainClearCarriedMask = 0;
         lastFinishedFrameId = this.frameId;
         // The frame that just ended is priced here, at the one place every per-frame counter is reset
         // (-Dceltium.vulkan.frameBudget=true; a no-op otherwise).

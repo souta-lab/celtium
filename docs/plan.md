@@ -33,7 +33,6 @@
      `celtium-world-accept`（188 mods・`qmagnet`）3対で **Celtium が 1.18–1.29×遅い**（p50 median **1.215**、
      `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-round51-2026-11-04.md)）。frameBudget は
      `gpuShare=0.01`＝CPU律速。**差は 0.52 ms**（Celtium 2.946 / Celeritas 2.427）。
-     **round 58 の paired 再測は有効**（median **1.175**、`SLOWER`、[証拠](evidence/render-split-and-signature-cache-2026-11-04.md)）。
      **warm p50 は round 51 の 2.946 から動かず**＝受理CPU −0.28 ms はフレームに現れない。
      **出荷構成の warm 窓: frame 2.38 = render 1.61 + fmlTick 0.62 + display 0.10 + tick 0.06**＝**render が 68%**。
      受理は **0.37 wall / 0.25 CPU ms**＝CPU 律速、全部消しても 0.31 ms（round 56 の −0.28 ms は validation ON の値）。
@@ -99,11 +98,12 @@
 
 ## FPSの現状と残る道
 
-- 現行の判定は **round 63 の paired 3対: p50 median 1.279（SLOWER・`NOT_MET`）**（[証拠](evidence/offer-key-cache-slots-2026-11-04.md)）。
-  **round 58 の 1.175 より悪化**。Celeritas は 2.325→2.335 ms で不変、**Celtium だけ 2.642→2.988 ms（+13.1%）**。
-  遅くなったのは**窓の記録**（`windowRecordMillis`/窓 18.46→20.94 µs、+13.4%）だが窓は 23.5→21.4 と減っており、
-  frame 全体が一様に遅い形。**原因未確定＝round 64 の主題**。旧scene（Susy/ATM3）の ABBA値は artifact が
-  現ビルドと一致しないため現在判定に使わない（[archive](<history/plan-archive-2026-10-21.md>)）。
+- 現行の判定は **round 64 の paired 3対: p50 median 1.189（SLOWER・`NOT_MET`）**（[証拠](evidence/main-clear-queue-2026-11-04.md)）。
+  同じ rep に **round 58 のビルドを control arm** として並べた `medianControlRatio` は **1.063**、clean な rep 1–2 では
+  **0.985 / 1.063**。**round 63 の「round 58 から 13.1% 悪化」は control arm で再現しない**——両ビルドは測定のばらつき
+  以内で同速で、1.279 は負荷の乗った rep を含む session だった（rep 3 の 1.566 が round 63 rep 2 の 1.470 と同じ形）。
+  窓あたりの記録 18.46→20.94 µs は分母の効果（窓 237481→218069）。**残る差は immediate path の accept と window 費用**。
+  旧scene（Susy/ATM3）の ABBA値は artifact が現ビルドと一致しないため現在判定に使わない（[archive](<history/plan-archive-2026-10-21.md>)）。
 - pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
 - 棄却: bind flush延期（2026-10-31、2回ともRADV SIGSEGV、[罠](<verification-traps.md>)）、indirect immediate、フレーム再利用（アニメ凍結）、
   **group数∝grpDraw**（font run 2.3×減で不変、[証拠](evidence/font-witness-census-2026-11-03.md)）。
