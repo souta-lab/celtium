@@ -544,8 +544,9 @@ public final class ValidationClient {
          * so a frame can show which of them reached the picture, and the report carries the placed/tile-entity counts
          * so "nothing was placed" cannot read as "nothing was drawn".
          * <p>
-         * Uncalibrated until a GL reference run of this scene exists: the picture is held to the smoke test, its
-         * identity, the frame binding and the camera pose, and the verdict is {@code UNCALIBRATED_PRESENTED_IMAGE}.
+         * Calibrated from a GL-bridge reference run of this scene at this pose (leg {@code r2-gtref}, 2026-11-04):
+         * the world frame and the machine GUI frame each have their own floors, in
+         * {@link #celtium$gregtechGate()}.
          * <p>
          * It also drives a <b>machine GUI</b> stage: after the world frame, the scene opens one of the machines it
          * placed through GTCEu's own UI factory ({@code MetaTileEntityUIFactory.openUI}, the call
@@ -553,7 +554,7 @@ public final class ValidationClient {
          * {@code ModularUIGui}, a {@code GuiScreen} that draws its widgets through the vanilla GUI path plus its own
          * {@code Stencil} clipping - a producer the video settings screen does not exercise.
          */
-        GREGTECH("gregtech", false, false, true);
+        GREGTECH("gregtech", false, true, true);
 
         final String name;
         /** Whether this scene drives a GUI screen and takes a second capture with it open. */
@@ -1437,9 +1438,10 @@ public final class ValidationClient {
                 return celtium$netherGate();
             case VIDEO_SETTINGS:
                 return celtium$videoSettingsGate();
+            case GREGTECH:
+                return celtium$gregtechGate();
             case END:
             case OTHER_DIMENSION:
-            case GREGTECH:
                 return celtium$uncalibratedGate(scene);
             case TERRAIN:
             default:
@@ -1695,6 +1697,61 @@ public final class ValidationClient {
     }
 
     /**
+     * The GregTech CE Unofficial scene's floors, measured on a GL-bridge reference run of this scene at its own pose.
+     * <p>
+     * Reference (GL bridge, Celeritas 2.5.0-dev, fresh game directory, {@code scene=gregtech}, 1280x720, camera
+     * x=0.5 y=6.0 z=0.5 yaw=180 pitch=15, guiScale=3, leg {@code r2-gtref} 2026-11-04 17:09, fixture
+     * {@code cdc8389c…}): the world frame is {@code screenshots/celtium-validation-world.png} and the machine GUI
+     * frame is {@code screenshots/celtium-validation.png} (the GL bridge's own screenshots). Measured: world frame
+     * distinctColours=6756 nonBackgroundFraction=0.879401 verticalBands=714 blackFraction=0.011492
+     * backgroundColour=0xB3CFFF; machine GUI frame distinctColours=8429 nonBackgroundFraction=0.880439
+     * verticalBands=710 blackFraction=0.01803 backgroundColour=0xFF7706, screen=ModularUIGui.
+     * <p>
+     * The two stages are different pictures and get their own floors, as the video settings scene's do. The floors
+     * are the project's usual margins: {@code nonBackgroundFraction >= 0.45} is 51% of the measured 0.879/0.880 (a
+     * frame where the ground and the machines did not draw is mostly the 0xB3CFFF sky), {@code verticalBands >= 280}
+     * is 39% of the measured 714/710 (a flat or untextured frame is far below), and the black ceilings are the
+     * measured value plus 0.05 (0.06 world, 0.07 GUI), the same rule the terrain scene uses. No panel floors: the
+     * machine screen is judged as a picture of the screen, not against the video settings panel's rectangle.
+     * <p>
+     * The candidate run of the same fixture and pose (leg {@code r2-gt4}, Celtium) measured world
+     * 6399/0.881848/714/0.005646 and GUI 9858/0.880439/710/0.017993 - the same frame within the margins, which is
+     * what makes these floors a gate rather than a copy of one arm.
+     */
+    private static SceneGate celtium$gregtechGate() {
+        String runs = "gl-bridge r2-gtref (2026-11-04 17:09), scene=gregtech at x=0.5 y=6.0 z=0.5 yaw=180 pitch=15,"
+                + " 1280x720, guiScale=3, world frame=screenshots/celtium-validation-world.png and machine GUI"
+                + " frame=screenshots/celtium-validation.png (the GL bridge's own screenshots),"
+                + " screen=gregtech.api.gui.impl.ModularUIGui at the GUI capture";
+        String numbers = "world frame: distinctColours=6756 nonBackgroundFraction=0.879401 verticalBands=714"
+                + " blackFraction=0.011492 backgroundColour=0xB3CFFF; machine GUI frame: distinctColours=8429"
+                + " nonBackgroundFraction=0.880439 verticalBands=710 blackFraction=0.01803 backgroundColour=0xFF7706."
+                + " The Celtium run of the same fixture and pose (r2-gt4) measured world 6399/0.881848/714/0.005646"
+                + " and GUI 9858/0.880439/710/0.017993";
+        String margin = "world: nonBackgroundFraction>=0.45 = 51% of the measured 0.879401, verticalBands>=280 = 39% of"
+                + " the measured 714, blackFraction<=0.06 = the measured 0.011492 + 0.05; GUI:"
+                + " nonBackgroundFraction>=0.45 = 51% of the measured 0.880439, verticalBands>=280 = 39% of the"
+                + " measured 710, blackFraction<=0.07 = the measured 0.01803 + 0.05. No panel floors: the machine"
+                + " screen is not the video settings panel";
+        String reference = "gl-bridge " + runs + ": " + numbers + " -> floors distinctColours>16,"
+                + " nonBackgroundFraction>=0.45, verticalBands>=280, blackFraction<=0.06 (world) and 0.07 (GUI);"
+                + " margin: " + margin;
+        String guiNumbers = "machine GUI frame: distinctColours=8429 nonBackgroundFraction=0.880439 verticalBands=710"
+                + " blackFraction=0.01803 backgroundColour=0xFF7706 (the Celtium run of the same fixture measured"
+                + " 9858/0.880439/710/0.017993)";
+        String guiMargin = "nonBackgroundFraction>=0.45 = 51% of the measured 0.880439; verticalBands>=280 = 39% of"
+                + " the measured 710; blackFraction<=0.07 = the measured 0.01803 + 0.05";
+        String guiSource = "gl-bridge r2-gtref (2026-11-04 17:09), scene=gregtech, machine GUI frame"
+                + " screenshots/celtium-validation.png, screen=gregtech.api.gui.impl.ModularUIGui";
+        String guiReference = "gl-bridge " + guiSource + ": " + guiNumbers + " -> gui floors"
+                + " nonBackgroundFraction>=0.45, verticalBands>=280, blackFraction<=0.07; margin: " + guiMargin;
+        SceneGate.FrameFloors guiFloors = new SceneGate.FrameFloors(0.45D, 280, 0.07D, 0.0D, 0.0D, 0, 0.0D, 0.0D,
+                guiReference, guiNumbers, guiMargin, true);
+        return new SceneGate(PRESENTED_DISTINCT_COLOUR_FLOOR, 0.45D, 280, 0.06D, 0.0D, 0.0D, 0, 0.0D, reference, runs,
+                numbers, margin, true, guiFloors);
+    }
+
+    /**
      * A scene with no measured reference: no floors are enforced, and the report says so in words.
      * <p>
      * It must not pass silently either, which is what {@code UNCALIBRATED_PRESENTED_IMAGE} is for: the picture is
@@ -1807,7 +1864,12 @@ public final class ValidationClient {
         StringBuilder key = new StringBuilder();
         key.append("scene=").append(scene.name);
         key.append(" pose=").append(celtium$referencePose(scene).describe());
-        key.append(" stack=").append(celtium$REFERENCE_STACK);
+        // The scene's own stack, mapped the way the run's key maps it. A scene that names its own flat world (the
+        // GTCEu showcase does, so its rows do not stand in the default stack's lava) would otherwise never match its
+        // own reference: the key said "default" while the run said the stack string, and a calibrated scene reported
+        // sceneCalibrationKeyMatches=false against the run its floors came from.
+        String referenceStack = celtium$sceneWorldLayers(scene);
+        key.append(" stack=").append(celtium$DEFAULT_WORLD_LAYERS.equals(referenceStack) ? "default" : referenceStack);
         key.append(" blockSweep=").append(celtium$REFERENCE_BLOCK_SWEEP);
         key.append(" allBlocks=").append(celtium$REFERENCE_ALL_BLOCKS);
         key.append(" entities=").append(celtium$REFERENCE_ENTITIES);
@@ -1816,8 +1878,6 @@ public final class ValidationClient {
         return key.toString();
     }
 
-    /** The world stack every measured reference used: the fixture's default, stated once. */
-    private static final String celtium$REFERENCE_STACK = "default";
     /** The block sweep every measured reference used: none. */
     private static final int celtium$REFERENCE_BLOCK_SWEEP = 0;
     /** Whether the measured references ran with the all-blocks wall: they did not. */
