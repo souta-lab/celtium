@@ -58,6 +58,17 @@ One hypothesis was tested and rejected: the composite's self-sampling passes are
 `-Dceltium.vulkan.skipSelfComposite` (default on), so the same jar was run with the drop off (`r3-gt5`). The lamp
 region is pixel-identical (mean 145.96/155.86/145.25 in both), so the drop is not what removes the glow.
 
+The mod's own gate is open, measured from the fixture (`r3-gt9`): `Shaders.allowedShader()` is `true`,
+`Shaders.IMAGE_F` is a `ShaderObject`, and the bloom framebuffer is `1280x720`. So `renderFullImageInFBO` does not
+return early - it binds the framebuffer, calls `ShaderProgram.useShader` (which calls `GL20.glUseProgram`) and draws
+the quad through `Tessellator`. A census of the GL stub's draw entry (`CELTIUM_PROGRAM_DRAW`, one line per program a
+draw is decoded under) reports **zero** draws with a non-zero program, and the backend's
+`CELTIUM_SHADER_PROGRAM_REFUSED` (which fires when a batch is offered while a custom program is bound) does not fire
+either. So the composite's full-screen quad does not reach either draw path with the program bound: the next
+question is where it goes instead (the `VertexBuffer` path is cancelled into `CeltiumNativeDraw.vertexBuffer`, and
+the `WorldVertexBufferUploader` hook offers every `Tessellator` batch, so the two candidates are a program that is
+already 0 by the time the batch is offered and a batch that never reaches the uploader).
+
 ## The pipe rows were not reproducible
 
 The item pipe row measured lavender in `r2-gt6` and cream in `r2-gtref` with the same fixture and pose. The cause is

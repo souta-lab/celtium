@@ -697,6 +697,17 @@ public final class CeltiumGlStub implements FunctionProvider {
     private volatile float pointSize = 1.0f;
     /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
     private volatile int currentProgram, compilingList, boundVertexArray, lastCalledList, listBase;
+
+    /**
+     * The programs a draw has been decoded under, so the first draw of each is reported once.
+     * <p>
+     * A mod's post-processing (GTCEu's bloom composite, the outline chain) draws full-screen quads with its own
+     * {@code ShaderProgram} bound. The immediate path refuses a batch while a custom program is bound, and the refusal
+     * is logged from the backend - but only for a batch that reaches it. A draw that the decode refuses first, or one
+     * whose program is already 0 by the time it is drawn, leaves no line at all, and "the composite never drew" and
+     * "the composite drew and was refused" are different findings. This census is the one that tells them apart.
+     */
+    private final java.util.Set<Integer> celtium$programDraws = new java.util.HashSet<Integer>();
     /** The last name {@code GlStateManager.bindTexture} named. See {@link #celtium$noteBoundTexture}. */
     private volatile int lastBoundTexture = -1;
     /** {@code GL_COMPILE_AND_EXECUTE}: the commands are recorded and also executed as they arrive}. */
@@ -9670,6 +9681,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         if (reason == null) {
             celtium$noteClientTuple(clientMemory, buffer, count, formatId);
+        }
+        if (this.currentProgram != 0 && this.celtium$programDraws.add(Integer.valueOf(this.currentProgram))) {
+            System.out.println("[Celtium] CELTIUM_PROGRAM_DRAW program=" + this.currentProgram + " mode=" + mode
+                    + " count=" + count + " format=" + formatId + " reason=" + reason);
         }
         long address = 0L;
         if (reason == null) {

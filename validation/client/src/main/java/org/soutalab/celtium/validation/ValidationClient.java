@@ -3686,6 +3686,8 @@ public final class ValidationClient {
                 report.addProperty("gregtechStageShadersSupported",
                         Boolean.valueOf(celtium$gregtechShadersSupported));
                 report.addProperty("gregtechStageBloomFbo", celtium$gregtechBloomFbo);
+                report.addProperty("gregtechStageBloomAllowed", celtium$gregtechBloomAllowed);
+                report.addProperty("gregtechStageBloomImageShader", celtium$gregtechBloomImageShader);
             }
             if (worldTicks >= 60 && !celtium$entitiesSpawned && Boolean.getBoolean("celtium.validation.keepEntities")) {
                 celtium$entitiesSpawned = true;
@@ -12714,6 +12716,10 @@ public final class ValidationClient {
     private boolean celtium$gregtechShadersSupported;
     /** GTCEu's bloom framebuffer, as {@code WxH texture=id}, or {@code none} when the composite never ran. */
     private String celtium$gregtechBloomFbo = "none";
+    /** {@code Shaders.allowedShader()}: the gate GTCEu itself puts in front of every bloom composite draw. */
+    private String celtium$gregtechBloomAllowed = "none";
+    /** Whether {@code Shaders.IMAGE_F} exists: a null shader makes {@code renderFullImageInFBO} return before drawing. */
+    private String celtium$gregtechBloomImageShader = "none";
     /**
      * The machine positions the stage placed, in placement order, as {@code {x, y, z}} triples. The GUI stage opens
      * the first one: a machine's screen is reached through its tile entity, so the position is what the opener needs,
@@ -12962,6 +12968,8 @@ public final class ValidationClient {
         celtium$gregtechBloomLayerInValues = celtium$bloomLayerInValues(celtium$gregtechBloomLayer);
         celtium$gregtechShadersSupported = net.minecraft.client.renderer.OpenGlHelper.shadersSupported;
         celtium$gregtechBloomFbo = celtium$bloomFbo();
+        celtium$gregtechBloomAllowed = celtium$bloomAllowed();
+        celtium$gregtechBloomImageShader = celtium$bloomImageShader();
         if (lamp == null) {
             return;
         }
@@ -13052,6 +13060,28 @@ public final class ValidationClient {
             int height = celtium$intField(fbo, "framebufferHeight", "field_147618_d");
             int texture = celtium$intField(fbo, "framebufferTexture", "field_147617_g");
             return width + "x" + height + " texture=" + texture;
+        } catch (Throwable unreadable) {
+            return "unreadable: " + unreadable;
+        }
+    }
+
+    /** {@code Shaders.allowedShader()}, read reflectively: the mod's own gate in front of the composite. */
+    private static String celtium$bloomAllowed() {
+        try {
+            Class<?> shaders = Class.forName("gregtech.client.shader.Shaders");
+            Object allowed = shaders.getMethod("allowedShader").invoke(null);
+            return String.valueOf(allowed);
+        } catch (Throwable unreadable) {
+            return "unreadable: " + unreadable;
+        }
+    }
+
+    /** Whether {@code Shaders.IMAGE_F} is non-null, read reflectively. */
+    private static String celtium$bloomImageShader() {
+        try {
+            Class<?> shaders = Class.forName("gregtech.client.shader.Shaders");
+            Object image = shaders.getField("IMAGE_F").get(null);
+            return image == null ? "null" : image.getClass().getSimpleName();
         } catch (Throwable unreadable) {
             return "unreadable: " + unreadable;
         }
