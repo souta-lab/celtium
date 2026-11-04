@@ -16582,6 +16582,15 @@ this.frameBufferOpen = false;
     private final long[][] offerStageDeltas = new long[16][2];
 
     private static final boolean MERGE_CENSUS = Boolean.getBoolean("celtium.vulkan.mergeCensus");
+    /**
+     * {@code -Dceltium.vulkan.splashCensus=true}: resolve each format-2 group's mirror source at the draw.
+     * <p>
+     * The lookup it gates is the only per-group registry read in the draw loop that no draw decision consumes: it
+     * feeds {@code splashSourcedGroups} and arms the one-shot {@code CELTIUM_SPLASH_PAIRPOST} readback. Both are
+     * answers to the loading-screen question, which is closed, so the shipping path does not pay a hash under the
+     * registry's monitor on every format-2 group of every window for them.
+     */
+    private static final boolean SPLASH_CENSUS = Boolean.getBoolean("celtium.vulkan.splashCensus");
     /** {@code -Dceltium.debug.retainedCensus=true}: how much of a frame is retained geometry, and how it repeats. */
     private static final boolean RETAINED_CENSUS = Boolean.getBoolean("celtium.debug.retainedCensus");
     /** {@code -Dceltium.debug.drawKeyCensus=true}: the distinct material keys a frame uses and how often they alternate. */
@@ -20048,11 +20057,17 @@ this.frameBufferOpen = false;
                 // the key the registry resolves for that id now, the size of that wrapper, and which path filled the
                 // mirror. The question left is whether the descriptor at the draw samples the recorded id's mirror or
                 // another texture's, and these five facts answer it from one artifact.
-                if (group.formatId == 2 && group.texture != 0) {
+                if (SPLASH_CENSUS && group.formatId == 2 && group.texture != 0) {
                     // The owner census: how many format-2 groups sample a mirror that the splash's own DynamicTexture
                     // filled. The panorama's faces are drawn with texture 8, whose mirror came from
                     // SplashProgress.drawVanillaScreen - a 256x256 white canvas - so this counter is what says how
                     // much of the GUI's traffic is sampling the splash's leftover rather than the panorama's sheets.
+                    //
+                    // Behind a switch, because it is the one per-group registry lookup left in the draw loop that no
+                    // draw decision reads: it feeds one counter and arms one one-shot readback. The lookup is a hash
+                    // under the registry's monitor, paid on every format-2 group of every window, and format 2 is 18%
+                    // of the accepted batches on the measured scene. The counter it feeds is printed by the
+                    // diagnostics line, so a run that wants it asks for it.
                     int mirrorFlags = celtium$registry().celtium$mirrorSourceFlags(group.texture);
                     if ((mirrorFlags & 1) != 0 && this.targetStatistics.splashSourcedGroups() < Integer.MAX_VALUE) {
                         this.targetStatistics.noteSplashSourcedGroups();
