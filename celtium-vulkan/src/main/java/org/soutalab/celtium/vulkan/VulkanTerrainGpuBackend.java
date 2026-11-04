@@ -10763,8 +10763,7 @@ this.frameBufferOpen = false;
         this.framebufferCompositor.release();
         // Prepared materials retain these pipeline objects too. Terrain pass enums survive a world switch, so
         // comparing lastUiPass alone cannot invalidate materials whose Vulkan pipelines were just destroyed.
-        java.util.Arrays.fill(this.prepareCacheValue, null);
-        java.util.Arrays.fill(this.prepareCachePass, null);
+        java.util.Arrays.fill(this.prepareCache, null);
         int released = 0;
         for (VulkanImmediateBlockPipeline block : this.blockPipelineCache.values()) {
             released += releaseDirect(block == null ? null : () -> block.delete());
@@ -12055,24 +12054,69 @@ this.frameBufferOpen = false;
                 ^ ((long) System.identityHashCode(pass) * 0x94D049BB133111EBL)
                 ^ (lightKey * 0xBF58476D1CE4E5B9L);
         int slot = (int) (mix >>> (64 - PREPARE_CACHE_BITS));
-        PreparedImmediate cached = this.prepareCacheValue[slot];
-        if (cached != null && this.prepareCachePass[slot] == pass && this.prepareCacheFormat[slot] == format
-                && this.prepareCacheTexture[slot] == textureId && this.prepareCacheKey[slot] == key
-                && this.prepareCacheTextureKey[slot] == textureKey && this.prepareCacheLightKey[slot] == lightKey) {
+        // One array of entries rather than seven parallel arrays. The seven-array form read the same slot index out
+        // of seven different arrays, so a lookup touched seven cache lines to answer one question - and this lookup
+        // runs once per slow-path offer (~129 a frame) inside a method the batch-timing census puts at 493 ns. The
+        // entry holds the six key fields and the value together, so a hit is one array load and one object.
+        PrepareCacheEntry entry = this.prepareCache[slot];
+        if (celtium$prepareCacheHit(entry, pass, format, textureId, key, textureKey, lightKey)) {
             this.prepareCacheHits++;
-            return cached;
+            return entry.value;
         }
         PreparedImmediate prepared = prepareImmediateUncached(format, textureId, key, state, live, resolvedKnown);
         if (prepared != null) {
-            this.prepareCachePass[slot] = pass;
-            this.prepareCacheFormat[slot] = format;
-            this.prepareCacheTexture[slot] = textureId;
-            this.prepareCacheKey[slot] = key;
-            this.prepareCacheTextureKey[slot] = textureKey;
-            this.prepareCacheLightKey[slot] = lightKey;
-            this.prepareCacheValue[slot] = prepared;
+            if (entry == null) {
+                entry = new PrepareCacheEntry();
+                this.prepareCache[slot] = entry;
+            }
+            entry.pass = pass;
+            entry.format = format;
+            entry.textureId = textureId;
+            entry.key = key;
+            entry.textureKey = textureKey;
+            entry.lightKey = lightKey;
+            entry.value = prepared;
         }
         return prepared;
+    }
+
+    /**
+     * One prepared-material cache slot: the six inputs the answer depends on, plus the answer.
+     * <p>
+     * A plain mutable holder rather than a record: the table is direct-mapped and a slot is overwritten in place, so
+     * the point is that the six comparisons and the value share one object instead of seven arrays. The fields are
+     * package-private and the class is static and final so the JIT sees plain field loads with no accessor calls.
+     */
+    static final class PrepareCacheEntry {
+        Object pass;
+        int format;
+        int textureId;
+        long key;
+        long textureKey;
+        long lightKey;
+        PreparedImmediate value;
+    }
+
+    /**
+     * Whether a slot answers exactly this question - all six inputs equal, and a value to return.
+     * <p>
+     * Extracted so the predicate can be exercised without a device, the same shape as
+     * {@link #celtium$stateKeyCacheHit}: the table needs a context, but "which inputs make a hit" is a comparison, and
+     * a green test here is not evidence that a material was reused. Every field is compared because every field is an
+     * input: the pass decides the render pass the pipeline was built against, the format and the state key decide the
+     * pipeline, the texture id and its wrapper key decide the descriptor, and the light map key decides the lit
+     * families' descriptor. Dropping any one of them would return a material built for a different draw.
+     */
+    static boolean celtium$prepareCacheHit(PrepareCacheEntry entry, Object pass, int format, int textureId,
+            long key, long textureKey, long lightKey) {
+        return entry != null
+                && entry.value != null
+                && entry.pass == pass
+                && entry.format == format
+                && entry.textureId == textureId
+                && entry.key == key
+                && entry.textureKey == textureKey
+                && entry.lightKey == lightKey;
     }
 
     /**
@@ -12090,13 +12134,14 @@ this.frameBufferOpen = false;
     private static final int PREPARE_CACHE_BITS =
             Math.max(6, Math.min(12, Integer.getInteger("celtium.vulkan.prepareCacheBits", 10).intValue()));
     private static final int PREPARE_CACHE_SIZE = 1 << PREPARE_CACHE_BITS;
-    private final int[] prepareCacheFormat = new int[PREPARE_CACHE_SIZE];
-    private final int[] prepareCacheTexture = new int[PREPARE_CACHE_SIZE];
-    private final long[] prepareCacheKey = new long[PREPARE_CACHE_SIZE];
-    private final PreparedImmediate[] prepareCacheValue = new PreparedImmediate[PREPARE_CACHE_SIZE];
-    private final Object[] prepareCachePass = new Object[PREPARE_CACHE_SIZE];
-    private final long[] prepareCacheTextureKey = new long[PREPARE_CACHE_SIZE];
-    private final long[] prepareCacheLightKey = new long[PREPARE_CACHE_SIZE];
+    /**
+     * The table itself: one entry per slot, holding the six key fields and the prepared material together.
+     * <p>
+     * It used to be seven parallel arrays indexed by the same slot, which meant a lookup read seven cache lines to
+     * answer one question. The entry is allocated on the first store into its slot and then overwritten in place, so
+     * the steady state allocates nothing.
+     */
+    private final PrepareCacheEntry[] prepareCache = new PrepareCacheEntry[PREPARE_CACHE_SIZE];
     private long prepareCacheHits;
     private long prepareCacheCalls;
 

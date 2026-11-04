@@ -22,7 +22,8 @@
    | スパイク・移動時の体感lag | 移動中はterrainのocclusion探索がclient threadの28%（同期実行）→ **探索をsearch threadへ（既定）**、AMD飛行p50 1.03–1.34→0.74–0.89 ms・validation 0。同条件のCeleritasは0.78 ms・16 ms超0枚。入室停止は未帰属 |
    | 視点移動で隠れた海底/洞窟が一瞬見える・GVCのmob/機体が見えない | **修正（実機確認待ち）**: 非同期探索の結果を、視点が変わったフレームだけ描画前にjoin（`22d8d84e4`）。Modのclient-array display list・直接の`GL11.glColor*`/`glDepthMask`・lit時ITEM形式（`eeb6b1d0e`）。A4のserver crashはMod側→`scripts/fix_gvcr2_a4.py` |
    | 殴られたentityが赤い箱 | **修正**: combine中もalphaテストを維持（帽子レイヤの透明部が赤塗り） |
-   | 色付きガラスのチカチカ | **修正（実機確認待ち）**: 半透明terrainパスが背面cullなしで描いていた→vanilla同様に背面cull（`5f75fc009`、参照比で~20–25暗かった差が解消、[画像](evidence/2026-10-28-stained-glass-backfaces.png)） |   | F3+T が重い | reload自体 2.24 s（Celeritas 2.05 s）。差は font atlas の再upload → pack不変なら保持（`6d056197d`）。reload後のframeは正常 |
+   | 色付きガラスのチカチカ | **修正（実機確認待ち）**: 半透明terrainパスが背面cullなしで描いていた→vanilla同様に背面cull（`5f75fc009`、[画像](evidence/2026-10-28-stained-glass-backfaces.png)） |
+   | F3+T が重い | reload自体 2.24 s（Celeritas 2.05 s）。差は font atlas の再upload → pack不変なら保持（`6d056197d`）。reload後のframeは正常 |
    | Xaero's Minimap（クラッシュ・真っ暗・位置ずれ・透け） | **修正**: PBO map/unpack、raw FBO/raw matrix、tile upload、mod FBO同士のsample（空mirrorより公開優先・self-compositeは同一imageだけ）。AMD/Intel world PASSED・validation 0、Celeritas参照と同じ絵 |
    | ワールド退出後ボタン無し | **未再現**（既定・日本語・1920×1080）。手順差の手掛かり待ち |
    | ロード画面 | **Forgeのsplashと同じ画面**（ロゴ・メモリ・進捗・Forgeロゴ）をnative描画（`3ebd22e90`） |
@@ -38,19 +39,24 @@
      `gpuShare=0.01`＝CPU律速。**差は 0.52 ms**（Celtium 2.946 / Celeritas 2.427）。
      **round 58 の paired 再測は有効**（median **1.175**、`SLOWER`、負荷 0.079/0.5、[証拠](evidence/render-split-and-signature-cache-2026-11-04.md)）。
      **warm p50 は round 51 の 2.946 から動かず**＝受理CPU −0.28 ms はフレームに現れない。
-     **出荷構成の warm 窓: frame 2.38 = render 1.61 + fmlTick 0.62 + display 0.10 + tick 0.06**（tickMean は tick が
-     走ったフレーム数で割る）＝**render が 68%**。受理は **0.37 wall / 0.25 CPU ms**＝CPU 律速、全部消しても 0.31 ms。
-     **round 56 の −0.28 ms は validation ON の leg の値**（出荷構成では ~0.1 ms）。
-     **round 59 実測（µs 分解能）**（[証拠](evidence/pass-split-micros-2026-11-04.md)）: frame 2019 = world 1592 +
-     gui 392。`flush` 486 = `winRecord` 364 = `wrecLoop` 244（`grpDraw` **128**＝209 group×0.61 µs）＋窓の固定費。
-     **「固定費は8本に分散」は棄却**: 8本＝150 µs で、`winSubmit` 43・`winBarrier` 31・`winBeginPass` 28 の**3本で67%**。
-     `winSubmit` は `vkQueueSubmit` ではない（実 submit 3.4回/フレーム、窓36枚）。`winRecord` の未帰属は 52 µs。
-     受理経路は段で **s8 893 / s10 690 / s11 870 / s13 696 ns/offer**、名前付き bracket は 507 ns/offer だけ＝
-     **~2.6 µs/offer が未帰属**でここが最大の的。`stateKeyCache` は 21.9%（4キー形）で**効果は測定限界以下**。
-     **round 58 実測**（[証拠](evidence/render-split-and-signature-cache-2026-11-04.md)）: frame 1.2 = world 0.8 +
-     gui 0.4、`flush` 0.4 = `wrecLoop` 0.2（`grpDraw` 0.1）。`vkCmdDrawIndexed` **0.68 µs**、
-     pipeline bind 4,117/727,499＝dedupe は効く。
-     **`gui` 0.4 のうち Celtium は `guiBatch` 0.1 だけ**（[証拠](evidence/warm-window-split-2026-11-04.md)）。
+     **出荷構成の warm 窓: frame 2.38 = render 1.61 + fmlTick 0.62 + display 0.10 + tick 0.06**＝**render が 68%**。
+     受理は **0.37 wall / 0.25 CPU ms**＝CPU 律速、全部消しても 0.31 ms。**round 56 の −0.28 ms は validation ON の値**。
+     **round 60 実測（出荷コード `acbe9428…`、AMD、[証拠](evidence/window-clear-order-2026-11-04.md)）**:
+     frame 1322 = world 861 + gui 421 + hand 50。**フレームの 85% は Celtium の即時経路**（受理 161 offer ×
+     4024 ns ＝ 648 µs ＋ `flush` 392 ＋ `guiFlush` 81）。単位は **offer 160.8 / group 131.9 / 窓 23.4 /
+     実 submit 2.2 毎フレーム**。窓の固定費は「窓の単価」ではなく **clear 1 回あたり ~5.6 µs**で、
+     削る対象は **clear を現在のパス内に `vkCmdClearAttachments` で記録できるか**（round 54 の
+     `pairClearInPass` が pair clear で実証した形。sticky pass の棄却はフレーム全体で開いたままにした場合）。
+     次の構造的な一手は**不透明 group だけの 2 スロット open group**（format 交替 63% を畳む）。
+     受理経路の名前付き内訳は 889 ns/offer だけで **3135 ns が未帰属**（`prepare` 493・`stateKey` 199・
+     `captureState` 98・`checks` 61）。prepare キャッシュの詰め直しは**効果が測定限界以下**だった。
+     **round 59 実測（µs 分解能）**（[証拠](evidence/pass-split-micros-2026-11-04.md)）: `flush` 486 =
+     `winRecord` 364 = `wrecLoop` 244（`grpDraw` 128）。**「固定費は8本に分散」は棄却**（8本＝150 µs、
+     `winSubmit` 43・`winBarrier` 31・`winBeginPass` 28 の3本で67%）。`winSubmit` は `vkQueueSubmit` ではない。
+     `stateKeyCache` は 21.9% で**効果は測定限界以下**。
+     **round 58 実測**（[証拠](evidence/render-split-and-signature-cache-2026-11-04.md)）: `vkCmdDrawIndexed`
+     **0.68 µs**、pipeline bind 4,117/727,499＝dedupe は効く。**`gui` のうち Celtium は `guiBatch` だけ**
+     （[証拠](evidence/warm-window-split-2026-11-04.md)）。
      pair clear は `winHead` 内（**round 54 で既定 ON**、`-Dceltium.vulkan.pairClearInPass=false` が旧経路）: `winHead` **141→43 µs**、frame差は未分離。**Celtium 自身 ~0.7 ms を ~0.2 ms にしないと届かない。**
      **窓の統合（sticky pass）は棄却**（[証拠](evidence/sticky-window-pass-2026-11-04.md)）: merge 2.6/フレーム成立でも
      **warm p50 2.85→11.47 ms**、窓 23.5→20.8 の代わりに **`grpDraw` 0.9→9.6 µs/group**。理由未解明、再開しない。
@@ -58,20 +64,15 @@
      （offer 238.3→230.1、group 136.5→133.5）。残り86は**intervening flush**＝順序規則。既定OFF。
      **round 42–46 の内訳は検証レイヤを測っていた**（[証拠](evidence/frame-split-conditions-2026-11-04.md)）:
      検証OFF は frame 1.4、`vkCmdDrawIndexed` は 5.0→**0.9 µs**。
-     **出荷構成の世界scene**（[証拠](evidence/world-frame-accounting-2026-11-04.md)）: 219 offer・113.6 group・
-     22.1 flush・23.1 window/フレーム、受理 3.49 µs/offer、present 0.20 ms。
-
-     **窓の94%は`bindFramebuffer`**（183,841 flush 中 173,470＝33/フレーム、index上限は2/フレーム、
-     [証拠](evidence/window-source-bind-2026-11-04.md)）。
+     **窓の95%は`glClear`**（round 60: `clearOrderFlushes` 28.3/フレーム → flush 22.3 → 窓 23.4、GL draw 由来 ~1）。
      JFRは`CELTIUM_LEG_JFR`（attach）。**warm windowはflagが要る**（`warmFromTick=400 warmToTick=600 holdUntilTick=620`）。
      **colour witnessはcombine分岐だけに効く**（[証拠](evidence/font-colour-witness-narrowing-2026-11-04.md)）:
      既定`combine`でrun 94.5→19.0・offer 221→146/フレーム、**受理CPU −0.28 ms**（validation ON の値）。
      **groupは115のまま**（棄却:「font runがgroupの82%」）。**off-target windowはframe imageを動かさない**（[証拠](evidence/off-target-frame-barriers-2026-11-03.md)）。
-     **offerの55%がslow path**（[証拠](evidence/accept-distribution-2026-11-03.md)）。
-     **拒否の内訳**（[証拠](evidence/merge-refusal-census-2026-11-03.md)）: 931,838 group openのうち
-     **format 448,268（48%）**・no-mesh 190,619・texture 167,484。**formatは畳めない**（6は色をpush blockから、2は頂点から取る）。`s9`=99 nsがmerge述語。
-     **窓**: 現行sceneは23.2/フレームで**13.0がGregTechのpost chain**（`Shaders.renderFullImageInFBO`、
-     [証拠](evidence/window-sources-2026-11-03.md)）。
+     **offerの80%がslow path**（round 60: `fastMerged` 20.5%。旧「55%」は別scene）。
+     **拒否の内訳**（[証拠](evidence/merge-refusal-census-2026-11-03.md)・round 60 census）: group openの
+     **format 交替が63%（2↔6が46%・2↔4が25%）**・texture 33%・**行列は4%だけ**。`s9`=130 nsがmerge述語。
+     **窓**: GregTech sceneは23.2/フレームで**13.0がpost chain**（[証拠](evidence/window-sources-2026-11-03.md)）。
    - **Intel: 未達**（最新 `rel-intel`: p50 0.896・p95 0.872、**p99 1.048**＝3.46 vs 3.30 ms（中央値）。kpi3 1.110→kpi5 1.051→1.048）。
      p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般、固定fpsでも残る）。棄却仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)。
    - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
@@ -79,13 +80,12 @@
 3. **native 状態・実行**: cull の面と winding・`GL_VIEWPORT_BIT`・`GL_LIGHTING_BIT` の部分復元・font run の拒否保持・no-op census は出荷経路で発火しない→生きた描画census `CELTIUM_GL_SURFACE_DRAWING`・display-list census は id<512 のみ→総量/id を報告（entity arm modelDraws=5545・拒否0）。証拠は `evidence/*-2026-11-03.md`。glint画素/inventory・actor較正は未対応。
 
 4. **影・パックは Demonica の fork で**: 利用者指示により **Iris を設計参照にするのをやめ、Demonica を fork して Celtium 用にする**。
-   Demonica の実体: **Iris の shader pipeline + Angelica の GLSM + 互換層**を、別途導入の Celeritas の上で動かすもの。
-   Actinium から fork し terrain renderer は持たない。**Cleanroom の OpenGL context 上で動く**ため、Celtium では
-   「Celeritas との接続面（terrain 描画・pack pipeline・GLSM）」を **Vulkan 経路との接続面に置き換える**作業になる。
+   Demonica の実体は **Iris の shader pipeline + Angelica の GLSM + 互換層**で、Actinium から fork し terrain renderer を持たない。
+   Celtium では「Celeritas との接続面（terrain 描画・pack pipeline・GLSM）」を **Vulkan 経路との接続面に置き換える**作業になる。
    **別成果物（addon jar）**として実装し、core には取り込まない。
-5. **本体の影scaffoldとshaderpack frontendは削除済み**（2026-10-27、旧アーキテクチャ削除）。影とpackはDemonica addonで実装する。
-6. **ライセンス**: Demonica 本体は **AGPL-3.0**（〜0.4.0 は GPL-3.0）。Angelica/Iris 由来部分は LGPL-3.0、Actinium 由来は GPL-3.0、
-   glsl-transformer は AGPL-3.0。**fork するなら fork 側も AGPL-3.0 になり、Celtium core とは別リポジトリ/別jarで境界を保つ**。
+5. **本体の影scaffoldとshaderpack frontendは削除済み**（2026-10-27）。影とpackはDemonica addonで実装する。
+6. **ライセンス**: Demonica 本体は **AGPL-3.0**（〜0.4.0 は GPL-3.0）。Angelica/Iris 由来は LGPL-3.0、Actinium 由来は GPL-3.0、
+   glsl-transformer は AGPL-3.0。**fork 側も AGPL-3.0 になり、Celtium core とは別リポジトリ/別jarで境界を保つ**。
    LGPL 部分のチェリーピックはクレジット明記で可能。GLSM の丸ごと持ち込みはしない。
 
 ## 現在の優先順
@@ -93,11 +93,11 @@
 | 優先・項目 | 実装/判定 | AMD | Intel | 根拠と残り |
 |---|---|---|---|---|
 
-| **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤測定済み** | 実機報告＋画面 | ②未実行 | ①パノラマ ②エンドポータル ③F2黒スクショ（`nglGetTexImage`） ④ガラスちらつき（`5f75fc009`） ⑤残像＝静止0差分・tooltipの動きは連続3フレーム残留0（[証拠](evidence/tooltip-motion-2026-11-02.md)）・mod FBO bind中0（[証拠](evidence/tooltip-mod-fbo-2026-11-03.md)）・看板の文字0（[証拠](evidence/sign-text-afterimage-2026-11-03.md)）、⑥空の帯は**一度きりの遷移**＝損失は**記録側**（[証拠](evidence/sky-band-one-transition-2026-11-03.md)） |
+| **利用者報告の不具合（2026-10-23）** | **①②③修正済み・④実機確認待ち・⑤測定済み** | 実機報告＋画面 | ②未実行 | ①パノラマ ②エンドポータル ③F2黒スクショ（`nglGetTexImage`） ④ガラスちらつき（`5f75fc009`） ⑤残像＝静止0差分・tooltipの動きは連続3フレーム残留0（[証拠](evidence/tooltip-motion-2026-11-02.md)）・mod FBO bind中0（[証拠](evidence/tooltip-mod-fbo-2026-11-03.md)）・看板の文字0（[証拠](evidence/sign-text-afterimage-2026-11-03.md)）、⑥空の帯は**一度きりの遷移**（[証拠](evidence/sky-band-one-transition-2026-11-03.md)） |
 
 
 | **画質（4画面＋QMAGNET）** | **settings画素一致・worldは16階調超 0.97/1.05 %（AMD/Intel）。menu背景は両GPU確認済み** | 両GPU PASSED・clean | 実測 | [証拠](evidence/image-quality-2026-10-28.md)・[menu](evidence/menu-capture-2026-11-02.md)。残り: 遠い壁1面の陰影勾配、loadingは参照なし。**creative tab の item icon と hover slotのhighlight を修正**（[highlight](evidence/creative-highlight-line-pipeline-2026-11-02.md)）。**creative grid は現行JARで参照一致**（[検証](evidence/creative-grid-verified-2026-11-03.md)）|
-| **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（v0.0.14-alpha・AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | v0.0.14-alpha `90a7c505…` は qmagnet world で AMD/Intel PASSED・validation 0・画像gate一致。0.6.13（GLFW/LWJGL 3.4.1）はSDL3不在を検出して版を名指しで拒否 |
+| **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | v0.0.14-alpha `90a7c505…` は qmagnet world で AMD/Intel PASSED・validation 0・画像gate一致。0.6.13（GLFW/LWJGL 3.4.1）はSDL3不在を検出して版を名指しで拒否 |
 | **巨大pack互換（E2E-E 1.87.3）** | **AMD: fixture PASSED・validation 0、Intel未実行** | AMD | 未実行 | Cleanroom 0.7差はlocal置換と上流PR（`8f121acfb`）。残りは[証拠](evidence/e2e-cleanroom07-2026-10-26.md)末尾へ。 |
 
 | **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない |
@@ -107,7 +107,7 @@
 
 - 現行の判定は上の表（`celtium-world-accept` 3対、p50 median **1.215**）。旧scene（Susy/ATM3）の
   ABBA値は artifact が現ビルドと一致しないため現在判定に使わない（[archive](<history/plan-archive-2026-10-21.md>)）。
-- 残差は window 固定費と per-batch。pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
+- 残差は **clear が開ける窓**と per-batch（round 60）。pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
 - 棄却: bind flush延期（2026-10-31、2回ともRADV SIGSEGV、[罠](<verification-traps.md>)）、indirect immediate、フレーム再利用（アニメ凍結）、
   **group数∝grpDraw**（font run 2.3×減で不変、[証拠](evidence/font-witness-census-2026-11-03.md)）。
 
@@ -116,6 +116,7 @@
 [archive](<history/plan-archive-2026-10-21.md>) の「2026-10-24 移動」節（KPI 2.29x・draw数・GC主因 等。再入条件つき）。
 - GPU pass時間・present/readback・アップロード量・GC・フレーム内訳の旧値は、artifact/区間が現ビルドと一致しないため参考値にも使わない。
 - validation clean・`exitCode=0`・色数gateは、描画不存在・正しい絵・画像一致をそれぞれ証明しない。
+- 旧計器の「窓の94%は`bindFramebuffer`」「offerの55%がslow path」は別sceneの値（round 60 で置換済み）。
 
 ## 更新と参照
 
@@ -123,4 +124,4 @@
   [罠](<verification-traps.md>)。
 - 計測の生ログと棄却済みの詳細は [plan-archive-2026-10-21.md](<history/plan-archive-2026-10-21.md>)。
   旧表・旧日記は [snapshot](<history/plan-state-snapshot-2026-10-17.md>)・[diary](<history/plan-diary.md>)。
-  履歴を現在の命令・判定として読み戻さない。ビルド・stage・実機検証は[手順](<development.md>)。
+  履歴を現在の命令・判定として読み戻さない。
