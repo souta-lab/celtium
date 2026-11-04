@@ -269,3 +269,21 @@ Readings:
   terrain pass draws the bloom layer into the game's framebuffer instead, so bloomFBO's alpha stays 0, the mask is
   empty and every level below it is black. The terrain renderer has to honour the framebuffer GTCEu binds around
   `renderBlockLayer(BLOOM)`.
+
+### Round 8d: the last copy reads the right framebuffer (leg `r27-gt`)
+
+The DRAWN line now names each sampler's framebuffer identity and published image, and the target's colour texture:
+
+```
+bloom_combine ... target=0x255d08d2 targetColourTex=23838
+IMAGE_F inputs=[colourTexture=unit0:tex23838(fb){fbo=0x255d08d2 img=0xf600000000f60}] target=0x5dbbfa05 targetColourTex=482 targetIsMain=true
+```
+
+So the final blend-off copy samples exactly the framebuffer `bloom_combine` wrote, and publication registers that
+framebuffer's own chain-pair image (`celtium$publishFramebufferColorTexture`, route chain-pair), not a copy. Yet the
+dump at present shows that pair holding the correct scene while the game's framebuffer is black.
+
+Leading hypothesis, not yet measured: **recording order**. Black is exactly what a blend-off copy of a freshly cleared
+pair (0,0,0,0) produces, so the copy into the game's framebuffer executes after the pair's clear and before
+`bloom_combine` writes it. Next: log the window sequence (target, first/last group, clear-in-pass) for one frame of
+the scene and check where the IMAGE_F group into the game's framebuffer lands relative to the combine window.

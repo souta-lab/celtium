@@ -3652,7 +3652,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             textures[i] = texture;
             inputs.append(' ').append(sampler.name()).append("=unit").append(unit).append(":tex").append(name)
                     .append(this.mainFramebufferColorNames.contains(Integer.valueOf(name)) ? "(main)" : "")
-                    .append(this.publishedFrameImages.get(name) != 0L ? "(fb)" : "");
+                    .append(this.publishedFrameImages.get(name) != 0L ? "(fb)" : "")
+                    .append("{fbo=0x").append(Long.toHexString(celtium$framebufferIdentityForColorTexture(name)))
+                    .append(" img=0x").append(Long.toHexString(this.publishedFrameImages.get(name))).append('}');
         }
         if (!MOD_PROGRAMS_TO_MAIN && this.currentFramebufferIdentity == this.targetRegistry.mainIdentity()) {
             return celtium$modFailure(programId, "the pass draws into the game's framebuffer and "
@@ -3662,8 +3664,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (textures.length > 0 && set == 0L) {
             return celtium$modFailure(programId, "no sampler set could be allocated");
         }
+        long[] targetColour = framebufferColorTexture(this.currentFramebufferIdentity);
         celtium$reportModProgram(programId, true, "inputs=[" + inputs.toString().trim() + "] target=0x"
-                + Long.toHexString(this.currentFramebufferIdentity) + " targetIsMain="
+                + Long.toHexString(this.currentFramebufferIdentity) + " targetColourTex="
+                + (targetColour == null ? -1 : targetColour[0]) + " targetIsMain="
                 + (this.currentFramebufferIdentity == this.targetRegistry.mainIdentity())
                 + " blend=" + like.celtium$colorBlend().blend() + " depthTest=" + like.celtium$depthTest()
                 + " depthWrite=" + like.celtium$depthWrite());
