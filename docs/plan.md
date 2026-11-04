@@ -53,7 +53,7 @@
      **colour witnessはcombine分岐だけに効く**（[証拠](evidence/font-colour-witness-narrowing-2026-11-04.md)）:
      既定`combine`でrun 94.5→19.0・offer 221→146/フレーム、**受理CPU −0.28 ms**（validation ON の値）。
      **groupは115のまま**（棄却:「font runがgroupの82%」）。**off-target windowはframe imageを動かさない**（[証拠](evidence/off-target-frame-barriers-2026-11-03.md)）。
-     **offerの80%がslow path**（round 60: `fastMerged` 20.5%。旧「55%」は別scene）。
+     **offerの80%がslow path**（round 60）。
      **拒否の内訳**（[証拠](evidence/merge-refusal-census-2026-11-03.md)・round 60 census）: group openの
      **format 交替が63%（2↔6が46%・2↔4が25%）**・texture 33%・**行列は4%だけ**。`s9`=130 nsがmerge述語。
      **窓**: GregTech sceneは23.2/フレームで**13.0がpost chain**（[証拠](evidence/window-sources-2026-11-03.md)）。
