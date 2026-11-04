@@ -546,19 +546,41 @@ public final class ValidationClient {
          * <p>
          * Uncalibrated until a GL reference run of this scene exists: the picture is held to the smoke test, its
          * identity, the frame binding and the camera pose, and the verdict is {@code UNCALIBRATED_PRESENTED_IMAGE}.
+         * <p>
+         * It also drives a <b>machine GUI</b> stage: after the world frame, the scene opens one of the machines it
+         * placed through GTCEu's own UI factory ({@code MetaTileEntityUIFactory.openUI}, the call
+         * {@code MetaTileEntity.onRightClick} makes on the server) and captures the screen. That screen is
+         * {@code ModularUIGui}, a {@code GuiScreen} that draws its widgets through the vanilla GUI path plus its own
+         * {@code Stencil} clipping - a producer the video settings screen does not exercise.
          */
-        GREGTECH("gregtech", false, false);
+        GREGTECH("gregtech", false, false, true);
 
         final String name;
         /** Whether this scene drives a GUI screen and takes a second capture with it open. */
         final boolean guiStage;
         /** Whether a measured reference exists at this pose: an uncalibrated scene records its floors as missing. */
         final boolean calibrated;
+        /**
+         * Whether the scene's second stage is a mod's own machine screen rather than Minecraft's video settings
+         * screen. The two share the stage machinery (open on the tick after the world capture, wait for the screen,
+         * capture it) but not the opener, the screen class the verdict names, or the panel floors.
+         */
+        final boolean machineGuiStage;
 
         Scene(String name, boolean guiStage, boolean calibrated) {
+            this(name, guiStage, calibrated, false);
+        }
+
+        Scene(String name, boolean guiStage, boolean calibrated, boolean machineGuiStage) {
             this.name = name;
             this.guiStage = guiStage;
             this.calibrated = calibrated;
+            this.machineGuiStage = machineGuiStage;
+        }
+
+        /** Whether this scene takes a second capture with a screen open, whichever kind of screen it is. */
+        boolean anyGuiStage() {
+            return guiStage || machineGuiStage;
         }
     }
 
@@ -1140,6 +1162,10 @@ public final class ValidationClient {
     private boolean celtium$gateEnforced;
     /** Whether the world stage's picture has been taken, so the capture body does not run twice for one frame. */
     private boolean celtium$worldStageTaken;
+    /** Bounded CELTIUM_CAPTURE_ENTITY_HOLD lines: a pack that respawns entities every frame must say so. */
+    private int celtium$entityHoldLines;
+    /** Consecutive capture frames held off by non-player entities; the capture gives up waiting after 40. */
+    private int celtium$entityHoldFrames;
     /** Every completed picture of this run, by stage. */
     private final java.util.Map<String, PictureEvidence> celtium$evidence =
             new java.util.LinkedHashMap<String, PictureEvidence>();
@@ -3509,6 +3535,7 @@ public final class ValidationClient {
                 // here too, so a run that dies before its verdict still names the reference its floors came from.
                 report.addProperty("scene", celtium$scene.name);
                 report.addProperty("sceneGuiStage", Boolean.valueOf(celtium$scene.guiStage));
+                report.addProperty("sceneMachineGuiStage", Boolean.valueOf(celtium$scene.machineGuiStage));
                 report.addProperty("runId", celtium$runId);
                 report.addProperty("cameraRequested", celtium$pose.describe());
                 report.addProperty("sceneGateSource", celtium$gateSource());
@@ -3569,6 +3596,7 @@ public final class ValidationClient {
                 report.addProperty("gregtechStageFailed", Integer.valueOf(celtium$gregtechFailed));
                 report.addProperty("gregtechStageTileEntities", Integer.valueOf(celtium$gregtechTileEntities));
                 report.addProperty("gregtechStageMachines", Integer.valueOf(celtium$gregtechMachines));
+                report.addProperty("gregtechStageInvalidMachines", Integer.valueOf(celtium$gregtechInvalidMachines));
                 report.addProperty("gregtechStagePipes", Integer.valueOf(celtium$gregtechPipes));
                 report.addProperty("gregtechStageCables", Integer.valueOf(celtium$gregtechCables));
                 report.addProperty("gregtechStageCasings", Integer.valueOf(celtium$gregtechCasings));
@@ -4114,6 +4142,11 @@ public final class ValidationClient {
         if (celtium$clientTicks == 1 || celtium$clientTicks % 1200 == 0) {
             System.out.println("[Celtium] CELTIUM_FIXTURE_TICK clientTicks=" + celtium$clientTicks
                     + " worldTicks=" + worldTicks
+                    + " worldFrames=" + worldFrames
+                    + " frameStarts=" + celtium$frameStartSeen
+                    + " frameEnds=" + celtium$frameEndSeen
+                    + " stage=" + celtium$stage
+                    + " captureStarted=" + celtium$captureStarted
                     + " screen=" + (mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName())
                     + " world=" + (mc.world != null));
         }
@@ -7179,7 +7212,42 @@ public final class ValidationClient {
                     } else {
                         report.addProperty("selectionTarget", "null");
                     }
-                } else if (removeNonPlayerEntities(mc) > 0) return;
+                } else {
+                    int removedNow = removeNonPlayerEntities(mc);
+                    if (removedNow > 0) {
+                        // A pack that spawns entities every tick would otherwise hold the capture off forever with no
+                        // trace: the capture body returns here and the run ends with no report. Bounded, and it names
+                        // the classes, so "the world has mobs" and "a mod respawns one entity per frame" differ.
+                        celtium$entityHoldFrames++;
+                        if (celtium$entityHoldLines < 6) {
+                            celtium$entityHoldLines++;
+                            StringBuilder classes = new StringBuilder();
+                            for (net.minecraft.entity.Entity entity : new ArrayList<net.minecraft.entity.Entity>(
+                                    mc.world.loadedEntityList)) {
+                                if (entity == mc.player) continue;
+                                if (classes.length() > 0) classes.append(',');
+                                classes.append(entity.getClass().getName());
+                                if (classes.length() > 300) break;
+                            }
+                            System.out.println("[Celtium] CELTIUM_CAPTURE_ENTITY_HOLD tick=" + worldTicks
+                                    + " removed=" + removedNow + " frames=" + celtium$entityHoldFrames
+                                    + " classes=" + classes);
+                        }
+                        // The removal is what the capture wants (terrain and sky only); waiting a frame is the
+                        // deterministic version of it, and a pack that puts an entity back every frame would wait
+                        // forever. After a bounded wait the capture proceeds on the frame the removal just cleaned,
+                        // and the report says how long it waited.
+                        if (celtium$entityHoldFrames <= 40) {
+                            return;
+                        }
+                        report.addProperty("captureEntityHoldFrames", Integer.valueOf(celtium$entityHoldFrames));
+                        report.addProperty("captureEntityHoldGaveUp",
+                                "the world kept holding non-player entities; the capture proceeded after "
+                                        + celtium$entityHoldFrames + " frames of removing them");
+                    } else {
+                        celtium$entityHoldFrames = 0;
+                    }
+                }
                 report.addProperty("nonPlayerEntitiesRemoved", entitiesRemoved);
                 report.addProperty("captureWidth", mc.displayWidth);
                 report.addProperty("captureHeight", mc.displayHeight);
@@ -7415,7 +7483,7 @@ public final class ValidationClient {
                 // own picture. Its identity is written next to it here, synchronously, so it names this frame. A scene
                 // with a GUI stage writes the world frame to its own file, because celtium-validation.png is that
                 // scene's subject: the screen, captured later.
-                celtium$captureGlScreenshot(mc, celtium$scene.guiStage ? "celtium-validation-world.png"
+                celtium$captureGlScreenshot(mc, celtium$scene.anyGuiStage() ? "celtium-validation-world.png"
                         : "celtium-validation.png", "world");
             }
             // The verdict carries the picture assertions. A run whose picture of the window is flat, mostly black, or
@@ -7427,10 +7495,10 @@ public final class ValidationClient {
             celtium$captureWorldFrames = worldFrames;
             report.addProperty("worldFramesAtCapture", Integer.valueOf(worldFrames));
             report.addProperty("firstPresentedWorldFrame", Integer.valueOf(celtium$firstPresentedWorldFrame));
-            if (celtium$scene.guiStage) {
-                // The world frame is the video settings scene's reference; the acceptance is the screen. The screen is
-                // opened on the next client tick rather than here: this handler runs inside the world render pass, and
-                // a screen that appears mid-pass would be half of this frame as well as the next.
+            if (celtium$scene.anyGuiStage()) {
+                // The world frame is the GUI scene's reference; the acceptance is the screen. The screen is opened on
+                // the next client tick rather than here: this handler runs inside the world render pass, and a screen
+                // that appears mid-pass would be half of this frame as well as the next.
                 celtium$stage = 1;
                 celtium$guiOpenPending = true;
                 report.addProperty("guiStageStartedAtTick", Integer.valueOf(worldTicks));
@@ -9166,7 +9234,7 @@ public final class ValidationClient {
         if (world == null || !world.completed) {
             return false;
         }
-        if (!celtium$scene.guiStage) {
+        if (!celtium$scene.anyGuiStage()) {
             return true;
         }
         PictureEvidence gui = celtium$evidence.get("gui");
@@ -9446,6 +9514,10 @@ public final class ValidationClient {
 
     /** Opens Minecraft's own options screen - the call the pause menu's Options button makes. */
     private void celtium$openGuiScene(Minecraft mc) {
+        if (celtium$scene.machineGuiStage) {
+            celtium$openMachineGui(mc);
+            return;
+        }
         celtium$guiScreenOpenedAtTick = worldTicks;
         celtium$guiScreenOpenedAtFrames = worldFrames;
         try {
@@ -9462,6 +9534,196 @@ public final class ValidationClient {
         report.addProperty("guiScreenOpened", celtium$guiScreenOpened);
         report.addProperty("guiScreenOpenedVia", celtium$guiScreenOpenedVia);
         report.addProperty("guiScreenOpenedAtTick", Integer.valueOf(worldTicks));
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // The machine GUI stage: open a GTCEu machine's own screen and capture it.
+    // ---------------------------------------------------------------------------------------------------------------
+
+    /**
+     * Opens the first machine the stage placed, through GTCEu's own UI factory.
+     * <p>
+     * The call is the one {@code MetaTileEntity.onRightClick} makes on the server:
+     * {@code MetaTileEntityUIFactory.INSTANCE.openUI(holder, player)}. It is made here rather than by simulating a
+     * click because {@code BlockMachine.onBlockActivated} first ray-traces the player's look against the block's
+     * collision boxes ({@code RayTracer.retraceBlock}) and returns false when the ray misses - a fixture that has to
+     * aim the camera to open a screen would be testing its own aim. The factory is the mod's own entry point, and the
+     * screen it opens is the mod's own screen; what the picture then has to show is that screen.
+     * <p>
+     * Everything is reflective: the fixture is compiled against vanilla and Forge only, so a GTCEu class is named by
+     * string and a missing one is a recorded failure rather than a link error.
+     */
+    private void celtium$openMachineGui(Minecraft mc) {
+        celtium$machineGuiOpenedAtTick = worldTicks;
+        celtium$machineGuiOpenedAtFrames = worldFrames;
+        celtium$guiScreenOpenedAtTick = worldTicks;
+        celtium$guiScreenOpenedAtFrames = worldFrames;
+        celtium$machineGuiAttempts++;
+        if (celtium$gregtechMachinePositions.isEmpty()) {
+            celtium$machineGuiResult = "no machine with a tile entity was placed, so there is no screen to open";
+            celtium$machineGuiOpenedVia = "none";
+            report.addProperty("machineGuiResult", celtium$machineGuiResult);
+            report.addProperty("machineGuiOpenedVia", celtium$machineGuiOpenedVia);
+            return;
+        }
+        final int[] pos = celtium$gregtechMachinePositions.get(0);
+        final net.minecraft.server.integrated.IntegratedServer server = mc.getIntegratedServer();
+        if (server == null || mc.player == null) {
+            celtium$machineGuiResult = "no integrated server or player";
+            celtium$machineGuiOpenedVia = "none";
+            report.addProperty("machineGuiResult", celtium$machineGuiResult);
+            report.addProperty("machineGuiOpenedVia", celtium$machineGuiOpenedVia);
+            return;
+        }
+        final java.util.UUID playerId = mc.player.getUniqueID();
+        try {
+            server.addScheduledTask(new Runnable() {
+                @Override
+                public void run() {
+                    celtium$openMachineGuiOnServer(server, playerId, pos);
+                }
+            });
+            celtium$machineGuiOpenedVia = "MetaTileEntityUIFactory.INSTANCE.openUI(holder, player) on the server"
+                    + " thread, for the machine at " + pos[0] + "," + pos[1] + "," + pos[2];
+        } catch (Throwable error) {
+            celtium$machineGuiOpenedVia = "could not schedule the open: " + error;
+        }
+        report.addProperty("machineGuiOpenedVia", celtium$machineGuiOpenedVia);
+        report.addProperty("machineGuiOpenedAtTick", Integer.valueOf(worldTicks));
+        report.addProperty("machineGuiMachine", pos[0] + "," + pos[1] + "," + pos[2]);
+    }
+
+    /** The server-thread half of {@link #celtium$openMachineGui}: the mod's own UI factory, called on its holder. */
+    private void celtium$openMachineGuiOnServer(net.minecraft.server.MinecraftServer server, java.util.UUID playerId,
+            int[] pos) {
+        try {
+            net.minecraft.world.WorldServer world = server.worlds[0];
+            net.minecraft.entity.player.EntityPlayerMP player = server.getPlayerList().getPlayerByUUID(playerId);
+            if (player == null) {
+                celtium$machineGuiResult = "the player is not on the server";
+                return;
+            }
+            net.minecraft.util.math.BlockPos blockPos = new net.minecraft.util.math.BlockPos(pos[0], pos[1], pos[2]);
+            net.minecraft.tileentity.TileEntity holder = world.getTileEntity(blockPos);
+            if (holder == null) {
+                // What is there instead, and whether the rest of the row kept its tile entities: "the machine is not
+                // where the placement put it" and "the server dropped every tile entity in the row" are different
+                // findings, and the position alone cannot tell them apart.
+                int rowTileEntities = 0;
+                for (int[] other : celtium$gregtechMachinePositions) {
+                    if (world.getTileEntity(new net.minecraft.util.math.BlockPos(other[0], other[1], other[2])) != null) {
+                        rowTileEntities++;
+                    }
+                }
+                net.minecraft.block.state.IBlockState state = world.getBlockState(blockPos);
+                celtium$machineGuiResult = "no tile entity at " + blockPos + ": block="
+                        + (state.getBlock().getRegistryName() == null ? state.getBlock().getClass().getName()
+                                : state.getBlock().getRegistryName().toString())
+                        + " rowTileEntities=" + rowTileEntities + "/" + celtium$gregtechMachinePositions.size()
+                        + " world=" + world.provider.getDimension() + " loaded=" + world.isBlockLoaded(blockPos);
+                System.out.println("[Celtium] CELTIUM_MACHINE_GUI " + celtium$machineGuiResult);
+                return;
+            }
+            Class<?> factoryClass = Class.forName("gregtech.api.metatileentity.MetaTileEntityUIFactory");
+            Object factory = factoryClass.getField("INSTANCE").get(null);
+            Class<?> holderInterface = Class.forName("gregtech.api.gui.IUIHolder");
+            java.lang.reflect.Method openUI = factoryClass.getMethod("openUI", holderInterface,
+                    net.minecraft.entity.player.EntityPlayerMP.class);
+            openUI.invoke(factory, holder, player);
+            celtium$machineGuiResult = "openUI returned; holder=" + holder.getClass().getName();
+            System.out.println("[Celtium] CELTIUM_MACHINE_GUI " + celtium$machineGuiResult);
+        } catch (Throwable error) {
+            Throwable cause = error instanceof java.lang.reflect.InvocationTargetException
+                    && ((java.lang.reflect.InvocationTargetException) error).getCause() != null
+                            ? ((java.lang.reflect.InvocationTargetException) error).getCause() : error;
+            celtium$machineGuiResult = "failed: " + cause;
+            System.out.println("[Celtium] CELTIUM_MACHINE_GUI " + celtium$machineGuiResult);
+        }
+    }
+
+    /**
+     * Drives the machine GUI stage: wait for the mod's screen, let it lay out, capture it.
+     * <p>
+     * The screen arrives over the network from the server-side {@code openUI}, so it is not there on the tick the
+     * opener ran. The wait is bounded and names the class it actually got, so a screen that never arrives fails the
+     * run with the reason instead of waiting out the watchdog.
+     */
+    private void celtium$advanceMachineGuiStage(Minecraft mc) {
+        if (celtium$machineGuiOpenedAtTick < 0) {
+            // The stage is entered on the frame after the world capture; the opener runs on the next client tick.
+            return;
+        }
+        String screenName = celtium$screenName(mc);
+        report.addProperty("guiScreenCurrent", screenName);
+        if (mc.currentScreen != null && celtium$machineGuiSeenAtTick < 0) {
+            celtium$machineGuiSeenAtTick = worldTicks;
+            celtium$machineGuiSeenAtFrames = worldFrames;
+            celtium$machineGuiScreenClass = mc.currentScreen.getClass().getName();
+            report.addProperty("machineGuiScreenClass", celtium$machineGuiScreenClass);
+            report.addProperty("machineGuiSeenAtTick", Integer.valueOf(worldTicks));
+            report.addProperty("machineGuiSeenAtFrames", Integer.valueOf(worldFrames));
+            report.addProperty("machineGuiResult", celtium$machineGuiResult);
+        }
+        if (mc.currentScreen == null) {
+            report.addProperty("machineGuiResult", celtium$machineGuiResult);
+            if (worldTicks - celtium$machineGuiOpenedAtTick > celtium$guiWaitTicks) {
+                report.addProperty("guiScreenVerdict", "the machine screen never opened");
+                fail(mc, new IllegalStateException("scene " + celtium$scene.name + ": no screen was open "
+                        + (worldTicks - celtium$machineGuiOpenedAtTick) + " ticks after the machine UI was opened ("
+                        + celtium$machineGuiOpenedVia + "; " + celtium$machineGuiResult + ")"));
+            }
+            return;
+        }
+        if (!celtium$isMachineGuiScreen(mc)) {
+            if (worldTicks - celtium$machineGuiOpenedAtTick > celtium$guiWaitTicks) {
+                report.addProperty("guiScreenVerdict", "the screen never became the machine screen");
+                fail(mc, new IllegalStateException("scene " + celtium$scene.name + ": the screen opened via "
+                        + celtium$machineGuiOpenedVia + " is " + mc.currentScreen.getClass().getName()
+                        + ", not " + celtium$MACHINE_GUI_CLASS + ", after "
+                        + (worldTicks - celtium$machineGuiOpenedAtTick) + " ticks (" + celtium$machineGuiResult + ")"));
+            }
+            return;
+        }
+        int layoutTicks = worldTicks - celtium$machineGuiSeenAtTick;
+        int layoutFrames = worldFrames - celtium$machineGuiSeenAtFrames;
+        if (layoutTicks < celtium$guiLayoutTicks || layoutFrames < celtium$guiMinFrames) {
+            return;
+        }
+        celtium$stage = 2;
+        report.addProperty("guiScreenVerdict", "the machine screen was open at the capture");
+        report.addProperty("guiScreenClassAtCapture", mc.currentScreen.getClass().getName());
+        report.addProperty("guiScreenTitleAtCapture", celtium$guiScreenTitle(mc));
+        report.addProperty("guiCaptureTick", Integer.valueOf(worldTicks));
+        report.addProperty("guiCaptureWorldFrames", Integer.valueOf(worldFrames));
+        report.addProperty("guiLayoutTicks", Integer.valueOf(layoutTicks));
+        report.addProperty("guiLayoutFrames", Integer.valueOf(layoutFrames));
+        report.addProperty("machineGuiResult", celtium$machineGuiResult);
+        celtium$captureGlScreenshot(mc, "celtium-validation.png", "gui");
+        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+            celtium$requestPresentedDump(mc, "gui");
+        }
+        if (celtium$glLessInstalled()) {
+            celtium$presentedVerdictPendingAtTick = worldTicks;
+            celtium$presentedVerdictPendingFrames = worldFrames;
+            report.addProperty("presentedVerdictDeferredAtTick", Integer.valueOf(worldTicks));
+            return;
+        }
+        celtium$judgePictures(mc, "at the machine GUI capture");
+        celtium$setStatusFromPictures();
+        finish(mc);
+    }
+
+    /** Whether the open screen is GTCEu's ModularUI screen, by class name or by one of its superclasses. */
+    private static boolean celtium$isMachineGuiScreen(Minecraft mc) {
+        if (mc.currentScreen == null) {
+            return false;
+        }
+        for (Class<?> type = mc.currentScreen.getClass(); type != null; type = type.getSuperclass()) {
+            if (celtium$MACHINE_GUI_CLASS.equals(type.getName())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -10491,6 +10753,10 @@ public final class ValidationClient {
      * instead of waiting out the timeout.
      */
     private void celtium$advanceGuiStage(Minecraft mc) {
+        if (celtium$scene.machineGuiStage) {
+            celtium$advanceMachineGuiStage(mc);
+            return;
+        }
         if (celtium$guiClickPending && worldTicks >= celtium$guiScreenOpenedAtTick + 1) {
             celtium$guiClickPending = false;
             celtium$clickVideoSettingsButton(mc);
@@ -10899,7 +11165,33 @@ public final class ValidationClient {
         PictureEvidence worldEvidence = celtium$evidence.get("world");
         Picture worldPicture = celtium$judgeStage("world", worldEvidence, worldFramesAtCapture, failures);
         Picture primary = worldPicture;
-        if (celtium$scene.guiStage) {
+        if (celtium$scene.machineGuiStage) {
+            // The machine screen is the acceptance; the world frame is judged above as the same run's reference. The
+            // screen class is checked by name because that is what the report carries: a picture of some other screen
+            // is not a picture of the mod's machine UI, whatever it looks like.
+            int guiFramesAtCapture = report.has("guiCaptureWorldFrames")
+                    ? report.get("guiCaptureWorldFrames").getAsInt() : -1;
+            PictureEvidence guiEvidence = celtium$evidence.get("gui");
+            Picture guiPicture = celtium$judgeStage("gui", guiEvidence, guiFramesAtCapture, failures);
+            primary = guiPicture;
+            if (guiPicture != null) {
+                String screenClass = report.has("guiScreenClassAtCapture")
+                        ? report.get("guiScreenClassAtCapture").getAsString() : "none";
+                boolean machineScreen = false;
+                for (String part : screenClass.split("\\$")) {
+                    machineScreen |= celtium$MACHINE_GUI_CLASS.equals(part);
+                }
+                if (!machineScreen) {
+                    failures.add("scene " + celtium$scene.name + ": the screen at the capture was " + screenClass
+                            + ", not " + celtium$MACHINE_GUI_CLASS + ", so the picture is not the machine screen"
+                            + " (opened via " + celtium$machineGuiOpenedVia + "; " + celtium$machineGuiResult + ")");
+                }
+                if (worldPicture == null) {
+                    failures.add("scene " + celtium$scene.name + ": the machine GUI stage needs the world frame of the"
+                            + " same run as its reference and there is none to judge");
+                }
+            }
+        } else if (celtium$scene.guiStage) {
             int guiFramesAtCapture = report.has("guiCaptureWorldFrames")
                     ? report.get("guiCaptureWorldFrames").getAsInt() : -1;
             PictureEvidence guiEvidence = celtium$evidence.get("gui");
@@ -11225,7 +11517,7 @@ public final class ValidationClient {
     private java.util.List<String> celtium$gatePicture(Picture picture, String stage) {
         java.util.List<String> failures = new java.util.ArrayList<String>();
         PresentedImageStats stats = picture.stats();
-        boolean primary = "world".equals(stage) ? !celtium$scene.guiStage : celtium$scene.guiStage;
+        boolean primary = "world".equals(stage) ? !celtium$scene.anyGuiStage() : celtium$scene.anyGuiStage();
         String prefix = "world".equals(stage) ? "worldFrame" : "guiFrame";
         // The floors this stage's picture is judged by, and the frame they came from. A scene with two stages shows two
         // different pictures, so the GUI stage is held to floors derived from the reference's GUI frame (task-47).
@@ -12307,6 +12599,8 @@ public final class ValidationClient {
     private int celtium$gregtechFailed;
     private int celtium$gregtechTileEntities;
     private int celtium$gregtechMachines;
+    /** Machines whose holder had no meta tile entity: GTCEu removes those blocks itself, so they are not machines. */
+    private int celtium$gregtechInvalidMachines;
     private int celtium$gregtechPipes;
     private int celtium$gregtechCables;
     private int celtium$gregtechCasings;
@@ -12319,6 +12613,23 @@ public final class ValidationClient {
     private String celtium$gregtechItemPipeName = "none";
     private String celtium$gregtechItemPipeRenderType = "none";
     private String celtium$gregtechCasingName = "none";
+    /**
+     * The machine positions the stage placed, in placement order, as {@code {x, y, z}} triples. The GUI stage opens
+     * the first one: a machine's screen is reached through its tile entity, so the position is what the opener needs,
+     * and reading it back from the placement is what keeps the opener and the picture about the same block.
+     */
+    private final java.util.List<int[]> celtium$gregtechMachinePositions = new java.util.ArrayList<int[]>();
+    /** How the machine screen was opened, and what it was when the capture was taken. */
+    private String celtium$machineGuiOpenedVia = "not attempted";
+    private String celtium$machineGuiScreenClass = "none";
+    private String celtium$machineGuiResult = "not attempted";
+    private int celtium$machineGuiOpenedAtTick = -1;
+    private int celtium$machineGuiOpenedAtFrames = -1;
+    private int celtium$machineGuiSeenAtTick = -1;
+    private int celtium$machineGuiSeenAtFrames = -1;
+    private int celtium$machineGuiAttempts;
+    /** The screen class the verdict requires at the capture: GTCEu's ModularUI screen. */
+    private static final String celtium$MACHINE_GUI_CLASS = "gregtech.api.gui.impl.ModularUIGui";
 
     /**
      * Builds the GTCEu showcase: the blocks a GregTech pack draws through paths the flat scene never reaches.
@@ -12374,6 +12685,7 @@ public final class ValidationClient {
         int failed = 0;
         int tileEntities = 0;
         int machines = 0;
+        int invalidMachines = 0;
         int pipes = 0;
         int cables = 0;
         int casings = 0;
@@ -12400,6 +12712,16 @@ public final class ValidationClient {
                     }
                     if (world.getTileEntity(pos) != null) {
                         tileEntities++;
+                        // A holder whose meta tile entity is null is not a machine: GTCEu's MetaTileEntityHolder
+                        // removes its own block on the first update when it has nothing to tick, so a meta the item
+                        // does not carry leaves a hole in the row and a position the GUI stage cannot open. Measured
+                        // on Supersymmetry 2.8.10: meta 0 is such a meta - the block was air by the GUI stage while
+                        // the other twelve still had their holders. Only a holder with a meta tile entity is recorded.
+                        if (celtium$metaTileEntityPresent(world.getTileEntity(pos))) {
+                            celtium$gregtechMachinePositions.add(new int[] {pos.getX(), pos.getY(), pos.getZ()});
+                        } else {
+                            invalidMachines++;
+                        }
                     }
                 } catch (Throwable error) {
                     failed++;
@@ -12493,12 +12815,13 @@ public final class ValidationClient {
         celtium$gregtechFailed = failed;
         celtium$gregtechTileEntities = tileEntities;
         celtium$gregtechMachines = machines;
+        celtium$gregtechInvalidMachines = invalidMachines;
         celtium$gregtechPipes = pipes;
         celtium$gregtechCables = cables;
         celtium$gregtechCasings = casings;
         celtium$gregtechStageResult = "placed=" + placed + " failed=" + failed + " tileEntities=" + tileEntities
-                + " machines=" + machines + " pipes=" + pipes + " cables=" + cables + " casings=" + casings
-                + " groundY=" + groundY + " at=" + px + "," + pz;
+                + " machines=" + machines + " invalidMachines=" + invalidMachines + " pipes=" + pipes
+                + " cables=" + cables + " casings=" + casings + " groundY=" + groundY + " at=" + px + "," + pz;
         System.out.println("[Celtium] CELTIUM_GREGTECH_STAGE " + celtium$gregtechStageResult);
     }
 
@@ -12552,9 +12875,28 @@ public final class ValidationClient {
         return new net.minecraft.item.ItemStack(net.minecraft.item.Item.getItemFromBlock(block), 1, 0);
     }
 
+    /**
+     * Whether a GTCEu machine holder actually carries a meta tile entity, read reflectively.
+     * <p>
+     * {@code MetaTileEntityHolder.update()} removes its own block when the meta tile entity is null, so a holder
+     * without one is a block that is about to disappear - not a machine the scene can show or open. The fixture is
+     * compiled against vanilla and Forge only, so the accessor is named by string and an unreadable holder counts as
+     * absent rather than as a link error.
+     */
+    private static boolean celtium$metaTileEntityPresent(net.minecraft.tileentity.TileEntity holder) {
+        if (holder == null) {
+            return false;
+        }
+        try {
+            Object meta = holder.getClass().getMethod("getMetaTileEntity").invoke(holder);
+            return meta != null;
+        } catch (Throwable unreadable) {
+            return false;
+        }
+    }
+
     /** A block's registry name, or its class name when the registry has none: the report has to name what it placed. */
-    private static String celtium$blockName(net.minecraft.block.Block block) {
-        if (block == null) {
+    private static String celtium$blockName(net.minecraft.block.Block block) {        if (block == null) {
             return "none";
         }
         net.minecraft.util.ResourceLocation name = block.getRegistryName();
