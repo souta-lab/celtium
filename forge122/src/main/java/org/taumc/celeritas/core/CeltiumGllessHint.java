@@ -186,6 +186,19 @@ public final class CeltiumGllessHint {
         glGetShaderInfoLog(maxLength, lengthPtr, logPtr);
     }
 
+    /**
+     * {@code glUseProgram}: the program a mod's shader draw is decoded under.
+     * <p>
+     * The stub has tracked this since its table was written, but no route reached the setter, so the transformer's
+     * bare-return fallback answered the native and the tracked program stayed 0. The backend's "a custom shader program
+     * is bound" refusal is the only thing that keeps a batch the immediate pipeline cannot reproduce out of the frame,
+     * and it reads this value - so without the route the refusal was unreachable and a mod's full-screen composite was
+     * drawn with the world transform instead.
+     */
+    public static void glUseProgram(int program) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$useProgram(program);
+    }
+
     /** The DSA spellings of the texture-parameter setter (the first argument is the texture name). */
     public static void glTextureParameteri(int texture, int pname, int value) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$textureParameteri(texture, pname, value);

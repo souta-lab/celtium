@@ -93,3 +93,25 @@ custom program is bound and their refusal reason. `CELTIUM_SHADER_PROGRAM_REFUSE
 composite's draw is either never offered (the program is 0 at draw time, or the draw is refused earlier for its
 format) or offered and dropped by a rule that does not name itself. The instrument to add is a per-program census of
 the full-screen POSITION_TEX draws, with the refusal reason, at the point the immediate path decides.
+
+## Round 4: the program bind had no route (fixed)
+
+The census was empty because `glUseProgram` never reached the stub. The transformer rewrites every GL native and
+answers the ones no route claims with a bare return; `glUseProgram` had no route, so the stub's tracked program stayed
+0 for the whole session. With it at 0 the backend's "a custom shader program is bound" refusal could never fire, and
+the composite's full-screen quad was accepted by the immediate path and drawn with the world projection.
+
+The fix routes `glUseProgram` / `nglUseProgram` / `glUseProgramObjectARB` to `CeltiumGlStub.celtium$useProgram`, and
+`CELTIUM_PROGRAM_BOUND` names the first bind of each program with its call site. Legs `r5-gt1` (census) and `r5-gt2` (acceptance: PASSED, validationMessageCount=0, gpuRequirementMet=true, sceneCalibrationKeyMatches=true; renderer
+`ea32d975…`, fixture `22fcf3e0…`, AMD RX 6400, scene=gregtech):
+
+```
+CELTIUM_PROGRAM_BOUND program=23887 site=[... codechicken.lib.render.shader.ShaderProgram.useShader:122 <- gregtech.client.shader.Shaders.renderFullImageInFBO:130]
+CELTIUM_SHADER_PROGRAM_REFUSED program=23887 format=6 (first batch refused with this program bound)
+```
+
+and the same three lines for programs 23916, 23917 and 23918: four GTCEu bloom programs, all bound from
+`Shaders.renderFullImageInFBO`, all refused and counted. No other program was bound in the run (no vanilla program:
+the vanilla post chain is cancelled at `ShaderGroup.render` HEAD and never calls `useShader`). The lamps are still a
+plain white box - the bloom stays missing until mod GLSL is compiled and run natively (goal.md, 2026-11-04) - but the
+gap is now counted per program instead of being drawn as a different picture.

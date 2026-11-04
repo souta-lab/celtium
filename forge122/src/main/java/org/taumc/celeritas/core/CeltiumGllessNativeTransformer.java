@@ -785,6 +785,21 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
+        if (("nglUseProgram".equals(name) || "glUseProgram".equals(name)
+                || name.endsWith("glUseProgramObjectARB")) && "(I)V".equals(descriptor)) {
+            // The program a mod's shader draw is decoded under. The stub has tracked it since its table was written,
+            // but this native had no route, so the bare-return fallback below answered it and the tracked program
+            // stayed 0 for the whole session. That made the backend's "a custom shader program is bound" refusal
+            // unreachable: GTCEu's bloom composite (a full-screen POSITION_TEX quad drawn with its own ShaderProgram)
+            // was accepted by the immediate path and drawn with the world projection instead of being refused and
+            // counted. Measured on the GTCEu scene: CELTIUM_SHADER_PROGRAM_REFUSED and CELTIUM_PROGRAM_DRAW both
+            // printed zero lines while the composite demonstrably ran.
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glUseProgram", "(I)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
         if (("nglDepthFunc".equals(name) || "glDepthFunc".equals(name)) && "(I)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",

@@ -60,6 +60,11 @@ public class TransformerRouteVerifierCheck {
         "nglCopyTexSubImage2D", "glClearDepth", "glClearDepthf", "glClearColor", "glViewport", "glScissor",
         "nglGetProgramResourceLocation", "nglGetProgramResourceLocationIndex",
         "glTexSubImage2D", "nglTexSubImage2D", "nglTexImage2D", "glBindTexture",
+        // The program binding. It had no route at all until the GTCEu bloom investigation found the stub's tracked
+        // program stuck at 0: the transformer's bare-return fallback answered the native, so the backend's
+        // custom-program refusal could never fire and a mod's full-screen composite was drawn with the world
+        // transform. Both spellings are listed because LWJGL declares the JNI and the C form separately.
+        "glUseProgram", "nglUseProgram",
         "nglGetTextureParameterfv", "nglGetTextureParameterIuiv",
         "nglGetSamplerParameteriv", "nglGetSamplerParameterfv", "glGetMultisamplefv",
         "nglColor3fv", "nglColor4fv", "nglColor3bv", "nglColor4bv", "nglColor3ubv", "nglColor4ubv",

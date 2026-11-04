@@ -1,9 +1,10 @@
 # Celtium — 製品目標と完成条件
 
 2026-10-21 再定義。利用者指示による改訂: 10-24（新アーキテクチャ・互換方針）、10-25（基盤固有最適化・描画modの吸収・
-巨大クラス分割・KPI p50/p95/p99・GL stubの範囲）、10-27（巨大packの置換・旧コード削除量）。
+巨大クラス分割・KPI p50/p95/p99・GL stubの範囲）、10-27（巨大packの置換・旧コード削除量）、
+11-04（Mod自前のshader program・条件ごとの閉じる証拠）。
 以前の性能値・原因断定・完了宣言は前提にしない。**本書も絶対ではない**: 実測がより良い方針を示せば直す。
-現在の実装と受入は [plan.md](<plan.md>)、設計案（参考・非拘束）は [new_architecture.md](<new_architecture.md>)、
+状態は [plan.md](<plan.md>)（唯一の現在表）、設計案（非拘束）は [new_architecture.md](<new_architecture.md>)、
 手順は [development.md](<development.md>)。本書は作業許可やGoalの稼働状態を変更しない。
 
 ## 目的と唯一の描画制約
@@ -12,65 +13,57 @@ Minecraft 1.12.2 / CleanroomMC 向けに、**Celeritasを明確に上回る性�
 
 - **native Vulkan-only。Minecraft/Forgeの描画・資源・状態・可視性・提出をnative rendererが所有する。**
   全描画物（地形・entity・TESR・item・particle・text・GUI・空・手・post）は1つのscene database・可視性・
-  frame compilerに載る（形は実測で決める）。バニラのGL呼出しをスタブへ転送して
-  「native化」と呼ばない。HUD/GUI/loadingも例外ではない。
-- **GL stubは「GLを直接呼ぶmod」のためだけ**（2026-10-25 利用者指示）。vanilla/Forgeの経路はGL呼出しを1:1で
-  Vulkanへ翻訳せず、mixinで意味（描くもの・状態・資源）を受け取ってnativeに描く。GLを直接呼ぶmod（例: Xaero's Minimap の
-  PBO・raw FBO・raw matrix）はstubが受け、その結果をnativeの対象（target・texture・matrix）へ届ける。
-  どのstub呼出しが実画面に必要だったかを診断で示し、stubが何も描かないことを互換と呼ばない。
-- GLコンテキスト・GLによる描画fallbackに頼らない。拒否された描画は欠落であり、成功ではない。
+  frame compilerに載る（形は実測で決める）。バニラのGL呼出しをスタブへ転送して「native化」と呼ばない。
+- **GL stubは「GLを直接呼ぶmod」のためだけ**（10-25）。vanilla/Forgeはmixinで意味を受け取りnativeに描く。
+  mod の直接GL（例: Xaero の PBO・raw FBO・raw matrix）はstubが受け、結果をnativeの target・texture・matrix へ届ける。
+  stubが何も描かないことを互換と呼ばない。GLコンテキスト・GL fallbackに頼らず、拒否された描画は欠落と数える。
+- **Mod自前のshader program（GLSL）もstubの責務**（11-04）。例: GTCEu の bloom 合成。固定集合ではないので
+  実行時に GLSL→SPIR-V へ変換し native pass で実行する。それまでは program bind 中の batch を拒否して
+  program ごとに数えるのが正しい状態で、世界投影で別の絵を描くことを互換と呼ばない。
 
-### 基盤固有の最適化と描画modの吸収（2026-10-25 利用者指示）
+### 基盤固有の最適化と描画modの吸収（10-25 利用者指示）
 
-- **SDL3 / Java 21 / LWJGL 3 / Cleanroom / Vulkan 1.2 でしかできない最適化を積極的に採る。**
-  GL互換や旧環境のための遠回りは残さない（例: descriptor indexing・draw indirect count・timeline semaphore・
-  `VkPipelineCache` 永続化・世代別ZGC・SDL3 の Wayland直結）。
-  採否は実測（paired KPI・p95/p99・スパイク）で決める。
-- **描画系modはすべて競合として排除し、その最適化手法はすべて本体に取り込む。一貫して。**
-  Celeritas/Sodium（地形）、EntityCulling（遮蔽によるentity/TESRの間引き）、ImmediatelyFast（GUI・文字・HUDのbatch）、
-  Enhanced Block Entities（静的TESRのchunk mesh化）、memory系（FoamFix/VintageFix の資源・テクスチャ遅延）などの
-  発想を、別modとの相互運用ではなく本体の一つのscene/可視性/提出経路として実装する。
-- **巨大クラスを分割する。** `VulkanTerrainGpuBackend`（約2万行）を所有権ごとの部品（状態owner・受理・記録・提出・
-  present・診断）へ分け、振る舞いを変えない段階的な抽出で進める。
-- **旧アーキテクチャのコードを削除する。** 置き換わった不要クラス・旧経路・使われない計器/実験switchの
-  **削除行数を成果として数える**（commit messageに記載）。効果の無い実験は残さず消し、CPUテストとlegで無変化を確かめる。
+- **SDL3 / Java 21 / LWJGL 3 / Cleanroom / Vulkan 1.2 でしかできない最適化を積極的に採る**（descriptor indexing・
+  draw indirect count・timeline semaphore・`VkPipelineCache` 永続化・世代別ZGC・SDL3 Wayland直結など）。採否は実測で決める。
+- **描画系modは競合として排除し、その手法を本体の一つのscene/可視性/提出経路に取り込む**: Celeritas/Sodium（地形）、
+  EntityCulling、ImmediatelyFast（GUI・文字・HUDのbatch）、Enhanced Block Entities、FoamFix/VintageFix（資源遅延）。
+- **巨大クラスを分割する**: `VulkanTerrainGpuBackend` を所有権ごと（状態owner・受理・記録・提出・present・診断）に段階抽出。
+- **旧コードを削除する**: 置き換わったクラス・旧経路・使われない計器/実験switchの**削除行数を成果に数える**。
+  効果の無い実験は消し、CPUテストとlegで無変化を確かめる。
 
-それ以外の実装方式（CPUエンジン・内部API・shader・資源配置・描画順・パッケージ構成・キャッシュ・スレッド分担）は
-固定しない。ただしMinecraft/Forgeの観測可能な描画・イベント契約を壊す変更は、互換性向上と取り違えない。
+それ以外の実装方式は固定しない。ただしMinecraft/Forgeの観測可能な描画・イベント契約を壊す変更を互換向上と取り違えない。
 
 ## 完成条件（すべて必要）
 
-1. **性能**：同一条件・hash固定のCeleritas対照に、**AMD RX 6400とIntel UHD 630の双方で、p50・p95・p99のすべてが
-   明確に下回る**（2026-10-25 利用者指示）。3組以上のpaired runで、各指標のratio中央値が1.0未満かつ全対で同じ向き、
-   負荷ゲートを通った形式verdictがあること。起動・移動・チャンク更新・スパイク（16.7/33/50ms超の枚数と最大値）、
-   CPU/GPU時間、メモリと長時間安定性も確認する。
-   描画機能や距離を削って得た比率を同条件の勝利にしない。
-2. **native境界**：sky / terrain / entities / block entities / particles / hand / GUI / font / loading / settingsを含む
-   Minecraft/Forge経路が、GL互換層を逆呼出しせずnativeに描画される。状態query・texture・framebufferも含めて監査する。
-3. **画質**：loading / home / game / settingsの4画面とQMAGNET's Test Mapを、原寸画像・参照・機能別の対照で確認する。
-   粗い色数gateとvalidation cleanだけで画質一致とはしない。
-4. **互換（2026-10-24 改訂・利用者指示）**：Forge APIの公開契約と、**Forge/vanillaの標準描画経路に載るコンテンツ**が
-   欠落・ちらつき・順序・状態漏れなく描かれる。resize、resource reload、world切替、GUI/FBOの寿命も検証する。
-   **描画に手を加えるMod（renderer置換・culling/batching/FPS系・独自shader・描画順/GUI描画の差替え等）は競合として非サポート**で、
-   判明している競合はmod ID・transformer/mixin target・renderer置換の署名で起動時にfail-fastする（曖昧な推測で正常Modを排除しない）。
-   **E2E 1.93a と Cleanroom対応の別の巨大pack（E2E-E）が完全に動作すること**（RLCraft 2.9.3 はCeltium無しでも
-   起動しないため除外）。受入はworldを開いた提示画像に異常が無いこと。除いた描画modの機能
-   （culling・batching・FPS系など）は本体が提供し、残りの全Mod・全コンテンツが欠落・クラッシュ・ちらつきなく動く。
-   依存Modを削除した別packの起動を、完全packの受入にしない。
-5. **影とshaderpack**：**Celtium本体ではなく、Demonica forkの別成果物（AGPL-3.0のaddon jar）**で実現する（2026-10-24 利用者指示）。
-   本体の責務は、そのaddonが接続できる境界（terrain描画・pass・資源の受け渡し）を壊さないこと。受入はaddon側で、
-   両GPUの実画面で影とBSLの描画反映・主要効果・破綻を確認する。本体の優先は①性能→④互換で、影はその後。
+各条件の「閉じる証拠」以外で達成を宣言しない。
+
+1. **性能**：hash固定のCeleritas対照に、**AMD RX 6400とIntel UHD 630の双方で p50・p95・p99 すべてが明確に下回る**（10-25）。
+   3組以上のpaired runで各ratio中央値が1.0未満・全対で同じ向き・負荷ゲート通過。起動・移動・チャンク更新・スパイク
+   （16.7/33/50ms超の枚数と最大値）・CPU/GPU時間・メモリ・長時間安定性も確認。描画を削って得た比率は勝利にしない。
+   *閉じる証拠*: `scripts/gv-kpi.sh` の形式verdict（KPI profile `celtium-world-accept`・validation/readback OFF・
+   warm tick [400,600)）。validation ON の内訳・単発leg・計器込みの ms・旧JARの比では閉じない。
+2. **native境界**：sky / terrain / entities / block entities / particles / hand / GUI / font / loading / settings が
+   GL互換層を逆呼出しせずnativeに描かれる（状態query・texture・framebufferを含む）。
+   *閉じる証拠*: 出荷経路の census（`CELTIUM_GL_SURFACE*`・未route呼出し・program bind/拒否）が Mod 由来だけを示す。
+3. **画質**：loading / home / game / settings の4画面とQMAGNET's Test Mapを原寸で確認。
+   *閉じる証拠*: 同fixture・同poseの GL 参照（Celeritas）との比較と機能別の陽性対照。色数gate・validation clean単独では閉じない。
+4. **互換**（10-24）：Forge API の公開契約と**Forge/vanillaの標準描画経路に載るコンテンツ**が欠落・ちらつき・順序・
+   状態漏れなく描かれる（resize・resource reload・world切替・GUI/FBO寿命を含む）。**描画に手を加えるMod**（renderer置換・
+   culling/batching/FPS系・独自shaderpack・描画順の差替え）は非サポートで、判明した競合は mod ID・transformer/mixin
+   target・署名で起動時にfail-fastする（推測で正常Modを排除しない）。**E2E 1.93a と E2E-E が完全に動作すること**
+   （RLCraft 2.9.3 はCeltium無しでも起動しないため除外）。
+   *閉じる証拠*: 両packの実instance leg（両GPU）で world を開いた提示画像に異常が無いこと。依存Modを抜いたpack・
+   `runClient`・回帰検出用scene（GTCEu/Supersymmetry・SF4）は完全packの受入を代用しない。
+5. **影とshaderpack**：**Demonica forkの別成果物（AGPL-3.0のaddon jar）**で実現（10-24）。本体の責務は接続境界
+   （terrain描画・pass・資源の受け渡し）を壊さないこと。受入はaddon側で両GPUの実画面。本体の優先は①性能→④互換。
 6. **配布**：packaged JARとテスト済み実装が一致し、対応環境・依存・ライセンス・設定・既知の非対応・導入手順が正確。
-   初回導入と長時間プレイでdriver/device lost・資源リーク・受入外の無言の欠落がない。
+   初回導入と長時間プレイでdevice lost・資源リーク・無言の欠落がない。*閉じる証拠*: 配布jarと検証jarの SHA-256 一致。
 
 ## 証拠の最低条件
 
-- full JAR SHA-256、fixture SHA-256、ビルド成功とsource revision/dirty差分、実GPU、scene、camera、flags、測定区間、legを紐づける。
-  **実行時のgit HEADはJARの出自の証明ではない。** build provenanceとstageのbytesを照合する。
-- 性能と画質/validationのrunを分ける。計測負荷を明記し、fixtureを含むframe intervalをrenderer単体時間と呼ばない。
-- 既定のcold区間はworldTicks [120,200)、post-startup区間は [400,600)。後者は50以上のサンプルと区間完了が必要。
-  fixtureは通常約200tickで終了するため、**起動時間の延長だけでなく `holdUntilTick` が必要**。
-  tick番号だけではチャンク構築完了やsteady stateを証明しない。
-- 部分計数から全draw数を断定しない。GPUの成功を別GPUへ、1sceneの成功を全Modへ拡張しない。
-  失敗・未較正・欠測・hash不一致を成功から除外し、画像と診断の不一致を調べる。
+- full JAR／fixture の SHA-256、build provenance と dirty差分、実GPU、scene、camera、flags、測定区間、legを紐づける。
+  **実行時のgit HEADはJARの出自の証明ではない。**
+- 性能と画質/validationのrunを分け、計測負荷を明記する。cold区間は worldTicks [120,200)、post-startup は [400,600)
+  （50サンプル以上・区間完了・`holdUntilTick` が必要）。tick番号はsteady stateを証明しない。
+- 部分計数から全数を、1 GPU・1 sceneの成功を他へ拡張しない。失敗・未較正・欠測・hash不一致は成功から除く。
 - 過去の否定・肯定は再入条件を持つ仮説として扱い、対象artifactと有効な計器から再評価する。

@@ -708,6 +708,14 @@ public final class CeltiumGlStub implements FunctionProvider {
      * "the composite drew and was refused" are different findings. This census is the one that tells them apart.
      */
     private final java.util.Set<Integer> celtium$programDraws = new java.util.HashSet<Integer>();
+    /**
+     * The programs {@code glUseProgram} has bound, so the first bind of each is reported once with its call site.
+     * <p>
+     * The draw census above answers "which program was a draw decoded under"; this one answers "was a program bound at
+     * all, and by whom". They are different findings and the GTCEu bloom investigation needed both: the draw census was
+     * empty because the bind itself never reached the stub.
+     */
+    private final java.util.Set<Integer> celtium$programBinds = new java.util.HashSet<Integer>();
     /** The last name {@code GlStateManager.bindTexture} named. See {@link #celtium$noteBoundTexture}. */
     private volatile int lastBoundTexture = -1;
     /** {@code GL_COMPILE_AND_EXECUTE}: the commands are recorded and also executed as they arrive}. */
@@ -6888,6 +6896,34 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static int celtium$currentProgram() {
         CeltiumGlStub stub = installed;
         return stub == null ? Integer.MIN_VALUE : stub.currentProgram;
+    }
+
+    /**
+     * Records the program {@code glUseProgram} bound, and names the first bind of each program.
+     * <p>
+     * This is the setter the transformer's route calls. It exists because the field was dead in the shipped path: the
+     * stub's own table has answered {@code glUseProgram} with {@code SEM_USE_PROGRAM} since the table was written, but
+     * the transformer rewrites every GL native and answers the ones no route claims with a bare return - so the
+     * trampoline was never reached and {@code currentProgram} stayed 0 for the whole session. The consequence is not
+     * cosmetic: the backend refuses a batch offered while a custom program is bound (it cannot run the program), and
+     * with the field stuck at 0 that refusal could never fire, so a mod's shader-drawn full-screen quad was accepted
+     * and drawn by the immediate pipeline with the world projection instead of being refused and counted. Measured on
+     * the GTCEu scene: {@code CELTIUM_SHADER_PROGRAM_REFUSED} and {@code CELTIUM_PROGRAM_DRAW} both printed zero lines
+     * while GTCEu's bloom composite demonstrably ran.
+     * <p>
+     * The first bind of each program is reported with its call site, because the id alone does not say whose program it
+     * is and the stack does.
+     */
+    public static void celtium$useProgram(int program) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        stub.currentProgram = program;
+        if (program != 0 && stub.celtium$programBinds.add(Integer.valueOf(program))) {
+            System.out.println("[Celtium] CELTIUM_PROGRAM_BOUND program=" + program
+                    + " site=[" + celtium$callSite() + "]");
+        }
     }
 
     /** The scalar half of {@link #getInts}; {@link Integer#MIN_VALUE} means "not a tracked scalar pname". */
