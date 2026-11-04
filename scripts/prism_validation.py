@@ -202,7 +202,14 @@ def inspect(instance, java, fetch_missing=False):
         for lib in data.get("libraries", []):
             if allowed(lib):
                 group, artifact, version, *classifier = lib["name"].split(":")
-                libraries[(group, artifact, tuple(classifier))] = lib
+                # Prism profiles may list one coordinate twice: the class jar (downloads.artifact) and its natives
+                # (downloads.classifiers / "natives", same name, no classifier in it). Keyed alike, the natives entry
+                # replaced the class jar and LWJGL itself left the classpath (2026-11-05: the E2E 1.93a instance died
+                # with NoClassDefFoundError: org/lwjgl/BufferUtils with only lwjgl-3.4.3-natives-linux.jar on it).
+                downloads = lib.get("downloads", {})
+                natives_only = ("natives" in lib or "classifiers" in downloads) and "artifact" not in downloads
+                key = (group, artifact, tuple(classifier) + (("natives",) if natives_only else ()))
+                libraries[key] = lib
     if not main_jar or not main_class or not assets:
         raise ValueError("Profile lacks a main jar, main class or asset index")
 
