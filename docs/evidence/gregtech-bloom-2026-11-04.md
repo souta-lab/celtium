@@ -245,3 +245,27 @@ renders the bloom layer into it, and blends it onto the game's framebuffer; sinc
 blend is alpha blending there, so black over the world means the sampled image is opaque black. Next: check whether
 the off-target pair image's clear keeps the (0,0,0,0) alpha, and whether the published image for 23802 is
 `bloomFBO`'s (the terrain's bloom layer is drawn by the terrain pass, which may not target `bloomFBO` at all).
+
+### Round 8c: the pass list and the pair images (leg `r26-gt`, modPrograms on, `dumpPairsAtPresent=500`)
+
+Every distinct pass input is now logged. One frame of GTCEu's unreal bloom, in order:
+
+1. `IMAGE_F` bloomFBO (tex 23802) -> game framebuffer, blend on
+2. `IMAGE_F` game colour (tex 482) -> pair `0x7494b11` (bloomFBO), blend on (GTCEu: `DST_ALPHA`)
+3. `down_sampling`/`blur` x10 through tex 23814..23830 -> the 640x360 .. 40x22 pairs
+4. `composite` (5 blur levels) -> `0x5bc123c3`; `bloom_combine` (game colour 482 + bloom 23814) -> `0x46a41ce` / `0xb744781`
+5. `IMAGE_F` **tex 23838** -> game framebuffer, **blend off**
+
+Pair dumps (mean RGBA): the two `bloom_combine` targets hold the right scene (110.5/137.5/129.3/255); every
+down/blur pair is opaque black (0/0/0/255); `0x7494b11` is (0,0,0,0).
+
+Readings:
+
+- **The black world** is step 5: a blend-off copy of tex 23838 onto the game's framebuffer, while the combine targets
+  hold the correct picture. So tex 23838 is not resolving to the combine target's image. Next: name 23838's framebuffer
+  identity and the image `celtium$publishFramebufferColorTexture` publishes for it.
+- **Why there is no bloom at all** (also in the GL-refusing default): step 2 builds the bloom mask by drawing the game's
+  colour into bloomFBO with `DST_ALPHA`, which keeps only the pixels where the bloom layer was drawn into bloomFBO. The
+  terrain pass draws the bloom layer into the game's framebuffer instead, so bloomFBO's alpha stays 0, the mask is
+  empty and every level below it is black. The terrain renderer has to honour the framebuffer GTCEu binds around
+  `renderBlockLayer(BLOOM)`.

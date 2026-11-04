@@ -3702,7 +3702,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** One line per program and outcome: which programs draw natively, and why the others do not. */
     private void celtium$reportModProgram(int program, boolean drawn, String detail) {
-        if (this.modProgramReported.add(Integer.valueOf(drawn ? program : -program - 1))) {
+        // Keyed by the detail as well: one program is used for several passes (GTCEu's IMAGE_F copies three
+        // different framebuffers), and which input each pass read is the question a wrong picture asks.
+        if (this.modProgramReported.size() < 64
+                && this.modProgramReported.add(Integer.valueOf((drawn ? program : -program - 1) * 31 + detail.hashCode()))) {
             System.out.println("[Celtium] CELTIUM_MOD_PROGRAM_" + (drawn ? "DRAWN" : "NOT_DRAWN") + " program=" + program
                     + " " + detail);
         }
