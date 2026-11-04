@@ -201,9 +201,12 @@ public final class VulkanModProgramPipeline {
                     .lineWidth(1.0f);
             VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo.calloc(stack)
                     .sType$Default().rasterizationSamples(VK_SAMPLE_COUNT_1_BIT);
+            // Lab switch -Dceltium.vulkan.modProgramDepth=false: no depth test or write for mod passes, to separate a
+            // full-screen quad's depth from its colour when a pass misbehaves (round 8 of the GTCEu bloom evidence).
+            boolean depthOn = !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramDepth", "true"));
             VkPipelineDepthStencilStateCreateInfo depth = VkPipelineDepthStencilStateCreateInfo.calloc(stack)
-                    .sType$Default().depthTestEnable(like.celtium$depthTest())
-                    .depthWriteEnable(like.celtium$depthWrite()).depthCompareOp(like.celtium$depthCompareOp());
+                    .sType$Default().depthTestEnable(depthOn && like.celtium$depthTest())
+                    .depthWriteEnable(depthOn && like.celtium$depthWrite()).depthCompareOp(like.celtium$depthCompareOp());
             VulkanColorBlendState colorBlend = like.celtium$colorBlend();
             VkPipelineColorBlendAttachmentState.Buffer blendAttachment = VkPipelineColorBlendAttachmentState.calloc(1, stack);
             blendAttachment.get(0).blendEnable(colorBlend.blend())

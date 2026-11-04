@@ -230,3 +230,18 @@ So the black comes from the `IMAGE_F` passes into the game's framebuffer. Not ye
 samples the game's colour before the world's own draws have reached that image, so the result written back is black;
 (B) the full-screen quad's depth write (the copied render state) hides the terrain drawn after it. Next measurement:
 dump `bloomFBO` and the combine target after the passes, and repeat with depth write forced off for mod passes.
+
+### Round 8b: what the black is not
+
+| leg | switches (all with modPrograms=true) | world black fraction |
+|---|---|---|
+| `r23-gt` | `modProgramDepth=false` (no depth test/write on mod passes; the copied state already had depthWrite=false) | 0.792 — **(B) rejected** |
+| `r24-gt` | `modProgramsSampleMain=false` (refuses every pass that samples the game's colour, i.e. `bloom_combine` and the copy of the game's colour into `bloomFBO`) | 0.786 — the combine is **not the sole cause** |
+| `r21-gt` | `modProgramsToMain=false` | 0.011 (normal) |
+
+The remaining main-writing pass is `IMAGE_F` drawing `bloomFBO` (GL name 23802, resolved to its published framebuffer
+image) onto the game's framebuffer. From the bytecode: GTCEu sets `bloomFBO`'s clear colour to (0,0,0,0), clears it,
+renders the bloom layer into it, and blends it onto the game's framebuffer; since the GL reference is unharmed, that
+blend is alpha blending there, so black over the world means the sampled image is opaque black. Next: check whether
+the off-target pair image's clear keeps the (0,0,0,0) alpha, and whether the published image for 23802 is
+`bloomFBO`'s (the terrain's bloom layer is drawn by the terrain pass, which may not target `bloomFBO` at all).

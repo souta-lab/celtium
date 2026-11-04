@@ -3579,6 +3579,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Lab switch: {@code false} refuses the mod-program passes whose target is the game's framebuffer. */
     private static final boolean MOD_PROGRAMS_TO_MAIN =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramsToMain", "true"));
+    /** Lab switch: {@code false} refuses the mod-program passes that sample the game's own colour image. */
+    private static final boolean MOD_PROGRAMS_SAMPLE_MAIN =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramsSampleMain", "true"));
     /** The open group is a mod program's draw: nothing else may merge into it, and it into nothing. */
     private boolean currentGroupIsModProgram;
     private final java.util.Map<String, VulkanModProgramPipeline> modProgramPipelines = new java.util.HashMap<>();
@@ -3642,6 +3645,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 return celtium$modFailure(programId, "sampler " + sampler.name() + " (unit " + unit + ", texture "
                         + name + ") is the colour image of the framebuffer being drawn into");
             }
+            if (!MOD_PROGRAMS_SAMPLE_MAIN && this.mainFramebufferColorNames.contains(Integer.valueOf(name))) {
+                return celtium$modFailure(programId, "sampler " + sampler.name() + " reads the game's colour and "
+                        + "-Dceltium.vulkan.modProgramsSampleMain=false refuses that");
+            }
             textures[i] = texture;
             inputs.append(' ').append(sampler.name()).append("=unit").append(unit).append(":tex").append(name)
                     .append(this.mainFramebufferColorNames.contains(Integer.valueOf(name)) ? "(main)" : "")
@@ -3658,7 +3665,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         celtium$reportModProgram(programId, true, "inputs=[" + inputs.toString().trim() + "] target=0x"
                 + Long.toHexString(this.currentFramebufferIdentity) + " targetIsMain="
                 + (this.currentFramebufferIdentity == this.targetRegistry.mainIdentity())
-                + " blend=" + like.celtium$colorBlend().blend());
+                + " blend=" + like.celtium$colorBlend().blend() + " depthTest=" + like.celtium$depthTest()
+                + " depthWrite=" + like.celtium$depthWrite());
         return new PreparedImmediate(new VulkanModProgramPipeline.Draw(pipeline,
                 VulkanModProgramPipeline.packUniforms(program), set), set, 0L);
     }
