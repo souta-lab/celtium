@@ -20,7 +20,7 @@
    | ワールド退出後ボタン無し | **未再現**（既定・日本語・1920×1080）。手順差の手掛かり待ち |
    | ロード画面 | **Forgeのsplashと同じ画面**（ロゴ・メモリ・進捗・Forgeロゴ）をnative描画（`3ebd22e90`） |
    | ログ量 | **タグごと16行上限**（`CeltiumLogLimiter`） |
-   | E2E 1.93a（Cleanroom 0.7） | Intelの読込SIGSEGVと疎なatlas描画拒否は修正候補で各1回通過。最終jarは未再検証・画像比較未成立（[証拠](evidence/e2e-cleanroom07-2026-10-26.md)）。**2026-11-04: ローカルの e2e-1.93a / e2ee-1.87.3 instance は mods が欠落（1 jar）しており再取得が必要** |
+   | E2E 1.93a（Cleanroom 0.7） | Intelの読込SIGSEGVと疎なatlas描画拒否は修正候補で各1回通過。**2026-11-05: 現行jarで AMD/Intel とも PASSED・validation 0**（mods 再取得・harness の natives 修正・lwjgl-vulkan 3.4.3 指定、[証拠](evidence/e2e-cleanroom07-2026-10-26.md)）。地平線の黒帯は無し |
    | vanilla post shader・発光outline | **native描画**（creeper/spider: `12a45471f`、outline合成: `ef807429c`。AMD/Intel world PASSED・validation 0。outlineはwithin-run A/Bで実測＝[証拠](evidence/glow-outline-2026-11-03.md): 2669px・対照0・noise 3.69%・`postChains=1`） |
    texture environment・空framebuffer初期化・公開cache・material寿命の整理は [実装と検証](evidence/native-texture-owner-2026-10-25.md)。
 2. **性能**（KPI flags・1280×720・vsync off/260・`world-0.7.11` instance（Xaeroなし）・3対×240 s、両GPUとも 0.1.1-alpha の jar `9feaa083`（コードは配布jar `a8bd0480`と同一、差はjar内README）＝`54b42982d`）:
