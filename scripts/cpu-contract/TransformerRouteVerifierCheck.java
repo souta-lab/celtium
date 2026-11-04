@@ -65,6 +65,10 @@ public class TransformerRouteVerifierCheck {
         // custom-program refusal could never fire and a mod's full-screen composite was drawn with the world
         // transform. Both spellings are listed because LWJGL declares the JNI and the C form separately.
         "glUseProgram", "nglUseProgram",
+        // A mod's own program: source, attachment, link and uniform values (ModProgramRegistry, 2026-11-05).
+        "nglShaderSource", "glAttachShader", "glLinkProgram", "glDeleteProgram",
+        "glUniform1f", "glUniform2f", "glUniform3f", "glUniform4f", "glUniform1i", "glUniform2i", "glUniform3i",
+        "glUniform4i", "nglUniform1fv", "nglUniform2fv", "nglUniform4fv", "nglUniform1iv", "nglUniformMatrix4fv",
         "nglGetTextureParameterfv", "nglGetTextureParameterIuiv",
         "nglGetSamplerParameteriv", "nglGetSamplerParameterfv", "glGetMultisamplefv",
         "nglColor3fv", "nglColor4fv", "nglColor3bv", "nglColor4bv", "nglColor3ubv", "nglColor4ubv",

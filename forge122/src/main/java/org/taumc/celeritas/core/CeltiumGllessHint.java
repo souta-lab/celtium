@@ -199,6 +199,121 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$useProgram(program);
     }
 
+    /**
+     * {@code glShaderSource}: the strings GL would concatenate, kept so a mod's program can be lowered and run natively
+     * ({@link org.soutalab.celtium.vulkan.gl.ModProgramRegistry}). {@code lengths} 0 or a negative entry means the
+     * string is NUL-terminated.
+     */
+    public static void glShaderSource(int shader, int count, long strings, long lengths) {
+        if (strings == 0L || count <= 0) {
+            return;
+        }
+        StringBuilder source = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            long text = org.lwjgl.system.MemoryUtil.memGetAddress(strings + (long) i * org.lwjgl.system.Pointer.POINTER_SIZE);
+            if (text == 0L) {
+                continue;
+            }
+            int length = lengths == 0L ? -1 : org.lwjgl.system.MemoryUtil.memGetInt(lengths + 4L * i);
+            source.append(length < 0
+                    ? org.lwjgl.system.MemoryUtil.memUTF8(text)
+                    : org.lwjgl.system.MemoryUtil.memUTF8(text, length));
+        }
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.shaderSource(shader, source.toString());
+    }
+
+    public static void glAttachShader(int program, int shader) {
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.attach(program, shader);
+    }
+
+    public static void glLinkProgram(int program) {
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.link(program);
+    }
+
+    public static void glDeleteProgram(int program) {
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.deleteProgram(program);
+    }
+
+    private static int boundProgram() {
+        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$currentProgram();
+    }
+
+    /** The scalar uniform setters: the values belong to the program currently bound, as in GL. */
+    public static void glUniform1f(int location, float x) {
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloats(boundProgram(), location, new float[] {x});
+    }
+
+    public static void glUniform2f(int location, float x, float y) {
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloats(boundProgram(), location, new float[] {x, y});
+    }
+
+    public static void glUniform3f(int location, float x, float y, float z) {
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloats(boundProgram(), location,
+                new float[] {x, y, z});
+    }
+
+    public static void glUniform4f(int location, float x, float y, float z, float w) {
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloats(boundProgram(), location,
+                new float[] {x, y, z, w});
+    }
+
+    public static void glUniform1i(int location, int x) {
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInts(boundProgram(), location, new int[] {x});
+    }
+
+    public static void glUniform2i(int location, int x, int y) {
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInts(boundProgram(), location, new int[] {x, y});
+    }
+
+    public static void glUniform3i(int location, int x, int y, int z) {
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInts(boundProgram(), location, new int[] {x, y, z});
+    }
+
+    public static void glUniform4i(int location, int x, int y, int z, int w) {
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInts(boundProgram(), location,
+                new int[] {x, y, z, w});
+    }
+
+    /**
+     * The pointer forms ({@code nglUniform{1..4}fv}, {@code nglUniformMatrix{2..4}fv}): {@code components} is the
+     * element size the route passes, so one helper serves every spelling. A transposed matrix is stored as GL would
+     * read it (column-major).
+     */
+    public static void glUniformFloatv(int location, int count, long values, int components, boolean transpose,
+                                       int matrixSide) {
+        if (values == 0L || count <= 0) {
+            return;
+        }
+        float[] out = new float[count * components];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = org.lwjgl.system.MemoryUtil.memGetFloat(values + 4L * i);
+        }
+        if (transpose && matrixSide > 0) {
+            for (int m = 0; m < count; m++) {
+                int base = m * components;
+                float[] copy = java.util.Arrays.copyOfRange(out, base, base + components);
+                for (int r = 0; r < matrixSide; r++) {
+                    for (int c = 0; c < matrixSide; c++) {
+                        out[base + c * matrixSide + r] = copy[r * matrixSide + c];
+                    }
+                }
+            }
+        }
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloats(boundProgram(), location, out);
+    }
+
+    /** {@code nglUniform{1..4}iv}. */
+    public static void glUniformIntv(int location, int count, long values, int components) {
+        if (values == 0L || count <= 0) {
+            return;
+        }
+        int[] out = new int[count * components];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = org.lwjgl.system.MemoryUtil.memGetInt(values + 4L * i);
+        }
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInts(boundProgram(), location, out);
+    }
+
     /** The DSA spellings of the texture-parameter setter (the first argument is the texture name). */
     public static void glTextureParameteri(int texture, int pname, int value) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$textureParameteri(texture, pname, value);

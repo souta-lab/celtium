@@ -8987,8 +8987,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 this.shaderProgramRefusedPrograms.put(boundProgram,
                         this.shaderProgramRefusedPrograms.get(boundProgram) + 1);
                 if (seenCount == null) {
+                    org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program modProgram =
+                            org.soutalab.celtium.vulkan.gl.ModProgramRegistry.program(boundProgram);
                     System.out.println("[Celtium] CELTIUM_SHADER_PROGRAM_REFUSED program=" + boundProgram
                             + " format=" + formatId
+                            // Whether the program could run natively: lowered by the stub's registry, and how many
+                            // of its uniform writes arrived (a zero says the values would be missing, not the code).
+                            + " lowered=" + (modProgram == null ? "unseen"
+                                    : modProgram.lowered() == null ? "unlinked" : modProgram.lowered().ok())
+                            + " uniformWrites=" + (modProgram == null ? 0 : modProgram.uniformWrites())
                             + " (first batch refused with this program bound)");
                     // The call site, once per program: the id and the format say a custom program drew coloured quads,
                     // which is not enough to know what to support. The stack names it.

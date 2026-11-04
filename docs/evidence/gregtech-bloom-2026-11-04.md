@@ -135,3 +135,29 @@ including the seven the bloom chain uses (`image`, `down_sampling`, `up_sampling
 Still missing for the bloom to appear: the stub has to keep the sources and `glUniform*` values per program, the
 backend has to build a pipeline from the SPIR-V and run the batch into the mod's framebuffer, and the shipped jar has
 to carry shaderc's natives (distribution decision, see the report of 2026-11-04).
+
+## Round 6: the stub keeps each mod program's sources, link result and uniform values
+
+`glShaderSource`/`glAttachShader`/`glLinkProgram`/`glDeleteProgram` and every `glUniform*` spelling (scalar,
+pointer and matrix forms, ARB included) were listed no-ops; they now route to `ModProgramRegistry`, which lowers the
+program at link (`CELTIUM_MOD_PROGRAM_LINKED`) and stores uniform values under the uniform's name (the stub's
+location is the name hash, so a location maps back once the program is linked). The refusal line now says whether the
+refused program could run natively.
+
+Leg `r13-gt` (renderer `bc7f37b5…`, fixture `22fcf3e0…`, AMD RX 6400, scene=gregtech): PASSED,
+validationMessageCount=0, gpuRequirementMet=true.
+
+```
+CELTIUM_SHADER_PROGRAM_REFUSED program=23812 format=6 lowered=true uniformWrites=0
+CELTIUM_SHADER_PROGRAM_REFUSED program=23841 format=6 lowered=true uniformWrites=4
+CELTIUM_SHADER_PROGRAM_REFUSED program=23842 format=6 lowered=true uniformWrites=7
+CELTIUM_SHADER_PROGRAM_REFUSED program=23843 format=6 lowered=true uniformWrites=6
+```
+
+All four bloom programs are lowered and carry their values (23812 is the one-sampler `image` pass, which sets
+nothing). Leg `r13-world` (same jar, `celtium-world-accept`, 188 mods, validation on): PASSED,
+validationMessageCount=0; the ten programs linked in that run all lowered. CPU: route verifier 259 calls / 87
+classes / 0 failures, `:celtium-vulkan:test` green.
+
+What remains for the bloom: run the batch natively (pipeline from the SPIR-V, the block packed from the recorded
+values, samplers resolved from texture units to native images, the mod framebuffer as target) and ship shaderc.

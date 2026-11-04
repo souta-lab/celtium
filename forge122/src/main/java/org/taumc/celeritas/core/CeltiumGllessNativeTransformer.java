@@ -51,19 +51,14 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // is on (the default), and the route is consulted before this set, so an entry here only answers the calls
             // a run with -Dceltium.gless.legacyImmediate=false still makes.
             "glTexCoord2f", "glTexCoord2d", "glVertex3f",
-            // The uniform setters are listed no-ops in the stub's table (the programs those values belong to are
-            // GL-less stubs, so nothing reads them); the measured session called them 4.0e4 times. The three below
-            // are absent from the table entirely and reach the generic unknown-symbol no-op, 5.9e3 calls together.
-            "glUniform1i", "glUniform1f", "glUniform2f", "glUniform3f", "glUniform4f",
-            "glUniform1iv", "glUniform2iv", "glUniform3iv", "glUniform4iv",
-            "glUniform1fv", "glUniform2fv", "glUniform3fv", "glUniform4fv",
-            "glUniformMatrix2fv", "glUniformMatrix3fv", "glUniformMatrix4fv",
+            // The uniform setters, the shader source, attachment and link are routed to ModProgramRegistry
+            // (celtium$routeModProgram, 2026-11-05) and are therefore absent.
             "glClearStencil", "glVertex2i", "glLineStipple",
             // The attribute stacks and the mod-shader entry points are listed no-ops as well: GL-less has no attribute
             // stack to push, and a mod's GL program is a stub whose uniforms nothing reads. Their combined call volume
             // in the measured session was 3.4e3.
             // glPushAttrib/glPopAttrib and the client pair are routed below to their state records.
-            "glCompileShader", "glAttachShader", "glShaderSource", "glLinkProgram",
+            "glCompileShader",
             // Spellings whose only route belongs to the legacy capture, which is armed by
             // -Dceltium.gless.legacyImmediate=true and runs above this set. With the switch off the answer here is GL's
             // silent no-op without a native crossing - the same answer these calls had before a route existed - and
@@ -765,6 +760,100 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
     }
 
+    private static final java.util.regex.Pattern MOD_UNIFORM_SCALAR =
+            java.util.regex.Pattern.compile("glUniform([1-4])([fi])(ARB)?");
+    private static final java.util.regex.Pattern MOD_UNIFORM_VECTOR =
+            java.util.regex.Pattern.compile("nglUniform([1-4])([fi])v(ARB)?");
+    private static final java.util.regex.Pattern MOD_UNIFORM_MATRIX =
+            java.util.regex.Pattern.compile("nglUniformMatrix([2-4])fv(ARB)?");
+
+    /**
+     * A mod's own program: its sources, attachment, link and uniform values reach
+     * {@code ModProgramRegistry} (2026-11-05). Until now these were listed no-ops, so a program bound for a draw was an
+     * empty id and its batch could only be refused; GTCEu's bloom programs are the measured case. The ARB spellings
+     * (glShaderSourceARB, glAttachObjectARB, glLinkProgramARB, glUniform*ARB) take the same arguments.
+     */
+    private static boolean celtium$routeModProgram(MethodVisitor method, String name, String descriptor) {
+        String hint = "org/taumc/celeritas/core/CeltiumGllessHint";
+        if ((name.equals("nglShaderSource") || name.equals("nglShaderSourceARB")) && "(IIJJ)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitVarInsn(Opcodes.LLOAD, 2);
+            method.visitVarInsn(Opcodes.LLOAD, 4);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glShaderSource", "(IIJJ)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return true;
+        }
+        if ((name.equals("glAttachShader") || name.equals("glAttachObjectARB")) && "(II)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glAttachShader", "(II)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return true;
+        }
+        if ((name.equals("glLinkProgram") || name.equals("glLinkProgramARB")) && "(I)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glLinkProgram", "(I)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return true;
+        }
+        if (name.equals("glDeleteProgram") && "(I)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glDeleteProgram", "(I)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return true;
+        }
+        java.util.regex.Matcher scalar = MOD_UNIFORM_SCALAR.matcher(name);
+        if (scalar.matches()) {
+            int n = Integer.parseInt(scalar.group(1));
+            boolean isFloat = "f".equals(scalar.group(2));
+            String expected = "(I" + (isFloat ? "F" : "I").repeat(n) + ")V";
+            if (!expected.equals(descriptor)) {
+                return false;
+            }
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            for (int i = 0; i < n; i++) {
+                method.visitVarInsn(isFloat ? Opcodes.FLOAD : Opcodes.ILOAD, 1 + i);
+            }
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glUniform" + n + (isFloat ? "f" : "i"), expected,
+                    false);
+            method.visitInsn(Opcodes.RETURN);
+            return true;
+        }
+        java.util.regex.Matcher vector = MOD_UNIFORM_VECTOR.matcher(name);
+        if (vector.matches() && "(IIJ)V".equals(descriptor)) {
+            int n = Integer.parseInt(vector.group(1));
+            boolean isFloat = "f".equals(vector.group(2));
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitVarInsn(Opcodes.LLOAD, 2);
+            method.visitIntInsn(Opcodes.BIPUSH, n);
+            if (isFloat) {
+                method.visitInsn(Opcodes.ICONST_0);
+                method.visitInsn(Opcodes.ICONST_0);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glUniformFloatv", "(IIJIZI)V", false);
+            } else {
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glUniformIntv", "(IIJI)V", false);
+            }
+            method.visitInsn(Opcodes.RETURN);
+            return true;
+        }
+        java.util.regex.Matcher matrix = MOD_UNIFORM_MATRIX.matcher(name);
+        if (matrix.matches() && "(IIZJ)V".equals(descriptor)) {
+            int side = Integer.parseInt(matrix.group(1));
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitVarInsn(Opcodes.ILOAD, 1);
+            method.visitVarInsn(Opcodes.LLOAD, 3);
+            method.visitIntInsn(Opcodes.BIPUSH, side * side);
+            method.visitVarInsn(Opcodes.ILOAD, 2);
+            method.visitIntInsn(Opcodes.BIPUSH, side);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glUniformFloatv", "(IIJIZI)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return true;
+        }
+        return false;
+    }
+
     private static void emitDefaultReturn(MethodVisitor method, String name, String descriptor) {
         if (emitNativeRasterAdapter(method, name, descriptor)) return;
         if (emitRawColourRoute(method, name, descriptor)) return;
@@ -798,6 +887,9 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glUseProgram", "(I)V", false);
             method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        if (celtium$routeModProgram(method, name, descriptor)) {
             return;
         }
         if (("nglDepthFunc".equals(name) || "glDepthFunc".equals(name)) && "(I)V".equals(descriptor)) {

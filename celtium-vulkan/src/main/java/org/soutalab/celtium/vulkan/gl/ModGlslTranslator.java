@@ -60,7 +60,7 @@ public final class ModGlslTranslator {
     private static final Pattern EXTENSION = Pattern.compile("^\\s*#\\s*extension[^\\n]*\\n?", Pattern.MULTILINE);
     /** A global declaration with a storage qualifier: qualifier, optional precision, type, declarators. */
     private static final Pattern DECLARATION = Pattern.compile(
-            "(?m)^[ \\t]*(attribute|varying|uniform)\\s+(?:(?:lowp|mediump|highp)\\s+)?(\\w+)\\s+([^;{}()]+);");
+            "(?<![\\w.])(attribute|varying|uniform)\\s+(?:(?:lowp|mediump|highp)\\s+)?(\\w+)\\s+([^;{}()]+);");
     private static final Pattern DECLARATOR = Pattern.compile("^\\s*(\\w+)\\s*(?:\\[\\s*(\\d+)\\s*\\])?\\s*(?:=.*)?$");
     private static final Pattern MAIN = Pattern.compile("\\bvoid\\s+main\\s*\\(\\s*(?:void)?\\s*\\)");
 
