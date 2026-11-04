@@ -4,7 +4,7 @@
   "refmap": "mixins.celeritas.refmap.json",
   "plugin": "org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin",
   "package": "org.taumc.celeritas.mixin",
-  "compatibilityLevel": "JAVA_8",
+  "compatibilityLevel": "JAVA_11",
   "client": [
     "core.SplashProgressMixin",
     "core.GLAllocationMixin"
