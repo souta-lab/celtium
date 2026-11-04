@@ -182,3 +182,27 @@ CELTIUM_MOD_PROGRAM_LINKED program=23843 compiled=true spirvBytes=2584 lowered=t
 
 Without the native (every ordinary install today) the line reads `compiled=false compileFailure=shaderc unavailable`
 and `CELTIUM_MOD_SHADERC available=false reason=...` names why, once.
+
+## Next unit: run the batch natively (design, not built)
+
+What exists: per program, the lowered stages and their SPIR-V, the std140 member offsets, the sampler bindings
+(1..n), and the recorded uniform values by name (`ModProgramRegistry.Program`). The batch arrives at the
+immediate path's program refusal (`submitImmediateBatchBody`, the `boundProgram != 0` branch).
+
+Steps, each separately verifiable on the gregtech scene:
+
+1. **Vertex inputs.** GL aliases generic attribute 0 with the conventional vertex position, which is how GTCEu's
+   `attribute vec2 position` is fed by a Tessellator POSITION_TEX batch. Map: location 0 <- position; a lowered
+   `celtium_MultiTexCoord0` <- the batch's UV; `celtium_Color` <- its colour. Refuse any other attribute.
+2. **Inputs.** A sampler's value is a texture unit; the texture bound on that unit at draw time is the input. Check
+   that the stub/state mirror keeps the binding per unit (GTCEu binds its FBO textures on units 0..4 with
+   `GlStateManager.setActiveTexture`), and resolve each name to its native image through the texture registry.
+3. **Executor.** Generalise `VulkanPostChain.Program` from its fixed table (two samplers, UBO at binding 2) to a
+   program built from runtime SPIR-V with N samplers at bindings 1..n and the block at binding 0, and a pass whose
+   output is the mod framebuffer currently bound (the raw/mod FBO target the off-target routing already resolves).
+4. **Ordering.** Treat the batch like a post-chain pass inside the immediate stream: flush the open window, record
+   the pass with the read barriers the chain already issues for its inputs, then continue.
+5. **Verify.** The lamp-row metrics in this file (lamp box mean RGB ~243, near-white halo fraction ~0.128 in the GL
+   reference vs ~171 / 0.028 now) are the acceptance numbers, on both GPUs, validation 0.
+
+Distribution: libshaderc for Windows and Linux (~4 MB each) has to ship for any of this to run outside a leg.
