@@ -9147,6 +9147,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // vertex conversion that would quantise the tint to eight bits. The pair says whether that is the
                     // transition at all.
                     this.mergeRefusal("format-" + this.currentGroupFormatId + ">" + formatId);
+                    // Cross-tab, not a refusal: the keys start with "xtab-" and are not part of the sum that equals
+                    // groupCreateCount. The two structural answers to format alternation - one pipeline for both
+                    // layouts, or a second open group - only pay when the other terms would have merged: unifying the
+                    // layout buys nothing for an alternation that also changes texture, and a second slot reorders
+                    // draws, which is only invisible when the batch is opaque, depth-tested and depth-writing.
+                    this.mergeRefusal("xtab-format-" + (this.currentGroupTexture == boundTexture ? "sametex" : "difftex")
+                            + (this.immediateState.blendEnabled() ? "-blend"
+                                    : (this.immediateState.depthTestEnabled() && this.immediateState.depthMask()
+                                            ? "-opaque" : "-nodepth")));
                 } else if (this.currentGroupTexture != boundTexture) {
                     this.mergeRefusal("texture");
                 } else if (this.currentGroupStateKey != stateKey) {

@@ -39,7 +39,7 @@
      **round 60 実測（出荷コード `acbe9428…`、AMD、[証拠](evidence/window-clear-order-2026-11-04.md)）**:
      frame 1322 = world 861 + gui 421 + hand 50。**85% は Celtium の即時経路**（受理 161 offer × 4024 ns ＝ 648 µs
      ＋ `flush` 392 ＋ `guiFlush` 81）。単位は **offer 160.8 / group 131.9 / 窓 23.4**。
-     次の構造的な一手は**不透明 group だけの 2 スロット open group**（format 交替 63% を畳む）。
+     **format 交替は texture も必ず違う**（同texture 0件、[証拠](evidence/format-alternation-xtab-2026-11-04.md)）→ layout 統合は棄却。2 スロット open group の上限は不透明分 25/113 group。
      受理経路の名前付き内訳は 889 ns/offer だけで **3135 ns が未帰属**（`prepare` 493・`stateKey` 199・
      `captureState` 98・`checks` 61）。prepare キャッシュの詰め直しは**効果が測定限界以下**だった。
      **round 59 実測（µs 分解能）**（[証拠](evidence/pass-split-micros-2026-11-04.md)）: `flush` 486 = `winRecord` 364 =
