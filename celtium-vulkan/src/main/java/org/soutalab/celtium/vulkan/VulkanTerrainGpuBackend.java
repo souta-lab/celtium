@@ -3184,6 +3184,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     private void celtium$noteFrameBoundary(String where) {
+        if (MOD_READBACK) {
+            celtium$reportModInputReadback();
+        }
         if (!FRAME_STATS) {
             return;
         }
@@ -3690,11 +3693,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + like.celtium$colorBlend().dstAlpha() + ") glBlend=" + this.immediateState.blendSrcRgb() + ","
                 + this.immediateState.blendDstRgb() + " depthTest=" + like.celtium$depthTest()
                 + " depthWrite=" + like.celtium$depthWrite());
-        String label = MOD_TRACE_FRAMES > 0 ? "program=" + programId + " offeredFrame=" + this.frameId
+        String label = MOD_TRACE_FRAMES > 0 || MOD_READBACK ? "program=" + programId + " offeredFrame=" + this.frameId
                 + " target=0x" + Long.toHexString(this.currentFramebufferIdentity) + " inputs=[" + inputs.toString().trim()
                 + "]" : null;
         return new PreparedImmediate(new VulkanModProgramPipeline.Draw(pipeline,
-                VulkanModProgramPipeline.packUniforms(program), set, label), set, 0L);
+                VulkanModProgramPipeline.packUniforms(program), set, label, textures), set, 0L);
     }
 
     /**
@@ -3724,6 +3727,135 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
         }
         return texture;
+    }
+
+    /**
+     * {@code -Dceltium.debug.modProgramReadback=true}: once, in the first window from frame 300 that carries a
+     * mod-program pass, copy the centre pixel of every image those passes sample into a host buffer before the pass
+     * begins, and print the values four frames later. This is what a pass actually reads, measured in the command
+     * stream at the point it reads it - the question the GTCEu bloom copy left open (the image is right at present
+     * and the pass reads black).
+     */
+    private static final boolean MOD_READBACK = Boolean.getBoolean("celtium.debug.modProgramReadback");
+    /** Read barrier before windows that carry a mod pass; default on, {@code -Dceltium.vulkan.modReadBarrier=false}. */
+    private static final boolean MOD_READ_BARRIER =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modReadBarrier", "true"));
+
+    /** {@return whether a queued group for {@code target} is a mod program's draw}. */
+    private boolean celtium$queuedForTargetHasModProgram(long target) {
+        for (int i = 0, n = this.immediateGroups.size(); i < n; i++) {
+            ImmediateGroup group = this.immediateGroups.get(i);
+            if (group.target == target && group.prepared != null
+                    && group.prepared.pipeline instanceof VulkanModProgramPipeline.Draw) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private VulkanHostBuffer modReadbackBuffer;
+    private int modReadbackProbeLines;
+
+    private long celtium$firstModGroupTarget() {
+        for (int i = 0, n = this.immediateGroups.size(); i < n; i++) {
+            ImmediateGroup g = this.immediateGroups.get(i);
+            if (g.prepared != null && g.prepared.pipeline instanceof VulkanModProgramPipeline.Draw) {
+                return g.target;
+            }
+        }
+        return 0L;
+    }
+    private java.util.List<String> modReadbackLabels;
+    private long modReadbackFrame;
+
+    private void celtium$recordModInputReadback(long target) {
+        java.util.List<VulkanGlTexture> images = new java.util.ArrayList<>();
+        java.util.List<String> labels = new java.util.ArrayList<>();
+        for (int i = 0, n = this.immediateGroups.size(); i < n && images.size() < 16; i++) {
+            ImmediateGroup group = this.immediateGroups.get(i);
+            if (group.target != target || group.prepared == null
+                    || !(group.prepared.pipeline instanceof VulkanModProgramPipeline.Draw draw)
+                    || draw.pipeline.blends) {
+                continue;
+            }
+            for (VulkanGlTexture input : draw.inputs) {
+                if (input != null && input.image() != 0L && images.size() < 16) {
+                    images.add(input);
+                    labels.add((draw.label == null ? "pass" : draw.label.replaceAll(" inputs=.*", "")) + " input=0x"
+                            + Long.toHexString(input.image()) + " " + input.width() + "x" + input.height());
+                }
+            }
+        }
+        if (this.modReadbackProbeLines < 12) {
+            int modGroups = 0;
+            for (int i = 0, n = this.immediateGroups.size(); i < n; i++) {
+                ImmediateGroup g = this.immediateGroups.get(i);
+                if (g.prepared != null && g.prepared.pipeline instanceof VulkanModProgramPipeline.Draw) {
+                    modGroups++;
+                }
+            }
+            if (modGroups > 0) {
+                this.modReadbackProbeLines++;
+                System.out.println("[Celtium] CELTIUM_MOD_READBACK_PROBE frame=" + this.frameId + " window=0x"
+                        + Long.toHexString(target) + " queuedModGroups=" + modGroups + " opaqueInputsHere="
+                        + images.size() + " firstModGroupTarget=0x" + Long.toHexString(celtium$firstModGroupTarget()));
+            }
+        }
+        if (images.isEmpty()) {
+            return;
+        }
+        if (this.modReadbackBuffer == null) {
+            this.modReadbackBuffer = new VulkanHostBuffer(this.context, 64L,
+                    org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        }
+        org.lwjgl.system.MemoryUtil.memSet(this.modReadbackBuffer.mappedAddress(), 0x5A, 64L);
+        try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+            org.lwjgl.vulkan.VkMemoryBarrier.Buffer before = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
+            before.get(0).sType$Default()
+                    .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                            | org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT);
+            this.context.celtium$beforeBarrier(this.commandBuffer.address());
+            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(this.commandBuffer,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, before, null, null);
+            for (int i = 0; i < images.size(); i++) {
+                VulkanGlTexture image = images.get(i);
+                org.lwjgl.vulkan.VkBufferImageCopy.Buffer region = org.lwjgl.vulkan.VkBufferImageCopy.calloc(1, stack);
+                region.get(0).bufferOffset(4L * i).bufferRowLength(0).bufferImageHeight(0);
+                region.get(0).imageSubresource().set(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1);
+                region.get(0).imageOffset().set(Math.max(0, image.width() / 2), Math.max(0, image.height() / 2), 0);
+                region.get(0).imageExtent().set(1, 1, 1);
+                org.lwjgl.vulkan.VK10.vkCmdCopyImageToBuffer(this.commandBuffer, image.image(),
+                        org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL, this.modReadbackBuffer.buffer(), region);
+            }
+            org.lwjgl.vulkan.VkMemoryBarrier.Buffer after = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
+            after.get(0).sType$Default().srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT)
+                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT
+                            | org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(this.commandBuffer,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, after, null, null);
+        }
+        this.modReadbackLabels = labels;
+        this.modReadbackFrame = this.frameId;
+    }
+
+    /** Prints the readback once the frame that recorded it is certainly complete. */
+    private void celtium$reportModInputReadback() {
+        if (this.modReadbackLabels == null || this.modReadbackFrame < 0 || this.frameId < this.modReadbackFrame + 4) {
+            return;
+        }
+        long base = this.modReadbackBuffer.mappedAddress();
+        for (int i = 0; i < this.modReadbackLabels.size(); i++) {
+            int r = org.lwjgl.system.MemoryUtil.memGetByte(base + 4L * i) & 0xFF;
+            int g = org.lwjgl.system.MemoryUtil.memGetByte(base + 4L * i + 1) & 0xFF;
+            int b = org.lwjgl.system.MemoryUtil.memGetByte(base + 4L * i + 2) & 0xFF;
+            int a = org.lwjgl.system.MemoryUtil.memGetByte(base + 4L * i + 3) & 0xFF;
+            System.out.println("[Celtium] CELTIUM_MOD_READBACK recordedFrame=" + this.modReadbackFrame + " "
+                    + this.modReadbackLabels.get(i) + " centre=(" + r + "," + g + "," + b + "," + a + ")");
+        }
+        this.modReadbackFrame = -1L;
     }
 
     private PreparedImmediate celtium$modFailure(int programId, String reason) {
@@ -13885,6 +14017,30 @@ this.frameBufferOpen = false;
         // transition is recorded outside the pass, before the draw, like the outline's.
         // Its own bracket: the loop walks every published name (38 at the end of the measured run) and each name costs
         // hash lookups under VulkanGlTexture's monitor, so this is the candidate for the window's unnamed remainder.
+        // The window's own target. activeImmediateTarget is only assigned when the pass begins, further down, so at
+        // this point it still names the previous window's target (measured: every probe here saw the queued mod group
+        // of the window *before*).
+        long windowTarget = this.targetRegistry.currentIdentity();
+        if (MOD_READBACK && this.modReadbackLabels == null && this.frameId >= 300) {
+            celtium$recordModInputReadback(windowTarget);
+        }
+        if (MOD_READ_BARRIER && celtium$queuedForTargetHasModProgram(windowTarget)) {
+            // A mod pass samples framebuffers earlier windows of this frame drew into; they stay in GENERAL, and
+            // nothing else makes one pass's colour writes visible to a later pass's fragment reads.
+            try (org.lwjgl.system.MemoryStack barrierStack = org.lwjgl.system.MemoryStack.stackPush()) {
+                org.lwjgl.vulkan.VkMemoryBarrier.Buffer barrier =
+                        org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, barrierStack);
+                barrier.get(0).sType$Default()
+                        .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                                | org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT)
+                        .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT);
+                this.context.celtium$beforeBarrier(this.commandBuffer.address());
+                org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(this.commandBuffer,
+                        org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+                                | org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, barrier, null, null);
+            }
+        }
         org.soutalab.celtium.vulkan.FramePassTimings.begin("winPublish");
         try {
             this.postChainBridge.celtium$transitionPublishedFrameTextures(false);
@@ -21004,7 +21160,8 @@ this.frameBufferOpen = false;
                             // source reads that source's previous contents.
                             this.modTraceLines++;
                             System.out.println("[Celtium] CELTIUM_MOD_DRAW_ORDER recordFrame=" + this.frameId
-                                    + " seq=" + this.modTraceLines + " groupTarget=0x" + Long.toHexString(group.target)
+                                    + " seq=" + this.modTraceLines + " site=" + this.immediateDrawSite
+                                    + " groupTarget=0x" + Long.toHexString(group.target)
                                     + " " + value.label);
                         }
                         value.draw(this.commandBuffer, mesh, this.immediateBindCache);

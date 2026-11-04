@@ -39,12 +39,16 @@ public final class VulkanModProgramPipeline {
         final long samplerSet;
         /** What this pass reads and writes, for the record-order trace; never read by the draw. */
         public final String label;
+        /** The images the pass samples, for the mid-frame readback instrument only. */
+        public final VulkanGlTexture[] inputs;
 
-        Draw(VulkanModProgramPipeline pipeline, ByteBuffer uniforms, long samplerSet, String label) {
+        Draw(VulkanModProgramPipeline pipeline, ByteBuffer uniforms, long samplerSet, String label,
+             VulkanGlTexture[] inputs) {
             this.pipeline = pipeline;
             this.uniforms = uniforms;
             this.samplerSet = samplerSet;
             this.label = label;
+            this.inputs = inputs;
         }
 
         public void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, long[] bindCache) {
@@ -56,6 +60,8 @@ public final class VulkanModProgramPipeline {
     private final ModGlslTranslator.Result lowered;
     private final int samplerCount;
     private final int pushBytes;
+    /** Whether the pass blends (its render state as built); the readback instrument looks for the blend-off copy. */
+    boolean blends;
     private long setLayout = VK_NULL_HANDLE;
     private long pipelineLayout = VK_NULL_HANDLE;
     private long pipeline = VK_NULL_HANDLE;
@@ -217,6 +223,7 @@ public final class VulkanModProgramPipeline {
                 colorBlend = VulkanColorBlendState.of(true, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE,
                         VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE, VK_BLEND_OP_ADD, VK_BLEND_OP_ADD, 0xF);
             }
+            this.blends = colorBlend.blend();
             VkPipelineColorBlendAttachmentState.Buffer blendAttachment = VkPipelineColorBlendAttachmentState.calloc(1, stack);
             blendAttachment.get(0).blendEnable(colorBlend.blend())
                     .srcColorBlendFactor(colorBlend.srcColor()).dstColorBlendFactor(colorBlend.dstColor())

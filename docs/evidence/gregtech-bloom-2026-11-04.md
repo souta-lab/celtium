@@ -323,3 +323,30 @@ chain-pair image of the combine's own framebuffer in GENERAL, adds nothing when 
 the right scene at present. Not established: what the image holds *at the copy*. The repository's
 `celtium.debug.sampleWindowImages` is declared but never read, so the next unit is a real mid-frame readback of a
 sampled pair (one pixel, copied to a host buffer before the copy's window and read after the frame fence).
+
+## Round 9: fixed — the read barrier was right, the earlier test put it on the wrong window
+
+The window prefix in `recordImmediateOnlyPass` runs **before** `activeImmediateTarget` is assigned for the window (it
+is set where the pass begins), so anything at the prefix that asks "this window's target" through that field reads
+the *previous* window's target. A probe there proved it: every window saw the queued mod group of the window before.
+That invalidates round 8b/8e's barrier test (r35-gt), which keyed on the field and so never fired before the copy.
+
+Keyed on `targetRegistry.currentIdentity()` instead, the same global barrier (colour/transfer write -> fragment
+read, outside the pass, only for windows that carry a mod pass) fixes the world:
+
+| leg | renderer | setting | result |
+|---|---|---|---|
+| `r42-gt` | `d2f6be19…` | `modPrograms=true` (+ libshaderc for the leg) | **PASSED**, validationMessageCount=0, world 7012 colours, black 0.011492 |
+| `r42-gt` | same | `modProgramReadback=true` | the copy's input centre pixel read **(135,50,9,255)** at the moment the copy runs |
+| `r42-world` | same | default (off) | PASSED, validation 0 |
+
+![modPrograms on](gregtech-mod-programs-on-2026-11-05.png)
+
+With the programs running, GTCEu's machine overlays drawn in its bloom layer (the light bars and screens on the second
+row) now appear — the first `IMAGE_F` pass composites them. The lamp halo is still absent because bloomFBO's mask is
+empty (the terrain pass draws the bloom layer into the game's framebuffer, round 8c). Still opt-in until compared with
+the GL reference and until libshaderc ships.
+
+Latent issue found on the way, not changed here: the existing prefix call
+`celtium$queuedForTargetUsesPublished(this.activeImmediateTarget)` (the published chain output's sampled-layout
+transition) reads the same stale field.
