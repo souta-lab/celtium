@@ -6242,13 +6242,159 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return this.clearOrderFlushesZeroMask;
     }
 
+    /**
+     * Whether the ordering flush a {@code glClear} asks for can be skipped because the clear's own image has no
+     * pending draws.
+     * <p>
+     * The flush exists for one rule (audit S10): what the renderer already accepted has to reach the image before the
+     * clear erases it. It is a rule about <em>one image</em>. The queue, though, holds groups for every target the
+     * frame has offered, and the flush draws all of them - so a clear on a mod's framebuffer used to submit the
+     * window's own composite groups, which that clear cannot touch, and open a window for them.
+     * <p>
+     * Measured on leg {@code r61a-defer} (AMD RX 6400, 1680 world frames): {@code celtium/clears[main=38690
+     * foreign=8058]} - 27.8 clears a frame, 83% of them on the main framebuffer - and every foreign clear logged
+     * {@code queued=1 lastQueuedTarget=0x0}: the queue held a group for the window identity, the clear named a mod's
+     * framebuffer, and the flush drew the former for a clear that could not reach it. The marker route this replaced
+     * (attach the clear to a queued group of its own target) never fired once - {@code clearOrderDeferred=0} - because
+     * a mod clears its framebuffer right after binding it, before it has queued a draw.
+     * <p>
+     * So the question is not "can the clear ride the queue" but "does the clear's image have anything queued". The
+     * answer is the same one {@link #celtium$gameClear} acts on, read from the same state: the stub's current draw
+     * framebuffer, resolved to an object identity the same way (the raw name first, then the colour texture the attach
+     * recorded). Two identities share an image and must be treated as one: the main identity and identity 0 both draw
+     * into the frame image ({@code routeLabelForBinding}); every other non-main identity owns its own chain pair.
+     */
+    private static final boolean CLEAR_SKIP_FLUSH =
+            Boolean.parseBoolean(System.getProperty("celtium.vulkan.clearSkipFlush", "true"));
+
+    /** Clear-order flushes skipped because the clear's own image had no pending draws. */
+    long clearOrderSkipped;
+    /** {@return clear-order flushes skipped by {@link #CLEAR_SKIP_FLUSH}}, so the window saving can be priced. */
+    public long clearOrderSkippedFlushes() {
+        return this.clearOrderSkipped;
+    }
+
+    /** The GL clear bits this renderer owns: colour (0x4000) and depth (0x0100). Stencil is not implemented. */
+    private static final int CLEAR_ORDER_MASK = 0x4100;
+
+    /**
+     * {@return whether a GL clear mask names an attachment this renderer owns}, the mask half of the clear-order rule.
+     * <p>
+     * A clear of neither colour nor depth erases nothing the renderer holds, so the accepted draws have nothing to be
+     * ordered against. Stencil is the case that matters: the measured scene's dominant clear is ModularUI's
+     * {@code Stencil#reset} (mask 0x400), issued between GUI widgets, and it used to submit the GUI batch it cannot
+     * touch - one window per widget.
+     */
+    static boolean celtium$clearNamesOwnedAttachment(int mask) {
+        return (mask & CLEAR_ORDER_MASK) != 0;
+    }
+
+    /** Clear-order flushes skipped because the clear named neither colour nor depth. */
+    long clearOrderNoTargetMask;
+    /** {@return clear-order flushes skipped for a mask this renderer does not own}, so the share can be priced. */
+    public long clearOrderNoTargetMaskFlushes() {
+        return this.clearOrderNoTargetMask;
+    }
+
     public void flushBeforeClear(int mask) {
         if (this.immediateWindowBusy) return; // bridge GL state restore must not recursively flush
         if (mask == 0) {
             this.clearOrderFlushesZeroMask++;
         }
+        if (!celtium$clearNamesOwnedAttachment(mask)) {
+            // A clear of neither colour nor depth erases nothing this renderer owns, so there is nothing for the
+            // accepted draws to be ordered against. The rule was written for mask 0 alone; the measured scene's
+            // dominant clear is ModularUI's stencil reset (mask 0x400, `Stencil#reset`), which arrives between GUI
+            // widgets and used to submit the GUI batch it cannot touch - one window per widget.
+            this.clearOrderNoTargetMask++;
+            this.immediateStatistics.noteClearOrderFlushes();
+            return;
+        }
+        if (CLEAR_SKIP_FLUSH && !celtium$clearNeedsOrderingFlush()) {
+            this.clearOrderSkipped++;
+            this.immediateStatistics.noteClearOrderFlushes();
+            return;
+        }
         flushPendingBeforeGlDraw();
         this.immediateStatistics.noteClearOrderFlushes();
+    }
+
+    /**
+     * {@return whether the clear about to be issued needs the ordering flush}, the predicate behind
+     * {@link #CLEAR_SKIP_FLUSH}.
+     * <p>
+     * It answers the same question {@link #celtium$gameClear} answers when the clear reaches the stub, and it answers it
+     * from the same state: the stub's current draw framebuffer, resolved to an object identity the same way (the raw
+     * name first, then the colour texture the attach recorded). The two must agree, because a "no" here skips the flush
+     * and the clear's own route (in-pass, standalone or latch) is then the only thing that orders it.
+     */
+    private boolean celtium$clearNeedsOrderingFlush() {
+        if (offTargetTarget() == null) {
+            return true; // the GL bridge has no pair queue: the flush is the only ordering there is
+        }
+        if (COALESCE_RAW_WRITES && !this.pendingRawWrites.isEmpty()) {
+            // The flush also records the coalesced texture copies. Skipping would move them past the clear, and a copy
+            // into the very texture the clear covers is an ordering the queue does not express.
+            return true;
+        }
+        int drawFbo = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$drawFramebuffer();
+        if (drawFbo < 0) {
+            return true;
+        }
+        long identity = drawFbo <= 0 ? Long.MIN_VALUE
+                : this.targetRegistry.identityForFramebufferName(drawFbo);
+        if (identity == Long.MIN_VALUE && drawFbo > 0) {
+            int colorTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferColorTexture(drawFbo);
+            if (colorTexture != 0) {
+                identity = celtium$framebufferIdentityForColorTexture(colorTexture);
+            }
+        }
+        return celtium$clearNeedsOrderingFlushDecision(true, false,
+                identity != Long.MIN_VALUE, celtium$queueHoldsImageOf(identity));
+    }
+
+    /**
+     * The decision table behind {@link #celtium$clearNeedsOrderingFlush}, as a pure function so the rule can be pinned
+     * without a device.
+     * <p>
+     * Each input is one of the reasons the flush is still needed, and the answer is "skip" only when none of them
+     * applies:
+     * <ul>
+     * <li>{@code pairQueueAvailable} - the GL bridge has no pair queue, so the flush is the only ordering there is;</li>
+     * <li>{@code rawWritesPending} - the flush also records the coalesced texture copies, and a copy into the texture
+     *     the clear covers is an ordering the queue does not express;</li>
+     * <li>{@code identityResolved} - an unresolved framebuffer cannot be shown to have nothing queued;</li>
+     * <li>{@code imageHasPendingDraws} - the clear's own image has queued draws, which the clear must erase.</li>
+     * </ul>
+     */
+    static boolean celtium$clearNeedsOrderingFlushDecision(boolean pairQueueAvailable, boolean rawWritesPending,
+                                                           boolean identityResolved, boolean imageHasPendingDraws) {
+        return !pairQueueAvailable || rawWritesPending || !identityResolved || imageHasPendingDraws;
+    }
+
+    /**
+     * {@return whether the queue holds a draw into the image {@code identity} renders into}, the carrier scan the clear
+     * skip needs.
+     * <p>
+     * The main identity and identity 0 both draw into the frame image, so a clear on either is ordered against both;
+     * every other non-main identity owns its own chain pair, so its draws are ordered against its own identity alone.
+     */
+    private boolean celtium$queueHoldsImageOf(long identity) {
+        long main = this.targetRegistry.mainIdentity();
+        boolean frameImage = identity == main || identity == 0L;
+        if (this.currentGroupUsed) {
+            long open = this.currentGroupTarget;
+            if (open == identity || (frameImage && (open == main || open == 0L))) {
+                return true;
+            }
+        }
+        for (int i = this.immediateGroups.size() - 1; i >= 0; i--) {
+            long target = this.immediateGroups.get(i).target;
+            if (target == identity || (frameImage && (target == main || target == 0L))) {
+                return true;
+            }
+        }
+        return false;
     }
 
 
@@ -10271,6 +10417,29 @@ this.frameBufferOpen = false;
 
     private long flushReasonCount;
 
+    /**
+     * {@return the flush-reason census, largest first}, for the diagnostics line.
+     * <p>
+     * The census itself prints to stdout every {@link #FLUSH_REASON_FRAMES} frames, but the log limiter keeps only the
+     * first sixteen lines of a tag - and the first sixteen are all frame 0, the loading screen. The world phase's
+     * reasons never reached a reader. This summary rides the one-line diagnostics instead, so a leg names the call
+     * sites that open the frame's windows.
+     */
+    String flushReasonSummary() {
+        if (this.flushReasons.isEmpty()) {
+            return "none";
+        }
+        java.util.List<java.util.Map.Entry<String, Integer>> rows =
+                new java.util.ArrayList<java.util.Map.Entry<String, Integer>>(this.flushReasons.entrySet());
+        rows.sort((a, b) -> Integer.compare(b.getValue().intValue(), a.getValue().intValue()));
+        StringBuilder line = new StringBuilder();
+        for (int i = 0; i < rows.size() && i < 10; i++) {
+            if (i > 0) line.append(' ');
+            line.append(rows.get(i).getKey()).append('=').append(rows.get(i).getValue());
+        }
+        return line.toString();
+    }
+
     /** Prints the flush-reason census, largest first, every {@link #FLUSH_REASON_FRAMES} frames. */
     private void celtium$reportFlushReasons(boolean force) {
         if (!FLUSH_REASON_CENSUS || this.flushReasons.isEmpty()) {
@@ -10936,6 +11105,19 @@ this.frameBufferOpen = false;
         if (site >= 0 && site < this.flushSiteCounts.length) {
             this.flushSiteCounts[site]++;
         }
+    }
+
+    /** {@return the per-site flush counts, named and non-zero only}, for the diagnostics line. */
+    String flushSiteSummary() {
+        StringBuilder line = new StringBuilder();
+        for (int i = 0; i < this.flushSiteCounts.length && i < FLUSH_SITE_NAMES.length; i++) {
+            if (this.flushSiteCounts[i] == 0L) {
+                continue;
+            }
+            if (line.length() > 0) line.append(' ');
+            line.append(FLUSH_SITE_NAMES[i]).append('=').append(this.flushSiteCounts[i]);
+        }
+        return line.length() == 0 ? "none" : line.toString();
     }
 
     /**
@@ -19821,6 +20003,16 @@ this.frameBufferOpen = false;
                 if (group.modelRun != null) {
                     this.modelReplay.celtium$drawModelRun(group);
                     gpuMark("run");
+                    // A model run is drawn from the replay's own instance buffer, but it is still a group in the queue
+                    // and a clear can ride it exactly as it rides a mesh group. This path used to `continue` past the
+                    // replay, so a clear attached to a model-run group was silently dropped - invisible while the
+                    // ordering flush emptied the queue before every clear, and a lost clear the moment a clear is
+                    // allowed to ride the queue (CLEAR_DEFER).
+                    if (group.postClears != null) {
+                        celtium$recordQueuedClearsInPass(group.postClears, group.target);
+                        gpuMark("pass-clear");
+                        group.postClears = null;
+                    }
                     continue;
                 }
                 VulkanDynamicMesh mesh = group.mesh;

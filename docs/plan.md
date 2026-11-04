@@ -32,39 +32,37 @@
    | vanilla post shader・発光outline | **native描画**（creeper/spider: `12a45471f`、outline合成: `ef807429c`。AMD/Intel world PASSED・validation 0。outlineはwithin-run A/Bで実測＝[証拠](evidence/glow-outline-2026-11-03.md): 2669px・対照0・noise 3.69%・`postChains=1`） |
    texture environment・空framebuffer初期化・公開cache・material寿命の整理は [実装と検証](evidence/native-texture-owner-2026-10-25.md)。
 2. **性能**（KPI flags・1280×720・vsync off/260・`world-0.7.11` instance（Xaeroなし）・3対×240 s、両GPUとも 0.1.1-alpha の jar `9feaa083`（コードは配布jar `a8bd0480`と同一、差はjar内README）＝`54b42982d`）:
-   - **AMD: goal条件1を満たす**（最新 `rel-amd`: verdict NOT_SLOWER、各対のp50/p95/p99比が全て<1、中央値 0.591/0.596/0.826、p50 0.63 vs 1.06 ms）。
-     **この行は scene 限定**（`world-0.7.11`・Xaeroなし・旧JAR）。現行JARを実配布profileで測ると逆:
+   - **AMD: 旧scene（`world-0.7.11`・Xaeroなし・旧JAR）では goal条件1を満たす**（`rel-amd` NOT_SLOWER、中央値 0.591/0.596/0.826）。
+     現行JARを実配布profileで測ると逆:
      `celtium-world-accept`（188 mods・`qmagnet`）3対で **Celtium が 1.18–1.29×遅い**（p50 median **1.215**、
      `goalCondition=NOT_MET`、[証拠](evidence/paired-kpi-round51-2026-11-04.md)）。frameBudget は
      `gpuShare=0.01`＝CPU律速。**差は 0.52 ms**（Celtium 2.946 / Celeritas 2.427）。
-     **round 58 の paired 再測は有効**（median **1.175**、`SLOWER`、負荷 0.079/0.5、[証拠](evidence/render-split-and-signature-cache-2026-11-04.md)）。
+     **round 58 の paired 再測は有効**（median **1.175**、`SLOWER`、[証拠](evidence/render-split-and-signature-cache-2026-11-04.md)）。
      **warm p50 は round 51 の 2.946 から動かず**＝受理CPU −0.28 ms はフレームに現れない。
      **出荷構成の warm 窓: frame 2.38 = render 1.61 + fmlTick 0.62 + display 0.10 + tick 0.06**＝**render が 68%**。
-     受理は **0.37 wall / 0.25 CPU ms**＝CPU 律速、全部消しても 0.31 ms。**round 56 の −0.28 ms は validation ON の値**。
+     受理は **0.37 wall / 0.25 CPU ms**＝CPU 律速、全部消しても 0.31 ms（round 56 の −0.28 ms は validation ON の値）。
      **round 60 実測（出荷コード `acbe9428…`、AMD、[証拠](evidence/window-clear-order-2026-11-04.md)）**:
-     frame 1322 = world 861 + gui 421 + hand 50。**フレームの 85% は Celtium の即時経路**（受理 161 offer ×
-     4024 ns ＝ 648 µs ＋ `flush` 392 ＋ `guiFlush` 81）。単位は **offer 160.8 / group 131.9 / 窓 23.4 /
-     実 submit 2.2 毎フレーム**。窓の固定費は「窓の単価」ではなく **clear 1 回あたり ~5.6 µs**で、
-     削る対象は **clear を現在のパス内に `vkCmdClearAttachments` で記録できるか**（round 54 の
-     `pairClearInPass` が pair clear で実証した形。sticky pass の棄却はフレーム全体で開いたままにした場合）。
+     frame 1322 = world 861 + gui 421 + hand 50。**85% は Celtium の即時経路**（受理 161 offer × 4024 ns ＝ 648 µs
+     ＋ `flush` 392 ＋ `guiFlush` 81）。単位は **offer 160.8 / group 131.9 / 窓 23.4**。
      次の構造的な一手は**不透明 group だけの 2 スロット open group**（format 交替 63% を畳む）。
      受理経路の名前付き内訳は 889 ns/offer だけで **3135 ns が未帰属**（`prepare` 493・`stateKey` 199・
      `captureState` 98・`checks` 61）。prepare キャッシュの詰め直しは**効果が測定限界以下**だった。
-     **round 59 実測（µs 分解能）**（[証拠](evidence/pass-split-micros-2026-11-04.md)）: `flush` 486 =
-     `winRecord` 364 = `wrecLoop` 244（`grpDraw` 128）。**「固定費は8本に分散」は棄却**（8本＝150 µs、
-     `winSubmit` 43・`winBarrier` 31・`winBeginPass` 28 の3本で67%）。`winSubmit` は `vkQueueSubmit` ではない。
-     `stateKeyCache` は 21.9% で**効果は測定限界以下**。
-     **round 58 実測**（[証拠](evidence/render-split-and-signature-cache-2026-11-04.md)）: `vkCmdDrawIndexed`
-     **0.68 µs**、pipeline bind 4,117/727,499＝dedupe は効く。**`gui` のうち Celtium は `guiBatch` だけ**
-     （[証拠](evidence/warm-window-split-2026-11-04.md)）。
+     **round 59 実測（µs 分解能）**（[証拠](evidence/pass-split-micros-2026-11-04.md)）: `flush` 486 = `winRecord` 364 =
+     `wrecLoop` 244（`grpDraw` 128）。**「固定費は8本に分散」は棄却**（`winSubmit` 43・`winBarrier` 31・`winBeginPass` 28
+     の3本で67%）。`winSubmit` は `vkQueueSubmit` ではない。`stateKeyCache` は 21.9% で**効果は測定限界以下**。
+     **round 58 実測**（[証拠](evidence/render-split-and-signature-cache-2026-11-04.md)）: `vkCmdDrawIndexed` **0.68 µs**、
+     pipeline bind 4,117/727,499＝dedupe は効く。**`gui` のうち Celtium は `guiBatch` だけ**。
      pair clear は `winHead` 内（**round 54 で既定 ON**、`-Dceltium.vulkan.pairClearInPass=false` が旧経路）: `winHead` **141→43 µs**、frame差は未分離。**Celtium 自身 ~0.7 ms を ~0.2 ms にしないと届かない。**
-     **窓の統合（sticky pass）は棄却**（[証拠](evidence/sticky-window-pass-2026-11-04.md)）: merge 2.6/フレーム成立でも
-     **warm p50 2.85→11.47 ms**、窓 23.5→20.8 の代わりに **`grpDraw` 0.9→9.6 µs/group**。理由未解明、再開しない。
-     **font runの行列bakeも棄却**（[証拠](evidence/font-run-bake-2026-11-04.md)）: 94 run/フレームのうち**8しか畳めない**
-     （offer 238.3→230.1、group 136.5→133.5）。残り86は**intervening flush**＝順序規則。既定OFF。
-     **round 42–46 の内訳は検証レイヤを測っていた**（[証拠](evidence/frame-split-conditions-2026-11-04.md)）:
-     検証OFF は frame 1.4、`vkCmdDrawIndexed` は 5.0→**0.9 µs**。
-     **窓の95%は`glClear`**（round 60: `clearOrderFlushes` 28.3/フレーム → flush 22.3 → 窓 23.4、GL draw 由来 ~1）。
+     **窓の統合（sticky pass）は棄却**（[証拠](evidence/sticky-window-pass-2026-11-04.md)）: **warm p50 2.85→11.47 ms**、
+     窓 23.5→20.8 の代わりに **`grpDraw` 0.9→9.6 µs/group**。理由未解明、再開しない。
+     **font runの行列bakeも棄却**（[証拠](evidence/font-run-bake-2026-11-04.md)）: 94 run/フレームのうち**8しか畳めない**。既定OFF。
+     **round 42–46 の内訳は検証レイヤを測っていた**（[証拠](evidence/frame-split-conditions-2026-11-04.md)）: 検証OFF は frame 1.4。
+     **「窓の95%は`glClear`」は棄却**（round 61、[証拠](evidence/clear-order-flush-2026-11-04.md)）: clear の 83% は main で、
+     最大の呼び手は ModularUI `Stencil#reset`（mask 0x400＝stencil、**本レンダラは未実装**）。stencil のみの clear と
+     「clear 自身の image に pending が無い」clear の flush を落とすと **clear-order flush 呼び出しの 71% が消える**が、
+     **窓/フレームは 35.7→36.6 で動かない**（`clearOrderFlushes` は*呼び出し*を数え、大半は早期 return していた）。
+     **窓を開けているのは framebuffer bind**（`r61e-sites` の `flushReasons`: `noteRenderTarget`=33,260/50,857＝65%、
+     clear=9,959＝20%、`flushSiteCounts=bind-framebuffer=53146`）。次は「bind の target 変更 flush は本当に要るか」。
      JFRは`CELTIUM_LEG_JFR`（attach）。**warm windowはflagが要る**（`warmFromTick=400 warmToTick=600 holdUntilTick=620`）。
      **colour witnessはcombine分岐だけに効く**（[証拠](evidence/font-colour-witness-narrowing-2026-11-04.md)）:
      既定`combine`でrun 94.5→19.0・offer 221→146/フレーム、**受理CPU −0.28 ms**（validation ON の値）。

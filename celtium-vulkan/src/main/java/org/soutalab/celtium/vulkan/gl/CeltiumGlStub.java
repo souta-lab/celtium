@@ -654,6 +654,11 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** Clears seen for the framebuffer the game calls its main one, and for every other target. */
     private int mainClears;
     private int foreignClears;
+    /** Bounded caller log for main-framebuffer clears: which caller clears it, and how often. */
+    private static final boolean CLEAR_CALLERS =
+            Boolean.parseBoolean(System.getProperty("celtium.vulkan.clearCallers", "false"));
+    private static final int CLEAR_CALLER_LINES = 16;
+    private int mainClearCallerLogs;
     private float lastForeignClearRed;
     private float lastForeignClearGreen;
     private float lastForeignClearBlue;
@@ -4330,6 +4335,19 @@ public final class CeltiumGlStub implements FunctionProvider {
         // frame, while a census of the routes said the clear never reached the delivered image.
         if (this.drawFramebufferIsMain) {
             this.mainClears++;
+            if (CLEAR_CALLERS && this.mainClearCallerLogs < CLEAR_CALLER_LINES) {
+                // Which caller clears the main framebuffer, and how often: 23 a frame is not vanilla's one, and the
+                // answer decides whether the clear-order flush can ever be skipped for it.
+                this.mainClearCallerLogs++;
+                StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+                StringBuilder callers = new StringBuilder(200);
+                for (int i = 2; i < Math.min(stack.length, 11); i++) {
+                    callers.append(" <- ").append(stack[i].getClassName()).append('#').append(stack[i].getMethodName());
+                }
+                System.out.println("[Celtium] CELTIUM_MAIN_CLEAR mask=0x" + Integer.toHexString(mask)
+                        + " colour=(" + this.clearRed + "," + this.clearGreen + "," + this.clearBlue + ","
+                        + this.clearAlpha + ") callers=" + callers);
+            }
             // Per buffer: a later depth-only clear must not replace the colour the colour clear was issued with.
             if ((mask & 0x4000) != 0) {
                 this.lastMainClearRed = this.clearRed;
@@ -7640,6 +7658,18 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static int celtium$drawFramebuffer() {
         CeltiumGlStub stub = installed;
         return stub == null ? -1 : stub.drawFbo;
+    }
+
+    /**
+     * {@return whether the stub's current draw framebuffer is the game's main one}, true when no stub is installed.
+     * <p>
+     * The clear-ordering flush asks this before it decides to open a window: a main-framebuffer clear is carried by the
+     * frame latch and applied at the next acquire, so the draws it must erase have to reach the image first, while a
+     * non-main clear can ride the draw queue as a marker on the last group of its own target.
+     */
+    public static boolean celtium$drawFramebufferIsMain() {
+        CeltiumGlStub stub = installed;
+        return stub == null || stub.drawFramebufferIsMain;
     }
 
     /** {@return the colour texture of a raw framebuffer, or 0 when none was recorded}. */

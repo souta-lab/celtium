@@ -288,6 +288,8 @@ final class BackendDiagnostics {
                 + " descriptorHits=" + VulkanImmediateTexturePipeline.DESCRIPTOR_HITS
                 + " descriptorMisses=" + VulkanImmediateTexturePipeline.DESCRIPTOR_MISSES + " clearOrderFlushes=" + b.immediateStatistics.clearOrderFlushes()
                 + " clearOrderZeroMask=" + b.clearOrderFlushesZeroMask
+                + " clearOrderSkipped=" + b.clearOrderSkipped + " clearOrderNoTargetMask=" + b.clearOrderNoTargetMask
+                + " flushReasons=[" + b.flushReasonSummary() + " flushSiteCounts=" + b.flushSiteSummary() + "]"
                 + " offTargetByTarget=[" + b.offTargetSummary() + "] offTargetTargets=" + b.targetStatistics.offTargetTargetsCreated()
                 + " refusedBeforeAppend=" + b.immediateStatistics.refusedBeforeAppend()
                 + " partialMirrorRefusals=" + b.immediateStatistics.partialMirrorRefusals()
