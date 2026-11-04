@@ -96,7 +96,18 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
 
     @Override
     protected VintageRenderSectionManager createRenderSectionManager(CommandList commandList) {
-        return VintageRenderSectionManager.create(chooseVertexType(), this.world, this.getEffectiveRenderDistance(), commandList);
+        try {
+            return VintageRenderSectionManager.create(chooseVertexType(), this.world, this.getEffectiveRenderDistance(),
+                    commandList);
+        } catch (IllegalStateException noBackend) {
+            // No Vulkan backend means no picture at all, and this runs inside the join packet's scheduled task, whose
+            // exceptions Minecraft logs and drops: the client stayed on "Loading terrain" with a world and no player
+            // for the whole run (leg e2e-amd-r2, 25 minutes, LWJGL Vulkan bindings too old for validation). Hand the
+            // failure to the main loop's own crash path instead, so the game stops with a report that names it.
+            net.minecraft.client.Minecraft.getMinecraft().crashed(net.minecraft.crash.CrashReport.makeCrashReport(
+                    noBackend, "Celtium could not create its Vulkan renderer"));
+            throw noBackend;
+        }
     }
 
     /**
