@@ -110,6 +110,8 @@ CELTIUM_PROGRAM_BOUND program=23887 site=[... codechicken.lib.render.shader.Shad
 CELTIUM_SHADER_PROGRAM_REFUSED program=23887 format=6 (first batch refused with this program bound)
 ```
 
+(Intel UHD 630, leg `r7-gt-intel`, same jar: PASSED, validationMessageCount=0, gpuRequirementMet=true, the same four refusals.)
+
 and the same three lines for programs 23916, 23917 and 23918: four GTCEu bloom programs, all bound from
 `Shaders.renderFullImageInFBO`, all refused and counted. No other program was bound in the run (no vanilla program:
 the vanilla post chain is cancelled at `ShaderGroup.render` HEAD and never calls `useShader`). The lamps are still a

@@ -24,7 +24,7 @@
    | ワールド退出後ボタン無し | **未再現**（既定・日本語・1920×1080）。手順差の手掛かり待ち |
    | ロード画面 | **Forgeのsplashと同じ画面**（ロゴ・メモリ・進捗・Forgeロゴ）をnative描画（`3ebd22e90`） |
    | ログ量 | **タグごと16行上限**（`CeltiumLogLimiter`） |
-   | E2E 1.93a（Cleanroom 0.7） | Intelの読込SIGSEGVと疎なatlas描画拒否は修正候補で各1回通過。最終jarは未再検証・画像比較未成立（[証拠](evidence/e2e-cleanroom07-2026-10-26.md)） |
+   | E2E 1.93a（Cleanroom 0.7） | Intelの読込SIGSEGVと疎なatlas描画拒否は修正候補で各1回通過。最終jarは未再検証・画像比較未成立（[証拠](evidence/e2e-cleanroom07-2026-10-26.md)）。**2026-11-04: ローカルの e2e-1.93a / e2ee-1.87.3 instance は mods が欠落（1 jar）しており再取得が必要** |
    | vanilla post shader・発光outline | **native描画**（creeper/spider: `12a45471f`、outline合成: `ef807429c`。AMD/Intel world PASSED・validation 0。outlineはwithin-run A/Bで実測＝[証拠](evidence/glow-outline-2026-11-03.md): 2669px・対照0・noise 3.69%・`postChains=1`） |
    texture environment・空framebuffer初期化・公開cache・material寿命の整理は [実装と検証](evidence/native-texture-owner-2026-10-25.md)。
 2. **性能**（KPI flags・1280×720・vsync off/260・`world-0.7.11` instance（Xaeroなし）・3対×240 s、両GPUとも 0.1.1-alpha の jar `9feaa083`（コードは配布jar `a8bd0480`と同一、差はjar内README）＝`54b42982d`）:
@@ -45,21 +45,11 @@
      **round 59 実測（µs 分解能）**（[証拠](evidence/pass-split-micros-2026-11-04.md)）: `flush` 486 = `winRecord` 364 =
      `wrecLoop` 244（`grpDraw` 128）。**「固定費は8本に分散」は棄却**（`winSubmit` 43・`winBarrier` 31・`winBeginPass` 28
      の3本で67%）。
-     **round 63**: `stateKeyCache` を id ごとの 16 スロットにしたが **hit 率は 21.9% のまま**（`stateVersion` が支配的で
-     format は原因でなかった）。未出力だった hit/miss を verify 行に載せた（[証拠](evidence/offer-key-cache-slots-2026-11-04.md)）。
-     **round 58 実測**（[証拠](evidence/render-split-and-signature-cache-2026-11-04.md)）: `vkCmdDrawIndexed` **0.68 µs**、
-     pipeline bind 4,117/727,499＝dedupe は効く。**`gui` のうち Celtium は `guiBatch` だけ**。
-     pair clear は `winHead` 内（**round 54 で既定 ON**、`-Dceltium.vulkan.pairClearInPass=false` が旧経路）: `winHead` **141→43 µs**、frame差は未分離。
-     **窓の統合（sticky pass）は棄却**（[証拠](evidence/sticky-window-pass-2026-11-04.md)）: **warm p50 2.85→11.47 ms**、
-     窓 23.5→20.8 の代わりに **`grpDraw` 0.9→9.6 µs/group**。理由未解明、再開しない。
-     **font runの行列bakeも棄却**（[証拠](evidence/font-run-bake-2026-11-04.md)）: 94 run/フレームのうち**8しか畳めない**。既定OFF。
-     **round 42–46 の内訳は検証レイヤを測っていた**（[証拠](evidence/frame-split-conditions-2026-11-04.md)）: 検証OFF は frame 1.4。
+     round 63: `stateKeyCache` の hit 率 21.9%（`stateVersion` 支配、[証拠](evidence/offer-key-cache-slots-2026-11-04.md)）。
+     **棄却済み（再開しない）**: 窓の統合 sticky pass（p50 2.85→11.47 ms、[証拠](evidence/sticky-window-pass-2026-11-04.md)）・font runの行列bake（94 run中8、[証拠](evidence/font-run-bake-2026-11-04.md)）・round 42–46 の内訳（検証レイヤを測っていた、[証拠](evidence/frame-split-conditions-2026-11-04.md)）。`vkCmdDrawIndexed` 0.68 µs・pipeline bind dedupe は効く（[証拠](evidence/render-split-and-signature-cache-2026-11-04.md)）。pair clear は既定で pass 内（`winHead` 141→43 µs）。
      **「窓の95%は`glClear`」は棄却**（round 61、[証拠](evidence/clear-order-flush-2026-11-04.md)）: clear の 83% は main、
      最大の呼び手は ModularUI `Stencil#reset`（mask 0x400＝stencil、**未実装**）。flush 呼び出しの 71% を落としても
-     **窓/フレームは 35.7→36.6 で動かない**。**窓を開けているのは framebuffer bind**（`flushReasons`: `noteRenderTarget`=65%）。
-     **窓を開けているのは framebuffer bind**（`r61e-sites` の `flushReasons`: `noteRenderTarget`=33,260/50,857＝65%、
-     clear=9,959＝20%、`flushSiteCounts=bind-framebuffer=53146`）。次は「bind の target 変更 flush は本当に要るか」。
-     JFRは`CELTIUM_LEG_JFR`（attach）。**warm windowはflagが要る**（`warmFromTick=400 warmToTick=600 holdUntilTick=620`）。
+     **窓/フレームは 35.7→36.6 で動かない**。**窓を開けているのは framebuffer bind**（`flushReasons`: bind 65%・clear 20%）。bind flush の延期は3回失敗済み（[罠](<verification-traps.md>)）で再入しない。
      **colour witnessはcombine分岐だけに効く**（[証拠](evidence/font-colour-witness-narrowing-2026-11-04.md)）:
      既定`combine`でrun 94.5→19.0・offer 221→146/フレーム、**受理CPU −0.28 ms**（validation ON の値）。
      **groupは115のまま**（棄却:「font runがgroupの82%」）。**off-target windowはframe imageを動かさない**（[証拠](evidence/off-target-frame-barriers-2026-11-03.md)）。
@@ -93,6 +83,7 @@
 | **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | v0.0.14-alpha `90a7c505…` は qmagnet world で AMD/Intel PASSED・validation 0・画像gate一致。0.6.13（GLFW/LWJGL 3.4.1）はSDL3不在を検出して版を名指しで拒否 |
 | **巨大pack互換（E2E-E 1.87.3）** | **AMD: fixture PASSED・validation 0、Intel未実行** | AMD | 未実行 | Cleanroom 0.7差はlocal置換と上流PR（`8f121acfb`）。残りは[証拠](evidence/e2e-cleanroom07-2026-10-26.md)末尾へ。 |
 
+| **Mod自前のGLSL program** | **拒否・計数まで（`51f57cded`）。実行は未実装** | GTCEu scene PASSED・validation 0 | PASSED・validation 0（r7-gt-intel） | `glUseProgram` に route が無く program が常に0→GTCEu bloom の全画面quadが世界投影で描かれていた。現在は program ごとに拒否（4本、全て `Shaders.renderFullImageInFBO`）。bloom は欠落のまま。次: 実行時 GLSL→SPIR-V（[証拠](evidence/gregtech-bloom-2026-11-04.md)） |
 | **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない |
 | **次の標的** | **native実装へ** | — | 未着手 | ①model/immediate共通packetのnative実行 ②lit fog **修正**（[証拠](evidence/lit-fog-2026-11-03.md)） ③state/texture/target所有の統合。 |
 
@@ -106,7 +97,10 @@
   旧scene（Susy/ATM3）の ABBA値は artifact が現ビルドと一致しないため現在判定に使わない（[archive](<history/plan-archive-2026-10-21.md>)）。
 - pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
 - 棄却: bind flush延期（2026-10-31、2回ともRADV SIGSEGV、[罠](<verification-traps.md>)）、indirect immediate、フレーム再利用（アニメ凍結）、
-  **group数∝grpDraw**（font run 2.3×減で不変、[証拠](evidence/font-witness-census-2026-11-03.md)）。
+  **group数∝grpDraw**（font run 2.3×減で不変、[証拠](evidence/font-witness-census-2026-11-03.md)）、
+  **受理経路のC1停滞**（2026-11-04 world-accept warm中の `jcmd Compiler.codelist`: `submitImmediateBatchBody`・
+  `drawPendingImmediate`・`flushImmediateWindow`・`prepareImmediate` は全て tier 4 で稼働。deoptの反復有無は未測。
+  `-XX:+PrintCompilation` はランチャーにしか出ないので jcmd を使う）。
 
 ## 撤回した前提・未確定（数値を前提にしない）
 
