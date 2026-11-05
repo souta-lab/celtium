@@ -694,6 +694,11 @@ public final class VulkanGlState {
     }
 
     public void lightingEnabled(boolean enabled) {
+        // Unchanged is not a mutation (the offer-key census, l18miss-amd: every miss was a stateVersion move and 67%
+        // recomputed the same key). The payload the light generation guards does not change with a repeated enable.
+        if (this.lightingEnabled == enabled) {
+            return;
+        }
         this.lightingEnabled = enabled;
         this.lightGeneration++;
         noteStateMutation();
@@ -714,7 +719,8 @@ public final class VulkanGlState {
     }
 
     public void lightEnabled(int index, boolean enabled) {
-        noteStateMutation();
+        // Only lights 0 and 1 are kept, so only a change of their mask is a mutation; a repeated enable, or a light
+        // this mirror does not hold, moves no version.
         if (index < 0 || index >= 2) {
             return;
         }
@@ -726,6 +732,7 @@ public final class VulkanGlState {
         }
         if (this.lightsEnabledMask != previous) {
             this.lightGeneration++;
+            noteStateMutation();
         }
     }
 

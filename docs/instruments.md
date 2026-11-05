@@ -1202,8 +1202,8 @@
 | `CELTIUM_TEX_VERTICES` | [BackendDiagnostics.java:699](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L699>) |
 | `CELTIUM_TRACKER` | [CeleritasWorldRenderer.java:138](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer.java#L138>), [CeleritasWorldRenderer.java:152](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer.java#L152>) |
 | `CELTIUM_TRANSFORM_CENSUS` | [CeltiumGllessHint.java:1080](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L1080>) |
-| `CELTIUM_UNIT_BIND` | [VulkanGlState.java:902](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlState.java#L902>) |
-| `CELTIUM_UNIT_SWITCH` | [VulkanGlState.java:1044](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlState.java#L1044>) |
+| `CELTIUM_UNIT_BIND` | [VulkanGlState.java:909](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlState.java#L909>) |
+| `CELTIUM_UNIT_SWITCH` | [VulkanGlState.java:1051](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlState.java#L1051>) |
 | `CELTIUM_UNKNOWN_SYMBOL` | [CeltiumGlStub.java:6031](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L6031>) |
 | `CELTIUM_UNKNOWN_SYMBOLS` | [CeltiumGlStub.java:1282](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L1282>) |
 | `CELTIUM_UNMAPPED` | [VulkanTerrainGpuBackend.java:9262](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L9262>), [WorldVertexBufferUploaderMixin.java:310](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/WorldVertexBufferUploaderMixin.java#L310>) |

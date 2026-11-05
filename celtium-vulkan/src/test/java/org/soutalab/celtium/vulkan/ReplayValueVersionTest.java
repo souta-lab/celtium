@@ -85,6 +85,9 @@ class ReplayValueVersionTest {
         state.blendFunc(VulkanGlState.BLEND_ONE, VulkanGlState.BLEND_ZERO, VulkanGlState.BLEND_ONE,
                 VulkanGlState.BLEND_ZERO);
         state.cullEnabled(state.cullEnabled());
+        state.lightingEnabled(state.lightingEnabled());
+        state.lightEnabled(0, state.lightEnabled(0));
+        state.lightEnabled(5, true);
         assertEquals(version, state.stateVersion());
         state.color(0.25f, 0.5f, 0.75f, 0.25f);
         assertTrue(state.stateVersion() > version, "a changed colour still moves it");
