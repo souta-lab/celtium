@@ -519,4 +519,4 @@ modelview の下で設定した同じ値なので、push 時の snapshot と pop
   KPI と同じ `warmFromTick/warmToTick/holdUntilTick` を付ける（`scripts/warm-profile.sh` は付けている）。
 - **KPI/A-B の run は終わるまで pack のコピー（~0.9 GB/leg）を抱える**。10 legの A/B 2本を続けると数十GB
   になり、`No space left on device` で途中終了する（l9bbatch）。leg の結果JSONが出たrunから `mods/` `cache/` を消す
-  （一時的な trimmer で回した）。ディスクの空きはleg開始前に確認する。
+  （`gv_kpi.py` が各legの報告を読んだ直後に消す、e10ecb397。残すなら `CELTIUM_KPI_KEEP_PACK=1`）。ディスクの空きはleg開始前に確認する。
