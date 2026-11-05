@@ -67,7 +67,7 @@ class ModelLightRotationTest {
         for (Matrix4f matrix : matrices) {
             float[] rotation = rotationOf(matrix);
             float[] inverse = new float[9];
-            VulkanTerrainGpuBackend.celtium$invertRotation(rotation, inverse);
+            GroupLighting.celtium$invertRotation(rotation, inverse);
             assertIdentity(multiply(rotation, inverse), 1.0e-4f, matrix.toString());
             // The inverse must be usable as the column-major 3x3 the payload multiplies the light directions with, so
             // the same check from the other side: this is the product that has to be the identity for either order.
@@ -78,7 +78,7 @@ class ModelLightRotationTest {
     @Test void aSingularRotationInvertsToTheIdentity() {
         float[] singular = {1, 2, 3, 2, 4, 6, 0, 0, 0};
         float[] inverse = new float[9];
-        VulkanTerrainGpuBackend.celtium$invertRotation(singular, inverse);
+        GroupLighting.celtium$invertRotation(singular, inverse);
         assertArrayEquals(new float[] {1, 0, 0, 0, 1, 0, 0, 0, 1}, inverse, 0.0f,
                 "a degenerate draw keeps identity directions rather than infinities");
     }
@@ -87,7 +87,7 @@ class ModelLightRotationTest {
         float[] rotation = rotationOf(new Matrix4f().rotateZ(0.7f));
         float[] inverse = new float[9];
         java.util.Arrays.fill(inverse, 99.0f);
-        VulkanTerrainGpuBackend.celtium$invertRotation(rotation, inverse);
+        GroupLighting.celtium$invertRotation(rotation, inverse);
         for (float value : inverse) {
             assertNotEquals(99.0f, value, "every slot is written");
         }

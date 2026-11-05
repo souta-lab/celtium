@@ -1668,9 +1668,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     final ImmediateGroupSplitCensus groupSplitCensus = new ImmediateGroupSplitCensus();
 
     /** Live unit-0 texture affine, read without allocating: see {@code celtium$textureAffineMoved}. */
-    private final float[] textureAffineScratch = new float[6];
-    /** The last array handed out by {@link #celtium$textureAffine()}; read-only after capture, like the others. */
-    private float[] lastTextureAffine;
+    final float[] textureAffineScratch = new float[6];
+    /** The last array handed out by {@link #this.groupChange.celtium$textureAffine()}; read-only after capture, like the others. */
+    float[] lastTextureAffine;
 
     /**
      * The replay's own projection cache. Distinct from {@code lastSharedProjection}, which the close path feeds with a
@@ -2355,10 +2355,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int injectedDeviceLosses;
     /** Caps the env-combine report so a hurt mob does not log every frame. */
     /** The texture matrix the currently open group was accepted under; {@code null} for identity. */
-    private float[] currentGroupTexMatrix;
+    float[] currentGroupTexMatrix;
     /** The open texgen group's eye rows (NativeTexGen.eyeRows), or null for every other group. */
-    private float[] currentGroupTexGen;
-    private final float[] texGenScratch = new float[12];
+    float[] currentGroupTexGen;
+    final float[] texGenScratch = new float[12];
     private final float[] texGenPushScratch = new float[12];
     /** Groups drawn under a non-identity texture matrix - the glint and the renderer's own transforms. */
     int observedBlendSrc = -1;
@@ -2735,13 +2735,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The four-float scratch {@code GL_CURRENT_COLOR} is read into, reused across groups rather than alloc/freed. */
     private final java.nio.FloatBuffer colourScratch = org.lwjgl.system.MemoryUtil.memAllocFloat(4);
     /** The nine-float working matrix {@link #celtium$lightParams} inverts the modelview's upper 3x3 into. */
-    private final float[] lightInverseScratch = new float[9];
+    final float[] lightInverseScratch = new float[9];
     /**
      * The nine rotation floats {@link #celtium$lightParams} reads, copied out of the modelview by
      * {@link ModelReplayInputCache#copyRotation}: the payload's only geometric input, named in one place rather than
      * read out of a sixteen-float matrix in two of them.
      */
-    private final float[] lightRotationScratch = new float[9];
+    final float[] lightRotationScratch = new float[9];
     /** Shared immutable white for a group whose GL colour read failed; only ever read, never written. */
     private static final float[] WHITE_GROUP_COLOR = {1.0f, 1.0f, 1.0f, 1.0f};
     /**
@@ -2968,19 +2968,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * band kept the dome's own flat colour (120,167,255) in both the fog-on and the fog-off leg, where vanilla ramps
      * to the fog colour (179,207,255) - i.e. the flag made no difference to the picture at all.
      */
-    private float[] currentGroupFog;
+    float[] currentGroupFog;
     /** The clip rectangle captured with the open group, or null when glScissor had not been called. */
-    private int[] currentGroupScissor;
+    int[] currentGroupScissor;
     /** The previous group's clip rectangle; equal rectangles share it, as the colour and matrix captures do. */
     private int[] lastGroupScissorBox;
     /** Whether the clip was enabled when the open group was created. */
-    private boolean currentGroupScissorEnabled;
+    boolean currentGroupScissorEnabled;
     /** GL's polygon offset captured with the open group (BH-11: the live state is disabled around the overlay). */
     private boolean currentGroupPolygonOffsetEnabled;
     private float currentGroupPolygonOffsetFactor;
     private float currentGroupPolygonOffsetUnits;
     /** The colour GL had current when a position-only batch was offered; null for every other format. */
-    private float[] currentGroupColor;
+    float[] currentGroupColor;
     /**
      * The fixed-function lighting payload of the batch that opened this group, captured at acceptance (BH-05).
      * <p>
@@ -4963,307 +4963,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * way and the renderer uses the same channel for its own overlays. Only the UV transform matters, so the result
      * is {@code [a,b,c,d,tx,ty]} in column-major terms ({@code u'=a*u+c*v+tx, v'=b*u+d*v+ty}).
      */
-    /**
-     * {@return whether the colour the game has current differs from the one captured with {@code currentGroupColor}}.
-     * <p>
-     * BH-04: the group key compared the format, texture, state key, pass and matrices, but not the current colour, so
-     * two colourless draws in one group were both drawn with the first one's tint. A {@code null} captured colour means
-     * the group's format does not take a colour at all, and then there is nothing to compare.
-     */
-    private boolean celtium$colourDiffers() {
-        if (this.currentGroupColor == null) {
-            return true;
-        }
-        return this.currentGroupColor[0] != this.immediateState.colorRed()
-                || this.currentGroupColor[1] != this.immediateState.colorGreen()
-                || this.currentGroupColor[2] != this.immediateState.colorBlue()
-                || this.currentGroupColor[3] != this.immediateState.colorAlpha();
-    }
+    /** Split out of this class (2026-11-06); see GroupChange. */
+    final GroupChange groupChange = new GroupChange(this);
 
-    /**
-     * {@return whether the live texture affine differs from the one captured with {@code currentGroupTexMatrix}}.
-     * <p>
-     * BH-04's texture-matrix half: the affine is per-draw state (the item glint scrolls it, and the renderer's own
-     * effects set it), and it is captured once when a group opens. A batch offered after it changed used to join the
-     * open group and be drawn with the earlier transform. {@code null} means the identity, so a move to or from the
-     * identity is a change like any other.
-     */
-    private boolean celtium$textureAffineMoved() {
-        // Compared through the scratch rather than by building the affine twice: this runs once per offered batch
-        // (~280 a frame), and the old form allocated a float[6] on every call to answer a yes/no question.
-        boolean live = celtium$readTextureAffine(this.textureAffineScratch);
-        float[] captured = this.currentGroupTexMatrix;
-        if (!live || captured == null) {
-            return live != (captured != null);
-        }
-        for (int i = 0; i < 6; i++) {
-            if (this.textureAffineScratch[i] != captured[i]) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * {@return whether the live fog differs from the one captured with {@code currentGroupFog}}.
-     * <p>
-     * BH-04's fog half, and the reason the fog was captured per group in the first place: {@code renderSky} brackets
-     * the sky dome with fog enabled and the sun and moon with it disabled inside one pass, so a group that spanned
-     * such a bracket drew both halves under one of the two. {@code null} is fog off, which is a state to compare.
-     */
-    /**
-     * {@return whether the live clip rectangle is the one the open group was captured under}.
-     * <p>
-     * The comparison is between two <em>clips</em>, not two boxes: a rectangle is only in force when the test is
-     * enabled <em>and</em> {@code glScissor} has been called, so "test off with a box recorded" and "test on with a box
-     * recorded" are different states and must split the group even when the four numbers are equal. The live side is
-     * read through the value readers rather than {@code scissorBox()} because this runs once per offered batch, and
-     * that method builds an array.
-     */
-    private boolean celtium$sameScissor(boolean liveApplies) {
-        boolean capturedApplies = this.currentGroupScissorEnabled && this.currentGroupScissor != null;
-        if (capturedApplies != liveApplies) {
-            return false;
-        }
-        if (!liveApplies) {
-            return true;
-        }
-        int[] captured = this.currentGroupScissor;
-        return captured[0] == this.rasterState.scissorX()
-                && captured[1] == this.rasterState.scissorY()
-                && captured[2] == this.rasterState.scissorWidth()
-                && captured[3] == this.rasterState.scissorHeight();
-    }
-
-    private boolean celtium$fogMoved() {
-        // The group's own copy is taken once per group by the snapshot; the comparison per offer allocates nothing.
-        return this.fog.movedFrom(this.currentGroupFog);
-    }
-
-    private static final boolean FORCE_IDENTITY_TEXMAT = Boolean.getBoolean("celtium.forceIdentityTexmat");
-
-    /** {@return {@code out}, filled with the live texgen eye rows under unit 0's texture matrix}. */
-    private float[] celtium$texGenEyeRows(float[] out) {
-        NativeTexGen.current().eyeRows(this.immediateState.peekTextureMatrix(0), out);
-        return out;
-    }
-
-    /** {@return whether the live texgen rows differ from the open group's}; the end portal's layers differ only here. */
-    private boolean celtium$texGenMoved() {
-        float[] captured = this.currentGroupTexGen;
-        if (captured == null) {
-            return true;
-        }
-        return !java.util.Arrays.equals(celtium$texGenEyeRows(this.texGenScratch), captured);
-    }
-
-    float[] celtium$textureAffine() {
-        if (!celtium$readTextureAffine(this.textureAffineScratch)) {
-            return null;
-        }
-        // Copied here and nowhere else: a group keeps its own snapshot, and capturing is a few hundred times a frame
-        // rather than once per offer. Equal affines share the previous array - most model draws run with the same
-        // item transform - and a changed one gets a new array so groups already holding the old keep its values.
-        float[] last = this.lastTextureAffine;
-        if (last != null && java.util.Arrays.equals(last, this.textureAffineScratch)) {
-            return last;
-        }
-        float[] fresh = this.textureAffineScratch.clone();
-        this.lastTextureAffine = fresh;
-        return fresh;
-    }
-
-    /**
-     * Reads unit 0's texture affine into {@code out}.
-     *
-     * @return whether the live affine is anything other than the identity
-     */
-    boolean celtium$readTextureAffine(float[] out) {
-        if (FORCE_IDENTITY_TEXMAT) {
-            return false;
-        }
-        try {            // Unit 0's matrix explicitly: the lightmap unit's matrix is a different transform on a different stack,
-            // and reading the shared stack would return whichever unit was last active.
-            float[] matrix = this.immediateState.peekTextureMatrix(0);
-            if (matrix == null) {
-                return false;
-            }
-            float a = matrix[0], b = matrix[1], c = matrix[4], d = matrix[5], tx = matrix[12], ty = matrix[13];
-            if (a == 1.0f && b == 0.0f && c == 0.0f && d == 1.0f && tx == 0.0f && ty == 0.0f) {
-                return false;
-            }
-            out[0] = a;
-            out[1] = b;
-            out[2] = c;
-            out[3] = d;
-            out[4] = tx;
-            out[5] = ty;
-            return true;
-        } catch (RuntimeException | LinkageError error) {
-            return false;
-        }
-    }
-
-    /**
-     * The lit group's push payload: five vec4 - the two light directions rotated into model space, the scene ambient,
-     * and each light's diffuse - or {@code null} when lighting is off.
-     * <p>
-     * GL lights live in eye space while the vertex shader only has model-space normals, so each eye-space direction is
-     * pre-multiplied by the inverse modelview's rotation: {@code dot(N, M^-1 * L)} equals the fixed pipeline's
-     * {@code dot(M^-T * N, L)} exactly for orthogonal transforms, which is every transform vanilla's lit draws use.
-     * A disabled light's diffuse is zeroed rather than the direction skipped - the shader's dot stays a constant.
-     */
-    float[] celtium$lightParams(int[] state, float[] modelView) {
-        // Equal payloads share the previous array: the directions depend on the modelview's rotation only, and most
-        // lit groups in a frame carry the same axis-aligned orientation - the per-group twenty-float allocation was
-        // pure garbage for them. A changed payload gets a new array so groups already holding one keep its values.
-        float[] computed = celtium$lightParams(state, modelView, this.lightParamsScratch);
-        if (computed == null) {
-            return null;
-        }
-        float[] last = this.lastLightParams;
-        if (last != null && java.util.Arrays.equals(last, computed)) {
-            return last;
-        }
-        float[] fresh = computed.clone();
-        this.lastLightParams = fresh;
-        return fresh;
-    }
-
-    /** As {@link #celtium$lightParams(int[], float[])}, written into {@code into} when the caller copies it out at once. */
-    /** Filled by the two-arg form before it decides whether a group needs its own array. */
-    private final float[] lightParamsScratch = new float[20];
-    private float[] lastLightParams;
-
-    /**
-     * The model replay's lit payload, rebuilt only when the rotation or the light state moved.
-     * <p>
-     * The replay path calls this per display-list replay - 2.5 M times in one pack leg - while the payload depends only
-     * on {@code modelView[0..10]} and {@link VulkanGlState#lightGeneration()}. A scene of entities sharing an
-     * orientation repeats both, so the 3x3 inverse, two square roots and twenty stores were being done to arrive at
-     * the bytes that were already in {@link #modelInstanceLight}. The scratch is the model path's own, never
-     * {@link #lightParamsScratch}, because the two-arg form above writes that one for the per-group path.
-     *
-     * @return the payload to copy into the record, or null when the replay is unlit
-     */
-    float[] celtium$replayLight(int[] state, float[] modelView) {
-        if (state == null || state.length < 9 || state[8] == 0 || modelView == null) {
-            return null;
-        }
-        long generation = this.immediateState.lightGeneration();
-        if (this.modelReplayInputCache.reuseLightPayload(generation, modelView)) {
-            return this.modelInstanceLight;
-        }
-        this.celtium$lightParams(state, modelView, this.modelInstanceLight);
-        this.modelReplayInputCache.noteLightPayload(generation, modelView);
-        return this.modelInstanceLight;
-    }
-
-    /**
-     * The replay's depth-remapped projection, rebuilt only when the live projection changes.
-     * <p>
-     * The remap is a 4x4 multiply with a constant matrix, and the projection is installed per pass, so nearly every
-     * replay of a frame recomputed the same sixteen floats. The returned array is the model path's scratch; the group
-     * that keeps a projection asks {@link #celtium$shareProjection} for its own copy.
-     */
-    float[] celtium$replayProjection(float[] projectionNow) {
-        // The projection's version, not its contents: the remap is a 4x4 multiply and the cache used to read all sixteen
-        // floats back to prove they had not moved. Every mutation of the projection stack bumps the version, so one
-        // compare says the same thing.
-        long projectionVersion = this.immediateState.projectionVersion();
-        if (this.modelReplayInputCache.reuseProjection(projectionVersion)) {
-            return this.modelReplayProjection;
-        }
-        remapClipDepth(projectionNow, this.modelReplayProjection);
-        this.modelReplayInputCache.noteProjection(projectionVersion);
-        return this.modelReplayProjection;
-    }
-
-    float[] celtium$lightParams(int[] state, float[] modelView, float[] into) {
-        if (modelView == null || modelView.length < 11) {
-            return null;
-        }
-        // One owner of "which floats of a modelview the payload depends on": the copy below is the array this function
-        // reads, and the input cache keys on it too, so the two cannot drift. Reading the modelview directly here and
-        // listing the nine indices again in the cache's key was two lists that could disagree.
-        ModelReplayInputCache.copyRotation(modelView, this.lightRotationScratch);
-        return celtium$lightParamsFromRotation(state, this.lightRotationScratch, into);
-    }
-
-    /**
-     * Inverts a rotation's upper 3x3 into {@code inv}, column-major, or writes the identity for a singular one.
-     * <p>
-     * Split out and static so the geometry the model replay trusts is testable without a device: {@code rotation} is
-     * {@link ModelReplayInputCache#copyRotation}'s nine floats, the array the payload is built from, so a test of this
-     * inverse is a test of the payload a hit reuses.
-     */
-    static void celtium$invertRotation(float[] rotation, float[] inv) {
-        // Named in row/col so the cofactors stay readable: a b c / d e f / g h i, with the rotation array holding the
-        // modelview's column-major a=m[0], d=m[1], g=m[2], b=m[4] and so on.
-        float a = rotation[0], d = rotation[1], g = rotation[2];
-        float b = rotation[3], e = rotation[4], h = rotation[5];
-        float c = rotation[6], f = rotation[7], i22 = rotation[8];
-        float det = a * (e * i22 - f * h) - b * (d * i22 - f * g) + c * (d * h - e * g);
-        if (Math.abs(det) < 1.0e-8f) {
-            // A singular modelview degenerates the draw anyway; identity directions refuse nothing.
-            java.util.Arrays.fill(inv, 0f);
-            inv[0] = inv[4] = inv[8] = 1f;
-            return;
-        }
-        float invDet = 1.0f / det;
-        inv[0] = (e * i22 - f * h) * invDet; inv[1] = (f * g - d * i22) * invDet; inv[2] = (d * h - e * g) * invDet;
-        inv[3] = (c * h - b * i22) * invDet; inv[4] = (a * i22 - c * g) * invDet; inv[5] = (b * g - a * h) * invDet;
-        inv[6] = (b * f - c * e) * invDet; inv[7] = (c * d - a * f) * invDet; inv[8] = (a * e - b * d) * invDet;
-    }
-
-    /**
-     * The lit payload from the nine rotation floats alone, in {@link ModelReplayInputCache#copyRotation}'s order.
-     *
-     * @param rotation the modelview's nine rotation floats: the payload's only geometric input
-     */
-    float[] celtium$lightParamsFromRotation(int[] state, float[] rotation, float[] into) {
-        if (state == null || state.length < 9 || state[8] == 0 || rotation == null) {
-            return null;
-        }
-        // The inverse is a local working matrix: a member scratch rather than a nine-float allocation per lit group.
-        celtium$invertRotation(rotation, this.lightInverseScratch);
-        float[] inv = this.lightInverseScratch;
-        float[] params = into == null ? new float[20] : into;
-        if (into != null) {
-            java.util.Arrays.fill(params, 0f);
-        }
-        float[] dirs = this.immediateState.lightDirections();
-        float[] diffuse = this.immediateState.lightDiffuse();
-        float[] ambient = this.immediateState.lightAmbient();
-        for (int i = 0; i < 2; ++i) {
-            int eye = i * 3;
-            float x = inv[0] * dirs[eye] + inv[3] * dirs[eye + 1] + inv[6] * dirs[eye + 2];
-            float y = inv[1] * dirs[eye] + inv[4] * dirs[eye + 1] + inv[7] * dirs[eye + 2];
-            float z = inv[2] * dirs[eye] + inv[5] * dirs[eye + 1] + inv[8] * dirs[eye + 2];
-            float len = (float) Math.sqrt(x * x + y * y + z * z);
-            if (len > 1.0e-6f) {
-                params[i * 4] = x / len;
-                params[i * 4 + 1] = y / len;
-                params[i * 4 + 2] = z / len;
-            }
-            int diffuseBase = 12 + i * 4;
-            if (this.immediateState.lightEnabled(i)) {
-                params[diffuseBase] = diffuse[eye];
-                params[diffuseBase + 1] = diffuse[eye + 1];
-                params[diffuseBase + 2] = diffuse[eye + 2];
-            }
-        }
-        params[8] = ambient[0];
-        params[9] = ambient[1];
-        params[10] = ambient[2];
-        return params;
-    }
-
-    /** Native material snapshot; no GL query, unit switching or state reconciliation at model replay. */
-    float[] celtium$envCombineColor() {
-        return NativeTextureEnvironment.current().combinedColor();
-    }
-
+    /** The lit group's light payload and replay variants; split out of this class (2026-11-06), see GroupLighting. */
+    final GroupLighting lighting = new GroupLighting(this);
 
 
     /** Reports the animation-driven mirror refreshes on stdout: the debug list is capped and would drop them. */
@@ -8812,7 +8516,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             boolean liveScissorApplies = this.rasterState.scissorTest()
                     && this.rasterState.scissorCalled();
             boolean scissorMoved = GROUP_SCISSOR && this.currentImmediateMesh != null
-                    && !celtium$sameScissor(liveScissorApplies);
+                    && !this.groupChange.celtium$sameScissor(liveScissorApplies);
             if (scissorMoved) {
                 this.immediateStatistics.noteScissorBoundarySplits();
             }
@@ -8881,9 +8585,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 } else if (matrixMoved) {
                     this.mergeRefusal("matrix");
                 } else if (GROUP_COLOUR && (formatId == 7 || formatId == 6 || formatId == 9 || formatId == 4)
-                        && this.colorMirrorHasValue && this.celtium$colourDiffers()) {
+                        && this.colorMirrorHasValue && this.groupChange.celtium$colourDiffers()) {
                     this.mergeRefusal("colour");
-                } else if (affineRelevant && this.celtium$textureAffineMoved()) {
+                } else if (affineRelevant && this.groupChange.celtium$textureAffineMoved()) {
                     // Split by format and by whether the open group bakes its matrix into the vertices: an affine change
                     // in a pre-transformed group could be baked into its UVs instead of splitting it.
                     this.mergeRefusal("affine-f" + formatId + (this.currentGroupPreTransformed ? "-pre" : ""));
@@ -8919,15 +8623,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // take the colour from the mirror and only when the mirror has a value, which is exactly when the
                     // capture below reads it.
                     || (GROUP_COLOUR && (formatId == 7 || formatId == 6 || formatId == 9 || formatId == 4)
-                            && this.colorMirrorHasValue && this.celtium$colourDiffers())
+                            && this.colorMirrorHasValue && this.groupChange.celtium$colourDiffers())
                     // BH-04, the other two halves: the texture affine and the fog are per-draw state as well, and both
                     // are captured once when the group opens. A batch offered after either changed used to be appended
                     // to the open group and drawn with the earlier value - the glint's scrolling affine and a quad drawn
                     // under a different fog bracket are the two shapes this closes. Both comparisons are null-safe:
                     // null means "identity affine" and "fog off" respectively, and those are states to compare too.
-                    || (affineRelevant && this.celtium$textureAffineMoved())
-                    || (formatId == VulkanImmediateFormats.POSITION_COLOR_TEXGEN && this.celtium$texGenMoved())
-                    || this.celtium$fogMoved()
+                    || (affineRelevant && this.groupChange.celtium$textureAffineMoved())
+                    || (formatId == VulkanImmediateFormats.POSITION_COLOR_TEXGEN && this.groupChange.celtium$texGenMoved())
+                    || this.groupChange.celtium$fogMoved()
                     || lightParamsMoved) {
                 // Which term refused the open group, counted. Asked only where a group is actually created (a few
                 // hundred times a frame, not per offer), and asked with the same live state the predicate just read.
@@ -8946,8 +8650,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         !this.currentGroupPreTransformed
                                 && !java.util.Arrays.equals(this.currentGroupModelView, this.glModelView),
                         GROUP_COLOUR && (formatId == 7 || formatId == 6 || formatId == 9 || formatId == 4)
-                                && this.colorMirrorHasValue && this.celtium$colourDiffers(),
-                        this.celtium$textureAffineMoved(), this.celtium$fogMoved(), lightParamsMoved));
+                                && this.colorMirrorHasValue && this.groupChange.celtium$colourDiffers(),
+                        this.groupChange.celtium$textureAffineMoved(), this.groupChange.celtium$fogMoved(), lightParamsMoved));
                 // A new matrix pair means a new group: mixing them is what placed geometry off-screen.
                 closeCurrentImmediateGroup();
                 long groupCreateStart = BATCH_TIMINGS ? System.nanoTime() : 0;
@@ -9110,7 +8814,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // BH-05: the lighting belongs to the batch that opened the group, so it is read from the state saved
                 // two lines above while that state is still the live one. Reading it at close time instead let a later
                 // light change shade vertices that had already been accepted.
-                this.currentGroupLightParams = celtium$lightParams(this.currentGroupState, this.currentGroupModelView);
+                this.currentGroupLightParams = this.lighting.celtium$lightParams(this.currentGroupState, this.currentGroupModelView);
                 // The lighting generation captured with the payload: the enable bit is already in the state key, but a
                 // light whose direction or colour changed without a toggle must close the group as well, or the batches
                 // after the change are drawn with the payload of the batch before it (BH-05's remaining half).
@@ -9188,9 +8892,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // Only a layout that samples a texture carries the affine: the colour- and position-only vertex
                 // shaders have no texture coordinate and do not declare the push slots, so recording whatever the
                 // mirror last held would put a value in the group's identity that no batch in it can draw with.
-                this.currentGroupTexMatrix = affineRelevant ? celtium$textureAffine() : null;
+                this.currentGroupTexMatrix = affineRelevant ? this.groupChange.celtium$textureAffine() : null;
                 this.currentGroupTexGen = formatId == VulkanImmediateFormats.POSITION_COLOR_TEXGEN
-                        ? celtium$texGenEyeRows(new float[12]) : null;
+                        ? this.groupChange.celtium$texGenEyeRows(new float[12]) : null;
                 if (MERGE_CENSUS && affineRelevant) {
                     this.groupSplitCensus.noteTextureAffine(this.currentGroupTexMatrix);
                 }
@@ -9732,22 +9436,22 @@ this.frameBufferOpen = false;
             return false;
         }
         // BH-09: the clip rectangle is per-draw state, compared against the group's opening capture.
-        if (GROUP_SCISSOR && !celtium$sameScissor(
+        if (GROUP_SCISSOR && !this.groupChange.celtium$sameScissor(
                 this.rasterState.scissorTest()
                         && this.rasterState.scissorCalled())) {
             return false;
         }
         // BH-04: the current colour is group state for the colourless layouts (and for 9, the same rule as the slow path).
         if (GROUP_COLOUR && (formatId == 7 || formatId == 6 || formatId == 9 || formatId == 4)
-                && this.colorMirrorHasValue && this.celtium$colourDiffers()) {
+                && this.colorMirrorHasValue && this.groupChange.celtium$colourDiffers()) {
             return false;
         }
         // BH-04's other halves: texture affine and fog, captured once at open. The affine only exists for a layout
         // that samples a texture - the colour and position-only shaders have no texture coordinate at all, so holding
         // a group open across a changed mirror value is not a correctness risk for them (and format 1 is half the
         // offered batches).
-        if (VulkanImmediateFormats.samplesTexture(formatId) && this.celtium$textureAffineMoved()
-                || this.celtium$fogMoved()) {
+        if (VulkanImmediateFormats.samplesTexture(formatId) && this.groupChange.celtium$textureAffineMoved()
+                || this.groupChange.celtium$fogMoved()) {
             return false;
         }
         // BH-05: a moved light payload splits only a lit group - the enable is in the state key already.

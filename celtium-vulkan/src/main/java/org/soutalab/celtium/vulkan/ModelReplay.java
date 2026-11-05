@@ -166,7 +166,7 @@ final class ModelReplay {
             // sixteen floats once per replay. The suspicion that the live projection had already been remapped was tested
             // with a switch that copied it through unchanged: the difference grew from 4.56 % to 6.01 % of the crop, so the
             // remap is right and the switch was removed rather than kept.
-            float[] projectionRemapped = b.celtium$replayProjection(projectionNow);
+            float[] projectionRemapped = b.lighting.celtium$replayProjection(projectionNow);
             // A model is drawn through the lit ITEM pipeline, whose descriptor set needs the light map; with no mirror the
             // descriptor is 0 and the enqueue refuses. The terrain pass recovers the mirror before it gives up
             // (ensureLightmapMirror), and the model path has to do the same: the first-person arm is drawn before the
@@ -179,7 +179,7 @@ final class ModelReplay {
             // Resolved before the guard so a replay counts once either way: the light-map coordinate it samples and the
             // combine colour its record carries.
             float[] lightCoord = b.celtium$lightmapForGroup();
-            float[] combineColor = b.celtium$envCombineColor();
+            float[] combineColor = b.lighting.celtium$envCombineColor();
             // The whole replay, when it is the one this path resolved last time: measured need, leg r16b-model-growth-4k -
             // 2,509,753 replays in 112 frames and 781 ms in this path (311 ns a replay) while modelInstances reported 98
             // runs, i.e. about one per frame. A run only grows on a matching stateKey/target/projection/fog/viewport/pass,
@@ -217,7 +217,7 @@ final class ModelReplay {
                     resolved.colour[2] = b.immediateState.colorBlue();
                     resolved.colour[3] = b.immediateState.colorAlpha();
                 }
-                resolved.affineValid = b.celtium$readTextureAffine(resolved.affine);
+                resolved.affineValid = b.groupChange.celtium$readTextureAffine(resolved.affine);
             }
             // The layer passes: a display list replayed under a texture other than the one it was compiled with. The
             // spider's red eyes are one (LayerSpiderEyes rebinds the eyes texture and draws the same lists again with
@@ -353,8 +353,8 @@ final class ModelReplay {
                 ? b.groupColor(b.immediateState.colorRed(), b.immediateState.colorGreen(),
                         b.immediateState.colorBlue(), b.immediateState.colorAlpha())
                 : null;
-        group.texMatrix = b.celtium$textureAffine();
-        group.lightParams = b.celtium$lightParams(state, modelView);
+        group.texMatrix = b.groupChange.celtium$textureAffine();
+        group.lightParams = b.lighting.celtium$lightParams(state, modelView);
         // The same rule as the immediate path, and it is the light-map unit's enable state that decides it - not the
         // pass. The model path's GUI-stage content is the inventory's player model and any TESR item (a chest, a
         // shulker box, a banner: RenderItem.renderItem sends those through
@@ -523,10 +523,10 @@ final class ModelReplay {
             colour[2] = b.immediateState.colorBlue();
             colour[3] = b.immediateState.colorAlpha();
         }
-        float[] affine = b.celtium$readTextureAffine(b.modelInstanceAffine) ? b.modelInstanceAffine : null;
+        float[] affine = b.groupChange.celtium$readTextureAffine(b.modelInstanceAffine) ? b.modelInstanceAffine : null;
         // Cached on the rotation and the light state: the same payload was rebuilt for every replay of a scene whose
         // entities share an orientation (2.5 M rebuilds in one pack leg; the cache's miss counter says how many remain).
-        float[] light = b.celtium$replayLight(state, modelView);
+        float[] light = b.lighting.celtium$replayLight(state, modelView);
         if (MODEL_LIGHT_DEBUG_FRAME > 0 && b.frameId >= MODEL_LIGHT_DEBUG_FRAME && modelLightLines++ < 80) {
             // One frame of the instances' lighting inputs, for a lit model whose shade differs from the reference:
             // the flag, the object-space light terms and the lightmap coordinate the shader will see, by list.
@@ -609,7 +609,7 @@ final class ModelReplay {
                 probe.colour[2] = b.immediateState.colorBlue();
                 probe.colour[3] = b.immediateState.colorAlpha();
             }
-            probe.affineValid = b.celtium$readTextureAffine(probe.affine);
+            probe.affineValid = b.groupChange.celtium$readTextureAffine(probe.affine);
         }
         probe.lightCoordValid = lightCoord != null;
         probe.combineValid = combineColor != null;
@@ -617,7 +617,7 @@ final class ModelReplay {
         // the modelview's rotation) are not a usable key: the payload is invariant under a change of modelview, so an
         // input-keyed guard refused every replay of the pack's scene (leg r19b: hit=0 of 2,940,981) while the bytes
         // repeated. celtium$replayLight already asks its own cache first, so this is the same call the path made.
-        float[] light = b.celtium$replayLight(fast.cached().state, modelView);
+        float[] light = b.lighting.celtium$replayLight(fast.cached().state, modelView);
         probe.lightValid = light != null;
         if (!fast.matchesValues(probe, projection, lightCoord, combineColor, light, versionsProven)) {
             fast.noteMiss(ModelReplayFastPath.MISS_INPUTS);
