@@ -161,3 +161,12 @@ ones: the per-tick lightmap re-upload). ~250 us of the world-pass excess is stil
   on its own previous upload's fence (one tick earlier), writes 1 KB to persistent staging, records into its own
   command buffer and submits deferred; nothing in it waits on the frame. Its measured 50-70 us per tick is CPU work,
   not a stall. Next (needs a leg): the split with `e68601a76` (entities bracket, `inWorldAnimMirror`).
+
+## l1split-amd: the tick-frame excess named (2026-11-05 21:23, renderer `56293e99…` = 79392badc, world-accept, guiScale 3, validation off, PASSED)
+
+With the `entities` bracket closed on the cancelled path (e68601a76), the settled block (1000 frames, 61 tick frames)
+reads frame 1433/1183 us (tick/plain, +250): `lightmap` 74/0, `entities` 83/34, `terrain` 127/87, `flush` 224/184,
+sky/winRecord/wrecLoop ~+10 each; `worldPass` 860/718, so little is left unnamed inside it. The block before it had
+`lightmap` 308/0. `inWorldAnimMirror=231/4999us/worst801us`: the direct count agrees with r79-time (hundreds of calls,
+a few ms per run), so in-world sprite animation is not a tick-frame cost. Next: dynAnnounce/dynFlush/dynMirror inside
+the light map's upload (a1e25c8ee).

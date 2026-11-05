@@ -79,6 +79,23 @@ public class TextureUtilMixin {
      * The SRG name is derived rather than guessed: the mapped source's parameter names carry the SRG number
      * ({@code p_110988_1_} and friends), which is exactly how the two hooks around this one were chosen.
      */
+    /**
+     * The whole int[] upload, timed as a pass (declared before the announcing hook so it opens first). Against
+     * {@code lightmap} (the caller) and {@code dynAnnounce} (the renderer's part) it separates the game's own light-map
+     * computation from the upload, and the upload's stub {@code glTexSubImage2D} capture from the announcement.
+     */
+    @Inject(method = "func_110988_a", at = @At("HEAD"), require = 0)
+    private static void celtium$uploadTimedBegin(int glTextureId, int[] data, int width, int height,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("dynUpload");
+    }
+
+    @Inject(method = "func_110988_a", at = @At("RETURN"), require = 0)
+    private static void celtium$uploadTimedEnd(int glTextureId, int[] data, int width, int height,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("dynUpload");
+    }
+
     @Inject(method = "func_110988_a", at = @At("HEAD"), require = 0)
     private static void celtium$announceUploadedPixels(int glTextureId, int[] data, int width, int height,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
