@@ -18,8 +18,11 @@ spec.loader.exec_module(runner)
 
 
 class CompletedProcess:
+    console_extra = b""
+
     def __init__(self, *args, **kwargs):
         kwargs["stdout"].write(b'[Celtium] CELTIUM_NATIVE_DEVICE name="Intel(R) UHD Graphics 630 (CFL GT2)" uuid=abcd matchedOpenGl=false\n')
+        kwargs["stdout"].write(CompletedProcess.console_extra)
 
     def wait(self, timeout=None):
         return 0
@@ -29,7 +32,9 @@ class CompletedProcess:
 
 
 class PrismVerdictTests(unittest.TestCase):
-    def exercise(self, status, validation_error=False, require_gpu="UHD Graphics 630"):
+    def exercise(self, status, validation_error=False, require_gpu="UHD Graphics 630", console=b""):
+        CompletedProcess.console_extra = console
+        self.addCleanup(setattr, CompletedProcess, "console_extra", b"")
         with tempfile.TemporaryDirectory() as tmp:
             game = Path(tmp)
             (game / "logs").mkdir()
@@ -75,6 +80,19 @@ class PrismVerdictTests(unittest.TestCase):
         code, outcome = self.exercise("FAILED_PRESENTED_IMAGE")
         self.assertEqual(code, 1)
         self.assertEqual(outcome["validationExitCode"], 1)
+
+    def test_validation_message_only_in_the_process_console_counts(self):
+        # Printed to stderr before Forge's redirect or after log4j shut down: absent from latest.log.
+        code, outcome = self.exercise("PASSED", console=b"Celtium Vulkan validation: severity=ERROR id=VUID-x late\n")
+        self.assertEqual(code, 1)
+        self.assertEqual(outcome["validationMessageCount"], 1)
+        self.assertEqual(outcome["validationConsoleOnlyCount"], 1)
+
+    def test_message_in_both_logs_counts_once(self):
+        line = b"[12:00:00] [Client thread/INFO] [STDERR]: Celtium Vulkan validation: severity=ERROR id=VUID-test bad lifetime\n"
+        code, outcome = self.exercise("PASSED", validation_error=True, console=line)
+        self.assertEqual(outcome["validationMessageCount"], 1)
+        self.assertNotIn("validationConsoleOnlyCount", outcome)
 
 
 if __name__ == "__main__":

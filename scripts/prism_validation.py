@@ -7,6 +7,7 @@ such as the official Cleanroom instance; it is not a general Minecraft launcher.
 """
 
 import argparse
+import collections
 import configparser
 import fcntl
 from contextlib import nullcontext
@@ -884,11 +885,31 @@ def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, ass
         # visible as skipped. Two rounds running, a message read through a truncated preview looked like something it was
         # not, and a gate that says nothing about what it allowed invites exactly that mistake.
         allowed = []
+        # The layer's callback prints to System.err. Forge routes stderr into latest.log only while its logging is up,
+        # so a message from before that redirect or after log4j has shut down exists only in the process console. Both
+        # are read; a console line that latest.log also carries is the same message and counted once (a multiset
+        # difference by the message text, so N real repeats in the console still count N times).
+        process_console = game / "validation-console.log"
+        marker = "Celtium Vulkan validation: "
+        logged = collections.Counter()
+        lines = []
         if console.exists():
             for line in console.read_text(errors="ignore").splitlines():
-                marker = "Celtium Vulkan validation: "
-                if marker not in line:
-                    continue
+                if marker in line:
+                    text = line.split(marker, 1)[1].strip()
+                    logged[text] += 1
+                    lines.append(line)
+        if process_console.is_file():
+            seen = collections.Counter()
+            for line in process_console.read_text(errors="ignore").splitlines():
+                if marker in line:
+                    text = line.split(marker, 1)[1].strip()
+                    seen[text] += 1
+                    if seen[text] > logged[text]:
+                        lines.append(line)
+                        outcome["validationConsoleOnlyCount"] = outcome.get("validationConsoleOnlyCount", 0) + 1
+        if console.exists():
+            for line in lines:
                 text = line.split(marker, 1)[1].strip()
                 severity = None
                 if text.startswith("severity="):
