@@ -84,7 +84,7 @@
 
 ## FPSの現状と残る道
 
-- 現行の判定は **round 64 の paired 3対: p50 median 1.189（SLOWER・`NOT_MET`）**（[証拠](evidence/main-clear-queue-2026-11-04.md)）。
+- 現行の判定は **round 67 の paired 3対: p50 median 1.062（SLOWER・`NOT_MET`、p95 1.218）**（[証拠](evidence/paired-kpi-round67-2026-11-05.md)）。round 64 は 1.189。
   同じ rep に **round 58 のビルドを control arm** として並べた `medianControlRatio` は **1.063**、clean な rep 1–2 では
   **0.985 / 1.063**。**round 63 の「round 58 から 13.1% 悪化」は control arm で再現しない**——両ビルドは測定のばらつき
   以内で同速で、1.279 は負荷の乗った rep を含む session だった（rep 3 の 1.566 が round 63 rep 2 の 1.470 と同じ形）。
