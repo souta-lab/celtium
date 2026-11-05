@@ -52,6 +52,37 @@ public class TextureAtlasMixin implements TextureMapExtension {
         return this.celeritas$quadTree.find(x, y);
     }
 
+    /**
+     * One batch for the tick's animated sprites: each sprite's frame reaches the backend as its own patch upload, and
+     * submitting them one by one put ~0.3 ms on every tick frame (r69prof). The end runs at RETURN; a throw leaves the
+     * batch to the staging ring's own submit-before-wrap and the next tick's begin, which does not reopen it.
+     */
+    @Inject(method = "updateAnimations", at = @At("HEAD"))
+    private void celtium$beginAnimationUploads(CallbackInfo ci) {
+        try {
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (backend != null) {
+                backend.beginAnimationUploads(((TextureMap) (Object) this).getGlTextureId());
+            }
+        } catch (Throwable ignored) {
+            // A batching hint must never break the animation tick.
+        }
+    }
+
+    @Inject(method = "updateAnimations", at = @At("RETURN"))
+    private void celtium$endAnimationUploads(CallbackInfo ci) {
+        try {
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
+                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (backend != null) {
+                backend.endAnimationUploads();
+            }
+        } catch (Throwable ignored) {
+            // Same rule as the begin.
+        }
+    }
+
     @ModifyExpressionValue(method = "updateAnimations", at = @At(value = "INVOKE", target = "Ljava/util/List;iterator()Ljava/util/Iterator;"))
     private Iterator<TextureAtlasSprite> getFilteredIterator(Iterator<TextureAtlasSprite> iterator) {
         if (CeleritasVintage.options().performance.animateOnlyVisibleTextures) {

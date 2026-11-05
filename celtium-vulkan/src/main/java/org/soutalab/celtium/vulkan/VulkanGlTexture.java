@@ -1860,6 +1860,23 @@ public final class VulkanGlTexture {
             flushStaging();
         }
 
+        boolean clearedBaseline = celtium$canInitializePatchBaseline();
+        boolean deferred = this.regionDeferring && this.patchBatching && !clearedBaseline
+                && celtium$levelsSampled(depth);
+        if (deferred) {
+            // Recorded later as one copy per level for every sprite of the tick (see flushDeferredRegions); a patch
+            // over a region still pending is ordered behind it by flushing first.
+            if (celtium$overlapsDeferred(x, y, pixelWidth, pixelHeight)) {
+                flushDeferredRegions();
+            }
+            for (int level = 0; level < depth; level++) {
+                celtium$deferRegion(level, offsets[level], x >> level, y >> level, pixelWidth >> level,
+                        pixelHeight >> level);
+            }
+            this.deferredDepth = Math.max(this.deferredDepth, depth);
+        } else {
+        // Anything pending was staged earlier and must reach the image before this patch does.
+        flushDeferredRegions();
         VkCommandBuffer commandBuffer;
         if (this.patchBatching) {
             if (this.patchBatch == null) {
@@ -1871,7 +1888,6 @@ public final class VulkanGlTexture {
         }
         // A native image can be populated entirely by sub-image writes. Give its untouched space a defined value
         // before the first patch, so sampling does not depend on every tile of a sparse atlas being written.
-        boolean clearedBaseline = celtium$canInitializePatchBaseline();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
             VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
@@ -1922,6 +1938,7 @@ public final class VulkanGlTexture {
             if (!this.patchBatching) {
                 this.outstandingUploadFence = context.celtium$submitDeferred(commandBuffer, 0L);
             }
+        }
         }
         this.currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         for (int level = 0; level < depth; level++) {
@@ -3009,6 +3026,7 @@ public final class VulkanGlTexture {
     }
 
     private void transitionToShaderRead() {
+        if (this.deferredCount > 0) submitPatchBatch(); // a deferred animation copy must not land after this write
         VkCommandBuffer commandBuffer = context.beginCommands();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
@@ -3425,6 +3443,7 @@ public final class VulkanGlTexture {
         int levelHeight = Math.max(1, this.height >> level);
         long bytes = (long) levelWidth * levelHeight * BYTES_PER_PIXEL;
         ensureStaging(bytes);
+        if (this.deferredCount > 0) submitPatchBatch(); // a deferred animation copy must not land after this write
         VkCommandBuffer commands = context.beginCommands();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
@@ -3747,6 +3766,7 @@ public final class VulkanGlTexture {
             flushStaging();
         }
 
+        if (this.deferredCount > 0) submitPatchBatch(); // a deferred animation copy must not land after this write
         VkCommandBuffer commandBuffer = context.beginCommands();
         boolean finishedSamplingTransition = false;
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -3952,8 +3972,154 @@ public final class VulkanGlTexture {
     private boolean patchBatching;
     private VkCommandBuffer patchBatch;
 
+    /**
+     * Opens a patch batch for a run of patches the caller brackets - the atlas's animated sprites of one
+     * {@code TextureMap.updateAnimations}, one patch per sprite. Measured 2026-11-05 (wall profile r69prof, warm ticks):
+     * one command buffer and one submission per sprite put ~0.3 ms on every tick frame. Returns whether this call
+     * opened the batch, so a caller nested inside an already open one does not close it.
+     */
+    public boolean beginPatchBatch() {
+        if (!PATCH_BATCH || this.patchBatching) {
+            return false;
+        }
+        this.patchBatching = true;
+        this.regionDeferring = DEFER_PATCH_REGIONS;
+        return true;
+    }
+
+    /** Closes a batch {@link #beginPatchBatch()} opened and submits what it recorded. */
+    public void endPatchBatch() {
+        this.regionDeferring = false;
+        this.patchBatching = false;
+        submitPatchBatch();
+    }
+
+    /**
+     * {@code -Dceltium.vulkan.deferPatchRegions=false}: inside an animation batch, record each sprite's barriers and
+     * copies on the spot as before. With it on (default), the sprites' regions are recorded together - one barrier,
+     * one {@code vkCmdCopyBufferToImage} per mip level carrying every region, one barrier back. Measured 2026-11-05:
+     * skipping the animated uploads altogether (r75anim, reps 1-2) took the warm tick frame from 5.43/4.77 ms to
+     * 4.57/4.44 ms, and the aligned profile put the per-sprite copies at most of that path; RADV implements each
+     * buffer-to-image copy as its own meta operation.
+     */
+    private static final boolean DEFER_PATCH_REGIONS = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.deferPatchRegions"));
+    private boolean regionDeferring;
+    private int deferredDepth;
+    private int deferredCount;
+    /** Per deferred region: level, x, y, width, height. */
+    private int[] deferredRects = new int[5 * 64];
+    private long[] deferredOffsets = new long[64];
+
+    private boolean celtium$levelsSampled(int depth) {
+        for (int level = 0; level < depth; level++) {
+            if (levelLayout(level) != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void celtium$deferRegion(int level, long offset, int x, int y, int w, int h) {
+        if (this.deferredCount == this.deferredOffsets.length) {
+            this.deferredOffsets = java.util.Arrays.copyOf(this.deferredOffsets, this.deferredCount * 2);
+            this.deferredRects = java.util.Arrays.copyOf(this.deferredRects, this.deferredCount * 10);
+        }
+        int i = this.deferredCount++;
+        this.deferredOffsets[i] = offset;
+        int r = i * 5;
+        this.deferredRects[r] = level;
+        this.deferredRects[r + 1] = x;
+        this.deferredRects[r + 2] = y;
+        this.deferredRects[r + 3] = w;
+        this.deferredRects[r + 4] = h;
+    }
+
+    /** Whether a level-0 rectangle meets any pending level-0 region; a copy's regions must not overlap. */
+    private boolean celtium$overlapsDeferred(int x, int y, int w, int h) {
+        int[] rects = this.deferredRects;
+        for (int i = 0; i < this.deferredCount; i++) {
+            int r = i * 5;
+            if (rects[r] == 0 && x < rects[r + 1] + rects[r + 3] && rects[r + 1] < x + w
+                    && y < rects[r + 2] + rects[r + 4] && rects[r + 2] < y + h) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Records the pending regions into the open batch: the levels they touch go to TRANSFER_DST together, each level
+     * takes one copy with all of its regions, and the levels return to sampling. Every deferred patch required its
+     * levels to be in SHADER_READ_ONLY already, so that is the layout the barrier leaves and restores.
+     */
+    private void flushDeferredRegions() {
+        int count = this.deferredCount;
+        if (count == 0) {
+            return;
+        }
+        int depth = this.deferredDepth;
+        this.deferredCount = 0;
+        this.deferredDepth = 0;
+        if (this.patchBatch == null) {
+            this.patchBatch = context.beginCommands();
+        }
+        VkCommandBuffer commandBuffer = this.patchBatch;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
+            barrier.get(0).sType$Default()
+                    .srcAccessMask(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT
+                            | VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .oldLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                    .newLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(image);
+            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, depth, 0, 1);
+            vkCmdPipelineBarrier(commandBuffer, SAMPLING_STAGES | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
+            int[] rects = this.deferredRects;
+            for (int level = 0; level < depth; level++) {
+                int regions = 0;
+                for (int i = 0; i < count; i++) {
+                    if (rects[i * 5] == level) {
+                        regions++;
+                    }
+                }
+                if (regions == 0) {
+                    continue;
+                }
+                VkBufferImageCopy.Buffer copies = VkBufferImageCopy.calloc(regions, stack);
+                int k = 0;
+                for (int i = 0; i < count; i++) {
+                    int r = i * 5;
+                    if (rects[r] != level) {
+                        continue;
+                    }
+                    VkBufferImageCopy copy = copies.get(k++);
+                    copy.bufferOffset(this.deferredOffsets[i]).bufferRowLength(0).bufferImageHeight(0);
+                    copy.imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level)
+                            .baseArrayLayer(0).layerCount(1);
+                    copy.imageOffset().set(rects[r + 1], rects[r + 2], 0);
+                    copy.imageExtent().set(rects[r + 3], rects[r + 4], 1);
+                }
+                vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        copies);
+            }
+            barrier.get(0).srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
+                    .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                    .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null,
+                    barrier);
+        }
+    }
+
     /** Submits the open patch batch, if any; its fence becomes this texture's outstanding upload. */
     private void submitPatchBatch() {
+        // Pending regions name slices of the staging ring this submission is about to fence: record them first.
+        flushDeferredRegions();
         VkCommandBuffer batch = this.patchBatch;
         if (batch != null) {
             this.patchBatch = null;
