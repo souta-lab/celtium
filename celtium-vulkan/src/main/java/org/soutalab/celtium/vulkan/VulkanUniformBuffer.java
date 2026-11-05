@@ -67,7 +67,12 @@ final class VulkanUniformBuffer {
 
         Allocation replacement;
         try {
-            replacement = create(alignToDevice(required), "VulkanUniformBuffer:growth");
+            // Geometric: the terrain asks for one more block per new region, so growing to the exact request
+            // allocated, mapped and copied a new buffer for nearly every region a moving player loaded. The extra
+            // capacity is only reported (uniformBlocks); nothing addresses past what was written.
+            long grown = previousSize > 0L && previousSize < (Long.MAX_VALUE / 2L)
+                    ? Math.max(required, previousSize + (previousSize >> 1)) : required;
+            replacement = create(alignToDevice(grown), "VulkanUniformBuffer:growth");
         } catch (RuntimeException | LinkageError failure) {
             // The old buffer, its memory and its mapped address are untouched by create(), so the caller keeps a
             // working buffer and only this growth is lost (BH-24). Counted, so the injection run says it happened.
