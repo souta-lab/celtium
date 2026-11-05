@@ -737,7 +737,7 @@ final class ModelReplay {
         if (b.openModelRunGroup == group) {
             b.openModelRunGroup = null;
         }
-        b.celtium$flushIndirectRun();
+        b.indirectRuns.celtium$flushIndirectRun();
         try (MemoryStack groupStack = MemoryStack.stackPush()) {
             b.celtium$setGroupViewport(groupStack, group);
         }
