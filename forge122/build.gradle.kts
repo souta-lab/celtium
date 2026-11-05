@@ -121,6 +121,14 @@ dependencies {
     modEmbedDependencies("org.lwjgl:lwjgl-shaderc:${rootProject.findProperty("celtium_mod_lwjgl_version")}") {
         isTransitive = false
     }
+    // Its natives, decided 2026-11-05 by the user: without them the binding fails its own load on every ordinary
+    // install and a mod's GL program stays refused. LWJGL extracts them from the binding class's own class loader
+    // (linux/x64/org/lwjgl/shaderc/libshaderc.so, windows/x64/.../shaderc.dll), which is the mod jar.
+    for (platform in listOf("natives-linux", "natives-windows")) {
+        modEmbedDependencies("org.lwjgl:lwjgl-shaderc:${rootProject.findProperty("celtium_mod_lwjgl_version")}:$platform") {
+            isTransitive = false
+        }
+    }
     val lombokVersion = rootProject.findProperty("lombok_version").toString()
     compileOnly("org.projectlombok:lombok:${lombokVersion}")
     annotationProcessor("org.projectlombok:lombok:${lombokVersion}")
@@ -195,6 +203,10 @@ tasks.named<Jar>("jar") {
     }
     // LWJGL Vulkan Java bindings are bundled since v0.1.2-alpha; include their BSD-3-Clause notice.
     from(file("$repositoryRoot/licenses/lwjgl-LICENSE")) {
+        into("licenses")
+    }
+    // The shaderc natives embedded above link shaderc, SPIRV-Tools, SPIRV-Headers and glslang; their notices.
+    from(file("$repositoryRoot/licenses/shaderc-LICENSE")) {
         into("licenses")
     }
     manifest {

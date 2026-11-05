@@ -359,3 +359,19 @@ the terrain pass) ran before that field is assigned for the pass, so they asked 
 They now ask `targetRegistry.currentIdentity()`. Renderer `f4f1993d…`: glow-outline A/B leg `r45-glow` (the
 re-run recipe of glow-outline-2026-11-03.md) **verdict=PASS**, outline 2723 px (0.295%), control 28/7, noise 3.51%,
 validation 0; `r44-world-intel` (Intel UHD 630, world-accept) PASSED, validation 0, gpuRequirementMet=true.
+
+## Round 10: libshaderc ships in the jar (2026-11-05, user decision)
+
+`forge122/build.gradle.kts` embeds `lwjgl-shaderc:3.4.3:natives-linux` and `:natives-windows` (x64 only), so
+`linux/x64/org/lwjgl/shaderc/libshaderc.so` (10.4 MB) and `windows/x64/org/lwjgl/shaderc/shaderc.dll` (6.5 MB) sit at
+the paths LWJGL's `SharedLibraryLoader` extracts from; `licenses/shaderc-LICENSE` carries the notices of shaderc,
+SPIRV-Tools, SPIRV-Headers and glslang (the versions the binary names: glslang 16.4.0, SPIRV-Tools v2026.3).
+Packaged jar `ae90347a…` (18.77 MB, was 18.76 MB with the natives' predecessor build).
+
+Observed outside the game: a standalone probe with only that jar plus LWJGL 3.4.3 core on the classpath and no
+`org.lwjgl.librarypath` for shaderc logged `Extracting: …celtium-forge-mc1.12.2-0.2.0.jar!/linux/x64/org/lwjgl/shaderc/libshaderc.so`
+and compiled a fragment shader for Vulkan 1.2 (status 0, 400 bytes, magic `0x07230203`).
+
+Not yet observed: the load under Forge's `LaunchClassLoader` in a real instance (the gregtech scene is Supersymmetry,
+a heavy pack, so it runs at night), and the Windows DLL. Expected in that leg: `CELTIUM_MOD_SHADERC available=true`
+with no leg-supplied natives. `modPrograms` stays opt-in until that and the GL-reference comparison.
