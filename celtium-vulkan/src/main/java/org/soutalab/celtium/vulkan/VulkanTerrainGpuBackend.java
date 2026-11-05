@@ -2860,6 +2860,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private VulkanHostBuffer indirectCommands;
     private int indirectCommandCount;
     private long indirectRunKey;
+    /** The fields {@link #indirectRunKey} hashes, compared exactly when the keys agree. */
+    private long indirectRunDescriptor;
+    private long indirectRunVertexBuffer;
+    private long indirectRunIndexBuffer;
+    private long indirectRunAlpha;
     private boolean indirectRunActive;
     private int indirectRunFirstCommand;
     private int indirectRunCommands;
@@ -2978,7 +2983,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 ^ (prepared.descriptor * 0x94D049BB133111EBL)
                 ^ (((long) mesh.vertexBuffer()) * 31L) ^ ((long) mesh.indexBuffer())
                 ^ (perRecordMatte ? 0L : (alphaKey * 0xC2B2AE3D27D4EB4FL));
-        if (this.indirectRunActive && key != this.indirectRunKey) {
+        // The key is a hash, so equal keys are checked against the fields it was built from: a collision must not put a
+        // group into a run drawn with another pipeline, descriptor or buffer.
+        long runAlpha = perRecordMatte ? 0L : alphaKey;
+        if (this.indirectRunActive && (key != this.indirectRunKey
+                || prepared.pipeline != this.indirectRunOriginalPipeline
+                || prepared.descriptor != this.indirectRunDescriptor
+                || mesh.vertexBuffer() != this.indirectRunVertexBuffer
+                || mesh.indexBuffer() != this.indirectRunIndexBuffer
+                || runAlpha != this.indirectRunAlpha)) {
             celtium$flushIndirectRun("key-change");
         }
         int recordIndex = this.drawRecords.record(push, DRAW_RECORDS_ARRAY_INDEX ? group.textureArrayIndex : -1);
@@ -2992,6 +3005,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (!this.indirectRunActive) {
             this.indirectRunActive = true;
             this.indirectRunKey = key;
+            this.indirectRunDescriptor = prepared.descriptor;
+            this.indirectRunVertexBuffer = mesh.vertexBuffer();
+            this.indirectRunIndexBuffer = mesh.indexBuffer();
+            this.indirectRunAlpha = runAlpha;
             if (prepared.pipeline instanceof VulkanImmediateTexturePipeline texture) {
                 this.indirectRunPipeline = celtium$recordsPipeline(texture);
                 this.indirectRunPipelineObject = this.indirectRunPipeline;
