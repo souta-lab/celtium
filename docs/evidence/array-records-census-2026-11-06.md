@@ -23,3 +23,18 @@ that stores the texture index. It is opt-in: `-Dceltium.vulkan.indirectImmediate
 4. **Record capacity** (`record-full`, 3k): the record buffer fills within a frame.
 
 Until (1)-(3) hold, the switches only add work; they stay off.
+
+## Two blockers cleared, a correctness blocker found (2026-11-06 07:30-07:55)
+
+- `-Dceltium.vulkan.recordsPositionTwins=true` (0f45e4b72): the position variants' twins again - `l35arr-amd` PASSED,
+  validation 0; `texture-twin` 30,399 -> 9. The new top breakers: `key-change` 45,942 and `stride` 30,896.
+- **bd6c83de3** (default path): an empty arena mesh opened its slice at 16-byte alignment because the copy paths set
+  the layout after taking the write address. Fixed; the default-flags picture leg `l37pic-amd` PASSED, validation 0.
+- With all switches on (`l36arr-amd`, r110 `b650af93`): `stride` breaks are gone and runs start to span groups
+  (`runs=133756 … groups=138713`, 1,657 multi-group runs) - and the picture **FAILS** (validation 0): the hand draws
+  black, the water and the crop cutouts are missing ([image](2026-11-06-array-records-multigroup-runs.png)). Multi-group
+  runs are drawn with the first group's texture set while the records twins are not the array variant
+  (`createRecordsLike`, not `createRecordsArray`): the per-group texture never reaches the draw.
+
+Next, in order: wire `createRecordsArray` and the texture array's set into the run draw (the record already carries the
+array index), then take the descriptor out of the run key. The switches stay off.
