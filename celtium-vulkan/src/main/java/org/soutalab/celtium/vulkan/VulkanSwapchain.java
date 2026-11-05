@@ -1664,12 +1664,7 @@ public final class VulkanSwapchain {
         }
         // This image's previous semaphore is free now: acquiring the image again means its previous present - which
         // came after the submission that waited on that semaphore - has been consumed.
-        for (int i = 0; i < this.acquireSemaphoreOwnerImage.length; i++) {
-            if (i != slot && this.acquireSemaphoreOwnerImage[i] == imageIndex) {
-                this.acquireSemaphoreOwnerImage[i] = -1L;
-            }
-        }
-        this.acquireSemaphoreOwnerImage[slot] = imageIndex;
+        assignAcquireOwner(this.acquireSemaphoreOwnerImage, slot, imageIndex);
     }
 
     /** {@return the acquire-semaphore ownership census}, for the present trace and the report. */
@@ -1727,12 +1722,10 @@ public final class VulkanSwapchain {
             this.acquireSemaphoreOwnerImage = owners;
         }
         int length = this.acquireSemaphores.length;
-        for (int step = 0; step < length; step++) {
-            int slot = (this.acquireSemaphoreCursor + step) % length;
-            if (this.acquireSemaphoreOwnerImage[slot] < 0L) {
-                this.acquireSemaphoreCursor = (slot + 1) % length;
-                return this.acquireSemaphores[slot];
-            }
+        int free = freeAcquireSlot(this.acquireSemaphoreOwnerImage, this.acquireSemaphoreCursor);
+        if (free >= 0) {
+            this.acquireSemaphoreCursor = (free + 1) % length;
+            return this.acquireSemaphores[free];
         }
         LongBuffer grown = stack.mallocLong(1);
         if (vkCreateSemaphore(this.context.device(), org.lwjgl.vulkan.VkSemaphoreCreateInfo.calloc(stack)
@@ -1746,6 +1739,28 @@ public final class VulkanSwapchain {
         this.acquireSemaphorePoolGrowths++;
         this.acquireSemaphoreCursor = 0;
         return this.acquireSemaphores[length];
+    }
+
+    /** {@return the first slot from {@code cursor} that no image owns}, or -1 when every slot is owned. Pure. */
+    static int freeAcquireSlot(long[] owners, int cursor) {
+        int length = owners.length;
+        for (int step = 0; step < length; step++) {
+            int slot = (cursor + step) % length;
+            if (owners[slot] < 0L) {
+                return slot;
+            }
+        }
+        return -1;
+    }
+
+    /** Gives {@code slot} to {@code imageIndex} and frees the slot that image held before. Pure. */
+    static void assignAcquireOwner(long[] owners, int slot, int imageIndex) {
+        for (int i = 0; i < owners.length; i++) {
+            if (i != slot && owners[i] == imageIndex) {
+                owners[i] = -1L;
+            }
+        }
+        owners[slot] = imageIndex;
     }
 
     /** Times the acquire-semaphore pool grew because every semaphore was still owned by an image. */
