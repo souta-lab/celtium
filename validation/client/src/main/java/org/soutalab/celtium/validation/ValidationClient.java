@@ -5519,28 +5519,34 @@ public final class ValidationClient {
         // Looked up once per name, misses included: this runs three times a frame, and in the reference arm, where
         // the class does not exist, each call threw a ClassNotFoundException (leg tickjfr-celeritas-1: 33 of 525
         // client-thread samples) - a tax on the arm the ratio divides by.
-        String key = className + '#' + field;
-        java.lang.reflect.Field handle = celtium$staticCounterFields.get(key);
-        if (handle == null && !celtium$staticCounterFields.containsKey(key)) {
+        // A getter handle, not Field.getLong: under Cleanroom the reflective read is routed through its compatibility
+        // hooks, and the warm-window profile (l6prof, 2026-11-05) put these three reads per frame at 28 samples in 10 s
+        // of the native arm against none in the reference arm - a tax on the arm the ratio is about. The key is the
+        // field name alone (the class is the same for every caller), so a lookup builds no string.
+        java.lang.invoke.MethodHandle handle = celtium$staticCounterHandles.get(field);
+        if (handle == null && !celtium$staticCounterHandles.containsKey(field)) {
             try {
-                handle = Class.forName(className).getField(field);
+                handle = java.lang.invoke.MethodHandles.publicLookup()
+                        .unreflectGetter(Class.forName(className).getField(field))
+                        .asType(java.lang.invoke.MethodType.methodType(long.class));
             } catch (Throwable absent) {
                 handle = null;
             }
-            celtium$staticCounterFields.put(key, handle);
+            celtium$staticCounterHandles.put(field, handle);
         }
         if (handle == null) {
             return -1L;
         }
         try {
-            return handle.getLong(null);
+            return (long) handle.invokeExact();
         } catch (Throwable unreadable) {
             return -1L;
         }
     }
 
-    private static final java.util.Map<String, java.lang.reflect.Field> celtium$staticCounterFields =
-            new java.util.HashMap<String, java.lang.reflect.Field>();
+    /** Getter handles by field name; every caller reads fields of one class (VulkanContext). Null marks "absent". */
+    private static final java.util.Map<String, java.lang.invoke.MethodHandle> celtium$staticCounterHandles =
+            new java.util.HashMap<String, java.lang.invoke.MethodHandle>();
 
     /**
      * Differences the upload path's own wait counters over one frame and adds them to the window the frame is in.
