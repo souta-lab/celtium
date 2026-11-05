@@ -3952,6 +3952,26 @@ public final class VulkanGlTexture {
     private boolean patchBatching;
     private VkCommandBuffer patchBatch;
 
+    /**
+     * Opens a patch batch for a run of patches the caller brackets - the atlas's animated sprites of one
+     * {@code TextureMap.updateAnimations}, one patch per sprite. Measured 2026-11-05 (wall profile r69prof, warm ticks):
+     * one command buffer and one submission per sprite put ~0.3 ms on every tick frame. Returns whether this call
+     * opened the batch, so a caller nested inside an already open one does not close it.
+     */
+    public boolean beginPatchBatch() {
+        if (!PATCH_BATCH || this.patchBatching) {
+            return false;
+        }
+        this.patchBatching = true;
+        return true;
+    }
+
+    /** Closes a batch {@link #beginPatchBatch()} opened and submits what it recorded. */
+    public void endPatchBatch() {
+        this.patchBatching = false;
+        submitPatchBatch();
+    }
+
     /** Submits the open patch batch, if any; its fence becomes this texture's outstanding upload. */
     private void submitPatchBatch() {
         VkCommandBuffer batch = this.patchBatch;
