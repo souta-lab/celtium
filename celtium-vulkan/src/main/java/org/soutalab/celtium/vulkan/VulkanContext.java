@@ -581,6 +581,18 @@ public final class VulkanContext {
         }
     }
 
+    /** {@return whether the physical device offers this extension}, enabled or not; false when it cannot be asked. */
+    private boolean celtium$deviceOffers(String name) {
+        if (name == null || this.physicalDevice == null) {
+            return false;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            return deviceExtensionNames(stack, this.physicalDevice).contains(name);
+        } catch (RuntimeException | LinkageError ignored) {
+            return false;
+        }
+    }
+
     public boolean hasInstanceExtension(String name) {
         return name != null && this.instance != null && this.enabledInstanceExtensions.contains(name);
     }
@@ -2665,6 +2677,9 @@ public final class VulkanContext {
                 + " required=[" + String.join(", ", required) + "]"
                 + " fdInterop=" + this.interopPath
                 + " enabledDeviceExtensions=[" + String.join(", ", this.enabledDeviceExtensions) + "]"
+                // Available, not enabled: whether the animated-sprite path could write the atlas from the host without a
+                // command buffer per sprite (the warm-window profile puts that path at ~1/5 of the client tick).
+                + " hostImageCopyAvailable=" + celtium$deviceOffers("VK_EXT_host_image_copy")
                 + " limits=[maxPushConstantsSize=" + pushConstantLimit + " immediatePushBytes=" + PUSH_CONSTANT_BYTES_USED
                 + " maxImageDimension2D=" + properties.limits().maxImageDimension2D() + "]"
                 + " indirect=[multiDrawIndirect=" + this.multiDrawIndirectSupported
