@@ -5417,9 +5417,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final boolean SKIP_ANIMATED_FLUSH = "flush".equals(SKIP_ANIMATED);
     /** {@code upload}: the checks and the flush, but not the mirror update (conversion, staging, copies). */
     private static final boolean SKIP_ANIMATED_MIRROR = "upload".equals(SKIP_ANIMATED);
+    /**
+     * {@code load} / {@code world}: the whole path, but only before / only after the first world pass. Splits the
+     * ~17,000 resource-loading uploads from the few hundred in-world ones (r79-source, r79-time).
+     */
+    private static final boolean SKIP_ANIMATED_BEFORE_WORLD = "load".equals(SKIP_ANIMATED);
+    private static final boolean SKIP_ANIMATED_IN_WORLD = "world".equals(SKIP_ANIMATED);
+    /** Set by the first world pass and never cleared: the boundary the load/world split asks about. */
+    private boolean worldPassSeen;
 
     public void announceAnimatedUpload(int[][] data, int width, int height, int x, int y) {
-        if (SKIP_ANIMATED_UPLOADS) {
+        if (SKIP_ANIMATED_UPLOADS || (SKIP_ANIMATED_BEFORE_WORLD && !this.worldPassSeen)
+                || (SKIP_ANIMATED_IN_WORLD && this.worldPassSeen)) {
             return;
         }
         int bound = NativeTextureBindings.current().texture2d();
@@ -7791,6 +7800,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     public void beginWorldPass() {
         this.worldSnapshotValid = false;
         this.worldPassActive = true;
+        this.worldPassSeen = true;
     }
 
     public void endWorldPass() {
@@ -8630,6 +8640,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // The world pass installs a perspective projection; the overlay and the GUI install orthographic ones.
         // That is enough to tell the passes apart for the mirror comparison, which is only meaningful within one.
         this.worldPassActive = true;
+        this.worldPassSeen = true;
         // The comparison cannot happen here: at this instant gluPerspective has not applied its result to GL yet, so GL
         // still holds the identity and any delta would measure the wrong thing. The flag defers it to the next hookable
         // operation after that call, which is the matrixMode(GL_MODELVIEW) that immediately follows it.
