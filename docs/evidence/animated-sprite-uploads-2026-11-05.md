@@ -103,3 +103,10 @@ one; terrain (chunk uploads, `stUpload` 115-188 us vs ~0) and `terrainEnsure` gr
 (`terrainCapacity` 46/0 us, `terrainSharedIndex` 260/4 us with one index regeneration in the whole run). Part of the
 tick-frame cost is therefore not work inside those brackets but time the client thread loses on those frames
 (preemption by build workers, safepoints or GC); not yet separated.
+
+## Intel tick-frame split (`r90split-intel`, renderer `3d4fd4fe…`, hold to tick 900)
+
+Steady block (tickFrames=352, plainFrames=3648, mean us): frame 5420/2973, world 4683/2345. Named inner brackets that
+grow on tick frames sum to ~0.8 ms (terrain 701/493, setupTerrain 240/69, particles 145/52, offPreflight 121/25,
+offPrepare 103/25, terrainEnsure 108/29, flush 685/611); **~1.5 ms of the world bracket's tick-frame excess is outside
+every named bracket**. That unbracketed part of the world pass is the next instrument gap for the Intel tail.
