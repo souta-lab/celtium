@@ -1899,7 +1899,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * and an identity whose attachment is one of them is main. Re-read at adoption too, because the census for the
      * adopted identity is filled by the same bind that reports it.
      */
-    private final java.util.Set<Integer> mainFramebufferColorNames = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<Integer, Boolean>());
+    final java.util.Set<Integer> mainFramebufferColorNames = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<Integer, Boolean>());
     private int framebufferCensusLogs;
     /**
      * The identity of {@code Minecraft.framebuffer}, as the game's own field reports it on every bind.
@@ -1922,14 +1922,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int frameDumpsWritten;
     private String presentSkipReason = "never called";
     /** Textures supplied whole on their first offer, and the ones that could not be. */
-    private int lazyMirrorSupplies;
+    int lazyMirrorSupplies;
     /**
      * Mirrors with full content refreshed because the game wrote the texture through raw GL since - a write no upload
      * hook announces. JourneyMap allocates each 512x512 map tile with one glTexImage2D and then fills it with 16x16
      * glTexSubImage2D patches; the first (blank) image made the mirror "full", the lazy supply never looked again, and
      * every minimap tile was drawn transparent.
      */
-    private int rawWriteRefreshes;
+    int rawWriteRefreshes;
     /**
      * Raw writes whose mirror already held the level's current serial, so no upload was asked for.
      * <p>
@@ -1937,41 +1937,41 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * uploads a world frame" when the truth was "15.9 calls, none of which uploaded anything": the mirror's own
      * serial check answered every one of them. The name of the counter is now what it counts.
      */
-    private int rawWriteAlreadyCurrent;
+    int rawWriteAlreadyCurrent;
     /** Per GL id: the stub's write epoch when the texture's write serial was last compared, so a quiet frame costs one read. */
     private long[] rawWriteEpochChecked = new long[4096];
     /** Per GL id: the write serial the mirror was last refreshed for. */
     private long[] rawWriteSerialApplied = new long[4096];
-    private int lazyMirrorFailures;
+    int lazyMirrorFailures;
     /**
      * The same total split by the site that raised it: the lazy supply, a raw write applied in place, and a coalesced
      * raw write applied at the next window. One number could not say which of the three was failing, and the three
      * have different repairs - a supply that cannot read is a deferral, a raw write that cannot read is a write the
      * stub never captured. Measured on leg {@code r33a-accept}: 28,272 failures, all of them one site.
      */
-    private int lazyMirrorSupplyFailures;
-    private int rawWriteFailures;
-    private int coalescedRawWriteFailures;
+    int lazyMirrorSupplyFailures;
+    int rawWriteFailures;
+    int coalescedRawWriteFailures;
     /**
      * Lazy supplies that did not build a mirror because the name stands for a framebuffer's colour attachment and the
      * stub holds no pixels for it. Counted apart from {@link #lazyMirrorFailures}: nothing failed to upload, the
      * content is the framebuffer's and arrives when its owner publishes the image.
      */
-    private int lazyMirrorDeferrals;
+    int lazyMirrorDeferrals;
     /**
      * Uploads skipped because the level has provably nothing to read ({@code celtium$levelHasNothingToRead}): no
      * captured record and no patch backlog. The upload would have thrown the capture-miss, so this is the same
      * decision without the exception - and it is counted, because "the mirror kept what it had" is a fact the picture
      * depends on and must not be silent.
      */
-    private int lazyMirrorEmptyDeferrals;
+    int lazyMirrorEmptyDeferrals;
     /**
      * Binds where the lazy supply was skipped because the stub's level-0 write serial has not moved since the attempt
      * that failed. A texture the game allocated empty (a framebuffer attachment, say) carries no pixels for the supply
      * to read, fails the same way every bind, and cost 1,183 retries in one leg - the serial is the "new content"
      * signal, so the attempt is worth repeating only when a write actually arrived.
      */
-    private int lazyMirrorRetrySkips;
+    int lazyMirrorRetrySkips;
     /** The stub write serial seen at the last lazy-supply attempt per GL id; a retry runs only when it moves. */
     /**
      * Last upload serial a lazy supply was attempted for, indexed by GL texture id. It was a
@@ -1981,7 +1981,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private long[] lazySupplySerialByTexture = new long[4096];
     /** {@code true} where {@link #lazySupplySerialByTexture} holds a recorded attempt (serial 0 is a valid serial). */
     private boolean[] lazySupplySerialRecorded = new boolean[4096];
-    private String lastLazyMirrorFailure = "none";
+    String lastLazyMirrorFailure = "none";
     /** Texture lifecycle: reallocations seen, and how often the sampled atlas/light map had to be re-established. */
     private int glTextureDeletions;
     private int atlasReestablished;
@@ -2903,7 +2903,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * frames. Each bracketed section can be short while the delivered rate is low, and that gap is what a user sees as
      * low FPS, so it is measured on the frame boundary instead of inferred from the sections.
      */
-    private static final boolean FRAME_STATS = Boolean.getBoolean("celtium.vulkan.frameStats");
+    static final boolean FRAME_STATS = Boolean.getBoolean("celtium.vulkan.frameStats");
     /** Read once: these are consulted on frame and loading paths, not at startup only. */
     private static final boolean HANDOFF_TIMINGS = Boolean.getBoolean("celtium.vulkan.handoffTimings");
     private static final String FRAME_DUMP_DIR = System.getProperty("celtium.vulkan.frameDumpDir");
@@ -2915,285 +2915,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final int FRAME_DUMP_COUNT = Integer.getInteger("celtium.vulkan.frameDumpCount", 0).intValue();
     private static final String MIRROR_DUMP_SPEC = System.getProperty("celtium.mirrorDump");
     private static final boolean SWAPCHAIN_PROBE = Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY);
-    private final long[] frameIntervals = new long[120];
-    /** How many frame-statistic lines this run has printed, so per-frame means can be reported. */
-    private long debugFrameReports;
-    private int frameIntervalCount;
-    private long lastFrameBoundaryNanos;
-
-    /**
-     * {@return the game loop's own breakdown of the frame}, read reflectively because the counters live in the mod's
-     * mixin package and this module does not depend on it. It is what separates tick, display, fps-sync, render and the
-     * loop's remainder - the shares a present-to-present interval cannot name.
-     */
-    private String celtium$gameLoopSummary() {
-        try {
-            Class<?> timing = Class.forName("org.taumc.celeritas.impl.profile.GameLoopTiming");
-            Object summary = timing.getMethod("summaryDelta").invoke(null);
-            return String.valueOf(summary);
-        } catch (ReflectiveOperationException | LinkageError failed) {
-            return "unavailable(" + failed.getClass().getSimpleName() + ")";
-        }
-    }
+    int frameIntervalCount;
 
     private void celtium$noteFrameBoundary(String where) {
-        if (MOD_READBACK) {
-            celtium$reportModInputReadback();
+        if (ModPrograms.MOD_READBACK) {
+            this.modPrograms.celtium$reportModInputReadback();
         }
         if (!FRAME_STATS) {
             return;
         }
-        long now = System.nanoTime();
-        if (this.lastFrameBoundaryNanos != 0L) {
-            this.frameIntervals[this.frameIntervalCount++] = now - this.lastFrameBoundaryNanos;
-        }
-        this.lastFrameBoundaryNanos = now;
-        if (this.frameIntervalCount < this.frameIntervals.length) {
-            return;
-        }
-        // Snapshotted before the report is built, so the deltas describe the frames this report covers.
-        long pipelineBindTotal = VulkanImmediateTexturePipeline.PIPELINE_BIND_NANOS;
-        long descriptorBindTotal = VulkanImmediateTexturePipeline.DESCRIPTOR_BIND_NANOS;
-        long pipelineBindDelta = pipelineBindTotal - this.lastPipelineBindNanos;
-        long descriptorBindDelta = descriptorBindTotal - this.lastDescriptorBindNanos;
-        long submitDelta = this.immediateSubmitNanos - this.lastImmediateSubmitNanos;
-        this.lastImmediateSubmitNanos = this.immediateSubmitNanos;
-        long acceptDecideDelta = this.acceptDecideNanos - this.lastAcceptDecideNanos;
-        long acceptPreflightDelta = this.acceptPreflightNanos - this.lastAcceptPreflightNanos;
-        long acceptTailDelta = this.acceptTailNanos - this.lastAcceptTailNanos;
-        long appendDelta = this.immediateStatistics.appendNanos() - this.lastAppendNanos;
-        this.lastAcceptDecideNanos = this.acceptDecideNanos;
-        this.lastAcceptPreflightNanos = this.acceptPreflightNanos;
-        this.lastAcceptTailNanos = this.acceptTailNanos;
-        this.lastAppendNanos = this.immediateStatistics.appendNanos();
-        this.lastAcceptedBatches = this.immediateStatistics.immediateBatchesOffered();
-        long drawFormDelta = VulkanDynamicMesh.DRAW_FORM_BINDS - this.lastDrawFormBinds;
-        long bindFormDelta = VulkanDynamicMesh.BIND_FORM_BINDS - this.lastBindFormBinds;
-        this.lastDrawFormBinds = VulkanDynamicMesh.DRAW_FORM_BINDS;
-        this.lastBindFormBinds = VulkanDynamicMesh.BIND_FORM_BINDS;
-        long arenaPromotionsDelta = (this.frameArena == null ? 0 : this.frameArena.promotions()) - this.lastArenaPromotions;
-        long arenaBlockedDelta = (this.frameArena == null ? 0 : this.frameArena.blockedOpenings()) - this.lastArenaBlocked;
-        long arenaFallbacksDelta = this.submissionStatistics.frameArenaFallbackGroups() - this.lastArenaFallbacks;
-        this.lastArenaPromotions = this.frameArena == null ? 0 : this.frameArena.promotions();
-        this.lastArenaBlocked = this.frameArena == null ? 0 : this.frameArena.blockedOpenings();
-        this.lastArenaFallbacks = this.submissionStatistics.frameArenaFallbackGroups();
-        long itemPipelineDelta = VulkanImmediateItemPipeline.ITEM_PIPELINE_NANOS - this.lastItemPipelineNanos;
-        long itemDescriptorDelta = VulkanImmediateItemPipeline.ITEM_DESCRIPTOR_NANOS - this.lastItemDescriptorNanos;
-        long itemViewDelta = VulkanImmediateItemPipeline.ITEM_VIEW_NANOS - this.lastItemViewNanos;
-        long itemPushDelta = VulkanImmediateItemPipeline.ITEM_PUSH_NANOS - this.lastItemPushNanos;
-        long itemMeshDelta = VulkanImmediateItemPipeline.ITEM_MESH_NANOS - this.lastItemMeshNanos;
-        this.lastItemPipelineNanos = VulkanImmediateItemPipeline.ITEM_PIPELINE_NANOS;
-        this.lastItemDescriptorNanos = VulkanImmediateItemPipeline.ITEM_DESCRIPTOR_NANOS;
-        this.lastItemViewNanos = VulkanImmediateItemPipeline.ITEM_VIEW_NANOS;
-        this.lastItemPushNanos = VulkanImmediateItemPipeline.ITEM_PUSH_NANOS;
-        this.lastItemMeshNanos = VulkanImmediateItemPipeline.ITEM_MESH_NANOS;
-        long preTransformedDelta = this.immediateStatistics.preTransformedGroups() - this.lastPreTransformed;
-        long matrixSplitsDelta = this.immediateStatistics.matrixSplits() - this.lastMatrixSplits;
-        this.lastPreTransformed = this.immediateStatistics.preTransformedGroups();
-        this.lastMatrixSplits = this.immediateStatistics.matrixSplits();
-        long textureCountDelta = this.textureDrawCount - this.lastTextureDrawCount;
-        long itemCountDelta = this.itemDrawCount - this.lastItemDrawCount;
-        long blockCountDelta = this.blockDrawCount - this.lastBlockDrawCount;
-        long particleCountDelta = this.particleDrawCount - this.lastParticleDrawCount;
-        long genericCountDelta = this.genericDrawCount - this.lastGenericDrawCount;
-        this.lastTextureDrawCount = this.textureDrawCount;
-        this.lastItemDrawCount = this.itemDrawCount;
-        this.lastBlockDrawCount = this.blockDrawCount;
-        this.lastParticleDrawCount = this.particleDrawCount;
-        this.lastGenericDrawCount = this.genericDrawCount;
-        long textureDrawDelta = this.textureDrawNanos - this.lastTextureDrawNanos;
-        long itemDrawDelta = this.itemDrawNanos - this.lastItemDrawNanos;
-        long blockDrawDelta = this.blockDrawNanos - this.lastBlockDrawNanos;
-        long particleDrawDelta = this.particleDrawNanos - this.lastParticleDrawNanos;
-        long genericDrawDelta = this.genericDrawNanos - this.lastGenericDrawNanos;
-        this.lastTextureDrawNanos = this.textureDrawNanos;
-        this.lastItemDrawNanos = this.itemDrawNanos;
-        this.lastBlockDrawNanos = this.blockDrawNanos;
-        this.lastParticleDrawNanos = this.particleDrawNanos;
-        this.lastGenericDrawNanos = this.genericDrawNanos;
-        long viewDelta = VulkanImmediateTexturePipeline.VIEW_NANOS - this.lastViewNanos;
-        long pushDelta = VulkanImmediateTexturePipeline.PUSH_CALL_NANOS - this.lastPushCallNanos;
-        long meshDelta = VulkanImmediateTexturePipeline.MESH_BIND_NANOS - this.lastMeshBindNanos;
-        this.lastViewNanos = VulkanImmediateTexturePipeline.VIEW_NANOS;
-        this.lastPushCallNanos = VulkanImmediateTexturePipeline.PUSH_CALL_NANOS;
-        this.lastMeshBindNanos = VulkanImmediateTexturePipeline.MESH_BIND_NANOS;
-        this.lastPipelineBindNanos = pipelineBindTotal;
-        this.lastDescriptorBindNanos = descriptorBindTotal;
-
-        if (BUFFER_CENSUS) {
-            System.out.println("[Celtium] CELTIUM_BUFFER_CENSUS groups=" + this.bufferCensusGroups
-                    + " vertexBuffers=" + this.bufferCensusVertexBuffers.size()
-                    + " indexBuffers=" + this.bufferCensusIndexBuffers.size()
-                    + " arenaBacked=" + this.bufferCensusArenaBacked
-                    + " owning=" + this.bufferCensusOwning);
-            this.bufferCensusGroups = 0L;
-            this.bufferCensusArenaBacked = 0L;
-            this.bufferCensusOwning = 0L;
-            this.bufferCensusVertexBuffers.clear();
-            this.bufferCensusIndexBuffers.clear();
-        }
-        if (GROUP_CENSUS) {
-            StringBuilder census = new StringBuilder();
-            String[] families = {"texture", "litItem", "unlitItem", "colour", "other"};
-            for (int i = 0; i < this.groupCensusCounts.length; i++) {
-                if (this.groupCensusCounts[i] == 0) {
-                    continue;
-                }
-                int family = i / 4;
-                int state = i % 4;
-                census.append(' ').append(families[family]).append((state & 2) != 0 ? "/blend" : "/opaque")
-                        .append((state & 1) != 0 ? "+dw" : "-dw").append('=').append(this.groupCensusCounts[i]);
-            }
-            System.out.println("[Celtium] CELTIUM_GROUP_COMPOSITION groups=" + this.groupCensusMain + census);
-            java.util.Arrays.fill(this.groupCensusCounts, 0L);
-            this.groupCensusMain = 0;
-        }
-        if (DRAW_KEY_CENSUS) {
-            System.out.println("[Celtium] CELTIUM_DRAW_KEY_CENSUS groups=" + this.drawKeyGroups
-                    + " distinctKeys=" + this.drawKeyCounts.size()
-                    + " switches=" + this.drawKeySwitches
-                    + " largestBucket=" + this.drawKeyLargest
-                    + " arrayKeyRuns=" + (this.arrayKeyGroups - this.arrayKeySwitches)
-                    + " arrayKeySwitches=" + this.arrayKeySwitches
-                    + " arrayKeyDistinct=" + this.arrayKeyCounts.size()
-                    + " arrayKeyLargest=" + this.arrayKeyLargest);
-            this.drawKeyGroups = 0L;
-            this.drawKeySwitches = 0L;
-            this.drawKeyPrevious = 0L;
-            this.drawKeyLargest = 0;
-            this.drawKeyCounts.clear();
-            this.arrayKeyGroups = 0L;
-            this.arrayKeySwitches = 0L;
-            this.arrayKeyPrevious = 0L;
-            this.arrayKeyLargest = 0;
-            this.arrayKeyCounts.clear();
-        }
-        if (RETAINED_CENSUS) {
-            System.out.println("[Celtium] CELTIUM_RETAINED_CENSUS groups=" + this.retainedCensusGroups
-                    + " retainedAtAccept=" + this.retainedAccept
-                    + " preTransformEligible=" + this.preTransformEligible
-                    + " retained=" + this.retainedCensusRetained
-                    + " distinctMeshes=" + this.retainedCensusByMesh.size()
-                    + " largestBucket=" + this.retainedCensusLargest);
-            this.retainedCensusGroups = 0L;
-            this.retainedAccept = 0L;
-            this.preTransformEligible = 0L;
-            this.retainedCensusRetained = 0L;
-            this.retainedCensusLargest = 0;
-            this.retainedCensusByMesh.clear();
-        }
-        long[] sorted = java.util.Arrays.copyOf(this.frameIntervals, this.frameIntervalCount);
-        java.util.Arrays.sort(sorted);
-        long p50 = sorted[sorted.length / 2];
-        System.out.println("[Celtium] CELTIUM_FRAME_STATS site=" + where
-                + " frames=" + this.frameIntervalCount
-                + " ms[p50=" + String.format(java.util.Locale.ROOT, "%.2f", p50 / 1e6)
-                + " p95=" + String.format(java.util.Locale.ROOT, "%.2f", sorted[(int) (sorted.length * 0.95)] / 1e6)
-                + " min=" + String.format(java.util.Locale.ROOT, "%.2f", sorted[0] / 1e6)
-                + " max=" + String.format(java.util.Locale.ROOT, "%.2f", sorted[sorted.length - 1] / 1e6) + "]"
-                + " fps[p50=" + String.format(java.util.Locale.ROOT, "%.1f", 1e9 / Math.max(1L, p50)) + "] "
-                + org.soutalab.celtium.vulkan.FrameCoordinator.submitQueueSummary()
-                + " " + org.soutalab.celtium.vulkan.VulkanContext.batchedSubmitSummary()
-                + (BATCH_TIMINGS ? offerStageNanosSummary() + " " + acceptSpanSummary() + " "
-                        + batchDistSummary() : "")
-                + " append[ms=" + (this.immediateStatistics.appendNanos() / 1000000L) + "]"
-                + " prepare[nanos=" + this.immediateStatistics.prepareImmediateNanos()
-                + " calls=" + this.immediateStatistics.prepareImmediateCalls()
-                + " perFrameMs=" + String.format(java.util.Locale.ROOT, "%.2f",
-                        this.immediateStatistics.prepareImmediateNanos() / 1e6
-                                / Math.max(1L, this.debugFrameReports))
-                + "]"
-                + (FRAME_STATS ? " loop[" + celtium$gameLoopSummary() + "]" : "")
-                + " texCopy[calls=" + this.textureCopyCalls + " totalMs=" + (this.textureCopyNanos / 1000000L) + "]"
-                + " copyBlit[refusals=" + this.textureCopyService.textureCopyBlitRefusals()
-                + " last=" + this.textureCopyService.lastTextureCopyBlitRefusal() + "]"
-                + " lazyMirror[supplies=" + this.lazyMirrorSupplies + " rawWriteRefreshes=" + this.rawWriteRefreshes
-                + " current=" + this.rawWriteAlreadyCurrent
-                + " skips=" + this.lazyMirrorRetrySkips
-                + " failures=" + this.lazyMirrorFailures + "(supply=" + this.lazyMirrorSupplyFailures
-                + " raw=" + this.rawWriteFailures + " coalesced=" + this.coalescedRawWriteFailures + ")"
-                + " deferred=" + this.lazyMirrorDeferrals + " empty=" + this.lazyMirrorEmptyDeferrals
-                + " last=[" + this.lastLazyMirrorFailure + "]]"
-                // Which textures the supply part of the accept path is actually paying for. The count alone could not
-                // say: `rawWriteRefreshes` is 11-12 a world frame on the shipped profile and the supply part is 60% of
-                // the accept path, but "a mod re-declaring a texture it did not change" (now suppressed by the stub's
-                // whole-image serial rule) and "a small patch landing in a large record" (which this class pays for by
-                // re-copying the whole record) are different defects with different repairs. The per-GL-id counts and
-                // the wall time in uploadFromGlTexture name which one it is, on the same line as the frame it costs.
-                + " mirrorUploads[" + org.soutalab.celtium.vulkan.VulkanGlTexture.fullUploadSummary() + "]"
-                // What the terrain pass records per frame. The KPI's other half (terrain 4.5 ms of a 6.8 ms frame) had
-                // no per-frame shape: the counters existed as run totals, so "many small indirect draws" and "few big
-                // ones" could not be told apart from a log. These are deltas over the frames this report covers.
-                + this.celtium$terrainPerFrameSummary(this.frameIntervalCount)
-                + " preflush[groupsPerFrame=" + (this.preflushFrames == 0 ? 0
-                        : this.preflushGroupsDrained / this.preflushFrames) + "]"
-                + " framesNoClear=" + this.framesWithNoClearAtAll
-                + " drawn[perFrame=" + this.celtium$drawnGroupsPerFrame() + "]"
-                + " sortOrder[segments=" + this.drawOrderSegments + " ordered=" + this.drawOrderOpaque
-                + " reject[noPrepared=" + this.reorderRejectNoPrepared + " dw=" + this.reorderRejectDepthWrite
-                + " dt=" + this.reorderRejectDepthTest + " blend=" + this.reorderRejectBlend
-                + " other=" + this.reorderRejectOther + " accept=" + this.reorderAccept + "]]"
-                + " modelMerge[draws=" + this.modelRunsDrawn + " merged=" + this.modelRunsMerged + "]"
-                + " runFlush" + this.indirectRuns.indirectFlushReasons
-                + " refuse" + this.indirectRuns.indirectRefusalCounts
-                + " indirect[runs=" + this.indirectRuns.indirectRunsIssued + " singletons=" + this.indirectRuns.indirectSingletonRuns
-                + " groups=" + this.indirectRuns.indirectGroupsIssued
-                + " runsPerFrameX100=" + this.celtium$indirectRunsPerFrameX100() + "]"
-                // How many groups the bake actually opened and how many splits still name the matrix: the bake only pays
-                // if the second number falls, and a zero on the first says the predicate never fired.
-                + " preTransform[groups=" + (this.immediateStatistics.preTransformedGroups() - this.lastPreTransformed)
-                + " matrixSplits=" + (this.immediateStatistics.matrixSplits() - this.lastMatrixSplits) + "]"
-                // Windows per frame: each window is a render pass plus a submission, and the A/B that removed the drawing
-                // left 0.5 ms a frame in the window machinery, so this count is what says whether coalescing windows is
-                // worth anything.
-                + " windows[perFrameX100=" + this.celtium$windowsPerFrameX100() + "]"
-                // The arena hypothesis for the 6 microseconds a mesh bind costs: a mesh that could not borrow one of the
-                // frame arena's slices owns its buffers, and owning buffers means two binds per draw that cannot be
-                // deduplicated. Promotion and fallback counts say whether that is happening at all.
-                + " arena[promotions=" + arenaPromotionsDelta + " blocked=" + arenaBlockedDelta
-                + " fallbacks=" + arenaFallbacksDelta + "]"
-                // Which mesh-bind form the frame used: the offset-in-draw form binds the arena's buffers once and is
-                // cheap; re-binding a slice offset per group is the expensive one, and only happens when the slice
-                // offset is not a multiple of the vertex stride.
-                + " forms[draw=" + drawFormDelta + " bind=" + bindFormDelta + "]"
-                // The accept path's split per frame, not cumulatively: the JFR puts submitImmediateBatch at the top of
-                // the render thread and the counters for its parts existed, but only as run totals.
-                + " acceptPerFrame[batches=" + (this.immediateStatistics.immediateBatchesOffered() - this.lastAcceptedBatches)
-                + " decideMs=" + (acceptDecideDelta / 1_000_000L)
-                + " preflightMs=" + (acceptPreflightDelta / 1_000_000L)
-                + " tailMs=" + (acceptTailDelta / 1_000_000L)
-                + " appendMs=" + (appendDelta / 1_000_000L)
-                // The batch method's whole time against the parts measured inside it. Whatever the gap is, is work in
-                // submitImmediateBatchTimed that no bracket named yet - the figure that decides whether the accept side
-                // can explain the ~2 ms the JFR attributes to it.
-                + " submitMs=" + (submitDelta / 1_000_000L) + "]"
-                + " binds[pipelineMs=" + (pipelineBindDelta / 1_000_000L)
-                + " descriptorMs=" + (descriptorBindDelta / 1_000_000L) + "]"
-                + " variants[textureMs=" + (textureDrawDelta / 1_000_000L)
-                + " itemMs=" + (itemDrawDelta / 1_000_000L)
-                + " blockMs=" + (blockDrawDelta / 1_000_000L)
-                + " particleMs=" + (particleDrawDelta / 1_000_000L)
-                + " genericMs=" + (genericDrawDelta / 1_000_000L)
-                + " counts[texture=" + textureCountDelta + " item=" + itemCountDelta
-                + " block=" + blockCountDelta + " particle=" + particleCountDelta
-                + " generic=" + genericCountDelta + "]]"
-                + " itemParts[pipelineMs=" + (itemPipelineDelta / 1_000_000L)
-                + " descriptorMs=" + (itemDescriptorDelta / 1_000_000L)
-                + " viewMs=" + (itemViewDelta / 1_000_000L)
-                + " pushMs=" + (itemPushDelta / 1_000_000L)
-                + " meshMs=" + (itemMeshDelta / 1_000_000L) + "]"
-                + " drawParts[viewMs=" + (viewDelta / 1_000_000L)
-                + " pushCallMs=" + (pushDelta / 1_000_000L)
-                + " meshBindMs=" + (meshDelta / 1_000_000L) + "]"
-                // The frame's own serialisation: the fence wait on a slot, counted where vkWaitForFences is called. The
-                // pre-terrain flush reads 2.8 ms with zero groups, so this is the number that says whether that time is
-                // waiting for the GPU rather than working.
-                + " frameFenceWait[count=" + this.submissionStatistics.frameFenceWaitCount()
-                + " totalMs=" + this.submissionStatistics.frameFenceWaitMillis()
-                + " worstMs=" + this.submissionStatistics.frameFenceWaitWorstMillis() + "]");
-        this.debugFrameReports++;
-        this.frameIntervalCount = 0;
+        this.frameStats.celtium$frameStatsReport(where);
     }
+
+    /** The frameStats report; split out of this class (2026-11-06), see FrameStatsReport. */
+    final FrameStatsReport frameStats = new FrameStatsReport(this);
 
     /** {@code -Dceltium.vulkan.windowDiag=true}: report what SDL and the Display shim say the window is, once a second. */
     static final boolean WINDOW_DIAG = Boolean.getBoolean("celtium.vulkan.windowDiag");
@@ -3326,19 +3061,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int currentGroupTexture;
     private long currentGroupStateKey;
     /**
-     * Whether a mod's own program draws the batches it can. <b>Opt-in</b> ({@code -Dceltium.vulkan.modPrograms=true}):
-     * on the GTCEu scene every bloom pass draws with validation clean, but the passes into the game's framebuffer turn
-     * the whole world black (legs r17-r20-gt; r21-gt with {@code modProgramsToMain=false} is PASSED and pixel-normal),
-     * so the default keeps refusing until that is understood. See docs/evidence/gregtech-bloom-2026-11-04.md.
-     */
-    private static final boolean MOD_PROGRAMS = Boolean.getBoolean("celtium.vulkan.modPrograms");
-    /** Lab switch: {@code -Dceltium.vulkan.modProgramsOpaqueToMain=false} refuses blend-off passes into it. */
-    private static final boolean MOD_PROGRAMS_REFUSE_OPAQUE_MAIN =
-            "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramsOpaqueToMain", "true"));
-    /** Lab switch: {@code false} refuses the mod-program passes whose target is the game's framebuffer. */
-    private static final boolean MOD_PROGRAMS_TO_MAIN =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramsToMain", "true"));
-    /**
      * {@code -Dceltium.vulkan.terrainToBoundTarget=true}: draw a terrain pass into the bound mod framebuffer's chain pair
      * instead of the game's framebuffer when a non-main framebuffer is bound (GTCEu's Bloom layer). Off by default until
      * a leg compares it with the GL reference; the pair's depth is its own, not the game's, so a bloom block behind a
@@ -3346,323 +3068,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private static final boolean TERRAIN_TO_BOUND_TARGET = Boolean.getBoolean("celtium.vulkan.terrainToBoundTarget");
     private long terrainPassesToBoundTarget;
-    /** {@code -Dceltium.debug.modProgramTrace=N}: log the record order of mod-program passes for N frames from 300. */
-    private static final int MOD_TRACE_FRAMES = Integer.getInteger("celtium.debug.modProgramTrace", 0).intValue();
-    private int modTraceLines;
-    /** Lab switch: {@code false} refuses the mod-program passes that sample the game's own colour image. */
-    private static final boolean MOD_PROGRAMS_SAMPLE_MAIN =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramsSampleMain", "true"));
     /** The open group is a mod program's draw: nothing else may merge into it, and it into nothing. */
     private boolean currentGroupIsModProgram;
-    private final java.util.Map<ModProgramKey, VulkanModProgramPipeline> modProgramPipelines = new java.util.HashMap<>();
-
-    /** A mod program pipeline's identity: both SPIR-V arrays and the variant it is built like, by reference. */
-    private static final class ModProgramKey {
-        private final byte[] vertex;
-        private final byte[] fragment;
-        private final int formatId;
-        private final Object like;
-
-        ModProgramKey(byte[] vertex, byte[] fragment, int formatId, Object like) {
-            this.vertex = vertex;
-            this.fragment = fragment;
-            this.formatId = formatId;
-            this.like = like;
-        }
-
-        @Override
-        public boolean equals(Object other) {
-            return other instanceof ModProgramKey k && k.vertex == this.vertex && k.fragment == this.fragment
-                    && k.formatId == this.formatId && k.like == this.like;
-        }
-
-        @Override
-        public int hashCode() {
-            return ((System.identityHashCode(this.vertex) * 31 + System.identityHashCode(this.fragment)) * 31
-                    + this.formatId) * 31 + System.identityHashCode(this.like);
-        }
-    }
-    private final java.util.Set<Integer> modProgramReported = new java.util.HashSet<>();
-    private String lastModProgramFailure = "none";
-
-    /** {@return the registry's program when this batch can be drawn with it}, or null to refuse as before. */
-    private org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program celtium$executableModProgram(int program,
-                                                                                                    int formatId) {
-        if (!MOD_PROGRAMS) {
-            return null;
-        }
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program p =
-                org.soutalab.celtium.vulkan.gl.ModProgramRegistry.program(program);
-        String reason = VulkanModProgramPipeline.unsupported(p, formatId);
-        if (reason != null) {
-            celtium$reportModProgram(program, false, reason);
-            return null;
-        }
-        return p;
-    }
-
-    /**
-     * {@return the prepared draw for a mod program}: a pipeline with the render state of {@code standard} (what the
-     * batch would have been drawn with), the program's packed uniforms, and its samplers resolved from the texture
-     * units their uniforms name. Null, with {@link #lastModProgramFailure}, when any of that is missing.
-     */
-    private PreparedImmediate celtium$modPrepared(org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program program,
-                                                  int programId, int formatId, PreparedImmediate standard) {
-        if (!(standard.pipeline instanceof VulkanImmediateTexturePipeline like)) {
-            return celtium$modFailure(programId, "the batch's own variant is "
-                    + standard.pipeline.getClass().getSimpleName() + ", not a textured one");
-        }
-        // Keyed by the objects themselves: identity hash codes are not unique, so a key built from them could hand
-        // one program's pipeline to another (and, after a world teardown, to a pipeline built like a released one).
-        ModProgramKey key = new ModProgramKey(program.vertexSpirv(), program.fragmentSpirv(), formatId, like);
-        VulkanModProgramPipeline pipeline = this.modProgramPipelines.get(key);
-        if (pipeline == null) {
-            try {
-                pipeline = VulkanModProgramPipeline.create(this.context, program, formatId, like);
-            } catch (RuntimeException | LinkageError failure) {
-                return celtium$modFailure(programId, "pipeline: " + failure.getMessage());
-            }
-            this.modProgramPipelines.put(key, pipeline);
-        }
-        VulkanGlTexture[] textures = new VulkanGlTexture[pipeline.samplerCount()];
-        StringBuilder inputs = new StringBuilder();
-        for (int i = 0; i < textures.length; i++) {
-            org.soutalab.celtium.vulkan.gl.ModGlslTranslator.SamplerBinding sampler = pipeline.samplers().get(i);
-            int[] unitValue = program.ints(sampler.name());
-            int unit = unitValue == null || unitValue.length == 0 ? 0 : unitValue[0];
-            int name = this.immediateState.boundTextureName(unit);
-            VulkanGlTexture texture = name > 0 ? celtium$modSamplerTexture(name) : null;
-            if (texture == null || texture.view() == 0L) {
-                return celtium$modFailure(programId, "sampler " + sampler.name() + " (unit " + unit + ", texture "
-                        + name + ") has no native image");
-            }
-            if (celtium$samplesCurrentTargetColor(name)) {
-                // The pass would read the image it is drawing into: inside one Vulkan render pass that is a feedback
-                // loop whose result is undefined (measured: leg r17-gt drew the whole world black). Refused until the
-                // target is snapshotted before the pass.
-                return celtium$modFailure(programId, "sampler " + sampler.name() + " (unit " + unit + ", texture "
-                        + name + ") is the colour image of the framebuffer being drawn into");
-            }
-            if (!MOD_PROGRAMS_SAMPLE_MAIN && this.mainFramebufferColorNames.contains(Integer.valueOf(name))) {
-                return celtium$modFailure(programId, "sampler " + sampler.name() + " reads the game's colour and "
-                        + "-Dceltium.vulkan.modProgramsSampleMain=false refuses that");
-            }
-            textures[i] = texture;
-            inputs.append(' ').append(sampler.name()).append("=unit").append(unit).append(":tex").append(name)
-                    .append(this.mainFramebufferColorNames.contains(Integer.valueOf(name)) ? "(main)" : "")
-                    .append(this.publishedFrameImages.get(name) != 0L ? "(fb)" : "")
-                    .append("{fbo=0x").append(Long.toHexString(celtium$framebufferIdentityForColorTexture(name)))
-                    .append(" img=0x").append(Long.toHexString(this.publishedFrameImages.get(name)))
-                    .append(" wimg=0x").append(Long.toHexString(texture.image()))
-                    .append(" own=").append(texture.celtium$ownsImage())
-                    .append(" layout=").append(texture.samplingLayout()).append('}');
-        }
-        if (MOD_PROGRAMS_REFUSE_OPAQUE_MAIN && !like.celtium$colorBlend().blend()
-                && this.currentFramebufferIdentity == this.targetRegistry.mainIdentity()) {
-            return celtium$modFailure(programId, "a blend-off pass into the game's framebuffer and "
-                    + "-Dceltium.vulkan.modProgramsOpaqueToMain=false refuses that");
-        }
-        if (!MOD_PROGRAMS_TO_MAIN && this.currentFramebufferIdentity == this.targetRegistry.mainIdentity()) {
-            return celtium$modFailure(programId, "the pass draws into the game's framebuffer and "
-                    + "-Dceltium.vulkan.modProgramsToMain=false refuses that");
-        }
-        long set = pipeline.samplerSet(textures);
-        if (textures.length > 0 && set == 0L) {
-            return celtium$modFailure(programId, "no sampler set could be allocated");
-        }
-        long[] targetColour = framebufferColorTexture(this.currentFramebufferIdentity);
-        GllessFrameTarget pairOwner = offTargetTarget();
-        inputs.append(" pairGen=").append(pairOwner == null ? -1L : pairOwner.chainPairGenerationTotal());
-        celtium$reportModProgram(programId, true, "inputs=[" + inputs.toString().trim() + "] target=0x"
-                + Long.toHexString(this.currentFramebufferIdentity) + " targetColourTex="
-                + (targetColour == null ? -1 : targetColour[0]) + " targetIsMain="
-                + (this.currentFramebufferIdentity == this.targetRegistry.mainIdentity())
-                + " blend=" + like.celtium$colorBlend().blend() + "(" + like.celtium$colorBlend().srcColor() + ","
-                + like.celtium$colorBlend().dstColor() + "," + like.celtium$colorBlend().srcAlpha() + ","
-                + like.celtium$colorBlend().dstAlpha() + ") glBlend=" + this.immediateState.blendSrcRgb() + ","
-                + this.immediateState.blendDstRgb() + " depthTest=" + like.celtium$depthTest()
-                + " depthWrite=" + like.celtium$depthWrite());
-        String label = MOD_TRACE_FRAMES > 0 || MOD_READBACK ? "program=" + programId + " offeredFrame=" + this.frameId
-                + " target=0x" + Long.toHexString(this.currentFramebufferIdentity) + " inputs=[" + inputs.toString().trim()
-                + "]" : null;
-        return new PreparedImmediate(new VulkanModProgramPipeline.Draw(pipeline,
-                VulkanModProgramPipeline.packUniforms(program), set, label, textures), set, 0L);
-    }
-
-    /**
-     * The image a mod program samples for a GL texture name, resolved the way {@code prepareImmediateUncached} resolves
-     * the unit-0 texture: a framebuffer colour texture is the framebuffer's own image, published under the name, not
-     * the CPU mirror the registry may also hold for it (that mirror is empty - measured: leg r19-gt sampled GTCEu's
-     * bloom framebuffer through it and composited black over the whole world).
-     */
-    private VulkanGlTexture celtium$modSamplerTexture(int name) {
-        VulkanTextureRegistry registry = celtium$registry();
-        VulkanGlTexture texture = registry.get(name);
-        if (texture != null && this.publishedFrameImages.get(name) != 0L) {
-            // Already the framebuffer's own image (the wrapper is the published one: r34-gt logged wimg == img for
-            // every sampler), so there is nothing to publish again. Not a fix for the black world - r33-gt was black
-            // with this in place - only a lookup that does not repeat the publication.
-            return texture;
-        }
-        boolean unpublishedAttachment = texture != null && this.publishedFrameImages.get(name) == 0L
-                && celtium$framebufferIdentityForColorTexture(name) != Long.MIN_VALUE;
-        if (texture == null || !texture.hasFullContent() || unpublishedAttachment) {
-            boolean published = celtium$publishFramebufferColorTexture(name);
-            if (!published && celtium$adoptRawFramebufferColorTexture(name)) {
-                published = celtium$publishFramebufferColorTexture(name);
-            }
-            if (published) {
-                texture = registry.get(name);
-            }
-        }
-        return texture;
-    }
-
-    /**
-     * {@code -Dceltium.debug.modProgramReadback=true}: once, in the first window from frame 300 that carries a
-     * mod-program pass, copy the centre pixel of every image those passes sample into a host buffer before the pass
-     * begins, and print the values four frames later. This is what a pass actually reads, measured in the command
-     * stream at the point it reads it - the question the GTCEu bloom copy left open (the image is right at present
-     * and the pass reads black).
-     */
-    private static final boolean MOD_READBACK = Boolean.getBoolean("celtium.debug.modProgramReadback");
-    /** Read barrier before windows that carry a mod pass; default on, {@code -Dceltium.vulkan.modReadBarrier=false}. */
-    private static final boolean MOD_READ_BARRIER =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modReadBarrier", "true"));
-
-    /** {@return whether a queued group for {@code target} is a mod program's draw}. */
-    private boolean celtium$queuedForTargetHasModProgram(long target) {
-        for (int i = 0, n = this.immediateGroups.size(); i < n; i++) {
-            ImmediateGroup group = this.immediateGroups.get(i);
-            if (group.target == target && group.prepared != null
-                    && group.prepared.pipeline instanceof VulkanModProgramPipeline.Draw) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private VulkanHostBuffer modReadbackBuffer;
-    private int modReadbackProbeLines;
-
-    private long celtium$firstModGroupTarget() {
-        for (int i = 0, n = this.immediateGroups.size(); i < n; i++) {
-            ImmediateGroup g = this.immediateGroups.get(i);
-            if (g.prepared != null && g.prepared.pipeline instanceof VulkanModProgramPipeline.Draw) {
-                return g.target;
-            }
-        }
-        return 0L;
-    }
-    private java.util.List<String> modReadbackLabels;
-    private long modReadbackFrame;
-
-    private void celtium$recordModInputReadback(long target) {
-        java.util.List<VulkanGlTexture> images = new java.util.ArrayList<>();
-        java.util.List<String> labels = new java.util.ArrayList<>();
-        for (int i = 0, n = this.immediateGroups.size(); i < n && images.size() < 16; i++) {
-            ImmediateGroup group = this.immediateGroups.get(i);
-            if (group.target != target || group.prepared == null
-                    || !(group.prepared.pipeline instanceof VulkanModProgramPipeline.Draw draw)
-                    || draw.pipeline.blends) {
-                continue;
-            }
-            for (VulkanGlTexture input : draw.inputs) {
-                if (input != null && input.image() != 0L && images.size() < 16) {
-                    images.add(input);
-                    labels.add((draw.label == null ? "pass" : draw.label.replaceAll(" inputs=.*", "")) + " input=0x"
-                            + Long.toHexString(input.image()) + " " + input.width() + "x" + input.height());
-                }
-            }
-        }
-        if (this.modReadbackProbeLines < 12) {
-            int modGroups = 0;
-            for (int i = 0, n = this.immediateGroups.size(); i < n; i++) {
-                ImmediateGroup g = this.immediateGroups.get(i);
-                if (g.prepared != null && g.prepared.pipeline instanceof VulkanModProgramPipeline.Draw) {
-                    modGroups++;
-                }
-            }
-            if (modGroups > 0) {
-                this.modReadbackProbeLines++;
-                System.out.println("[Celtium] CELTIUM_MOD_READBACK_PROBE frame=" + this.frameId + " window=0x"
-                        + Long.toHexString(target) + " queuedModGroups=" + modGroups + " opaqueInputsHere="
-                        + images.size() + " firstModGroupTarget=0x" + Long.toHexString(celtium$firstModGroupTarget()));
-            }
-        }
-        if (images.isEmpty()) {
-            return;
-        }
-        if (this.modReadbackBuffer == null) {
-            this.modReadbackBuffer = new VulkanHostBuffer(this.context, 64L,
-                    org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-        }
-        org.lwjgl.system.MemoryUtil.memSet(this.modReadbackBuffer.mappedAddress(), 0x5A, 64L);
-        try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
-            org.lwjgl.vulkan.VkMemoryBarrier.Buffer before = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
-            before.get(0).sType$Default()
-                    .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
-                            | org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT)
-                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT);
-            this.context.celtium$beforeBarrier(this.commandBuffer.address());
-            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(this.commandBuffer,
-                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, before, null, null);
-            for (int i = 0; i < images.size(); i++) {
-                VulkanGlTexture image = images.get(i);
-                org.lwjgl.vulkan.VkBufferImageCopy.Buffer region = org.lwjgl.vulkan.VkBufferImageCopy.calloc(1, stack);
-                region.get(0).bufferOffset(4L * i).bufferRowLength(0).bufferImageHeight(0);
-                region.get(0).imageSubresource().set(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1);
-                region.get(0).imageOffset().set(Math.max(0, image.width() / 2), Math.max(0, image.height() / 2), 0);
-                region.get(0).imageExtent().set(1, 1, 1);
-                org.lwjgl.vulkan.VK10.vkCmdCopyImageToBuffer(this.commandBuffer, image.image(),
-                        org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL, this.modReadbackBuffer.buffer(), region);
-            }
-            org.lwjgl.vulkan.VkMemoryBarrier.Buffer after = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
-            after.get(0).sType$Default().srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT)
-                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT
-                            | org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(this.commandBuffer,
-                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, after, null, null);
-        }
-        this.modReadbackLabels = labels;
-        this.modReadbackFrame = this.frameId;
-    }
-
-    /** Prints the readback once the frame that recorded it is certainly complete. */
-    private void celtium$reportModInputReadback() {
-        if (this.modReadbackLabels == null || this.modReadbackFrame < 0 || this.frameId < this.modReadbackFrame + 4) {
-            return;
-        }
-        long base = this.modReadbackBuffer.mappedAddress();
-        for (int i = 0; i < this.modReadbackLabels.size(); i++) {
-            int r = org.lwjgl.system.MemoryUtil.memGetByte(base + 4L * i) & 0xFF;
-            int g = org.lwjgl.system.MemoryUtil.memGetByte(base + 4L * i + 1) & 0xFF;
-            int b = org.lwjgl.system.MemoryUtil.memGetByte(base + 4L * i + 2) & 0xFF;
-            int a = org.lwjgl.system.MemoryUtil.memGetByte(base + 4L * i + 3) & 0xFF;
-            System.out.println("[Celtium] CELTIUM_MOD_READBACK recordedFrame=" + this.modReadbackFrame + " "
-                    + this.modReadbackLabels.get(i) + " centre=(" + r + "," + g + "," + b + "," + a + ")");
-        }
-        this.modReadbackFrame = -1L;
-    }
-
-    private PreparedImmediate celtium$modFailure(int programId, String reason) {
-        this.lastModProgramFailure = reason;
-        celtium$reportModProgram(programId, false, reason);
-        return null;
-    }
-
-    /** One line per program and outcome: which programs draw natively, and why the others do not. */
-    private void celtium$reportModProgram(int program, boolean drawn, String detail) {
-        // Keyed by the detail as well: one program is used for several passes (GTCEu's IMAGE_F copies three
-        // different framebuffers), and which input each pass read is the question a wrong picture asks.
-        if (this.modProgramReported.size() < 64
-                && this.modProgramReported.add(Integer.valueOf((drawn ? program : -program - 1) * 31 + detail.hashCode()))) {
-            System.out.println("[Celtium] CELTIUM_MOD_PROGRAM_" + (drawn ? "DRAWN" : "NOT_DRAWN") + " program=" + program
-                    + " " + detail);
-        }
-    }
+    /** A mod's own shader programs drawn natively (opt-in); split out of this class (2026-11-06), see ModPrograms. */
+    final ModPrograms modPrograms = new ModPrograms(this);
 
     /** The key of the group before the current one, kept only for the merge census's A-B-A count. */
     private int censusPrevGroupFormatId = -1;
@@ -4069,7 +3478,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** How many large windows have had their routing logged. */
     int windowRouteLogs;
     /** Frames that ended without the delivered image receiving any clear; the afterimage's first measurable shape. */
-    private long framesWithNoClearAtAll;
+    long framesWithNoClearAtAll;
     private int frameClearsAtLastBoundary = -1;
     /** Reused by the window flush for its recording snapshot; see GllessFrameTarget.snapshotRecording(reuse). */
     private org.soutalab.celtium.vulkan.GllessFrameTarget.RecordingSnapshot windowRecordingSnapshot;
@@ -7300,7 +6709,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      *
      * @return whether a record existed and was published
      */
-    private boolean celtium$adoptRawFramebufferColorTexture(int glTextureName) {
+    boolean celtium$adoptRawFramebufferColorTexture(int glTextureName) {
         int framebuffer = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
                 .celtium$framebufferForColorTexture(glTextureName);
         if (framebuffer == 0) {
@@ -7333,7 +6742,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** Bounded count for {@link #celtium$adoptRawFramebufferColorTexture}. */
     private int rawFramebufferAdoptions;
-    private long celtium$framebufferIdentityForColorTexture(int glTextureName) {
+    long celtium$framebufferIdentityForColorTexture(int glTextureName) {
         if (glTextureName == 0) {
             return Long.MIN_VALUE;
         }
@@ -7409,7 +6818,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      *
      * @return whether the name resolves to an image now
      */
-    private boolean celtium$publishFramebufferColorTexture(int glTextureName) {
+    boolean celtium$publishFramebufferColorTexture(int glTextureName) {
         long identity = celtium$framebufferIdentityForColorTexture(glTextureName);
         if (identity == Long.MIN_VALUE) {
             return false;
@@ -7425,7 +6834,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * had answered. The size check still runs ({@link #celtium$validateColorTextureIdentity}), because that is the
      * rule that keeps a reused GL name from being taken for a deleted framebuffer's attachment.
      */
-    private boolean celtium$publishFramebufferColorTexture(int glTextureName, long knownIdentity, long[] knownReported) {
+    boolean celtium$publishFramebufferColorTexture(int glTextureName, long knownIdentity, long[] knownReported) {
         long identity = celtium$validateColorTextureIdentity(glTextureName, knownIdentity);
         if (identity == Long.MIN_VALUE) {
             return false;
@@ -9171,7 +8580,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.immediateStatistics.noteProgramQueryCount();
             // A mod's own program that the stub lowered and compiled is drawn, not refused (VulkanModProgramPipeline).
             org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program modDrawProgram =
-                    boundProgram != 0 && boundProgram != Integer.MIN_VALUE ? celtium$executableModProgram(boundProgram, formatId)
+                    boundProgram != 0 && boundProgram != Integer.MIN_VALUE ? this.modPrograms.celtium$executableModProgram(boundProgram, formatId)
                             : null;
             if (boundProgram != 0 && modDrawProgram == null) {
                 // 8 is the entity layout: position, texture, colour and a normal the shaders do not read.
@@ -9362,9 +8771,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 return false;
             }
             if (modDrawProgram != null) {
-                prepared = celtium$modPrepared(modDrawProgram, boundProgram, formatId, prepared);
+                prepared = this.modPrograms.celtium$modPrepared(modDrawProgram, boundProgram, formatId, prepared);
                 if (prepared == null) {
-                    this.immediateLastRefusal = "mod program: " + this.lastModProgramFailure;
+                    this.immediateLastRefusal = "mod program: " + this.modPrograms.lastModProgramFailure;
                     this.immediateStatistics.noteRefusedBeforeAppend();
                     flushPendingBeforeGlDraw();
                     return false;
@@ -11596,10 +11005,10 @@ this.frameBufferOpen = false;
         }
         this.indirectRuns.recordsColourPipelines.clear();
         // Mod program pipelines are built like one of the variants released above and keyed by it: they go with it.
-        for (VulkanModProgramPipeline modProgram : this.modProgramPipelines.values()) {
+        for (VulkanModProgramPipeline modProgram : this.modPrograms.modProgramPipelines.values()) {
             released += releaseDirect(modProgram == null ? null : modProgram::delete);
         }
-        this.modProgramPipelines.clear();
+        this.modPrograms.modProgramPipelines.clear();
         this.indirectRuns.indirectRunPipeline = null;
         this.indirectRuns.indirectRunPipelineObject = null;
         this.indirectRuns.indirectRunOriginalPipeline = null;
@@ -13953,10 +13362,10 @@ this.frameBufferOpen = false;
         // this point it still names the previous window's target (measured: every probe here saw the queued mod group
         // of the window *before*).
         long windowTarget = this.targetRegistry.currentIdentity();
-        if (MOD_READBACK && this.modReadbackLabels == null && this.frameId >= 300) {
-            celtium$recordModInputReadback(windowTarget);
+        if (ModPrograms.MOD_READBACK && this.modPrograms.modReadbackLabels == null && this.frameId >= 300) {
+            this.modPrograms.celtium$recordModInputReadback(windowTarget);
         }
-        if (MOD_READ_BARRIER && celtium$queuedForTargetHasModProgram(windowTarget)) {
+        if (ModPrograms.MOD_READ_BARRIER && this.modPrograms.celtium$queuedForTargetHasModProgram(windowTarget)) {
             // A mod pass samples framebuffers earlier windows of this frame drew into; they stay in GENERAL, and
             // nothing else makes one pass's colour writes visible to a later pass's fragment reads.
             try (org.lwjgl.system.MemoryStack barrierStack = org.lwjgl.system.MemoryStack.stackPush()) {
@@ -16839,7 +16248,7 @@ this.frameBufferOpen = false;
      * window the attachment query is unanswerable and {@link #celtium$samplesBoundFramebufferColor(int)} is false
      * there for everything.
      */
-    private boolean celtium$samplesCurrentTargetColor(int texture) {
+    boolean celtium$samplesCurrentTargetColor(int texture) {
         if (texture == 0 || this.currentFramebufferIdentity == 0L) {
             return false;
         }
@@ -17109,9 +16518,9 @@ this.frameBufferOpen = false;
      * marks cannot carry these: a mark set on one branch makes the interval it starts average across whichever batches
      * marked both ends, which is how a HashMap lookup read as nineteen microseconds.
      */
-    private long acceptDecideNanos;
-    private long acceptPreflightNanos;
-    private long acceptTailNanos;
+    long acceptDecideNanos;
+    long acceptPreflightNanos;
+    long acceptTailNanos;
     /**
      * The part of the accept path's own clock that belongs to the window flush it triggered.
      * <p>
@@ -17215,7 +16624,7 @@ this.frameBufferOpen = false;
     }
 
     /** {@return the accept path's three spans, in milliseconds, for the frame statistics}. */
-    private String acceptSpanSummary() {
+    String acceptSpanSummary() {
         StringBuilder parts = new StringBuilder(" parts[");
         String[] names = {"expand", "matrix", "extent", "registry", "supply", "prepare"};
         for (int i = 0; i < names.length; i++) {
@@ -17251,21 +16660,21 @@ this.frameBufferOpen = false;
      */
     private static final boolean SPLASH_CENSUS = Boolean.getBoolean("celtium.vulkan.splashCensus");
     /** {@code -Dceltium.debug.retainedCensus=true}: how much of a frame is retained geometry, and how it repeats. */
-    private static final boolean RETAINED_CENSUS = Boolean.getBoolean("celtium.debug.retainedCensus");
+    static final boolean RETAINED_CENSUS = Boolean.getBoolean("celtium.debug.retainedCensus");
     /** {@code -Dceltium.debug.drawKeyCensus=true}: the distinct material keys a frame uses and how often they alternate. */
-    private static final boolean DRAW_KEY_CENSUS = Boolean.getBoolean("celtium.debug.drawKeyCensus");
+    static final boolean DRAW_KEY_CENSUS = Boolean.getBoolean("celtium.debug.drawKeyCensus");
     /** {@code -Dceltium.debug.groupCensus=true}: the drawn groups' families and depth/blend state, for the ordering scope. */
-    private static final boolean GROUP_CENSUS = Boolean.getBoolean("celtium.debug.groupCensus");
+    static final boolean GROUP_CENSUS = Boolean.getBoolean("celtium.debug.groupCensus");
     /** Draws per family and state: texture/litItem/unlitItem/colour/other x blend x depthWrite. */
-    private final long[] groupCensusCounts = new long[12];
-    private long groupCensusMain;
+    final long[] groupCensusCounts = new long[12];
+    long groupCensusMain;
     /** {@code -Dceltium.debug.bufferCensus=true}: how many distinct buffers a frame's groups draw from. */
-    private static final boolean BUFFER_CENSUS = Boolean.getBoolean("celtium.debug.bufferCensus");
-    private final java.util.Set<Long> bufferCensusVertexBuffers = new java.util.HashSet<Long>();
-    private final java.util.Set<Long> bufferCensusIndexBuffers = new java.util.HashSet<Long>();
-    private long bufferCensusGroups;
-    private long bufferCensusArenaBacked;
-    private long bufferCensusOwning;
+    static final boolean BUFFER_CENSUS = Boolean.getBoolean("celtium.debug.bufferCensus");
+    final java.util.Set<Long> bufferCensusVertexBuffers = new java.util.HashSet<Long>();
+    final java.util.Set<Long> bufferCensusIndexBuffers = new java.util.HashSet<Long>();
+    long bufferCensusGroups;
+    long bufferCensusArenaBacked;
+    long bufferCensusOwning;
     /** {@code -Dceltium.vulkan.sortOpaque=true}: order the opaque groups by material so equal materials share a run. */
     /**
      * Order a flush's opaque groups by material before recording them. <b>Off by default</b>, and that is the measured
@@ -17281,8 +16690,8 @@ this.frameBufferOpen = false;
     private long[] drawOrderKeys = new long[0];
     private int[] drawOrderIndices = new int[0];
     private int[] drawOrder = new int[0];
-    private int drawOrderSegments;
-    private int drawOrderOpaque;
+    int drawOrderSegments;
+    int drawOrderOpaque;
 
     /**
      * {@return the order to record a flush's groups in}: the fully opaque groups by material first, then everything else
@@ -17301,7 +16710,7 @@ this.frameBufferOpen = false;
      * order and the runs short.
      */
     /** Why groups fail the reorderable predicate, by first failing condition, for the ordering census. */
-    private long reorderRejectNoPrepared, reorderRejectDepthWrite, reorderRejectDepthTest, reorderRejectBlend,
+    long reorderRejectNoPrepared, reorderRejectDepthWrite, reorderRejectDepthTest, reorderRejectBlend,
             reorderAccept, reorderRejectOther;
 
     private static boolean celtium$reorderable(java.util.List<ImmediateGroup> groups, int index) {
@@ -17420,24 +16829,24 @@ this.frameBufferOpen = false;
         this.drawOrderOpaque += reorderable;
         return order;
     }
-    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap drawKeyCounts =
+    final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap drawKeyCounts =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
-    private long drawKeyGroups;
-    private long drawKeySwitches;
-    private long arrayKeyGroups;
-    private long arrayKeySwitches;
-    private long arrayKeyPrevious;
-    private int arrayKeyLargest;
-    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap arrayKeyCounts =
+    long drawKeyGroups;
+    long drawKeySwitches;
+    long arrayKeyGroups;
+    long arrayKeySwitches;
+    long arrayKeyPrevious;
+    int arrayKeyLargest;
+    final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap arrayKeyCounts =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
-    private long drawKeyPrevious;
-    private int drawKeyLargest;
-    private final java.util.Map<Integer, Integer> retainedCensusByMesh = new java.util.HashMap<Integer, Integer>();
-    private long retainedCensusGroups;
-    private long retainedAccept;
-    private long preTransformEligible;
-    private long retainedCensusRetained;
-    private int retainedCensusLargest;
+    long drawKeyPrevious;
+    int drawKeyLargest;
+    final java.util.Map<Integer, Integer> retainedCensusByMesh = new java.util.HashMap<Integer, Integer>();
+    long retainedCensusGroups;
+    long retainedAccept;
+    long preTransformEligible;
+    long retainedCensusRetained;
+    int retainedCensusLargest;
     /** {@code -Dceltium.debug.itemCensus=true}: name the groups the item pipeline draws, up to a bound. */
     private static final boolean ITEM_CENSUS = Boolean.getBoolean("celtium.debug.itemCensus");
     private static final int ITEM_CENSUS_LIMIT = Integer.getInteger("celtium.debug.itemCensusLimit", 40);
@@ -18359,74 +17768,41 @@ this.frameBufferOpen = false;
     private int immediateOffersThisFrame;
 
     /** Groups the pre-terrain flush handed over, and how many frames contributed. */
-    private long preflushGroupsDrained;
-    private long preflushFrames;
+    long preflushGroupsDrained;
+    long preflushFrames;
 
     private long lastTerrainIndirectCalls;
     private long lastDrawnGroups;
     private long lastIndirectRuns;
 
     /** {@return indirect runs per frame times 100, over the frames this report covers}. */
-    private long celtium$indirectRunsPerFrameX100() {
+    long celtium$indirectRunsPerFrameX100() {
         long delta = this.indirectRuns.indirectRunsIssued - this.lastIndirectRuns;
         this.lastIndirectRuns = this.indirectRuns.indirectRunsIssued;
         return (delta * 100L) / Math.max(1, this.frameIntervalCount);
     }
-    private long lastPreTransformed;
-    private long lastMatrixSplits;
     private long lastImmediateWindows;
 
     /** {@return windows per frame times 100, over the frames this report covers}. */
-    private long celtium$windowsPerFrameX100() {
+    long celtium$windowsPerFrameX100() {
         long windows = this.immediateStatistics.immediateWindows();
         long delta = windows - this.lastImmediateWindows;
         this.lastImmediateWindows = windows;
         return Math.max(1, this.frameIntervalCount) == 0 ? 0 : (delta * 100L) / Math.max(1, this.frameIntervalCount);
     }
-    private long lastPipelineBindNanos;
-    private long lastViewNanos;
-    private long textureDrawNanos;
-    private long textureDrawCount;
-    private long itemDrawCount;
-    private long blockDrawCount;
-    private long particleDrawCount;
-    private long genericDrawCount;
-    private long lastTextureDrawCount;
-    private long lastItemDrawCount;
-    private long lastBlockDrawCount;
-    private long lastParticleDrawCount;
-    private long lastGenericDrawCount;
-    private long itemDrawNanos;
-    private long blockDrawNanos;
-    private long particleDrawNanos;
-    private long genericDrawNanos;
-    private long lastTextureDrawNanos;
-    private long lastArenaPromotions;
-    private long lastDrawFormBinds;
-    private long lastAcceptDecideNanos;
-    private long lastImmediateSubmitNanos;
-    private long lastAcceptPreflightNanos;
-    private long lastAcceptTailNanos;
-    private long lastAppendNanos;
-    private long lastAcceptedBatches;
-    private long lastBindFormBinds;
-    private long lastArenaBlocked;
-    private long lastArenaFallbacks;
-    private long lastItemPipelineNanos;
-    private long lastItemDescriptorNanos;
-    private long lastItemViewNanos;
-    private long lastItemPushNanos;
-    private long lastItemMeshNanos;
-    private long lastItemDrawNanos;
-    private long lastBlockDrawNanos;
-    private long lastParticleDrawNanos;
-    private long lastGenericDrawNanos;
-    private long lastPushCallNanos;
-    private long lastMeshBindNanos;
-    private long lastDescriptorBindNanos;
+    long textureDrawNanos;
+    long textureDrawCount;
+    long itemDrawCount;
+    long blockDrawCount;
+    long particleDrawCount;
+    long genericDrawCount;
+    long itemDrawNanos;
+    long blockDrawNanos;
+    long particleDrawNanos;
+    long genericDrawNanos;
 
     /** {@return the immediate groups drawn per frame over the report window}. */
-    private long celtium$drawnGroupsPerFrame() {
+    long celtium$drawnGroupsPerFrame() {
         long drawn = this.immediateStatistics.groupDrawCount();
         long delta = drawn - this.lastDrawnGroups;
         this.lastDrawnGroups = drawn;
@@ -18435,7 +17811,7 @@ this.frameBufferOpen = false;
     private long lastTerrainIndirectDraws;
 
     /** {@return the terrain pass's per-frame recording counts}, as a log fragment. */
-    private String celtium$terrainPerFrameSummary(int frames) {
+    String celtium$terrainPerFrameSummary(int frames) {
         if (this.terrain == null || frames <= 0) {
             return "";
         }
@@ -18950,8 +18326,8 @@ this.frameBufferOpen = false;
      * @return {@code "served"} when the pixels reached the destination mirror, otherwise a reason that names itself
      */
     /** Cumulative wall time of the game's copyTexSubImage calls: three a frame in the menu, and each is a GPU round trip. */
-    private long textureCopyCalls;
-    private long textureCopyNanos;
+    long textureCopyCalls;
+    long textureCopyNanos;
 
     public String celtium$serveTextureCopy(int destName, int level, int xoffset, int yoffset,
             int x, int y, int width, int height, int readFbo) {
@@ -21107,14 +20483,14 @@ this.frameBufferOpen = false;
                         if (BATCH_TIMINGS) this.particleDrawNanos += System.nanoTime() - variantStart;
                         this.particleDrawCount++;
                     } else if (pipeline instanceof VulkanModProgramPipeline.Draw value) {
-                        if (value.label != null && this.modTraceLines < 400 && this.frameId >= 300
-                                && this.frameId < 300 + MOD_TRACE_FRAMES) {
+                        if (value.label != null && this.modPrograms.modTraceLines < 400 && this.frameId >= 300
+                                && this.frameId < 300 + ModPrograms.MOD_TRACE_FRAMES) {
                             // The order the passes are *recorded* in, against the order they were offered in (the
                             // label carries the offer's frame): a copy recorded before the pass that fills its
                             // source reads that source's previous contents.
-                            this.modTraceLines++;
+                            this.modPrograms.modTraceLines++;
                             System.out.println("[Celtium] CELTIUM_MOD_DRAW_ORDER recordFrame=" + this.frameId
-                                    + " seq=" + this.modTraceLines + " site=" + this.immediateDrawSite
+                                    + " seq=" + this.modPrograms.modTraceLines + " site=" + this.immediateDrawSite
                                     + " groupTarget=0x" + Long.toHexString(group.target)
                                     + " " + value.label);
                         }
