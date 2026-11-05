@@ -293,3 +293,15 @@ Census `l24miss-amd`: `hit1565706/501134[… sameKey=0 …]` - hit rate **51% ->
 any more. Speed (r106/r105): p50 1.004, p95 1.000, p99 0.996, tick frame 0.994 - **no measurable change**. After r105
 the key misses no longer cost frame time; this line of work stops here (kept, harmless). The remaining gap to
 Celeritas is elsewhere in the GUI path (the window flush the font-run submissions trigger, per the profiles above).
+
+## Official KPI on r107 (5ff004c26, renderer `7752059a…`, flush threshold 32768) vs Celeritas, 3 pairs (2026-11-06 05:33-06:12)
+
+| GPU | p50 | p95 | p99 | per-pair p99 |
+|---|---|---|---|---|
+| AMD (`l27kpi-amd`) | **0.976** | **0.935** | **0.993** | 0.924 / 1.121 / 0.993 |
+| Intel (`l27kpi-intel`) | **0.940** | **0.970** | **0.993** | 0.993 / 1.081 / 0.911 |
+
+**Every median percentile is below 1 on both GPUs** for the first time. goalCondition stays NOT_MET because one pair
+each crosses 1: AMD pair 2's Celeritas p99 was 5.121 ms against 5.59-6.34 in its other pairs, and Intel pair 2's
+Celtium run was slow throughout (p50 3.699 vs 3.31-3.38). Both are single-arm excursions; more pairs or a quieter
+machine decide whether the every-pair condition holds.
