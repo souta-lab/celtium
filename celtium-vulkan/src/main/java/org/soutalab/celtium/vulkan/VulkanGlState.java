@@ -446,8 +446,22 @@ public final class VulkanGlState {
         // The raster mirror owns its own version because the raw-GL adapter writes it without going through this class.
         // Both counters only increase, so their sum changes whenever either does: a false equality cannot come from one
         // moving and the other moving back.
+        return this.stateVersion + this.raster.version() + this.colorVersion + this.lightMaskVersion;
+    }
+
+    /**
+     * {@return the version of the values the immediate path's state key is built from}: {@link #stateVersion()}
+     * without the current colour and the per-light enables, which the key does not carry (the colour reaches the draw
+     * as a push value). The GUI changes the colour around nearly every text run, and the offer-key census
+     * (l19miss-amd) had 67% of the misses recomputing an identical key - a stateVersion moved by the colour.
+     */
+    public long keyStateVersion() {
         return this.stateVersion + this.raster.version();
     }
+
+    /** Versions of the two replay-visible values the state key does not carry; see {@link #keyStateVersion()}. */
+    private long colorVersion;
+    private long lightMaskVersion;
 
     /** {@return the version of the projection stack; see {@link #stateVersion()}. */
     public long projectionVersion() {
@@ -732,7 +746,7 @@ public final class VulkanGlState {
         }
         if (this.lightsEnabledMask != previous) {
             this.lightGeneration++;
-            noteStateMutation();
+            this.lightMaskVersion++;
         }
     }
 
@@ -1013,7 +1027,7 @@ public final class VulkanGlState {
         this.colorGreen = green;
         this.colorBlue = blue;
         this.colorAlpha = alpha;
-        noteStateMutation();
+        this.colorVersion++;
     }
 
     public float colorRed() {

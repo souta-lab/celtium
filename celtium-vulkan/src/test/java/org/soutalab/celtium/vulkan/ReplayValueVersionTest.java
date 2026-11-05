@@ -93,6 +93,19 @@ class ReplayValueVersionTest {
         assertTrue(state.stateVersion() > version, "a changed colour still moves it");
     }
 
+    /** The colour and the per-light enables are replay-visible but not part of the immediate state key. */
+    @Test void colourAndLightEnablesMoveTheStateButNotTheKeyVersion() {
+        VulkanGlState state = new VulkanGlState();
+        long key = state.keyStateVersion();
+        long all = state.stateVersion();
+        state.color(0.1f, 0.2f, 0.3f, 0.4f);
+        state.lightEnabled(1, true);
+        assertEquals(key, state.keyStateVersion());
+        assertTrue(state.stateVersion() > all);
+        state.blendEnabled(true);
+        assertTrue(state.keyStateVersion() > key, "a keyed value still moves the key version");
+    }
+
     @Test void aModelviewEditMovesNoVersionAtAll() {
         // The modelview is the one input a repeated replay is allowed to change. A version that moved on it would
         // refuse the state half of every replay, so the acceleration would exist and never be granted.

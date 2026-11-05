@@ -10716,7 +10716,7 @@ this.frameBufferOpen = false;
 
     /** Fills {@code out} with the raw inputs of the state capture: see {@link #celtium$stateFromSignature}. */
     void celtium$stateSignature(int[] out) {
-        long stateVersion = this.immediateState.stateVersion();
+        long stateVersion = this.immediateState.keyStateVersion();
         NativeTextureEnvironment currentEnvironment = NativeTextureEnvironment.current();
         long environmentVersion = currentEnvironment.version();
         int windowTarget = this.targetRegistry.currentIdentity() == 0L ? 1 : 0;
@@ -10925,7 +10925,7 @@ this.frameBufferOpen = false;
      * group rather than once per offer is what makes the names true.
      */
     private long celtium$offerStateKey(int formatId) {
-        long stateVersion = this.immediateState.stateVersion();
+        long stateVersion = this.immediateState.keyStateVersion();
         NativeTextureEnvironment currentEnvironment = NativeTextureEnvironment.current();
         long environmentVersion = currentEnvironment.version();
         int windowTarget = this.targetRegistry.currentIdentity() == 0L ? 1 : 0;
