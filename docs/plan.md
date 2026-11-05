@@ -84,11 +84,9 @@
 
 ## FPSの現状と残る道
 
+- **hidden section の rebuild を既定で止めた**（upstream と同じく可視探索だけが queue、同一JAR A/B 0.915x、[証拠](evidence/terrain-hidden-rebuilds-2026-11-05.md)）。
 - 現行の判定は **round 67 の paired 3対: p50 median 1.062（SLOWER・`NOT_MET`、p95 1.218）**（[証拠](evidence/paired-kpi-round67-2026-11-05.md)）。round 64 は 1.189。
-  同じ rep に **round 58 のビルドを control arm** として並べた `medianControlRatio` は **1.063**、clean な rep 1–2 では
-  **0.985 / 1.063**。**round 63 の「round 58 から 13.1% 悪化」は control arm で再現しない**——両ビルドは測定のばらつき
-  以内で同速で、1.279 は負荷の乗った rep を含む session だった（rep 3 の 1.566 が round 63 rep 2 の 1.470 と同じ形）。
-  窓あたりの記録 18.46→20.94 µs は分母の効果（窓 237481→218069）。**残る差は immediate path の accept と window 費用**。
+  round 63 の「round 58 から 13.1% 悪化」は control arm で再現しない（round 64 の記録）。
   旧scene（Susy/ATM3）の ABBA値は artifact が現ビルドと一致しないため現在判定に使わない（[archive](<history/plan-archive-2026-10-21.md>)）。
 - pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
 - 棄却: bind flush延期（2026-10-31、2回ともRADV SIGSEGV、[罠](<verification-traps.md>)）、indirect immediate、フレーム再利用（アニメ凍結）、
