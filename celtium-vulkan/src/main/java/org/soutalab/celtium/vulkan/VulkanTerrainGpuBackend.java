@@ -3611,7 +3611,34 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramsSampleMain", "true"));
     /** The open group is a mod program's draw: nothing else may merge into it, and it into nothing. */
     private boolean currentGroupIsModProgram;
-    private final java.util.Map<String, VulkanModProgramPipeline> modProgramPipelines = new java.util.HashMap<>();
+    private final java.util.Map<ModProgramKey, VulkanModProgramPipeline> modProgramPipelines = new java.util.HashMap<>();
+
+    /** A mod program pipeline's identity: both SPIR-V arrays and the variant it is built like, by reference. */
+    private static final class ModProgramKey {
+        private final byte[] vertex;
+        private final byte[] fragment;
+        private final int formatId;
+        private final Object like;
+
+        ModProgramKey(byte[] vertex, byte[] fragment, int formatId, Object like) {
+            this.vertex = vertex;
+            this.fragment = fragment;
+            this.formatId = formatId;
+            this.like = like;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof ModProgramKey k && k.vertex == this.vertex && k.fragment == this.fragment
+                    && k.formatId == this.formatId && k.like == this.like;
+        }
+
+        @Override
+        public int hashCode() {
+            return ((System.identityHashCode(this.vertex) * 31 + System.identityHashCode(this.fragment)) * 31
+                    + this.formatId) * 31 + System.identityHashCode(this.like);
+        }
+    }
     private final java.util.Set<Integer> modProgramReported = new java.util.HashSet<>();
     private String lastModProgramFailure = "none";
 
@@ -3642,8 +3669,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return celtium$modFailure(programId, "the batch's own variant is "
                     + standard.pipeline.getClass().getSimpleName() + ", not a textured one");
         }
-        String key = System.identityHashCode(program.vertexSpirv()) + "/" + System.identityHashCode(program.fragmentSpirv())
-                + "/" + formatId + "/" + System.identityHashCode(like);
+        // Keyed by the objects themselves: identity hash codes are not unique, so a key built from them could hand
+        // one program's pipeline to another (and, after a world teardown, to a pipeline built like a released one).
+        ModProgramKey key = new ModProgramKey(program.vertexSpirv(), program.fragmentSpirv(), formatId, like);
         VulkanModProgramPipeline pipeline = this.modProgramPipelines.get(key);
         if (pipeline == null) {
             try {
@@ -11738,6 +11766,11 @@ this.frameBufferOpen = false;
             released += releaseDirect(records == null ? null : records::delete);
         }
         this.recordsColourPipelines.clear();
+        // Mod program pipelines are built like one of the variants released above and keyed by it: they go with it.
+        for (VulkanModProgramPipeline modProgram : this.modProgramPipelines.values()) {
+            released += releaseDirect(modProgram == null ? null : modProgram::delete);
+        }
+        this.modProgramPipelines.clear();
         this.indirectRunPipeline = null;
         this.indirectRunPipelineObject = null;
         this.indirectRunOriginalPipeline = null;
