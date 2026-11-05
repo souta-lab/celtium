@@ -110,3 +110,20 @@ Steady block (tickFrames=352, plainFrames=3648, mean us): frame 5420/2973, world
 grow on tick frames sum to ~0.8 ms (terrain 701/493, setupTerrain 240/69, particles 145/52, offPreflight 121/25,
 offPrepare 103/25, terrainEnsure 108/29, flush 685/611); **~1.5 ms of the world bracket's tick-frame excess is outside
 every named bracket**. That unbracketed part of the world pass is the next instrument gap for the Intel tail.
+
+## Where in time the tick-frame excess is (`r92split-amd`, 1000-frame blocks, renderer `0701f03e8`)
+
+Join 16:31:31; warm ticks 400..600 are about 16:31:51-16:32:01.
+
+| block ending | tick / plain frame (us) | what grows on tick frames |
+|---|---|---|
+| 16:31:42 (world start) | 47620 / 1302 | everything |
+| 16:31:52 (join+14..21 s) | **11219 / 2880** | chunk-load wave: setupTerrain 1447/104, terrainEnsure 734/26, stPrepare 613/35, stUpload 361/3, chunkUpload 280/1 |
+| 16:31:56 (in window) | 3215 / 2641 | worldPass +463: flush +62, terrain +58, particles +44, lightmap 70/0 |
+| 16:31:59 (in window) | 2616 / 2108 | worldPass +345, lightmap 60/0 |
+| 16:32:02-16:32:07 | 2299/1919 ... 2119/1746 | settled: +370..400, lightmap 48-57/0 |
+
+The post-join chunk-load wave sits right at the start of the warm window, so whether a run's p99 carries it depends
+on small timing shifts - consistent with the run-to-run spread of the tail all day. The settled excess on tick frames is
+~0.4-0.5 ms and spread out; the only Celtium-specific named item is `lightmap` (50-70 us on every tick frame, 0 on plain
+ones: the per-tick lightmap re-upload). ~250 us of the world-pass excess is still unnamed.
