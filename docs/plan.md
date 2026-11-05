@@ -85,7 +85,7 @@
 ## FPSの現状と残る道
 
 - **hidden section の rebuild を既定で止めた**（upstream と同じく可視探索だけが queue、同一JAR A/B 0.915x、[証拠](evidence/terrain-hidden-rebuilds-2026-11-05.md)）。
-- 現行の判定は **round 67 の paired 3対: p50 median 1.062（SLOWER・`NOT_MET`、p95 1.218）**（[証拠](evidence/paired-kpi-round67-2026-11-05.md)）。round 64 は 1.189。
+- 現行の判定は **round 74 の paired 3対: p50 median 0.914（NOT_SLOWER）、p95 0.978、p99 1.060→`NOT_MET`**（[証拠](evidence/terrain-hidden-rebuilds-2026-11-05.md)）。残りは tail（p99 が全対で 6–11% 遅い）。round 67 は 1.062。
   round 63 の「round 58 から 13.1% 悪化」は control arm で再現しない（round 64 の記録）。
   旧scene（Susy/ATM3）の ABBA値は artifact が現ビルドと一致しないため現在判定に使わない（[archive](<history/plan-archive-2026-10-21.md>)）。
 - pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)

@@ -57,3 +57,17 @@ The join-aligned profile (r69prof) also caught the fixture's own PNG writes and 
 (presented-image dump, picture hashing): its 9 s window ran past world tick 600 into the end-of-run picture work, so
 wall-time-since-join does not map exactly onto ticks. In the KPI legs both arms capture before tick 400 (Celtium 288,
 Celeritas 310/342), so the measured ticks 400..600 do not contain it.
+
+## Clean KPI on the new default: p50 NOT_SLOWER
+
+`r74kpi` (renderer `ae276acd…`, same code as HEAD after the animation-batch revert; reference `567dcf8a…`; AMD RX 6400,
+world-accept, guiScale 3, validation off, warm ticks 400..600, 3 pairs, all PASSED, machine idle):
+
+| rep | Celtium p50 | Celeritas p50 | p50 | p95 | p99 |
+|---|---|---|---|---|---|
+| 1 | 2.429 | 2.361 | 1.029 | 1.085 | 1.060 |
+| 2 | 2.142 | 2.352 | 0.911 | 0.958 | 1.106 |
+| 3 | 2.167 | 2.370 | 0.914 | 0.978 | 1.059 |
+
+**Median paired p50 ratio 0.914x, verdict NOT_SLOWER**; medians p95 0.978, p99 1.060; goalCondition NOT_MET (it needs
+every percentile below 1 in every pair). The remaining gap is the tail: p99 is 6-11% slower in every pair.
