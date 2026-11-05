@@ -48,6 +48,27 @@ import static org.lwjgl.vulkan.VK10.*;
 final class VulkanModelInstances {
     /** The push block the last model draw emitted in this segment, so an identical one is not sent again. */
     private final byte[] lastConstants = new byte[ModelRunConstants.BYTES];
+    /**
+     * Reused by every run's draw instead of a MemoryStack buffer per call: each stack.longs/calloc created a new NIO
+     * wrapper object per run, and the warm-window JFR (r84jfr) put VulkanModelInstances.draw's DirectLongBufferU at the
+     * top of the client thread's allocation samples. Recording is single-threaded; freed in delete().
+     */
+    private final LongBuffer drawSets = MemoryUtil.memAllocLong(2);
+    private final LongBuffer drawVertexBuffer = MemoryUtil.memAllocLong(1);
+    private final LongBuffer drawZeroOffset = MemoryUtil.memCallocLong(1);
+    private final ByteBuffer drawConstants = MemoryUtil.memCalloc(ModelRunConstants.BYTES);
+
+    private ByteBuffer celtium$constants(float[] projection, float[] fog) {
+        ByteBuffer constants = this.drawConstants;
+        MemoryUtil.memSet(constants, 0);
+        ModelRunConstants.write(constants, projection, fog);
+        return constants;
+    }
+
+    private void celtium$bindVertexBuffer(VkCommandBuffer commandBuffer, long vertexBuffer) {
+        this.drawVertexBuffer.put(0, vertexBuffer);
+        vkCmdBindVertexBuffers(commandBuffer, 0, this.drawVertexBuffer, this.drawZeroOffset);
+    }
     private boolean lastConstantsValid;
     /** The buffer pair the last cached draw bound, so a run that shares it binds nothing. */
     private long lastVertexBuffer = VK_NULL_HANDLE;
@@ -588,10 +609,9 @@ final class VulkanModelInstances {
         if (run.count <= 0) {
             return;
         }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
+        {
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, run.pipeline.handle);
-            ByteBuffer constants = stack.calloc(ModelRunConstants.BYTES);
-            ModelRunConstants.write(constants, projection, fog);
+            ByteBuffer constants = celtium$constants(projection, fog);
             vkCmdPushConstants(commandBuffer, this.pipelineLayout,
                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, constants);
             // The full path always pushes; recording the block here lets the next cached run skip it when identical.
@@ -599,9 +619,10 @@ final class VulkanModelInstances {
                 this.lastConstants[i] = constants.get(i);
             }
             this.lastConstantsValid = true;
+            this.drawSets.put(0, textureSet).put(1, this.recordsSet);
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
-                    stack.longs(textureSet, this.recordsSet), null);
-            vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(run.vertexBuffer), stack.longs(0L));
+                    this.drawSets, null);
+            celtium$bindVertexBuffer(commandBuffer, run.vertexBuffer);
             vkCmdBindIndexBuffer(commandBuffer, run.indexBuffer, 0L, VK_INDEX_TYPE_UINT32);
             this.lastVertexBuffer = run.vertexBuffer;
             this.lastIndexBuffer = run.indexBuffer;
@@ -626,9 +647,8 @@ final class VulkanModelInstances {
         if (run.count <= 0) {
             return;
         }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            ByteBuffer constants = stack.calloc(ModelRunConstants.BYTES);
-            ModelRunConstants.write(constants, projection, fog);
+        {
+            ByteBuffer constants = celtium$constants(projection, fog);
             boolean samePush = this.lastConstantsValid;
             if (samePush) {
                 for (int i = 0; i < ModelRunConstants.BYTES; i++) {
@@ -647,7 +667,7 @@ final class VulkanModelInstances {
             }
             this.lastConstantsValid = true;
             if (this.lastVertexBuffer != run.vertexBuffer) {
-                vkCmdBindVertexBuffers(commandBuffer, 0, stack.longs(run.vertexBuffer), stack.longs(0L));
+                celtium$bindVertexBuffer(commandBuffer, run.vertexBuffer);
                 this.lastVertexBuffer = run.vertexBuffer;
             }
             if (this.lastIndexBuffer != run.indexBuffer) {
@@ -677,7 +697,16 @@ final class VulkanModelInstances {
     }
 
     /** Destroys everything; the caller has waited for the device. */
+    private boolean drawBuffersFreed;
+
     void delete() {
+        if (!this.drawBuffersFreed) {
+            this.drawBuffersFreed = true;
+            MemoryUtil.memFree(this.drawSets);
+            MemoryUtil.memFree(this.drawVertexBuffer);
+            MemoryUtil.memFree(this.drawZeroOffset);
+            MemoryUtil.memFree(this.drawConstants);
+        }
         for (Pipeline pipeline : this.pipelines.values()) {
             vkDestroyPipeline(this.context.device(), pipeline.handle, null);
         }
