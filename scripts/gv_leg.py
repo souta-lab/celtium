@@ -42,6 +42,24 @@ NATIVE_DEVICE = re.compile(r'CELTIUM_NATIVE_DEVICE name="([^"]+)" uuid=([0-9a-fA
 COPYABLE_PACK_DIRS = ("scripts", "schematics", "structures", "resources")
 
 
+# The packs the `e2e` mode can run (CELTIUM_E2E_PACK). E2E-E's exclusions are the ones its passing legs used:
+# competitors Celtium refuses, a patch that needs the excluded Nothirium, the pack's older relauncher (the instance
+# carries 1.3.0), and FermiumBooter, which Cleanroom 0.7.14 bundles - its jar name starts with a backtick.
+E2E_PACKS = {
+    "e2e": {
+        "instance": lambda root: root / ".celtium-work/modpack-p0/prism-e2e-private/instances/e2e-1.93a",
+        "staged": lambda root: root / ".celtium-work/modpack-p0/e2e-staged/mods",
+        "exclude": [],
+    },
+    "e2ee": {
+        "instance": lambda root: Path.home() / ".local/share/PrismLauncher/instances/celtium-e2ee-1.87.3",
+        "staged": lambda root: root / ".celtium-work/modpack-e2ee/staged/mods",
+        "exclude": ["SmoothFont-*", "gnetum-*", "NothiriumLittleTilesPatch-*", "CustomLoadingScreen-*",
+                    "!cleanroom-relauncher-1.1.4*", "`FermiumBooter-*"],
+    },
+}
+
+
 class LegError(Exception):
     pass
 
@@ -290,6 +308,13 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
         # (QMAGNET's Test Map) as the save "qmagnet". Clone it and install the map as that save to reproduce.
         "world": Path.home() / ".local/share/PrismLauncher/instances/celtium-world-accept",
     }
+    # E2E-E (a superset of E2E) runs as the `e2e` mode with its own instance, staged jars and exclusions. One switch
+    # selects all three, so a leg cannot pair E2E-E's instance with E2E's jars; each variable still overrides its part.
+    e2e_pack = os.environ.get("CELTIUM_E2E_PACK", "e2e").strip() or "e2e"
+    if e2e_pack not in E2E_PACKS:
+        raise LegError(f"CELTIUM_E2E_PACK must be one of {sorted(E2E_PACKS)}, not {e2e_pack!r}")
+    if mode == "e2e":
+        defaults["e2e"] = E2E_PACKS[e2e_pack]["instance"](root)
     profile = "cohort" if mode == "plain" else mode
     instance = require_dir(Path(os.environ.get(f"CELTIUM_INSTANCE_{profile.upper()}", defaults[profile])))
     require_file(instance / "mmc-pack.json")
@@ -327,8 +352,10 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
             mods.extend(jars_in(Path(os.environ["CLASH_DIR"])))
     if mode == "e2e":
         # E2E_STAGED_MODS selects another pack's jars (E2E-E) for the same mode and checks.
-        staged = jars_in(Path(os.environ.get("E2E_STAGED_MODS", root / ".celtium-work/modpack-p0/e2e-staged/mods")))
-        exclusions = ["[Nn]othirium-*", "[Nn]aughthirium-*", *shlex.split(os.environ.get("E2E_EXCLUDE", ""))]
+        pack = E2E_PACKS[e2e_pack]
+        staged = jars_in(Path(os.environ.get("E2E_STAGED_MODS", pack["staged"](root))))
+        exclusions = ["[Nn]othirium-*", "[Nn]aughthirium-*", *pack["exclude"],
+                      *shlex.split(os.environ.get("E2E_EXCLUDE", ""))]
         # Filtering supplied mods alone is insufficient: the harness also copies
         # source-instance mods. Exclude the replaced renderers from BOTH inputs.
         instance_exclusions.extend(exclusions)

@@ -359,6 +359,24 @@ class LegRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(runner.LegError, "celtium.vulkan.presentedDumpEvery"):
             self.plan(extras=["-Dceltium.validation.presentedDumpEvery=0"])
 
+    def test_e2ee_pack_selects_its_staged_jars_and_exclusions_together(self):
+        staged = self.root / ".celtium-work/modpack-e2ee/staged/mods"
+        staged.mkdir(parents=True)
+        refused = ("SmoothFont-mc1.12.2-2.1.4.jar", "gnetum-1.4.3.jar", "`FermiumBooter-1.2.0.jar",
+                   "!cleanroom-relauncher-1.1.4.jar", "CustomLoadingScreen-1.12.2-1.5.9.jar")
+        for name in (*refused, "zenutils-1.28.8.jar"):
+            (staged / name).write_bytes(name.encode())
+        os.environ["CELTIUM_E2E_PACK"] = "e2ee"
+        self.addCleanup(os.environ.pop, "CELTIUM_E2E_PACK", None)
+        plan = self.plan(mode="e2e")
+        supplied = {Path(dep["source"]).name for dep in plan.manifest["dependencies"]}
+        self.assertIn("zenutils-1.28.8.jar", supplied)
+        self.assertFalse(supplied & set(refused), supplied)
+        self.assertIn("`FermiumBooter-*", plan.manifest["instanceModExclusions"])
+        os.environ["CELTIUM_E2E_PACK"] = "e2e-e"
+        with self.assertRaisesRegex(runner.LegError, "CELTIUM_E2E_PACK"):
+            self.plan(mode="e2e")
+
     def test_e2e_replaced_renderers_are_excluded_from_both_pack_inputs(self):
         from prism_validation import copy_pack_into_game_dir
         staged = self.root / ".celtium-work/modpack-p0/e2e-staged/mods"
