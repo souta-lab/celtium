@@ -127,3 +127,20 @@ The post-join chunk-load wave sits right at the start of the warm window, so whe
 on small timing shifts - consistent with the run-to-run spread of the tail all day. The settled excess on tick frames is
 ~0.4-0.5 ms and spread out; the only Celtium-specific named item is `lightmap` (50-70 us on every tick frame, 0 on plain
 ones: the per-tick lightmap re-upload). ~250 us of the world-pass excess is still unnamed.
+
+## Five pairs each (2026-11-05 evening, renderer `3d4fd4fe…`, AMD, world-accept, guiScale 3, same jar both arms)
+
+| mode | median control ratio | client tick p50, candidate (5 reps) | control (5 reps) |
+|---|---|---|---|
+| `=load` (`n4load`) | 1.000x | 1.86 1.85 1.92 1.88 1.91 | 1.80 1.95 1.94 1.83 1.83 |
+| `=upload` (`n4upload`) | 1.035x | 1.68 1.74 2.14 1.69 1.88 | 1.98 1.87 2.01 1.93 2.27 |
+
+- `=load` has no effect: the r80load 0.902x was noise. So the earlier explanation ("texture state that loading leaves
+  behind") is rejected.
+- `=upload` lowers the client tick again (median 1.74 vs 1.98 ms; 4 of 5 pairs, and 3 of 3 in r78upload). The frame
+  ratio went the other way (1.035x), but that half ran under user load (load average 4.9, candidate r3 p99 14.3 ms),
+  so it is not read as a frame-time result.
+- Since `=load` does nothing, the tick difference comes from in-world calls of the mirror update, which conflicts with
+  the r79-time count (308 calls, 2 ms). `animatedImageFills` cannot settle it: it also counts whole-texture int[]
+  uploads (lightmap, per-frame mod textures). Next: the in-world-only counter `inWorldAnimMirror=<calls>/<us>/worst`
+  in the backend stats line, on one leg.

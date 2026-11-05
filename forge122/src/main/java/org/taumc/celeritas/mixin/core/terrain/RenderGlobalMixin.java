@@ -422,6 +422,9 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
 
         this.mc.entityRenderer.disableLightmap();
         this.mc.profiler.endSection();
+        // Cancelling returns before the method's own RETURN, so the "entities" bracket opened at HEAD would never close
+        // and the entity pass would land in the world pass's unnamed remainder.
+        org.soutalab.celtium.vulkan.FramePassTimings.end("entities");
         ci.cancel();
     }
 

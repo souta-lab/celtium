@@ -52,7 +52,7 @@
      **拒否の内訳**（[証拠](evidence/merge-refusal-census-2026-11-03.md)・round 60 census）: group openの
      **format 交替が63%（2↔6が46%・2↔4が25%）**・texture 33%・**行列は4%だけ**。`s9`=130 nsがmerge述語。
      **窓**: GregTech sceneは23.2/フレームで**13.0がpost chain**（[証拠](evidence/window-sources-2026-11-03.md)）。
-   - **Intel: 未達**（2026-11-05 `r81intel`: p50 0.901 NOT_SLOWER・p95 1.015・**p99 1.054**。tick 本体は Celeritas より速く、tick frame の描画側が超過、[証拠](evidence/animated-sprite-uploads-2026-11-05.md)）。
+   - **Intel: 未達**（2026-11-05 `n5kpi-intel`: p50 0.919 NOT_SLOWER・p95 0.984・**p99 1.048**、r81と同等。tick 本体は Celeritas より速く、tick frame の描画側が超過、[証拠](evidence/animated-sprite-uploads-2026-11-05.md)）。
      p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般、固定fpsでも残る）。棄却仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)。
    - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
    - 過去の棄却（barrier省略・texture跨ぎmerge・1 submit・glthread）は[証拠](evidence/intel-gap-2026-10-26.md)。
@@ -78,14 +78,14 @@
 | **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | v0.0.14-alpha `90a7c505…` は qmagnet world で AMD/Intel PASSED・validation 0・画像gate一致。0.6.13（GLFW/LWJGL 3.4.1）はSDL3不在を検出して版を名指しで拒否 |
 | **巨大pack互換（E2E-E 1.87.3）** | **AMD: fixture PASSED・validation 0、Intel未実行** | AMD | 未実行 | Cleanroom 0.7差はlocal置換と上流PR（`8f121acfb`）。残りは[証拠](evidence/e2e-cleanroom07-2026-10-26.md)末尾へ。 |
 
-| **Mod自前のGLSL program** | **拒否・計数まで（`51f57cded`）。実行は未実装** | GTCEu scene PASSED・validation 0 | PASSED・validation 0（r7-gt-intel） | `glUseProgram` に route が無く program が常に0→GTCEu bloom の全画面quadが世界投影で描かれていた。現在は program ごとに拒否（4本、全て `Shaders.renderFullImageInFBO`）。bloom は欠落のまま。native 実行は opt-in（`-Dceltium.vulkan.modPrograms=true`）で PASSED（黒は前処理の target ずれ・修正済み）。halo は bloom 層が bloomFBO に描かれず未。**shaderc 同梱**（jar単体でload可・ゲーム内未、[証拠](evidence/gregtech-bloom-2026-11-04.md)） |
+| **Mod自前のGLSL program** | **拒否・計数まで（`51f57cded`）。実行は未実装** | GTCEu scene PASSED・validation 0 | PASSED・validation 0（r7-gt-intel） | `glUseProgram` に route が無く program が常に0→GTCEu bloom の全画面quadが世界投影で描かれていた。現在は program ごとに拒否（4本、全て `Shaders.renderFullImageInFBO`）。bloom は欠落のまま。native 実行は opt-in（`-Dceltium.vulkan.modPrograms=true`）で PASSED（黒は前処理の target ずれ・修正済み）。halo は bloom 層が bloomFBO に描かれず未。**shaderc 同梱**（ゲーム内でjar単体からcompile・描画、AMD。Windows未、[証拠](evidence/gregtech-bloom-2026-11-04.md)） |
 | **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない |
 | **次の標的** | **native実装へ** | — | 未着手 | ①model/immediate共通packetのnative実行 ②lit fog **修正**（[証拠](evidence/lit-fog-2026-11-03.md)） ③state/texture/target所有の統合。 |
 
 ## FPSの現状と残る道
 
 - **hidden section の rebuild を既定で止めた**（upstream と同じく可視探索だけが queue、同一JAR A/B 0.915x、[証拠](evidence/terrain-hidden-rebuilds-2026-11-05.md)）。
-- 現行の判定は **round 74 の paired 3対: p50 median 0.914（NOT_SLOWER）、p95 0.978、p99 1.060→`NOT_MET`**（[証拠](evidence/terrain-hidden-rebuilds-2026-11-05.md)）。残りは tail（p99 が全対で 6–11% 遅い＝tick frame、[切り分け](evidence/animated-sprite-uploads-2026-11-05.md)）。round 67 は 1.062。
+- 現行の判定は **AMD paired 3対: round 74 p50 0.914/p95 0.978/p99 1.060、夜の`n3` 0.981/1.028/1.033→`NOT_MET`**（[証拠](evidence/terrain-hidden-rebuilds-2026-11-05.md)）。残りは tail（p99 が全対で 6–11% 遅い＝tick frame、[切り分け](evidence/animated-sprite-uploads-2026-11-05.md)）。round 67 は 1.062。
   round 63 の「round 58 から 13.1% 悪化」は control arm で再現しない（round 64 の記録）。
   旧scene（Susy/ATM3）の ABBA値は artifact が現ビルドと一致しないため現在判定に使わない（[archive](<history/plan-archive-2026-10-21.md>)）。
 - pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)

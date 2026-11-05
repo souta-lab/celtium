@@ -375,3 +375,10 @@ and compiled a fragment shader for Vulkan 1.2 (status 0, 400 bytes, magic `0x072
 Not yet observed: the load under Forge's `LaunchClassLoader` in a real instance (the gregtech scene is Supersymmetry,
 a heavy pack, so it runs at night), and the Windows DLL. Expected in that leg: `CELTIUM_MOD_SHADERC available=true`
 with no leg-supplied natives. `modPrograms` stays opt-in until that and the GL-reference comparison.
+
+Observed in the game (2026-11-05 `n1-gt-shaderc`, AMD RX 6400 RADV, Supersymmetry gregtech scene, jar `3d4fd4fe…`,
+fixture `0e3db0d1…`, `-Dceltium.vulkan.modPrograms=true`, guiScale 3 seeded): the launch command carries no
+`-Dorg.lwjgl.*` property and the leg's `test-libraries` holds only `lwjgl-vulkan-3.4.3.jar`, so shaderc came from the
+renderer jar. 10 `CELTIUM_MOD_PROGRAM_LINKED … compiled=true` (0 `compiled=false`) and 16 `CELTIUM_MOD_PROGRAM_DRAWN`;
+fixture PASSED, validation 0. The expected `CELTIUM_MOD_SHADERC available=true` line does not exist under that name;
+the compile results are the evidence. Still open: the Windows DLL, Intel, and the GL-reference picture comparison.

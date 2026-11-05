@@ -5414,6 +5414,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     /** How many animated sprite uploads flushed the queued immediate groups because one samples the atlas. */
     long animatedUploadFlushes;
+    /** In-world animated sprite mirror updates: count, total and worst nanoseconds (see announceAnimatedUpload). */
+    long inWorldAnimMirrorCalls;
+    long inWorldAnimMirrorNanos;
+    long inWorldAnimMirrorWorstNanos;
 
     /**
      * Diagnostic only: {@code -Dceltium.vulkan.skipAnimatedUploads=true} drops every animated sprite frame, so the
@@ -5461,8 +5465,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     + " at " + x + "," + y + " lightmapGlId=" + this.lightmapSourceGlId
                     + " atlasGlId=" + this.atlasSourceGlId);
         }
+        // The mirror update alone (conversion, staging, copies): =upload skipped exactly this and lowered the client
+        // tick by ~0.24 ms (n4upload), so its own bracket names the cost on tick frames.
+        // The animation runs in runTick, outside the frame bracket, so it is counted here rather than as a pass: in-world
+        // calls only (after the first world pass), with their total and worst time.
+        long mirrorStart = this.worldPassSeen ? System.nanoTime() : 0L;
         if (this.textureRegistry.announceFullPixels(bound, data, width, height, x, y)) {
             this.textureStats.noteAnimatedImageFill();
+        }
+        if (mirrorStart != 0L) {
+            long took = System.nanoTime() - mirrorStart;
+            this.inWorldAnimMirrorCalls++;
+            this.inWorldAnimMirrorNanos += took;
+            if (took > this.inWorldAnimMirrorWorstNanos) this.inWorldAnimMirrorWorstNanos = took;
         }
     }
 

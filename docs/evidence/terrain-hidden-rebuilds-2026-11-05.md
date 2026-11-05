@@ -71,3 +71,11 @@ world-accept, guiScale 3, validation off, warm ticks 400..600, 3 pairs, all PASS
 
 **Median paired p50 ratio 0.914x, verdict NOT_SLOWER**; medians p95 0.978, p99 1.060; goalCondition NOT_MET (it needs
 every percentile below 1 in every pair). The remaining gap is the tail: p99 is 6-11% slower in every pair.
+
+## Evening KPI on the current renderer (2026-11-05, renderer `3d4fd4fe…`, reference `567dcf8a…`, world-accept, guiScale 3)
+
+- AMD `n3kpi-amd` (3 pairs, PASSED): p50 **0.981** NOT_SLOWER, p95 1.028, p99 1.033, NOT_MET. Pair 1 went the other way
+  (2.601 vs 2.486 ms); pairs 2-3 0.970/0.981. The 0.914 of round 74 did not reproduce; the machine was not quiet
+  (load average 3-5 through the evening), so neither value is preferred over the other yet.
+- Intel `n5kpi-intel` (3 pairs, PASSED): p50 **0.919** NOT_SLOWER, p95 0.984, p99 1.048, NOT_MET — consistent with r81
+  (0.901/1.015/1.054). A first attempt (`n3kpi-intel`) died on a full disk after two pairs and is not used.
