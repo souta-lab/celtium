@@ -1309,6 +1309,16 @@ public final class CeltiumGllessHint {
     public static void glFramebufferTexture2D(int target, int attachment, int textarget, int texture, int level) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferTexture2D(target, attachment, textarget,
                 texture, level);
+        // Bounded census of raw attachments: which framebuffer took which colour texture, and the identity its draws
+        // will use. Xaero's radar icons move one framebuffer between its own texture and the icon atlas, and the
+        // near-player icons are still missing with the texture identity on (xaero-radar-icons evidence).
+        if (RAW_ATTACH_LOGS < 64 && attachment == 0x8CE0) {
+            RAW_ATTACH_LOGS++;
+            System.out.println("[Celtium] CELTIUM_RAW_ATTACH framebuffer=" + rawDrawFramebuffer + " texture=" + texture
+                    + " level=" + level + " vanillaDepth=" + vanillaFramebufferDepth + " identity=0x"
+                    + Long.toHexString(org.soutalab.celtium.vulkan.RenderTargetRegistry.rawTargetIdentity(
+                            rawDrawFramebuffer, texture)));
+        }
         if (vanillaFramebufferDepth == 0 && target != GL_READ_FRAMEBUFFER) {
             reportRawFramebuffer(rawDrawFramebuffer);
         }
@@ -1321,6 +1331,9 @@ public final class CeltiumGllessHint {
     public static int vanillaFramebufferDepth;
 
     private static final int GL_READ_FRAMEBUFFER = 0x8CA8;
+
+    /** CELTIUM_RAW_ATTACH lines printed so far. */
+    private static int RAW_ATTACH_LOGS;
 
     /** The draw framebuffer the last raw bind named; 0 is the default framebuffer. */
     private static int rawDrawFramebuffer;
