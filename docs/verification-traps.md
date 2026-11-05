@@ -504,3 +504,16 @@ modelview の下で設定した同じ値なので、push 時の snapshot と pop
 証拠であり、次の round が同じ集団を追わないための情報になる。fixture 側は block 内で**必ず違う値**を
 設定して `attribInside != attribBefore` を主張し、`attribAfter == attribBefore` と
 `attribOutsideAfter == attribInside` を対で取る（この3つが揃って初めて「戻した」と言える）。
+
+## 同じ夜の legs を並べるときの罠（2026-11-05/06）
+
+- **KPI/A-B の最中に build・test を走らせない**。`gv_kpi.py` は busy cores > 2.0 を測ると
+  `KPI unusable (loaded machine …)` で**拒否**する（l9batch、自分の Gradle で 2.44）。拒否は正しい挙動で、
+  `CELTIUM_KPI_FORCE=1` で通すのは記録目的の時だけ。速度legの間は読むだけにする。
+- **legの順番待ちを game slot に任せない**。`gv-leg.sh` の slot 待ちは `SLOT_WAIT=120` 秒で、超えると
+  `--slot-wait … expired` で失敗する（l13xaero-ref）。前のjob/scriptの終了を `pgrep` で待ってから起動する。
+- **world-accept のタイトル画面は CustomMainMenu**（`lumien.custommainmenu.gui.GuiCustom`）。`GuiMainMenu` を
+  前提にした fixture の分岐は通らない（world switch が tick 100 で止まった、l8/l11）。title 判定は
+  `celtium$isTitleScreen` を使う。
+- **素の `world` legは warm窓（tick 400–600）を持たない**: `warmTickP50Ms=-1`。warm の値やprofileが要るなら
+  KPI と同じ `warmFromTick/warmToTick/holdUntilTick` を付ける（`scripts/warm-profile.sh` は付けている）。
