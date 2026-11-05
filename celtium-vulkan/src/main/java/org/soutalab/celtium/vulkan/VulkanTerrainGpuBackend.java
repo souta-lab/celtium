@@ -10945,9 +10945,16 @@ this.frameBufferOpen = false;
             return this.celtium$keyCacheKeys[slot];
         }
         this.celtium$keyCacheMisses++;
+        // Why it missed, in priority order (the first differing input), and whether the recomputed key came out equal
+        // to the slot's previous one - a version that moved and came back, which only a value-keyed cache could catch.
+        if (!this.celtium$keyCacheValids[slot]) this.celtium$keyMissInvalid++;
+        else if (stateVersion != this.celtium$keyCacheStates[slot]) this.celtium$keyMissState++;
+        else if (environmentVersion != this.celtium$keyCacheEnvironments[slot]) this.celtium$keyMissEnvironment++;
+        else this.celtium$keyMissWindow++;
         this.celtium$offerStateFresh = false;
         celtium$materializeOfferState();
         long key = celtium$stateKey(formatId, this.celtium$stateScratch);
+        if (this.celtium$keyCacheValids[slot] && key == this.celtium$keyCacheKeys[slot]) this.celtium$keyMissSameKey++;
         this.celtium$keyCacheKeys[slot] = key;
         this.celtium$keyCacheStates[slot] = stateVersion;
         this.celtium$keyCacheEnvironments[slot] = environmentVersion;
@@ -11027,12 +11034,21 @@ this.frameBufferOpen = false;
     private final boolean[] celtium$keyCacheValids = new boolean[OFFER_KEY_CACHE_SLOTS];
     private long celtium$keyCacheHits;
     private long celtium$keyCacheMisses;
+    /** Offer-key misses by first differing input, and misses whose recomputed key equalled the slot's previous key. */
+    private long celtium$keyMissInvalid;
+    private long celtium$keyMissState;
+    private long celtium$keyMissEnvironment;
+    private long celtium$keyMissWindow;
+    private long celtium$keyMissSameKey;
     /** Whether {@link #celtium$stateScratch} holds the state the current offer key was taken under. */
     private boolean celtium$offerStateFresh;
 
     /** {@return the offer state-key cache's hits and misses, for the verification summary}. */
     String celtium$stateKeyCacheSummary() {
-        return this.celtium$keyCacheHits + "/" + this.celtium$keyCacheMisses;
+        return this.celtium$keyCacheHits + "/" + this.celtium$keyCacheMisses
+                + "[invalid=" + this.celtium$keyMissInvalid + " state=" + this.celtium$keyMissState
+                + " env=" + this.celtium$keyMissEnvironment + " window=" + this.celtium$keyMissWindow
+                + " sameKey=" + this.celtium$keyMissSameKey + "]";
     }
 
     /**
