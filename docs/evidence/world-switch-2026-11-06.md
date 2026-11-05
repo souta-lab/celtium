@@ -24,4 +24,5 @@ So neither is caused by the record-twin / mod-pipeline teardown releases (295b31
 
 `l12switch-amd` (renderer `82f20d80…` = 4e8ddde32, fixture `97685d8d…`, AMD, world-accept, validation on): **PASSED,
 validation 0** - `leftWorldAtTick=100`, `rejoinedAtTick=100` into the save `qmagnet`, no 01779. The device contract
-line reports `hostImageCopyAvailable=true` on the RX 6400 (RADV). Intel: `l14switch-intel` queued.
+line reports `hostImageCopyAvailable=true` on the RX 6400 (RADV). Intel `l14switch-intel` (same jars, UHD 630, `gpuRequirementMet=true`): **PASSED, validation 0**, rejoined at tick
+100; `hostImageCopyAvailable=true` there too.
