@@ -170,3 +170,14 @@ sky/winRecord/wrecLoop ~+10 each; `worldPass` 860/718, so little is left unnamed
 `lightmap` 308/0. `inWorldAnimMirror=231/4999us/worst801us`: the direct count agrees with r79-time (hundreds of calls,
 a few ms per run), so in-world sprite animation is not a tick-frame cost. Next: dynAnnounce/dynFlush/dynMirror inside
 the light map's upload (a1e25c8ee).
+
+## The light map's tick cost is the game's own computation (l2/l3split-amd, 2026-11-05 21:27-21:35, PASSED)
+
+Settled blocks, mean us on tick frames (plain frames 0 for all): l2 (`a1e25c8ee`) `lightmap` 70, `dynAnnounce` 10,
+`dynMirror` 10, no `dynFlush` above 10; l3 (`39b9bc0cb`, jar `r97-diag`) `lightmap` 75, `dynUpload` 16, `dynAnnounce` 13,
+`dynMirror` 11. The upload the renderer adds - stub `glTexSubImage2D` capture plus announcement - is ~16 us; the other
+~60 us of `lightmap` is `EntityRenderer.updateLightmap`'s own per-texel computation, which Celeritas pays too (no
+Celtium mixin touches the method beyond these brackets). So the light map is not where Celtium's tick frames lose to
+Celeritas's; of the settled +250 us tick-frame excess over plain frames, the renderer-specific candidates are
+`entities` (+30-50), `terrain` (+40), `flush` (+40-60) and the window recording (+15-30), each small. The p99 gap to
+Celeritas therefore needs a comparative measurement of the same brackets, not a further split of Celtium alone.
