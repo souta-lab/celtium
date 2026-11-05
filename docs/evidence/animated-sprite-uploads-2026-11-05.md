@@ -276,3 +276,13 @@ Census `l21miss-amd`: `hit922301/874588[… sameKey=437381]` - hit rate **~25% -
 Kept. Half of the remaining misses still recompute the same key; the raster version moves only for keyed values, so
 these are real A->B->A changes (lighting or blend toggled around an item and restored). Catching them needs a
 value-keyed cache - a packed state word kept by the setters - rather than a version. Not started.
+
+## Official KPI on r105 (866fff46b, renderer `2c713f2b…`) vs Celeritas `567dcf8a…`, 3 pairs each (2026-11-06 03:49-04:27)
+
+| GPU | p50 | p95 | p99 | per-pair p99 |
+|---|---|---|---|---|
+| AMD (`l23kpi-amd`) | **0.898** | **0.927** | 1.009 | 1.009 / 1.003 / 1.010 |
+| Intel (`l23kpi-intel`) | **0.951** | 0.991 | **0.876** | 0.876 / 0.872 / 1.098 |
+
+goalCondition NOT_MET (it needs every percentile below 1 in every pair), but AMD p99 moved from 1.033 (n3, evening)
+to within 1% in every pair, and AMD p95 from 1.028 to 0.927.
