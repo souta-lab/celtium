@@ -32,9 +32,12 @@ Until (1)-(3) hold, the switches only add work; they stay off.
   the layout after taking the write address. Fixed; the default-flags picture leg `l37pic-amd` PASSED, validation 0.
 - With all switches on (`l36arr-amd`, r110 `b650af93`): `stride` breaks are gone and runs start to span groups
   (`runs=133756 … groups=138713`, 1,657 multi-group runs) - and the picture **FAILS** (validation 0): the hand draws
-  black, the water and the crop cutouts are missing ([image](2026-11-06-array-records-multigroup-runs.png)). Multi-group
-  runs are drawn with the first group's texture set while the records twins are not the array variant
-  (`createRecordsLike`, not `createRecordsArray`): the per-group texture never reaches the draw.
+  black, the water and the crop cutouts are missing ([image](2026-11-06-array-records-multigroup-runs.png)). The cause is
+  not established. The run key holds the descriptor, so a multi-group run shares one texture; candidates are (a) the
+  reopened position twins reading the record or the vertex stream differently from the per-group draw, (b) the
+  command's first-vertex/first-index derived from arena offsets that are now stride-aligned but not rebased per
+  group, (c) state the record does not carry (the earlier note on texgen). A/B by switch: run with
+  `recordsPositionTwins` off on r110 - if the picture passes, (a).
 
-Next, in order: wire `createRecordsArray` and the texture array's set into the run draw (the record already carries the
-array index), then take the descriptor out of the run key. The switches stay off.
+Next: separate (a)-(c) with the switch A/B above; then wire `createRecordsArray` and the texture array's set (the
+record already carries the array index) and take the descriptor out of the run key. The switches stay off.
