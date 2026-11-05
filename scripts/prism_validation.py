@@ -798,7 +798,17 @@ def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, ass
         outcome["headlessSession"] = str(game / "headless/session.json")
     if args.validate:
         result = game / "logs/celtium-validation.json"
-        fixture = json.loads(result.read_text()) if result.exists() else {}
+        # A report that exists but does not parse is a run that ended while the fixture was writing it (measured:
+        # l10flush-control-r5, a 0-byte file after the game stopped mid-load). It is a missing report, named as such,
+        # not a harness traceback that loses every other fact about the run.
+        try:
+            fixture = json.loads(result.read_text()) if result.exists() else {}
+        except (OSError, ValueError) as unreadable:
+            fixture = {}
+            outcome["fixtureReportUnreadable"] = "%s (%d bytes)" % (
+                type(unreadable).__name__, result.stat().st_size if result.exists() else -1)
+        if not isinstance(fixture, dict):
+            fixture = {}
         outcome["fixtureStatus"] = fixture.get("status", "MISSING_REPORT")
         screenshot = game / "screenshots/celtium-validation.png"
         # A PNG signature is not evidence of a picture. Under the GL-less stub the game-level screenshot is black by

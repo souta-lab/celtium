@@ -32,7 +32,7 @@ class CompletedProcess:
 
 
 class PrismVerdictTests(unittest.TestCase):
-    def exercise(self, status, validation_error=False, require_gpu="UHD Graphics 630", console=b""):
+    def exercise(self, status, validation_error=False, require_gpu="UHD Graphics 630", console=b"", raw_report=None):
         CompletedProcess.console_extra = console
         self.addCleanup(setattr, CompletedProcess, "console_extra", b"")
         with tempfile.TemporaryDirectory() as tmp:
@@ -42,7 +42,7 @@ class PrismVerdictTests(unittest.TestCase):
             (game / "screenshots/presented.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 32)
             fixture = {"status": status, "pictureEvidenceSource": "presented-dump",
                        "pictureFile_world": "screenshots/presented.png"}
-            (game / "logs/celtium-validation.json").write_text(json.dumps(fixture))
+            (game / "logs/celtium-validation.json").write_text(json.dumps(fixture) if raw_report is None else raw_report)
             log = "Celtium Vulkan validation: severity=ERROR id=VUID-test bad lifetime\n" if validation_error else ""
             (game / "logs/latest.log").write_text(log)
             args = SimpleNamespace(validate=True, window_size="1280x720", jvm_arg=[], headless=False,
@@ -93,6 +93,12 @@ class PrismVerdictTests(unittest.TestCase):
         code, outcome = self.exercise("PASSED", validation_error=True, console=line)
         self.assertEqual(outcome["validationMessageCount"], 1)
         self.assertNotIn("validationConsoleOnlyCount", outcome)
+
+    def test_an_empty_report_is_a_missing_report_not_a_traceback(self):
+        code, outcome = self.exercise("PASSED", raw_report="")
+        self.assertEqual(code, 1)
+        self.assertEqual(outcome["fixtureStatus"], "MISSING_REPORT")
+        self.assertIn("0 bytes", outcome["fixtureReportUnreadable"])
 
 
 if __name__ == "__main__":
