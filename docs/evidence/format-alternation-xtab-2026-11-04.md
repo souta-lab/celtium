@@ -82,3 +82,22 @@ seeded guiScale 3 the world-accept legs come back `UNCALIBRATED_PRESENTED_IMAGE`
 The A-B-A count reproduces on this build: disjoint A-B-A openings (118,431 opaque + 130,398 ordered) / 8,465 frames
 = **29.4 a frame** (round 60: 28.1). A merge-back compares the batch with A, which has the same format and texture, so
 the finding above does not bound it.
+
+## 2026-11-05: what a group costs - nothing measurable at this margin (A-B-A merge-back rejected)
+
+`noMerge` now also disables the fast merge (`178eec65…`; before that it never reached the fast-merged batches and
+left the group count unchanged, r65nomerge). Paired same-jar KPI `r66nomerge` (fixture `22fcf3e0…`, AMD RX 6400,
+world-accept, guiScale 3 seeded, validation off, warm ticks 400..600, all four legs PASSED):
+
+| leg | warm p50 | p95 | samples | groups created / frame | fast-merged / frame |
+|---|---|---|---|---|---|
+| control r1 | 2.465 | 4.815 | 3773 | 118.6 | 33.2 |
+| noMerge r1 | 5.375 | 22.629 | 1133 | 138.3 | 0 |
+| control r2 | 2.555 | 5.384 | 3457 | 114.2 | 32.8 |
+| noMerge r2 | **2.455** | 4.982 | 3629 | **150.1** | 0 |
+
+(Per-frame counts are whole-run averages from the final stats line.) noMerge r1 is a disturbed leg (p99 43 ms, a
+third of the samples), not a cost: r2 draws **~34 more groups a frame at the control's p50**; median control ratio
+0.961x. So the accepted ~118 groups are not where the frame goes, and merging the 29.4 disjoint A-B-A openings back
+cannot buy a measurable amount. **Rejected; not built.** Revisit only if a profile shows per-group cost (record, draw,
+or the slow-path accept) rising above noise, e.g. on Intel or with many more groups than this scene's ~150.
