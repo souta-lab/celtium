@@ -200,3 +200,31 @@ from 3 s after the join. Samples under `Minecraft.runTick`: 120 vs 33 of ~7,500 
   samples over one 15 s window per arm this is not separable from noise.
 Next discriminator: several profiles per arm restricted to the warm ticks (a fixture-side start/stop at ticks 400/600,
 or JFR with timestamps), before any change is aimed at the tick.
+
+## Warm-window CPU profiles, 3 pairs (l6prof, 2026-11-05 22:38-22:58, AMD, world-accept, guiScale 3, renderer `c3102913…`, fixture `12eab9d6…`, all PASSED)
+
+async-profiler `-e itimer -i 1ms -d 10` started at the fixture's `CELTIUM_WARM_WINDOW begin` (ticks 400..600, KPI window flags),
+on the Java 25 game JVM. Totals per arm over 3 reps: all samples 11,650 vs 12,053 (Celtium vs Celeritas), `Minecraft.runTick` 217 vs 272.
+
+Client tick (`Minecraft.runTick`), Celtium minus Celeritas:
+the native arm spends less CPU in the tick (-55). The only item above the noise is `TextureMap.updateAnimations`,
+41 vs 28 (+13 in 30 s, ~20 us per tick); its samples sit in the per-sprite `uploadPatchedLevels`
+(`vkCmdCopyBufferToImage`, `vkBeginCommandBuffer` in the Radeon driver). The stub answers `glClientWaitSync` as
+already signalled, so RenderAheadManager does not wait in the tick either. l4kpi's tick wall-time gap (2 pairs) is
+therefore not a tick CPU cost; it is unexplained and may be contention or noise.
+
+Frame side, 3 reps (samples in 30 s): `onRenderTickEnd` 604 vs 243; InGameInfo HUD 446 vs 182 (+264, ~0.9% of all
+time, ~30 us per frame); CreativeCore's overlay 84 vs 26 (+58); the fixture's counter reads 50 vs 2 (+48).
+
+Breakdown (rep 1):
+- InGameInfo's HUD (`Ticker.onRenderTick`): 191 vs 65. Its text is drawn through the font run, and each item icon's
+  `RenderHelper.enableGUIStandardItemLighting` pushes a matrix, which is a font-run boundary: the run is submitted there
+  (`celtium$submitFontRun` -> `submitImmediateBatch`), and 59 of those samples are a window flush the accept path
+  triggers at `immediateFlushIndices` (8192) - Radeon driver time and `drawPendingImmediate`. Moving the boundary off
+  `pushMatrix` would not help: the next `translate` is a boundary too.
+- The fixture's own per-frame counter reads (`celtium$sampleUploadWait`, three `Field.getLong` through Cleanroom's
+  compatibility hooks): 28 vs 0 - a measurement tax on the native arm only. Replaced by getter MethodHandles.
+- CreativeCore's overlay (`OverlayRenderer.render`): 22 vs 5.
+
+Changes queued from this: the per-tick animation batch restored (a565cbf03 via revert of 440479bd6, switches
+`batchAnimationUploads` / `deferPatchRegions`), A/B `l9batch`; window-flush threshold 32768 vs 8192, A/B `l10flush`.
