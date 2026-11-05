@@ -190,6 +190,12 @@ python3 .celtium-work/jfr-top.py .celtium-work/<leg>.jfr "Client thread" 1 40
 引くので、JDKを選ばない。記録できなかった場合は`jfrAttach.started=false`と理由が残り、空ファイルを「何も動いていなかった」と
 読み違えません。
 
+**warm窓だけをasync-profilerで取る**（2026-11-05、4回の空振りから）: 素の `world` legはtick 400前に終わるので、KPIと同じ
+`-Dceltium.validation.warmFromTick=400 -Dceltium.validation.warmToTick=600 -Dceltium.validation.holdUntilTick=620` を付ける。
+fixtureが `CELTIUM_WARM_WINDOW begin/end` を出すので、beginの行を待ってから `asprof -e itimer -i 1ms -d 10` を当てる
+（`perf_event_paranoid=2` では `-e cpu` は空）。対象は**run dirをcwdに持つjavaのうちRSS最大**（relauncherが起こすJava 25の子。
+Java 8の親や短命のhelperを拾うと空か `Process exited`）。実体は `scripts/warm-profile.sh LEG STAGE [gpu] [flags]`（参照側は `CELTIUM_LEG_REFERENCE_RENDERER`）。
+
 **world profileの`duration`は240秒が下限**（2026-11-03実測）: 188 modsの起動に約100秒かかり、240秒でようやく
 `worldTicksAtEnd` 338–351。150秒ではharnessが `harnessExitCode=124` で落ちる（leg `r46a-gateoff`）。
 warm窓（tick 400–600）のKPIを取るにはさらに長い`duration`が要る（240秒では`frameIntervalWarmP50Ms=-1`）。
