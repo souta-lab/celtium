@@ -614,15 +614,18 @@ public final class VulkanDynamicMesh {
         } else if (axisAligned) {
             // The common case, kept as its own loop: a diagonal product is three multiply-adds and it is what GUI draws
             // and the HUD use, so it should not pay for the off-axis terms it does not have.
+            // One bulk copy carries every attribute, then each position is overwritten from the source: the per-vertex
+            // memCopy of the stride's tail was the accept path's largest item (l29aprof: 65 of 366 samples here).
+            MemoryUtil.memCopy(sourceAddress, vertexTarget, addedVertices);
             for (int i = 0; i < count; i++) {
                 long source = sourceAddress + (long) i * stride;
                 long target = vertexTarget + (long) i * stride;
                 MemoryUtil.memPutFloat(target, m00 * MemoryUtil.memGetFloat(source) + tx);
                 MemoryUtil.memPutFloat(target + 4, m11 * MemoryUtil.memGetFloat(source + 4) + ty);
                 MemoryUtil.memPutFloat(target + 8, m22 * MemoryUtil.memGetFloat(source + 8) + tz);
-                MemoryUtil.memCopy(source + 12, target + 12, (long) stride - 12L);
             }
         } else {
+            MemoryUtil.memCopy(sourceAddress, vertexTarget, addedVertices);
             for (int i = 0; i < count; i++) {
                 long source = sourceAddress + (long) i * stride;
                 long target = vertexTarget + (long) i * stride;
@@ -632,7 +635,6 @@ public final class VulkanDynamicMesh {
                 MemoryUtil.memPutFloat(target, (m00 * x) + (m01 * y) + (m02 * z) + tx);
                 MemoryUtil.memPutFloat(target + 4, (m10 * x) + (m11 * y) + (m12 * z) + ty);
                 MemoryUtil.memPutFloat(target + 8, (m20 * x) + (m21 * y) + (m22 * z) + tz);
-                MemoryUtil.memCopy(source + 12, target + 12, (long) stride - 12L);
             }
         }
         if (baseVertex == 0) {
