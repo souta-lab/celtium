@@ -5395,16 +5395,32 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (this.textureRegistry == null) {
             this.textureRegistry = celtium$registry();
         }
-        if (!this.immediateWindowBusy && queuedGroupUsesTexture(glTextureId)) flushPendingBeforeGlDraw();
+        // Timed as passes: the light map's upload is the largest single tick-frame item (l1split-amd: 74-308 us inside
+        // "lightmap"); dynFlush and dynMirror say whether it is the ordering flush or the mirror update.
+        FramePassTimings.begin("dynAnnounce");
+        if (!this.immediateWindowBusy && queuedGroupUsesTexture(glTextureId)) {
+            FramePassTimings.begin("dynFlush");
+            try {
+                flushPendingBeforeGlDraw();
+            } finally {
+                FramePassTimings.end("dynFlush");
+            }
+        }
         // One int[] holding the whole of level 0, which is the shape announceFullPixels documents: its data[0] is
         // the entire base level, not its first row. Splitting the flat array into one int[] per row made data[0] a
         // single row, so every texel past the first row fell outside the array the consumer reads and was written as
         // transparent - measured as a light map whose row 0 held the noon gradient and whose rows 1..15 were black,
         // which is the black terrain this replaces.
         this.textureStats.noteAnnouncedDynamicTexture();
-        if (this.textureRegistry.announceFullPixels(glTextureId, new int[][] { pixels }, width, height, 0, 0)) {
-            this.textureStats.noteAnimatedImageFill();
-            this.textureStats.noteDynamicTextureFill();
+        FramePassTimings.begin("dynMirror");
+        try {
+            if (this.textureRegistry.announceFullPixels(glTextureId, new int[][] { pixels }, width, height, 0, 0)) {
+                this.textureStats.noteAnimatedImageFill();
+                this.textureStats.noteDynamicTextureFill();
+            }
+        } finally {
+            FramePassTimings.end("dynMirror");
+            FramePassTimings.end("dynAnnounce");
         }
     }
 

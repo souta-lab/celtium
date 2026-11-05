@@ -52,7 +52,7 @@ public final class FramePassTimings {
             // pipeline lookup, shared index buffer, uniform capacity, atlas/lightmap mirrors), the command-buffer
             // begin, and the frame end after the submission. The pass' bracket (3.5 ms p50 against a 0.9 ms record
             // and 0.2 ms submit) leaves that gap unnamed, and the three candidates have different owners.
-            "terrainEnsure", "terrainRefresh", "terrainLightmap", "terrainBegin", "terrainEnd",
+            "terrainEnsure", "terrainRefresh", "terrainLightmap", "dynAnnounce", "dynFlush", "dynMirror", "terrainBegin", "terrainEnd",
             // The immediate path's two untimed spans: closing the batch still being filled (per group, and the
             // group's payload capture is the expensive half) and the window's own setup before it records
             // (recording snapshot, frame begin, target/device gates). They were the residue of the batch call's
