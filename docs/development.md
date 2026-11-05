@@ -148,6 +148,8 @@ scripts/gv-leg.sh <different-leg> .gv-verify/jars/<tag> cohort intel 900
 - IntelはrunnerがMesaの `DRI_PRIME=pci-0000_00_02_0!` を設定する。それでも結果のnative device行とGPU gateを読む。
 - 追加JVM引数は秒数の**後**へ1引数ずつ渡す（空白を含む値はquote）。同じキーを複数回書いた時の有効値も記録する。
 - **ゲームは同時に1つ**。ハーネスのworktree共通 `game-slot/owner.pid` が直列化する。旧 `gpu.lock` のmkdir待ちを重ねない。
+  `gv-leg.sh` が枠を待つのは `SLOT_WAIT`（`gv_leg.py`）秒までで、超えると `--slot-wait … expired` で失敗する。
+  複数legを並べるときは枠待ちに任せず、前のjob/scriptの終了を待ってから次を起動する（2026-11-06 l13xaero-ref）。
   自分が起動していないゲームがある時は起動しない。lockを消して割り込まない。
 - 同名legの出力が存在すれば拒否する。古い失敗を消さず別名で実行する。長いjobは管理ツールのbackground jobとしてIDを保持する。
 
