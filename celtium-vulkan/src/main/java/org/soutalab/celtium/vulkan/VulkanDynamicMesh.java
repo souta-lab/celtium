@@ -525,6 +525,12 @@ public final class VulkanDynamicMesh {
         long requiredVertices = this.vertexBytes + addedVertices;
         long requiredIndices = this.indexBytes + (long) indices.length * 4;
         boolean borrowed = this.frameRegion != null;
+        if (this.vertexBytes == 0L) {
+            // The slice start is aligned to the current layout's stride (celtium$sliceAlignment), and the layout used to
+            // be set only after this write - so an empty arena mesh opened its slice at 16-byte alignment and its bind
+            // offset was not a whole number of vertices (array-records census: 30,896 runs closed on "stride").
+            this.layout = Layout.positionOnly(stride);
+        }
         long vertexTarget = vertexWriteAddress(this.vertexBytes, addedVertices);
         long indexTarget = indexWriteAddress(this.indexBytes, (long) indices.length * 4);
         if (borrowed && this.frameRegion == null) {
@@ -585,6 +591,12 @@ public final class VulkanDynamicMesh {
         long requiredVertices = this.vertexBytes + addedVertices;
         long requiredIndices = this.indexBytes + (long) indices.length * 4;
         boolean borrowed = this.frameRegion != null;
+        if (this.vertexBytes == 0L) {
+            // The slice start is aligned to the current layout's stride (celtium$sliceAlignment), and the layout used to
+            // be set only after this write - so an empty arena mesh opened its slice at 16-byte alignment and its bind
+            // offset was not a whole number of vertices (array-records census: 30,896 runs closed on "stride").
+            this.layout = Layout.positionOnly(stride);
+        }
         long vertexTarget = vertexWriteAddress(this.vertexBytes, addedVertices);
         long indexTarget = indexWriteAddress(this.indexBytes, (long) indices.length * 4);
         if (borrowed && this.frameRegion == null) {
