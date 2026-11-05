@@ -261,3 +261,10 @@ a stateVersion move, and 67% of them recompute the key the slot already held**. 
 the version on a repeated value (lightingEnabled bumped it and the light generation every call; lightEnabled bumped it
 for an unchanged mask and for lights the mirror does not keep) - fixed in ba8d6c3a9; `l19miss-amd` and the r104-vs-r101
 A/B `l20light` measure what is left.
+
+`l19miss-amd` (r104, ba8d6c3a9): `hit512070/1487756[… state=1487747 … sameKey=1004901]` - the lighting guards did not
+move the same-key share (67.5%). The key is built from blend/colour-mask/alpha/cull/depth/lighting-enable/texture-env/
+window and **not** from the current colour or the per-light enables, yet both moved stateVersion; the GUI recolours
+almost every text run. `l20light` (r104 vs r101, 5 pairs, PASSED): p50 0.982, p95 0.957, p99 0.997, tick frame 0.988,
+key-cache hit rate unchanged (~33%) - read as noise, kept as harmless. Next: 866fff46b keys both caches by a version
+the colour and light enables do not move (`l21miss-amd`, A/B `l22keyver` vs r104).
