@@ -5402,12 +5402,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * The id has to be asked of GL because the method that performs the write takes no id - it is the one place in this
      * renderer where a GL query buys something a hook cannot supply.
      */
+    /** How many animated sprite uploads flushed the queued immediate groups because one samples the atlas. */
+    long animatedUploadFlushes;
+
     /**
      * Diagnostic only: {@code -Dceltium.vulkan.skipAnimatedUploads=true} drops every animated sprite frame, so the
      * atlas keeps its first frame. It measures the ceiling of the animation path on tick frames (the aligned profile
      * r69prof put it at 85 samples against Celeritas's 31); never an acceptance configuration.
      */
-    private static final boolean SKIP_ANIMATED_UPLOADS = Boolean.getBoolean("celtium.vulkan.skipAnimatedUploads");
+    private static final String SKIP_ANIMATED = System.getProperty("celtium.vulkan.skipAnimatedUploads", "");
+    /** {@code true} or {@code all}: return before anything. */
+    private static final boolean SKIP_ANIMATED_UPLOADS = "true".equals(SKIP_ANIMATED) || "all".equals(SKIP_ANIMATED);
+    /** {@code flush}: everything but the flush of a queued group that samples the atlas. */
+    private static final boolean SKIP_ANIMATED_FLUSH = "flush".equals(SKIP_ANIMATED);
+    /** {@code upload}: the checks and the flush, but not the mirror update (conversion, staging, copies). */
+    private static final boolean SKIP_ANIMATED_MIRROR = "upload".equals(SKIP_ANIMATED);
 
     public void announceAnimatedUpload(int[][] data, int width, int height, int x, int y) {
         if (SKIP_ANIMATED_UPLOADS) {
@@ -5415,7 +5424,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         int bound = NativeTextureBindings.current().texture2d();
         compareBoundTextureWithGl(bound);
-        if (!this.immediateWindowBusy && queuedGroupUsesTexture(bound)) flushPendingBeforeGlDraw();
+        if (!SKIP_ANIMATED_FLUSH && !this.immediateWindowBusy && queuedGroupUsesTexture(bound)) {
+            this.animatedUploadFlushes++;
+            flushPendingBeforeGlDraw();
+        }
+        if (SKIP_ANIMATED_MIRROR) {
+            return;
+        }
         if (this.textureRegistry == null) {
             this.textureRegistry = celtium$registry();
         }
