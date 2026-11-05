@@ -1022,9 +1022,6 @@ final class BackendDiagnostics {
             return;
         }
         ++b.windowDiagFrames;
-        if (false) {
-            return;
-        }
         long window = CeltiumWindow.sdlWindowPointer();
         int[] pixels = new int[2];
         boolean havePixels = CeltiumWindow.sdlPixelSize(pixels);

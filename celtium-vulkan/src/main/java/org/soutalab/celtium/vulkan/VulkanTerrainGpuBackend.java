@@ -11652,15 +11652,6 @@ this.frameBufferOpen = false;
             this.crossPassComparisonsSkipped++;
             return;
         }
-        if (!this.mirrorSeeded && false) {
-            // One bootstrap read, once, before any comparison is recorded. The first dump showed the mirror's modelview
-            // missing exactly the translation that was applied before the hooks were installed, so the stack starts from
-            // what GL already had rather than from empty. The seed is taken before the counters move, so the comparisons
-            // below still measure whether the mirror *tracks* GL, not whether it was copied from it.
-            this.immediateState.copyMatricesFrom(this.glProjection, this.glModelView);
-            this.mirrorSeeded = true;
-            return;
-        }
         this.matrixComparisons++;
         float projectionDelta = maxDelta(this.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION),
                 this.glProjection);
@@ -13614,40 +13605,6 @@ this.frameBufferOpen = false;
 
     /** {@return whether the pending queue holds non-empty geometry for a target}, asked before a pass is begun. */
     /** {@return how many non-empty pending groups belong to a target}, counted when a pass is about to run. */
-    /**
-     * Whether this offer is the game copying the finished frame onto itself.
-     * <p>
-     * Under the GL-less window the game's composite is issued with no Framebuffer bound - the frame mixin reports that
-     * as {@code bindFramebuffer(0L, false)} - so the target identity is 0 while the image being sampled is the frame
-     * image's own colour texture, named by the main framebuffer's entry in the identity map. That combination is the
-     * self-copy: the swap point already presents the frame, so there is nothing for it to do, and drawing it is what
-     * polluted the outline chain's input image.
-     * <p>
-     * <b>This predicate is not used, and must not be used as a skip rule.</b> Skipping what it matches (measured
-     * 2026-10-11, glow scene) made the delivered frame a single colour: under the adoption path the fbo==0 composite is
-     * not a copy of the frame onto itself, it is the pass that DELIVERS the game's finished frame into the delivered
-     * image, and its sampled texture is the one the game framebuffer was adopted from. Refusing it loses the world (the
-     * earlier version of this mistake froze the picture), routing it into the delivered image wipes it (this one), and
-     * skipping it empties it. All three shapes were measured before the rule was withdrawn.
-     * <p>
-     * What that means for the glow: the off-target pair cannot be freed by changing where identity 0 is drawn. The pair
-     * is the game's adopted colour image, so the world, the composite and the entity silhouette all legitimately pass
-     * through it, and the outline chain reading it as its input is the actual defect. The fix belongs where the chain's
-     * input image is chosen: it needs an image of its own rather than the shared pair.
-     * <p>
-     * <b>That fourth change is the one that is in the tree (2026-10-11):</b> a second owned pair was added beside the
-     * first, identity 0 keeps the pair above and every other non-main identity - the outline framebuffer's silhouette
-     * is the measured one - renders into the new pair, which the chain adopts, publishes and hands back instead. No
-     * rule about what identity 0 means changed, which is why the delivered frame survived the change: the routing is
-     * by identity and the chain's input image, not the drawing of the composite, is what moved.
-     */
-    private boolean celtium$isScreenSelfComposite() {
-        if (this.targetRegistry.currentIdentity() != 0L) {
-            return false;
-        }
-        int frameColorTexture = framebufferColorTextureName(this.targetRegistry.mainIdentity());
-        return frameColorTexture != 0 && this.immediateState.boundTextureName() == frameColorTexture;
-    }
 
     /**
      * Whether this group is the game's finished-frame composite drawn into the image it samples.

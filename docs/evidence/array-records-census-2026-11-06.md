@@ -51,3 +51,11 @@ empty arena mesh takes the stride before its first write) with the indirect path
 multi-group runs are not needed to break it. Next discriminator: the indirect path's record/command for a group
 whose slice now starts at a stride multiple - compare `vertexBindOffset()`/first-vertex between r108 and r110 on one
 group (a bounded log line in `celtium$tryIndirect`).
+
+## Stride-first A/B on one jar (`l39stride-{true,false}`, r111 `23dc650c`, indirect + array switches, 2026-11-06)
+
+`-Dceltium.vulkan.arenaStrideFirst=true`: **FAILED_PRESENTED_IMAGE**, validation 0; `=false`: **PASSED**, validation 0.
+The first six `CELTIUM_INDIRECT_PROBE` lines are identical in both (stride 24, offsets multiples of 24), so the
+breaking group is a later one. The switch is now **off by default** (the default path gains nothing from it and the
+run path breaks with it); the stride run-breaks therefore return when the run path is resumed, and the bad group has
+to be found first (raise the probe's line limit and diff the two arms).

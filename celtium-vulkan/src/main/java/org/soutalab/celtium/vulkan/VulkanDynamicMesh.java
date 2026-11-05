@@ -515,9 +515,13 @@ public final class VulkanDynamicMesh {
      *
      * @return {@code false} when the layout was refused (a stride this mesh cannot represent, or no indices)
      */
-    /** {@code -Dceltium.vulkan.arenaStrideFirst=false}: the old order (layout set after the first write), for A/B. */
-    static final boolean ARENA_STRIDE_FIRST =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.arenaStrideFirst"));
+    /**
+     * {@code -Dceltium.vulkan.arenaStrideFirst=true}: an empty arena mesh takes the stride before its first write, so
+     * its slice starts at a whole number of vertices (what the indirect run path needs). Off by default: on r111 the
+     * same jar with the indirect switches failed its picture with this on and passed with it off (l39stride), and the
+     * default path gains nothing from it. See docs/evidence/array-records-census-2026-11-06.md.
+     */
+    static final boolean ARENA_STRIDE_FIRST = Boolean.getBoolean("celtium.vulkan.arenaStrideFirst");
 
     public boolean copyVertices(long sourceAddress, int stride, int count, int[] indices) {
         if (sourceAddress == 0L || count <= 0 || indices == null || indices.length == 0

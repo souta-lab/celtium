@@ -1449,25 +1449,6 @@ public final class VulkanContext {
                 + entries.size() + " deferred entries without calling the native driver.");
     }
 
-    private void failBatch(SharedBatch batch, java.util.ArrayList<DeferredSubmit> entries) {
-        for (DeferredSubmit entry : entries) {
-            this.deferredSubmits.remove(entry);
-            this.deferredSubmitsOutstanding--;
-            if (entry.frameSlot >= 0) {
-                // The slot buffer stays its pool's resource; the callback marks the submission "completed"
-                // (lost, for pending purposes) so nothing waits on a fence that never armed.
-                if (entry.slotReclaim != null) {
-                    entry.slotReclaim.accept(Boolean.TRUE);
-                }
-            } else {
-                vkFreeCommandBuffers(this.device, this.commandPool, entry.commandBuffer);
-            }
-            entry.commandBuffer = null;
-            entry.slotReclaim = null;
-            entry.uploadSlotMask = 0L;
-        }
-        vkDestroyFence(this.device, batch.fence, null);
-    }
 
     /**
      * The frame's batched submit, the present blit's submit and {@code vkQueuePresentKHR} run on one worker thread while
