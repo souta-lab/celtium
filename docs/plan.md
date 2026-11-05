@@ -85,7 +85,7 @@
 ## FPSの現状と残る道
 
 - **hidden section の rebuild を既定で止めた**（upstream と同じく可視探索だけが queue、同一JAR A/B 0.915x、[証拠](evidence/terrain-hidden-rebuilds-2026-11-05.md)）。
-- 現行の判定は **r105（2026-11-06）AMD 0.898/0.927/1.009、Intel 0.951/0.991/0.876→`NOT_MET`**（AMD p99 は全対 +0.3–1.0%）（[証拠](evidence/terrain-hidden-rebuilds-2026-11-05.md)）。**warm窓のCPU profile（3対）では tick は Celtium の方が軽く、上乗せは mod HUD の GUI 描画**（InGameInfo 446/182・
+- 現行の判定は **r105（2026-11-06）AMD 0.898/0.927/1.009、Intel 0.951/0.991/0.876→`NOT_MET`**（AMD p99 全対 +0.3–1%）（[証拠](evidence/terrain-hidden-rebuilds-2026-11-05.md)）。**warm窓のCPU profile（3対）では tick は Celtium の方が軽く、上乗せは mod HUD の GUI 描画**（InGameInfo 446/182・
   CreativeCore 84/26 サンプル。文字runの submit が窓flushを起こす）と fixture 自身の counter 読み（修正済）、
   アニメ更新 41/28（batch 復元済）。状態keyキャッシュを色で外さない版に分け hit 25→51%、p95 0.954・p99 0.970（[証拠](evidence/animated-sprite-uploads-2026-11-05.md)）。
 - pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
