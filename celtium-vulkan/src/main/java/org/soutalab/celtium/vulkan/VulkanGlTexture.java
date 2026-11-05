@@ -1589,7 +1589,8 @@ public final class VulkanGlTexture {
                     this.appliedMipSerials = new long[32];
                     java.util.Arrays.fill(this.appliedMipSerials, Long.MIN_VALUE);
                 }
-                for (int lvl = 1; lvl < this.appliedMipSerials.length
+                // Bounded by the image's own levels too: a captured chain deeper than the mirror has no level to go into.
+                for (int lvl = 1; lvl < this.appliedMipSerials.length && lvl < this.mipLevels
                         && (extentW >> lvl) > 0 && (extentH >> lvl) > 0; lvl++) {
                     long mipSerial = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
                             .textureUploadSerial(glTextureId, lvl);
