@@ -27,12 +27,11 @@ restarts (rep 2: stable for 396 frames at the end).
 Not established: Celeritas's GL screenshots lack the info-HUD text that Celtium's presented frames carry; that can be
 the capture point inside the frame rather than a workload difference.
 
-## CPU profile of one pair (attribution only)
+## CPU profile of one pair - withdrawn: it covered world loading
 
-`r67prof-{celtium,celeritas}` (same inputs), async-profiler 4.6 `-e cpu -i 200us -t` for 25 s from 110 s after the
-game JVM started (not aligned to world ticks). Client thread: Celtium 4237 samples, Celeritas 2979; frame p50 under
-the profiler 2.178 vs 2.342. Celeritas spends wall time off-CPU in the GL driver (`Display.update`/SDL 236 samples,
-`libGL` 230), which `-e cpu` does not count, so equal frames with more Celtium CPU is consistent.
-Largest Celtium-only CPU: `renderTileEntities` 157 vs 24 (vanilla TESRs: shulker, skull, sign, bed, spawner, banner
-through the immediate path), `drawChunkLayer` 154 vs ~0 (Celtium records terrain itself; GL hands it to the driver),
-`setupTerrain` 91 vs 17. Because the profile window was not tied to the warm window, these are leads, not shares.
+`r67prof-{celtium,celeritas}` attached async-profiler 110 s after the game JVM started. A JIT recording taken the
+same way (`r68jit`, `jfr-jit.jfc`) shows where that lands: windows 11:10:26-51 (Celtium joined the world 11:10:44)
+and 11:13:30-55 (Celeritas joined 11:13:55) - the integrated server start and world join, not warm ticks 400..600.
+So the profile's differences (TESRs, `drawChunkLayer`, `setupTerrain`, client tick, and the JIT's 7357 vs 3534
+compilations with similar deopts 667 vs 564 and no recompile loop) describe loading, and are not leads for the
+measured frames. Re-profile aligned to the join (warm ticks are ~20-30 s after it).
