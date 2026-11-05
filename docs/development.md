@@ -119,6 +119,9 @@ scripts/gv-leg.sh <different-leg> .gv-verify/jars/<tag> cohort intel 900
   同マップのGL参照runから測った床で判定する（`celtium$worldMapGate`）。instanceが無ければ
   `CELTIUM_INSTANCE_COHORT` のcloneを作り `.celtium-work/worlds/qmagnet` を `minecraft/saves/qmagnet` へコピーする。
 - `CELTIUM_ROOT` / `CELTIUM_INSTANCE_COHORT` / `CELTIUM_INSTANCE_WORLD` / `CELTIUM_INSTANCE_E2E` / `CELTIUM_INSTANCE_RECIPE`でcheckout/instanceを差し替える。
+- **E2E-E 1.87.3（E2Eの上位集合、`e2e` modeで回す）**: `CELTIUM_INSTANCE_E2E=~/.local/share/PrismLauncher/instances/celtium-e2ee-1.87.3`、
+  `E2E_STAGED_MODS=.celtium-work/modpack-e2ee/staged/mods`、``E2E_EXCLUDE='SmoothFont-* gnetum-* NothiriumLittleTilesPatch-* CustomLoadingScreen-* !cleanroom-relauncher-1.1.4* `FermiumBooter-*'``
+  （FermiumBooterのjar名は先頭がbacktick）。instanceの`mods`がほぼ空なのは正常: pack jarはleg時にstagedから入る。
 - **sceneの前提を壊すpack modは隔離コピーから外せる**: `CELTIUM_LEG_EXCLUDE_INSTANCE_MODS="'TipTheScales-*'"`
   （globをshell quoteで並べる）。隔離先からのみ外し、元instanceは変更しない。manifestの `instanceModExclusions` に残る。
   2026-11-02実測: SupersymmetryのTipTheScalesがVideo Settingsボタンに自前の画面

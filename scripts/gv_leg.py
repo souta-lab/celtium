@@ -283,7 +283,8 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
     fixture = one_jar(jar_dir, FIXTURE)
     defaults = {
         "cohort": Path.home() / ".local/share/PrismLauncher/instances/cleanroom-0.6.13-alpha",
-        "e2e": root / ".celtium-work/modpack-p0/prism-e2e-private/instances/e2e-1.93a-no-stellar-parallel",
+        # The instance the passing E2E legs used (e2e-amd-r3, e2e-intel-r1); the old "-no-stellar-parallel" copy is gone.
+        "e2e": root / ".celtium-work/modpack-p0/prism-e2e-private/instances/e2e-1.93a",
         "recipe": root / ".celtium-work/modpack-p0/recipe-profile/instances/rlcraft-2.9.3-recipe",
         # The standard real-world profile: the clone of the cohort instance that carries the distributed map
         # (QMAGNET's Test Map) as the save "qmagnet". Clone it and install the map as that save to reproduce.
