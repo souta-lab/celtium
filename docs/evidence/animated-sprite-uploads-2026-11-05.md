@@ -151,3 +151,13 @@ ones: the per-tick lightmap re-upload). ~250 us of the world-pass excess is stil
   different machine load (control medians 1.83 vs 1.98 ms), so the 0.24 ms is also within the set-to-set spread.
   Status: unexplained, possibly not real; not a lead for the p99 tail. The counter `inWorldAnimMirror=<calls>/<us>/
   worst` (e68601a76) confirms the in-world count on the next leg.
+
+## Reading the tick-frame brackets as means (code reading, no new run)
+
+- `terrainSharedIndex` 71/4 us (tick/plain, AMD split) is one event: `sharedIndexRegenerations=1` per run in every
+  leg checked (n3kpi-amd-celtium-r1, n4load/n4upload control r1). A mean over ~200 tick frames turns one regeneration
+  into 71 us; it is not a per-tick cost and cannot carry p99. Means of rare events have to be read with their counts.
+- The lightmap's per-tick path (`announceFullPixels` whole-texture -> `uploadFromImage` -> `copyToImage`) waits only
+  on its own previous upload's fence (one tick earlier), writes 1 KB to persistent staging, records into its own
+  command buffer and submits deferred; nothing in it waits on the frame. Its measured 50-70 us per tick is CPU work,
+  not a stall. Next (needs a leg): the split with `e68601a76` (entities bracket, `inWorldAnimMirror`).
