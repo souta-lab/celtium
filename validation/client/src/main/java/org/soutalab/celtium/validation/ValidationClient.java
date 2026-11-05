@@ -3569,6 +3569,22 @@ public final class ValidationClient {
     }
 
     /** The second half of {@link #tick}: progress, exit hook and the scripted world actions; see the call site. */
+    /**
+     * Whether a screen is the title screen, including a pack's replacement of it. CustomMainMenu swaps
+     * {@code GuiMainMenu} for its own class, so a world switch that waited for {@code GuiMainMenu} waited forever in
+     * the world-accept instance (leg l8switch-amd: worldTicks stuck at 100 for five minutes, then MISSING_REPORT).
+     */
+    private static boolean celtium$isTitleScreen(net.minecraft.client.gui.GuiScreen screen) {
+        if (screen == null) {
+            return false;
+        }
+        if (screen instanceof GuiMainMenu) {
+            return true;
+        }
+        String name = screen.getClass().getName();
+        return name.startsWith("lumien.custommainmenu.") || name.endsWith("MainMenu");
+    }
+
     /** Whether the warm window's begin and end edges have been logged (CELTIUM_WARM_WINDOW). */
     private boolean celtium$warmBeginLogged;
     private boolean celtium$warmEndLogged;
@@ -4701,7 +4717,7 @@ public final class ValidationClient {
                 mc.displayGuiScreen(new net.minecraft.client.gui.GuiMainMenu());
                 celtium$rejoinPending = true;
             }
-            if (celtium$rejoinPending && mc.world == null && mc.currentScreen instanceof GuiMainMenu) {
+            if (celtium$rejoinPending && mc.world == null && celtium$isTitleScreen(mc.currentScreen)) {
                 int holdTicks = Integer.getInteger("celtium.validation.worldSwitchMenuHoldTicks", 0).intValue();
                 if (celtium$worldSwitchMenuTicks++ < holdTicks) {
                     if (!celtium$worldSwitchMenuDumpRequested
