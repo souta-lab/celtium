@@ -54,3 +54,13 @@ switch on, before it can become the default.
 Next: which draw produces those icons (the radar's per-entity icon quads sample the icon atlas the creator renders
 into), and whether that atlas texture has a published image under the switch - `CELTIUM_RAW_FBO_ADOPTED` printed
 nothing in either Celtium leg. The switch stays off by default.
+
+## The attachment census (`l17xaero-diag`, 2026-11-06 02:29, renderer `327d960c…` = 03a1f5083, switch on, PASSED)
+
+`CELTIUM_RAW_ATTACH` printed 15 lines (limit 64): each framebuffer took its own texture once (fb 1/3, 6/7, 23/24 …
+138/139) and **no framebuffer ever had its colour texture swapped** - the `setFramebufferTexture` path the hypothesis
+rests on did not run in this leg. The 1024x1024 texture 139 (fb 138, a size that fits the icon atlas) was deleted at
+"Reloading radar icon resources...", and no attachment followed it. No OpenGLException or Xaero error in the log.
+So the near-player icons are missing before any swap: either the icon creator is never asked in this scene, or the
+icons come from another path. Next discriminator: count `RadarIconCreator` entries (a mixin counter on its create
+method) and the radar's icon-vs-fallback branch, before touching routing again. The switch stays off.
