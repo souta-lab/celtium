@@ -62,3 +62,8 @@ What remains unexplained: `skipAnimatedUploads=upload` lowered the client tick i
 ~17,000 load-time uploads, so the difference is most likely the texture state that loading leaves behind, not
 per-tick work. `=flush` changed nothing and its counter shows that flush never fires (`r78flush`, 0 in every leg).
 Next discriminating test: skip uploads only before the first world frame vs only after it.
+
+`r80load` (`=load`, renderer `8aed10f9…`, 3 pairs, PASSED): median control ratio 0.902x but rep 1 went the other way
+(2.478 vs 2.305), client tick 1.93/1.92/1.92 vs 1.84/1.99/2.09, and the control alone ranged 2.305-2.692 ms across
+reps. Inconclusive in the daytime: the rep-to-rep spread is larger than the effect. Resume on a quiet machine with
+five pairs each of `=load` and `=upload`.
