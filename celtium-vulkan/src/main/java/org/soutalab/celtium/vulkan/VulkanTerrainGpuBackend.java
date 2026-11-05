@@ -10944,6 +10944,23 @@ this.frameBufferOpen = false;
             this.celtium$offerStateFresh = false;
             return this.celtium$keyCacheKeys[slot];
         }
+        // A version that moved can still describe the same values: the GUI turns lighting or blend on around an item
+        // and back (l21miss-amd: half the remaining misses recomputed an identical key). The key is a pure function of
+        // the layout id and the state signature (celtium$stateFromSignature and celtium$stateKey read nothing else), so
+        // a signature equal to the slot's own answers with the slot's key; only the versions are refreshed.
+        if (this.celtium$keyCacheValids[slot] && this.celtium$keyCacheFormats[slot] == formatId) {
+            int[] probe = this.celtium$keyValueProbe;
+            celtium$stateSignature(probe);
+            if (java.util.Arrays.equals(probe, this.celtium$keyCacheSignatures[slot])) {
+                this.celtium$keyCacheStates[slot] = stateVersion;
+                this.celtium$keyCacheEnvironments[slot] = environmentVersion;
+                this.celtium$keyCacheWindowTargets[slot] = windowTarget;
+                this.celtium$keyCacheHits++;
+                this.celtium$keyValueHits++;
+                this.celtium$offerStateFresh = false;
+                return this.celtium$keyCacheKeys[slot];
+            }
+        }
         this.celtium$keyCacheMisses++;
         // Why it missed, in priority order (the first differing input), and whether the recomputed key came out equal
         // to the slot's previous one - a version that moved and came back, which only a value-keyed cache could catch.
@@ -10956,6 +10973,8 @@ this.frameBufferOpen = false;
         long key = celtium$stateKey(formatId, this.celtium$stateScratch);
         if (this.celtium$keyCacheValids[slot] && key == this.celtium$keyCacheKeys[slot]) this.celtium$keyMissSameKey++;
         this.celtium$keyCacheKeys[slot] = key;
+        System.arraycopy(this.celtium$stateSignature, 0, this.celtium$keyCacheSignatures[slot], 0,
+                this.celtium$keyCacheSignatures[slot].length);
         this.celtium$keyCacheStates[slot] = stateVersion;
         this.celtium$keyCacheEnvironments[slot] = environmentVersion;
         this.celtium$keyCacheWindowTargets[slot] = windowTarget;
@@ -11040,6 +11059,10 @@ this.frameBufferOpen = false;
     private long celtium$keyMissEnvironment;
     private long celtium$keyMissWindow;
     private long celtium$keyMissSameKey;
+    /** Hits answered by an equal signature after the version moved, and the per-slot signatures they compare. */
+    private long celtium$keyValueHits;
+    private final int[][] celtium$keyCacheSignatures = new int[OFFER_KEY_CACHE_SLOTS][ModelReplayFastPath.SIGNATURE];
+    private final int[] celtium$keyValueProbe = new int[ModelReplayFastPath.SIGNATURE];
     /** Whether {@link #celtium$stateScratch} holds the state the current offer key was taken under. */
     private boolean celtium$offerStateFresh;
 
@@ -11048,7 +11071,7 @@ this.frameBufferOpen = false;
         return this.celtium$keyCacheHits + "/" + this.celtium$keyCacheMisses
                 + "[invalid=" + this.celtium$keyMissInvalid + " state=" + this.celtium$keyMissState
                 + " env=" + this.celtium$keyMissEnvironment + " window=" + this.celtium$keyMissWindow
-                + " sameKey=" + this.celtium$keyMissSameKey + "]";
+                + " sameKey=" + this.celtium$keyMissSameKey + " valueHits=" + this.celtium$keyValueHits + "]";
     }
 
     /**
