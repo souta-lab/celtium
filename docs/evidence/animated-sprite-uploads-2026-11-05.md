@@ -310,3 +310,12 @@ Second AMD run on r107 (`l28kpi-amd`, 06:09-06:28, 3 pairs, PASSED): **p50 0.918
 0.991 / 0.942 / 1.058 (pair 3's Celeritas p99 5.386 ms, its other pairs 5.73-6.09). Across the two runs (6 pairs) the
 p99 ratios are 0.924, 1.121, 0.993, 0.991, 0.942, 1.058: median 0.99, with single pairs straying ±6-12%. The p50/p95
 lead is clear; at p99 the build is at parity and the every-pair condition is decided by per-pair noise.
+
+## What is left after r107: warm-window profiles, 2 pairs (`l29aprof`, AMD, renderer `7752059a…`, 2026-11-06 06:30-06:45)
+
+Inclusive samples present in both arms (Celtium vs Celeritas, 20 s each): C2 compiler threads 3179 vs 2328 (+851),
+`onRenderTickEnd` 396 vs 176, GregTech `BloomEffectUtil.renderBloomBlockLayer` 250 vs 70, its `drawChunkLayer` 225 vs
+39, `ioctl` 244 vs 8, executor workers 284 vs 34. In the earlier r98 profiles 141 of the bloom layer's samples were the
+bind flush (`bindFramebuffer` -> `flushImmediateWindow`) - the rejected-three-times area. New lead: **the JIT is still
+compiling in the warm window** on the native arm; whether that is deopt/recompile cycling is being recorded (`l30jit`,
+JFR jdk.Compilation/jdk.Deoptimization over ticks ~400-600).
