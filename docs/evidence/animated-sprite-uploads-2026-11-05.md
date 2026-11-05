@@ -81,3 +81,25 @@ five pairs each of `=load` and `=upload`.
 
 On Intel Celtium's client tick is *faster* than Celeritas's, yet its tick frames are slower: the excess on tick frames
 is the render that follows the tick, not the tick itself.
+
+## GC and allocation in the warm window (join-aligned JFR, `settings=profile`, 9 s)
+
+| run | young GCs | pause total | worst |
+|---|---|---|---|
+| `r84jfr-celtium` (renderer `8aed10f9…`) | 2 | 108.8 ms | 69.8 ms |
+| `r84jfr-celeritas` (`567dcf8a…`) | 1 | 18.0 ms | 18.0 ms |
+| `r85jfr-celtium` (`1abdadae…`, model-run buffers reused) | 1 | 42.4 ms | 42.4 ms |
+
+One window each: not enough to rank GC behaviour. The allocation samples are not usable for attribution at this count:
+r84 put 59.9% of the weight on `VulkanModelInstances.draw` (DirectLongBufferU), and after `0f3524831` removed those
+wrappers r85 put 59.8% on an unrelated `ConcurrentHashMap$Node` - one TLAB-sized sample carries most of the weight.
+`0f3524831` stays (it removes real per-draw wrapper objects; `r85-world-amd` PASSED, validation 0), but no frame-time or
+GC effect is claimed for it.
+
+## Tick-frame bracket split
+
+`r82split`/`r83split` (`passSplit`, `passSplitMicros`): on AMD a frame after a tick costs ~2.3 ms more than a plain
+one; terrain (chunk uploads, `stUpload` 115-188 us vs ~0) and `terrainEnsure` grow, but so do trivially cheap brackets
+(`terrainCapacity` 46/0 us, `terrainSharedIndex` 260/4 us with one index regeneration in the whole run). Part of the
+tick-frame cost is therefore not work inside those brackets but time the client thread loses on those frames
+(preemption by build workers, safepoints or GC); not yet separated.
