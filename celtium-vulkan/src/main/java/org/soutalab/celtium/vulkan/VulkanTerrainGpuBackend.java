@@ -5402,7 +5402,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * The id has to be asked of GL because the method that performs the write takes no id - it is the one place in this
      * renderer where a GL query buys something a hook cannot supply.
      */
+    /**
+     * Diagnostic only: {@code -Dceltium.vulkan.skipAnimatedUploads=true} drops every animated sprite frame, so the
+     * atlas keeps its first frame. It measures the ceiling of the animation path on tick frames (the aligned profile
+     * r69prof put it at 85 samples against Celeritas's 31); never an acceptance configuration.
+     */
+    private static final boolean SKIP_ANIMATED_UPLOADS = Boolean.getBoolean("celtium.vulkan.skipAnimatedUploads");
+
     public void announceAnimatedUpload(int[][] data, int width, int height, int x, int y) {
+        if (SKIP_ANIMATED_UPLOADS) {
+            return;
+        }
         int bound = NativeTextureBindings.current().texture2d();
         compareBoundTextureWithGl(bound);
         if (!this.immediateWindowBusy && queuedGroupUsesTexture(bound)) flushPendingBeforeGlDraw();
