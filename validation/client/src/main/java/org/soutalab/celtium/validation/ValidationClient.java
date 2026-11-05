@@ -3569,6 +3569,10 @@ public final class ValidationClient {
     }
 
     /** The second half of {@link #tick}: progress, exit hook and the scripted world actions; see the call site. */
+    /** Whether the warm window's begin and end edges have been logged (CELTIUM_WARM_WINDOW). */
+    private boolean celtium$warmBeginLogged;
+    private boolean celtium$warmEndLogged;
+
     private void celtium$tickRest(Minecraft mc) {
         celtium$installExitHook(mc);
         // Taken here, on the render thread, where the world, the player and the screen are the client's to read. The
@@ -4217,6 +4221,15 @@ public final class ValidationClient {
                     && worldTicks < Integer.getInteger("celtium.validation.warmToTick", 600).intValue()) {
                 warmTickMillis.add(took / 1_000_000.0);
                 warmTickSeries.add(new double[] {worldTicks, took / 1_000_000.0});
+                if (!this.celtium$warmBeginLogged) {
+                    // A log edge for tools that must align with the measured window (a profiler attached from outside):
+                    // the join line is ~20 s earlier and the run ends ~2 s after the window, so neither can stand in.
+                    this.celtium$warmBeginLogged = true;
+                    System.out.println("[Celtium] CELTIUM_WARM_WINDOW begin worldTicks=" + worldTicks);
+                }
+            } else if (this.celtium$warmBeginLogged && !this.celtium$warmEndLogged) {
+                this.celtium$warmEndLogged = true;
+                System.out.println("[Celtium] CELTIUM_WARM_WINDOW end worldTicks=" + worldTicks);
             }
         }
         Minecraft mc = Minecraft.getMinecraft();
