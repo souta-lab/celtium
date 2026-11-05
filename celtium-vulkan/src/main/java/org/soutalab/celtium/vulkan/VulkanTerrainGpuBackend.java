@@ -7190,6 +7190,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private final java.util.Set<Long> rawDeletedAttachmentTargets = new java.util.HashSet<>();
 
     public void celtium$rawAttachmentTextureDeleted(int framebuffer) {
+        // Under the texture identity the image belongs to the texture, and its deletion is handled by rawTextureDeleted.
+        if (RenderTargetRegistry.RAW_TEXTURE_IDENTITY) return;
         long identity = RenderTargetRegistry.rawFramebufferIdentity(framebuffer);
         GllessFrameTarget target = offTargetTarget();
         if (target != null && target.chainPairExists(identity)) {
@@ -7203,6 +7205,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     public void celtium$rawFramebufferDeleted(int framebuffer, int colorTexture) {
         if (framebuffer == 0 || this.gpuStalled || this.context.celtium$isDeviceLost()) return;
+        // Deleting a framebuffer leaves its texture alive in GL; under the texture identity the image stays with it.
+        if (RenderTargetRegistry.RAW_TEXTURE_IDENTITY) return;
         long identity = RenderTargetRegistry.rawFramebufferIdentity(framebuffer);
         GllessFrameTarget target = offTargetTarget();
         if (target == null || !target.chainPairExists(identity)) return;
@@ -7222,6 +7226,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     public void celtium$rawTextureDeleted(int texture) {
+        if (RenderTargetRegistry.RAW_TEXTURE_IDENTITY && texture != 0 && !this.gpuStalled
+                && !this.context.celtium$isDeviceLost()) {
+            long identity = RenderTargetRegistry.rawColorTextureIdentity(texture);
+            GllessFrameTarget target = offTargetTarget();
+            if (target != null && target.chainPairExists(identity)) {
+                celtium$forgetDeletedFramebuffer(identity);
+            }
+        }
         java.util.Set<Long> orphans = this.rawOrphanedTargets.remove(texture);
         if (orphans != null) {
             for (Long identity : orphans) celtium$forgetDeletedFramebuffer(identity.longValue());
@@ -7472,7 +7484,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (framebuffer == 0) {
             return false;
         }
-        long identity = RenderTargetRegistry.rawFramebufferIdentity(framebuffer);
+        long identity = RenderTargetRegistry.rawTargetIdentity(framebuffer, glTextureName);
         int width = 0;
         int height = 0;
         int[] size = textureSize(glTextureName);

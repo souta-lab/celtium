@@ -40,6 +40,29 @@ public final class RenderTargetRegistry {
         return framebuffer == 0 ? 0L : (1L << 40) | (framebuffer & 0xFFFFFFFFL);
     }
 
+    /**
+     * {@code -Dceltium.vulkan.rawFboTextureIdentity=true} (off by default, unverified): a raw framebuffer with a colour
+     * texture draws into an image keyed by that texture rather than by the framebuffer. GL keeps one storage per
+     * texture, so a framebuffer whose attachment is swapped (Xaero's radar icons: {@code setFramebufferTexture} moves
+     * one framebuffer between the icon atlas and its own texture) must not land both in one image; see
+     * docs/evidence/xaero-radar-icons-2026-11-05.md.
+     */
+    public static final boolean RAW_TEXTURE_IDENTITY = Boolean.getBoolean("celtium.vulkan.rawFboTextureIdentity");
+
+    /** The identity of the image a raw framebuffer's colour texture owns under {@link #RAW_TEXTURE_IDENTITY}. */
+    public static long rawColorTextureIdentity(int colorTexture) {
+        return (1L << 41) | (colorTexture & 0xFFFFFFFFL);
+    }
+
+    /** {@return the identity a raw framebuffer's draws go to}: its colour texture's under the switch, else its own. */
+    public static long rawTargetIdentity(int framebuffer, int colorTexture) {
+        if (framebuffer == 0) {
+            return 0L;
+        }
+        return RAW_TEXTURE_IDENTITY && colorTexture != 0 ? rawColorTextureIdentity(colorTexture)
+                : rawFramebufferIdentity(framebuffer);
+    }
+
     /** The four real images a framebuffer identity can be drawn into. */
     public enum ImageSlot {
         /** The delivered frame image the present path blits from (the game's main framebuffer). */

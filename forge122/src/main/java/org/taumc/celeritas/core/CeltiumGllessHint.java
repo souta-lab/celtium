@@ -1343,9 +1343,9 @@ public final class CeltiumGllessHint {
             backend.bindFramebuffer(0L, false);
             return;
         }
-        long identity = org.soutalab.celtium.vulkan.RenderTargetRegistry.rawFramebufferIdentity(framebuffer);
-        backend.bindFramebuffer(identity, false);
         int color = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferColorTexture(framebuffer);
+        long identity = org.soutalab.celtium.vulkan.RenderTargetRegistry.rawTargetIdentity(framebuffer, color);
+        backend.bindFramebuffer(identity, false);
         int[] extent = color == 0 ? null : org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$textureExtent(color);
         if (extent != null && extent[0] > 0 && extent[1] > 0) {
             backend.bindFramebufferColorTexture(identity, color, extent[0], extent[1]);

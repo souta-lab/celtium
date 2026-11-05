@@ -32,3 +32,10 @@ used by the bind report, the adoption path and the raw delete/orphan paths alike
 texture. It changes routing that the working minimap tiles depend on, so it is not made without a leg: E2E-E with
 `CELTIUM_E2E_PACK=e2ee`, radar icons visible near mobs, the minimap tiles and the world map unchanged against the
 current jar, validation 0.
+
+## Implemented behind a switch (unverified)
+
+`-Dceltium.vulkan.rawFboTextureIdentity=true` (default off, so the shipped routing is unchanged): the raw bind report
+and the adoption path key the image by the attached colour texture (`RenderTargetRegistry.rawTargetIdentity`); a raw
+framebuffer's deletion keeps the image, and the texture's deletion forgets it. Acceptance as written above, with the
+switch on, before it can become the default.
