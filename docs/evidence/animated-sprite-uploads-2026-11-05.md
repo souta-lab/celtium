@@ -181,3 +181,22 @@ Celtium mixin touches the method beyond these brackets). So the light map is not
 Celeritas's; of the settled +250 us tick-frame excess over plain frames, the renderer-specific candidates are
 `entities` (+30-50), `terrain` (+40), `flush` (+40-60) and the window recording (+15-30), each small. The p99 gap to
 Celeritas therefore needs a comparative measurement of the same brackets, not a further split of Celtium alone.
+
+## Client tick vs Celeritas, and a CPU profile of runTick (2026-11-05 21:35-22:21, light legs, all PASSED)
+
+`l4kpi-amd` (2 pairs, renderer `c3102913…` = r97-diag, world-accept, guiScale 3): p50 1.000, p95 1.049, p99 1.121; client
+tick p50 Celtium 2.03/1.90 vs Celeritas 1.73/1.78 ms, tick-frame p50 5.87/5.47 vs 5.12/5.19 ms. Here the tick itself is
+~0.2 ms slower (r81intel had it faster, so this is not settled across runs).
+
+`l5prof-{celtium,celeritas}`: async-profiler 4.6 `-e itimer -i 1ms -d 15` on the game JVM (the Java 25 child the Cleanroom
+relauncher starts - the Java 8 parent and a short-lived helper were picked first and gave empty profiles; `-e cpu` gives
+nothing at perf_event_paranoid=2; attaching 21 s after the join line is too late, the fixture exits ~22 s after it),
+from 3 s after the join. Samples under `Minecraft.runTick`: 120 vs 33 of ~7,500 each.
+- `ValidationClient`'s own tick handler: 52 vs 1 - but `finish()` (picture judging, PNG decode/encode) and the GL
+  screenshot, i.e. after the warm window, plus `/celtium` commands that run once at world tick 100. The per-frame
+  in-window part (`celtium$sampleUploadWait`, three reflective counter reads) is ~5 samples. Not a warm-window bias.
+- The rest, 68 vs 32, is spread: `WorldClient` display ticks (13 vs 4), Fluidlogged API's fluid ticks (8 vs 1),
+  in-game-info ticker (6 vs 14), `TextureMap.updateAnimations` (4 vs 0), chunk/entity ticks (a few each). With 1 ms
+  samples over one 15 s window per arm this is not separable from noise.
+Next discriminator: several profiles per arm restricted to the warm ticks (a fixture-side start/stop at ticks 400/600,
+or JFR with timestamps), before any change is aimed at the tick.
