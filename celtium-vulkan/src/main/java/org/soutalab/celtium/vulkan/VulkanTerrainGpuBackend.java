@@ -4216,7 +4216,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * calibrated legs PASSED on AMD and Intel, and the format-2 fixture's clear-order / pixel / depth contracts still
      * pass (leg wino2).
      */
-    private static final int IMMEDIATE_FLUSH_INDICES = Integer.getInteger("celtium.vulkan.immediateFlushIndices", 8192);
+    /**
+     * How many indices a window may hold before the accept path flushes it. 32768 since 2026-11-06: two same-jar A/Bs
+     * against 8192 (l10flush 4 pairs: p50 0.941, p95 0.937; l26flush 5 pairs: p50 0.988, p95 0.995, p99 0.995, tick
+     * frame 0.977) moved every percentile the same way and none the other - the GUI's font runs filled 8192 several
+     * times a frame and each fill opened a window.
+     */
+    private static final int IMMEDIATE_FLUSH_INDICES = Integer.getInteger("celtium.vulkan.immediateFlushIndices", 32768);
     /**
      * Per-call isolation/inspection switches, read once at class init: each of these was re-queried through
      * {@code Boolean.getBoolean}/{@code Integer.getInteger} on every call it gated - the format-refusal check ran
