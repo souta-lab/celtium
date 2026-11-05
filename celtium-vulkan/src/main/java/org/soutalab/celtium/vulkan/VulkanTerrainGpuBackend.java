@@ -5501,6 +5501,35 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Set by the first world pass and never cleared: the boundary the load/world split asks about. */
     private boolean worldPassSeen;
 
+    /** The mirror whose patch batch {@link #beginAnimationUploads(int)} opened, closed by the matching end. */
+    private VulkanGlTexture animationBatchTexture;
+    /** {@code -Dceltium.vulkan.batchAnimationUploads=false}: one submission per animated sprite, as before. */
+    private static final boolean BATCH_ANIMATION_UPLOADS = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.batchAnimationUploads"));
+
+    @Override
+    public void beginAnimationUploads(int glTextureId) {
+        if (!BATCH_ANIMATION_UPLOADS || this.animationBatchTexture != null || glTextureId <= 0) {
+            return;
+        }
+        if (this.textureRegistry == null) {
+            this.textureRegistry = celtium$registry();
+        }
+        VulkanGlTexture texture = this.textureRegistry.existing(glTextureId);
+        if (texture != null && texture.beginPatchBatch()) {
+            this.animationBatchTexture = texture;
+        }
+    }
+
+    @Override
+    public void endAnimationUploads() {
+        VulkanGlTexture texture = this.animationBatchTexture;
+        if (texture != null) {
+            this.animationBatchTexture = null;
+            texture.endPatchBatch();
+        }
+    }
+
     public void announceAnimatedUpload(int[][] data, int width, int height, int x, int y) {
         if (SKIP_ANIMATED_UPLOADS || (SKIP_ANIMATED_BEFORE_WORLD && !this.worldPassSeen)
                 || (SKIP_ANIMATED_IN_WORLD && this.worldPassSeen)) {

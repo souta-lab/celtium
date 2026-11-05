@@ -261,6 +261,14 @@ public interface TerrainGpuBackend {
     default void announceDynamicTexture(int[] pixels) {
     }
 
+    /** Brackets one atlas animation tick, so the backend can record its per-sprite uploads together. */
+    default void beginAnimationUploads(int glTextureId) {
+    }
+
+    /** Ends the bracket {@link #beginAnimationUploads(int)} opened. */
+    default void endAnimationUploads() {
+    }
+
     /** Announces a whole-texture animated write with the pixels it is writing. */
     default void announceAnimatedUpload(int[][] data, int width, int height, int x, int y) {
     }
