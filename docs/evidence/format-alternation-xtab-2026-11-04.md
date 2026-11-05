@@ -67,3 +67,18 @@ group B. Closed rectangles: a shared edge counts as overlap.
 `groupCreateCount=898,083` (114.9/frame). **28.1 openings a frame (24%) could be merged back into A without any
 change to the picture**, because nothing in B is over or under them. At ~0.9 us of recording plus ~3 us of slow-path
 accept per group that is an estimated ~0.11 ms a frame - about a fifth of the 0.52 ms gap to Celeritas, not all of it.
+
+## 2026-11-05: the merge-across switches cannot measure the ceiling
+
+Leg `r65census` (renderer `ae90347a…`, fixture `22fcf3e0…`, AMD RX 6400, world-accept, guiScale 3 seeded, PASSED,
+calibration key matched, validation off for timing) with `mergeAcrossFormat=true mergeAcrossTexture=true
+mergeCensus=true`: **121.8 groups a frame**, unchanged from the shipped ~118. Only the predicate at
+`VulkanTerrainGpuBackend` reads the two switches, so the openings they should have removed are refused by a later term.
+A format switch carries its own per-group state: format 2 has per-vertex colour and 6/7/4/9 take the push-block tint
+(the colour term), and a textured and an untextured layout differ in the texture affine. So the switches neutralise the
+first term only and the census's first-term `format=544,076` cannot show the term that actually refused. (Without the
+seeded guiScale 3 the world-accept legs come back `UNCALIBRATED_PRESENTED_IMAGE`, see verification-traps.md.)
+
+The A-B-A count reproduces on this build: disjoint A-B-A openings (118,431 opaque + 130,398 ordered) / 8,465 frames
+= **29.4 a frame** (round 60: 28.1). A merge-back compares the batch with A, which has the same format and texture, so
+the finding above does not bound it.

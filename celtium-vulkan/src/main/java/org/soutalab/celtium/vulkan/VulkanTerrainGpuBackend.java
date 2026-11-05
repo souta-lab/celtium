@@ -9367,7 +9367,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             org.soutalab.celtium.vulkan.FramePassTimings.end("offPrepare");
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offMerge");
             long acceptDecideStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
-            boolean fastMerged = retained == null && this.currentImmediateMesh != null
+            // NO_MERGE is tested here too: without it the diagnostic only reached the slow path's predicate, which sees
+            // batches whose key already differs, and a noMerge leg kept the shipped group count (r65nomerge: 115-117 a
+            // frame against the control's 117-120), so it measured nothing.
+            boolean fastMerged = !NO_MERGE && retained == null && this.currentImmediateMesh != null
                     && modDrawProgram == null && !this.currentGroupIsModProgram
                     && this.currentGroupFormatId == formatId
                     && this.currentGroupTexture == boundTexture
