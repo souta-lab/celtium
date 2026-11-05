@@ -246,3 +246,10 @@ threshold stays 8192 until a quieter or longer A/B. `stateKeyCache` hit rate in 
 Renderers `da008de3…` (r101) vs `82f20d80…` (r100), same fixture, AMD, world-accept, guiScale 3, all PASSED:
 **p50 0.973, p95 1.000, p99 1.002, tick-frame p50 0.964** (medians of per-pair ratios). The mechanism is visible in the
 legs' own counter: `stateKeyCache` hits 33.0/33.2/32.8/32.6/33.2% (r101) vs 29.1/28.6/30.2/29.7/27.4% (r100). Kept.
+
+## Intel warm-window profiles, 2 pairs (`l16iprof`, 2026-11-06 02:18-02:33, UHD 630, renderer `da008de3…` = r101, all PASSED)
+
+`scripts/warm-profile.sh`, samples in 20 s per arm (Celtium vs Celeritas): mod HUD (InGameInfo) 231 vs 190 (x1.2, AMD
+x2.4); CreativeCore overlay 54 vs 19; `runTick` 139 vs 158; `TextureMap.updateAnimations` 11 vs 11; the fixture's
+counter reads 3 (the handle fix holds). Same shape as AMD - the extra time is GUI drawing, not the tick - with a
+smaller HUD factor, consistent with the window flush's driver cost being the part that differs between RADV and ANV.
