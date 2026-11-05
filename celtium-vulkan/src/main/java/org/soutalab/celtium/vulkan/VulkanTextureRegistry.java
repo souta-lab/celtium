@@ -555,12 +555,6 @@ public final class VulkanTextureRegistry {
         return get(glTextureId, false);
     }
 
-    /** {@return the mirror already held for this GL name}, never creating one; {@code null} when there is none. */
-    public VulkanGlTexture existing(int glTextureId) {
-        Entry entry = this.entries.get((int) glTextureId);
-        return entry == null ? null : entry.texture;
-    }
-
     public VulkanGlTexture get(int glTextureId) {
         // A direct-mapped memo over the map lookup: the callers resolve the same name several times in a row (the JFR
         // census showed get() calling get() with the same argument, and the draw path asks once per group), and the map

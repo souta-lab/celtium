@@ -5402,35 +5402,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * The id has to be asked of GL because the method that performs the write takes no id - it is the one place in this
      * renderer where a GL query buys something a hook cannot supply.
      */
-    /** The mirror whose patch batch {@link #beginAnimationUploads(int)} opened, closed by the matching end. */
-    private VulkanGlTexture animationBatchTexture;
-    /** {@code -Dceltium.vulkan.batchAnimationUploads=false}: one submission per animated sprite, as before. */
-    private static final boolean BATCH_ANIMATION_UPLOADS = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.vulkan.batchAnimationUploads"));
-
-    @Override
-    public void beginAnimationUploads(int glTextureId) {
-        if (!BATCH_ANIMATION_UPLOADS || this.animationBatchTexture != null || glTextureId <= 0) {
-            return;
-        }
-        if (this.textureRegistry == null) {
-            this.textureRegistry = celtium$registry();
-        }
-        VulkanGlTexture texture = this.textureRegistry.existing(glTextureId);
-        if (texture != null && texture.beginPatchBatch()) {
-            this.animationBatchTexture = texture;
-        }
-    }
-
-    @Override
-    public void endAnimationUploads() {
-        VulkanGlTexture texture = this.animationBatchTexture;
-        if (texture != null) {
-            this.animationBatchTexture = null;
-            texture.endPatchBatch();
-        }
-    }
-
     public void announceAnimatedUpload(int[][] data, int width, int height, int x, int y) {
         int bound = NativeTextureBindings.current().texture2d();
         compareBoundTextureWithGl(bound);
