@@ -17,7 +17,7 @@
    | 色付きガラスのチカチカ | **修正（実機確認待ち）**: 半透明terrainパスが背面cullなしで描いていた→vanilla同様に背面cull（`5f75fc009`、[画像](evidence/2026-10-28-stained-glass-backfaces.png)） |
    | F3+T が重い | reload自体 2.24 s（Celeritas 2.05 s）。差は font atlas の再upload → pack不変なら保持（`6d056197d`）。reload後のframeは正常 |
    | Xaero's Minimap（クラッシュ・真っ暗・位置ずれ・透け） | **修正**: PBO map/unpack、raw FBO/raw matrix、tile upload、mod FBO同士のsample（空mirrorより公開優先・self-compositeは同一imageだけ）。AMD/Intel world PASSED・validation 0、Celeritas参照と同じ絵 |
-   | ワールド退出後ボタン無し | **未再現**（既定・日本語・1920×1080）。手順差の手掛かり待ち |
+   | ワールド退出後ボタン無し | **修正済み**（利用者確認 2026-11-05） |
    | ロード画面 | **Forgeのsplashと同じ画面**（ロゴ・メモリ・進捗・Forgeロゴ）をnative描画（`3ebd22e90`） |
    | ログ量 | **タグごと16行上限**（`CeltiumLogLimiter`） |
    | E2E 1.93a（Cleanroom 0.7） | Intelの読込SIGSEGVと疎なatlas描画拒否は修正候補で各1回通過。**2026-11-05: 現行jarで AMD/Intel とも PASSED・validation 0**（mods 再取得・harness の natives 修正・lwjgl-vulkan 3.4.3 指定、[証拠](evidence/e2e-cleanroom07-2026-10-26.md)）。地平線の黒帯は無し |

@@ -3606,6 +3606,77 @@ public final class VulkanGlTexture {
         }
     }
 
+    /**
+     * Writes the game's own pixels for one mip level above the base, and only that level.
+     * <p>
+     * The level-0 path cannot do this: it skips its opening barrier for any level but 0, names the range
+     * {@code (level, mipLevels)} - past the image's last level when {@code level > 0} - and then regenerates the whole
+     * chain from level 0, overwriting the level it was asked to write and moving level 0 out of a layout it is not in.
+     * It returns the image to the sampling layout only when the level is 0 or the last one, so a captured-mip loop
+     * that stops early (a level without game pixels) left the levels it had written in TRANSFER_DST, and a draw
+     * sampling them through a SHADER_READ_ONLY descriptor is {@code VUID-vkCmdDraw-None-09600} - the atlas error the
+     * E2E-E legs reported. Here the one level goes from its recorded layout to TRANSFER_DST, takes the copy, and goes
+     * back to SHADER_READ_ONLY in the same submission.
+     */
+    private void copyMipLevelToImage(ByteBuffer pixels, int pixelWidth, int pixelHeight, int level, int offsetX,
+            int offsetY) {
+        if (level >= this.mipLevels) {
+            throw new IllegalStateException("mip level " + level + " upload into a mirror with " + this.mipLevels
+                    + " level(s) (texel id " + this.encodeLabel + ")");
+        }
+        int levelWidth = Math.max(1, this.width >> level);
+        int levelHeight = Math.max(1, this.height >> level);
+        if (offsetX < 0 || offsetY < 0 || offsetX + pixelWidth > levelWidth || offsetY + pixelHeight > levelHeight) {
+            throw new IllegalStateException("level-" + level + " upload of " + pixelWidth + "x" + pixelHeight + " at "
+                    + offsetX + "," + offsetY + " does not fit the level's " + levelWidth + "x" + levelHeight
+                    + " (texel id " + this.encodeLabel + ")");
+        }
+        long bytes = requiredUploadBytes("a level-" + level + " upload of " + pixelWidth + "x" + pixelHeight,
+                pixelWidth, pixelHeight, pixels);
+        ensureStaging(bytes);
+        putStagingPixels(stagingAddress, pixels, pixelWidth, pixelHeight);
+        if (!stagingCoherent) {
+            flushStaging();
+        }
+        int previous = levelLayout(level);
+        VkCommandBuffer commandBuffer = context.beginCommands();
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
+            barrier.get(0).sType$Default()
+                    .srcAccessMask(previous == VK_IMAGE_LAYOUT_UNDEFINED ? 0
+                            : VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .oldLayout(previous)
+                    .newLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(image);
+            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1);
+            vkCmdPipelineBarrier(commandBuffer, SAMPLING_STAGES | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
+
+            VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
+            region.get(0).bufferOffset(0L).bufferRowLength(0).bufferImageHeight(0);
+            region.get(0).imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+                    .mipLevel(level).baseArrayLayer(0).layerCount(1);
+            region.get(0).imageOffset().set(offsetX, offsetY, 0);
+            region.get(0).imageExtent().set(pixelWidth, pixelHeight, 1);
+            vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
+
+            barrier.get(0)
+                    .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
+                    .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                    .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null,
+                    barrier);
+        } finally {
+            this.outstandingUploadFence = context.celtium$submitDeferred(commandBuffer, 0L);
+        }
+        setLevelLayout(level, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        recordWholeImageWrite();
+    }
+
     /** Records a level's layout, growing the array when a recreated image has more levels than the previous one had. */
     private void setLevelLayout(int level, int layout) {
         if (level < 0) {
@@ -3710,6 +3781,10 @@ public final class VulkanGlTexture {
      * layout, in {@link #uploadPatchedLevels}.
      */
     private void copyToImage(ByteBuffer pixels, int pixelWidth, int pixelHeight, int level, int offsetX, int offsetY) {
+        if (level > 0) {
+            copyMipLevelToImage(pixels, pixelWidth, pixelHeight, level, offsetX, offsetY);
+            return;
+        }
         // Every path that reaches the staging buffer goes through the same slice validation: the declared extent must
         // fit the buffer's remaining bytes from its current position, which is where the address the copy takes starts
         // (audit N08). Refused by name, before ensureStaging allocates anything.
