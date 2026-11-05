@@ -1078,6 +1078,8 @@ public final class VulkanSwapchain {
                     replaceAcquireSemaphore(stack, acquire);
                     return "present probe: vkAcquireNextImageKHR returned " + result;
                 }
+                // The probe's semaphore is owned like any other until its image comes back (see acquireSemaphore).
+                celtium$noteAcquireOwner(stack, acquire, index.get(0));
                 long image = this.images[index.get(0)];
                 VkCommandBuffer commands = this.context.beginCommands();
                 try {
@@ -1655,9 +1657,17 @@ public final class VulkanSwapchain {
             this.acquireSemaphoreOwnerImage = new long[this.acquireSemaphores.length];
             java.util.Arrays.fill(this.acquireSemaphoreOwnerImage, -1L);
         }
-        // A semaphore still owned by an image that has not been re-acquired is the reuse the spec forbids.
+        // A semaphore still owned by an image that has not been re-acquired is the reuse the spec forbids; the selection
+        // in acquireSemaphore no longer hands one out, so this counter should stay 0.
         if (this.acquireSemaphoreOwnerImage[slot] >= 0L && this.acquireSemaphoreOwnerImage[slot] != imageIndex) {
             this.acquireSemaphoreReusesWhileOwned++;
+        }
+        // This image's previous semaphore is free now: acquiring the image again means its previous present - which
+        // came after the submission that waited on that semaphore - has been consumed.
+        for (int i = 0; i < this.acquireSemaphoreOwnerImage.length; i++) {
+            if (i != slot && this.acquireSemaphoreOwnerImage[i] == imageIndex) {
+                this.acquireSemaphoreOwnerImage[i] = -1L;
+            }
         }
         this.acquireSemaphoreOwnerImage[slot] = imageIndex;
     }
@@ -1674,7 +1684,9 @@ public final class VulkanSwapchain {
         }
         return "acquires=" + this.acquiresRecorded + " acquireSemaphoresOwned=" + owned
                 + " acquireSemaphoreReusesWhileOwned=" + this.acquireSemaphoreReusesWhileOwned
-                + " acquireCursor=" + this.acquireSemaphoreCursor;
+                + " acquireCursor=" + this.acquireSemaphoreCursor
+                + " acquirePool=" + (this.acquireSemaphores == null ? 0 : this.acquireSemaphores.length)
+                + " acquirePoolGrowths=" + this.acquireSemaphorePoolGrowths;
     }
 
     private long acquireSemaphore(MemoryStack stack) {
@@ -1699,10 +1711,45 @@ public final class VulkanSwapchain {
             }
             this.acquireSemaphores = pool;
         }
-        long result = this.acquireSemaphores[this.acquireSemaphoreCursor];
-        this.acquireSemaphoreCursor = (this.acquireSemaphoreCursor + 1) % this.acquireSemaphores.length;
-        return result;
+        // A semaphore is handed out only when no image owns it. Round-robin over one semaphore per image reused a
+        // semaphore whose waiting submission the GPU had not executed yet whenever the frames ran behind - leg
+        // l8switch-amd, a slow title screen with readback on: VUID-vkAcquireNextImageKHR-semaphore-01779 ten times. The
+        // ownership is released in celtium$noteAcquireOwner when the image that holds it is acquired again: that acquire
+        // returning means the image's previous present was consumed, and the submission that waited on the old
+        // semaphore came before that present. When every semaphore is owned the pool grows by one.
+        if (this.acquireSemaphoreOwnerImage == null || this.acquireSemaphoreOwnerImage.length != this.acquireSemaphores.length) {
+            long[] owners = new long[this.acquireSemaphores.length];
+            java.util.Arrays.fill(owners, -1L);
+            if (this.acquireSemaphoreOwnerImage != null) {
+                System.arraycopy(this.acquireSemaphoreOwnerImage, 0, owners, 0,
+                        Math.min(owners.length, this.acquireSemaphoreOwnerImage.length));
+            }
+            this.acquireSemaphoreOwnerImage = owners;
+        }
+        int length = this.acquireSemaphores.length;
+        for (int step = 0; step < length; step++) {
+            int slot = (this.acquireSemaphoreCursor + step) % length;
+            if (this.acquireSemaphoreOwnerImage[slot] < 0L) {
+                this.acquireSemaphoreCursor = (slot + 1) % length;
+                return this.acquireSemaphores[slot];
+            }
+        }
+        LongBuffer grown = stack.mallocLong(1);
+        if (vkCreateSemaphore(this.context.device(), org.lwjgl.vulkan.VkSemaphoreCreateInfo.calloc(stack)
+                .sType$Default(), null, grown) != VK_SUCCESS) {
+            return VK_NULL_HANDLE;
+        }
+        this.acquireSemaphores = java.util.Arrays.copyOf(this.acquireSemaphores, length + 1);
+        this.acquireSemaphores[length] = grown.get(0);
+        this.acquireSemaphoreOwnerImage = java.util.Arrays.copyOf(this.acquireSemaphoreOwnerImage, length + 1);
+        this.acquireSemaphoreOwnerImage[length] = -1L;
+        this.acquireSemaphorePoolGrowths++;
+        this.acquireSemaphoreCursor = 0;
+        return this.acquireSemaphores[length];
     }
+
+    /** Times the acquire-semaphore pool grew because every semaphore was still owned by an image. */
+    private long acquireSemaphorePoolGrowths;
 
     /** {@return the render-finished semaphore for a swapchain image}, created alongside the acquire pool on first use. */
     private long renderFinishedFor(MemoryStack stack, int imageIndex) {
@@ -2093,6 +2140,8 @@ public final class VulkanSwapchain {
                 vkDestroySemaphore(this.context.device(), semaphore, null);
             }
             this.acquireSemaphores = null;
+            this.acquireSemaphoreOwnerImage = null;
+            this.acquireSemaphoreCursor = 0;
         }
         if (this.acquireSemaphore != VK_NULL_HANDLE) {
             // The queue is drained first: the semaphore may still be referenced by a pending present.
