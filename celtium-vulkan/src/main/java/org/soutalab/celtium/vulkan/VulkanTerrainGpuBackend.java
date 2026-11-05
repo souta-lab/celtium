@@ -11711,6 +11711,24 @@ this.frameBufferOpen = false;
             released += releaseDirect(item == null ? null : () -> item.delete());
         }
         this.itemPipelineCache.clear();
+        // The record-reading twins are keyed by the identity of the pipelines released above, so after this point no
+        // lookup can reach them again: kept until process exit, every world left one more set of live VkPipelines
+        // behind. They go with their originals, at the same settled point.
+        for (VulkanImmediateTexturePipeline records : this.recordsPipelines.values()) {
+            released += releaseDirect(records == null ? null : records::delete);
+        }
+        this.recordsPipelines.clear();
+        for (VulkanImmediateItemPipeline records : this.recordsItemPipelines.values()) {
+            released += releaseDirect(records == null ? null : records::delete);
+        }
+        this.recordsItemPipelines.clear();
+        for (VulkanImmediatePipeline records : this.recordsColourPipelines.values()) {
+            released += releaseDirect(records == null ? null : records::delete);
+        }
+        this.recordsColourPipelines.clear();
+        this.indirectRunPipeline = null;
+        this.indirectRunPipelineObject = null;
+        this.indirectRunOriginalPipeline = null;
         released += releaseDirect(this.immediatePipeline == null ? null : () -> this.immediatePipeline.delete());
         this.immediatePipeline = null;
         released += releaseImmediateMesh(this.isolationMesh);
