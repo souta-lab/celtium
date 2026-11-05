@@ -8693,6 +8693,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * in. Read by the GL-less stub's own draw census ({@code CELTIUM_DRAWARRAY_LAYOUT}), where "the sky plane is
      * drawn in the wrong colour" and "the wrong geometry was submitted" look identical in the frame.
      */
+    /** Whether the mirrored colour's red and green are both zero - the per-draw probe, without an array per call. */
+    public boolean celtium$mirroredColorRedGreenZero() {
+        return this.immediateState.colorRed() == 0.0F && this.immediateState.colorGreen() == 0.0F;
+    }
+
     public float[] celtium$mirroredColor() {
         return new float[] {this.immediateState.colorRed(), this.immediateState.colorGreen(),
                 this.immediateState.colorBlue(), this.immediateState.colorAlpha()};

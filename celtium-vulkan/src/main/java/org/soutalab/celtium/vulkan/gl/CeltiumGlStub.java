@@ -10719,12 +10719,12 @@ public final class CeltiumGlStub implements FunctionProvider {
             if (!(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan)) {
                 return;
             }
-            float[] colour = vulkan.celtium$mirroredColor();
-            if (colour == null || colour[0] != 0.0F || colour[1] != 0.0F) {
+            if (!vulkan.celtium$mirroredColorRedGreenZero()) {
                 return;
             }
             DRAWARRAY_PURE_BLUE.incrementAndGet();
             if (DRAWARRAY_PURE_BLUE_LOGGED.incrementAndGet() <= 3) {
+                float[] colour = vulkan.celtium$mirroredColor();
                 System.out.println("[Celtium] CELTIUM_DRAWARRAY_PUREBLUE buffer=" + buffer + " count=" + count
                         + " colour=(" + celtium$round3(colour[0]) + "," + celtium$round3(colour[1]) + ","
                         + celtium$round3(colour[2]) + "," + celtium$round3(colour[3]) + ") site=["
