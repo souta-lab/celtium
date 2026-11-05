@@ -2870,6 +2870,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int indirectRunCommands;
     private VulkanImmediateTexturePipeline indirectRunPipeline;
     private long indirectRunTextureSet;
+    private int indirectProbeLines;
     private VulkanDynamicMesh indirectRunMesh;
     private java.nio.ByteBuffer indirectRunPush;
     private long indirectRunsIssued;
@@ -2972,6 +2973,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         int stride = mesh.layout().stride;
         long vertexOffsetBytes = mesh.vertexBindOffset();
         long indexOffsetBytes = mesh.indexBindOffset();
+        if (this.indirectProbeLines < 12) {
+            // Bounded: what a group hands the run path (array-records census, the r110 picture failure).
+            this.indirectProbeLines++;
+            System.out.println("[Celtium] CELTIUM_INDIRECT_PROBE stride=" + stride + " vertexOffset=" + vertexOffsetBytes
+                    + " indexOffset=" + indexOffsetBytes + " vertices=" + mesh.vertexCount() + " indices="
+                    + mesh.indexCount() + " arena=" + mesh.isArenaBorrow() + " pipeline="
+                    + prepared.pipeline.getClass().getSimpleName());
+        }
         if (stride <= 0 || vertexOffsetBytes % stride != 0L || indexOffsetBytes % 4L != 0L
                 || mesh.indexCount() <= 0 || mesh.vertexCount() <= 0) {
             celtium$flushIndirectRun("stride");

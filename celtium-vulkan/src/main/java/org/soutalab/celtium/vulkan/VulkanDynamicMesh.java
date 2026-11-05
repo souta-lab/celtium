@@ -515,6 +515,10 @@ public final class VulkanDynamicMesh {
      *
      * @return {@code false} when the layout was refused (a stride this mesh cannot represent, or no indices)
      */
+    /** {@code -Dceltium.vulkan.arenaStrideFirst=false}: the old order (layout set after the first write), for A/B. */
+    static final boolean ARENA_STRIDE_FIRST =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.arenaStrideFirst"));
+
     public boolean copyVertices(long sourceAddress, int stride, int count, int[] indices) {
         if (sourceAddress == 0L || count <= 0 || indices == null || indices.length == 0
                 || stride < 4 || stride > 256) {
@@ -525,7 +529,7 @@ public final class VulkanDynamicMesh {
         long requiredVertices = this.vertexBytes + addedVertices;
         long requiredIndices = this.indexBytes + (long) indices.length * 4;
         boolean borrowed = this.frameRegion != null;
-        if (this.vertexBytes == 0L) {
+        if (ARENA_STRIDE_FIRST && this.vertexBytes == 0L) {
             // The slice start is aligned to the current layout's stride (celtium$sliceAlignment), and the layout used to
             // be set only after this write - so an empty arena mesh opened its slice at 16-byte alignment and its bind
             // offset was not a whole number of vertices (array-records census: 30,896 runs closed on "stride").
@@ -591,7 +595,7 @@ public final class VulkanDynamicMesh {
         long requiredVertices = this.vertexBytes + addedVertices;
         long requiredIndices = this.indexBytes + (long) indices.length * 4;
         boolean borrowed = this.frameRegion != null;
-        if (this.vertexBytes == 0L) {
+        if (ARENA_STRIDE_FIRST && this.vertexBytes == 0L) {
             // The slice start is aligned to the current layout's stride (celtium$sliceAlignment), and the layout used to
             // be set only after this write - so an empty arena mesh opened its slice at 16-byte alignment and its bind
             // offset was not a whole number of vertices (array-records census: 30,896 runs closed on "stride").
