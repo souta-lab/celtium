@@ -39,3 +39,18 @@ current jar, validation 0.
 and the adoption path key the image by the attached colour texture (`RenderTargetRegistry.rawTargetIdentity`); a raw
 framebuffer's deletion keeps the image, and the texture's deletion forgets it. Acceptance as written above, with the
 switch on, before it can become the default.
+
+## First legs on world-xaero (2026-11-06, light: 5 mods, qmagnet save, AMD, guiScale 3, HUD kept)
+
+`l7xaero-off` / `l7xaero-on` (renderer `c3102913…`, switch off/on) both PASSED, validation 0; the GL reference
+`l13xaero-ref` (Celeritas `567dcf8a…`, same fixture and pose) PASSED. Minimap crop, left to right: off, on, GL
+([image](2026-11-06-xaero-radar-off-on-gl.png)):
+
+- The markers on the grey band: GL draws small dark dots; **on** draws the same; off draws larger brown blobs. The
+  switch moves this part toward the reference.
+- Around the player arrow GL draws a red dot and thin green marks (nearby entities' icons). **Neither off nor on draws
+  them** - this is the user's "radar entity icons missing", and the texture identity alone does not restore it.
+
+Next: which draw produces those icons (the radar's per-entity icon quads sample the icon atlas the creator renders
+into), and whether that atlas texture has a published image under the switch - `CELTIUM_RAW_FBO_ADOPTED` printed
+nothing in either Celtium leg. The switch stays off by default.
