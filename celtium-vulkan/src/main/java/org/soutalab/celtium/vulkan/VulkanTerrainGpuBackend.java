@@ -2887,8 +2887,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * through the other would sample with an affine built from dead data, so they stay on the per-group path until their
      * own record-reading shaders are wired.
      */
+    /**
+     * {@code -Dceltium.vulkan.recordsPositionTwins=true}: give the position variants their record-reading twins again.
+     * They were refused because groups did not share geometry; immediate groups now write into the frame arena
+     * (celtium$newImmediateMesh), which is the condition the refusal named for reopening. The array-records census
+     * (docs/evidence/array-records-census-2026-11-06.md) has these variants as the largest run breaker.
+     */
+    private static final boolean RECORDS_POSITION_TWINS = Boolean.getBoolean("celtium.vulkan.recordsPositionTwins");
+
     private VulkanImmediateTexturePipeline celtium$recordsPipeline(VulkanImmediateTexturePipeline state) {
-        if (state.celtium$positionOnly() || state.celtium$positionNoTexture()) {
+        if (!RECORDS_POSITION_TWINS && (state.celtium$positionOnly() || state.celtium$positionNoTexture())) {
             // Measured with twins for these variants: the refusals fell, but runs still closed every group - the indirect
             // key names each group's own vertex and index buffer, and a group's mesh is its own buffer (key-change
             // 26,950 and stride-alignment refusals 18,711 in one world leg), so a run could not span two groups and the
