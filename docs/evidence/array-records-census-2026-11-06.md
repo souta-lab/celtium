@@ -41,3 +41,13 @@ Until (1)-(3) hold, the switches only add work; they stay off.
 
 Next: separate (a)-(c) with the switch A/B above; then wire `createRecordsArray` and the texture array's set (the
 record already carries the array index) and take the descriptor out of the run key. The switches stay off.
+
+## The discriminating leg says it is not the multi-group runs (2026-11-06 08:05)
+
+`l38arr-amd` (r110, `indirectImmediate` + `arrayRecords`, position twins **off**): every run a singleton
+(`runs=48590 singletons=48590`) and the picture still **FAILS** (validation 0). The same switches on r108 passed
+(`l33arr-amd`), and r110 with no switches passes (`l37pic-amd`). So the failure is the interaction of bd6c83de3 (the
+empty arena mesh takes the stride before its first write) with the indirect path - candidate (a) is ruled out, the
+multi-group runs are not needed to break it. Next discriminator: the indirect path's record/command for a group
+whose slice now starts at a stride multiple - compare `vertexBindOffset()`/first-vertex between r108 and r110 on one
+group (a bounded log line in `celtium$tryIndirect`).
