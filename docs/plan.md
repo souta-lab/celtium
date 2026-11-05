@@ -87,7 +87,7 @@
 - **hidden section の rebuild を既定で止めた**（upstream と同じく可視探索だけが queue、同一JAR A/B 0.915x、[証拠](evidence/terrain-hidden-rebuilds-2026-11-05.md)）。
 - 現行の判定は **AMD paired 3対: round 74 p50 0.914/p95 0.978/p99 1.060、夜の`n3` 0.981/1.028/1.033→`NOT_MET`**（[証拠](evidence/terrain-hidden-rebuilds-2026-11-05.md)）。**warm窓のCPU profile（3対）では tick は Celtium の方が軽く、上乗せは mod HUD の GUI 描画**（InGameInfo 446/182・
   CreativeCore 84/26 サンプル。文字runの submit が窓flushを起こす）と fixture 自身の counter 読み（修正済）、
-  アニメ更新 41/28（batch 復元済、A/B 中）（[証拠](evidence/animated-sprite-uploads-2026-11-05.md)）。
+  アニメ更新 41/28（batch 復元済）。状態keyキャッシュを色で外さない版に分け hit 25→51%、p95 0.954・p99 0.970（[証拠](evidence/animated-sprite-uploads-2026-11-05.md)）。
 - pack 1 frame 26.7k–39.4k replay、segmentは**frame要求で自動拡張**。[根拠](evidence/model-record-growth-2026-11-02.md)
 - 棄却: bind flush延期（2026-10-31、2回ともRADV SIGSEGV、[罠](<verification-traps.md>)）、indirect immediate、フレーム再利用（アニメ凍結）、
   **group数∝grpDraw**（font run 2.3×減で不変、[証拠](evidence/font-witness-census-2026-11-03.md)）、

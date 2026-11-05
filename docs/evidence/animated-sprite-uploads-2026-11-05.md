@@ -268,3 +268,11 @@ window and **not** from the current colour or the per-light enables, yet both mo
 almost every text run. `l20light` (r104 vs r101, 5 pairs, PASSED): p50 0.982, p95 0.957, p99 0.997, tick frame 0.988,
 key-cache hit rate unchanged (~33%) - read as noise, kept as harmless. Next: 866fff46b keys both caches by a version
 the colour and light enables do not move (`l21miss-amd`, A/B `l22keyver` vs r104).
+
+## Key version without the colour (866fff46b): r105 vs r104, 5 pairs (`l22keyver`, 2026-11-06 03:18-03:50, all PASSED)
+
+Census `l21miss-amd`: `hit922301/874588[… sameKey=437381]` - hit rate **~25% -> ~51%**; in the A/B legs 51% (r105) vs
+25% (r104). Speed (medians of per-pair ratios, r105/r104): **p50 0.981, p95 0.954, p99 0.970, tick frame 0.968**.
+Kept. Half of the remaining misses still recompute the same key; the raster version moves only for keyed values, so
+these are real A->B->A changes (lighting or blend toggled around an item and restored). Catching them needs a
+value-keyed cache - a packed state word kept by the setters - rather than a version. Not started.
