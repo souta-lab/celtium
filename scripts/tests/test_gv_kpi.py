@@ -205,5 +205,32 @@ class KpiTests(unittest.TestCase):
             with self.assertRaises(kpi.KpiError): kpi.inputs(stage, reference)
 
 
+class FreePackCopyTests(unittest.TestCase):
+    def test_pack_copy_goes_and_reports_stay(self):
+        import os
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp)
+            for name in ("mods", "cache", "logs", "screenshots"):
+                (game / name).mkdir()
+                (game / name / "f").write_text("x")
+            with patch.dict(os.environ, {"CELTIUM_KPI_KEEP_PACK": ""}):
+                kpi.free_pack_copy(game)
+            self.assertFalse((game / "mods").exists())
+            self.assertFalse((game / "cache").exists())
+            self.assertTrue((game / "logs/f").exists())
+            self.assertTrue((game / "screenshots/f").exists())
+
+    def test_keep_switch(self):
+        import os
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp)
+            (game / "mods").mkdir()
+            with patch.dict(os.environ, {"CELTIUM_KPI_KEEP_PACK": "1"}):
+                kpi.free_pack_copy(game)
+            self.assertTrue((game / "mods").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

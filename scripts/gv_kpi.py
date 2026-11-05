@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import time
 from pathlib import Path
 import re
@@ -192,6 +193,18 @@ def cpu_snapshot() -> dict:
             "children": times.children_user + times.children_system, "wall": time.monotonic()}
 
 
+PACK_COPY_DIRS = ("mods", "cache", "vintagefix", "saves", "resourcepacks")
+
+
+def free_pack_copy(game: Path) -> None:
+    """Drop a finished leg's copied pack once its report is read: ~0.9 GB a leg, and a 10-leg A/B pair filled the disk
+    mid-run (l9bbatch, [Errno 28]). Logs, screenshots and the reports stay. CELTIUM_KPI_KEEP_PACK=1 keeps it."""
+    if os.environ.get("CELTIUM_KPI_KEEP_PACK") == "1":
+        return
+    for name in PACK_COPY_DIRS:
+        shutil.rmtree(game / name, ignore_errors=True)
+
+
 def busy_cores(seconds: float) -> float:
     """The cores busy machine-wide over a sample of the given length."""
     start = cpu_snapshot()
@@ -304,6 +317,7 @@ def main(argv: list[str]) -> int:
                                  "control" if name == "control" else None)
             metric["leg"] = plan.leg
             pair[name] = metric
+            free_pack_copy(plan.paths["game"])
             print(f"{plan.leg}: warm p50={metric['p50Ms']:.3f}ms p95={metric['p95Ms']:.3f}ms p99={metric['p99Ms']:.3f}ms "
                   f"samples={metric['samples']} renderer={metric['rendererSha256']}", flush=True)
         if not arm_only and "celeritas" in pair:
