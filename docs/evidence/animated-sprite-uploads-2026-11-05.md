@@ -305,3 +305,8 @@ Celeritas is elsewhere in the GUI path (the window flush the font-run submission
 each crosses 1: AMD pair 2's Celeritas p99 was 5.121 ms against 5.59-6.34 in its other pairs, and Intel pair 2's
 Celtium run was slow throughout (p50 3.699 vs 3.31-3.38). Both are single-arm excursions; more pairs or a quieter
 machine decide whether the every-pair condition holds.
+
+Second AMD run on r107 (`l28kpi-amd`, 06:09-06:28, 3 pairs, PASSED): **p50 0.918, p95 0.905, p99 0.991**; per-pair p99
+0.991 / 0.942 / 1.058 (pair 3's Celeritas p99 5.386 ms, its other pairs 5.73-6.09). Across the two runs (6 pairs) the
+p99 ratios are 0.924, 1.121, 0.993, 0.991, 0.942, 1.058: median 0.99, with single pairs straying ±6-12%. The p50/p95
+lead is clear; at p99 the build is at parity and the every-pair condition is decided by per-pair noise.
