@@ -253,3 +253,11 @@ legs' own counter: `stateKeyCache` hits 33.0/33.2/32.8/32.6/33.2% (r101) vs 29.1
 x2.4); CreativeCore overlay 54 vs 19; `runTick` 139 vs 158; `TextureMap.updateAnimations` 11 vs 11; the fixture's
 counter reads 3 (the handle fix holds). Same shape as AMD - the extra time is GUI drawing, not the tick - with a
 smaller HUD factor, consistent with the window flush's driver cost being the part that differs between RADV and ANV.
+
+## Why the offer-key cache misses (`l18miss-amd`, renderer `5a5907d0…` = 855c18763, world-accept, warm flags, PASSED)
+
+`stateKeyCache=hit461505/1372779[invalid=9 state=1372770 env=0 window=0 sameKey=922517]` at run end: **every miss is
+a stateVersion move, and 67% of them recompute the key the slot already held**. The two lighting setters still moved
+the version on a repeated value (lightingEnabled bumped it and the light generation every call; lightEnabled bumped it
+for an unchanged mask and for lights the mirror does not keep) - fixed in ba8d6c3a9; `l19miss-amd` and the r104-vs-r101
+A/B `l20light` measure what is left.
