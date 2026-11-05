@@ -286,3 +286,10 @@ value-keyed cache - a packed state word kept by the setters - rather than a vers
 
 goalCondition NOT_MET (it needs every percentile below 1 in every pair), but AMD p99 moved from 1.033 (n3, evening)
 to within 1% in every pair, and AMD p95 from 1.028 to 0.927.
+
+## Value-keyed hits (8ab706c74): r106 vs r105, 5 pairs (`l25value`, 2026-11-06 04:31-05:02, all PASSED)
+
+Census `l24miss-amd`: `hit1565706/501134[… sameKey=0 …]` - hit rate **51% -> 76%**, no miss recomputes the slot's key
+any more. Speed (r106/r105): p50 1.004, p95 1.000, p99 0.996, tick frame 0.994 - **no measurable change**. After r105
+the key misses no longer cost frame time; this line of work stops here (kept, harmless). The remaining gap to
+Celeritas is elsewhere in the GUI path (the window flush the font-run submissions trigger, per the profiles above).
