@@ -325,3 +325,7 @@ window's begin edge, i.e. ticks ~300-400): 464 `jdk.Deoptimization` events, **no
 code** - they sit in Minecraft's world/NBT code, imageio, JEI's still-running startup, Scala and Guava (mods' own
 background work after the join). So the extra C2 time is not a deopt/recompile cycle in the renderer; not a lead.
 `delay` for a JFR aligned to the warm window on this profile is ~125 s, not 115.
+
+`d489d5c9c` (bulk copy, then positions, in `copyVerticesTransformed`): picture leg `l31pic-amd` PASSED, validation 0;
+A/B `l32copy` r108 vs r107, 5 pairs: p50 1.006, p95 1.012, p99 1.005, tick frame 1.000 - no change in frame time
+although the profile put 18% of the accept path in that loop. Kept (same bytes, simpler).
