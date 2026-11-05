@@ -66,6 +66,15 @@ public abstract class RenderSectionManager {
 
     /** Whether to print the build-flow line, which says who fills the queues and how fast they drain. */
     private static final boolean BUILD_FLOW_LOG = Boolean.getBoolean("celtium.debug.buildFlow");
+    /**
+     * Whether {@code celtium$queueMeshUpdates} also queues pending sections the visibility search did not reach.
+     * The search already queues the visible ones, nearest first (upstream behaviour); this extra producer builds the
+     * hidden ones as well. Measured 2026-11-05 (wall profile r69prof, warm ticks): Celtium's client thread spent
+     * ~2% in submitRebuildTasks/WorldSlice.prepare plus worker wake-ups while Celeritas submitted no rebuild at all.
+     * {@code -Dceltium.terrain.queueHiddenPending=false} measures the upstream rule.
+     */
+    private static final boolean QUEUE_HIDDEN_PENDING =
+            !"false".equals(System.getProperty("celtium.terrain.queueHiddenPending"));
     private static int buildFlowLines;
 
     /**
@@ -664,6 +673,12 @@ public abstract class RenderSectionManager {
 
     private void celtium$queueMeshUpdates() {
         // Nothing pending means nothing to queue: asked before the membership sets below are built over every queue.
+        if (!QUEUE_HIDDEN_PENDING) {
+            // The search's own lists carry the visible sections; the candidate set is only this producer's state, so
+            // it is dropped rather than left to collect disposed sections.
+            this.celtiumPendingMeshUpdates.clear();
+            return;
+        }
         if (this.celtiumPendingMeshUpdates.isEmpty()) {
             return;
         }
