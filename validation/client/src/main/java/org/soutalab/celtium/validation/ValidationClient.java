@@ -7622,7 +7622,23 @@ public final class ValidationClient {
             celtium$requestFinish(mc);
         } catch (Throwable error) {
             fail(mc, error);
+            // The renderer's own fail-closed stop is the game's to handle, as it is for a player: absorbed here, the
+            // run idled to its time limit because the integrated server was parked on Forge's missing-registry prompt
+            // and the clean shutdown waited on it (r87-norenderer). Recorded above, then handed to the crash path.
+            if (celtium$isRendererStartFailure(error)) {
+                throw error instanceof RuntimeException runtime ? runtime : new IllegalStateException(error);
+            }
         }
+    }
+
+    private static boolean celtium$isRendererStartFailure(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            String message = cause.getMessage();
+            if (message != null && message.startsWith("Celtium could not start the Vulkan renderer")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private double percentile(double fraction) {

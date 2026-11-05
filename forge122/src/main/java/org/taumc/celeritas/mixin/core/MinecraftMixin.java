@@ -470,10 +470,20 @@ public class MinecraftMixin {
         // attempt fails produces an endless black screen and a deceptively successful exit.
         // Terminate with an actionable crash report after the bounded retry window.
         if (celtium$windowRendererAttempts >= celtium$WINDOW_RENDERER_ATTEMPTS) {
-            throw new IllegalStateException("Celtium could not start the Vulkan renderer after "
+            IllegalStateException failure = new IllegalStateException("Celtium could not start the Vulkan renderer after "
                     + celtium$windowRendererAttempts + " attempts. Last failure: "
                     + celtium$windowRendererLastFailure
                     + ". Check the Vulkan driver and Celtium's bundled LWJGL Vulkan bindings.");
+            // Reported here rather than left to the main loop's catch: that catch unloads the world first, and when
+            // the integrated server is parked on Forge's startup query (a save written with missing mods) the unload
+            // waits on it forever - r88-norenderer hung after the throw with no report. displayCrashReport saves the
+            // report and exits through Forge's handleExit without touching the server.
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+            if (mc != null) {
+                mc.displayCrashReport(net.minecraft.crash.CrashReport.makeCrashReport(failure,
+                        "Celtium could not start its Vulkan renderer"));
+            }
+            throw failure;
         }
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
         // The saved VSync option is pushed once, here, before anything creates a swapchain: the option page's setter
@@ -564,6 +574,12 @@ public class MinecraftMixin {
 
     @Inject(method = "func_175601_h", at = @At("HEAD"), require = 0)
     private void celtium$presentAtSwapPoint(CallbackInfo ci) {
+        // The bounded retry-then-crash also runs here, outside the try below (which would swallow its throw): modal
+        // loops draw frames without running runTick. Measured (r86-norenderer: a renderer that cannot be created, on a
+        // save that stops at Forge's missing-registry prompt): two attempts, then the prompt's loop kept drawing
+        // refused frames for the whole leg and the game never stopped - a black window waiting on a question nobody
+        // can see. After a successful creation this is one latched return.
+        celtium$ensureWindowRenderer();
         celtium$swapPointCalls++;
         if (celtium$swapPointCalls <= 3 || celtium$swapPointCalls % 300 == 0) {
             System.out.println("[Celtium] CELTIUM_SWAPPOINT calls=" + celtium$swapPointCalls);
