@@ -69,6 +69,45 @@ public abstract class EntityRendererMixin {
         org.soutalab.celtium.vulkan.FramePassTimings.end("world");
     }
 
+    // The world bracket's sub-parts that no other bracket names (r90split-intel: ~1.5 ms of the tick-frame excess sat in
+    // the world pass outside every named bracket). updateLightmap, getMouseOver and renderWorldPass are the three calls
+    // renderWorld makes; the lightmap is dirtied by every client tick.
+    @Inject(method = "func_78472_g", at = @At("HEAD"), require = 0)
+    private void celtium$lightmapTimedBegin(float partialTicks,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("lightmap");
+    }
+
+    @Inject(method = "func_78472_g", at = @At("RETURN"), require = 0)
+    private void celtium$lightmapTimedEnd(float partialTicks,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("lightmap");
+    }
+
+    @Inject(method = "func_78473_a", at = @At("HEAD"), require = 0)
+    private void celtium$mouseOverTimedBegin(float partialTicks,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("mouseOver");
+    }
+
+    @Inject(method = "func_78473_a", at = @At("RETURN"), require = 0)
+    private void celtium$mouseOverTimedEnd(float partialTicks,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("mouseOver");
+    }
+
+    @Inject(method = "func_175068_a", at = @At("HEAD"), require = 0)
+    private void celtium$worldPassInnerTimedBegin(int pass, float partialTicks, long finishTimeNano,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("worldPass");
+    }
+
+    @Inject(method = "func_175068_a", at = @At("RETURN"), require = 0)
+    private void celtium$worldPassInnerTimedEnd(int pass, float partialTicks, long finishTimeNano,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("worldPass");
+    }
+
     @Inject(method = "func_78476_b", at = @At("HEAD"), require = 0)
     private void celtium$handPassTimedBegin(float partialTicks, int pass,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {

@@ -43,7 +43,7 @@ public final class FramePassTimings {
      * begin through pipeline bind) - recordPrepare ran ~70-85% of record on both GPUs, and these three names say
      * which of its driver-visible calls owns that.
      */
-    private static final String[] INSIDE = {"entities", "particles", "present", "flush", "terrain", "chunkUpload",
+    private static final String[] INSIDE = {"lightmap", "mouseOver", "worldPass", "entities", "particles", "present", "flush", "terrain", "chunkUpload",
             "setupTerrain", "stGraph", "stEvents", "stAsync", "stPrepare", "stUpload", "stUpdate", "stVisible", "stReclaim", "sky", "terrainHandoff", "terrainRecord", "terrainSubmit", "recordPrepare",
             "recordBatch", "prepDescriptors", "prepBarriers", "prepBegin",
             "recBind", "recDraw", "recLoop", "terrainTarget", "terrainSetup", "terrainClose", "terrainPrep", "terrainCapacity", "terrainSharedIndex", "terrainPreflush", "flushCloseGroup",
@@ -164,7 +164,7 @@ public final class FramePassTimings {
      * {@link #TICK_SPLIT_FRAMES} frames as {@code CELTIUM_FRAME_TICK_PASSES}: Intel's warm p99 is the tick frames, and
      * the frame drawn after a tick costs ~0.3 ms more than a plain one - these say which bracket holds it.
      */
-    private static final int TICK_SPLIT_FRAMES = 4000;
+    private static final int TICK_SPLIT_FRAMES = Integer.getInteger("celtium.vulkan.tickSplitFrames", 4000).intValue();
     private static boolean tickSinceLastFrame;
     private static final long[] tickFrameSums = new long[1 + TOP_LEVEL.length + INSIDE.length];
     private static final long[] plainFrameSums = new long[1 + TOP_LEVEL.length + INSIDE.length];
