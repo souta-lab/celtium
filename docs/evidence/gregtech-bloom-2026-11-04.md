@@ -382,3 +382,9 @@ fixture `0e3db0d1…`, `-Dceltium.vulkan.modPrograms=true`, guiScale 3 seeded): 
 renderer jar. 10 `CELTIUM_MOD_PROGRAM_LINKED … compiled=true` (0 `compiled=false`) and 16 `CELTIUM_MOD_PROGRAM_DRAWN`;
 fixture PASSED, validation 0. The expected `CELTIUM_MOD_SHADERC available=true` line does not exist under that name;
 the compile results are the evidence. Still open: the Windows DLL, Intel, and the GL-reference picture comparison.
+
+Windows x64, checked without Windows (2026-11-05, jar built from 1bfb1a028): the jar carries
+`windows/x64/org/lwjgl/shaderc/shaderc.dll` (6,480,896 bytes) at the path LWJGL's SharedLibraryLoader extracts from;
+its SHA-1 `22f6c2c5…` equals `META-INF/windows/x64/org/lwjgl/shaderc/shaderc.dll.sha1`, which the loader compares
+against; `file` reports PE32+ DLL x86-64; its only import is KERNEL32.dll (the C runtime is linked in), so it needs no
+redistributable. Not observed: a load and compile on a Windows machine.
