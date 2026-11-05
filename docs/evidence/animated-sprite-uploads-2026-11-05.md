@@ -319,3 +319,9 @@ Inclusive samples present in both arms (Celtium vs Celeritas, 20 s each): C2 com
 bind flush (`bindFramebuffer` -> `flushImmediateWindow`) - the rejected-three-times area. New lead: **the JIT is still
 compiling in the warm window** on the native arm; whether that is deopt/recompile cycling is being recorded (`l30jit`,
 JFR jdk.Compilation/jdk.Deoptimization over ticks ~400-600).
+
+`l30jit-amd` (r107, JFR `settings=profile` attached 115 s after start; the 12 s it recorded ended just before the warm
+window's begin edge, i.e. ticks ~300-400): 464 `jdk.Deoptimization` events, **none in Celtium, Celeritas or Embeddium
+code** - they sit in Minecraft's world/NBT code, imageio, JEI's still-running startup, Scala and Guava (mods' own
+background work after the join). So the extra C2 time is not a deopt/recompile cycle in the renderer; not a lead.
+`delay` for a JFR aligned to the warm window on this profile is ~125 s, not 115.
