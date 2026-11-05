@@ -67,3 +67,17 @@ Next discriminating test: skip uploads only before the first world frame vs only
 (2.478 vs 2.305), client tick 1.93/1.92/1.92 vs 1.84/1.99/2.09, and the control alone ranged 2.305-2.692 ms across
 reps. Inconclusive in the daytime: the rep-to-rep spread is larger than the effect. Resume on a quiet machine with
 five pairs each of `=load` and `=upload`.
+
+## Intel, same renderer: p50 NOT_SLOWER, the tail is render work on tick frames
+
+`r81intel` (renderer `8aed10f9…` = current behaviour, reference `567dcf8a…`, Intel UHD 630, world-accept, guiScale 3,
+3 pairs, all PASSED): **median paired p50 0.901x NOT_SLOWER**, p95 1.015, p99 1.054, goalCondition NOT_MET.
+
+| rep | p50 Celtium / Celeritas | client tick p50 | tick-frame p50 | plain-frame p99 |
+|---|---|---|---|---|
+| 1 | 3.539 / 3.974 | 2.29 / 2.48 | 6.95 / 6.69 | 6.14 / 6.34 |
+| 2 | 3.415 / 3.600 | 2.24 / 2.35 | 6.58 / 6.47 | 6.18 / 5.70 |
+| 3 | 3.454 / 3.834 | 2.22 / 2.33 | 6.71 / 6.42 | 5.68 / 6.16 |
+
+On Intel Celtium's client tick is *faster* than Celeritas's, yet its tick frames are slower: the excess on tick frames
+is the render that follows the tick, not the tick itself.

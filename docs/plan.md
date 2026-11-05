@@ -52,7 +52,7 @@
      **拒否の内訳**（[証拠](evidence/merge-refusal-census-2026-11-03.md)・round 60 census）: group openの
      **format 交替が63%（2↔6が46%・2↔4が25%）**・texture 33%・**行列は4%だけ**。`s9`=130 nsがmerge述語。
      **窓**: GregTech sceneは23.2/フレームで**13.0がpost chain**（[証拠](evidence/window-sources-2026-11-03.md)）。
-   - **Intel: 未達**（最新 `rel-intel`: p50 0.896・p95 0.872、**p99 1.048**＝3.46 vs 3.30 ms（中央値）。kpi3 1.110→kpi5 1.051→1.048）。
+   - **Intel: 未達**（2026-11-05 `r81intel`: p50 0.901 NOT_SLOWER・p95 1.015・**p99 1.054**。tick 本体は Celeritas より速く、tick frame の描画側が超過、[証拠](evidence/animated-sprite-uploads-2026-11-05.md)）。
      p99帯はtickを含むフレーム（3.5%）。tick本体がCeltiumで~10–15%遅い（vanillaコード全般、固定fpsでも残る）。棄却仮説と計器は[証拠](evidence/intel-p99-2026-10-28.md)。
    - **fps上限が無視されていた**（GL-lessのpaceが表示リフレッシュに固定、120上限→60 fps）→ world内は上限値でpace（`99632d996`、Intel 120/60 PASSED）。
    - 過去の棄却（barrier省略・texture跨ぎmerge・1 submit・glthread）は[証拠](evidence/intel-gap-2026-10-26.md)。
