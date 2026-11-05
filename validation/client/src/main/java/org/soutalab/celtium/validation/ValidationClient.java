@@ -897,6 +897,13 @@ public final class ValidationClient {
      */
     private int celtium$presentedAtWorldStart;
     private int celtium$worldFramesAtWorldStart;
+    /**
+     * The window before the latest restart. A restart that lands after the capture (r76defer-celtium-r1: the server
+     * fell 16 s behind under external load, the client re-received its chunks and the counter dropped 3743 -> 0 at
+     * world frame 3745, one frame after a capture at 3744) does not move the window the picture was taken in.
+     */
+    private int celtium$previousPresentedAtWorldStart;
+    private int celtium$previousWorldFramesAtWorldStart;
     /** How many worlds this run has started: 1 for a plain run, 2 for a quit-to-title and rejoin. */
     private int celtium$worldStarts;
     /** The presented counter at the previous world frame, so a restart is seen as a drop. */
@@ -4876,6 +4883,8 @@ public final class ValidationClient {
             // restart is seen within one frame of happening.
             if (celtium$lastPresentedSample >= 0 && presentedNow < celtium$lastPresentedSample) {
                 celtium$presentedCounterRestarts++;
+                celtium$previousPresentedAtWorldStart = celtium$presentedAtWorldStart;
+                celtium$previousWorldFramesAtWorldStart = celtium$worldFramesAtWorldStart;
                 celtium$presentedAtWorldStart = presentedNow;
                 celtium$worldFramesAtWorldStart = worldFrames;
                 report.addProperty("presentedCounterRestarts", Integer.valueOf(celtium$presentedCounterRestarts));
@@ -11538,8 +11547,16 @@ public final class ValidationClient {
             // The assertion is therefore made inside the window the picture belongs to - the current world, whose start
             // sampled both counters (zero for the first world, so a single-world run compares exactly what it always
             // did) - and the whole-run delta is recorded beside it so the scoping is visible rather than implied.
-            int presentedInWorld = evidence.presentedFrame - celtium$presentedAtWorldStart;
-            int framesInWorld = captureWorldFrames - celtium$worldFramesAtWorldStart;
+            // The window the capture belongs to: a restart recorded after the capture's world frame began a later
+            // window, so the picture is judged in the one before it.
+            boolean restartAfterCapture = celtium$worldFramesAtWorldStart > captureWorldFrames;
+            int windowPresentedStart = restartAfterCapture ? celtium$previousPresentedAtWorldStart
+                    : celtium$presentedAtWorldStart;
+            int windowFramesStart = restartAfterCapture ? celtium$previousWorldFramesAtWorldStart
+                    : celtium$worldFramesAtWorldStart;
+            report.addProperty("pictureRestartAfterCapture_" + stage, Boolean.valueOf(restartAfterCapture));
+            int presentedInWorld = evidence.presentedFrame - windowPresentedStart;
+            int framesInWorld = captureWorldFrames - windowFramesStart;
             int delta = presentedInWorld - framesInWorld;
             int wholeRunDelta = evidence.presentedFrame - captureWorldFrames;
             // This assertion compares the picture's presented frame with the world frames the world drew, which is the
@@ -11566,8 +11583,8 @@ public final class ValidationClient {
             report.addProperty("pictureFrameDeltaWholeRun_" + stage, Integer.valueOf(wholeRunDelta));
             report.addProperty("pictureFrameScope_" + stage, "world window " + (celtium$worldStarts + 1) + ": the"
                     + " picture's frame " + evidence.presentedFrame + " is " + presentedInWorld + " presents into this"
-                    + " world (presented counter " + celtium$presentedAtWorldStart + " at its start), which drew "
-                    + framesInWorld + " frames (worldFrames " + celtium$worldFramesAtWorldStart + " at its start, "
+                    + " world (presented counter " + windowPresentedStart + " at its start), which drew "
+                    + framesInWorld + " frames (worldFrames " + windowFramesStart + " at its start, "
                     + captureWorldFrames + " at the capture); the whole-run delta is " + wholeRunDelta);
             if (Math.abs(delta) > 1) {
                 failures.add("the picture for " + where + " is the frame the renderer presented at "
