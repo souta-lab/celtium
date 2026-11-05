@@ -40,3 +40,25 @@ barrier, one `vkCmdCopyBufferToImage` per mip level with every sprite's region, 
 exact: only levels already in SHADER_READ_ONLY defer; a baseline clear takes the old path; an overlapping region
 flushes first; every submit of the batch records pending regions first; the image's other writers submit them before
 their own commands. Rollback: `-Dceltium.vulkan.deferPatchRegions=false`.
+
+## Correction (same day): in-world sprite animation is not the cost
+
+The deferral (`a565cbf03`) measured no effect either (`r77defer`, ratio 0.988x, tick frames equal) and was reverted
+(`440479bd6`). Then positive controls, which both negative results lacked:
+
+- Engagement (`r79-engage`, deferral code restored with counters, validation on, PASSED, validation 0): over 864
+  animation brackets (one per tick) only **361 patches** were deferred, with no fallback. The bracket worked, but there
+  is under one animated sprite upload per tick in this scene (Celeritas's animate-only-visible filter).
+- Sources (`r79-source`): 17,296 animated uploads in the run, 17,167 to GL texture 83 (block atlas); sampled callers
+  are almost all `TextureMap.finishLoading` <- `ModelManager.onResourceManagerReload`, i.e. resource loading, which
+  ends before the world starts (last reload 14:48:32, join 14:49:40 in `r79-time`).
+- Cost (`r79-time`): in-world announcements timed inside the bracket: **308 calls, 2 ms in total** (worst 242 us).
+
+So the batching and deferral had nothing to act on, and the 59 samples the join-aligned profile put on in-world
+uploads do not match the direct count (that profile's window-to-tick mapping was already shown to be loose).
+
+What remains unexplained: `skipAnimatedUploads=upload` lowered the client tick in all three pairs (`r78upload`:
+1.83/1.70/1.77 vs 1.98/2.00/2.03 ms; ratio 0.943x) and `=all` lowered tick frames (`r75anim`). Both modes also skip the
+~17,000 load-time uploads, so the difference is most likely the texture state that loading leaves behind, not
+per-tick work. `=flush` changed nothing and its counter shows that flush never fires (`r78flush`, 0 in every leg).
+Next discriminating test: skip uploads only before the first world frame vs only after it.
