@@ -58,11 +58,36 @@ class ReplayValueVersionTest {
         stateMoves(state, "alphaFuncReference", () -> state.alphaFuncReference(0.5f));
         stateMoves(state, "alphaTestEnabled", () -> state.alphaTestEnabled(true));
         stateMoves(state, "alphaFunc", () -> state.alphaFunc(VulkanGlState.ALPHA_LESS, 0.3f));
-        stateMoves(state, "cullEnabled", () -> state.cullEnabled(false));
+        stateMoves(state, "cullEnabled", () -> state.cullEnabled(!state.cullEnabled()));
         stateMoves(state, "cullFace", () -> state.cullFace(1028));
         stateMoves(state, "lightingEnabled", () -> state.lightingEnabled(true));
         stateMoves(state, "lightEnabled", () -> state.lightEnabled(0, true));
         stateMoves(state, "color", () -> state.color(0.25f, 0.5f, 0.75f, 0.5f));
+    }
+
+    /** An unchanged value is not a mutation: the GUI repeats colours and flags around nearly every draw. */
+    @Test void anUnchangedValueMovesNoVersion() {
+        VulkanGlState state = new VulkanGlState();
+        state.color(0.25f, 0.5f, 0.75f, 0.5f);
+        state.alphaTestEnabled(true);
+        state.alphaFunc(VulkanGlState.ALPHA_LESS, 0.3f);
+        state.depthMask(false);
+        state.blendEnabled(true);
+        state.blendFunc(VulkanGlState.BLEND_ONE, VulkanGlState.BLEND_ZERO, VulkanGlState.BLEND_ONE,
+                VulkanGlState.BLEND_ZERO);
+        long version = state.stateVersion();
+        state.color(0.25f, 0.5f, 0.75f, 0.5f);
+        state.alphaTestEnabled(true);
+        state.alphaFunc(VulkanGlState.ALPHA_LESS, 0.3f);
+        state.alphaFuncReference(0.3f);
+        state.depthMask(false);
+        state.blendEnabled(true);
+        state.blendFunc(VulkanGlState.BLEND_ONE, VulkanGlState.BLEND_ZERO, VulkanGlState.BLEND_ONE,
+                VulkanGlState.BLEND_ZERO);
+        state.cullEnabled(state.cullEnabled());
+        assertEquals(version, state.stateVersion());
+        state.color(0.25f, 0.5f, 0.75f, 0.25f);
+        assertTrue(state.stateVersion() > version, "a changed colour still moves it");
     }
 
     @Test void aModelviewEditMovesNoVersionAtAll() {

@@ -483,6 +483,9 @@ public final class VulkanGlState {
     }
 
     public void blendEnabled(boolean enabled) {
+        if (this.raster.blendEnabled() == enabled) {
+            return;
+        }
         this.raster.blendEnabled(enabled);
         noteStateMutation();
     }
@@ -500,7 +503,7 @@ public final class VulkanGlState {
 
     public void blendFunc(int srcRgb, int dstRgb, int srcAlpha, int dstAlpha) {
         this.raster.blendFunc(srcRgb, dstRgb, srcAlpha, dstAlpha);
-        noteStateMutation();
+        // No bump of our own: stateVersion() adds raster.version(), which moves exactly when the raster value changes.
     }
 
     public int blendSrcRgb() {
@@ -537,7 +540,7 @@ public final class VulkanGlState {
 
     public void blendEquation(int rgb, int alpha) {
         this.raster.blendEquation(rgb, alpha);
-        noteStateMutation();
+        // No bump of our own: stateVersion() adds raster.version(), which moves exactly when the raster value changes.
     }
 
     /**
@@ -554,7 +557,7 @@ public final class VulkanGlState {
 
     public void colorMask(int mask) {
         this.raster.colorMask(mask);
-        noteStateMutation();
+        // No bump of our own: stateVersion() adds raster.version(), which moves exactly when the raster value changes.
     }
 
     public boolean depthTestEnabled() {
@@ -562,6 +565,9 @@ public final class VulkanGlState {
     }
 
     public void depthTestEnabled(boolean enabled) {
+        if (this.depthTestEnabled == enabled) {
+            return;
+        }
         this.depthTestEnabled = enabled;
         noteStateMutation();
     }
@@ -571,6 +577,9 @@ public final class VulkanGlState {
     }
 
     public void depthFunc(int func) {
+        if (this.depthFunc == func) {
+            return;
+        }
         this.depthFunc = func;
         noteStateMutation();
     }
@@ -580,12 +589,18 @@ public final class VulkanGlState {
     }
 
     public void depthMask(boolean mask) {
+        if (this.depthMask == mask) {
+            return;
+        }
         this.depthMask = mask;
         noteStateMutation();
     }
 
     /** The reference value of the alpha test, as the fragment shader compares against it. */
     public void alphaFuncReference(float reference) {
+        if (this.alphaFuncReference == reference) {
+            return;
+        }
         this.alphaFuncReference = reference;
         noteStateMutation();
     }
@@ -599,6 +614,9 @@ public final class VulkanGlState {
     }
 
     public void cullEnabled(boolean enabled) {
+        if (this.raster.cullEnabled() == enabled) {
+            return;
+        }
         this.raster.cullEnabled(enabled);
         noteStateMutation();
     }
@@ -609,7 +627,7 @@ public final class VulkanGlState {
 
     public void cullFace(int face) {
         this.raster.cullFace(face);
-        noteStateMutation();
+        // No bump of our own: stateVersion() adds raster.version(), which moves exactly when the raster value changes.
     }
 
     public int frontFace() {
@@ -618,7 +636,7 @@ public final class VulkanGlState {
 
     public void frontFace(int face) {
         this.raster.frontFace(face);
-        noteStateMutation();
+        // No bump of our own: stateVersion() adds raster.version(), which moves exactly when the raster value changes.
     }
 
     /**
@@ -636,6 +654,9 @@ public final class VulkanGlState {
     }
 
     public void alphaTestEnabled(boolean enabled) {
+        if (this.alphaTestEnabled == enabled) {
+            return;
+        }
         this.alphaTestEnabled = enabled;
         noteStateMutation();
     }
@@ -659,6 +680,9 @@ public final class VulkanGlState {
      * diverge again while the callers of the older accessor still work.
      */
     public void alphaFunc(int func, float reference) {
+        if (this.alphaFunc == func && this.alphaRef == reference && this.alphaFuncReference == reference) {
+            return;
+        }
         this.alphaFunc = func;
         this.alphaRef = reference;
         this.alphaFuncReference = reference;
@@ -973,6 +997,11 @@ public final class VulkanGlState {
     }
 
     public void color(float red, float green, float blue, float alpha) {
+        // An unchanged value is not a mutation: stateVersion gates the offer-key and replay caches, and the GUI sets
+        // the same colour around nearly every draw (the warm-window profile, l6prof).
+        if (this.colorRed == red && this.colorGreen == green && this.colorBlue == blue && this.colorAlpha == alpha) {
+            return;
+        }
         this.colorRed = red;
         this.colorGreen = green;
         this.colorBlue = blue;
