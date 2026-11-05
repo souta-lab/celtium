@@ -45,3 +45,15 @@ world-accept) PASSED, gpuRequirementMet=true, validation 0, 17 listed sections; 
 
 Not established yet: E2E (heavy pack, night) where the producer was last needed for the far floor; pop-in when
 turning onto hidden sections (they now build when the search reaches them, as in Celeritas).
+
+## KPI against Celeritas on the new default: disturbed, not a verdict
+
+`r72kpi` (renderer `ae276acd…`, reference `567dcf8a…`, same profile as round 67): median paired ratio 1.166x, but rep 1's
+Celtium leg (3.284 ms, p99 16.7, 2414 samples) ran while this session built the next jar with Gradle, and the reps
+spread from 1.42 to 0.94 (rep 3: Celtium 2.208 vs Celeritas 2.359). Not used as the current judgment; to be re-run
+with the machine idle.
+
+The join-aligned profile (r69prof) also caught the fixture's own PNG writes and reads on Celtium's client thread
+(presented-image dump, picture hashing): its 9 s window ran past world tick 600 into the end-of-run picture work, so
+wall-time-since-join does not map exactly onto ticks. In the KPI legs both arms capture before tick 400 (Celtium 288,
+Celeritas 310/342), so the measured ticks 400..600 do not contain it.
