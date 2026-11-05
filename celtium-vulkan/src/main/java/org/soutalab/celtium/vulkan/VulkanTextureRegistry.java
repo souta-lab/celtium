@@ -1190,14 +1190,16 @@ public final class VulkanTextureRegistry {
         int[] texels = data != null && level >= 0 && level < data.length && data[level] != null ? data[level]
                 : new int[0];
         int written = 0;
+        // One int per texel in the buffer's own byte order, laid out so the bytes land as R, G, B, A - the same four
+        // bytes the per-byte puts wrote, at a quarter of the checked calls.
+        boolean little = out.order() == java.nio.ByteOrder.LITTLE_ENDIAN;
         for (int row = 0; row < height; row++) {
             for (int col = 0; col < width; col++) {
                 int texel = row * width + col;
                 int argb = texel < texels.length ? texels[texel] : 0;
-                out.put((byte) ((argb >> 16) & 0xFF));
-                out.put((byte) ((argb >> 8) & 0xFF));
-                out.put((byte) (argb & 0xFF));
-                out.put((byte) ((argb >>> 24) & 0xFF));
+                int rgba = ((argb >> 16) & 0xFF) << 24 | ((argb >> 8) & 0xFF) << 16 | (argb & 0xFF) << 8
+                        | ((argb >>> 24) & 0xFF);
+                out.putInt(little ? Integer.reverseBytes(rgba) : rgba);
                 written++;
             }
         }
@@ -1343,7 +1345,7 @@ public final class VulkanTextureRegistry {
             for (int level = 0; level < appliedLevels; level++) {
                 int levelWidth = width >> level;
                 int levelHeight = height >> level;
-                java.nio.ByteBuffer buffer = org.lwjgl.system.MemoryUtil.memAlloc(levelWidth * levelHeight * 4);
+                java.nio.ByteBuffer buffer = announceScratch(level, levelWidth * levelHeight * 4);
                 levelBytes[level] = buffer;
                 // The array the animation method passes is int[mipLevel][y * width + x], not an array of rows. The first
                 // index is the mip level and the second is the flat texel index, so level 0 is the whole patch and the
@@ -1385,13 +1387,32 @@ public final class VulkanTextureRegistry {
             this.lastFailure = "announced pixels for GL texture " + glTextureId + ": " + error;
             this.rejectPatch("conversion or upload failed: " + error);
             return false;
-        } finally {
-            for (java.nio.ByteBuffer buffer : levelBytes) {
-                if (buffer != null) {
-                    org.lwjgl.system.MemoryUtil.memFree(buffer);
-                }
-            }
         }
+    }
+
+    /**
+     * Per-level conversion buffers for {@link #announceFullPixels}, reused: the light map announces every tick and each
+     * animated sprite every frame change, and each call used to allocate and free a native buffer per level. The
+     * consumers (the hash, the staging copy, the source note) read the buffer before the call returns and keep no
+     * reference, so one buffer per level serves every call. Limited to the call's own byte count each time.
+     */
+    private java.nio.ByteBuffer[] announceScratch = new java.nio.ByteBuffer[0];
+
+    private java.nio.ByteBuffer announceScratch(int level, int bytes) {
+        if (level >= this.announceScratch.length) {
+            this.announceScratch = java.util.Arrays.copyOf(this.announceScratch, level + 1);
+        }
+        java.nio.ByteBuffer buffer = this.announceScratch[level];
+        if (buffer == null || buffer.capacity() < bytes) {
+            if (buffer != null) {
+                org.lwjgl.system.MemoryUtil.memFree(buffer);
+            }
+            buffer = org.lwjgl.system.MemoryUtil.memAlloc(Math.max(bytes, 1));
+            this.announceScratch[level] = buffer;
+        }
+        buffer.clear();
+        buffer.limit(bytes);
+        return buffer;
     }
 
     /**
@@ -2367,6 +2388,12 @@ public final class VulkanTextureRegistry {
     }
 
     public void delete() {
+        for (int i = 0; i < this.announceScratch.length; i++) {
+            if (this.announceScratch[i] != null) {
+                org.lwjgl.system.MemoryUtil.memFree(this.announceScratch[i]);
+                this.announceScratch[i] = null;
+            }
+        }
         for (Entry entry : this.entries.values()) {
             celtium$noteLargeRemoval(entry.glId, entry, "registry deleted");
             entry.texture.delete();
