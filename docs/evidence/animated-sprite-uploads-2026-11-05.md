@@ -228,3 +228,15 @@ Breakdown (rep 1):
 
 Changes queued from this: the per-tick animation batch restored (a565cbf03 via revert of 440479bd6, switches
 `batchAnimationUploads` / `deferPatchRegions`), A/B `l9batch`; window-flush threshold 32768 vs 8192, A/B `l10flush`.
+
+## Same-jar A/Bs on r100 (renderer `82f20d80…`, AMD, world-accept, guiScale 3, 2026-11-06 00:54-01:46)
+
+| A/B | candidate / control | pairs | p50 | p95 | p99 | tick frame p50 |
+|---|---|---|---|---|---|---|
+| `l10flush` | `immediateFlushIndices=32768` / 8192 | 4 (pair 5's control stopped mid-load) | 0.941 | 0.937 | 1.001 | 0.993 |
+| `l9bbatch` | `batchAnimationUploads=false` / batching on | 3 (disk full at pair 4) | 0.982 | 1.027 | 0.981 | 1.028 |
+
+Per-pair ratios spread 0.88-1.06 (flush) and the control arm itself moved 2.07-2.55 ms, so neither is settled:
+the larger flush threshold leans toward a p50/p95 gain, and the animation batch toward ~3% on tick frames only.
+The batch stays on by default (it was measured as behaviour-identical before, and is aimed by the profile); the
+threshold stays 8192 until a quieter or longer A/B. `stateKeyCache` hit rate in these legs: ~29% (r100).
