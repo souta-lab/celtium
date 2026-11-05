@@ -155,7 +155,7 @@ class LegRunnerTests(unittest.TestCase):
         (self.root / "scripts/prism_validation.py").write_text(FAKE_HARNESS)
         (self.root / "scripts/headless_wayland.py").write_text("# fake helper, never imported\n")
         (self.root / ".gv-verify/lib").mkdir(parents=True)
-        (self.root / ".gv-verify/lib/lwjgl-vulkan-3.4.1.jar").write_bytes(b"test-library")
+        (self.root / ".gv-verify/lib/lwjgl-vulkan-3.4.3.jar").write_bytes(b"test-library")
         self.jars = self.root / "jars with spaces"
         self.jars.mkdir()
         (self.jars / "celtium-forge-mc1.12.2-test.jar").write_bytes(b"test-renderer")
@@ -288,15 +288,15 @@ class LegRunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(runner.LegError, "missing directory"):
                 self.plan()
         # Real incomplete fixtures, not a mock that bypasses all file checks.
-        for missing in ("headless_wayland.py", "lwjgl-vulkan-3.4.1.jar"):
+        for missing in ("headless_wayland.py", "lwjgl-vulkan-3.4.3.jar"):
             incomplete = self.root / missing
             (incomplete / "scripts").mkdir(parents=True)
             (incomplete / ".gv-verify/lib").mkdir(parents=True)
             (incomplete / "scripts/prism_validation.py").write_text(FAKE_HARNESS)
             if missing != "headless_wayland.py":
                 (incomplete / "scripts/headless_wayland.py").write_text("# fake")
-            if missing != "lwjgl-vulkan-3.4.1.jar":
-                (incomplete / ".gv-verify/lib/lwjgl-vulkan-3.4.1.jar").write_bytes(b"fake")
+            if missing != "lwjgl-vulkan-3.4.3.jar":
+                (incomplete / ".gv-verify/lib/lwjgl-vulkan-3.4.3.jar").write_bytes(b"fake")
             with self.subTest(missing=missing), self.assertRaisesRegex(runner.LegError, "missing file"):
                 runner.make_plan("missing", self.jars, "plain", "amd", 1, [], root=incomplete)
         self.assertFalse((self.root / ".gv-verify/test.out").exists())

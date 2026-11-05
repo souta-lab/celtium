@@ -257,8 +257,10 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
     harness = require_file(root / "scripts/prism_validation.py")
     headless = require_file(root / "scripts/headless_wayland.py")
     # The Vulkan bindings jar must be the LWJGL version the instance actually runs: Cleanroom 0.7 ships 3.4.3 and
-    # exposes no GL, while 0.6 ships 3.4.1. The default is the version the validated 0.6 cohort uses.
-    library = require_file(Path(os.environ.get("CELTIUM_LEG_LWJGL_VULKAN", str(gv / "lib/lwjgl-vulkan-3.4.1.jar"))))
+    # exposes no GL, while 0.6 ships 3.4.1. The default is 3.4.3: Celtium refuses 0.6 hosts, and with a 3.4.1 binding a
+    # 0.7 instance that does not ship its own (cleanroom-0.7.11-alpha, leg r71-light-amd) never created the renderer -
+    # validation needs VkDebugUtilsMessengerCallbackEXTI - and timed out with MISSING_REPORT.
+    library = require_file(Path(os.environ.get("CELTIUM_LEG_LWJGL_VULKAN", str(gv / "lib/lwjgl-vulkan-3.4.3.jar"))))
     # Extra classpath jars for one leg, for features whose bindings the validated installation does not ship yet (the
     # in-process GLSL compiler is the first): `CELTIUM_LEG_EXTRA_LIBS` is a colon-separated list, kept out of the
     # standard set so a normal leg's classpath stays exactly what the product would have.
