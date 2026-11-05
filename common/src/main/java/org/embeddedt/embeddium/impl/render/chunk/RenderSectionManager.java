@@ -71,10 +71,13 @@ public abstract class RenderSectionManager {
      * The search already queues the visible ones, nearest first (upstream behaviour); this extra producer builds the
      * hidden ones as well. Measured 2026-11-05 (wall profile r69prof, warm ticks): Celtium's client thread spent
      * ~2% in submitRebuildTasks/WorldSlice.prepare plus worker wake-ups while Celeritas submitted no rebuild at all.
-     * {@code -Dceltium.terrain.queueHiddenPending=false} measures the upstream rule.
+     * Off by default since r70hidden (paired, same jar d9d3844c, AMD world-accept, 3 reps, all PASSED with 17 listed
+     * sections): warm p50 2.483/2.413/2.468 ms off against 2.857/2.637/2.483 on, median control ratio 0.915x.
+     * {@code -Dceltium.terrain.queueHiddenPending=true} restores it, for the case it was added for (queues that the
+     * search never fed: leg gv-cohort-rl2 read P0=P1=P2=0 with real chunk data).
      */
     private static final boolean QUEUE_HIDDEN_PENDING =
-            !"false".equals(System.getProperty("celtium.terrain.queueHiddenPending"));
+            Boolean.getBoolean("celtium.terrain.queueHiddenPending");
     private static int buildFlowLines;
 
     /**
