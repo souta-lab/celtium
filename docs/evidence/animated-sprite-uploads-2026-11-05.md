@@ -140,7 +140,14 @@ ones: the per-tick lightmap re-upload). ~250 us of the world-pass excess is stil
 - `=upload` lowers the client tick again (median 1.74 vs 1.98 ms; 4 of 5 pairs, and 3 of 3 in r78upload). The frame
   ratio went the other way (1.035x), but that half ran under user load (load average 4.9, candidate r3 p99 14.3 ms),
   so it is not read as a frame-time result.
-- Since `=load` does nothing, the tick difference comes from in-world calls of the mirror update, which conflicts with
-  the r79-time count (308 calls, 2 ms). `animatedImageFills` cannot settle it: it also counts whole-texture int[]
-  uploads (lightmap, per-frame mod textures). Next: the in-world-only counter `inWorldAnimMirror=<calls>/<us>/worst`
-  in the backend stats line, on one leg.
+- The registry's own cost line answers the count: at fixture end the control legs report `patches=17041/62769252B/
+  547ms` (r1) and `/510ms` (r2) - the whole run's sprite patches, i.e. the ~17,300 load-time ones of r79-source, so
+  in-world patches stay in the hundreds and r79-time's 308 calls / 2 ms stands. (`animatedImageFills`, 17,049 -> 23,107
+  over the world, is not that count: it also counts whole-texture int[] uploads such as the lightmap and per-frame mod
+  textures.) In-world mirror work therefore cannot carry 0.24 ms per tick.
+- What `=upload` changes besides that: load-time patches are dropped too, so the block atlas mirror is never filled
+  from patches (`patches=0/0B` in candidate legs) and every later announcement meets a different registry state.
+  `=load` drops the same load-time patches but runs the in-world path, and showed nothing. The two sets ran at
+  different machine load (control medians 1.83 vs 1.98 ms), so the 0.24 ms is also within the set-to-set spread.
+  Status: unexplained, possibly not real; not a lead for the p99 tail. The counter `inWorldAnimMirror=<calls>/<us>/
+  worst` (e68601a76) confirms the in-world count on the next leg.
