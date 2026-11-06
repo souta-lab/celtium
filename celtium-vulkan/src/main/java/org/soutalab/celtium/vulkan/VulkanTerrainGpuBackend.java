@@ -1434,6 +1434,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * 268-mod E2E leg: 146 presents against 153 world frames).
      */
     private int presentSkips;
+    /** {@link #presentSkips} split by the gate that returned: no target/stalled, no swapchain, no completed frame,
+     * target unavailable. Printed on the CELTIUM_PRESENT heartbeat, so a long run of skips names its gate. */
+    private final int[] presentSkipsByReason = new int[4];
     private int presentFailures;
     /** Frame composites left to the present path because Vulkan had already shown the frame. */
     private int glCompositesSkipped;
@@ -17218,11 +17221,15 @@ this.frameBufferOpen = false;
                     + " failures=" + this.presentFailures + " swapsSkipped=" + this.glSwapsSkipped
                     + " drainFailures=" + this.presentFlushFailures
                     + " waiting=" + this.lastFrameReachedQueue + " lastSkip=[" + this.presentSkipReason
-                    + "] lastResult=[" + this.lastPresentResult + "]");
+                    + "] lastResult=[" + this.lastPresentResult + "] skipsByReason=[noTarget/stalled="
+                    + this.presentSkipsByReason[0] + " noSwapchain=" + this.presentSkipsByReason[1]
+                    + " noCompletedFrame=" + this.presentSkipsByReason[2] + " targetUnavailable="
+                    + this.presentSkipsByReason[3] + "]");
         }
         if (this.frameTarget == null || this.gpuStalled) {
             this.presentSkipReason = "no frame target, or stalled";
             this.presentSkips++;
+            this.presentSkipsByReason[0]++;
             return false;
         }
         if (!ensureSwapchain()) {
@@ -17230,6 +17237,7 @@ this.frameBufferOpen = false;
             // this" is what that method's own contract says, and this is the second caller it was written for.
             this.presentSkipReason = "swapchain unavailable";
             this.presentSkips++;
+            this.presentSkipsByReason[1]++;
             return false;
         }
         // GL's updateDisplay presents everything drawn since the last swap, but this renderer defers immediate
@@ -17259,6 +17267,7 @@ this.frameBufferOpen = false;
         if (!this.lastFrameReachedQueue) {
             this.presentSkipReason = "no completed frame waiting";
             this.presentSkips++;
+            this.presentSkipsByReason[2]++;
             // No completed frame's content is waiting in the shared image. frameSubmitReachedQueue cannot be used here:
             // it is cleared when the next frame begins, and this call happens after that.
             return false;
@@ -17282,6 +17291,7 @@ this.frameBufferOpen = false;
             if (!ensureFrameTarget()) {
                 this.presentSkipReason = "frame target not available";
                 this.presentSkips++;
+                this.presentSkipsByReason[3]++;
                 return false;
             }
             // No beginFrame/endFrame around this any more. The probe needed them because it produced the content itself,
