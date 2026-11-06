@@ -288,7 +288,7 @@ Two separate things, never merged into one claim: **(a) binary/API compatibility
 observed through the offer/accept counters and the absence of Mixin transformation failures - and **(b) actual Vulkan
 drawing** - images compared against GL with a per-configuration noise floor, with validation messages counted as failures.
 A mod that loads and whose calls are accepted is not reported as a mod whose drawing is correct, and the current state of
-both columns is in [the second audit](history/audit-2026-10-09-second.md).
+both columns is in the second audit.
 
 ## Cohort attempt: Storage Drawers 1.12.2-5.5.2 (2026-10-12) — **does not load on this runtime**
 

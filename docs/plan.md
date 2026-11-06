@@ -1,8 +1,8 @@
 # Celtium 現状表（唯一の現在状態表）
 
 2026-11-06 全面改訂。開発ベース **0.2.0**（[build定義](<../build-1122/build.gradle.kts>)）、最新リリース
-[v0.2.0](<releases/0.2.0.md>)（2026-11-04）。製品の出口は [goal.md](<goal.md>)。旧い表と日記は
-[history](<history>) にあり、現在の判定として読み戻さない。
+[v0.2.0](<releases/0.2.0.md>)（2026-11-04）。製品の出口は [goal.md](<goal.md>)。旧い表・日記・証拠は
+git 履歴にあり（2026-11-06 に docs から削除）、現在の判定として読み戻さない。
 
 ## 現状（main・2026-11-06）
 
@@ -12,7 +12,7 @@
 | **E2E-E 1.87.3（≈430 mods）** | **AMD・Intel とも world・validation 0**（fx1）、Xaero raw-FBO identity でも 0（xr1）。0.7.14 用の pack 側置換3件 | [証拠](evidence/e2e-cleanroom07-2026-10-26.md) |
 | **modpack 拡大** | SkyFactory 4 4.2.4 を staging 中（gist の置換適用、preset `sf4`）。動いた pack は [modpacks.md](<modpacks.md>) へ | — |
 | **画質（4画面＋QMAGNET）** | settings 画素一致、world 16階調超 0.97/1.05 %（AMD/Intel）、menu・creative grid・tab icon 一致 | [証拠](evidence/image-quality-2026-10-28.md) |
-| **利用者報告** | パノラマ・エンドポータル・F2・ガラス・残像・退出後ボタン・Xaero（クラッシュ/黒/位置/透け）・ロード画面・F3+T・入室ラグ・移動時の欠け: 修正済み | 各証拠は history |
+| **利用者報告** | パノラマ・エンドポータル・F2・ガラス・残像・退出後ボタン・Xaero（クラッシュ/黒/位置/透け）・ロード画面・F3+T・入室ラグ・移動時の欠け: 修正済み | 各証拠は git 履歴 |
 | **mod自前GLSL** | GTCEu bloom: opt-in（`-Dceltium.vulkan.modPrograms=true`）で native 実行・validation 0、既定は program ごとに拒否・計数。shaderc 同梱 | [証拠](evidence/gregtech-bloom-2026-11-04.md) |
 | **コード整理** | `VulkanTerrainGpuBackend` 22,576 → 21,038 行（IndirectImmediateRuns・ModPrograms・FrameStatsReport・GroupLighting・GroupChange・PixelSignatures・HighlightProbe を分離）、孤立 javadoc 295 件整理 | git log 2026-11-06 |
 

@@ -1,6 +1,6 @@
 # Array-records for ordinary immediate groups: where it stands (2026-11-06)
 
-The structural path named in [fps-session](fps-session-2026-10-31.md) ("array-records for ordinary immediate groups",
+The structural path named in fps-session ("array-records for ordinary immediate groups",
 expected 0.15-0.2 ms of the gap) has its pieces built: a bindless texture array, records shaders, and a record writer
 that stores the texture index. It is opt-in: `-Dceltium.vulkan.indirectImmediate=true -Dceltium.vulkan.arrayRecords=true`.
 
@@ -32,7 +32,7 @@ Until (1)-(3) hold, the switches only add work; they stay off.
   the layout after taking the write address. Fixed; the default-flags picture leg `l37pic-amd` PASSED, validation 0.
 - With all switches on (`l36arr-amd`, r110 `b650af93`): `stride` breaks are gone and runs start to span groups
   (`runs=133756 … groups=138713`, 1,657 multi-group runs) - and the picture **FAILS** (validation 0): the hand draws
-  black, the water and the crop cutouts are missing ([image](2026-11-06-array-records-multigroup-runs.png)). The cause is
+  black, the water and the crop cutouts are missing (image). The cause is
   not established. The run key holds the descriptor, so a multi-group run shares one texture; candidates are (a) the
   reopened position twins reading the record or the vertex stream differently from the per-group draw, (b) the
   command's first-vertex/first-index derived from arena offsets that are now stride-aligned but not rebased per

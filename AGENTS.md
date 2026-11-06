@@ -18,7 +18,7 @@
 | 検証の罠（必要な節だけ） | [verification-traps.md](<docs/verification-traps.md>) |
 | **GLStub 戦略・受入（最重要方針）** | [glstub-strategy.md](<docs/glstub-strategy.md>) |
 | README の書き方（FPS統一・modpack名明記・chart生成） | [readme-rules.md](<docs/readme-rules.md>) |
-| 過去資料（現在判定・新しい指示ではない） | [history](<docs/history>), [監査](<docs/history/audit-2026-10-17-sol-review.md>) |
+| 過去資料 | git履歴のみ（`docs/history` は 2026-11-06 に削除。現在判定・新しい指示ではない） |
 
 ## 推測を事実に昇格させない
 
