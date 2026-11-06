@@ -257,6 +257,13 @@ public final class FramePassTimings {
         StringBuilder constants = new StringBuilder("[Celtium] CELTIUM_FRAME_TICK_CONSTANTS tickFrames=")
                 .append(tickCount).append(" plainFrames=").append(plainCount)
                 .append(" (us; tick p50/plain p50, brackets whose tick p50 is >= 10)");
+        // The p99 frame's excess over the median tick frame, per bracket. The percentile line above filters on
+        // |p99eq - plainP79|, which keeps exactly the brackets that are expensive on tick frames *and not* on plain
+        // ones - so a bracket that costs the same on both frame kinds is invisible there however large it is, and
+        // that is the shape a p99 ratio of 1.01 has: the renderer is a minority of the p99 frame and the excess is
+        // spread over brackets that are expensive on every frame. This line ranks the excess itself.
+        long[] tailExcess = new long[PERCENTILE_COLUMNS];
+        long[] tailP99 = new long[PERCENTILE_COLUMNS];
         for (int k = 0; k < PERCENTILE_COLUMNS; k++) {
             int t = 0;
             int p = 0;
@@ -280,9 +287,46 @@ public final class FramePassTimings {
             if (k == 0 || tickP50 >= 10L) {
                 constants.append(' ').append(name).append('=').append(tickP50).append('/').append(plainP50);
             }
+            tailExcess[k] = tickP99 - tickP50;
+            tailP99[k] = tickP99;
         }
         System.out.println(line);
         System.out.println(constants);
+        System.out.println(tailLine(tailExcess, tailP99));
+    }
+
+    /**
+     * {@return the p99 frame's excess over the median tick frame, per bracket, largest first}.
+     * <p>
+     * Each bracket's own p99-rank value minus its own median, so the numbers are percentiles of different brackets
+     * rather than one frame's split: a bracket whose p99-rank value is high because it is high on every frame shows
+     * a small excess here and a large absolute cost in {@code CELTIUM_FRAME_TICK_CONSTANTS}, and the two lines
+     * together are what separate "expensive always" from "expensive at the tail". The frame row is included, so the
+     * excess the brackets are being compared against is on the same line.
+     */
+    private static String tailLine(long[] excess, long[] p99) {
+        StringBuilder text = new StringBuilder("[Celtium] CELTIUM_FRAME_TICK_TAIL (us; p99eq-p50 and p99eq,"
+                + " excess >= 5, largest first)");
+        boolean[] used = new boolean[excess.length];
+        for (int n = 0; n < 24; n++) {
+            int best = -1;
+            for (int k = 0; k < excess.length; k++) {
+                if (used[k] || excess[k] < 5L) {
+                    continue;
+                }
+                if (best < 0 || excess[k] > excess[best]) {
+                    best = k;
+                }
+            }
+            if (best < 0) {
+                break;
+            }
+            used[best] = true;
+            String name = best == 0 ? "frame"
+                    : best <= TOP_LEVEL.length ? TOP_LEVEL[best - 1] : INSIDE[best - 1 - TOP_LEVEL.length];
+            text.append(' ').append(name).append('=').append(excess[best]).append('/').append(p99[best]);
+        }
+        return text.toString();
     }
 
     private static void fileTickSplit() {

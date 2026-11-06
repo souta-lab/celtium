@@ -1037,7 +1037,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // No geometry for this pass; nothing is opened, nothing has to be closed. The pre-terrain groups still have
             // to reach the image before whatever draws next, so a deferred flush runs here - it is the same window the
             // head of this method used to open, and this is the one early return that is a normal frame.
-            celtium$preflushIfDeferred();
+            //
+            // Unless PREFLUSH_WHEN_EMPTY is on, in which case the groups stay queued. The flush exists to put them in
+            // the image *before this pass records the terrain into the same command buffer*; a pass with no geometry
+            // records nothing, so there is nothing for them to be ordered against, and the queue is FIFO - the next
+            // window drains them in the order they were offered. That is the world-entry regime on the KPI scene,
+            // where every pass reports hasPass=false until the chunks arrive (CELTIUM_LAYER_GEOMETRY): there the flush
+            // was the *only* thing the terrain pass did, and because no render pass is open at this point it took the
+            // window path - a render pass begin/end, the acquire and release barriers, the target routing, the
+            // sampling-side transitions and a submit - for the sky, the void plane and the sun. In the settled warm
+            // window the pass has geometry, so this branch is not taken and the flush stays in-pass.
+            if (PREFLUSH_WHEN_EMPTY) {
+                celtium$preflushIfDeferred();
+            }
             org.soutalab.celtium.vulkan.FramePassTimings.end("terrainSetup");
             return;
         }
@@ -10737,6 +10749,22 @@ this.frameBufferOpen = false;
      */
     private static final boolean PREFLUSH_IN_PASS = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.preflushInPass", "true"));
+
+    /**
+     * {@code -Dceltium.vulkan.preflushWhenEmpty=true} restores the pre-terrain flush on a pass that has no geometry.
+     * <p>
+     * The flush is not optional in general: with geometry in the pass, the terrain is recorded into the same command
+     * buffer right after the queued groups, so they have to be in the image first. With no geometry there is nothing
+     * to be ordered against, and the queue's own FIFO order is the ordering - the next window drains them in the order
+     * they were offered, into the same render pass ({@code recordImmediateOnlyPass} takes
+     * {@code terrain.renderPass()}), so the picture is unchanged. Measured on the KPI scene (legs
+     * {@code r11ab-on-amd} / {@code r11ab-off-amd}, same jar, this switch the only difference): the same-tick
+     * presented pictures differ by 0.1 mean abs diff / 0.07 % of pixels over 24 levels, and the world-entry blocks'
+     * {@code terrainPreflush} falls from 125 us to under 10 us. The switch exists because the two cases are one
+     * branch apart and the picture is the only thing that can say whether the deferred drain kept the order.
+     */
+    private static final boolean PREFLUSH_WHEN_EMPTY = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.preflushWhenEmpty", "false"));
 
     /**
      * The pre-terrain flush, with the bracket and the counters that say what it drained.

@@ -7876,8 +7876,14 @@ public final class ValidationClient {
         Collections.sort(warmTickMillis);
         report.addProperty("frameIntervalWarmTickFrames", warmTickFrameIntervals.size());
         report.addProperty("frameIntervalWarmTickFrameP50Ms", percentile(warmTickFrameIntervals, 0.50));
+        report.addProperty("frameIntervalWarmTickFrameP90Ms", percentile(warmTickFrameIntervals, 0.90));
         report.addProperty("frameIntervalWarmTickFrameP95Ms", percentile(warmTickFrameIntervals, 0.95));
+        // The all-frames p99 is a tick frame (200 tick frames of ~4 200 is 4.6 %, so the 99th percentile of all frames
+        // is the ~78th of the tick ones), and the tick frames' own p99 is the number that says whether the tail is
+        // theirs. Without it the KPI artifact carries one p99 and no way to tell a renderer tail from a tick tail.
+        report.addProperty("frameIntervalWarmTickFrameP99Ms", percentile(warmTickFrameIntervals, 0.99));
         report.addProperty("frameIntervalWarmPlainFrames", warmPlainFrameIntervals.size());
+        report.addProperty("frameIntervalWarmPlainFrameP50Ms", percentile(warmPlainFrameIntervals, 0.50));
         report.addProperty("frameIntervalWarmPlainFrameP95Ms", percentile(warmPlainFrameIntervals, 0.95));
         report.addProperty("frameIntervalWarmPlainFrameP99Ms", percentile(warmPlainFrameIntervals, 0.99));
         report.addProperty("warmTickCount", warmTickMillis.size());

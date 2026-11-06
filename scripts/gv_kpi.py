@@ -111,7 +111,26 @@ def warm_metric(report: dict, process: dict, result: dict, manifest: dict, pinne
     p99 = finite_time(report, "frameIntervalWarmP99Ms")
     if p99 < p95:
         raise KpiError("warm p99 is below p95")
+    # The warm window's frames split by whether a client tick ran since the previous frame. The all-frames p99 is a
+    # tick frame (200 of ~4 200), so a p99 ratio of ~1.0 is a statement about the tick frames' upper quartile, not
+    # about the renderer's tail - and the two arms' tick frames are the same game code. Carried in the artifact so
+    # the p99 can be read as what it is; absent fields stay absent rather than being invented.
+    split = {}
+    for name, key in (
+            ("tickFrames", "frameIntervalWarmTickFrames"),
+            ("tickP50Ms", "frameIntervalWarmTickFrameP50Ms"),
+            ("tickP90Ms", "frameIntervalWarmTickFrameP90Ms"),
+            ("tickP95Ms", "frameIntervalWarmTickFrameP95Ms"),
+            ("tickP99Ms", "frameIntervalWarmTickFrameP99Ms"),
+            ("plainFrames", "frameIntervalWarmPlainFrames"),
+            ("plainP50Ms", "frameIntervalWarmPlainFrameP50Ms"),
+            ("plainP95Ms", "frameIntervalWarmPlainFrameP95Ms"),
+            ("plainP99Ms", "frameIntervalWarmPlainFrameP99Ms")):
+        value = report.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            split[name] = value
     return {"p50Ms": p50, "p95Ms": p95, "p99Ms": p99, "samples": count, "worldTicksAtEnd": report["worldTicksAtEnd"],
+            "frameSplit": split,
             "rendererSha256": manifest["artifacts"]["renderer"]["sha256"],
             "fixtureSha256": manifest["artifacts"]["fixture"]["sha256"],
             "device": process.get("glRendererPreflight") if reference else process.get("nativeDeviceName"),
@@ -165,6 +184,20 @@ def summarize(pairs: list[dict], arm_only: list[str]) -> dict:
     every_pair_faster = all(m["pairs"] and len(m["pairs"]) == len(reference_pairs) and max(m["pairs"]) < 1
                             for m in metric_ratios.values())
     summary["metricRatios"] = metric_ratios
+    # The same ratios inside the two frame populations. A p99 that is at parity while the plain frames are 10 % ahead
+    # is not a renderer that is slower at the tail - it is the tick frames' upper quartile, and the tick frames carry
+    # the game's own client tick in both arms. Reported beside the all-frames ratios so the two cannot be confused.
+    split_ratios = {}
+    for key in ("tickP50Ms", "tickP90Ms", "tickP95Ms", "tickP99Ms",
+                "plainP50Ms", "plainP95Ms", "plainP99Ms"):
+        values = [p["celtium"]["frameSplit"][key] / p["celeritas"]["frameSplit"][key]
+                  for p in reference_pairs
+                  if key in p["celtium"].get("frameSplit", {}) and key in p["celeritas"].get("frameSplit", {})
+                  and p["celeritas"]["frameSplit"][key]]
+        if values:
+            split_ratios[key] = {"pairs": values, "median": statistics.median(values)}
+    if split_ratios:
+        summary["frameSplitRatios"] = split_ratios
     summary["goalCondition"] = ("MET" if verdict != "NO_SPEED_VERDICT" and len(reference_pairs) >= 3
                                 and every_pair_faster else "NOT_MET")
     summary["disturbedRepetitions"] = disturbed
