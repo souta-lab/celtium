@@ -23,8 +23,8 @@
    MC Eternal → Nomifactory CEu（Rongmario の gist の移行手順に従う）。各 pack は AMD/Intel の e2e leg で validation を
    数え、Celtium の不具合は修正、pack 側の非互換は置換として記録する。
 2. **FPS の全対条件**: p99 の対ごとの揺れの内側。残る CPU 差は mod HUD の GUI 描画（InGameInfo・CreativeCore の
-   文字 run が窓 flush を起こす）と GTCEu bloom の terrain pass 前 flush。進行中: `flushUploads` の空 poll 削除
-   （`r118-poll`、同一jar A/B `p2poll`）。
+   文字 run が窓 flush を起こす）と GTCEu bloom の terrain pass 前 flush。`flushUploads` の空 poll 削除（`r118-poll`）は
+   同一jar A/B `p2poll` 4対で旧挙動 1.012×（対 0.83–1.12、雑音内）＝効果は測定以下、無害なので残置。
 3. **Xaero radar の entity icon**: 描かれるか未確認（entity の居る scene が必要、`-Dceltium.validation.keepEntities=true`）。
 4. **巨大クラス分割の継続**と効果の無い実験 switch の削除（挙動不変、CPU テストで確認）。
 5. **影・shaderpack**: Demonica fork の別 jar（AGPL-3.0）。本体の 1・2 の後。
