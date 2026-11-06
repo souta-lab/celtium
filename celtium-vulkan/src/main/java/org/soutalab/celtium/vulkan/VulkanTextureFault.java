@@ -22,11 +22,6 @@ public final class VulkanTextureFault {
     }
 
     /**
-     * {@return whether this texture upload should be skipped}.
-     *
-     * @param site a short label identifying the call site, for the substring form and for the log line
-     */
-    /**
      * Whether any injection was configured at all. Resolved once, because the switch is a JVM argument.
      * <p>
      * {@link #shouldFail} is asked on every texture upload, and it was a {@code synchronized} static method doing a
@@ -37,6 +32,11 @@ public final class VulkanTextureFault {
      */
     private static final boolean ARMED = FAIL_AT > 0 || !FAIL_SITE.isEmpty();
 
+    /**
+     * {@return whether this texture upload should be skipped}.
+     *
+     * @param site a short label identifying the call site, for the substring form and for the log line
+     */
     public static boolean shouldFail(String site) {
         return ARMED && shouldFailArmed(site);
     }

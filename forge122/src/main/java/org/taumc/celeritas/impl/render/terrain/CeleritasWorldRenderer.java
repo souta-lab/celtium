@@ -110,9 +110,6 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
         }
     }
 
-    /**
-     * Performs a render pass for the given {@link BlockRenderLayer} and draws all visible chunks for it.
-     */
     /** Frames between tracker reports; a dimension change is visible within a second at 60 fps. */
     private int celtium$trackerReportCountdown = 20;
 
@@ -153,6 +150,9 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
         }
     }
 
+    /**
+     * Performs a render pass for the given {@link BlockRenderLayer} and draws all visible chunks for it.
+     */
     @Override
     public void drawChunkLayer(BlockRenderLayer renderLayer, double x, double y, double z) {
         this.celtium$reportTrackerState();

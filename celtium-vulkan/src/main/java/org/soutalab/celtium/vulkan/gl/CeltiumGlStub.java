@@ -1316,10 +1316,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
-     * Whether this stub answers GL calls in this process. When it does there is no GL device identity to read -
-     * the renderer's strings are ours, not a driver's.
-     */
-    /**
      * BH-03's one-flag control: the alpha comparison function the immediate path applies, overriding whatever the game
      * set. {@code -Dceltium.glstub.alphaFuncOverride=<GL enum>} (GL_LEQUAL 0x0203, GL_ALWAYS 0x0207, ...), with 0
      * meaning "use the game's own function". It exists because the game sets its own functions and a fixture knob for
@@ -1358,6 +1354,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         return scalar;
     }
 
+    /**
+     * Whether this stub answers GL calls in this process. When it does there is no GL device identity to read -
+     * the renderer's strings are ours, not a driver's.
+     */
     public static boolean isInstalled() {
         return installed != null;
     }
@@ -3519,19 +3519,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** GL_ALPHA_TEST: the capability glAlphaFunc's comparison only applies while it is enabled. */
     private static final int GL_ALPHA_TEST = 0x0BC0;
 
-    /**
-     * A hook the backend registers so a draw it defers - the coalesced font run - is submitted <em>before</em> a state
-     * record it cannot see changes underneath it. The group's capture reads this stub live for blend, cull, colour
-     * mask and scissor (BH-07/08/09/10), and reads the mirror for the rest; a caller that bypasses the mirror - a raw
-     * {@code GL11} call - would otherwise let the pending run keep state it was appended under in the mirror while
-     * the record the capture actually consults moved on. Fired before each tracked write, and only when the value
-     * changes, so a no-op call does not split a run.
-     * <p>
-     * The measured defect this ordering produces when it is absent: the vanilla tooltip's font run survives Forge's
-     * disableDepth/enableDepth bracket and is submitted depth-tested, where the shadow pass's equal-depth draw kills
-     * the main pass's strokes - 585 of 797 shadow pixels lost their main ink in the HEI screen leg (instrument
-     * {@code scripts/cpu-contract/font-shadow-main-check.py}).
-     */
     /** Compatibility registration; the callback belongs to the native state owner. */
     public static void celtium$setDrawStateBoundaryHook(Runnable hook) {
         org.soutalab.celtium.vulkan.NativeRasterState.current().beforeChange(hook);
@@ -3609,7 +3596,6 @@ public final class CeltiumGlStub implements FunctionProvider {
         stub.raster.initializeScissor(width, height);
     }
 
-    /** Records the viewport selected through Minecraft's API or LWJGL3's native entry point. */
     /** The last viewport the game set, packed as x|y|w|h in four 16-bit fields; 0 means "never set". */
     private static long viewportPacked;
     private static boolean viewportSeen;
@@ -3637,6 +3623,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** Records the viewport selected through Minecraft's API or LWJGL3's native entry point. */
     public static void celtium$viewport(int x, int y, int width, int height) {
         recordViewportPacked(x, y, width, height);
         CeltiumGlStub stub = installed;
@@ -3819,10 +3806,6 @@ public final class CeltiumGlStub implements FunctionProvider {
         return new int[] {stub.raster.scissorX(), stub.raster.scissorY(), stub.raster.scissorWidth(), stub.raster.scissorHeight()};
     }
 
-    /**
-     * {@return whether GL_SCISSOR_TEST is enabled}. Read from the same {@code enables} map glEnable/glDisable write,
-     * so there is one state rather than a mirror that can drift from it.
-     */
     /** {@return how many times glScissor has been called in this process}, the scene-level clip census. */
     public static long scissorCallCount() {
         CeltiumGlStub stub = installed;
@@ -3835,6 +3818,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         return stub == null ? 0L : stub.scissorToggleCount;
     }
 
+    /**
+     * {@return whether GL_SCISSOR_TEST is enabled}. Read from the same {@code enables} map glEnable/glDisable write,
+     * so there is one state rather than a mirror that can drift from it.
+     */
     public static boolean scissorTest() {
         CeltiumGlStub stub = installed;
         return stub != null && stub.raster.scissorTest();
@@ -3900,17 +3887,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
-     * {@return the buffers the game asked {@code glClear} to clear since this was last called}, consuming them.
-     * <p>
-     * With no GL framebuffer to clear, the request is carried to the owned frame image instead: an image whose depth
-     * still holds undefined values rejects every depth-tested draw, which is a whole frame of nothing rather than a
-     * wrong pixel.
-     */
-    /**
-     * {@return the framebuffer the pending clear was issued against}, or -1 when no clear is pending. A non-zero
-     * value means the clear names one of the game's own framebuffers rather than the delivered frame.
-     */
-    /**
      * Records the backend's own main/non-main decision for the framebuffer that is now bound.
      * <p>
      * A clear's owner cannot be decided from the raw GL name: the game's main render target is not necessarily the
@@ -3933,6 +3909,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         return stub.pendingClears.get() != 0 && stub.pendingClearIsMain;
     }
 
+    /**
+     * {@return the framebuffer the pending clear was issued against}, or -1 when no clear is pending. A non-zero
+     * value means the clear names one of the game's own framebuffers rather than the delivered frame.
+     */
     public static int pendingClearDrawFbo() {
         CeltiumGlStub stub = installed;
         if (stub == null) {
@@ -3953,7 +3933,6 @@ public final class CeltiumGlStub implements FunctionProvider {
         return stub != null && stub.pendingClears.get() != 0;
     }
 
-    /** Records a clear through the same producer used by callback dispatch. */
     /** Uniform-block introspection: no block or active uniform exists, so the integer answer is zero. */
     public static void celtium$getActiveUniformInt(int program, int index, int pname, long out) {
         if (out != 0L) {
@@ -4300,6 +4279,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         org.lwjgl.system.MemoryUtil.memPutInt(out, value);
     }
 
+    /** Records a clear through the same producer used by callback dispatch. */
     public static void celtium$clear(int mask) {
         CeltiumGlStub stub = installed;
         if (stub != null) {
@@ -4444,6 +4424,13 @@ public final class CeltiumGlStub implements FunctionProvider {
         this.clearDepth = Math.max(0.0D, Math.min(1.0D, depth));
     }
 
+    /**
+     * {@return the buffers the game asked {@code glClear} to clear since this was last called}, consuming them.
+     * <p>
+     * With no GL framebuffer to clear, the request is carried to the owned frame image instead: an image whose depth
+     * still holds undefined values rejects every depth-tested draw, which is a whole frame of nothing rather than a
+     * wrong pixel.
+     */
     public static int consumePendingClears() {
         CeltiumGlStub stub = installed;
         return stub == null ? 0 : stub.pendingClears.getAndSet(0);
@@ -4632,21 +4619,12 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
-    /**
-     * {@return whether the level holds pixels the game itself wrote}, false for the zero-filled surface a
-     * {@code glTexImage2D} with a NULL data pointer left behind.
-     * <p>
-     * {@link #textureUploadRgba8} answers "is there a surface", and an allocation with no data gives one: the game
-     * allocates every level of a texture that way and then fills it in patches, so the surface has to exist. What the
-     * surface cannot say is whether any of it is the game's, and a mirror built from allocation zeros claims whole
-     * content no upload ever put there - measured as two 1280x720 mirrors, and the light map's first read, reporting
-     * {@code opaque=0} over {@code full=true}. A level with any real upload - a full image or a single patch - answers
-     * true, because that surface is what GL holds: the patches where they were written, undefined (read as zeros)
-     * elsewhere.
-     *
-     * @param textureName the GL texture name
-     * @param level       the mip level
-     */
+    /** {@return the serial the most recent level write took}, any texture: unchanged means no texture was written. */
+    public static long textureWriteEpoch() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? Long.MIN_VALUE : stub.texUploadSerial.get();
+    }
+
     /**
      * {@return the write serial the level's captured record carries, or {@link Long#MIN_VALUE} when no record
      * exists at all}
@@ -4659,12 +4637,6 @@ public final class CeltiumGlStub implements FunctionProvider {
      * @param textureName the GL texture name
      * @param level       the mip level
      */
-    /** {@return the serial the most recent level write took}, any texture: unchanged means no texture was written. */
-    public static long textureWriteEpoch() {
-        CeltiumGlStub stub = installed;
-        return stub == null ? Long.MIN_VALUE : stub.texUploadSerial.get();
-    }
-
     public static long textureUploadSerial(int textureName, int level) {
         CeltiumGlStub stub = installed;
         if (stub == null) {
@@ -4705,6 +4677,21 @@ public final class CeltiumGlStub implements FunctionProvider {
         return capture != null && !capture.gamePixels;
     }
 
+    /**
+     * {@return whether the level holds pixels the game itself wrote}, false for the zero-filled surface a
+     * {@code glTexImage2D} with a NULL data pointer left behind.
+     * <p>
+     * {@link #textureUploadRgba8} answers "is there a surface", and an allocation with no data gives one: the game
+     * allocates every level of a texture that way and then fills it in patches, so the surface has to exist. What the
+     * surface cannot say is whether any of it is the game's, and a mirror built from allocation zeros claims whole
+     * content no upload ever put there - measured as two 1280x720 mirrors, and the light map's first read, reporting
+     * {@code opaque=0} over {@code full=true}. A level with any real upload - a full image or a single patch - answers
+     * true, because that surface is what GL holds: the patches where they were written, undefined (read as zeros)
+     * elsewhere.
+     *
+     * @param textureName the GL texture name
+     * @param level       the mip level
+     */
     public static boolean textureLevelHasGamePixels(int textureName, int level) {
         CeltiumGlStub stub = installed;
         if (stub == null) {
@@ -5338,11 +5325,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
-     * One native trampoline per function name. Two call entries exist because which backend LWJGL uses is a
-     * runtime property, not a compile-time one: {@code invoke} serves the FFM backend, {@code callback} the
-     * legacy libffi one.
-     */
-    /**
      * The upcall object, implementing every trampoline interface.
      * <p>
      * LWJGL 3.4.3's {@code Callback} casts the instance to the type its descriptor names, so one object has to satisfy
@@ -5357,6 +5339,11 @@ public final class CeltiumGlStub implements FunctionProvider {
         private final CeltiumGlStub stub;
         private final Callback.Descriptor descriptor;
 
+        /**
+         * One native trampoline per function name. Two call entries exist because which backend LWJGL uses is a
+         * runtime property, not a compile-time one: {@code invoke} serves the FFM backend, {@code callback} the
+         * legacy libffi one.
+         */
         CeltiumGlTrampoline(int functionId, CeltiumGlStub stub, byte[] args) {
             super(descriptorFor(args));
             this.functionId = functionId;
@@ -6686,15 +6673,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
-     * Retires a texture's extent and pixel records.
-     * <p>
-     * Names are never reissued by the generator, but the game reuses one itself: {@code TextureUtil.allocateTexture}
-     * deletes the texture and immediately uploads to the same name again, mip level by mip level. A capture left
-     * behind by the previous image would be read as the new texture's pixels until its first real upload replaced it -
-     * stale content that looks like a working mirror, which is worse than the null an un-uploaded level answers with.
-     * The extents go with the pixels: a level nobody uploaded has no size to report.
-     */
-    /**
      * Retires a buffer's storage and its bindings.
      * <p>
      * Deleting a buffer left {@code bufferStore} holding its direct memory and {@code bufferBindings} still naming it, so
@@ -6926,7 +6904,6 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
-    /** The scalar half of {@link #getInts}; {@link Integer#MIN_VALUE} means "not a tracked scalar pname". */
     /** The buffer-object query: GL_BUFFER_SIZE answers the recorded or native size, everything else 0. */
     private void getBufferParameterQuery(String name, int target, int pname, long out) {
         if (pname == 0x8764) { // GL_BUFFER_SIZE - LWJGL needs this to size glMapBuffer results
@@ -6984,6 +6961,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** The scalar half of {@link #getInts}; {@link Integer#MIN_VALUE} means "not a tracked scalar pname". */
     private int getIntegerValue(int pname) {
         switch (pname) {
             case 0x0BE1: // GL_BLEND_SRC
@@ -7248,7 +7226,6 @@ public final class CeltiumGlStub implements FunctionProvider {
         getFloats(pname, out, "glGetDoublev".equals(fn.name));
     }
 
-    /** The same state-query implementation for callback dispatch and LWJGL3's replaced native entry points. */
     /** {@return whether the boolean query was answered}; the caller's buffer receives one byte per component. */
     public static boolean celtium$getBooleans(int pname, long out) {
         CeltiumGlStub stub = installed;
@@ -7265,6 +7242,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         return stub != null && stub.enabledCap(capability);
     }
 
+    /** The same state-query implementation for callback dispatch and LWJGL3's replaced native entry points. */
     public static void celtium$getFloats(int pname, long out, boolean asDouble) {
         if (out == 0L) {
             return;
@@ -8676,13 +8654,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
-     * {@return the byte offset a {@code glMapBufferRange} may map}, or -1 when the range is not within the buffer.
-     * <p>
-     * GL's contract: {@code offset} and {@code length} are non-negative, {@code length > 0}, and the range must lie
-     * inside the buffer. Anything else is an error the caller has to see, not a range quietly moved to zero (audit #361:
-     * offset -1 was answered as 0, and a length running past the end was not looked at).
-     */
-    /**
      * {@return the size GL last gave this buffer, falling back to the storage's capacity when nothing was recorded}.
      *
      * @param name     the buffer name
@@ -8693,6 +8664,13 @@ public final class CeltiumGlStub implements FunctionProvider {
         return this.bufferLogicalSize.containsKey(name) ? this.bufferLogicalSize.get(name) : capacity;
     }
 
+    /**
+     * {@return the byte offset a {@code glMapBufferRange} may map}, or -1 when the range is not within the buffer.
+     * <p>
+     * GL's contract: {@code offset} and {@code length} are non-negative, {@code length > 0}, and the range must lie
+     * inside the buffer. Anything else is an error the caller has to see, not a range quietly moved to zero (audit #361:
+     * offset -1 was answered as 0, and a length running past the end was not looked at).
+     */
     static long mapRangeOffset(long offset, long length, long capacity) {
         if (offset < 0L || length <= 0L || capacity < 0L) {
             return -1L;
@@ -9259,7 +9237,6 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
-    /** The transformer's entry for {@code glReadPixels}: forwards to the installed stub when one exists. */
     /**
      * A {@code glGetTexImage} of the bound texture, answered from that texture's mirror.
      * <p>
@@ -9288,6 +9265,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** The transformer's entry for {@code glReadPixels}: forwards to the installed stub when one exists. */
     public static void celtium$readPixels(int x, int y, int width, int height, int format, int type, long address) {
         CeltiumGlStub stub = installed;
         if (stub != null) {
@@ -10136,7 +10114,6 @@ public final class CeltiumGlStub implements FunctionProvider {
         return copy;
     }
 
-    /** Takes ownership at compile/submit time; no replay may read the caller's reused array. */
     /**
      * Validates the split arrays for a stride-48 draw and arms the repack with their per-draw bases.
      * <p>
@@ -10250,6 +10227,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         return out;
     }
 
+    /** Takes ownership at compile/submit time; no replay may read the caller's reused array. */
     static ByteBuffer copyClientVertices(long address, int count, int stride, int format) {
         int targetStride = stride == 32 && format == 9 ? 24 : stride == 32 && format == 8 ? 28 : stride;
         ByteBuffer copy = MemoryUtil.memAlloc(Math.multiplyExact(count, targetStride));
@@ -10319,13 +10297,13 @@ public final class CeltiumGlStub implements FunctionProvider {
         return stub != null && stub.liveNames.contains(list);
     }
 
+    /** Upper bound on one glCallLists run: a malformed count must not stall the render thread. */
+    private static final int MAX_CALL_LIST_NAMES = 1 << 16;
+
     /**
      * Executes a {@code glCallLists} run: every name is the list base plus the value read at that index. Vanilla does
      * not call this, but font and model batching mods do, and the call was a no-op - their lists produced no picture.
      */
-    /** Upper bound on one glCallLists run: a malformed count must not stall the render thread. */
-    private static final int MAX_CALL_LIST_NAMES = 1 << 16;
-
     private void callLists(int count, int type, long address) {
         if (count <= 0 || address == 0L) {
             return;

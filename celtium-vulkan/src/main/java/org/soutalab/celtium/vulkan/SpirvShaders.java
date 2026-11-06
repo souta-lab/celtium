@@ -41,7 +41,6 @@ public final class SpirvShaders {
     /** Classpath name of the SOLID terrain pass fragment module. */
     public static final String SOLID_FRAGMENT = "terrain_solid.frag";
 
-    /** Vertex module for the dynamic (non-terrain) geometry of roadmap stages S4/S6. */
     /** The record-reading form of the position-only variant: the sky, the stars and the horizon plane. */
     public static final String IMMEDIATE_POSITION_RECORDS_VERTEX = "immediate_position_records.vert";
     /** The record-reading form of the position-plus-texture variant: sky, clouds and the water surface. */
@@ -51,6 +50,7 @@ public final class SpirvShaders {
     /** Record-reading fragment for the position-plus-texture variant. */
     public static final String IMMEDIATE_POSITION_TEX_RECORDS_FRAGMENT = "immediate_position_tex_records.frag";
 
+    /** Vertex module for the dynamic (non-terrain) geometry of roadmap stages S4/S6. */
     public static final String UI_VERTEX = "ui_quad.vert";
 
     /** Fragment module for the dynamic (non-terrain) geometry of roadmap stages S4/S6. */

@@ -277,15 +277,6 @@ public final class VulkanTextureRegistry {
     /** The distinct reasons a patch was refused, each printed once. */
     private final java.util.Set<String> patchRejections = new java.util.HashSet<String>();
     /**
-     * Whether a region patch applies the producer's whole mip chain (the default) or only level 0.
-     * <p>
-     * The second setting is the pre-N07 behaviour and exists as a measurement control, not as a way to run the
-     * renderer: the per-level census in {@link VulkanGlTexture#mirrorLevelSummary()} and the mirror dump's
-     * {@code writes=}/{@code behind=} fields are what make the difference between "the producer's levels were applied"
-     * and "the levels above 0 kept whatever the last whole upload put there" a pair of numbers from the same binary.
-     * With the control set, {@code reachUnwritten} in the census must rise; with it unset it must stay at zero.
-     */
-    /**
      * Whether a mirror filled from a captured surface takes the game's own per-level data (the default) or only level
      * 0, with the chain above it generated here. The second setting is the pre-N07b behaviour and exists as a
      * measurement control: the whole-image blit averages across sprite borders, so the two settings differ in what a
@@ -299,6 +290,15 @@ public final class VulkanTextureRegistry {
             Integer.getInteger("celtium.vulkan.mirrorReachOverride", 0).intValue();
     private static final boolean MIRROR_CAPTURED_LEVELS =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.mirrorCapturedLevels", "true"));
+    /**
+     * Whether a region patch applies the producer's whole mip chain (the default) or only level 0.
+     * <p>
+     * The second setting is the pre-N07 behaviour and exists as a measurement control, not as a way to run the
+     * renderer: the per-level census in {@link VulkanGlTexture#mirrorLevelSummary()} and the mirror dump's
+     * {@code writes=}/{@code behind=} fields are what make the difference between "the producer's levels were applied"
+     * and "the levels above 0 kept whatever the last whole upload put there" a pair of numbers from the same binary.
+     * With the control set, {@code reachUnwritten} in the census must rise; with it unset it must stay at zero.
+     */
     private static final boolean PATCH_MIP_LEVELS =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.patchMipLevels", "true"));
     /** Bounded lifecycle log budget and the frame serial both paths print, so announce and forget can be ordered. */
@@ -307,7 +307,6 @@ public final class VulkanTextureRegistry {
     private int lifecycleSerial;
     /** Wrap answers that came from the GL default because the game never set that pname on that texture. */
     private static int wrapDefaultsUsed;
-    /** The GL texture ids that reach the readback refresh, recorded once each. */
     /**
      * Which source filled each mirror's content, by GL name, and the census of those fills.
      * <p>
@@ -769,18 +768,18 @@ public final class VulkanTextureRegistry {
     }
 
     /** @param nearestFilter see {@link VulkanGlTexture#create(VulkanContext, int, int, boolean)} */
-    /**
-     * Records the image a texture is being uploaded with, so the mirror can be built from it instead of from a readback.
-     * <p>
-     * The upload hook receives this image - it is the same data GL is about to be given - which is what makes ownership of these
-     * textures a change at one hook rather than a subsystem.
-     */
     /** FBO rendering invalidates the old CPU announcement; future sampling must read the returned game texture. */
     public void invalidateRenderedTexture(int id) {
         this.announcedImages.remove(id);
         this.staleIds.add(id);
     }
 
+    /**
+     * Records the image a texture is being uploaded with, so the mirror can be built from it instead of from a readback.
+     * <p>
+     * The upload hook receives this image - it is the same data GL is about to be given - which is what makes ownership of these
+     * textures a change at one hook rather than a subsystem.
+     */
     public void announceImage(int glTextureId, java.awt.image.BufferedImage image) {
         // Bounded lifecycle lines with a frame number: the open question is whether a BufferedImage announcement ever
         // arrives for a name an int[] upload previously filled (the panorama PNGs' names were filled by the splash's
@@ -1791,7 +1790,6 @@ public final class VulkanTextureRegistry {
     public static long STALE_NANOS;
     public static long STALE_CALLS;
     public static long HIT_CALLS;
-    /** Announcement generation per texture, and the generation already turned into a mirror. */
     /**
      * Announcement and consumption generations, indexed by GL name. They were {@code HashMap<Integer, Integer>} and the
      * in-world JFR put hash lookups at the top of the client thread (HashMap.get plus its node helpers around 97 of 1056
@@ -1819,7 +1817,6 @@ public final class VulkanTextureRegistry {
     /** The generation already present in the image, per texture: consumed by a readback skip or by a mirror build. */
     private int[] consumedGenerationByTexture = new int[4096];
 
-    /** {@return the announced generation for a GL name, or {@code null} when none was recorded}. */
     /** {@return the announced generation, 0 when none - the array's own sentinel, so no box is allocated. */
     private int announcedGenerationOfInt(int id) {
         if (id < 0 || id >= this.announcedGenerationByTexture.length) {
@@ -2321,7 +2318,6 @@ public final class VulkanTextureRegistry {
         return null;
     }
 
-    /** Drops one mirror so the next use re-uploads it; used when a texture's contents are known to have changed. */
     /**
      * Drops every mirror, so the next use of each re-reads its GL texture.
      * <p>
@@ -2336,6 +2332,7 @@ public final class VulkanTextureRegistry {
         this.staleIds.addAll(this.entries.keySet());
     }
 
+    /** Drops one mirror so the next use re-uploads it; used when a texture's contents are known to have changed. */
     public void invalidate(int glTextureId) {
         if (this.externalImages.containsKey((int) (glTextureId))) {
             // A published image is left alone: its content is what its owner is rendering, there is no stored state

@@ -24,6 +24,7 @@ public final class TerrainStatistics {
     private int terrainPasses;
     private int immediateOnlyPasses;
     private int worldPassBoundaryFlushes;
+    /** The frame in which a terrain pass last ran, so a window can say whether it came first. */
     private long lastTerrainPassFrame = -1L;
 
     /** Records a submitted pass. */

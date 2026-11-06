@@ -652,12 +652,6 @@ public abstract class RenderSectionManager {
     }
 
     /**
-     * Moves sections with a pending mesh update into the rebuild lists the submission path reads.
-     * <p>
-     * The two existing producers of those lists are sort schedulers, so this is the only path that carries
-     * {@link ChunkUpdateType#INITIAL_BUILD} and {@link ChunkUpdateType#REBUILD} to {@code submitRebuildTasks}.
-     */
-    /**
      * Sections whose pending update is one the mesh queue carries, recorded where that update is set.
      * <p>
      * {@code celtium$queueMeshUpdates} walked every loaded section - 19,600 at render distance 18 - and stayed at 9.2%
@@ -674,6 +668,12 @@ public abstract class RenderSectionManager {
     private final java.util.Set<RenderSection> celtiumPendingMeshUpdates =
             java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
 
+    /**
+     * Moves sections with a pending mesh update into the rebuild lists the submission path reads.
+     * <p>
+     * The two existing producers of those lists are sort schedulers, so this is the only path that carries
+     * {@link ChunkUpdateType#INITIAL_BUILD} and {@link ChunkUpdateType#REBUILD} to {@code submitRebuildTasks}.
+     */
     private void celtium$queueMeshUpdates() {
         // Nothing pending means nothing to queue: asked before the membership sets below are built over every queue.
         if (!QUEUE_HIDDEN_PENDING) {

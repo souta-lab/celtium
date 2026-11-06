@@ -287,6 +287,18 @@ final class ModelReplay {
         }
     }
 
+    /**
+     * Queues an existing mesh for the immediate window instead of drawing it in a pass of its own.
+     * <p>
+     * The model draw used to open a command buffer, record a pass and submit it inline at {@code callList}. That made it a
+     * separate submission inside the frame: it did not participate in the ordering the immediate path maintains through its
+     * window, and two identical runs did not produce the same picture in the model's band (measured: the default floor in
+     * that band was 32 pixels, the experiment's own floor 1283). Queueing the mesh as a group of the window means the
+     * flush that precedes the next GL draw records it in the same pass as everything else, in the same order.
+     * <p>
+     * The mesh is borrowed: the captured model meshes live for the whole run and are drawn every frame, so the retire
+     * drain must not free them.
+     */
     boolean celtium$enqueueModelMesh(VulkanDynamicMesh mesh, int texture, int[] state, long key,
             float[] projection, float[] modelView, int quads, float[] combineColor, float[] lightCoord) {
         if (b.MODEL_INSTANCES && mesh != null && !mesh.isEmpty()
@@ -425,14 +437,14 @@ final class ModelReplay {
         return true;
     }
 
-    /**
-     * Appends a model replay to the native instance run, preserving its lighting and alpha-test semantics.
-     * Off-target replays remain in their own pass on the per-group path.
-     */
     /** {@code -Dceltium.debug.modelLightFrame=N}: print the lighting inputs of the first 80 model instances from frame N on. */
     private static final long MODEL_LIGHT_DEBUG_FRAME = Long.getLong("celtium.debug.modelLightFrame", 0L).longValue();
     private static int modelLightLines;
 
+    /**
+     * Appends a model replay to the native instance run, preserving its lighting and alpha-test semantics.
+     * Off-target replays remain in their own pass on the per-group path.
+     */
     boolean celtium$appendModelInstance(VulkanDynamicMesh mesh, int texture, int[] state, long key,
             float[] projection, float[] modelView, int quads, float[] combineColor, float[] lightCoord) {
         if (b.modelInstancesFailed || state.length <= 14 || !b.context.textureArraySupported()) {

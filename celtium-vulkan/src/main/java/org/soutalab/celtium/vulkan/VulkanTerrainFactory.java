@@ -31,13 +31,13 @@ public final class VulkanTerrainFactory {
     private VulkanTerrainFactory() {
     }
 
+    /** Resolved once: both factory entry points ask the same startup question. */
+    private static final String ENABLE_SETTING = System.getProperty(ENABLE_PROPERTY, "auto");
+
     /**
      * @param reasons receives one line per reason the Vulkan backend was not created
      * @return the backend, or {@code null} when OpenGL must stay active
      */
-    /** Resolved once: both factory entry points ask the same startup question. */
-    private static final String ENABLE_SETTING = System.getProperty(ENABLE_PROPERTY, "auto");
-
     public static TerrainGpuBackend create(RenderPassConfiguration<?> configuration,
                                            ChunkRenderer renderer,
                                            RenderRegionManager regions,

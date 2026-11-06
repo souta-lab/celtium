@@ -143,6 +143,9 @@ public abstract class EntityRendererMixin {
         }
     }
 
+    /** Set once, when the light map's unit has been handed to the renderer. */
+    private static boolean celtium$lightmapUnitSent;
+
     /**
      * The world pass's explicit boundaries.
      * <p>
@@ -151,9 +154,6 @@ public abstract class EntityRendererMixin {
      * earlier flag was inferred from which projection was installed and proved unreliable - a first-person hand pass or a
      * custom framebuffer can install anything - so the lifecycle is stated rather than guessed.
      */
-    /** Set once, when the light map's unit has been handed to the renderer. */
-    private static boolean celtium$lightmapUnitSent;
-
     @Inject(method = "func_175068_a", at = @At("HEAD"), require = 0)
     private void celtium$worldPassBegin(int pass, float partialTicks, long finishTimeNano,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {

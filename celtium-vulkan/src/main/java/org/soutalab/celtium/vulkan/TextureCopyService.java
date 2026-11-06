@@ -1410,23 +1410,6 @@ public final class TextureCopyService {
     }
 
     /**
-     * Reads a rectangle of a depth image into floats, the depth-side twin of {@link #readImageRectangle}.
-     * <p>
-     * It exists for one question round 223 narrowed the menu's grey background to and could not answer from pixels:
-     * the frame image's depth in the panorama's 256x256 box is either 1.0 (the game's per-frame
-     * {@code glClear(GL_DEPTH_BUFFER_BIT)} reached this image) or the previous frame's blur quad depth
-     * ({@code rotateAndBlurSkybox} draws at {@code zLevel} with {@code depthMask} left on at the end of
-     * {@code drawPanorama}, so it writes roughly 0.75 into exactly that box). The cube does not write depth at all
-     * ({@code drawPanorama} sets {@code depthMask(false)}), so the value read here is the value its faces were tested
-     * against - and a stale 0.75 rejects every face, because a face's 64 jitter copies do not change its depth. That
-     * is the difference between "the cube repaints the box and something else eats it" and "the cube is never drawn
-     * into the box at all", and no colour read can tell them apart.
-     * <p>
-     * Unit: the depth image's own format ({@code VulkanDepthFormat.chosen}), read as floats either way - a 16-bit
-     * unorm depth is scaled by 1/65535 so both devices report the same 0..1 quantity. Limit: one rectangle per call,
-     * and the caller bounds the calls, because this is a full command buffer plus a fence wait.
-     */
-    /**
      * Frees a readback buffer, or hands it to the context's quarantine when its submission was not confirmed.
      * <p>
      * Audit #364: the command buffer that copies into this buffer is quarantined when the fence wait times out, because

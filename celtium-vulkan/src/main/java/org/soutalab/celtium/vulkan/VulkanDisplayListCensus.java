@@ -296,7 +296,6 @@ public final class VulkanDisplayListCensus {
         return !TEXTURE_LOGGED.add(list);
     }
     private static long cancelled;
-    /** Cancelled replays per list, paired with {@link #REPLAYS} so the lists nothing drew can be named. */
     /** Per-list cancelled replay counts; primitive for the same reason as {@link #REPLAYS}. */
     private static final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap CANCELLED_PER_LIST =
             new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();

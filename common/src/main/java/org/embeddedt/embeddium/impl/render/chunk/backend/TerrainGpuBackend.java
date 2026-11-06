@@ -171,18 +171,6 @@ public interface TerrainGpuBackend {
     }
 
     /**
-     * Offers a finished immediate-mode batch to this backend.
-     *
-     * @param vertexFormat  Minecraft's {@code VertexFormat} instance for the batch
-     * @param vertexStride  bytes per vertex of that format
-     * @param formatId      a structural identifier of the layout (0 unknown, 1 position+colour, 2 position+texture+
-     *                      colour), decided by comparing the element list rather than the class
-     * @param vertexAddress native address of the first vertex
-     * @param vertexCount   number of vertices
-     * @param drawMode      Minecraft/OpenGL draw mode
-     * @return {@code true} when the batch was consumed; {@code false} means the caller must draw it itself
-     */
-    /**
      * Sets the world projection from Minecraft's own numbers - field of view, aspect, near and far - instead of from a
      * mirrored GL call. The backend computes {@code gluPerspective} itself; see {@code EntityRendererMixin}.
      */
@@ -278,6 +266,18 @@ public interface TerrainGpuBackend {
         return "unknown";
     }
 
+    /**
+     * Offers a finished immediate-mode batch to this backend.
+     *
+     * @param vertexFormat  Minecraft's {@code VertexFormat} instance for the batch
+     * @param vertexStride  bytes per vertex of that format
+     * @param formatId      a structural identifier of the layout (0 unknown, 1 position+colour, 2 position+texture+
+     *                      colour), decided by comparing the element list rather than the class
+     * @param vertexAddress native address of the first vertex
+     * @param vertexCount   number of vertices
+     * @param drawMode      Minecraft/OpenGL draw mode
+     * @return {@code true} when the batch was consumed; {@code false} means the caller must draw it itself
+     */
     default boolean submitImmediateBatch(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                          int vertexCount, int drawMode) {
         return false;

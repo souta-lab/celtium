@@ -147,12 +147,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
      */
     private final Pair defaultPair = new Pair("default");
     /**
-     * The second pair, for draws the game addresses to one of <em>its own</em> framebuffers - the entity-outline
-     * silhouette is the measured case. {@link #ensureChainPair(int, int)} creates it on first use at the size the
-     * game's framebuffer asks for, and the post chain adopts it as its input, so the chain reads the silhouette
-     * rather than the copy of the whole scene the default pair holds.
-     */
-    /**
      * The chain pair per framebuffer identity. Two non-main identities used to share one Pair: the second one's
      * clear or draw then reached the first one's content between its draw and the read that sampled it - measured
      * as the world going black when the loading overlay's FBO and the frame's own passes alternated (legs
@@ -756,7 +750,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
         private int[] chainColorLayouts;
     }
 
-    /** {@return the owner state as it is now}, to be handed to {@link #rollbackRecording} if the record is discarded. */
     /**
      * Fills {@code snapshot} (or a new one when null) and returns it. The window flush takes one snapshot per window
      * (~10 a frame); reusing the object keeps its chain arrays too - they are grown only when more pairs appear.
@@ -1523,15 +1516,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return true;
     }
 
-    /**
-     * {@return which images the identity's chain pair holds now}, 0 before it exists. Changes whenever the pair is
-     * created or replaced, at any size: a framebuffer over the previous images names dead views.
-     */
     /** {@return how many chain-pair image sets have been created}, the cache key for name-to-image resolutions. */
     public long chainPairGenerationTotal() {
         return this.chainPairGenerations;
     }
 
+    /**
+     * {@return which images the identity's chain pair holds now}, 0 before it exists. Changes whenever the pair is
+     * created or replaced, at any size: a framebuffer over the previous images names dead views.
+     */
     public long chainPairGeneration(long identity) {
         Pair pair = existingChainPair(identity);
         return pair == null || !pair.exists() ? 0L : pair.generation;
@@ -1787,6 +1780,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
             }
         }
 
+        /** Reused clear structures; see clear(). */
+        private VkImageSubresourceRange clearRange;
+        private VkClearColorValue clearColour;
+        private VkClearDepthStencilValue clearDepthValue;
+        private float[] clearColourFloats;
+
         /**
          * Records the clears the game's own framebuffer receives before it draws into it: colour (0,0,0,0) and
          * depth 1.0, the transparent black and far plane {@code glClear} leaves behind, in the {@code GENERAL}
@@ -1804,12 +1803,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
          * Recorded outside a render pass instance, as both clear commands require. The commands land in the
          * caller's command buffer, which is the one the pair's pass will be recorded into.
          */
-        /** Reused clear structures; see clear(). */
-        private VkImageSubresourceRange clearRange;
-        private VkClearColorValue clearColour;
-        private VkClearDepthStencilValue clearDepthValue;
-        private float[] clearColourFloats;
-
         private void clear(VkCommandBuffer command) {
             // A recorded clear supersedes a deferred one: the two are the same clear, and leaving the flag set would
             // make the next pass clear an image it does not attach.
@@ -2199,17 +2192,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     + " readback=none";
         }
 
-        /**
-         * The one-time move from the layout the pair was created in to the {@code GENERAL} layout every later
-         * command assumes, with the clears that follow execution-ordered behind it. {@code TOP_OF_PIPE} as the
-         * source is the same statement the frame images' first acquire makes: nothing has touched these images yet,
-         * and the move discards the undefined content rather than preserving it.
-         * <p>
-         * Both destination access masks are the transfer write the clear performs, not the attachment accesses the
-         * pass will perform: this barrier's destination stage is {@code TRANSFER}, and an access flag not supported
-         * by a stage in the destination mask is exactly the kind of mismatch the validation layer rejects. The
-         * attachment visibility is the following barrier's job.
-         */
         /** Where the pair's depth image is: UNDEFINED, the clear's transfer layout, or the attachment layout. */
         private int depthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -2278,6 +2260,17 @@ public final class GllessFrameTarget implements FrameImageTarget {
             return this.colorInTransfer ? DEPTH_TRANSFER_LAYOUT : VK_IMAGE_LAYOUT_GENERAL;
         }
 
+        /**
+         * The one-time move from the layout the pair was created in to the {@code GENERAL} layout every later
+         * command assumes, with the clears that follow execution-ordered behind it. {@code TOP_OF_PIPE} as the
+         * source is the same statement the frame images' first acquire makes: nothing has touched these images yet,
+         * and the move discards the undefined content rather than preserving it.
+         * <p>
+         * Both destination access masks are the transfer write the clear performs, not the attachment accesses the
+         * pass will perform: this barrier's destination stage is {@code TRANSFER}, and an access flag not supported
+         * by a stage in the destination mask is exactly the kind of mismatch the validation layer rejects. The
+         * attachment visibility is the following barrier's job.
+         */
         private void recordAcquire(VkCommandBuffer command) {
             int queueFamily = context.queueFamilyIndex();
             try (MemoryStack stack = stackPush()) {

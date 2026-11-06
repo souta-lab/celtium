@@ -281,6 +281,10 @@ public final class VulkanDynamicMesh {
         draw(commandBuffer);
     }
 
+    /** How many mesh binds use the offset-in-draw form (buffers bound once) and how many re-bind at a slice offset. */
+    public static long DRAW_FORM_BINDS;
+    public static long BIND_FORM_BINDS;
+
     /**
      * The flush-path form: consecutive groups borrowing from the same arena re-bind the same two buffers every
      * draw (~19 groups/frame each paying vkCmdBindVertexBuffers+vkCmdBindIndexBuffer, OPT-12). The four slots of
@@ -290,10 +294,6 @@ public final class VulkanDynamicMesh {
      * emitted per group. A slice that does not convert binds at its own offset exactly as {@link #bindAndDraw} does,
      * and the cache then names that binding, so a mixed stream still dedups whatever repeats.
      */
-    /** How many mesh binds use the offset-in-draw form (buffers bound once) and how many re-bind at a slice offset. */
-    public static long DRAW_FORM_BINDS;
-    public static long BIND_FORM_BINDS;
-
     public void bindAndDraw(VkCommandBuffer commandBuffer, long[] bindCache) {
         if (this.destroyed) {
             throw new IllegalStateException("a destroyed mesh cannot be drawn");
@@ -360,12 +360,6 @@ public final class VulkanDynamicMesh {
      * binding once and one command.
      */
     /**
-     * Binds this mesh's own streams at offset zero and nothing else.
-     * <p>
-     * The indirect run form needs the buffers bound but the offsets in the commands: every command of a run carries its
-     * own firstIndex and vertexOffset, so the binding is one pair per run instead of one pair per draw.
-     */
-    /**
      * Binds a pair of raw buffer handles at offset zero, for a run whose geometry lives in one shared arena rather than
      * in any one mesh. The commands of such a run carry their own firstIndex and vertexOffset into that arena.
      */
@@ -382,6 +376,12 @@ public final class VulkanDynamicMesh {
         }
     }
 
+    /**
+     * Binds this mesh's own streams at offset zero and nothing else.
+     * <p>
+     * The indirect run form needs the buffers bound but the offsets in the commands: every command of a run carries its
+     * own firstIndex and vertexOffset, so the binding is one pair per run instead of one pair per draw.
+     */
     public void bindAtZero(VkCommandBuffer commandBuffer, long[] bindCache) {
         if (this.destroyed) {
             throw new IllegalStateException("a destroyed mesh cannot be drawn");
@@ -499,6 +499,14 @@ public final class VulkanDynamicMesh {
     }
 
     /**
+     * {@code -Dceltium.vulkan.arenaStrideFirst=true}: an empty arena mesh takes the stride before its first write, so
+     * its slice starts at a whole number of vertices (what the indirect run path needs). Off by default: on r111 the
+     * same jar with the indirect switches failed its picture with this on and passed with it off (l39stride), and the
+     * default path gains nothing from it. See docs/evidence/array-records-census-2026-11-06.md.
+     */
+    static final boolean ARENA_STRIDE_FIRST = Boolean.getBoolean("celtium.vulkan.arenaStrideFirst");
+
+    /**
      * Copies {@code count} vertices of {@code stride} bytes each from a native address and appends triangle-list
      * indices for {@code indices} (the expansion {@link VulkanImmediateDrawer} produces).
      * <p>
@@ -515,14 +523,6 @@ public final class VulkanDynamicMesh {
      *
      * @return {@code false} when the layout was refused (a stride this mesh cannot represent, or no indices)
      */
-    /**
-     * {@code -Dceltium.vulkan.arenaStrideFirst=true}: an empty arena mesh takes the stride before its first write, so
-     * its slice starts at a whole number of vertices (what the indirect run path needs). Off by default: on r111 the
-     * same jar with the indirect switches failed its picture with this on and passed with it off (l39stride), and the
-     * default path gains nothing from it. See docs/evidence/array-records-census-2026-11-06.md.
-     */
-    static final boolean ARENA_STRIDE_FIRST = Boolean.getBoolean("celtium.vulkan.arenaStrideFirst");
-
     public boolean copyVertices(long sourceAddress, int stride, int count, int[] indices) {
         if (sourceAddress == 0L || count <= 0 || indices == null || indices.length == 0
                 || stride < 4 || stride > 256) {

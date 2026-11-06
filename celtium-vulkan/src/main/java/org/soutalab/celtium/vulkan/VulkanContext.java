@@ -144,14 +144,6 @@ public final class VulkanContext {
     private int deviceType = -1;
     private long commandPool = VK_NULL_HANDLE;
 
-    /**
-     * How many times {@link #submitWithSemaphores} ran, and how many of those actually carried a wait.
-     * <p>
-     * This exists because the validation messages name the acquire semaphore as "not waited on" while the calling code
-     * passes it, and the question is whether the call this code builds is the call the driver receives. A counter is
-     * used rather than a print: an earlier attempt at printing from here coincided with a run whose terrain passes all
-     * errored, and while that link is unproven, a counter costs nothing and cannot perturb anything.
-     */
     /** The bound on a submission's fence wait, matching the renderer's frame waits. */
     private static final long SUBMIT_TIMEOUT_NANOS = 5_000_000_000L;
     /**
@@ -274,12 +266,19 @@ public final class VulkanContext {
         this.quarantinedReadbackBuffers.clear();
     }
 
-    /** Command buffers whose queue wait failed and whose command buffer was therefore quarantined instead of freed. */
     /** Command buffers and fences whose submission timed out: never freed while the queue may still own them. */
     private final java.util.Set<VkCommandBuffer> quarantinedCommandBuffers = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final java.util.Set<Long> quarantinedFences = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** Cleared when a submission times out: a device that stopped making progress gets no further work. */
     private volatile boolean usable = true;
+    /**
+     * How many times {@link #submitWithSemaphores} ran, and how many of those actually carried a wait.
+     * <p>
+     * This exists because the validation messages name the acquire semaphore as "not waited on" while the calling code
+     * passes it, and the question is whether the call this code builds is the call the driver receives. A counter is
+     * used rather than a print: an earlier attempt at printing from here coincided with a run whose terrain passes all
+     * errored, and while that link is unproven, a counter costs nothing and cannot perturb anything.
+     */
     public static int submitWithSemaphoresCalls;
     /**
      * Every {@code vkQueueSubmit} the process issues, from every path: the per-stage semaphore packets (the owned
@@ -297,15 +296,6 @@ public final class VulkanContext {
     private long stagingBuffer = VK_NULL_HANDLE;
     private long stagingMemory = VK_NULL_HANDLE;
     private long stagingMappedAddress;
-    /**
-     * OPT-07's staging ring: the bytes of the copies this frame has recorded but not yet submitted.
-     * <p>
-     * The single staging buffer above serves the immediate one-copy path (a copy larger than a ring slot, and the
-     * resource build that must be complete before it returns). Every ordinary upload writes into a slot of this ring
-     * and appends a copy record instead of submitting anything; {@link #flushUploads()} turns all of them into one
-     * command buffer, one submission and one fence wait. The slot is freed by that submission's fence and by nothing
-     * else: the ring's cursor is only moved on after the wait that confirmed the copies completed (OPT-04).
-     */
     /**
      * Ring slots and their size.
      * <p>
@@ -561,12 +551,6 @@ public final class VulkanContext {
 
     /** The Vulkan instance that owns the device. */
     /**
-     * {@return whether the instance was created with this extension}.
-     * <p>
-     * Surface extensions such as {@code VK_KHR_wayland_surface} are instance extensions, so the swapchain asks here
-     * rather than guessing from the platform name.
-     */
-    /**
      * {@return whether the logical device was created with this extension}.
      * <p>
      * The swapchain functions are device extensions: enabling the surface extension on the instance without this is
@@ -593,6 +577,12 @@ public final class VulkanContext {
         }
     }
 
+    /**
+     * {@return whether the instance was created with this extension}.
+     * <p>
+     * Surface extensions such as {@code VK_KHR_wayland_surface} are instance extensions, so the swapchain asks here
+     * rather than guessing from the platform name.
+     */
     public boolean hasInstanceExtension(String name) {
         return name != null && this.instance != null && this.enabledInstanceExtensions.contains(name);
     }
@@ -1995,12 +1985,6 @@ public final class VulkanContext {
     }
 
     /**
-     * Destroys the command pool, the staging buffer, the device and the instance. Safe to call more than once, and
-     * safe to call on a context whose creation failed halfway through.
-     * <p>
-     * Render thread only.
-     */
-    /**
      * Adds one bootstrap submission fence wait's duration (BH-27). Kept apart from the queue-wait totals so a report
      * can say which of the two happened: the queue-wide idle is now zero on the normal path, and these are the
      * bounded per-submission waits that replaced it.
@@ -2013,6 +1997,12 @@ public final class VulkanContext {
         }
     }
 
+    /**
+     * Destroys the command pool, the staging buffer, the device and the instance. Safe to call more than once, and
+     * safe to call on a context whose creation failed halfway through.
+     * <p>
+     * Render thread only.
+     */
     public void delete() {
         if (this.deviceLost) {
             // Let the OS reclaim native resources when the process exits. A
@@ -2557,7 +2547,6 @@ public final class VulkanContext {
     private Set<String> advertisedDeviceExtensions;
     /** The device extensions this context actually enabled, named in the contract line rather than implied. */
     private List<String> enabledDeviceExtensions = new ArrayList<String>();
-    /** Whether multiDrawIndirect was reported by the device and therefore enabled at creation. */
     /** Whether VK_KHR_dynamic_rendering was enabled on the device, which the shaderpack path builds pipelines on. */
     private boolean dynamicRenderingSupported;
     /** {@code VkPhysicalDeviceVulkan11Features.shaderDrawParameters}: gl_DrawID in shaders, Vulkan 1.1. */
@@ -2575,6 +2564,7 @@ public final class VulkanContext {
         return dynamicRenderingSupported;
     }
 
+    /** Whether multiDrawIndirect was reported by the device and therefore enabled at creation. */
     private boolean multiDrawIndirectSupported;
     /** Whether drawIndirectFirstInstance was reported by the device and therefore enabled at creation. */
     private boolean drawIndirectFirstInstanceSupported;
@@ -3514,7 +3504,6 @@ public final class VulkanContext {
         celtium$settleDeferredSubmits();
     }
 
-    /** Submits every pending copy and waits for it and every other outstanding deferred submission to complete. */
     /**
      * Buffers whose replacement has already been created but that a recording may still reference.
      * <p>
@@ -3786,6 +3775,7 @@ public final class VulkanContext {
         return new int[] {this.retiredBuffersOutstanding, this.retiredBuffersDestroyed};
     }
 
+    /** Submits every pending copy and waits for it and every other outstanding deferred submission to complete. */
     public void settleUploads() {
         flushUploads();
         celtium$settleDeferredSubmits();

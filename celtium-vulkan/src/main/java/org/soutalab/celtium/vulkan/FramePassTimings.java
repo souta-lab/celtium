@@ -119,7 +119,6 @@ public final class FramePassTimings {
     private FramePassTimings() {
     }
 
-    /** {@return whether the instrument should measure at all}. */
     /**
      * Resolved once: {@code Boolean.getBoolean} walks {@code System.getProperty} into a ConcurrentHashMap, and this is
      * asked on both sides of every bracket - the JFR census of the shipping configuration put that lookup at 1.8% of the
@@ -128,6 +127,7 @@ public final class FramePassTimings {
      */
     private static final boolean PASS_SPLIT_ENABLED = Boolean.getBoolean("celtium.vulkan.passSplit");
 
+    /** {@return whether the instrument should measure at all}. */
     public static boolean enabled() {
         // Deliberately not VulkanDiagnostics.enabled(): the acceptance fixture always passes celtium.vulkan.validation,
         // and tying the brackets to it put eight name lookups and two clock reads on every group of every acceptance leg -
@@ -359,7 +359,6 @@ public final class FramePassTimings {
         return index;
     }
 
-    /** The index of {@code gui} in the pass tables, so the flag is set by name rather than by a literal. */
     /**
      * A direct-mapped cache over the bracket-name lookup.
      * <p>

@@ -41,10 +41,10 @@ public final class CeltiumFontAtlas {
     /** The texture the whole font is bound under once built. */
     private static final ResourceLocation ATLAS_LOCATION = new ResourceLocation("celtium", "textures/font/atlas");
 
-    /** Property switch: the atlas is the default path; {@code =false} restores the per-page path for A/B work. */
     /** Read once: the mirror request runs on every atlas rebuild and the dump path on every dump decision. */
     private static final boolean MIRROR_FONT_ATLAS = Boolean.getBoolean("celtium.debug.mirrorFontAtlas");
     private static final String ATLAS_DUMP = System.getProperty("celtium.fontAtlas.dump");
+    /** Property switch: the atlas is the default path; {@code =false} restores the per-page path for A/B work. */
     private static final boolean ENABLED = Boolean
             .parseBoolean(System.getProperty("celtium.fontAtlas", "true"));
 

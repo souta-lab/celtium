@@ -17,9 +17,11 @@ public final class SubmissionStatistics {
     private int stalledStops;
     private int stalledTeardownSkips;
     private int idleWaits;
+    /** Windows abandoned because the device stalled; the batches they held are lost and counted. */
     private int stalledGeometryDrops;
     private int stalledGeometryDroppedBatches;
     private int injectedIdleFailures;
+    /** Groups whose arena slice could not be handed out, so they allocated their own buffers: the bounded fallback. */
     private long frameArenaFallbackGroups;
     private long frameFenceWaitMillis;
     private long frameFenceWaitWorstMillis;
@@ -30,6 +32,7 @@ public final class SubmissionStatistics {
     private int idleWaitTimeouts;
     private int idleWaitRetries;
     private long deviceWaitToken;
+    /** Where the latch was set from, so a report names the origin instead of only the state (task-60). */
     private String stallOrigin = "none";
 
     /** Records one stalledStops. */

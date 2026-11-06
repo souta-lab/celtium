@@ -541,9 +541,6 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
     }
 
     /**
-     * Schedules a chunk rebuild for the render belonging to the given chunk section position.
-     */
-    /**
      * Sections already scheduled for a rebuild this frame.
      * <p>
      * Vanilla's per-frame {@code RenderGlobal.updateClouds()} drains its light-update set and asks for a rebuild around
@@ -556,6 +553,9 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
     private final it.unimi.dsi.fastutil.longs.LongOpenHashSet celtium$scheduledSections =
             new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
 
+    /**
+     * Schedules a chunk rebuild for the render belonging to the given chunk section position.
+     */
     public void scheduleRebuildForChunk(int x, int y, int z, boolean important) {
         // Only the unimportant requests are collapsed: those are the light-update storm's shape (a position that had a
         // light change, marked so the section is re-meshed). An important request - a block placement or break, which

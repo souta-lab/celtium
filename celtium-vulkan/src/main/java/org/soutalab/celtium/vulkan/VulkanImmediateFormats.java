@@ -191,7 +191,6 @@ public final class VulkanImmediateFormats {
     /** Ids are dense and allocated in order, so the arrays the census keeps are sized from the highest one. */
     public static final int COUNT = COMBINE4 + 1;
 
-    /** Ids the acceptance mask admits by default: every layout this class names. */
     /**
      * The formats the immediate path accepts by default. Id 11 joined the list with the layout itself: a mapped but
      * unaccepted format is still refused, and the 268-mod E2E pack draws 24,143 batches in it.

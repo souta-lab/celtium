@@ -51,10 +51,10 @@ public abstract class WorldVertexBufferUploaderMixin {
     /** How many batches the compacted layout has been taken from, bounded like the other first-arrival reports. */
     private static int celtium$compactedBatches;
     private static int celtium$compactedDumps;
-    /** Uploads seen per mapped format id, before any accept/refuse decision. */
     /** Refusals by "format reason": the family-specific prints did not cover every format. */
     private static final java.util.LinkedHashMap<String, Integer> celtium$refusalsByFormat =
             new java.util.LinkedHashMap<String, Integer>();
+    /** Uploads seen per mapped format id, before any accept/refuse decision. */
     private static final int[] celtium$arrivalsByFormat =
             new int[org.soutalab.celtium.vulkan.VulkanImmediateFormats.COUNT];
     private static int celtium$arrivalTotal;
@@ -722,14 +722,6 @@ public abstract class WorldVertexBufferUploaderMixin {
     }
 
     /**
-     * Records the texture the list is being compiled under, once per list.
-     * <p>
-     * The same GL state the quad capture reads per quad, taken from the uploader side: the stub answers both from the
-     * single {@code glBindTexture} record, so this is the compile-time half of the texture identity the replay-time read
-     * in the {@code callList} hook pairs with. Read once per list - a batch arriving inside {@code glNewList} is the
-     * moment the geometry is compiled, and the texture does not change between the batches of one part.
-     */
-    /**
      * Names the game-side call site of batches that sample one texture, behind {@code -Dceltium.probe.texture=<glid>}.
      *
      * <p>Written for the videoSettings scene's background: the frame there is vanilla {@code GuiVideoSettings} over the
@@ -830,6 +822,14 @@ public abstract class WorldVertexBufferUploaderMixin {
         return text.length() == 0 ? "none" : text.toString();
     }
 
+    /**
+     * Records the texture the list is being compiled under, once per list.
+     * <p>
+     * The same GL state the quad capture reads per quad, taken from the uploader side: the stub answers both from the
+     * single {@code glBindTexture} record, so this is the compile-time half of the texture identity the replay-time read
+     * in the {@code callList} hook pairs with. Read once per list - a batch arriving inside {@code glNewList} is the
+     * moment the geometry is compiled, and the texture does not change between the batches of one part.
+     */
     private static void celtium$noteCompileTexture(int listIndex) {
         try {
             if (org.soutalab.celtium.vulkan.VulkanDisplayListCensus.compileTextureKnown(listIndex)) {

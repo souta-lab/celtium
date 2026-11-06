@@ -214,23 +214,6 @@ public class MinecraftMixin {
         }
     }
 
-    /**
-     * Creates the renderer at window creation under the GL-less window, so the menu and the loading screens have
-     * someone to draw and present them.
-     * <p>
-     * Measured on the user's own launch: the menu draws are client-memory {@code glDrawArrays} calls, the stub decodes
-     * them (524,288 in 90 s, layouts 24/16/20 bytes), and every one was refused with "no terrain backend is installed"
-     * because {@code TerrainGpuBackends} stays empty until a world renderer exists - so the window had nothing in it,
-     * and the present at the swap point (which requires a backend) never ran either. Two anchors, earliest first: the
-     * tail of {@code createDisplay} (the window is up, the game loop has not started, and the loading screen is about
-     * to be drawn) and the head of {@code runTick} (the retry point, and the only one a configuration where the display
-     * is created before the stub could use). Nothing menu-specific is needed at either: the backend's own
-     * no-terrain-pass UI render pass is what these frames draw with.
-     * <p>
-     * Only under the stub: a bridge frame draws its menu with OpenGL, so the world-time creation stays the only one
-     * there and this hook does nothing. The world renderer adopts this instance rather than building a second one, so
-     * the swapchain and the frame target keep one owner.
-     */
     /** Latched after the saved VSync option has been handed to the present policy once (task-56). */
     @Unique
     private static boolean celtium$vsyncPushed;
@@ -253,20 +236,6 @@ public class MinecraftMixin {
     private static String celtium$windowRendererStage = "none";
 
     /**
-     * The earliest install point: the tail of {@code Minecraft.createDisplay()}, before {@code startGame} reaches the
-     * loading screen.
-     * <p>
-     * Measured from the sources: {@code startGame} calls {@code createDisplay} (Minecraft.java:505), then
-     * {@code FMLClientHandler.beginMinecraftLoading} (:514) and {@code SplashProgress.drawVanillaScreen} (:517) - and
-     * Forge's splash is disabled under GL-less, so that call runs {@code Minecraft.drawSplashScreen} (:959-1005), which
-     * draws the Mojang logo through the immediate path and ends in {@code updateDisplay()}. With the renderer installed
-     * only at {@code runTick} HEAD, every one of those draws arrived with {@code TerrainGpuBackends.current() == null}
-     * and was refused as "no terrain backend is installed", so the loading screen could not exist. The window itself is
-     * already up here ({@code Display.create} was patched to a GLFW_NO_API window by LwjglxDisplayMixin), which is what
-     * the surface needs; the device and swapchain are created before the framebuffer and the resource load, and the
-     * world legs see the same single renderer as before because this is the same latch the tick path uses.
-     */
-    /**
      * Requests the presented dump for the loading phase, from the splash's own <em>head</em>.
      * <p>
      * No existing switch can land in this window: the tick-keyed dumps need a world or the main menu, and the loading
@@ -281,11 +250,6 @@ public class MinecraftMixin {
      * present runs, and the frame it writes is the splash's own. Measured before this change: the request line existed
      * with no PNG beside it ({@code pictureRequested_loading … after 0 presented frames}); the backend now holds such a
      * request instead of refusing it.
-     */
-    /**
-     * The control anchor: {@code startGame} runs on every launch, so a leg that shows no splash line at all can be
-     * read as "the mixin did not apply" rather than "the splash method was not reached" - the two have different
-     * fixes and the same silence otherwise.
      */
     /**
      * Gives the Client thread its own LWJGL3 GLCapabilities before mod pre-initialisation runs on it.
@@ -312,6 +276,11 @@ public class MinecraftMixin {
 
 
 
+    /**
+     * The control anchor: {@code startGame} runs on every launch, so a leg that shows no splash line at all can be
+     * read as "the mixin did not apply" rather than "the splash method was not reached" - the two have different
+     * fixes and the same silence otherwise.
+     */
     @Inject(method = "startGame", at = @At("HEAD"), require = 0)
     private void celtium$splashHookControl(CallbackInfo ci) {
         System.out.println("[Celtium] CELTIUM_SPLASH_HOOK startGame=true (mixin applied; the splash hook is live)");
@@ -433,6 +402,20 @@ public class MinecraftMixin {
         }
     }
 
+    /**
+     * The earliest install point: the tail of {@code Minecraft.createDisplay()}, before {@code startGame} reaches the
+     * loading screen.
+     * <p>
+     * Measured from the sources: {@code startGame} calls {@code createDisplay} (Minecraft.java:505), then
+     * {@code FMLClientHandler.beginMinecraftLoading} (:514) and {@code SplashProgress.drawVanillaScreen} (:517) - and
+     * Forge's splash is disabled under GL-less, so that call runs {@code Minecraft.drawSplashScreen} (:959-1005), which
+     * draws the Mojang logo through the immediate path and ends in {@code updateDisplay()}. With the renderer installed
+     * only at {@code runTick} HEAD, every one of those draws arrived with {@code TerrainGpuBackends.current() == null}
+     * and was refused as "no terrain backend is installed", so the loading screen could not exist. The window itself is
+     * already up here ({@code Display.create} was patched to a GLFW_NO_API window by LwjglxDisplayMixin), which is what
+     * the surface needs; the device and swapchain are created before the framebuffer and the resource load, and the
+     * world legs see the same single renderer as before because this is the same latch the tick path uses.
+     */
     @Inject(method = "createDisplay", at = @At("RETURN"), require = 0)
     private void celtium$ensureWindowRendererAtDisplay(CallbackInfo ci) {
         Minecraft mc = Minecraft.getMinecraft();

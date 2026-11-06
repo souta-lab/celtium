@@ -212,15 +212,6 @@ public final class VulkanImmediateTexturePipeline {
     }
 
     /**
-     * Creates a pipeline for one drawing state: blending with the given Vulkan factors, the depth test and its write
-     * mask, and face culling. These bake into the pipeline object, which is why the immediate path caches one per
-     * state instead of forcing every batch through a single hardcoded combination.
-     */
-    /**
-     * Creates the record-reading variant: the same textured family, with the block taken from the records buffer at set 1
-     * and drawn through {@link #drawIndirectRange}.
-     */
-    /**
      * The record-reading twin of an existing pipeline, keeping its variant flags (position-only, position-no-texture,
      * combine) so the twin's vertex stride and shader pair match the groups it will draw.
      */
@@ -236,6 +227,10 @@ public final class VulkanImmediateTexturePipeline {
         return pipeline.build();
     }
 
+    /**
+     * Creates the record-reading variant: the same textured family, with the block taken from the records buffer at set 1
+     * and drawn through {@link #drawIndirectRange}.
+     */
     public static VulkanImmediateTexturePipeline createRecords(VulkanContext context, long renderPass,
             VulkanColorBlendState colorBlend, boolean depthTest, boolean depthWrite, int cull, int depthCompareOp,
             long recordsSetLayout) {
@@ -298,12 +293,12 @@ public final class VulkanImmediateTexturePipeline {
         return pipeline.build();
     }
 
-    /** {@return whether this is the texgen variant}, which the backend's push writer fills differently. */
     /** {@return whether this is the multi-unit combine variant}, whose fragment stage the array shader pair does not have. */
     public boolean celtium$combine4() {
         return this.combine4;
     }
 
+    /** {@return whether this is the texgen variant}, which the backend's push writer fills differently. */
     public boolean celtium$texGen() {
         return this.texGen;
     }
@@ -387,6 +382,11 @@ public final class VulkanImmediateTexturePipeline {
         return pipeline.build();
     }
 
+    /**
+     * Creates a pipeline for one drawing state: blending with the given Vulkan factors, the depth test and its write
+     * mask, and face culling. These bake into the pipeline object, which is why the immediate path caches one per
+     * state instead of forcing every batch through a single hardcoded combination.
+     */
     public static VulkanImmediateTexturePipeline create(VulkanContext context, long renderPass, VulkanColorBlendState colorBlend,
                             boolean depthTest, boolean depthWrite, int cull, int depthCompareOp) {
         return allocate(context, renderPass, colorBlend, depthTest, depthWrite, cull, depthCompareOp).build();
@@ -438,7 +438,6 @@ public final class VulkanImmediateTexturePipeline {
         return this;
     }
 
-    /** Binds the pipeline, pushes the matrices and records the mesh's batch. */
     /**
      * Whether the per-group bind timings are collected. They were unconditional: five {@code System.nanoTime} calls per
      * group, and {@code __vdso_clock_gettime} was 1.2% of client-thread CPU on a world profile with about seventy
@@ -446,6 +445,7 @@ public final class VulkanImmediateTexturePipeline {
      */
     private static final boolean BIND_TIMINGS = Boolean.getBoolean("celtium.vulkan.bindTimings");
 
+    /** Binds the pipeline, pushes the matrices and records the mesh's batch. */
     public void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer pushConstants,
                      long descriptorSetToBind, long[] bindCache) {
         if (this.pipeline == VK_NULL_HANDLE || mesh == null || mesh.isEmpty()) {
@@ -626,14 +626,6 @@ public final class VulkanImmediateTexturePipeline {
     }
 
     /**
-     * {@return the stride this variant's vertex binding declares}.
-     * <p>
-     * One place, in the order the variants are built: an explicit stride wins (the position-normal layout is neither of the
-     * shortages below), then a trailing element that widens the vertex, then the three base layouts. The expression used to
-     * be inlined in the binding and read the three flags in an order that made {@code POSITION_NORMAL} unwritable without a
-     * fourth branch.
-     */
-    /**
      * The render state this variant was built with, for a pipeline that has to draw the same batch under a mod's own
      * program ({@link VulkanModProgramPipeline}): same render pass, blend, depth and cull, different shaders.
      */
@@ -653,6 +645,14 @@ public final class VulkanImmediateTexturePipeline {
         return this.cull;
     }
 
+    /**
+     * {@return the stride this variant's vertex binding declares}.
+     * <p>
+     * One place, in the order the variants are built: an explicit stride wins (the position-normal layout is neither of the
+     * shortages below), then a trailing element that widens the vertex, then the three base layouts. The expression used to
+     * be inlined in the binding and read the three flags in an order that made {@code POSITION_NORMAL} unwritable without a
+     * fourth branch.
+     */
     private int vertexStride() {
         if (this.explicitStride != 0) {
             return this.explicitStride;

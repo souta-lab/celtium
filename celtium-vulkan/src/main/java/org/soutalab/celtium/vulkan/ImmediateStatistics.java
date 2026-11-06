@@ -13,73 +13,133 @@ public final class ImmediateStatistics {
 
     private long immediateRecordedBatches;
 
+    /** Handoffs that actually carried geometry (the counters above count calls, many of which return early). */
     private long actualFlushes;
+    /** BH-03: batches captured with the alpha test on, with a comparison other than GREATER, and with it off. */
     private long alphaFuncGroups;
     private long alphaTestDisabledGroups;
     private long appendCount;
     private long blendAlphaNonDefaultGroups;
     private long blendFuncIgnored;
+    /**
+     * How many 2-argument {@code glBlendFunc} calls reached the mirror, and the last pair they carried.
+     * <p>
+     * Before this counter existed a 2-argument call was visible only through {@link #blendOutlier}, which is set for
+     * anything that is not the ordinary alpha pair - so a run in which the game called {@code blendFunc(ONE, ONE)}
+     * and nothing else unusual happened reported no evidence at all, and the fact that the call never reached the
+     * mirror was invisible.
+     */
     private long blendFuncTwoArgCalls;
+    /**
+     * BH-07's per-batch counts, taken at capture with the group: batches with blending on, and of those the ones whose
+     * alpha factor pair is not the {@code ONE / ONE_MINUS_SRC_ALPHA} pair every pipeline baked before the fix.
+     * <p>
+     * The second number is the one that matters. Before BH-07 it was zero <em>by construction</em> - the capture never
+     * read the alpha pair - so a non-zero value in a leg is the proof that the pair now travels, and the pipeline
+     * caches' size next to it is the proof that it also closes a pipeline rather than being captured and dropped.
+     */
     private long blendGroups;
     private long clearOrderFlushes;
     private long cullDisabledGroups;
+    /**
+     * Immediate groups whose capture saw {@code GL_CULL_FACE} enabled, and the ones that saw it disabled.
+     * <p>
+     * BH-08's per-batch proof: before the fix every group fell into the disabled column, because nothing ever wrote
+     * the mirror's cull flag. A leg that shows both columns non-empty (the HUD and the world differ) is the evidence
+     * that the capability and the face now reach the pipeline key, which is stronger than "the state flows" read off
+     * the source. Counted at capture, where the group's own state is taken.
+     */
     private long cullEnabledGroups;
+    /** Batches that joined the open group with the whole preflight skipped (OPT-18b's other half). */
     private long fastMergedBatches;
     private long flushCount;
     private long groupCloneCount;
     private long groupCreateCount;
     private long groupDrawCount;
+    /** Viewports issued per group; BH-13's counter, so "the rectangle was restored" is readable, not assumed. */
     private long groupViewportSets;
     private long groupsStaleTargetGeneration;
     private long groupsStaleWorldEpoch;
+    /** Groups drawn with GL's polygon offset applied as a Vulkan depth bias (BH-11). */
     private long immediateDepthBiasedGroups;
+    /** Lines of {@code CELTIUM_DRAW_SITE} printed; bounded by {@code celtium.vulkan.enqAll} + {@code enqFormat}. */
     private long immediateDrawSiteLogged;
     private int immediateGroupsFlushed;
     private long immediateGroupsClosed;
     private long immediateGroupsDiscarded;
     private long immediateGroupsDrawn;
+    /** Groups left in the queue because they belong to another render target (audit A32). */
     private long immediateGroupsKeptForOtherTargets;
     private long immediateRetryCount;
     private long immediateStateCalls;
     private long immediateTaken;
     private long immediateWindows;
     private long invalidImmediateRecords;
+    /**
+     * The ITEM family's batches split by which variant they got and by the stage they were offered in. This is the
+     * instrument the hotbar measurement needed and did not have: a GUI item that arrives unlit never samples the light
+     * map, so no light-map coordinate - captured or full-bright - can change its brightness, and a leg that reports
+     * only the coordinate counters cannot tell that apart from "the rule did nothing".
+     */
     private long itemLitGroups;
     private long itemLitGuiGroups;
     private long itemUnlitGroups;
     private long itemUnlitGuiGroups;
+    /** Groups closed because a light's direction or colour changed without the lighting enable moving. */
     private long lightParamBoundarySplits;
+    /** How many captures arrived and how many groups carried one into the push block, for the night measurement. */
     private long lightmapCoordCalls;
     private long lightmapCoordGroups;
+    /**
+     * Groups offered outside the world pass whose light-map coordinate is the full-bright pair instead of the captured
+     * one. Named so the fix is visible in the same census as the capture it replaces: at zero the rule did not fire and
+     * a hotbar item is still drawn with the world's light, whatever the picture looks like.
+     */
     private long lightmapFullBrightGroups;
     private long lightmapUnitDisables;
     private long lightmapUnitEnables;
+    /**
+     * Line batches drawn at the 1.0 width this renderer implements when OpenGL asked for more (BH-12): the block
+     * selection outline asks for 2.0 and the fishing rod's line is a line batch too, and under the GL-less window a
+     * refusal draws nothing. Counted so the difference is reported rather than silent.
+     */
     private long lineBatchesNarrowed;
     private long matrixSplits;
+    /** BH-07: batches whose captured blend equation was not ADD. */
     private long nonAddBlendEquationGroups;
     private long nonGreaterAlphaFuncGroups;
     private long orderPreservingFlushes;
     private long orderingFlushFailures;
+    /** BH-10: batches whose captured write mask was not all four channels, and the last such mask. */
     private long partialColorMaskGroups;
+    /** Batches refused because the mirror they need has only ever received a partial write. */
     private long partialMirrorRefusals;
+    /** Mirrors that had only a partial write and were supplied whole by the offer path (audit A04). */
     private long partialMirrorsCompleted;
     private long particleDescriptorRefusals;
     private long passBoundaryFlushes;
     private long preTransformedBatches;
+    /** Groups opened on the pre-transformed path, batches appended to them, and splits a matrix still caused. */
     private long preTransformedGroups;
     private long prepareImmediateCalls;
     private long programQueryCount;
+    /** Batches refused by a preflight that now runs before anything is appended (audit A08). */
     private long refusedBeforeAppend;
     private long scissorBoundarySplits;
+    /** Groups whose {@code vkCmdSetScissor} was the game's captured clip intersected with the target rectangle. */
     private long scissorCapturedGroups;
     private long scissorLateCapturedGroups;
+    /** Batches refused because a custom shader program was bound (the game's post-process chain and mod shaders). */
     private long shaderProgramRefusals;
     private long snapshotCaptures;
     private long snapshotServedCaptures;
+    /** Groups whose sampled texture wrapper had been replaced between prepare and draw, and were re-prepared. */
     private long staleGroupDescriptorsRebuilt;
+    /** Groups refused because their texture wrapper had moved and no rebuild was available for their pipeline. */
     private long staleGroupRefusals;
     private long stateSkipsDepthBias;
     private long texMatrixGroups;
+    /** Passes abandoned because the uniform buffer could not be prepared. */
     private long uniformPreparationFailures;
     private long stateSkipsViewport;
     private long stateSkipsScissor;
@@ -88,12 +148,14 @@ public final class ImmediateStatistics {
     private long appendNanos;
     private long captureStateNanos;
     private long groupCloneNanos;
+    /** Split of the batch call outside the preflight: group (mesh) creation against the vertex append. */
     private long groupCreateNanos;
     private long groupDrawNanos;
     private int groupsDiscardedAtFullTeardown;
     private int groupsDiscardedAtWorldTeardown;
     private long immediateCompletedBatches;
     private long immediateSubmitTailNanos;
+    /** Split of the batch call's remainder: matrices, state capture, state key, and the group's state clone. */
     private long matrixCopyNanos;
     private long orderingFlushDroppedBatches;
     private int postAcceptDroppedGroups;
@@ -109,13 +171,18 @@ public final class ImmediateStatistics {
      */
     private long selfCompositeSkips;
     private long prepBranchNanos;
+    /** Split of prepareImmediate: pipeline+texture lookup against the pipeline/descriptor branch. */
     private long prepLookupNanos;
     private long prepRegistryNanos;
+    /** Which half of the lookup dominates: the terrain pipeline lookup or the texture registry lookup. */
     private long prepTerrainPipelineNanos;
+    /** Split of the per-batch cost: time inside prepareImmediate (pipeline and descriptor preparation). */
     private long prepareImmediateNanos;
+    /** The GL query the custom-program shutter makes per batch, timed: it is a synchronising call on some drivers. */
     private long programQueryNanos;
     private long stateKeyNanos;
     private boolean blendObserved;
+    /** The last comparison function captured, as the raw GL enum; 0 means the test was disabled for that batch. */
     private int lastAlphaFunc;
     private int lastFrameAccepted;
     private int lastFrameDrawn;
@@ -123,11 +190,18 @@ public final class ImmediateStatistics {
     private String lastUniformPreparationFailure = "none";
     private float mirroredProjectionDelta = -1.0f;
     private String particleDescriptorFailureReason;    private long actualFlushWorstNanos;
+    /** Flushes refused because no command buffer was recording (A11 exposes this path). */
     private int drawsWithoutCommandBuffer;
     private int frameAccepted;
     private int immediateBatchesOffered;
     private int immediateDeferredNextFrame;
     private int immediateMaxGroupVertices;
+    /**
+     * How often a batch was left to GL because the frame's window budget was already spent.
+     * <p>
+     * This is the alternative to deferring it to a later frame: the batch is drawn by GL in the frame that produced it,
+     * which keeps ordering and latency right at the cost of GL doing that draw. Named so the configuration is honest.
+     */
     private int immediateRefusedWindowBudget;
     private int immediateWindowsThisFrame;
     private float lastAlphaPushReference = Float.NaN;
@@ -508,7 +582,6 @@ public final class ImmediateStatistics {
         return this.immediateGroupsDrawn;
     }
 
-    /** Records one immediateGroupsKeptForOtherTargets. */
     /** Group-loop iterations across the run, so the per-window scan's size is a number rather than an assumption. */
     private long groupLoopIterations;
 
@@ -531,6 +604,7 @@ public final class ImmediateStatistics {
         return this.groupLoopIterations;
     }
 
+    /** Records one immediateGroupsKeptForOtherTargets. */
     void noteImmediateGroupsKeptForOtherTargets() {
         this.immediateGroupsKeptForOtherTargets++;
     }

@@ -22,12 +22,6 @@ public final class CeltiumGllessHint {
     }
 
 
-    /**
-     * Whether the GL-less surface is in use, read from the same property the rest of the mod uses.
-     * <p>
-     * The mixins that answer calls the GL surface cannot need to be inert on a hybrid run, where a real GL context
-     * exists and its answers are the right ones.
-     */
     /** {@return whether this host carries the SDL3 LWJGL binding}, which only the 0.7 generation does. */
     private static boolean sdl3Present() {
         try {
@@ -152,22 +146,6 @@ public final class CeltiumGllessHint {
         return address;
     }
 
-    /**
-     * Answers the integer queries the game itself validates, writing into the caller's buffer.
-     * <p>
-     * Measured 2026-10-15 (legs {@code gv-cohort-fix128s} / {@code gv-e2e-268-fix128s}): a replacement that returns
-     * the type's zero for everything makes Minecraft throw during startup - {@code glCheckFramebufferStatus}
-     * returned "unknown status:0" from {@code Framebuffer.checkFramebufferComplete}, called from
-     * {@code Minecraft.init}. gpu-verifier's rule is the general form of it: <b>a zero-returning replacement breaks
-     * every query whose result the caller checks</b>, and {@code glGetIntegerv} has eleven call sites inside
-     * Minecraft (GL_MAX_TEXTURE_SIZE and friends, where 0 causes a different failure further on).
-     * <p>
-     * Writing the buffer rather than leaving it alone matters: LWJGL's {@code glGetIntegerv(int, IntBuffer)} is Java
-     * and calls this native with the buffer's address, so the caller reads whatever is at that address. The values
-     * below are the ones this renderer can honestly claim - a large but finite texture limit, the texture-unit and
-     * attribute counts a GL 3.0 profile guarantees - and anything unknown is written as 0 rather than left as
-     * uninitialised memory.
-     */
     /**
      * LWJGL3's info-log natives: the shader/program stand-ins report success and carry no log. Writing the empty
      * answer matters because the caller allocates a buffer of {@code maxLength} and LWJGL turns it into a String -
@@ -760,6 +738,22 @@ public final class CeltiumGllessHint {
         return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$isEnabled(capability);
     }
 
+    /**
+     * Answers the integer queries the game itself validates, writing into the caller's buffer.
+     * <p>
+     * Measured 2026-10-15 (legs {@code gv-cohort-fix128s} / {@code gv-e2e-268-fix128s}): a replacement that returns
+     * the type's zero for everything makes Minecraft throw during startup - {@code glCheckFramebufferStatus}
+     * returned "unknown status:0" from {@code Framebuffer.checkFramebufferComplete}, called from
+     * {@code Minecraft.init}. gpu-verifier's rule is the general form of it: <b>a zero-returning replacement breaks
+     * every query whose result the caller checks</b>, and {@code glGetIntegerv} has eleven call sites inside
+     * Minecraft (GL_MAX_TEXTURE_SIZE and friends, where 0 causes a different failure further on).
+     * <p>
+     * Writing the buffer rather than leaving it alone matters: LWJGL's {@code glGetIntegerv(int, IntBuffer)} is Java
+     * and calls this native with the buffer's address, so the caller reads whatever is at that address. The values
+     * below are the ones this renderer can honestly claim - a large but finite texture limit, the texture-unit and
+     * attribute counts a GL 3.0 profile guarantees - and anything unknown is written as 0 rather than left as
+     * uninitialised memory.
+     */
     public static void glGetIntegerv(int pname, long params) {
         if (params == 0L) {
             return;
@@ -2110,7 +2104,6 @@ public final class CeltiumGllessHint {
         }
     }
 
-    /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
     /** Raw uniform-block introspection: zeroed integer and empty-name answers. */
     public static void glGetActiveUniformInt(int program, int index, int pname, long out) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getActiveUniformInt(program, index, pname, out);
@@ -2297,6 +2290,7 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clearBufferfi(buffer, drawBuffer, depth, stencil);
     }
 
+    /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
     public static void glClear(int mask) {
         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                 org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
@@ -2396,16 +2390,6 @@ public final class CeltiumGllessHint {
         }
     }
 
-    /**
-     * Writes zeros for the single-value "get" functions whose result the caller reads out of its own buffer.
-     * <p>
-     * The general rule this belongs to, stated by gpu-verifier for this project and by headlessmc for its own GL
-     * instrumentation: a replacement that returns the type's zero is fine for a function whose result nobody checks,
-     * and wrong for every query the caller validates - and a query that writes into the caller's buffer is worse than
-     * wrong, because a no-op leaves <b>uninitialised memory</b> there. The sizes are per function because the number of
-     * bytes the caller allocated is not in the signature: writing more than the caller asked for would corrupt the
-     * heap, so only the functions whose element count is exactly one are handled here.
-     */
     /** Fence tokens for the GL-less path; 0 means "no object" to every caller, as with the names. */
     private static final java.util.concurrent.atomic.AtomicLong NEXT_FENCE =
             new java.util.concurrent.atomic.AtomicLong(1);
@@ -2444,21 +2428,6 @@ public final class CeltiumGllessHint {
     }
 
     /**
-     * Answers {@code glGetTexLevelParameteriv} for the two queries a caller divides by.
-     * <p>
-     * Measured 2026-10-15 (leg {@code gv-cohort-fix152}, the first run whose world load returned): the client got past
-     * the join and died with {@code ArithmeticException: / by zero} at
-     * {@code net.minecraftforge.client.CloudRenderer.render(CloudRenderer.java:326)} - {@code offU = offU % texW} -
-     * reached through {@code FMLClientHandler.renderClouds} and {@code RenderGlobal.func_180447_b}. Forge fills those
-     * two fields from {@code glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH/HEIGHT)} (CloudRenderer.java
-     * 479-480), and the generic zero-writer answered zero, which is not a usable divisor.
-     * <p>
-     * The value is Forge's own: the same class defines {@code PX_SIZE = 1 / 256F} and its cloud texture is 256 square,
-     * so 256 is what that query is asked about rather than a guess. Everything else keeps the zero answer, because for
-     * the rest of the queries a caller reads a number it does not divide by, and inventing values for those would be
-     * the kind of lying the stub's comments elsewhere refuse.
-     */
-    /**
      * {@return the answer the int-returning form of the texture level query must give}.
      * <p>
      * LWJGL's {@code glGetTexLevelParameteri} returns the value directly and goes through its own native, so the
@@ -2479,6 +2448,21 @@ public final class CeltiumGllessHint {
         int measured = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texLevelSize(target, level, pname);
         return org.soutalab.celtium.vulkan.gl.TextureLevelAnswer.withFallback(measured, pname);
     }
+    /**
+     * Answers {@code glGetTexLevelParameteriv} for the two queries a caller divides by.
+     * <p>
+     * Measured 2026-10-15 (leg {@code gv-cohort-fix152}, the first run whose world load returned): the client got past
+     * the join and died with {@code ArithmeticException: / by zero} at
+     * {@code net.minecraftforge.client.CloudRenderer.render(CloudRenderer.java:326)} - {@code offU = offU % texW} -
+     * reached through {@code FMLClientHandler.renderClouds} and {@code RenderGlobal.func_180447_b}. Forge fills those
+     * two fields from {@code glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH/HEIGHT)} (CloudRenderer.java
+     * 479-480), and the generic zero-writer answered zero, which is not a usable divisor.
+     * <p>
+     * The value is Forge's own: the same class defines {@code PX_SIZE = 1 / 256F} and its cloud texture is 256 square,
+     * so 256 is what that query is asked about rather than a guess. Everything else keeps the zero answer, because for
+     * the rest of the queries a caller reads a number it does not divide by, and inventing values for those would be
+     * the kind of lying the stub's comments elsewhere refuse.
+     */
     public static void glGetTexLevelParameteriv(int target, int level, int pname, long params) {
         int measured = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texLevelSize(target, level, pname);
         int value = org.soutalab.celtium.vulkan.gl.TextureLevelAnswer.withFallback(measured, pname);
@@ -2488,6 +2472,16 @@ public final class CeltiumGllessHint {
         org.lwjgl.system.MemoryUtil.memPutInt(params, value);
     }
 
+    /**
+     * Writes zeros for the single-value "get" functions whose result the caller reads out of its own buffer.
+     * <p>
+     * The general rule this belongs to, stated by gpu-verifier for this project and by headlessmc for its own GL
+     * instrumentation: a replacement that returns the type's zero is fine for a function whose result nobody checks,
+     * and wrong for every query the caller validates - and a query that writes into the caller's buffer is worse than
+     * wrong, because a no-op leaves <b>uninitialised memory</b> there. The sizes are per function because the number of
+     * bytes the caller allocated is not in the signature: writing more than the caller asked for would corrupt the
+     * heap, so only the functions whose element count is exactly one are handled here.
+     */
     public static void glGetZero(long params, int bytes) {
         if (params == 0L) {
             return;

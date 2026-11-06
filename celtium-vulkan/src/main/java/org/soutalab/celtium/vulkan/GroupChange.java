@@ -106,6 +106,12 @@ final class GroupChange {
         return !java.util.Arrays.equals(celtium$texGenEyeRows(b.texGenScratch), captured);
     }
 
+    /**
+     * The 2D affine part of the texture matrix, or {@code null} when it is the identity. {@code matrixMode(5890)}
+     * routes glTranslate/glRotate/glScale onto the mirror's texture stack; the item glint animates its texture this
+     * way and the renderer uses the same channel for its own overlays. Only the UV transform matters, so the result
+     * is {@code [a,b,c,d,tx,ty]} in column-major terms ({@code u'=a*u+c*v+tx, v'=b*u+d*v+ty}).
+     */
     float[] celtium$textureAffine() {
         if (!celtium$readTextureAffine(b.textureAffineScratch)) {
             return null;

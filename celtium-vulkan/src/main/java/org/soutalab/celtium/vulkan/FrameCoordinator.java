@@ -29,12 +29,6 @@ public final class FrameCoordinator {
     private static int FAIL_SUBMITS_REMAINING = Integer.getInteger("celtium.vulkan.failSubmits", 0).intValue();
 
     /**
-     * Coalesce accepted recordings into an open command buffer until the real frame boundary (default on).
-     * A RECORDED result is not a submission packet and must not be treated as a failed external-GL handoff.
-     * Every referenced buffer, image and descriptor generation must remain valid from recording through completion;
-     * retained geometry uses draw leases for that contract. Other resource domains require the same lifetime audit.
-     */
-    /**
      * Whether a frame's command buffer is ended and submitted once, at the frame boundary, instead of per segment.
      * <p>
      * On a discrete card that is the cheaper arrangement and it has been the default since it was measured. On an

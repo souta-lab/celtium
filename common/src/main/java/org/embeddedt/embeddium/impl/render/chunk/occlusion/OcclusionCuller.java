@@ -140,22 +140,6 @@ public class OcclusionCuller {
     }
 
     /**
-     * Search the current lattice and report each reached section to
-     * {@code visitor} in traversal order.
-     *
-     * <p>Reached sections are reported even when {@code visible} is false;
-     * the flag controls whether the section contributes renderable work and
-     * whether traversal expands through it. The caller must have prepared the
-     * lattice with {@link SectionLattice#ensureWindowCovers} and must not
-     * mutate its structure or metadata until this method returns.
-     *
-     * @param visitState the lattice's per-cell visit-state array this search stamps
-     * @param useOcclusionCulling whether section visibility metadata should
-     *                             restrict graph expansion
-     * @param recordVisible whether to record the visible cells into the lattice's
-     *                      {@code visibleCells} buffer for a subsequent shadow search
-     */
-    /**
      * {@return the search root's connectedness encoding, or -1 when there is no root}.
      * <p>
      * The walk only leaves a section through a face its visibility data allows, and that data is written when the
@@ -200,6 +184,22 @@ public class OcclusionCuller {
         return "finite";
     }
 
+    /**
+     * Search the current lattice and report each reached section to
+     * {@code visitor} in traversal order.
+     *
+     * <p>Reached sections are reported even when {@code visible} is false;
+     * the flag controls whether the section contributes renderable work and
+     * whether traversal expands through it. The caller must have prepared the
+     * lattice with {@link SectionLattice#ensureWindowCovers} and must not
+     * mutate its structure or metadata until this method returns.
+     *
+     * @param visitState the lattice's per-cell visit-state array this search stamps
+     * @param useOcclusionCulling whether section visibility metadata should
+     *                             restrict graph expansion
+     * @param recordVisible whether to record the visible cells into the lattice's
+     *                      {@code visibleCells} buffer for a subsequent shadow search
+     */
     public void findVisible(Visitor visitor,
                             Viewport viewport,
                             long[] visitState,

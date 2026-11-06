@@ -95,16 +95,6 @@ public abstract class FontRendererMixin {
     }
 
     /**
-     * The default-page glyph: vanilla's body, or the Celtium path that writes the same quad straight into the capture.
-     * <p>
-     * The fast path is taken only when the capture is armed for GL-less drawing and the property is on; otherwise this
-     * injection is the window bracket it always was. The advance, the four vertices and their texture coordinates are
-     * vanilla's ({@code renderDefaultChar}, {@code FontRenderer.java:230-249}), and the submit is the capture's own -
-     * format 2, stride 24, mode 5, the coalesced run with its strip separators - so nothing downstream changes. What
-     * disappears is the per-glyph {@code TextureManager.bindTexture} chain and the nine {@code GlStateManager} wrapper
-     * calls, which are the measured 3.15 µs/glyph of vanilla glyph body.
-     */
-    /**
      * {@return the texture bound to TEXTURE_2D on the active unit}, asking the installed GL stub directly rather than
      * paying a trampoline round trip for a field it already holds - the per-string bind check below used to pay two
      * FFI queries per drawString, which the fn census measured as the largest share of all glGetIntegerv arrivals.
@@ -116,6 +106,16 @@ public abstract class FontRendererMixin {
                 : org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
     }
 
+    /**
+     * The default-page glyph: vanilla's body, or the Celtium path that writes the same quad straight into the capture.
+     * <p>
+     * The fast path is taken only when the capture is armed for GL-less drawing and the property is on; otherwise this
+     * injection is the window bracket it always was. The advance, the four vertices and their texture coordinates are
+     * vanilla's ({@code renderDefaultChar}, {@code FontRenderer.java:230-249}), and the submit is the capture's own -
+     * format 2, stride 24, mode 5, the coalesced run with its strip separators - so nothing downstream changes. What
+     * disappears is the per-glyph {@code TextureManager.bindTexture} chain and the nine {@code GlStateManager} wrapper
+     * calls, which are the measured 3.15 µs/glyph of vanilla glyph body.
+     */
     @Inject(method = "func_78266_a", at = @At("HEAD"), cancellable = true, require = 0)
     private void celtium$openDefaultGlyph(int ch, boolean italic, CallbackInfoReturnable<Float> info) {
         CeltiumFontGlyphCapture.beginGlyph();

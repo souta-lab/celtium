@@ -15,13 +15,19 @@ public final class TargetStatistics {
 
     private int offTargetTargetsCreated;
     private int offTargetDrawn;
+    /** Batches offered for an off-target target, which is not the same as batches taken for one. */
     private int offTargetOffered;
+    /** Batches accepted for an off-target target - the one that is evidence. */
     private int offTargetAccepted;
     private int offTargetCopiedBack;
     private int offTargetRefusals;
     private int drainedOtherTargetPasses;
     private int unflushedTargetGroupsDropped;
     private int unflushedTargetPassFailures;
+    /**
+     * Window flushes that threw, and the batches they had to drop. Bounded to the frame they happened in since
+     * task-60: the count and the text are what let a reader tell a refused window from a device that stopped.
+     */
     private int windowFlushFailures;
     private long windowFlushFailureFrame = -1L;
     private int windowFlushDroppedBatches;
@@ -29,6 +35,7 @@ public final class TargetStatistics {
     private int compositePresentRefusals;
     private int splashCanvasInvalidations;
     private int splashSourcedGroups;
+    /** Off-target passes not begun because their target had no pending geometry. */
     private int offTargetPassesSkippedEmpty;
     private int otherTargetGroupsAtMainFlush;
     private int pairClearsRefusedOtherIdentity;

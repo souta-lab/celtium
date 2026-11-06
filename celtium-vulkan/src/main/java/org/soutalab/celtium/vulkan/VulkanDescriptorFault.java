@@ -23,11 +23,6 @@ public final class VulkanDescriptorFault {
     }
 
     /**
-     * {@return whether this descriptor request should fail}.
-     *
-     * @param site a short label identifying the call site, for the substring form and for the log line
-     */
-    /**
      * Whether any injection was configured. Resolved once, because the switch is a JVM argument.
      * <p>
      * {@link #shouldFail} is asked once per offered batch - {@code celtium$descriptorSet(..., "prepare")} - and it was a
@@ -37,6 +32,11 @@ public final class VulkanDescriptorFault {
      */
     private static final boolean ARMED = FAIL_AT > 0 || !FAIL_SITE.isEmpty();
 
+    /**
+     * {@return whether this descriptor request should fail}.
+     *
+     * @param site a short label identifying the call site, for the substring form and for the log line
+     */
     public static boolean shouldFail(String site) {
         return ARMED && shouldFailArmed(site);
     }

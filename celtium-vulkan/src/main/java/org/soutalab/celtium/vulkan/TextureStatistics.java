@@ -38,6 +38,7 @@ public final class TextureStatistics {
         return this.animatedImageFills;
     }
 
+    /** Announces that carried the size from the game instead of asking OpenGL for it. */
     private long announcedDynamicTextures;
 
     /** Records one announcedDynamicTextures. */
@@ -122,6 +123,7 @@ public final class TextureStatistics {
         return this.bindShortCircuits;
     }
 
+    /** Bound-texture comparisons between the state mirror and GL, and how many disagreed. */
     private long boundTextureComparisons;
 
     /** Records one boundTextureComparisons. */

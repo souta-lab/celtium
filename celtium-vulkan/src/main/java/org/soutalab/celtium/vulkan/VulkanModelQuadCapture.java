@@ -620,7 +620,6 @@ public final class VulkanModelQuadCapture {
         }
     }
 
-    /** {@return the compile generation of this list's current geometry, or 0 when it has none}. */
     /**
      * A value that changes whenever any list's geometry generation moves.
      * <p>
@@ -643,6 +642,7 @@ public final class VulkanModelQuadCapture {
         return mix;
     }
 
+    /** {@return the compile generation of this list's current geometry, or 0 when it has none}. */
     public static synchronized int generationOf(int listId) {
         ListGeometry geometry = LISTS.get(listId);
         return geometry == null ? 0 : geometry.generation;

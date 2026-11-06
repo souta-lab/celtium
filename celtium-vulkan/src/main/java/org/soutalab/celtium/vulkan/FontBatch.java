@@ -355,7 +355,6 @@ public final class FontBatch {
     /** The target the open run was appended for; a run is only re-offered to the target it was written for. */
     private long pendingTargetIdentity;
 
-    /** How each coalesced run was flushed: by an intervening submission, a boundary, or a state change. */
     /**
      * Flush invocations per caller-declared reason, including the ones that found no pending run.
      * <p>
@@ -370,6 +369,7 @@ public final class FontBatch {
     private long flushCallsBoundary;
     private long flushCallsStateChange;
 
+    /** How each coalesced run was flushed: by an intervening submission, a boundary, or a state change. */
     private int flushedIntervening;
     private int flushedBoundary;
     private int flushedStateChange;
@@ -434,7 +434,6 @@ public final class FontBatch {
         this.sink = sink;
     }
 
-    /** Registers the capture's pre-flush hook; invoked with {@code null} to clear it. */
     /** Wires the capture's "am I holding glyphs" probe, so a flush with nothing to do can be skipped. */
     public void celtium$setFontCaptureWork(java.util.function.BooleanSupplier probe) {
         this.captureWork = probe;
@@ -461,6 +460,7 @@ public final class FontBatch {
         return "pending=" + this.workBecausePending + " capture=" + this.workBecauseCapture;
     }
 
+    /** Registers the capture's pre-flush hook; invoked with {@code null} to clear it. */
     public void celtium$setFontPreFlush(Runnable hook) {
         this.preFlush = hook;
     }
@@ -932,7 +932,6 @@ public final class FontBatch {
                 + " stateChange=" + this.flushCallsStateChange;
     }
 
-    /** The font batching's own census, for the report: how much was coalesced and how each run went out. */
     /** {@return how many degenerate separator vertices the runs carried}. */
     public long fontStripSeparators() {
         return this.stripSeparators;
@@ -948,6 +947,7 @@ public final class FontBatch {
         return this.quadsAppended;
     }
 
+    /** The font batching's own census, for the report: how much was coalesced and how each run went out. */
     public String celtium$fontBatchSummary() {
         return "fontRunsStarted=" + this.batchesStarted
                 + " fontQuadsAppended=" + this.quadsAppended

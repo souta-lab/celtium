@@ -34,10 +34,11 @@ public final class ModelGeometryCache {
     /** A limit on how many quads go into one mesh, so a single quad can be drawn on its own (0 = no limit). */
     private static final int MODEL_QUAD_LIMIT = Integer.getInteger("celtium.vulkan.modelQuadLimit", 0).intValue();
 
-    /** The built meshes, keyed by display-list id, or null when they have not been built. */
     /** Reusable destination for the model-geometry read: the rebuild loop allocates nothing per list with it. */
     private final VulkanModelQuadCapture.Scratch snapshotScratch = new VulkanModelQuadCapture.Scratch();
 
+    /** The built meshes, keyed by display-list id, or null when they have not been built. */
+    /** The built meshes, keyed by display-list id, or null when they have not been built. */
     private it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<VulkanDynamicMesh> modelMeshes;
 
     /** One-entry memo over {@link #meshFor}: consecutive replays often ask for the same list again. */
@@ -105,7 +106,6 @@ public final class ModelGeometryCache {
         return this.modelMeshes;
     }
 
-    /** {@return how many replays asked for a list this cache has no mesh for}. */
     /**
      * Whether a missing-mesh line should be printed for this list: bounded, and only when the list differs from the
      * last one logged, so a scene with many draws of one list does not flood the log.
@@ -124,10 +124,13 @@ public final class ModelGeometryCache {
         this.modelMissingMeshes++;
     }
 
+    /** {@return how many replays asked for a list this cache has no mesh for}. */
+    /** Display lists a replay asked for that this renderer has no captured mesh for, and the bounded log of them. */
     public int modelMissingMeshes() {
         return this.modelMissingMeshes;
     }
 
+    /** Meshes refused by the vertex/index contract, and the first reason, so a bad snapshot is named not hidden. */
     public int modelMeshContractFailures() {
         return this.modelMeshContractFailures;
     }

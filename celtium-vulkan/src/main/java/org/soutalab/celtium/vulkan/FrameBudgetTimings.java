@@ -180,15 +180,6 @@ public final class FrameBudgetTimings {
     }
 
     /**
-     * Marks one presented frame: the cadence where no frame boundary runs.
-     * <p>
-     * The frame boundary only exists in the world path. The menu presents frames without ever reaching it, so a menu
-     * at 6 FPS carried no measurement at all - a report whose frame count was zero while the operator watched a
-     * slideshow. The interval between presents is the frame period wherever a frame was presented, and it costs one
-     * clock read. It is a separate ring from the world frames so the two are never added: a world frame files both a
-     * boundary sample and a present interval, and only the boundary sample has the record/batch/submit split.
-     */
-    /**
      * Whether the present cadence is measured. It is cheap enough to ask for on its own: the world-frame sample costs
      * four clock reads and a timestamp query per window, while the cadence costs one clock read per present. A leg
      * that only needs the frame period (the menu, or a renderer comparison where the split's own tax would change the
@@ -198,6 +189,15 @@ public final class FrameBudgetTimings {
     private static final boolean PRESENT_INTERVAL = ENABLED
             || Boolean.getBoolean("celtium.vulkan.presentInterval");
 
+    /**
+     * Marks one presented frame: the cadence where no frame boundary runs.
+     * <p>
+     * The frame boundary only exists in the world path. The menu presents frames without ever reaching it, so a menu
+     * at 6 FPS carried no measurement at all - a report whose frame count was zero while the operator watched a
+     * slideshow. The interval between presents is the frame period wherever a frame was presented, and it costs one
+     * clock read. It is a separate ring from the world frames so the two are never added: a world frame files both a
+     * boundary sample and a present interval, and only the boundary sample has the record/batch/submit split.
+     */
     public static void markPresent() {
         if (!PRESENT_INTERVAL) {
             return;
@@ -257,12 +257,12 @@ public final class FrameBudgetTimings {
         }
     }
 
-    /** Prints the last window's percentiles, or nothing once the line budget is spent. */
     /** {@return whether the present cadence is being measured}, for the call site's own conditional work. */
     public static boolean presentIntervalEnabled() {
         return PRESENT_INTERVAL;
     }
 
+    /** Prints the last window's percentiles, or nothing once the line budget is spent. */
     private static void printWindow() {
         if (lines >= MAX_LINES) {
             return;

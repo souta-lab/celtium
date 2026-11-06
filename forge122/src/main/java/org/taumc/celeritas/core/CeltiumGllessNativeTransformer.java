@@ -2998,7 +2998,6 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
     }
 
-    /** The argument slot count, needed because the rewritten method is not static-analysis computed. */
     /** {@return the local-variable slot of the last argument of a static method's descriptor} */
     private static int lastArgumentSlot(String descriptor) {
         int slot = 0;
@@ -3037,6 +3036,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         return last;
     }
 
+    /** The argument slot count, needed because the rewritten method is not static-analysis computed. */
     private static int argumentSlots(int access, String descriptor) {
         int slots = (access & Opcodes.ACC_STATIC) == 0 ? 1 : 0;
         int index = 1;

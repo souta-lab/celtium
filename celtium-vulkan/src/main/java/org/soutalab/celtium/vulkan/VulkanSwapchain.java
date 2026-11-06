@@ -408,13 +408,6 @@ public final class VulkanSwapchain {
     private boolean lastDumpWritten;
 
     /**
-     * Writes the last presented image to a PNG, and says whether it did.
-     * <p>
-     * This is the GL-independent image evidence: the game's own screenshot reads OpenGL's default framebuffer, so while
-     * that is the only image the renderer can be compared against, the GL composite has to stay. The same readback the
-     * centre sample uses is used here over the whole image.
-     */
-    /**
      * Asks for the next presented image to be written to this path.
      * <p>
      * The write has to happen at the moment the image is still the presenter's: reading it afterwards and transitioning it
@@ -2199,14 +2192,6 @@ public final class VulkanSwapchain {
     }
 
     /**
-     * Whether the extent a fresh swapchain would get still equals this one's.
-     * <p>
-     * Called once per frame from the present path: a real window resize changes the surface's current extent, and
-     * relying on the driver to report out-of-date at an acquire leaves the stale extent on the window for frames or
-     * forever - the resize harness's compositor never reports it. The framebuffer size arguments are only the
-     * fallback for a surface that pins no extent; a pinned one answers for itself.
-     */
-    /**
      * Cached answer of {@link #matchesSurfaceExtent}, with the inputs it was computed for.
      * <p>
      * The query is called once per frame from the present path and {@code vkGetPhysicalDeviceSurfaceCapabilitiesKHR}
@@ -2222,6 +2207,14 @@ public final class VulkanSwapchain {
     private long extentCacheNanos;
     private boolean extentCacheMatches;
 
+    /**
+     * Whether the extent a fresh swapchain would get still equals this one's.
+     * <p>
+     * Called once per frame from the present path: a real window resize changes the surface's current extent, and
+     * relying on the driver to report out-of-date at an acquire leaves the stale extent on the window for frames or
+     * forever - the resize harness's compositor never reports it. The framebuffer size arguments are only the
+     * fallback for a surface that pins no extent; a pinned one answers for itself.
+     */
     public boolean matchesSurfaceExtent(int framebufferWidth, int framebufferHeight) {
         long now = System.nanoTime();
         if (framebufferWidth == this.extentCacheFramebufferWidth

@@ -150,13 +150,13 @@ public final class ImmediateFogState implements org.embeddedt.embeddium.impl.ren
         return mode + (planar ? 16 : 0); // shape 2 = planar, and 2 << 3 = 16
     }
 
+    /** The last array handed out; never mutated, so a group holding it keeps the values it was captured with. */
+    private float[] lastSnapshot;
+
     /**
      * The per-batch fog payload: eight floats {@code {selector, density, start, end, r, g, b, weight}}, or {@code null}
      * when fog is off for this batch.
      */
-    /** The last array handed out; never mutated, so a group holding it keeps the values it was captured with. */
-    private float[] lastSnapshot;
-
     float[] snapshot() {
         int selector = selector();
         if (selector == 0) {

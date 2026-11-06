@@ -97,12 +97,12 @@ final class PublishedFrameTextures {
         return reported == null ? 0 : (int) reported[0];
     }
 
-    /** Records a published texture for a GL name. */
     /** {@return the publication version}, incremented whenever the published set changes. */
     long publishedVersion() {
         return this.publishedVersion;
     }
 
+    /** Records a published texture for a GL name. */
     void putPublished(int glTextureName, VulkanGlTexture texture) {
         this.publishedVersion++;
         this.published.put(Integer.valueOf(glTextureName), texture);

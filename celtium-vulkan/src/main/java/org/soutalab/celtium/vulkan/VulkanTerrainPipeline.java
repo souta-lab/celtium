@@ -105,18 +105,6 @@ public final class VulkanTerrainPipeline {
     public static final int DEPTH_ATTACHMENT_LAYOUT = GllessFrameTarget.DEPTH_RENDER_LAYOUT;
 
     /**
-     * The front face orientation the terrain vertex data needs.
-     * <p>
-     * The chunk mesher emits OpenGL counter-clockwise front faces, and the backend renders through a negative
-     * height viewport so the OpenGL projection can be reused. That viewport transform flips the framebuffer Y axis,
-     * and the Vulkan front-face test uses the sign of the triangle area in framebuffer coordinates, so the flip
-     * inverts the result: OpenGL counter-clockwise geometry is Vulkan {@code VK_FRONT_FACE_CLOCKWISE}. Using
-     * {@code VK_FRONT_FACE_COUNTER_CLOCKWISE} here would classify every visible terrain face as back facing and,
-     * with {@code blockFaceCulling}, cull it. If the backend ever stops flipping Y (for example by baking the flip
-     * into the projection matrix instead), pass {@code VK_FRONT_FACE_COUNTER_CLOCKWISE} to
-     * {@link #create(VulkanContext, TerrainRenderPass, boolean, int)}.
-     */
-    /**
      * Vulkan's framebuffer has its Y axis pointing down while OpenGL's points up, and the terrain matrices are
      * OpenGL's unchanged, so a counter-clockwise OpenGL face is clockwise in Vulkan framebuffer space. Declaring
      * counter-clockwise here culled exactly the visible faces and left the terrain's undersides on screen.
@@ -200,11 +188,6 @@ public final class VulkanTerrainPipeline {
     }
 
     /**
-     * The two vertex layouts this build can draw. The game picks one through the "compact vertex format" option,
-     * and the choice changes both the attribute layout and the position decoding in the vertex shader, so a
-     * configuration using a format this backend does not know must be refused rather than drawn wrong.
-     */
-    /**
      * The vertex layout a pipeline has to declare, readable from outside so a second pipeline (the shadow pass) can use
      * the same input without copying the pass switch.
      */
@@ -214,6 +197,11 @@ public final class VulkanTerrainPipeline {
         final int[] offsets;
         final String vertexModule;
 
+        /**
+         * The two vertex layouts this build can draw. The game picks one through the "compact vertex format" option,
+         * and the choice changes both the attribute layout and the position decoding in the vertex shader, so a
+         * configuration using a format this backend does not know must be refused rather than drawn wrong.
+         */
         VertexLayout(int stride, int[] formats, int[] offsets, String vertexModule) {
             this.stride = stride;
             this.formats = formats;
@@ -584,12 +572,6 @@ public final class VulkanTerrainPipeline {
         return layout;
     }
 
-    /**
-     * The minimum alignment the dynamic uniform buffer offset passed to {@link #bindDescriptors} must satisfy.
-     * Exposed so the backend can size and align its uniform blocks correctly without querying the device again.
-     *
-     * @return {@code VkPhysicalDeviceLimits::minUniformBufferOffsetAlignment}
-     */
     /** {@return the vertex input state this pipeline was created with} */
     public String vertexInputSummary() {
         return this.vertexInputSummary;
@@ -605,6 +587,12 @@ public final class VulkanTerrainPipeline {
         return this.limitsWarning;
     }
 
+    /**
+     * The minimum alignment the dynamic uniform buffer offset passed to {@link #bindDescriptors} must satisfy.
+     * Exposed so the backend can size and align its uniform blocks correctly without querying the device again.
+     *
+     * @return {@code VkPhysicalDeviceLimits::minUniformBufferOffsetAlignment}
+     */
     public long minUniformBufferAlignment() {
         return minUniformBufferOffsetAlignment;
     }
@@ -967,15 +955,6 @@ public final class VulkanTerrainPipeline {
     }
 
     /**
-     * The sampler this pass binds the block atlas with.
-     * <p>
-     * {@link #ATLAS_MAX_LOD} at or below 1 means the mirror's own sampler is what the measurement wants, so it is
-     * returned unchanged and nothing is created. Above 1 this pipeline creates one sampler, once, with the mirror's
-     * parameters for the block atlas - {@code GL_NEAREST} magnification and minification with a linear mipmap mode,
-     * clamp-to-edge addressing, no bias, no anisotropy - and the game's own {@code maxLod}. Only the clamp differs
-     * from the mirror's sampler, which is the variable this exists to move.
-     */
-    /**
      * {@return the highest level the game gave the atlas}: its GL_TEXTURE_MAX_LEVEL when recorded, otherwise the
      * highest level it allocated (TextureUtil.allocateTextureImpl issues one glTexImage2D per level 0..mipmapLevels);
      * -1 when neither is known.
@@ -998,6 +977,15 @@ public final class VulkanTerrainPipeline {
         return highest;
     }
 
+    /**
+     * The sampler this pass binds the block atlas with.
+     * <p>
+     * {@link #ATLAS_MAX_LOD} at or below 1 means the mirror's own sampler is what the measurement wants, so it is
+     * returned unchanged and nothing is created. Above 1 this pipeline creates one sampler, once, with the mirror's
+     * parameters for the block atlas - {@code GL_NEAREST} magnification and minification with a linear mipmap mode,
+     * clamp-to-edge addressing, no bias, no anisotropy - and the game's own {@code maxLod}. Only the clamp differs
+     * from the mirror's sampler, which is the variable this exists to move.
+     */
     private long atlasSamplerFor(VulkanGlTexture atlas) {
         // BH-32: the value is the game's own mipmap setting, so it must follow the atlas that is actually mirrored
         // rather than a constant. The mirror allocates as many levels as the GL texture has, and a texture reload can

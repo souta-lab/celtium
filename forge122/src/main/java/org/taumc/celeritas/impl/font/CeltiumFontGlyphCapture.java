@@ -69,20 +69,6 @@ public final class CeltiumFontGlyphCapture {
     private static final int STRIDE = 24;
     private static final int MAX_VERTICES = 4;
     /**
-     * Which draw mode the glyphs actually arrive as, counted per submission.
-     * <p>
-     * The coalesced run draws its accumulated vertices in one call with the run's mode. A run whose mode is a
-     * triangle strip or fan joins consecutive glyphs (a strip of 4N vertices draws 4N-2 triangles, connecting one
-     * glyph's last vertices to the next glyph's first), which is the shape of the 1-px bars the user reports in the
-     * gaps between characters. Quads do not join. The census is what says which of the two this path is on - the
-     * mode is read from the game's own glBegin, and this file must not assume it.
-     */
-    /**
-     * The draw-mode census as a flat array: a ConcurrentHashMap.merge ran per glyph and cost ~1us in boxes and
-     * hashing - at F3's ~15K glyphs a frame that alone was worth ~15ms of the 43ms F3 frame. Draw modes are small GL
-     * enums (0..10), so an index beats a hash; modes outside the table still land in {@link #otherModes}.
-     */
-    /**
      * The char->glyph-column lookups vanilla performs per character as {@code String.indexOf} against the font-page
      * table string and the format-code strings - a linear scan of a ~256-char constant per glyph, ~7% of the F3
      * leg's warm samples between {@code String.indexOf}/{@code StringUTF16.indexOf}. The tables are compile-time
@@ -92,7 +78,6 @@ public final class CeltiumFontGlyphCapture {
     private static final java.util.IdentityHashMap<String, int[]> CHAR_INDEX_CACHES =
             new java.util.IdentityHashMap<>();
 
-    /** {@return the index {@code table.indexOf(ch)} would return}, from a per-table direct map. */
     /** The table looked up last and its map, as one immutable pair so a reader never sees one without the other. */
     private static final class LastTable {
         final String table;
@@ -107,6 +92,7 @@ public final class CeltiumFontGlyphCapture {
     /** Consecutive glyphs use the same table, so this answers most calls without the identity map (1.3% of a frame). */
     private static LastTable lastTable;
 
+    /** {@return the index {@code table.indexOf(ch)} would return}, from a per-table direct map. */
     public static int tableCharIndex(String table, int ch) {
         LastTable last = lastTable;
         int[] cache = last != null && last.table == table ? last.cache : CHAR_INDEX_CACHES.get(table);
@@ -134,6 +120,11 @@ public final class CeltiumFontGlyphCapture {
         return ch >= 0 && ch < cache.length ? cache[ch] : table.indexOf(ch);
     }
 
+    /**
+     * The draw-mode census as a flat array: a ConcurrentHashMap.merge ran per glyph and cost ~1us in boxes and
+     * hashing - at F3's ~15K glyphs a frame that alone was worth ~15ms of the 43ms F3 frame. Draw modes are small GL
+     * enums (0..10), so an index beats a hash; modes outside the table still land in {@link #otherModes}.
+     */
     private static final int[] MODE_COUNTS = new int[16];
     private static int otherModes;
     private static final java.util.Map<Integer, Integer> OTHER_MODE_COUNTS = new java.util.HashMap<>();
@@ -945,12 +936,12 @@ public final class CeltiumFontGlyphCapture {
         }
     }
 
-    /** The hook's shape: a {@code Runnable} that takes no backend and flushes on the current one. */
     /** {@return whether glyph quads are buffered here, i.e. whether a flush of this capture would move anything}. */
     public static boolean hasBufferedQuads() {
         return bufferedOpen;
     }
 
+    /** The hook's shape: a {@code Runnable} that takes no backend and flushes on the current one. */
     private static void bufferedPreFlush() {
         flushBufferedQuads(null);
     }

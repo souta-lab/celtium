@@ -33,11 +33,6 @@ import java.util.function.Consumer;
 @Mixin(GlStateManager.class)
 public abstract class GlStateManagerMixin {
     /**
-     * Counts one display-list replay. The geometry inside a display list never passes through the uploader the immediate
-     * path hooks, so this is the only place the size of that missing path can be measured from - and it is where a native
-     * replacement will have to draw from, once the vertices are captured at compile time.
-     */
-    /**
      * Counts one display-list replay and, when the native path draws the list, cancels the GL body.
      * <p>
      * {@code cancellable = true} is what makes {@link CallbackInfo#cancel()} mean anything: with it false - the
@@ -335,13 +330,6 @@ public abstract class GlStateManagerMixin {
     }
 
     /**
-     * The blend factors, which the mirror never saw.
-     * <p>
-     * The audit lists the integer {@code blendFunc} overloads as part of S07, and this is the one whose body was confirmed
-     * to call {@code GL11.glBlendFunc}. The particle family was asserting its own blend because the mirror could not report
-     * these; with them captured the pipeline can use what Minecraft actually set.
-     */
-    /**
      * A clear is an ordering boundary (audit S10).
      * <p>
      * Accepted batches are held until a flush; a clear wipes the target immediately, so anything still held would be
@@ -354,6 +342,13 @@ public abstract class GlStateManagerMixin {
         if (backend != null) backend.flushBeforeClear(mask); // ordering failure must not be swallowed as a state hint
     }
 
+    /**
+     * The blend factors, which the mirror never saw.
+     * <p>
+     * The audit lists the integer {@code blendFunc} overloads as part of S07, and this is the one whose body was confirmed
+     * to call {@code GL11.glBlendFunc}. The particle family was asserting its own blend because the mirror could not report
+     * these; with them captured the pipeline can use what Minecraft actually set.
+     */
     @Inject(method = "func_179112_b", at = @At("HEAD"), require = 0)
     private static void celtium$blendFunc(int sourceFactor, int destinationFactor, CallbackInfo info) {
         celtium$mirror(backend -> backend.blendFunc(sourceFactor, destinationFactor));

@@ -157,17 +157,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     int targetWidth;
     int targetHeight;
     /**
-     * The framebuffer over the owned off-target images, and the render pass it was built for.
-     * <p>
-     * One per pair, cached for the same reason: compatibility is defined by the render pass the pipeline built, and
-     * one framebuffer serves every pass that is compatible with it.
-     */
-    /**
-     * The framebuffer over the chain pair - the images draws for the game's own framebuffers render into, the
-     * entity-outline silhouette being the measured one. It is a second framebuffer rather than a second colour view
-     * on one, because the render pass declares its attachments and the two pairs are different images.
-     */
-    /**
      * The published wrapper for the chain's adopted output: the renderer's off-target colour image under the GL name
      * the game's composite binds, plus the name and the image handle it was published for.
      * <p>
@@ -210,11 +199,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * the sampling-side transition at that site was moving the image the pass was about to attach.
      */
     long passAttachedColorImage;
-    /** How many published names the attach-side rule kept out of the sampling transition. */
-    /** How many published names were dropped because their image was no longer the pair's live image. */
-    /** How many published names were re-pointed at the pair's new image instead of being dropped. */
-    /** Groups whose sampled texture wrapper had been replaced between prepare and draw, and were re-prepared. */
-    /** Groups refused because their texture wrapper had moved and no rebuild was available for their pipeline. */
     /**
      * The serial of the frame a once-per-frame latch belongs to.
      * <p>
@@ -234,24 +218,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return this.celtium$presentCount;
     }
 
-    /**
-     * The frame in which each pair's images have been cleared, so the clear happens once per frame and not per
-     * window. One per pair: two pairs are two images, and a frame that cleared one of them says nothing about the
-     * other - which is exactly the mistake that would make the second window of a frame erase the first's work.
-     * <p>
-     * Keyed on {@link #celtium$frameSerial()}: a screen's frame counts too (see that method for what keying on
-     * {@code frameId} measured on the menu).
-     */
-    /**
-     * Which identity's content each pair holds this frame, which is what the clear-once rule is about.
-     * <p>
-     * The rule used to be "once per pair per frame", and that is not the same contract: two identities can route to
-     * one pair in a single frame (the vanilla splash's own framebuffer and the game's next one), and the second
-     * identity's pass beginning later cleared a pair that already held the first one's picture. Measured: the loading
-     * frame was one colour because a pass whose identity is not main cleared the chain pair the logo had just been
-     * drawn into. The rule is now "once per pair per frame <em>per content identity</em>": a different identity's
-     * later pass does not clear, and the refusal is counted and named.
-     */
     /** Passes identity 0 (the window) drew before the game's own framebuffer was adopted, and the bounded log of them. */
     private int windowDrawLogs;
     /** Loading-phase windows whose submission was marked as the frame the present may take (see the window close path). */
@@ -300,12 +266,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** One slot per remembered draw; 32 covers a frame's visible sections at a typical render distance. */
     private static final int READBACK_SLOTS = 32;
     private final long[] readbackOffsets = new long[READBACK_SLOTS];
-    /** The region the remembered reads come from; a frame's first draws all belong to the same one in practice. */
-    /** The region each remembered draw belongs to; the offsets alone cannot say which arena to read. */
     /** The diagnostic copy's size: one whole block per remembered draw, and the range the guard must cover. */
     private static final int READBACK_COPY_BYTES = 64;
     /** Whether the copy for each slot was actually issued; a refused slot's block is stale, not sampled data. */
     private final boolean[] readbackValid = new boolean[READBACK_SLOTS];
+    /** The region each remembered draw belongs to; the offsets alone cannot say which arena to read. */
     private final TerrainRenderer.RegionResources[] readbackRegions = new TerrainRenderer.RegionResources[READBACK_SLOTS];
 
     private long readbackMemory;
@@ -439,7 +404,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     // GroupStamp, PreparedImmediate and the typed group they ride in live in ImmediateGroup.java - the named form of
     // the Object[] every group used to be.
 
-    /** Bumped whenever the frame target is destroyed, so groups of the old target can be told apart. */
     /**
      * The target/alias/layout/clear census, whose ownership moved to {@link RenderTargetRegistry} in refactoring plan
      * R5. The generation it keeps is the single counter the immediate groups' stamps also read, so a group's staleness
@@ -468,20 +432,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
     private int currentGroupBatches;
     int[] currentGroupViewportValues;
-    /**
-     * Groups closed because the game's clip rectangle moved between two otherwise identical batches.
-     * <p>
-     * The capture and the flush half of this rule are already in the tree ({@code currentGroupScissor} /
-     * {@code currentGroupScissorEnabled}, captured where the group opens and read by {@code celtium$setGroupViewport});
-     * what was missing is the <em>boundary</em>: two batches offered under different {@code glScissor} rectangles still
-     * joined one group, so the whole group was clipped by the first rectangle. This counter is the evidence that the
-     * boundary fires, and it can only be non-zero on a scene that moves the clip inside a group.
-     */
-    /** Groups closed because a light's direction or colour changed without the lighting enable moving. */
     /** The lighting generation the open group was created under; see {@code VulkanGlState.lightGeneration()}. */
     private long currentGroupLightGeneration;
-    /** Groups whose {@code vkCmdSetScissor} was the game's captured clip intersected with the target rectangle. */
-    /** Set once the counter summary has been printed, so a second world teardown does not repeat it. */
     /** The verification line's output contract, whose ownership moved to {@link BackendReport} in plan R1c. */
     private final BackendReport report = new BackendReport();
 
@@ -497,7 +449,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private PreparedImmediate currentPreparedImmediate;
 
-    /** [accept, record, submit, fence-complete, pending, invalid, off-accept, off-record, off-complete]. */
     /**
      * {@return whether this frame's recordings are being coalesced into one open frame buffer}.
      * <p>
@@ -511,6 +462,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 && (this.frameTarget == null || !this.frameTarget.needsFrameSemaphores());
     }
 
+    /** [accept, record, submit, fence-complete, pending, invalid, off-accept, off-record, off-complete]. */
     public long[] immediateExecutionCounters() {
         long pending = this.currentGroupUsed ? this.currentGroupBatches : 0;
         for (ImmediateGroup group : this.immediateGroups) pending += group.batches;
@@ -535,10 +487,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private boolean swapchainProbeDone;
     VulkanSwapchain swapchain;
 
-    /** Timestamp queries: two per render pass, so the debug overlay can show real terrain times under Vulkan. */
     /** Passes a single frame can have; used to reserve uniform blocks before recording. */
     private static final int MAX_UNIFORM_PASSES = 6;
 
+    /** Timestamp queries: two per render pass, so the debug overlay can show real terrain times under Vulkan. */
     private static final int TIMESTAMP_SLOTS = 320;
     /**
      * Labelled single timestamps along the last command buffer (queries {@code MARK_BASE..}), written only while the
@@ -1311,6 +1263,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
 
+    /**
+     * {@return a machine-readable summary of what this backend actually drew}. The fixture reads it to decide
+     * whether a run really rendered terrain: selecting the backend by name is not evidence that any pass reached the
+     * queue, so submissions, skips and errors are counted instead.
+     */
     public String verificationSummary() {
         return this.reports.verificationSummary();
     }
@@ -1370,16 +1327,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     int tailCarriedFlush, tailCarriedSupply, tailCarriedBoth, tailCarriedNeither;
     private int submitFlushesAtEntry, submitSuppliesAtEntry;
-    /** Split of the per-batch cost: time inside prepareImmediate (pipeline and descriptor preparation). */
-    /** Split of the batch call outside the preflight: group (mesh) creation against the vertex append. */
     /** CPU time of the same three inner calls, so wall minus CPU says which one blocks in a native call. */
     long appendCpuNanos;
     long preflightCpuNanos;
     long groupCreateCpuNanos;
-    /** The GL query the custom-program shutter makes per batch, timed: it is a synchronising call on some drivers. */
-    /** Split of the batch call's remainder: matrices, state capture, state key, and the group's state clone. */
-    /** Split of prepareImmediate: pipeline+texture lookup against the pipeline/descriptor branch. */
-    /** Which half of the lookup dominates: the terrain pipeline lookup or the texture registry lookup. */
     /**
      * Set whenever a mirrored matrix call changes the matrix state, so the next batch re-reads the live
      * matrices instead of every batch doing it: two glGetFloatv calls per batch measured 28 us of the
@@ -1387,13 +1338,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private boolean matricesDirty = true;
 
-    /**
-     * Whether the group matrices come from the mirrored state instead of a live glGetFloatv pair.
-     * <p>
-     * Default false, because the mirrored stack was measured to disagree with what OpenGL actually had when the
-     * projection was first investigated. The comparison below keeps measuring that disagreement so the switch can be
-     * flipped on evidence: reading the matrices per group is the dominant cost of the whole immediate path.
-     */
     /**
      * Whether the immediate path takes the projection and model-view matrices from the state mirror instead of reading
      * them from OpenGL. Now the default: the two were compared and agree exactly (matrixMirrorDelta proj:0.0 view:0.0)
@@ -1439,17 +1383,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     final float[] worldSnapshotProjection = new float[16];
     private final float[] worldSnapshotModelView = new float[16];
     private boolean worldSnapshotValid;
-    /** Accepted batches per vertex-format id, so the contribution of each shape is attributable (sky is id 6). */
-    /** The identity of the main framebuffer, so an unfiltered flush can mean "main" rather than "everything". */
-    /** Off-target batches per render-target identity, so the per-target work has a size to plan against. */
-    /** Off-target render targets built for the game's other framebuffers: the resource half of per-target drawing. */
-    /** Batches offered for an off-target target, which is not the same as batches taken for one. */
-    /** Batches accepted for an off-target target - the one that is evidence. */
-    /** Batches refused because the mirror they need has only ever received a partial write. */
     /** Composites offered while the default framebuffer was bound, taken into the shared image instead of refused. */
     private int defaultFramebufferCompositesTaken;
-    /** Mirrors that had only a partial write and were supplied whole by the offer path (audit A04). */
-    /** Batches refused by a preflight that now runs before anything is appended (audit A08). */
     /** Acceptances counted across all formats, so the table can be printed incrementally. */
     private int immediateAcceptedTotal;
     /**
@@ -1486,11 +1421,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Line batches drawn by the line pipeline, and how many were refused for their width. */
     private int lineBatchesNative;
     private int lineBatchesRefusedForWidth;
-    /**
-     * Line batches drawn at the 1.0 width this renderer implements when OpenGL asked for more (BH-12): the block
-     * selection outline asks for 2.0 and the fishing rod's line is a line batch too, and under the GL-less window a
-     * refusal draws nothing. Counted so the difference is reported rather than silent.
-     */
     /** What the swapchain said about the last present: the report boolean alone does not say why it failed. */
     private String lastPresentResult = "none";
     /** Frames presented from Vulkan, and the attempts that did not reach the queue. */
@@ -1648,8 +1578,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     int chainAdoptionsRefused;
     /** How many lightmap identity lines have been recorded; bounded. */
     private int lightmapIdentityLogs;
-    /** How often the camera seed was skipped because there is no context to read it from. */
-    /** identity -> {colour texture name, texture width, texture height}, reported at each framebuffer bind. */
     /**
      * The publication census, whose ownership moved to {@link PublishedFrameTextures} in refactoring plan R1b: the
      * framebuffer-identity to colour-texture map, the GL-name to published-texture map and the counters. Which image a
@@ -1720,8 +1648,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** Blend-pair census: a map, not a count, so it stays with the draw path that fills it. */
     java.util.Map<Long, Integer> blendPairs = new java.util.HashMap<Long, Integer>();
+    /**
+     * Batches that were accepted and then dropped, by format id.
+     * <p>
+     * Sized from {@link VulkanImmediateFormats#COUNT}, not from the eight ids that existed when it was written: the
+     * summary prints every id now, and an array that stops at 8 would have thrown on the first drop of a layout past
+     * it. It has no increment site today - the drops that happen are counted in
+     * {@code postAcceptDroppedGroups}, which is per-event rather than per-format - so this reads as an all-zero row
+     * and says that rather than looking like a measurement of "nothing was dropped by format".
+     */
     final int[] postAcceptDroppedByFormat = new int[8];
     final int[] drawnByFormat = new int[VulkanImmediateFormats.COUNT];
+    /** Accepted batches per vertex-format id, so the contribution of each shape is attributable (sky is id 6). */
     final int[] acceptedByFormat = new int[8];
     /**
      * The pending font run, its boundary rule and the retention queue (refactoring plan R3b). The state view and the
@@ -1874,15 +1812,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Names the sampling side resolved through the framebuffer census, and the bounded log of them. */
     private int framebufferColorTextureLogs;
     /**
-     * Which framebuffer identities were bound as the game's main one.
-     * <p>
-     * The census above ties an identity to a colour texture name, but not to the main-ness the routing rule needs:
-     * the same run can have the splash's own framebuffer and the game's main one bound in turn, and the identity the
-     * main framebuffer reports is not always {@code mainTargetIdentity} (which is set when the main framebuffer is
-     * adopted, not on every bind). Recorded where the bind reports it - {@code FramebufferMixin} calls
-     * {@code bindFramebuffer(identity, isMain)} immediately before the census call - so the two facts travel together.
-     */
-    /**
      * Whether an identity has been bound as the game's main framebuffer. A primitive map, because this is written on
      * every framebuffer bind - hundreds to thousands a frame while block entities draw - and java.util's Map boxes the
      * key and the value on each put (profile: bindFramebuffer was 14.5% of client-thread CPU in a world leg).
@@ -1972,7 +1901,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * signal, so the attempt is worth repeating only when a write actually arrived.
      */
     int lazyMirrorRetrySkips;
-    /** The stub write serial seen at the last lazy-supply attempt per GL id; a retry runs only when it moves. */
     /**
      * Last upload serial a lazy supply was attempted for, indexed by GL texture id. It was a
      * {@code HashMap<Integer, Long>}, which boxes two objects and hashes on every entity or TESR batch; the ids are small
@@ -1996,18 +1924,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private float lightmapCoordX;
     private float lightmapCoordY;
-    /** How many captures arrived and how many groups carried one into the push block, for the night measurement. */
-    /**
-     * Groups offered outside the world pass whose light-map coordinate is the full-bright pair instead of the captured
-     * one. Named so the fix is visible in the same census as the capture it replaces: at zero the rule did not fire and
-     * a hotbar item is still drawn with the world's light, whatever the picture looks like.
-     */
-    /**
-     * The ITEM family's batches split by which variant they got and by the stage they were offered in. This is the
-     * instrument the hotbar measurement needed and did not have: a GUI item that arrives unlit never samples the light
-     * map, so no light-map coordinate - captured or full-bright - can change its brightness, and a leg that reports
-     * only the coordinate counters cannot tell that apart from "the rule did nothing".
-     */
     /**
      * Whether the light-map texture unit is enabled right now, from {@code EntityRenderer.enableLightmap()} /
      * {@code disableLightmap()} (SRG {@code func_180436_i} / {@code func_175072_h}). Defaults to <em>enabled</em> so a
@@ -2045,13 +1961,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Acceptances split by whether the game had blending on, which is what translucency is here. */
     private int immediateBlendedAccepted;
     private int immediateOpaqueAccepted;
-    /** Set while an off-target pass records, so the shared draw path binds that pass's pipeline. */
     /** One format-1 pipeline per off-target render pass: a pipeline belongs to the pass it was built for. */
 
+    /** Off-target batches per render-target identity, so the per-target work has a size to plan against. */
     private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap offTargetBatchesByTarget =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
-    /** Bound-texture comparisons between the state mirror and GL, and how many disagreed. */
-    /** Announces that carried the size from the game instead of asking OpenGL for it. */
     /** Whether the game has set a colour yet, i.e. whether the state mirror's colour can be trusted. */
     boolean colorMirrorHasValue;
     /** Which source the format-7 colour came from, reported so a run says whether the mirror is really in use. */
@@ -2084,7 +1998,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
     }
 
-    /** Batches refused because a custom shader program was bound (the game's post-process chain and mod shaders). */
     /** Whether the entity layout's first refusal has been reported. */
     private boolean entityProgramLogged;
     /** Which programs the custom-program shutter refused, and how often - the entity path's identity. */
@@ -2096,7 +2009,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap unflushedTargetDroppedByTarget =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
 
-    /** Per target: groups present at flush entry and flush entries, to separate "never queued" from "not drawn". */
     /** Flush entries whose target was not the bound one. Zero while the drain is reverted (BH-14/15/16). */
 
     /** Per target: batches dropped at a frame boundary because no pass ran for that identity (BH-15). */
@@ -2196,10 +2108,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Set when a wait timed out: no further recording or submission happens until the renderer is rebuilt. */
     boolean gpuStalled;
     /**
-     * Window flushes that threw, and the batches they had to drop. Bounded to the frame they happened in since
-     * task-60: the count and the text are what let a reader tell a refused window from a device that stopped.
-     */
-    /**
      * OPT-09/BH-36: the terrain indirect path, on unless asked off with {@code -Dceltium.vulkan.indirectTerrain=false}.
      * <p>
      * The acceptance the plan names - identical submitted geometry and transparent order against the direct path -
@@ -2212,8 +2120,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final boolean TERRAIN_INDIRECT_ENABLED =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.indirectTerrain", "true"));
     /** One {@code VkDrawIndexedIndirectCommand}: indexCount, instanceCount, firstIndex, vertexOffset, firstInstance. */
-    /** The device-side buffer the packets are written into, created on first use and grown when a batch needs more. */
-    /** Batches offered to the indirect path, calls recorded, draws carried by them, and clamp events. */
     /**
      * The within-leg equivalence check the plan's acceptance needs, and the reason it is a check rather than a picture.
      * <p>
@@ -2229,24 +2135,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** Batches that fell back to direct draws, and the last reason (a missing capability or a mixed index source). */
 
-    /** Viewports issued per group; BH-13's counter, so "the rectangle was restored" is readable, not assumed. */
-    /**
-     * Immediate groups whose capture saw {@code GL_CULL_FACE} enabled, and the ones that saw it disabled.
-     * <p>
-     * BH-08's per-batch proof: before the fix every group fell into the disabled column, because nothing ever wrote
-     * the mirror's cull flag. A leg that shows both columns non-empty (the HUD and the world differ) is the evidence
-     * that the capability and the face now reach the pipeline key, which is stronger than "the state flows" read off
-     * the source. Counted at capture, where the group's own state is taken.
-     */
-    /**
-     * BH-07's per-batch counts, taken at capture with the group: batches with blending on, and of those the ones whose
-     * alpha factor pair is not the {@code ONE / ONE_MINUS_SRC_ALPHA} pair every pipeline baked before the fix.
-     * <p>
-     * The second number is the one that matters. Before BH-07 it was zero <em>by construction</em> - the capture never
-     * read the alpha pair - so a non-zero value in a leg is the proof that the pair now travels, and the pipeline
-     * caches' size next to it is the proof that it also closes a pipeline rather than being captured and dropped.
-     */
-    /** BH-10: batches whose captured write mask was not all four channels, and the last such mask. */
     /**
      * BH-10's histogram over the captured write masks: one slot per possible mask, index = the
      * {@code VK_COLOR_COMPONENT_*} nibble (0x0 = nothing written, 0x7 = RGB without alpha, 0xF = all four).
@@ -2258,18 +2146,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * is about never ran". Complete rather than bounded: 16 slots, no eviction.
      */
     private final long[] colorMaskHistogram = new long[16];
-    /** BH-07: batches whose captured blend equation was not ADD. */
-    /** BH-03: batches captured with the alpha test on, with a comparison other than GREATER, and with it off. */
-    /** The last comparison function captured, as the raw GL enum; 0 means the test was disabled for that batch. */
-    /**
-     * BH-03's acceptance instrument: which selector and which reference the push block actually carried.
-     * <p>
-     * The finding's question is whether the game's comparison and reference reach the shader at all, and a captured
-     * value is not that answer - the slot at offset 100 is what the fragment reads, and it is written from
-     * {@code celtium$alphaFuncSelector}, which can substitute the measurement override. Counting the written value
-     * (and the reference written beside it at 112) is what lets one leg say "the property restored the function"
-     * rather than "the mirror holds the function".
-     */
     /**
      * Per-alpha-selector group counts, keyed primitively.
      * <p>
@@ -2299,16 +2175,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * to latch the renderer for the whole session, and the user's loading screen was where it did.
      */
     String lastOrderingFlushFailure = "none";
-    /** Where the latch was set from, so a report names the origin instead of only the state (task-60). */
-    /**
-     * True from the moment a framebuffer replacement is announced until the shared images match the new size again.
-     * <p>
-     * A resize replaces the game framebuffer, and every ordering flush during that window waits on a device that is in
-     * the middle of the replacement; that wait failing marks the device stalled permanently, since nothing clears that
-     * flag. Measured: one mid-run resize froze the present path (presentedFromVulkan stuck at 355 against 785 for the same
-     * duration without a resize), with the stall first at the bind and, once the bind was guarded, at the clear. The
-     * window is what both have in common.
-     */
     /** Ordering flushes skipped at a framebuffer replacement, and the batches the first of them had to drop. */
     private int replaceBoundaryDropBatches;
 
@@ -2350,10 +2216,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
     /** Inject a wait failure after this many waits; 0 disables. See the comment in waitForIdle. */
     private static final int FAIL_IDLE_AFTER = Integer.getInteger("celtium.vulkan.failIdleAfter", 0).intValue();
-    /** Windows abandoned because the device stalled; the batches they held are lost and counted. */
     /** One-shot count for the injected device-lost fence result. */
     private int injectedDeviceLosses;
-    /** Caps the env-combine report so a hurt mob does not log every frame. */
     /** The texture matrix the currently open group was accepted under; {@code null} for identity. */
     float[] currentGroupTexMatrix;
     /** The open texgen group's eye rows (NativeTexGen.eyeRows), or null for every other group. */
@@ -2375,25 +2239,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     final it.unimi.dsi.fastutil.ints.IntOpenHashSet diagnosedTextures =
             new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     String blendOutlier;
-    /**
-     * How many 2-argument {@code glBlendFunc} calls reached the mirror, and the last pair they carried.
-     * <p>
-     * Before this counter existed a 2-argument call was visible only through {@link #blendOutlier}, which is set for
-     * anything that is not the ordinary alpha pair - so a run in which the game called {@code blendFunc(ONE, ONE)}
-     * and nothing else unusual happened reported no evidence at all, and the fact that the call never reached the
-     * mirror was invisible.
-     */
     /** How many groups opened with each observed (src,dst) pair, so one run says whether they differ. */
     private VulkanImmediateParticlePipeline descriptorProbe;
-    /**
-     * Batches that were accepted and then dropped, by format id.
-     * <p>
-     * Sized from {@link VulkanImmediateFormats#COUNT}, not from the eight ids that existed when it was written: the
-     * summary prints every id now, and an array that stops at 8 would have thrown on the first drop of a layout past
-     * it. It has no increment site today - the drops that happen are counted in
-     * {@code postAcceptDroppedGroups}, which is per-event rather than per-format - so this reads as an all-zero row
-     * and says that rather than looking like a measurement of "nothing was dropped by format".
-     */
     /**
      * Flushes made by the world-to-GUI ordering rule in {@link #endWorldPass()} - the counter that names the rule.
      * <p>
@@ -2425,8 +2272,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * (compositor capture, jar 64923c0a: every button label, the splash line and the copyright line).
      */
 
-    /** The run's vertices, owned by this backend and grown as needed; the font's own buffer is copied into it. */
-    /** The cheap state witnesses a run was started with: a change in any of them flushes it through the normal path. */
     /**
      * The capture-side per-string font buffer's flush, run at the top of {@link #celtium$flushPendingFontBatch}: the
      * capture accumulates a string's glyphs itself and hands them over in one append, so every point that would
@@ -2503,13 +2348,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     public void celtium$setFontCaptureSummary(java.util.function.Supplier<String> supplier) {
         this.fontCaptureSummary = supplier;
     }
-    /** The matrix pair the open run was started under; a change flushes it, as the normal path's group key does. */
-    /** How each coalesced run was flushed: by an intervening submission, a boundary, or a state change. */
-    /** Glyph quads appended to a run and runs started, so "batched" is a quantity and not a claim. */
-    /**
-     * Degenerate separator vertices inserted between glyphs of a strip run (see {@code celtium$fontAppend}): the
-     * joining triangles a strip would otherwise draw between consecutive glyphs are the user-visible bars.
-     */
     /** Diagnostic only: reading GL back per batch to compare against the mirror. Off in the normal path. */
     static final boolean MATRIX_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.matrixDiagnostics");
@@ -2728,7 +2566,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * owns rather than being dropped, and the arena's own counters say how often that happened.
      */
     VulkanFrameArena frameArena;
-    /** Groups whose arena slice could not be handed out, so they allocated their own buffers: the bounded fallback. */
     /** CPU time spent in the frame's own fence wait: the serialisation OPT-08's second step (two frames in flight) targets. */
     private final float[] currentGroupProjection = new float[16];
     private final float[] currentGroupModelView = new float[16];
@@ -2754,8 +2591,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private boolean currentGroupUsed;
     private int currentGroupFormatId;
     private int[] currentGroupState = new int[7];
-    /** Groups opened on the pre-transformed path, batches appended to them, and splits a matrix still caused. */
-    /** Batches that joined the open group with the whole preflight skipped (OPT-18b's other half). */
     /**
      * The registry records the open group was built against. A texture re-created under the same GL name is a
      * different object - and a different descriptor - which is what the slow path's prepared-object comparison
@@ -2851,7 +2686,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int drawStateCensusFull;
     /** The indirect/record run path, split out of this class (2026-11-06); see IndirectImmediateRuns. */
     final IndirectImmediateRuns indirectRuns = new IndirectImmediateRuns(this);
-    /** Index the group being accepted will carry into the shared array; -1 when it has none. */
     /** {@code -Dceltium.vulkan.pumpBeforePresent=true}: service SDL's queue immediately before the present. */
     private static final boolean PUMP_BEFORE_PRESENT = Boolean.getBoolean("celtium.vulkan.pumpBeforePresent");
     /** {@code -Dceltium.vulkan.skipPresent=true}: record and submit, never present (isolation for the Wayland fault). */
@@ -2935,16 +2769,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     int windowDiagFrames;
 
 
+    /** Index the group being accepted will carry into the shared array; -1 when it has none. */
     private int currentGroupTextureIndex = -1;
     long textureIndexHits;
     long textureIndexMisses;
     private org.soutalab.celtium.vulkan.VulkanGlTexture currentGroupLightmapImage;
 
-    /** The last colour array handed to a group; read-only after capture, so equal colours may share it. */
     /** Scratch for the font run's save of the two matrices: the save is method-local, so two arrays serve every flush. */
     private final float[] fontRunProjectionScratch = new float[16];
     private final float[] fontRunModelViewScratch = new float[16];
 
+    /** The last colour array handed to a group; read-only after capture, so equal colours may share it. */
     private float[] lastGroupColorArray;
 
     /** {@return the captured colour, reusing the previous array while every component matches}. */
@@ -3140,13 +2975,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The same states, but with a line-list topology: the selection outline and other line batches. */
     private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediatePipeline> linePipelineCache =
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
-    /** One position-only pipeline per drawing state: twelve-byte vertices, no colour, no texture. */
     /** One pipeline per state for the entity/TESR layout, whose stride the textured pipeline cannot serve. */
     private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> positionTexColorNormalPipelineCache =
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     /** One pipeline per state for the composite batch's layout, likewise wider than the colourless pipeline's. */
     private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> positionTexNormalPipelineCache =
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    /** One position-only pipeline per drawing state: twelve-byte vertices, no colour, no texture. */
     private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<VulkanImmediateTexturePipeline> positionOnlyPipelineCache =
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     /**
@@ -3205,6 +3040,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     int immediateDiagnostics;
     private VulkanDynamicMesh isolationMesh;
+    /** Additive mip bias; 0.0 is GL parity. Swept to separate the chain's content from the shader's LOD. */
+
     /**
      * Which immediate layouts this backend accepts, as a comma-separated list.
      * <p>
@@ -3217,8 +3054,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * The switch is also the attribution instrument: {@code -Dceltium.vulkan.immediateFormats=3} accepts only the
      * BLOCK family, so a difference can be pinned to one pipeline at a time.
      */
-    /** Additive mip bias; 0.0 is GL parity. Swept to separate the chain's content from the shader's LOD. */
-
     private static final String ACCEPTED_FORMATS = System.getProperty("celtium.vulkan.immediateFormats", VulkanImmediateFormats.DEFAULT_ACCEPTED);
 
     /**
@@ -3298,7 +3133,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private static final boolean IMMEDIATE_WINDOWS_ENABLED =
             Boolean.parseBoolean(System.getProperty("celtium.vulkan.immediateWindows", "true"));
-    /** Off by default: present the frame from the composite batch instead of letting GL blit it. */
+    /**
+     * Lab switch: let the frame's own GL composite be skipped once Vulkan has put the frame on the swapchain.
+     * <p>
+     * Off by default because the game's screenshot reads OpenGL's default framebuffer: with this on, that framebuffer keeps
+     * whatever the last GL frame left there. The evidence for the frame becomes the presented image instead
+     * ({@code -Dceltium.validation.dumpPresentedImage=true}), which is why this could only be attempted after that path
+     * existed. The condition is a recorded fact - a frame really was presented from Vulkan - not a name or a counter.
+     */
+    private static final boolean SKIP_GL_COMPOSITE =
+            Boolean.getBoolean("celtium.vulkan.skipGlComposite");
     /**
      * Whether the frame's final composite is the present path's job rather than an immediate batch.
      * <p>
@@ -3313,16 +3157,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * groups are flushed, and format 2 is exactly the composite this changes. It now draws {@code POSITION_COLOR} and
      * passes with this on and off, so the property stays covered.
      */
-    /**
-     * Lab switch: let the frame's own GL composite be skipped once Vulkan has put the frame on the swapchain.
-     * <p>
-     * Off by default because the game's screenshot reads OpenGL's default framebuffer: with this on, that framebuffer keeps
-     * whatever the last GL frame left there. The evidence for the frame becomes the presented image instead
-     * ({@code -Dceltium.validation.dumpPresentedImage=true}), which is why this could only be attempted after that path
-     * existed. The condition is a recorded fact - a frame really was presented from Vulkan - not a name or a counter.
-     */
-    private static final boolean SKIP_GL_COMPOSITE =
-            Boolean.getBoolean("celtium.vulkan.skipGlComposite");
+    /** Off by default: present the frame from the composite batch instead of letting GL blit it. */
     private static final boolean PRESENT_FROM_COMPOSITE =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
     /**
@@ -3337,20 +3172,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final int IMMEDIATE_WINDOWS_PER_FRAME =
             Integer.getInteger("celtium.vulkan.immediateWindowsPerFrame", 16).intValue();
 
-    /**
-     * Indices one mid-frame window may hold before it is flushed automatically. Raised from 512 by measurement on the
-     * world path (AMD RX 6400, settled world at the same absolute tick, unified path, same fixture):
-     * <pre>
-     *   512  interval p50 34.89 / 33.67 ms, p95 56.90 / 58.00  (two legs)
-     *  8192  interval p50 31.09 / 31.40 ms, p95 50.68 / 50.69  (two legs)
-     * </pre>
-     * The window count per frame barely moves (5.10 -> 4.95) and the flush count does not drop either, so the saving is
-     * not "fewer windows": a larger window keeps each window's batch set contiguous instead of splitting it at a
-     * 512-index boundary, which is where the per-window draw-record and submit bookkeeping is paid. The window count
-     * itself is capped by {@link #IMMEDIATE_WINDOWS_PER_FRAME}. Correctness checked before the default moved: plain
-     * calibrated legs PASSED on AMD and Intel, and the format-2 fixture's clear-order / pixel / depth contracts still
-     * pass (leg wino2).
-     */
     /**
      * How many indices a window may hold before the accept path flushes it. 32768 since 2026-11-06: two same-jar A/Bs
      * against 8192 (l10flush 4 pairs: p50 0.941, p95 0.937; l26flush 5 pairs: p50 0.988, p95 0.995, p99 0.995, tick
@@ -3527,7 +3348,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int lastReportedOutOfDate = -1;
     private int lastReportedAcquireOutOfDate = -1;
     private int lastReportedDirectRefreshes = -1;
-    /** Handoffs that actually carried geometry (the counters above count calls, many of which return early). */
     /**
      * Wall time of the game's batch call, measured by the caller (the mixin) around {@code submitImmediateBatch}.
      * <p>
@@ -3592,7 +3412,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return info == null ? -1L : info.getBlockedTime();
     }
 
-    /** The thread's CPU time right now, or -1 when unsupported. */
     /**
      * Whether the per-batch CPU split is measured at all.
      * <p>
@@ -3616,6 +3435,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     public static final boolean BATCH_TIMINGS = Boolean.getBoolean("celtium.vulkan.batchTimings")
             || VulkanDiagnostics.enabled();
 
+    /** The thread's CPU time right now, or -1 when unsupported. */
     public static long threadCpuNanos() {
         if (!CPU_SPLIT) {
             return -1L;
@@ -3630,6 +3450,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int whiteTextureGlId;
     /** Opt-in: the per-target flush-entry census, whose lines only the end-of-run diagnostics read. */
     private static final boolean FLUSH_ENTRY_CENSUS = Boolean.getBoolean("celtium.vulkan.flushEntryCensus");
+    /** Per target: groups present at flush entry and flush entries, to separate "never queued" from "not drawn". */
     final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap flushEntryGroupsByTarget =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
     final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap flushEntryPassesByTarget =
@@ -3641,13 +3462,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int atlasSourceGlId = -1;
     private int lightmapSourceGlId = -1;
     private int immediatePresentFailures;
-    /**
-     * How often a batch was left to GL because the frame's window budget was already spent.
-     * <p>
-     * This is the alternative to deferring it to a later frame: the batch is drawn by GL in the frame that produced it,
-     * which keeps ordering and latency right at the cost of GL doing that draw. Named so the configuration is honest.
-     */
-    /** Frames between bulk mirror refreshes; 0 disables. See {@link #updateTimings()}. */
     /**
      * How often every mirror is marked stale, in frames. Zero means never.
      * <p>
@@ -3844,14 +3658,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private final java.util.Map<String, Integer> groupsDrawnBySite = new java.util.LinkedHashMap<String, Integer>();
     /** The batch count per draw site, in the same order as {@link #groupsDrawnBySite}. */
     private final java.util.Map<String, Integer> batchesDrawnBySite = new java.util.LinkedHashMap<String, Integer>();
-    /** Lines of {@code CELTIUM_DRAW_SITE} printed; bounded by {@code celtium.vulkan.enqAll} + {@code enqFormat}. */
-    /** Groups left in the queue because they belong to another render target (audit A32). */
-    /** Off-target passes not begun because their target had no pending geometry. */
     /** Groups enqueued with a target other than the main one (audit A10). */
     int groupsEnqueuedForOtherTargets;
     /** Batches accepted while a framebuffer other than the main one was bound (audit A10). */
     int acceptedForOtherTargets;
-    /** Flushes refused because no command buffer was recording (A11 exposes this path). */
     /** Refusal reasons seen for batches offered while a non-main framebuffer was bound (audit A10). */
     final java.util.Map<String, Integer> offTargetRefusalsByReason =
             new java.util.LinkedHashMap<String, Integer>();
@@ -3876,7 +3686,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Scratch for the flush pass's kept groups; compacted back into {@link #immediateGroups} once per pass. */
     private final java.util.List<ImmediateGroup> keptImmediateGroups = new java.util.ArrayList<ImmediateGroup>();
     private VulkanImmediatePipeline immediatePipeline;
-    /** The matrices in force when the pending batches were built; the flush runs a frame later. */
     /**
      * The scratch the per-call matrix builders fill in place of a fresh {@code new float[16]}: {@code ortho},
      * {@code frustum} and the perspective helper each built a throwaway array per call on a path the matrix census
@@ -3894,6 +3703,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * perspective rather than the GUI's ortho - which is exactly why the symptom looked like "the menu only".
      */
     private final float[] matrixScratch = new float[16];
+
+    /** The builders whose scratch matrix is zeroed before the write, resolved once from the property. */
+    private static final java.util.Set<String> SCRATCH_ZERO_BUILDERS = scratchZeroBuilders();
 
     /**
      * Which builders clear the shared scratch before writing it, from {@code -Dceltium.vulkan.scratchZero} as a comma
@@ -3927,9 +3739,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * hotbar, the crosshair and the HUD text over the world (distinct 11932, was 2440 before the HUD and 1 with the
      * ortho repair alone).
      */
-    /** The builders whose scratch matrix is zeroed before the write, resolved once from the property. */
-    private static final java.util.Set<String> SCRATCH_ZERO_BUILDERS = scratchZeroBuilders();
-
     private static boolean scratchZeroWanted(String builder) {
         return SCRATCH_ZERO_BUILDERS.contains(builder.toLowerCase(java.util.Locale.ROOT));
     }
@@ -4015,7 +3824,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.immediateStatistics.noteImmediateStateCalls();
     }
 
-    /** {@return the game's current depth-write state}, for the clear latch's GL mask rule. */
     /** {@return whether the depth test is enabled in the state mirror}. */
     public boolean celtium$depthTestEnabled() {
         return this.immediateState.depthTestEnabled();
@@ -4084,6 +3892,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return this.immediateState.depthFunc();
     }
 
+    /** {@return the game's current depth-write state}, for the clear latch's GL mask rule. */
     public boolean celtium$depthWritesLive() {
         return this.immediateState.depthMask();
     }
@@ -4341,15 +4150,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /**
-     * Writes the fog block (128..207) for one group into the shared push buffer.
-     * <p>
-     * The block layout, matching the fragment shaders' declaration: {@code u_FogColor} at 128 (rgb plus the blend
-     * weight), {@code u_FogParams} at 144 (density, start, end, selector), and the model view's three affine rows at
-     * 160/176/192 - each row's fourth component is that row's translation, so {@code eye = M * position} is three dot
-     * products in the vertex shader. The selector is written even when the group has no fog, because the push buffer is
-     * shared by every group in a flush and a stale selector from the previous group would fog this draw.
-     */
-    /**
      * OPT-09/BH-36: records one batch's commands as indirect packets and issues them as few calls as the device's
      * {@code maxDrawIndirectCount} allows.
      * <p>
@@ -4367,6 +4167,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** Grows the indirect packet buffer to hold at least {@code bytes}; false when it could not be created. */
 
+    /**
+     * Writes the fog block (128..207) for one group into the shared push buffer.
+     * <p>
+     * The block layout, matching the fragment shaders' declaration: {@code u_FogColor} at 128 (rgb plus the blend
+     * weight), {@code u_FogParams} at 144 (density, start, end, selector), and the model view's three affine rows at
+     * 160/176/192 - each row's fourth component is that row's translation, so {@code eye = M * position} is three dot
+     * products in the vertex shader. The selector is written even when the group has no fog, because the push buffer is
+     * shared by every group in a flush and a stale selector from the previous group would fog this draw.
+     */
     private void celtium$writeFogPush(ImmediateGroup group, ByteBuffer push) {
         float[] fog = group.fog;
         if (fog == null) {
@@ -4485,12 +4294,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /**
-     * Announces a dynamic texture's write, which arrives as a flat pixel array.
-     * <p>
-     * The light map's write does not pass through either hooked texture utility method, so this is the only announcement it ever
-     * makes. The id and the size are asked of GL because the method that performs the write takes neither.
-     */
-    /**
      * Announces a whole-texture {@code int[]} upload, the {@code TextureUtil.uploadTexture} / DynamicTexture path.
      * <p>
      * The id comes from the caller, not from the bound texture: these upload methods carry the texture they write as a
@@ -4498,6 +4301,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * map's pixels were being aimed (at a 1x1 placeholder), leaving its mirror to be read back on every update.
      */
     public void announceDynamicTexture(int glTextureId, int[] pixels, int width, int height) {
+        /**
+         * Announces a dynamic texture's write, which arrives as a flat pixel array.
+         * <p>
+         * The light map's write does not pass through either hooked texture utility method, so this is the only announcement it ever
+         * makes. The id and the size are asked of GL because the method that performs the write takes neither.
+         */
         announceDynamicTexture(glTextureId, pixels, width, height, false);
     }
 
@@ -4566,13 +4375,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
 
-    /**
-     * {@return whether a queued group still has to draw a batch that samples this GL texture}.
-     * <p>
-     * A texture mutation only threatens queued work when a queued group actually references the texture: the group holds the
-     * descriptor prepared for it, so replacing the image behind it would swap what those batches sample. When no group
-     * references it, flushing would open a window - four full-screen blits and two depth conversions - to protect nothing.
-     */
     /** {@return whether a queued batch for this target samples the published outline image}. */
     private boolean celtium$queuedForTargetUsesPublished(long target) {
         if (this.publishedChainOutput == null || this.publishedChainTexture == 0) {
@@ -4586,6 +4388,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return false;
     }
 
+    /**
+     * {@return whether a queued group still has to draw a batch that samples this GL texture}.
+     * <p>
+     * A texture mutation only threatens queued work when a queued group actually references the texture: the group holds the
+     * descriptor prepared for it, so replacing the image behind it would swap what those batches sample. When no group
+     * references it, flushing would open a window - four full-screen blits and two depth conversions - to protect nothing.
+     */
     private boolean queuedGroupUsesTexture(int glTextureId) {
         if (this.immediateGroups.isEmpty()) {
             return false;
@@ -4608,12 +4417,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.textureStats.noteAnnouncedUpload();
     }
 
-    /**
-     * Announces a whole-texture write made through the animation path, which writes into whatever texture is bound.
-     * <p>
-     * The id has to be asked of GL because the method that performs the write takes no id - it is the one place in this
-     * renderer where a GL query buys something a hook cannot supply.
-     */
     /** How many animated sprite uploads flushed the queued immediate groups because one samples the atlas. */
     long animatedUploadFlushes;
     /** In-world animated sprite mirror updates: count, total and worst nanoseconds (see announceAnimatedUpload). */
@@ -4671,6 +4474,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
     }
 
+    /**
+     * Announces a whole-texture write made through the animation path, which writes into whatever texture is bound.
+     * <p>
+     * The id has to be asked of GL because the method that performs the write takes no id - it is the one place in this
+     * renderer where a GL query buys something a hook cannot supply.
+     */
     public void announceAnimatedUpload(int[][] data, int width, int height, int x, int y) {
         if (SKIP_ANIMATED_UPLOADS || (SKIP_ANIMATED_BEFORE_WORLD && !this.worldPassSeen)
                 || (SKIP_ANIMATED_IN_WORLD && this.worldPassSeen)) {
@@ -4945,24 +4754,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
     }
 
-    /**
-     * Queues an existing mesh for the immediate window instead of drawing it in a pass of its own.
-     * <p>
-     * The model draw used to open a command buffer, record a pass and submit it inline at {@code callList}. That made it a
-     * separate submission inside the frame: it did not participate in the ordering the immediate path maintains through its
-     * window, and two identical runs did not produce the same picture in the model's band (measured: the default floor in
-     * that band was 32 pixels, the experiment's own floor 1283). Queueing the mesh as a group of the window means the
-     * flush that precedes the next GL draw records it in the same pass as everything else, in the same order.
-     * <p>
-     * The mesh is borrowed: the captured model meshes live for the whole run and are drawn every frame, so the retire
-     * drain must not free them.
-     */
-    /**
-     * The 2D affine part of the texture matrix, or {@code null} when it is the identity. {@code matrixMode(5890)}
-     * routes glTranslate/glRotate/glScale onto the mirror's texture stack; the item glint animates its texture this
-     * way and the renderer uses the same channel for its own overlays. Only the UV transform matters, so the result
-     * is {@code [a,b,c,d,tx,ty]} in column-major terms ({@code u'=a*u+c*v+tx, v'=b*u+d*v+ty}).
-     */
     /** Split out of this class (2026-11-06); see GroupChange. */
     final GroupChange groupChange = new GroupChange(this);
 
@@ -5528,13 +5319,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     @Override
     /**
-     * Writes the world projection the way {@code Project.gluPerspective} would, from the values Minecraft used.
-     * <p>
-     * The mirrored stack sees {@code loadIdentity} for the projection and never sees the frustum, so this is the only thing
-     * that puts a real projection in it. The acceptance is the existing worst-sample counter: {@code matrixMirrorDelta}'s
-     * projection term should fall from 2.0006 to near zero.
-     */
-    /**
      * Seeds the mirrored projection and modelview from OpenGL once, at the moment the world camera is fully applied.
      * <p>
      * The earlier seed ran at the first comparison, which is a moment when GL itself holds the identity - the first batch
@@ -6078,7 +5862,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
     }
 
-    /** {@return the identity the game's own framebuffer field names}, or {@code MIN_VALUE} when none was reported. */
     /**
      * {@return whether a draw framebuffer is the window's own image}.
      * <p>
@@ -6100,6 +5883,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return this.immediateState.texture2dEnabled();
     }
 
+    /** {@return the identity the game's own framebuffer field names}, or {@code MIN_VALUE} when none was reported. */
     public long celtium$gameFramebufferIdentity() {
         return this.gameFramebufferIdentity;
     }
@@ -6200,7 +5984,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
     }
 
-    /** The colour texture recorded for a framebuffer identity as {texture, width, height}, or null. */
     /**
      * Notes a render-target identity the first time a group is offered under it, so the line can be printed with the
      * group's own texture and format once they are known.
@@ -6278,6 +6061,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         GllessFrameTarget target = offTargetTarget();
         String route = GllessFrameTarget.routeLabelForBinding(identity, isMain);
         long frameImage = this.frameTarget == null ? 0L : this.frameTarget.colorImage();
+        /**
+         * The second pair, for draws the game addresses to one of <em>its own</em> framebuffers - the entity-outline
+         * silhouette is the measured case. {@link #ensureChainPair(int, int)} creates it on first use at the size the
+         * game's framebuffer asks for, and the post chain adopts it as its input, so the chain reads the silhouette
+         * rather than the copy of the whole scene the default pair holds.
+         */
         long chainPair = target == null ? 0L : target.chainPairColorImage(identity);
         long defaultPair = target == null ? 0L : target.offTargetColorImage();
         long routed = "frame-image".equals(route) ? frameImage
@@ -6397,11 +6186,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             targetStageTextures = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<it.unimi.dsi.fastutil.ints.IntLinkedOpenHashSet>
             targetStageFormats = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    /** The colour texture recorded for a framebuffer identity as {texture, width, height}, or null. */
     long[] framebufferColorTexture(long identity) {
         return this.publishedTextures.colorTexture(identity);
     }
 
-    /** {@return the framebuffer identity whose colour attachment carries this GL texture name}, or {@code MIN_VALUE}. */
     /**
      * Turns the stub's raw-framebuffer attachment record into the publication the vanilla path makes.
      *
@@ -6446,6 +6235,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** Bounded count for {@link #celtium$adoptRawFramebufferColorTexture}. */
     private int rawFramebufferAdoptions;
+    /** {@return the framebuffer identity whose colour attachment carries this GL texture name}, or {@code MIN_VALUE}. */
     long celtium$framebufferIdentityForColorTexture(int glTextureName) {
         if (glTextureName == 0) {
             return Long.MIN_VALUE;
@@ -6809,14 +6599,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
     }
 
-    /**
-     * Captures the projection and camera transform for this frame, once, at the camera boundary.
-     * <p>
-     * This is the per-frame snapshot the world pass draws from: the projection is the one derived from Minecraft's own
-     * numbers, and the camera transform is the modelview as the camera setup left it. It replaces the per-batch
-     * {@code glGetFloatv} pairs that used to be read at every matrix change, and it is the read the plan records as still
-     * present - one per frame, at a boundary, rather than two per batch anywhere.
-     */
     /** Reports the swapchain's out-of-date state on stdout whenever it changes: the debug list is capped. */
     private void reportOutOfDateState() {
         int outOfDate = this.swapchain != null && this.swapchain.outOfDate() ? 1 : 0;
@@ -6829,6 +6611,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
     }
 
+    /**
+     * Captures the projection and camera transform for this frame, once, at the camera boundary.
+     * <p>
+     * This is the per-frame snapshot the world pass draws from: the projection is the one derived from Minecraft's own
+     * numbers, and the camera transform is the modelview as the camera setup left it. It replaces the per-batch
+     * {@code glGetFloatv} pairs that used to be read at every matrix change, and it is the read the plan records as still
+     * present - one per frame, at a boundary, rather than two per batch anywhere.
+     */
     public void captureWorldSnapshot() {
         // Frame boundary for the font batching (task-59): a held run must not survive into the next frame.
         if (this.fontBatch.celtium$hasPendingWork()) {
@@ -7120,12 +6910,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
     }
 
-    /**
-     * The mirrored matrices, for the GL reads the stub has to answer: vanilla reads the terrain's projection and
-     * model-view through {@code glGetFloatv} ({@code ActiveRenderInfo.updateRenderInfo}), and it builds the frustum
-     * the chunk traversal culls with from the same two reads ({@code ClippingHelperImpl}). {@code VulkanGlState.matrix}
-     * returns a copy, so a caller cannot write into the mirror through this.
-     */
     /**
      * How many immediate batches this backend has been offered, as a monotonic ordering witness.
      * <p>
@@ -7553,6 +7337,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     private boolean windowSplitExitHookInstalled;
 
+    /**
+     * The mirrored matrices, for the GL reads the stub has to answer: vanilla reads the terrain's projection and
+     * model-view through {@code glGetFloatv} ({@code ActiveRenderInfo.updateRenderInfo}), and it builds the frustum
+     * the chunk traversal culls with from the same two reads ({@code ClippingHelperImpl}). {@code VulkanGlState.matrix}
+     * returns a copy, so a caller cannot write into the mirror through this.
+     */
     public float[] celtium$mirroredModelView() {
         return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
     }
@@ -7575,6 +7365,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return this.immediateState.matrix(VulkanGlState.MATRIX_MODE_TEXTURE);
     }
 
+    /** Whether the mirrored colour's red and green are both zero - the per-draw probe, without an array per call. */
+    public boolean celtium$mirroredColorRedGreenZero() {
+        return this.immediateState.colorRed() == 0.0F && this.immediateState.colorGreen() == 0.0F;
+    }
+
     /**
      * The colour the immediate path's mirror currently holds, as {r,g,b,a}.
      * <p>
@@ -7583,16 +7378,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * in. Read by the GL-less stub's own draw census ({@code CELTIUM_DRAWARRAY_LAYOUT}), where "the sky plane is
      * drawn in the wrong colour" and "the wrong geometry was submitted" look identical in the frame.
      */
-    /** Whether the mirrored colour's red and green are both zero - the per-draw probe, without an array per call. */
-    public boolean celtium$mirroredColorRedGreenZero() {
-        return this.immediateState.colorRed() == 0.0F && this.immediateState.colorGreen() == 0.0F;
-    }
-
     public float[] celtium$mirroredColor() {
         return new float[] {this.immediateState.colorRed(), this.immediateState.colorGreen(),
                 this.immediateState.colorBlue(), this.immediateState.colorAlpha()};
     }
 
+    /**
+     * Writes the world projection the way {@code Project.gluPerspective} would, from the values Minecraft used.
+     * <p>
+     * The mirrored stack sees {@code loadIdentity} for the projection and never sees the frustum, so this is the only thing
+     * that puts a real projection in it. The acceptance is the existing worst-sample counter: {@code matrixMirrorDelta}'s
+     * projection term should fall from 2.0006 to near zero.
+     */
     public void applyDerivedProjection(float fovDegrees, float aspect, float near, float far) {
         if (fovDegrees <= 0.0F || aspect <= 0.0F || near <= 0.0F || far <= near) {
             this.derivedProjectionRefusals++;
@@ -7629,7 +7426,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return submitGeometryBatch(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount, drawMode, null);
     }
 
-    /** Minecraft/Forge retained geometry enters with its layout and ownership already known, not through GL arrays. */
     /**
      * Whether fixed-function lighting is on in the mirror right now: a Mod's client-array geometry carries normals in
      * a layout only the lit ITEM pipeline shades, so the GL stub picks that layout for a lit draw and keeps its own for
@@ -7639,6 +7435,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return this.immediateState.lightingEnabled();
     }
 
+    /** Minecraft/Forge retained geometry enters with its layout and ownership already known, not through GL arrays. */
     public boolean submitRetainedGeometry(NativeGeometryBuffer geometry, int drawMode) {
         if (geometry.vertexCount() == 0) {
             return true;
@@ -9282,20 +9079,6 @@ this.frameBufferOpen = false;
 
 
     /**
-     * Snapshots the drawing state that bakes into a pipeline.
-     * <p>
-     * Captured with the group, like the matrices: by the time the flush runs a frame later the live state has moved on,
-     * and using it would draw with a blend or depth combination the batch never asked for.
-     * <p>
-     * The array is
-     * {@code {blend, srcColorVk, dstColorVk, depthTest, depthWrite, cull, alphaRefBits, depthFunc, lighting,
-     * srcAlphaVk, dstAlphaVk, colorWriteMask, colorOpVk, alphaOpVk, alphaFuncGl}} - the first nine slots are the
-     * original layout and keep their meaning, everything BH-07/BH-10/BH-03 added is appended so a reader written
-     * before the change still reads what it read. The key is computed over the whole array
-     * ({@link #celtium$stateKey}), which is what makes a batch that differs only in its alpha factors, its write mask
-     * or its alpha comparison a different pipeline <em>and</em> a different group.
-     */
-    /**
      * {@return whether the live modelView is a translate/scale/flip}, i.e. every off-axis element is exactly zero and
      * the matrix is affine. That is the matrix shape GUI and 2-D draws build. For it the CPU's single-precision
      * product {@code sx*x + tx} is bit-identical to the shader's full product, because the dropped terms are exact
@@ -9468,12 +9251,6 @@ this.frameBufferOpen = false;
                 : java.util.Arrays.equals(this.currentGroupModelView, this.glModelView);
     }
 
-    /**
-     * Reusable state array for {@link #celtium$captureState}: the offer path ran it on every batch (~300/frame),
-     * each call allocating a fresh int[15] that was discarded by the next batch. The array is transient by contract -
-     * the only retained copy is the group's own {@code state.clone()} at group-open - so one scratch buffer serves
-     * every capture. Anything that needs the values past the next offer must clone it, exactly like the group does.
-     */
     /** {@code -Dceltium.debug.noAffineBake}, read once: the pre-transform check asks it per offer. */
     private static final boolean NO_AFFINE_BAKE = Boolean.getBoolean("celtium.debug.noAffineBake");
 
@@ -9734,6 +9511,20 @@ this.frameBufferOpen = false;
      */
     private final int[] textureExtentScratch = new int[2];
 
+    /**
+     * Snapshots the drawing state that bakes into a pipeline.
+     * <p>
+     * Captured with the group, like the matrices: by the time the flush runs a frame later the live state has moved on,
+     * and using it would draw with a blend or depth combination the batch never asked for.
+     * <p>
+     * The array is
+     * {@code {blend, srcColorVk, dstColorVk, depthTest, depthWrite, cull, alphaRefBits, depthFunc, lighting,
+     * srcAlphaVk, dstAlphaVk, colorWriteMask, colorOpVk, alphaOpVk, alphaFuncGl}} - the first nine slots are the
+     * original layout and keep their meaning, everything BH-07/BH-10/BH-03 added is appended so a reader written
+     * before the change still reads what it read. The key is computed over the whole array
+     * ({@link #celtium$stateKey}), which is what makes a batch that differs only in its alpha factors, its write mask
+     * or its alpha comparison a different pipeline <em>and</em> a different group.
+     */
     int[] celtium$captureState() {
         int[] signature = this.celtium$stateSignature;
         celtium$stateSignature(signature);
@@ -10024,7 +9815,6 @@ this.frameBufferOpen = false;
         return this.maxLineWidth;
     }
 
-    /** {@return whether a line batch that OpenGL asked this width for can be drawn by the line pipeline}. */
     /** {@return the line width OpenGL currently has set}, or 1.0 when it cannot be read. */
     private float celtium$requestedLineWidth() {
         try {
@@ -10546,15 +10336,6 @@ this.frameBufferOpen = false;
      * draw runs in GL immediately". Flushing here keeps the order; with nothing pending it does nothing.
      */
     /**
-     * {@return one line of the descriptor-set census, with an entry per immediate family}.
-     * <p>
-     * Audit B11: this used to sum only the block and particle caches and print a single number, so the textured and
-     * item families - which allocate far more sets than either - were invisible, and the number that was printed read
-     * as a total for the whole immediate path. The four families now have four counters and four entries. The
-     * textured family is the largest by construction: it keeps a set per distinct texture view, so its row is the one
-     * that moves when a scene samples many textures.
-     */
-    /**
      * {@return the uploads every live region arena has performed}, the volume that makes {@code bootstrapQueueWaits}
      * readable as a cost per upload rather than a bare count (task-51).
      */
@@ -10581,6 +10362,15 @@ this.frameBufferOpen = false;
         return total;
     }
 
+    /**
+     * {@return one line of the descriptor-set census, with an entry per immediate family}.
+     * <p>
+     * Audit B11: this used to sum only the block and particle caches and print a single number, so the textured and
+     * item families - which allocate far more sets than either - were invisible, and the number that was printed read
+     * as a total for the whole immediate path. The four families now have four counters and four entries. The
+     * textured family is the largest by construction: it keeps a set per distinct texture view, so its row is the one
+     * that moves when a scene samples many textures.
+     */
     String descriptorSetCensus() {
         long block = 0;
         for (VulkanImmediateBlockPipeline pipeline : this.blockPipelineCache.values()) {
@@ -10736,21 +10526,6 @@ this.frameBufferOpen = false;
 
 
     /**
-     * Flushes the frame's pending work at the frame boundary, which the pure-native path never reaches otherwise.
-     * <p>
-     * Measured 2026-10-15 (legs {@code gv-cohort-fix154} and {@code gv-cohort-fix155}): the client loads a world and
-     * runs frames - {@code CELTIUM_SWAPPOINT calls=159900} at the game's own swap point - yet
-     * {@code FrameCoordinator.submitCommands} is never entered (its bounded entry probe printed nothing) and
-     * {@code setLastFrameReachedQueue(true)} is never called, so every present skips with "no completed frame
-     * waiting" and nothing is ever shown.
-     * <p>
-     * The reason is the trigger: the pending work is flushed by {@code flushPendingBeforeGlDraw}, which fires at GL
-     * draw and bind boundaries ({@code bindTexture} and friends) and from {@code applyDerivedProjection}. A GL-less
-     * frame crosses none of those, so its immediate work stays pending forever and no submission is ever made. The
-     * swap point is the boundary that <em>does</em> fire once per frame in both paths, so the flush is offered here
-     * for that caller.
-     */
-    /**
      * Ends and defers the frame's unified command buffer - the frame's single submission, carrying every recording
      * the frame made. The coordinator clears {@link #frameBufferOpen} itself; the boundary then flushes the batch,
      * which is the ONE vkQueueSubmit the frame pays.
@@ -10771,6 +10546,21 @@ this.frameBufferOpen = false;
         this.frameCoordinator.celtium$finishFrameBuffer(true);
     }
 
+    /**
+     * Flushes the frame's pending work at the frame boundary, which the pure-native path never reaches otherwise.
+     * <p>
+     * Measured 2026-10-15 (legs {@code gv-cohort-fix154} and {@code gv-cohort-fix155}): the client loads a world and
+     * runs frames - {@code CELTIUM_SWAPPOINT calls=159900} at the game's own swap point - yet
+     * {@code FrameCoordinator.submitCommands} is never entered (its bounded entry probe printed nothing) and
+     * {@code setLastFrameReachedQueue(true)} is never called, so every present skips with "no completed frame
+     * waiting" and nothing is ever shown.
+     * <p>
+     * The reason is the trigger: the pending work is flushed by {@code flushPendingBeforeGlDraw}, which fires at GL
+     * draw and bind boundaries ({@code bindTexture} and friends) and from {@code applyDerivedProjection}. A GL-less
+     * frame crosses none of those, so its immediate work stays pending forever and no submission is ever made. The
+     * swap point is the boundary that <em>does</em> fire once per frame in both paths, so the flush is offered here
+     * for that caller.
+     */
     public void celtium$flushPendingAtFrameBoundary() {
         long flushStartedNanos = System.nanoTime();
         try {
@@ -12405,13 +12195,6 @@ this.frameBufferOpen = false;
     /** Records the exception with its stack, so a failure identifies its own origin instead of being guessed at. */
 
 
-    /** Records a render pass containing nothing but the pending immediate groups. */
-    /**
-     * Records a pass for one off-target framebuffer's content and copies it back into the game's texture.
-     * <p>
-     * This is the interruption the structural finding called for. The body mirrors {@link #recordImmediateOnlyPass}, which
-     * already does exactly this shape for the frame's pass: begin, set the viewport and scissor, draw the pending groups, end.
-     */
     /**
      * Removes the pending groups that belong to one render target, leaving every other group in the queue.
      * <p>
@@ -12425,23 +12208,8 @@ this.frameBufferOpen = false;
         return ImmediateGroupQueue.retireGroupsForTarget(groups, targetIdentity);
     }
 
-    /** {@return whether the pending queue holds non-empty geometry for a target}, asked before a pass is begun. */
     /** {@return how many non-empty pending groups belong to a target}, counted when a pass is about to run. */
 
-    /**
-     * Whether this group is the game's finished-frame composite drawn into the image it samples.
-     * <p>
-     * The per-group form of {@link #celtium$isScreenSelfComposite}: the group carries the identity it was accepted
-     * under and the texture it samples, so the question is asked of the group rather than of the live bind - which by
-     * the time the group is drawn has usually moved on. The frame image's own published colour name is the main
-     * framebuffer's colour attachment ({@code framebufferColorTextureName(mainIdentity)}), which is the name
-     * {@code celtium$publishFramebufferColorTexture} gives the frame image, and identity 0's draws are routed to the
-     * frame image; so a group that matches both samples the image it is about to write.
-     * <p>
-     * This is a predicate, not a rule: {@link #SELF_COMPOSITE_SKIP} decides whether anything is done with it, and the
-     * three shapes this rule had on 2026-10-11 (skip emptied the frame, routing identity 0 into the delivered image
-     * wiped it, the pair lost the world) are why the switch exists before the default changes.
-     */
     /**
      * Counts a group that samples a published name standing for the chain pair's image.
      * <p>
@@ -12559,6 +12327,20 @@ this.frameBufferOpen = false;
     private final long[] windowRecordNanosByArm = new long[2];
     private final long[] windowRecordsByArm = new long[2];
 
+    /**
+     * Whether this group is the game's finished-frame composite drawn into the image it samples.
+     * <p>
+     * The per-group form of {@link #celtium$isScreenSelfComposite}: the group carries the identity it was accepted
+     * under and the texture it samples, so the question is asked of the group rather than of the live bind - which by
+     * the time the group is drawn has usually moved on. The frame image's own published colour name is the main
+     * framebuffer's colour attachment ({@code framebufferColorTextureName(mainIdentity)}), which is the name
+     * {@code celtium$publishFramebufferColorTexture} gives the frame image, and identity 0's draws are routed to the
+     * frame image; so a group that matches both samples the image it is about to write.
+     * <p>
+     * This is a predicate, not a rule: {@link #SELF_COMPOSITE_SKIP} decides whether anything is done with it, and the
+     * three shapes this rule had on 2026-10-11 (skip emptied the frame, routing identity 0 into the delivered image
+     * wiped it, the pair lost the world) are why the switch exists before the default changes.
+     */
     private boolean celtium$isSelfCompositeGroup(ImmediateGroup group) {
         if (this.frameTarget == null) {
             return false;
@@ -12748,6 +12530,7 @@ this.frameBufferOpen = false;
                 && !acquireNeeded && !replacementInProgress;
     }
 
+    /** Records a render pass containing nothing but the pending immediate groups. */
     private void recordImmediateOnlyPass(MemoryStack stack, VulkanTerrainPipeline terrain) {
         // Everything this method does before the window's prefix: the target routing, the pair clear, the begin-info.
         // winRecord is 0.5 ms a frame over 35.8 windows and winPrefix/winPassEnd were added to split the remainder;
@@ -13418,7 +13201,6 @@ this.frameBufferOpen = false;
     private float[] lastSharedProjection;
     private float[] lastSharedModelView;
 
-    /** {@return the last queued group's array when {@code values} equals it, else a new copy that becomes the last}. */
     /** {@return the previous clip rectangle when {@code values} equals it, else a new copy that becomes the previous}. */
     private int[] celtium$shareScissor(int[] values) {
         int[] last = this.lastGroupScissorBox;
@@ -13430,6 +13212,7 @@ this.frameBufferOpen = false;
         return copy;
     }
 
+    /** {@return the last queued group's array when {@code values} equals it, else a new copy that becomes the last}. */
     private float[] celtium$shareMatrix(float[] values, boolean projection) {
         float[] last = projection ? this.lastSharedProjection : this.lastSharedModelView;
         if (last != null && java.util.Arrays.equals(last, values)) {
@@ -13674,11 +13457,6 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * {@return a machine-readable summary of what this backend actually drew}. The fixture reads it to decide
-     * whether a run really rendered terrain: selecting the backend by name is not evidence that any pass reached the
-     * queue, so submissions, skips and errors are counted instead.
-     */
-    /**
      * BH-10's capture histogram as one bracketed field, non-zero slots only.
      * <p>
      * The number that decides the Fancy-cloud question is the {@code 0x0} slot: it is the depth-only pass. A leg
@@ -13747,13 +13525,6 @@ this.frameBufferOpen = false;
      * ordering and the pop-in cost are measured before the default changes.
      */
     private static final int UPLOAD_BUDGET = Integer.getInteger("celtium.vulkan.uploadBudget", 0).intValue();
-    /**
-     * Frames after a world is installed during which the budget does not apply.
-     * <p>
-     * The startup burst is the one that must not be throttled: the world's first seconds build hundreds of sections, and
-     * a per-frame cap made the fixture's capture deadline find zero of its sixty-four pinned sections (measured with
-     * budget 8). Past the warm-up only the steady-state trickle is budgeted, which is where the p95 spikes are.
-     */
     /**
      * The queue size above which an arriving batch is budgeted instead of uploaded at once.
      * <p>
@@ -14220,31 +13991,6 @@ this.frameBufferOpen = false;
     private static final int FRAME_AT_WINDOW_LINES =
             Integer.getInteger("celtium.vulkan.frameAtWindowLines", 8).intValue();
     /**
-     * Whether the game's finished-frame composite is dropped when it samples the image it is drawn into.
-     * <p>
-     * {@code -Dceltium.vulkan.skipSelfComposite=false} turns the drop off; it is <b>on by default as of round 248</b>,
-     * together with {@code ortho} in {@link #scratchZeroWanted}, because the two are one contract: the ortho repair is
-     * what makes the composite's full-screen quad draw at all, and without the drop that quad paints the frame image
-     * black. The draw is {@code Minecraft.runGameLoop}'s {@code unbindFramebuffer()} + {@code framebufferRender}
-     * ({@code Minecraft.java:1234-1237}), which runs after {@code EntityRenderer.updateCameraAndRender} - i.e. after
-     * the HUD - with no framebuffer bound, so under GL-less it lands in the frame image (identity 0) and samples the
-     * main framebuffer's colour texture, which the adoption path publishes over that same frame image.
-     * <p>
-     * Measured (leg r212-world-hud25, jar be90e52ccd1a2203, {@code scratchZero=perspective,ortho} alone): frame 150's
-     * window readbacks stop at {@code windows=1188} and the present probe then reports {@code windows=1189}, so the
-     * blackening draw is in the window the trace could not read; {@code CELTIUM_MIRROR_DRAW frame=100 groupTexture=3
-     * mirrorSource=none@1280x720 view=0xe900000000e9 target=0 batches=1} names the composite's source as the published
-     * frame image view, and the presented image is a single black colour with the HUD gone
-     * ({@code presentedDistinctColours=1 presentedMean=0.0}). Sampling an image while writing it as a colour attachment
-     * is invalid usage unless a feedback loop is enabled, so a driver is free to return black.
-     * <p>
-     * With the drop (leg r212-world-hud26, jar 3cc28cb1a40e0c32): {@code selfCompositeSkips=103} at frame 100 and 167 at
-     * frame 200 (one per frame), {@code presentedMean=71.3}, the present's {@code hotbarBand=(72,60,49)}, and the
-     * presented PNG carries the hotbar, the crosshair and the HUD text over the world (distinct 11932). The counter
-     * {@code selfCompositeSkips} is what makes the drop visible; only a group that samples the frame image's own
-     * published colour name under identity 0 matches.
-     */
-    /**
      * How many {@code CELTIUM_PAIR_LAYOUT} lines the run may print; {@code -Dceltium.vulkan.pairLayoutLines}.
      * <p>
      * Printed only when the three values change, because the question is their order within a frame, not their value
@@ -14276,6 +14022,31 @@ this.frameBufferOpen = false;
      * (presentedMean=71.302086, fixture PASSED/PASSED).
      */
     static final boolean PAIR_STAY_GENERAL = Boolean.parseBoolean(System.getProperty("celtium.vulkan.pairStayGeneral", "true"));
+    /**
+     * Whether the game's finished-frame composite is dropped when it samples the image it is drawn into.
+     * <p>
+     * {@code -Dceltium.vulkan.skipSelfComposite=false} turns the drop off; it is <b>on by default as of round 248</b>,
+     * together with {@code ortho} in {@link #scratchZeroWanted}, because the two are one contract: the ortho repair is
+     * what makes the composite's full-screen quad draw at all, and without the drop that quad paints the frame image
+     * black. The draw is {@code Minecraft.runGameLoop}'s {@code unbindFramebuffer()} + {@code framebufferRender}
+     * ({@code Minecraft.java:1234-1237}), which runs after {@code EntityRenderer.updateCameraAndRender} - i.e. after
+     * the HUD - with no framebuffer bound, so under GL-less it lands in the frame image (identity 0) and samples the
+     * main framebuffer's colour texture, which the adoption path publishes over that same frame image.
+     * <p>
+     * Measured (leg r212-world-hud25, jar be90e52ccd1a2203, {@code scratchZero=perspective,ortho} alone): frame 150's
+     * window readbacks stop at {@code windows=1188} and the present probe then reports {@code windows=1189}, so the
+     * blackening draw is in the window the trace could not read; {@code CELTIUM_MIRROR_DRAW frame=100 groupTexture=3
+     * mirrorSource=none@1280x720 view=0xe900000000e9 target=0 batches=1} names the composite's source as the published
+     * frame image view, and the presented image is a single black colour with the HUD gone
+     * ({@code presentedDistinctColours=1 presentedMean=0.0}). Sampling an image while writing it as a colour attachment
+     * is invalid usage unless a feedback loop is enabled, so a driver is free to return black.
+     * <p>
+     * With the drop (leg r212-world-hud26, jar 3cc28cb1a40e0c32): {@code selfCompositeSkips=103} at frame 100 and 167 at
+     * frame 200 (one per frame), {@code presentedMean=71.3}, the present's {@code hotbarBand=(72,60,49)}, and the
+     * presented PNG carries the hotbar, the crosshair and the HUD text over the world (distinct 11932). The counter
+     * {@code selfCompositeSkips} is what makes the drop visible; only a group that samples the frame image's own
+     * published colour name under identity 0 matches.
+     */
     private static final boolean SELF_COMPOSITE_SKIP =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.skipSelfComposite", "true"));
     /**
@@ -14361,22 +14132,6 @@ this.frameBufferOpen = false;
         return withDetail + " | " + verificationSummary();
     }
 
-    /**
-     * Releases the resources that belong to the world renderer and leaves the device alive.
-     * <p>
-     * Every resource here is created from the world's render pass configuration or from its regions - the region
-     * buffers, the per-pass pipelines, the model meshes, the shared index buffers and the terrain uniform buffer, and the
-     * immediate pipelines whose caches are keyed by draw state rather than by the pass they were built for. The
-     * ones the window keeps are the device and its command resources, the standalone UI render pass, the frame target
-     * and the swapchain, the texture registry and its mirrors, and the readback image: those are what a menu frame
-     * draws into and presents from. The uniforms and the pipelines are rebuilt on demand by the terrain path, so the
-     * next world recreates them from the configuration the adoption hands over.
-     * <p>
-     * The world's lifetime also ends for the queue: a group accepted under this world is retired here rather than left
-     * for the next draw, and the world epoch it carries is bumped so that nothing accepted before the next adoption can
-     * be drawn against this world's freed buffers. That is the audit's B10 gap - the target generation says nothing
-     * about a world, because the frame target survives one.
-     */
     /**
      * Prints the counter summary once per trigger class, naming what triggered it.
      * <p>
@@ -14483,6 +14238,22 @@ this.frameBufferOpen = false;
                 + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.noopDrawingCensusSummary());
     }
 
+    /**
+     * Releases the resources that belong to the world renderer and leaves the device alive.
+     * <p>
+     * Every resource here is created from the world's render pass configuration or from its regions - the region
+     * buffers, the per-pass pipelines, the model meshes, the shared index buffers and the terrain uniform buffer, and the
+     * immediate pipelines whose caches are keyed by draw state rather than by the pass they were built for. The
+     * ones the window keeps are the device and its command resources, the standalone UI render pass, the frame target
+     * and the swapchain, the texture registry and its mirrors, and the readback image: those are what a menu frame
+     * draws into and presents from. The uniforms and the pipelines are rebuilt on demand by the terrain path, so the
+     * next world recreates them from the configuration the adoption hands over.
+     * <p>
+     * The world's lifetime also ends for the queue: a group accepted under this world is retired here rather than left
+     * for the next draw, and the world epoch it carries is bumped so that nothing accepted before the next adoption can
+     * be drawn against this world's freed buffers. That is the audit's B10 gap - the target generation says nothing
+     * about a world, because the frame target survives one.
+     */
     @Override
     public void celtium$releaseWorldResources() {
         // Chunk outputs are per-world job results; keeping them across a world change would upload a section into the
@@ -14749,7 +14520,6 @@ this.frameBufferOpen = false;
      * only way to tell an attribute-layout problem from a transform problem, and the upload path already has the
      * bytes in hand.
      */
-    /** Passes abandoned because the uniform buffer could not be prepared. */
     /** Regions whose upload was abandoned because a resource could not be built. */
     int regionUploadFailures;
     String lastRegionUploadFailure = "none";
@@ -14768,8 +14538,6 @@ this.frameBufferOpen = false;
     private int sectionsLeftUnbuilt;
 
 
-    /** Colour word of the first vertex of a mesh, in the little-endian byte order the GPU reads. */
-    /** How many section uploads print their packed vertex colours; a property so a normal run stays quiet. */
     /** The vertex-level diagnostics (layout, drawn sections, GPU readback): one switch, quiet by default. */
     private static final boolean VERTEX_DIAGNOSTICS =
             Boolean.getBoolean("celtium.vulkan.vertexDiagnostics");
@@ -15679,25 +15447,13 @@ this.frameBufferOpen = false;
 
     // ------------------------------------------------------------------ frame target
 
-    /**
-     * S2 probe: builds the surface and swapchain for the window GLFW currently owns, reports what the surface
-     * advertises, and presents one cleared image. GL still presents this window in the hybrid build, so this runs
-     * once and only when {@code -Dceltium.vulkan.swapchainProbe=true} is set.
-     */
-    /**
-     * Creates the swapchain if it does not exist yet, and reports why when it cannot.
-     * <p>
-     * It used to be created as a side effect of the diagnostic probe, which meant turning the probe off silently turned
-     * the frame present off with it - a run that looked validation-clean because it presented nothing. Anything that
-     * needs to present calls this instead, so the probe is only a probe.
-     */
     /** Swapchains dropped because the VSync option changed (task-56), so the rebuild is a number, not a claim. */
 
-    /** A request is owned by the window, not the replaceable swapchain wrapper. */
     /** A surface kept across a rebuild: it belongs to the window, and recreating it breaks Wayland's explicit sync. */
     private long reusableSurface;
     private long reusableSurfaceWindow;
 
+    /** A request is owned by the window, not the replaceable swapchain wrapper. */
     private void releaseSwapchainForRebuild() {
         this.pendingPresentedDumps.addAll(this.swapchain.takePendingPresentedImageDumps());
         long window = CeltiumWindow.sdl() ? CeltiumWindow.sdlWindowPointer() : 0L;
@@ -15730,6 +15486,13 @@ this.frameBufferOpen = false;
         }
     }
 
+    /**
+     * Creates the swapchain if it does not exist yet, and reports why when it cannot.
+     * <p>
+     * It used to be created as a side effect of the diagnostic probe, which meant turning the probe off silently turned
+     * the frame present off with it - a run that looked validation-clean because it presented nothing. Anything that
+     * needs to present calls this instead, so the probe is only a probe.
+     */
     private boolean ensureSwapchain() {
         // The VSync option changed since this swapchain was built (task-56): the present mode is a creation parameter,
         // so the only way to honour it is a new swapchain. Dropping it here routes the rebuild through exactly the
@@ -15876,6 +15639,11 @@ this.frameBufferOpen = false;
         return false;
     }
 
+    /**
+     * S2 probe: builds the surface and swapchain for the window GLFW currently owns, reports what the surface
+     * advertises, and presents one cleared image. GL still presents this window in the hybrid build, so this runs
+     * once and only when {@code -Dceltium.vulkan.swapchainProbe=true} is set.
+     */
     private void runSwapchainProbe() {
         if (this.gpuStalled) {
             // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
@@ -15936,14 +15704,6 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * {@return whether the texture a batch samples is the colour attachment of the framebuffer bound right now}.
-     * <p>
-     * This is the material that tells a screen composite apart from the hand, an overlay or a mod's format-2 batch:
-     * the composite reads the framebuffer it is about to be drawn over, the others do not. The audit asked for the
-     * framebuffer to be checked rather than the vertex format alone (S17), and this is that check done on the texture
-     * the batch actually binds.
-     */
-    /**
      * Whether the bound texture is the colour image of the framebuffer the game is currently rendering into.
      * <p>
      * This is what separates the frame's own blit - already presented at the swap point, so GL's copy must stay
@@ -15960,6 +15720,14 @@ this.frameBufferOpen = false;
         return reported != null && (int) reported[0] == texture;
     }
 
+    /**
+     * {@return whether the texture a batch samples is the colour attachment of the framebuffer bound right now}.
+     * <p>
+     * This is the material that tells a screen composite apart from the hand, an overlay or a mod's format-2 batch:
+     * the composite reads the framebuffer it is about to be drawn over, the others do not. The audit asked for the
+     * framebuffer to be checked rather than the vertex format alone (S17), and this is that check done on the texture
+     * the batch actually binds.
+     */
     private boolean celtium$samplesBoundFramebufferColor(int texture) {
         if (texture == 0) {
             return false;
@@ -16057,15 +15825,6 @@ this.frameBufferOpen = false;
     // On by default since the staged acceptance: two scenes, both GPUs, the model draw inside the default's own
     // run-to-run floor (the spider scene's floor is 0 pixels and the effect 20 of 921600). -Dceltium.vulkan.modelMeshBuild=false
     // and -Dceltium.vulkan.modelDraw=false restore the previous behaviour.
-    /** The built meshes, keyed by display-list id, or null when they have not been built. */
-    /**
-     * Native model draws and the reasons they were refused.
-     * <p>
-     * Static so the count lives as long as the cancellation counter it has to be compared with: the census is static and
-     * survives a resource reload or a world switch, while a backend instance does not. With an instance field the two
-     * numbers drifted apart on exactly those two scenes (measured: cancelled 1022 against draws 526), which reads like a
-     * defect but was only the counters having different lifetimes.
-     */
     /** Long like the batch counter: one measured session draws models in the same six-figure volume. */
     static long modelDraws;
     int modelDrawRefusals;
@@ -16073,8 +15832,6 @@ this.frameBufferOpen = false;
     int modelNoListCalls;
     /** Bounded entry lines: whether the model draw path is reached at all, and with which state. */
     int modelEntryLogs;
-    /** Display lists a replay asked for that this renderer has no captured mesh for, and the bounded log of them. */
-    /** Meshes refused by the vertex/index contract, and the first reason, so a bad snapshot is named not hidden. */
     /** How many build-summary lines have been printed; bounded, because the build repeats as lists appear. */
     String modelLastRefusal = "none";
     /** Whether a frame target exists, so a pass can be opened. */
@@ -16086,13 +15843,10 @@ this.frameBufferOpen = false;
     private VulkanTerrainPipeline terrainPipelineForFrame;
     /** The texture the immediate path most recently bound. */
     private int currentImmediateTexture;
-    /** The frame in which a terrain pass last ran, so a window can say whether it came first. */
     /** One-shot: the frame's order, for settling whether the window runs before the terrain. */
     private boolean windowOrderLogged;
-    /** One-shots: the frame-target refusals that used to collapse into "no frame target". */
     /** One-shot: the distinct projection depth rows the groups of a frame draw with. */
     private int groupDepthRowsSeen;
-    /** One-shot: the matrices a model group is stored with. */
     /** How many model enqueues have printed their matrices. */
     int modelMatrixLoggedCount;
     /** Model replays that arrived for a target other than the main one: the outline pass's, and anything else off-target. */
@@ -16100,7 +15854,6 @@ this.frameBufferOpen = false;
     int modelOffTargetDraws;
     final java.util.Set<String> modelOffTargetLogged = new java.util.HashSet<String>();
     int modelOffTargetLogs;
-    /** The last off-target call count printed from the build, and how many such lines have printed. */
     /** How many flush-outcome lines have printed for off-target model batches, and the bound on them. */
     int modelOffTargetFlushLogs;
     static final int MODEL_OFFTARGET_FLUSH_LOG_LIMIT = 6;
@@ -16115,7 +15868,6 @@ this.frameBufferOpen = false;
     int modelLayerLogs;
     /** The bound on {@link #modelLayerLogs}: the entity scene has one layer (the spider's eyes) per texture. */
     static final int MODEL_LAYER_LOG_LIMIT = 16;
-    /** One-shot: the matrices an immediate group is stored with. */
     /** {@return whether the texture of the group being closed reports a complete mirror}. */
     private boolean groupTextureFull() {
         try {
@@ -16147,27 +15899,6 @@ this.frameBufferOpen = false;
     private int menuGroupCensus;
 
     /**
-     * How many offered batches are byte-identical repeats of one offered in the previous frame.
-     * <p>
-     * The immediate path costs 1.97 ms of a 4.88 ms frame (A/B: {@code -Dceltium.vulkan.immediate=false} falls to
-     * 2.91 ms). The question the reference pool's item-mesh cache (Angelica) and immediate-mode batching
-     * (ImmediatelyFast) both turn on is how much of that work repeats: a batch whose source bytes, state key, format
-     * and matrix match one from the previous frame has nothing new to record, so its transform, append and group
-     * could be reused rather than rebuilt.
-     * <p>
-     * Measured per accepted batch by hashing the source vertex block and comparing the tuple against the previous
-     * frame's set. The hash reads the same bytes the transform reads, so it is cheap enough for a normal leg; the
-     * counters decide whether a cache is worth building.
-     */
-    /**
-     * Whether the cross-frame reuse census runs: {@code -Dceltium.vulkan.batchReuseCensus=true}, off by default.
-     * <p>
-     * Off because it is not cheap: measured on the standard scene it added ~1.3 ms a frame (the leg's interval was
-     * 6.22 ms against a 4.88 ms baseline), which is the cost of hashing every batch's source block byte by byte. That
-     * tax is why the census is a measurement rather than a feature, and why a real cache would have to earn its
-     * lookup back with a cheaper identity than this hash.
-     */
-    /**
      * Whether the per-group push block is memoised: {@code -Dceltium.vulkan.pushBlockCache=true}, off by default.
      * <p>
      * The recording half of the immediate path is 0.95 ms a frame for ~330 groups, and two measurements narrowed it to
@@ -16177,19 +15908,6 @@ this.frameBufferOpen = false;
      * per group. Memoising it by the group's inputs replaces that with a 216-byte copy.
      */
     private static final boolean PUSH_BLOCK_CACHE = Boolean.getBoolean("celtium.vulkan.pushBlockCache");
-    /**
-     * Measurement switch, off by default: drops the immediate group recording entirely.
-     * <p>
-     * It does not measure what it was added for. The intent was the ceiling of the per-group work the merge is meant to
-     * remove, and the measurement says the opposite: with the recording dropped the frame goes from 3.9 ms to 124 ms
-     * (legs ceilBase2 / ceilSkip2, same flags back to back). Dropping every immediate draw does not make the renderer
-     * cheaper - it changes what the game does next, so the number is the game's reaction and not the cost that was
-     * removed. Kept because a future attempt should not have to rediscover that an empty frame is not a cheap frame.
-     */
-    /**
-     * Measurement switch: counts this frame's immediate groups by the state that decides whether they could share one
-     * command, and how many of them draw from the frame arena. Off by default.
-     */
     /**
      * {@code -Dceltium.vulkan.frameSignature=true}: per-frame batch-traffic hash, for the "could a recording be reused"
      * census. Off by default - see the hashing site for why the shipped path does not pay for it.
@@ -16353,6 +16071,10 @@ this.frameBufferOpen = false;
     }
     private final long[][] offerStageDeltas = new long[16][2];
 
+    /**
+     * Measurement switch: counts this frame's immediate groups by the state that decides whether they could share one
+     * command, and how many of them draw from the frame arena. Off by default.
+     */
     private static final boolean MERGE_CENSUS = Boolean.getBoolean("celtium.vulkan.mergeCensus");
     /**
      * {@code -Dceltium.vulkan.splashCensus=true}: resolve each format-2 group's mirror source at the draw.
@@ -16379,7 +16101,6 @@ this.frameBufferOpen = false;
     long bufferCensusGroups;
     long bufferCensusArenaBacked;
     long bufferCensusOwning;
-    /** {@code -Dceltium.vulkan.sortOpaque=true}: order the opaque groups by material so equal materials share a run. */
     /**
      * Order a flush's opaque groups by material before recording them. <b>Off by default</b>, and that is the measured
      * answer rather than an oversight: the ABBA A/B in {@code docs/verification-traps.md} (Susy world, same JAR,
@@ -16397,14 +16118,10 @@ this.frameBufferOpen = false;
     int drawOrderSegments;
     int drawOrderOpaque;
 
-    /**
-     * {@return the order to record a flush's groups in}: the fully opaque groups by material first, then everything else
-     * in arrival order.
-     * <p>
-     * A group moves only when its pipeline tests depth, writes depth and does not blend, which is the case where the
-     * colour a pixel ends up with is independent of the order its fragments were recorded in. Everything else - blended
-     * HUD and font work, alpha-tested decals, groups for another target - stays exactly where it was.
-     */
+    /** Why groups fail the reorderable predicate, by first failing condition, for the ordering census. */
+    long reorderRejectNoPrepared, reorderRejectDepthWrite, reorderRejectDepthTest, reorderRejectBlend,
+            reorderAccept, reorderRejectOther;
+
     /**
      * {@return whether this group can be reordered by material}.
      * <p>
@@ -16413,10 +16130,6 @@ this.frameBufferOpen = false;
      * asked about when the ordering was written, which left the lit item family - the bulk of a world frame - in arrival
      * order and the runs short.
      */
-    /** Why groups fail the reorderable predicate, by first failing condition, for the ordering census. */
-    long reorderRejectNoPrepared, reorderRejectDepthWrite, reorderRejectDepthTest, reorderRejectBlend,
-            reorderAccept, reorderRejectOther;
-
     private static boolean celtium$reorderable(java.util.List<ImmediateGroup> groups, int index) {
         ImmediateGroup group = groups.get(index);
         PreparedImmediate prepared = group.prepared;
@@ -16439,6 +16152,14 @@ this.frameBufferOpen = false;
         return false;
     }
 
+    /**
+     * {@return the order to record a flush's groups in}: the fully opaque groups by material first, then everything else
+     * in arrival order.
+     * <p>
+     * A group moves only when its pipeline tests depth, writes depth and does not blend, which is the case where the
+     * colour a pixel ends up with is independent of the order its fragments were recorded in. Everything else - blended
+     * HUD and font work, alpha-tested decals, groups for another target - stays exactly where it was.
+     */
     private int[] celtium$buildDrawOrder(java.util.List<ImmediateGroup> groups) {
         int count = groups.size();
         if (this.drawOrder.length < count) {
@@ -16590,6 +16311,15 @@ this.frameBufferOpen = false;
             Boolean.getBoolean("celtium.vulkan.mergeAcrossState");
     /** Diagnostic only: refuses every merge, so one offer is one draw - the other end of the design. */
     private static final boolean NO_MERGE = Boolean.getBoolean("celtium.vulkan.noMerge");
+    /**
+     * Measurement switch, off by default: drops the immediate group recording entirely.
+     * <p>
+     * It does not measure what it was added for. The intent was the ceiling of the per-group work the merge is meant to
+     * remove, and the measurement says the opposite: with the recording dropped the frame goes from 3.9 ms to 124 ms
+     * (legs ceilBase2 / ceilSkip2, same flags back to back). Dropping every immediate draw does not make the renderer
+     * cheaper - it changes what the game does next, so the number is the game's reaction and not the cost that was
+     * removed. Kept because a future attempt should not have to rediscover that an empty frame is not a cheap frame.
+     */
     private static final boolean SKIP_IMMEDIATE_RECORD =
             Boolean.getBoolean("celtium.vulkan.skipImmediateRecord");
 
@@ -16625,9 +16355,30 @@ this.frameBufferOpen = false;
     long pushBlockMisses;
     long pushBlockClears;
 
+    /**
+     * Whether the cross-frame reuse census runs: {@code -Dceltium.vulkan.batchReuseCensus=true}, off by default.
+     * <p>
+     * Off because it is not cheap: measured on the standard scene it added ~1.3 ms a frame (the leg's interval was
+     * 6.22 ms against a 4.88 ms baseline), which is the cost of hashing every batch's source block byte by byte. That
+     * tax is why the census is a measurement rather than a feature, and why a real cache would have to earn its
+     * lookup back with a cheaper identity than this hash.
+     */
     private static final boolean BATCH_REUSE_CENSUS =
             Boolean.getBoolean("celtium.vulkan.batchReuseCensus");
 
+    /**
+     * How many offered batches are byte-identical repeats of one offered in the previous frame.
+     * <p>
+     * The immediate path costs 1.97 ms of a 4.88 ms frame (A/B: {@code -Dceltium.vulkan.immediate=false} falls to
+     * 2.91 ms). The question the reference pool's item-mesh cache (Angelica) and immediate-mode batching
+     * (ImmediatelyFast) both turn on is how much of that work repeats: a batch whose source bytes, state key, format
+     * and matrix match one from the previous frame has nothing new to record, so its transform, append and group
+     * could be reused rather than rebuilt.
+     * <p>
+     * Measured per accepted batch by hashing the source vertex block and comparing the tuple against the previous
+     * frame's set. The hash reads the same bytes the transform reads, so it is cheap enough for a normal leg; the
+     * counters decide whether a cache is worth building.
+     */
     private final java.util.HashSet<Long> batchReuseThisFrame = new java.util.HashSet<Long>();
     final java.util.HashSet<Long> batchReuseLastFrame = new java.util.HashSet<Long>();
     long batchReuseHits;
@@ -16687,16 +16438,6 @@ this.frameBufferOpen = false;
     static final int MODEL_MATRIX_LINES = Integer.getInteger("celtium.vulkan.modelMatrixLines", 200);
 
 
-    /**
-     * Presents this frame's content from Vulkan, and says whether it reached the queue.
-     * <p>
-     * The frame's colour image is the one the game's own rendering and the native passes both wrote into (it is the shared
-     * image the GL side draws through), so presenting it puts this frame on the swapchain without a GL swap. The sequence
-     * is the one the probe already used: beginFrame, presentImage, endFrame.
-     * <p>
-     * Called once per frame from {@code Minecraft.updateDisplay}. A false return leaves the caller to swap through GL as
-     * before, so a failure here cannot leave the window without a frame.
-     */
     /** The post-process chain executor, created lazily the first frame a chain group actually renders. */
     VulkanPostChain postChain;
 
@@ -17000,7 +16741,6 @@ this.frameBufferOpen = false;
         return text.toString();
     }
 
-    /** Counts one window opening against the frame that asked for it, printing the first few callers. */
     /** {@code -Dceltium.debug.drawBench=N}: measure N bind+draw calls on the last mesh of a window. */
     private static final int DRAW_BENCH = Integer.getInteger("celtium.debug.drawBench", 0);
     private transient VulkanDynamicMesh lastDrawnMesh;
@@ -17209,6 +16949,7 @@ this.frameBufferOpen = false;
         return this.cachedWindowBegin;
     }
 
+    /** Counts one window opening against the frame that asked for it, printing the first few callers. */
     private void celtium$noteWindowOpenSite() {
         if (!this.windowSiteCensusWanted) {
             // The census names the callers that open the frame's windows. It walks the stack, so it is not left on the
@@ -17389,6 +17130,16 @@ this.frameBufferOpen = false;
 
 
 
+    /**
+     * Presents this frame's content from Vulkan, and says whether it reached the queue.
+     * <p>
+     * The frame's colour image is the one the game's own rendering and the native passes both wrote into (it is the shared
+     * image the GL side draws through), so presenting it puts this frame on the swapchain without a GL swap. The sequence
+     * is the one the probe already used: beginFrame, presentImage, endFrame.
+     * <p>
+     * Called once per frame from {@code Minecraft.updateDisplay}. A false return leaves the caller to swap through GL as
+     * before, so a failure here cannot leave the window without a frame.
+     */
     public boolean celtium$presentFrame() {
         long presentStartedNanos = System.nanoTime();
         try {
@@ -17823,6 +17574,10 @@ this.frameBufferOpen = false;
      */
     final TextureCopyService textureCopyService = new TextureCopyService(new CopyHost());
 
+    /** Cumulative wall time of the game's copyTexSubImage calls: three a frame in the menu, and each is a GPU round trip. */
+    long textureCopyCalls;
+    long textureCopyNanos;
+
     /**
      * Serves one {@code glCopyTexImage2D}/{@code glCopyTexSubImage2D} from an image this renderer owns.
      * <p>
@@ -17854,10 +17609,6 @@ this.frameBufferOpen = false;
      * @param readFbo  the framebuffer the game bound for reading
      * @return {@code "served"} when the pixels reached the destination mirror, otherwise a reason that names itself
      */
-    /** Cumulative wall time of the game's copyTexSubImage calls: three a frame in the menu, and each is a GPU round trip. */
-    long textureCopyCalls;
-    long textureCopyNanos;
-
     public String celtium$serveTextureCopy(int destName, int level, int xoffset, int yoffset,
             int x, int y, int width, int height, int readFbo) {
         // Thin delegate: the copy path lives in TextureCopyService, and this signature is what the GL-less stub calls.
@@ -17933,6 +17684,7 @@ this.frameBufferOpen = false;
             return VulkanTerrainGpuBackend.this.targetHeight;
         }
 
+        /** Bumped whenever the frame target is destroyed, so groups of the old target can be told apart. */
         @Override
         public long targetGeneration() {
             return VulkanTerrainGpuBackend.this.targetRegistry.generation();
@@ -17952,6 +17704,7 @@ this.frameBufferOpen = false;
             return VulkanTerrainGpuBackend.this.celtium$presentCount;
         }
 
+        /** The identity of the main framebuffer, so an unfiltered flush can mean "main" rather than "everything". */
         @Override
         public long mainTargetIdentity() {
             return VulkanTerrainGpuBackend.this.targetRegistry.mainIdentity();
@@ -18156,6 +17909,12 @@ this.frameBufferOpen = false;
 
 
 
+    /** Reverses a {@code width x height} rectangle's row order in place; the copy's GL-to-Vulkan row mapping. */
+
+
+    /** {@return how many of the read pixels are not pure white}; a mean cannot tell that apart. */
+
+
     /**
      * {@return rectangle {@code width x height} at {@code x,y} of an owned colour image as ARGB texels}, or null.
      * <p>
@@ -18165,12 +17924,6 @@ this.frameBufferOpen = false;
      * goes through {@code VulkanContext.beginCommands}/{@code endCommands}, which waits for the queue before allocating
      * and after submitting: that is the same route the swapchain's own presented-image readback takes.
      */
-    /** Reverses a {@code width x height} rectangle's row order in place; the copy's GL-to-Vulkan row mapping. */
-
-
-    /** {@return how many of the read pixels are not pure white}; a mean cannot tell that apart. */
-
-
     int[] celtium$readImageRectangle(long image, int x, int y, int width, int height) {
         // Thin delegate, kept because the chain-time dump (celtium$dumpOwnedImage) reads through this name; the
         // implementation moved to TextureCopyService with the rest of the copy path.
@@ -18291,6 +18044,14 @@ this.frameBufferOpen = false;
     private static final float[] FULL_BRIGHT_LIGHTMAP = {240.0F, 240.0F};
 
     /**
+     * {@code -Dceltium.vulkan.lightmapFullBrightGui=false} turns the rule off, for measurements: the same jar, the same
+     * scene and the same tick then draw a GUI item with the world's light, which is the "before" half of the pair
+     * without rebuilding a jar that differs in anything else.
+     */
+    private static final boolean LIGHTMAP_FULL_BRIGHT_GUI = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.lightmapFullBrightGui", "true"));
+
+    /**
      * The light-map coordinate a group offered now must be drawn with: the captured world light where the light-map
      * texture unit was **enabled**, the full-bright pair where it was disabled.
      * <p>
@@ -18318,14 +18079,6 @@ this.frameBufferOpen = false;
      * checked rather than assumed: {@code GuiInventory.java:154-165} only <em>disables</em> the unit at the end of its
      * draw, it never enables it, so nothing lights that model by the world either.
      */
-    /**
-     * {@code -Dceltium.vulkan.lightmapFullBrightGui=false} turns the rule off, for measurements: the same jar, the same
-     * scene and the same tick then draw a GUI item with the world's light, which is the "before" half of the pair
-     * without rebuilding a jar that differs in anything else.
-     */
-    private static final boolean LIGHTMAP_FULL_BRIGHT_GUI = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.vulkan.lightmapFullBrightGui", "true"));
-
     float[] celtium$lightmapForGroup() {
         if (!this.lightmapUnitEnabled && LIGHTMAP_FULL_BRIGHT_GUI) {
             this.immediateStatistics.noteLightmapFullBrightGroups();
@@ -18431,7 +18184,6 @@ this.frameBufferOpen = false;
         return MODEL_DRAW;
     }
 
-    /** Draws at most this many quads per list, for isolating a single quad (0 = all). */
     /** Draws only this display list, for isolating one list (0 = all). */
     static final int MODEL_ONLY_LIST = Integer.getInteger("celtium.vulkan.modelDrawOnlyList", 0).intValue();
 
@@ -18468,13 +18220,6 @@ this.frameBufferOpen = false;
         return descriptorSet;
     }
 
-    /**
-     * The one texture registry.
-     * <p>
-     * It was created inline at five call sites, which is five chances for two registries to exist and for the image the
-     * backend samples to differ from the image the announcements patch - the split this change removes. Creation stays lazy
-     * because the first texture registration happens before any world draw.
-     */
     /** Static probe for the font-glyph diagnostic: the mirror dims for a bound GL name, or "none"/"nobackend". */
     public static String celtium$mirrorDims(int glTextureId) {
         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
@@ -18532,6 +18277,13 @@ this.frameBufferOpen = false;
         }
     }
 
+    /**
+     * The one texture registry.
+     * <p>
+     * It was created inline at five call sites, which is five chances for two registries to exist and for the image the
+     * backend samples to differ from the image the announcements patch - the split this change removes. Creation stays lazy
+     * because the first texture registration happens before any world draw.
+     */
     VulkanTextureRegistry celtium$registry() {
         if (this.textureRegistry == null) {
             this.textureRegistry = new VulkanTextureRegistry(this.context);
@@ -18712,13 +18464,6 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * {@return the GLFW window's framebuffer size}, or {@code {0, 0}} when the window is unknown or has no drawable.
-     * <p>
-     * The window handle is the current context under a real GL configuration and comes from {@code Display} under the
-     * GL-less window, where there is no context to ask (reflective, because celtium-vulkan does not depend on the
-     * lwjglxx shim). This is the size the frame target must have: it is the drawable the swapchain presents.
-     */
-    /**
      * Last window drawable size, and when it was read. {@code glfwGetFramebufferSize} on X11 is a server round-trip
      * and the viewport fallback asks for it on paths that run many times per frame: JFR native samples measured
      * {@code GLFW.nglfwGetFramebufferSize} as the top native frame on the client thread (502 of 1,348 samples, ~4% of
@@ -18747,6 +18492,13 @@ this.frameBufferOpen = false;
         return fresh;
     }
 
+    /**
+     * {@return the GLFW window's framebuffer size}, or {@code {0, 0}} when the window is unknown or has no drawable.
+     * <p>
+     * The window handle is the current context under a real GL configuration and comes from {@code Display} under the
+     * GL-less window, where there is no context to ask (reflective, because celtium-vulkan does not depend on the
+     * lwjglxx shim). This is the size the frame target must have: it is the drawable the swapchain presents.
+     */
     private static int[] windowFramebufferSize() {
         // SDL first: on Cleanroom 0.7 the GLFW classes are not on the runtime classpath, so this method used to throw
         // NoClassDefFoundError the first time the swap chain asked how large the drawable is.
@@ -18955,15 +18707,6 @@ this.frameBufferOpen = false;
 
     // ------------------------------------------------------------------ command resources
 
-    /**
-     * OPT-08's ownership half: how many frames the backend records against its own command buffers and fences.
-     * <p>
-     * One command buffer per frame slot, one fence per slot, and a monotone sequence so the retirement of a
-     * submission's resources is decided by that submission's fence and not by "some wait happened". Today
-     * {@link #waitForIdle()} still waits for every pending slot, so the behaviour is unchanged and the pair of slots is
-     * the structure the next step (removing the wait before present) needs: with two slots the CPU can record the next
-     * frame into a buffer no submission is reading, which is impossible with one.
-     */
     /** The frame slots, owned by the scheduler (refactoring plan R6). */
     static final int FRAME_SLOTS = FrameSubmissionScheduler.FRAME_SLOTS;
     private final VkCommandBuffer[] slotCommandBuffers = new VkCommandBuffer[FRAME_SLOTS];
@@ -19295,16 +19038,6 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * Draws the immediate-mode batches accumulated since the last flush.
-     * <p>
-     * Timing note: the batches arrive while the frame is already past its terrain passes (entities, particles, the
-     * GUI), and the bridge only owns the shared images inside a terrain pass. They are therefore drawn with the
-     * <em>next</em> frame's first terrain pass, using that pass's own projection and model view. For content that
-     * does not move between frames this is invisible; for moving content it is one frame of latency, and the proper
-     * fix is a frame the renderer owns outright (stage 7 of the docs/plan.md stages). It is documented rather than
-     * hidden.
-     */
-    /**
      * Draws one synthetic {@code POSITION_COLOR} group with known NDC vertices through the immediate pipeline.
      * <p>
      * This is the isolation test the group-bounds measurement called for: the fixture's real batch is captured,
@@ -19366,12 +19099,6 @@ this.frameBufferOpen = false;
         }
     }
 
-    /**
-     * Draws the pending groups, optionally only those belonging to one render target.
-     * <p>
-     * The filter is what makes an off-target pass possible: a Vulkan render pass cannot be begun inside another, so those
-     * groups are drawn in their own pass and copied back, and they must not also be drawn in the frame's pass.
-     */
     /** The model run waiting to be drawn: consecutive compatible runs merge into its command range. */
     VulkanModelInstances.Run pendingModelRun;
     long pendingModelTextureSet;
@@ -19404,6 +19131,22 @@ this.frameBufferOpen = false;
     long modelBoundPipeline = -1L;
     long modelBoundTextureSet = -1L;
 
+    /**
+     * Draws the pending groups, optionally only those belonging to one render target.
+     * <p>
+     * The filter is what makes an off-target pass possible: a Vulkan render pass cannot be begun inside another, so those
+     * groups are drawn in their own pass and copied back, and they must not also be drawn in the frame's pass.
+     */
+    /**
+     * Draws the immediate-mode batches accumulated since the last flush.
+     * <p>
+     * Timing note: the batches arrive while the frame is already past its terrain passes (entities, particles, the
+     * GUI), and the bridge only owns the shared images inside a terrain pass. They are therefore drawn with the
+     * <em>next</em> frame's first terrain pass, using that pass's own projection and model view. For content that
+     * does not move between frames this is invisible; for moving content it is one frame of latency, and the proper
+     * fix is a frame the renderer owns outright (stage 7 of the docs/plan.md stages). It is documented rather than
+     * hidden.
+     */
     private void drawPendingImmediate(Long onlyTarget) {
         long target = onlyTarget == null ? this.targetRegistry.mainIdentity() : onlyTarget.longValue();
         this.modelBindValid = false;
@@ -20689,7 +20432,6 @@ this.frameBufferOpen = false;
     private long immediateNarrowViewports;
     /** Groups whose Vulkan scissor was the intersection of the target with the game's own glScissor box (BH-09). */
     private long immediateScissoredGroups;
-    /** Groups drawn with GL's polygon offset applied as a Vulkan depth bias (BH-11). */
     /** Groups whose clipped viewport is empty: an off-drawable rectangle, which GL would also draw nothing for. */
     private long immediateOffTargetViewports;
 
@@ -20806,11 +20548,6 @@ this.frameBufferOpen = false;
         }
     }
 
-    /**
-     * Writes the first three columns of an affine model-view matrix (48 bytes); the shader rebuilds the fourth, which is
-     * (0, 0, 0, 1) by construction. This is what keeps the immediate push block inside Vulkan's guaranteed 128 bytes
-     * (audit S19).
-     */
     /**
      * Writes {@code projection * modelView} into the push constants.
      * <p>
@@ -21098,11 +20835,6 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * The bookkeeping one confirmed slot completion makes true: the fence was observed signalled (or the device
-     * reported lost, which is completion-equivalent for pending purposes), so the slot may be re-recorded and every
-     * resource gated on its sequence may be released.
-     */
-    /**
      * The deferred counterpart of the slot's own {@code vkQueueSubmit}: the ended slot buffer joins the batched
      * list, and the batch's shared fence is recorded as this slot's completion proxy until the reclaim runs the
      * confirmation. Every piece of bookkeeping the direct submit performs (pending bit, sequence, retirement) is
@@ -21122,6 +20854,11 @@ this.frameBufferOpen = false;
         this.slotSubmitNanos[this.frameSlot] = System.nanoTime();
     }
 
+    /**
+     * The bookkeeping one confirmed slot completion makes true: the fence was observed signalled (or the device
+     * reported lost, which is completion-equivalent for pending purposes), so the slot may be re-recorded and every
+     * resource gated on its sequence may be released.
+     */
     private void celtium$noteSlotConfirmed(int slot, boolean lostDevice) {
         long submitNanos = this.slotSubmitNanos[slot];
         if (submitNanos != 0L) {
@@ -21163,7 +20900,6 @@ this.frameBufferOpen = false;
         }
     }
 
-    /** Fence-status polls of the pending slots and how many submissions they confirmed, for the run report. */
     /** Slots confirmed by the bounded wait on the reuse path, counted separately from the polls. */
 
     boolean waitForIdle() {
@@ -21248,14 +20984,14 @@ this.frameBufferOpen = false;
 
     // ------------------------------------------------------------------ shared resources
 
+    /** How many times the shared index buffer was regenerated; printed on the stats line. */
+    long sharedIndexRegenerations;
+
     /**
      * The shared index buffer holds the repeating primitive pattern the OpenGL backend also uses for unsorted
      * passes. The pattern is generated by the pass's own {@link ChunkPrimitiveType}, so the Vulkan and OpenGL
      * paths cannot drift apart on element order or count.
      */
-    /** How many times the shared index buffer was regenerated; printed on the stats line. */
-    long sharedIndexRegenerations;
-
     private void ensureSharedIndexBuffer(ChunkPrimitiveType primitiveType) {
         int maxVertices = 0;
         for (TerrainRenderer.RegionResources resources : this.terrain.regionResources()) {

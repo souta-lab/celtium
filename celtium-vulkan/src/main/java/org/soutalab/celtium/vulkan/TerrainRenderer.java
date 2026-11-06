@@ -70,7 +70,6 @@ public final class TerrainRenderer {
         }
     }
 
-    /** One mesh an upload produced and has not committed yet. */
     /**
      * One mesh of an upload batch. Pooled: a burst creates one per pass per rebuilt section, and the fields are
      * cleared on release so a pooled instance cannot pin a section's buffers or a world.
@@ -87,6 +86,7 @@ public final class TerrainRenderer {
         /** The region resources the diagnostic head belongs to, so logFirstVertex can fill it without a lookup. */
         TerrainRenderer.RegionResources firstVertexOwner;
 
+        /** One mesh an upload produced and has not committed yet. */
         private PendingMesh() {
         }
 
@@ -399,6 +399,7 @@ public final class TerrainRenderer {
     private long indirectGrowths;
     private String lastTerrainIndirectFallback = "none";
 
+    /** Batches offered to the indirect path, calls recorded, draws carried by them, and clamp events. */
     private long terrainIndirectOffers;
     private long terrainIndirectCalls;
     private long terrainIndirectDraws;
@@ -863,6 +864,7 @@ public final class TerrainRenderer {
     }
 
 
+    /** How many section uploads print their packed vertex colours; a property so a normal run stays quiet. */
     private static final int TERRAIN_VERTEX_COLOUR_SAMPLES =
             Integer.getInteger("celtium.vulkan.vertexColourSamples", 0).intValue();
 
@@ -877,6 +879,7 @@ public final class TerrainRenderer {
         }
     }
 
+    /** Colour word of the first vertex of a mesh, in the little-endian byte order the GPU reads. */
     static int firstVertexColor(ByteBuffer vertices) {
         java.nio.ByteOrder order = vertices.order();
         try {

@@ -87,10 +87,6 @@ import static org.lwjgl.vulkan.VK11.*;
  * transfer.
  */
 public final class VulkanGlTexture {
-    /**
-     * The mirror image format. R8G8B8A8_UNORM is what the GL readback is converted to (see
-     * {@link #readGlLevel0}) and what the interop bootstrap already proved importable on both APIs.
-     */
     /** How many CELTIUM_UPLOAD_EXTENT lines this process has printed; bounded so a run's log stays readable. */
     private static int UPLOAD_EXTENT_LOGS;
     /** How many CELTIUM_MIRROR_RECREATE lines this process has printed. */
@@ -109,12 +105,15 @@ public final class VulkanGlTexture {
     private static final int MIRROR_UPLOAD_LOG_LIMIT =
             Integer.getInteger("celtium.vulkan.mirrorUploadLog", 24).intValue();
 
+    /**
+     * The mirror image format. R8G8B8A8_UNORM is what the GL readback is converted to (see
+     * {@link #readGlLevel0}) and what the interop bootstrap already proved importable on both APIs.
+     */
     private static final int IMAGE_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
 
     /** Number of mip levels of the current image; the OpenGL atlas is sampled with a mip chain. */
     private int mipLevels = 1;
     private int imageUploadsSkipped;
-    /** Levels the GL texture reported on the last upload, or 0 to compute them from the size. */
     /**
      * Bumped whenever this mirror's image and view are recreated (audit S12).
      * <p>
@@ -265,8 +264,6 @@ public final class VulkanGlTexture {
         return ids;
     }
 
-    /** Whether the sampler magnifies with NEAREST (block atlas) or LINEAR (light map). */
-    /** The layout the image is actually in; barriers used to declare one the image was not in. */
     /**
      * The recorded layout of each mip level.
      * <p>
@@ -296,11 +293,13 @@ public final class VulkanGlTexture {
      * This is readiness to sample, not a claim that every texel was supplied by the producer (audit A04).
      */
     private boolean fullContentArrived;
+    /** The layout the image is actually in; barriers used to declare one the image was not in. */
     private int currentLayout = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
     /** GPU blits recorded into this mirror (the copy path's native route; see blitRectangleFrom). */
     private int blitRectangles;
     /** Image generation last written by a recorded GPU blit; an initial clear must never erase that write. */
     private long lastBlitGeneration = Long.MIN_VALUE;
+    /** Whether the sampler magnifies with NEAREST (block atlas) or LINEAR (light map). */
     private boolean nearestFilter;
     /** The source GL texture's wrap on each axis: {@code true} for GL_REPEAT, {@code false} for a clamp mode. */
     private boolean wrapRepeatU;
@@ -1701,20 +1700,6 @@ public final class VulkanGlTexture {
         }
     }
 
-    /**
-     * Uploads pixels the caller already has, without reading anything back from OpenGL.
-     * <p>
-     * This is the ownership path: an upload through the game's utility arrives with its image in hand, so the mirror can be
-     * built from the same data GL is about to be given rather than from a readback of what GL received. It deliberately does
-     * **not** mirror OpenGL's mip levels - that needs the readback - so the registry uses it only when
-     * {@code celtium.vulkan.mirrorGlMips} is off, which is the default and what every run in this project has measured.
-     * <p>
-     * Additive rather than extracted on purpose: the readback path has early returns and diagnostics of its own, and pulling a
-     * shared middle out of it left the file not compiling the first time this was attempted.
-     *
-     * @return whether the image was written, false when the content was already there
-     */
-    /** {@return whether a patch was written into a sub-region}, for the animated writes that cover part of a texture. */
     /** {@return whether the image's storage is defined and it can be sampled} (audit A04). */
     public boolean hasFullContent() {
         return this.fullContentArrived;
@@ -2077,7 +2062,6 @@ public final class VulkanGlTexture {
     /** Per-level write serials already copied into this image; index = mip level. */
     private long[] appliedMipSerials;
 
-    /** {@return how many writes a level has received}, for the mirror dump's provenance line. */
     /** Bounded, so a per-tile upload cannot flood the log. */
     private static int coverageLogs;
     /** The next coverage percentage that prints a progress line, and the bounded count of them. */
@@ -2126,6 +2110,7 @@ public final class VulkanGlTexture {
         return covered >= total;
     }
 
+    /** {@return how many writes a level has received}, for the mirror dump's provenance line. */
     private long levelWrites(int level) {
         return level >= 0 && level < this.levelWrites.length ? this.levelWrites[level] : 0L;
     }
@@ -2341,6 +2326,19 @@ public final class VulkanGlTexture {
         this.committedUploadBytes = (long) this.width * (long) this.height * BYTES_PER_PIXEL;
     }
 
+    /**
+     * Uploads pixels the caller already has, without reading anything back from OpenGL.
+     * <p>
+     * This is the ownership path: an upload through the game's utility arrives with its image in hand, so the mirror can be
+     * built from the same data GL is about to be given rather than from a readback of what GL received. It deliberately does
+     * **not** mirror OpenGL's mip levels - that needs the readback - so the registry uses it only when
+     * {@code celtium.vulkan.mirrorGlMips} is off, which is the default and what every run in this project has measured.
+     * <p>
+     * Additive rather than extracted on purpose: the readback path has early returns and diagnostics of its own, and pulling a
+     * shared middle out of it left the file not compiling the first time this was attempted.
+     *
+     * @return whether the image was written, false when the content was already there
+     */
     public boolean uploadFromImage(int pixelWidth, int pixelHeight, java.nio.ByteBuffer rgba) {
         requireOwned("a whole-image upload");
         requireAlive();
@@ -2481,17 +2479,6 @@ public final class VulkanGlTexture {
         return this.samplerMaxLod;
     }
 
-    /**
-     * Re-consults the game's recorded wrap parameters once, recreating the sampler when they differ from the modes it
-     * was built with.
-     * <p>
-     * The stub records {@code glTexParameteri} now, so the wrap a GL texture really has is readable under GL-less -
-     * but a mirror's sampler is created when the mirror is, and the game sets a texture's parameters after the upload
-     * that created it ({@code TextureUtil.uploadTextureImageAllocate}: image first, then {@code setTextureClamped}).
-     * Without this the tiled GUI background keeps the mode the default happened to be at creation time, which is the
-     * "one stretched tile" defect. Bounded to once per mirror; a change bumps the generation so descriptor caches
-     * keyed on {@link #key()} cannot keep naming the destroyed sampler.
-     */
     /** The recorded-parameter version this texture's sampler state was last confirmed against. */
     private int confirmedParameterVersion = -1;
 
@@ -3197,7 +3184,6 @@ public final class VulkanGlTexture {
         return this.blitRectangles;
     }
 
-    /** {@return whether this GL name is one the dump was asked for}, so a per-frame light map cannot flood the log. */
     /**
      * Dumps a mirror's level 0 as RGBA8 to {@code MIRROR_DUMP_DIR}, under the same gate, limit and counter as the
      * announce/upload sites - for the mirrors those sites never see. The copy path fills its destination through
@@ -3277,6 +3263,7 @@ public final class VulkanGlTexture {
         return MIRROR_DUMP_DIR != null && !MIRROR_DUMP_DIR.isEmpty();
     }
 
+    /** {@return whether this GL name is one the dump was asked for}, so a per-frame light map cannot flood the log. */
     private static boolean mirrorDumpWanted(int glTextureId) {
         if (MIRROR_DUMP_DIR == null || MIRROR_DUMP_DIR.isEmpty()) {
             return false;
