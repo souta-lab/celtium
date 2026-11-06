@@ -71,6 +71,13 @@ E2E_PACKS = {
         "staged": lambda root: root / ".celtium-work/modpack-atm3/staged/mods",
         "exclude": [],
     },
+    # RLCraft 2.9.3 (CurseForge 285109 / 4612979): the gist's removals, additions and updates are applied in the
+    # staged directory (.celtium-work/modpack-rlcraft/SUBSTITUTIONS.md).
+    "rlcraft": {
+        "instance": lambda root: Path.home() / ".local/share/PrismLauncher/instances/celtium-rlcraft-2.9.3",
+        "staged": lambda root: root / ".celtium-work/modpack-rlcraft/staged/mods",
+        "exclude": [],
+    },
 }
 
 
