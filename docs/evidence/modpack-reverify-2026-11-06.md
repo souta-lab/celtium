@@ -32,9 +32,9 @@ standard ("What verified means") is defined there.
 | RLCraft 2.9.3 | AMD 10.69 / 9.3 %, Intel 11.18 / 9.3 % | see defects 3, 4, 5 below; 44 degenerate quads refused (zero area, harmless) |
 | SkyFactory 4 4.2.4 | AMD 3.60 / 5.5 %, Intel 3.68 / 5.5 % | defect 2 (FBP particles, 7,260 refusals), defect 1 (leaves), 57 batches dropped at a menu boundary |
 | All the Mods 3 6.1.1 | AMD 12.82 / 9.9 %, Intel 12.85 / 9.9 % | defect 9 (no first-person hand), defect 10 (sky gradient), `CELTIUM_MODEL_MISSING` (display list with 0 captured quads), `missingMeshes` 2–5 in model builds, 385/295 batches dropped at a menu boundary (defect 5), a depth copy not read back |
-| SevTech: Ages 3.2.3 | (batch running) | |
-| Nomifactory CEu 1.7.7 | (batch running) | |
-| Project Ozone 3 3.4.11F | (batch running) | |
+| SevTech: Ages 3.2.3 | AMD 0.17 / 0.3 %, Intel 0.25 / 0.4 % — **not a valid scene**: the camera is inside the ground on both renderers (only the HUD and the minimap are visible) | `CELTIUM_MODEL_MISSING list=378` replayed every frame with nothing captured (`unresolvedTop=[378:x1015]`, same shape as defect 11); its logs went to `validation-console.log`, not `latest.log` |
+| Nomifactory CEu 1.7.7 | AMD 5.25 / 4.0 %, Intel 5.26 / 4.0 % | defect 10 (flat upper sky, as ATM3); defect 12 (GregTech CEu bloom shaders refused, ~10,000 POSITION_TEX batches); 11 batches dropped at a boundary. Clouds also differ (they move between runs) |
+| Project Ozone 3 3.4.11F | AMD 5.16 / 1.1 %, Intel 5.79 / 1.2 % | **no Celtium-origin report at all**; the picture matches (sky gradient, hand, terrain); the residual is cloud motion and HUD text. Pack errors equal to the Celeritas arm (678 vs 679) |
 
 ### Pictures (for eyes)
 
@@ -56,6 +56,14 @@ every pack).
 
 ![ATM3 AMD](modpack-reverify/atm3-amd.jpg)
 ![ATM3 Intel](modpack-reverify/atm3-intel.jpg)
+
+**SevTech** (invalid scene, camera in the ground), **Nomifactory** (flat upper sky), **Project Ozone 3** (match):
+
+![SevTech AMD](modpack-reverify/sevtech-amd.jpg)
+![Nomifactory AMD](modpack-reverify/nomi-amd.jpg)
+![Nomifactory Intel](modpack-reverify/nomi-intel.jpg)
+![PO3 AMD](modpack-reverify/po3-amd.jpg)
+![PO3 Intel](modpack-reverify/po3-intel.jpg)
 
 Every leg: **0 Vulkan validation messages**. Pack-origin log errors (missing models/recipes, signature warnings,
 mod config errors) appear identically in the Celeritas arm (e.g. SF4 373 vs 374 ERROR lines, RLCraft 232 vs 233) and
@@ -123,12 +131,22 @@ are not Celtium's.
    `1565129a2`** (unverified until the r122 leg): a raw framebuffer whose colour attachment is the game framebuffer's
    current colour texture is bound as the game framebuffer (`CELTIUM_RAW_BIND_GAME_FRAMEBUFFER`). Verify: the hand
    appears, `1000000008f` is gone from `unflushedTargetDropTargets`. Which mod binds it is still unnamed.
-10. **Upper-sky gradient differs (ATM3, both GPUs).** The difference heatmap shows a band across the top of the sky:
-    Celtium's upper sky is lighter than Celeritas'. Compare the sky dome / void plane colour and fog at the zenith;
-    may share a cause with defect 7's family (sky groups and their fog block).
+10. **Upper sky is flat fog colour (ATM3 and Nomifactory, both GPUs).** Sampled at x=300: Celtium is
+    (179,207,255) from the top row down, Celeritas (152,188,255) at the top grading to (179,207,255) - the sky dome is
+    missing or fully fogged, and only the fog colour shows. SF4, RLCraft and PO3 match (useVbo, render distance and
+    fancy graphics are identical across all packs, so it is a mod). Nomifactory has no unresolved list, so defect 11
+    is not the whole cause. The r122 legs run with `-Dceltium.vulkan.skyCensus=true` (CELTIUM_SKY_FRAME / _DRAW) to
+    compare the sky groups against PO3's.
 11. **A display list with no captured quads (ATM3).** `CELTIUM_MODEL_MISSING list=19119 texture=42 capturedQuads=0
     ... (no GPU mesh available; GL-less cannot replay this list)` and `CELTIUM_MODEL_BUILD missingMeshes=2..5`: some
-    mod's display list is replayed with nothing captured, so it draws nothing.
+    mod's display list is replayed with nothing captured, so it draws nothing. Called once per frame (740 calls in
+    740 frames; SevTech's list 378 likewise), so it is a per-frame draw such as a sky, not an entity. The r122 jar
+    prints the calling game frames with this line (`caller=`).
+12. **GregTech CEu bloom is refused (Nomifactory).** `CELTIUM_SHADER_PROGRAM_REFUSED program=254/283/284/285
+    format=6` from `gregtech.client.shader.Shaders.renderFullImageInFBO <- postprocessing.BloomEffect.blend /
+    renderUnreal`; `CELTIUM_REFUSALS_BY_FORMAT {6 no shader program could be prepared for this batch=9990}`. The
+    bloom post-process (glowing GT machines) is missing. Needs the custom-program path (translate the mod's GLSL, as
+    the post-chain programs are) - a larger piece of work.
 7. **(Fixed) SkyFactory 4 sky turned into a flat saturated band while a mod toast was up** — non-ITEM groups carried
    the lit payload over their fog block (`76ff182ee`).
 8. **(Fixed) E2E-E atlas left in TRANSFER_DST (5× VUID-09600)** — deferred-region flush overflowed the MemoryStack
