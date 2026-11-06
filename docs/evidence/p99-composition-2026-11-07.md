@@ -80,7 +80,30 @@ set, which changes with the texture), and each group pays a record write plus an
 it was already paying. The arena removed the buffer-identity blocker and the path is still a loss, so "fewer groups
 via indirect" is closed with data rather than left as an assumption.
 
-## 5. What the round changed
+## 5. The paired set on this build (`r10kpi-amd`)
+
+AMD RX 6400, Supersymmetry 0.2.0.2, validation off, warm ticks [400,600), guiScale 3, 240 s, 3 reps, renderer
+`48c6ce7d…`, fixture `7ff8697d…`, reference Celeritas 2.5.0-dev `567dcf8a…`, load guard passed and not bypassed
+(initial busy 0.141 cores, external 0.173, limits 2.0 / 0.5):
+
+| rep | Celtium p50/p95/p99 (ms) | Celeritas p50/p95/p99 (ms) | p50 | p95 | p99 |
+|---|---|---|---|---|---|
+| 1 | 2.617 / 5.165 / 6.486 | 2.566 / 5.094 / 7.802 | 1.020 | 1.014 | 0.831 |
+| 2 | 2.146 / 4.074 / 5.624 | 2.414 / 4.507 / 5.289 | 0.889 | 0.904 | 1.063 |
+| 3 | 2.163 / 4.093 / 5.680 | 2.457 / 4.654 / 5.608 | 0.880 | 0.879 | 1.013 |
+| **median** | | | **0.889** | **0.904** | **1.013** |
+
+`verdict=NOT_SLOWER`, `goalCondition=NOT_MET`. The p99 is parity again (0.831 / 1.063 / 1.013), which is what §2
+predicts: the renderer is a quarter of the p99 frame's excess, so a round that does not cut the renderer's absolute
+cost cannot move it.
+
+**The first repetition is the slowest for both arms** (Celtium 3 483 samples against 4 289 in rep 2, Celeritas 3 246
+against 3 848), so rep 1's pair is measured on a colder machine than reps 2-3 - the pack copy, the page cache and the
+disk are cold right after the load guard, and the KPI's order puts Celtium first in rep 1. That is a systematic
+first-leg penalty, not a renderer property; a discarded warm-up leg before the measured set is the fix and is not in
+the harness yet.
+
+## 6. What the round changed
 
 - **`-Dceltium.validation.warmSpikeMs`** (default 16.7) and slowest-N retention for `warmSpikes`. The list used to
   keep the *first* 16 frames over 16.7 ms, which are the world-entry frames - a question about the entry, not about
@@ -95,7 +118,7 @@ via indirect" is closed with data rather than left as an assumption.
 - **The dead atlas fallback removed** (`refreshAtlasMirror` asked `LightmapIdSource.atlasTextureId()` a second time
   when the first answer was `<= 0`, so it could never change the answer).
 
-## 6. What it means for the goal
+## 7. What it means for the goal
 
 The p99 needs the renderer's **absolute** cost on a tick frame to fall by ~250 us (14 % of 1 782 us), which moves the
 p99 ratio by ~5 % and the p50/p95 ratios with it. The renderer's own work on a tick frame is ~1 030 us: flush 218
