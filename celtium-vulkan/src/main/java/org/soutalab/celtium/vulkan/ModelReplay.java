@@ -104,6 +104,22 @@ final class ModelReplay {
             mesh = b.modelGeometry.meshFor(listId);
         }
         if (mesh == null || mesh.isEmpty()) {
+            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.hasRecordedList(listId)) {
+                // No model quads were captured for this list, but the stub recorded its commands - a Tessellator draw
+                // compiled into the list, which is how a mod's skybox or sky dome is built. The GL replay that follows
+                // this false return draws the recorded geometry, so this is not a missing mesh and must not be counted
+                // as one: measured on ATM3 (leg r125-atm3-amd), Astral Sorcery's skybox lists were reported as
+                // CELTIUM_MODEL_MISSING eight times while the recorded replay drew them.
+                b.modelRecordedReplayCalls++;
+                if (b.modelRecordedReplayLogs < 4) {
+                    b.modelRecordedReplayLogs++;
+                    System.out.println("[Celtium] CELTIUM_MODEL_RECORDED_REPLAY list=" + listId
+                            + " texture=" + boundTextureId
+                            + " (no captured model quads; the recorded display list draws it)"
+                            + " caller=" + celtium$gameCaller());
+                }
+                return false;
+            }
             // Named rather than silent: a display list this renderer never captured is a piece of the scene that the GL
             // body would draw and that nothing draws without a context. Counting it is what turns "the model is missing"
             // into "list N, texture M, no mesh", which is the only form in which it can be fixed.

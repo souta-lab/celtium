@@ -31,7 +31,7 @@ standard ("What verified means") is defined there.
 |---|---|---|
 | RLCraft 2.9.3 | AMD 10.69 / 9.3 %, Intel 11.18 / 9.3 % | see defects 3, 4, 5 below; 44 degenerate quads refused (zero area, harmless) |
 | SkyFactory 4 4.2.4 | AMD 3.60 / 5.5 %, Intel 3.68 / 5.5 % — **AMD 0.67 / 0.02 % after defect 1's fix** (`r123-sf4-final`, same saved world and reference) | defect 2 (FBP particles, 7,260 refusals), defect 1 (leaves), 57 batches dropped at a menu boundary |
-| All the Mods 3 6.1.1 | AMD 12.82 / 9.9 %, Intel 12.85 / 9.9 % | defect 9 (no first-person hand), defect 10 (sky gradient), `CELTIUM_MODEL_MISSING` (display list with 0 captured quads), `missingMeshes` 2–5 in model builds, 385/295 batches dropped at a menu boundary (defect 5), a depth copy not read back |
+| All the Mods 3 6.1.1 | AMD 12.82 / 9.9 %, Intel 12.85 / 9.9 % (r122) — **AMD 7.39 / 6.61 % after the hand, leaf and display-list fixes** (`r125-atm3-amd` vs `r125-atm3-ref`, same saved world) | defect 9 (no first-person hand, fixed), defect 10 (sky gradient, geometry now drawn but the background band is still flat), defect 11 (display list with 0 captured quads, fixed in `r125`/`r126`), 385/295 batches dropped at a menu boundary (defect 5), a depth copy not read back |
 | SevTech: Ages 3.2.3 | AMD 0.17 / 0.3 %, Intel 0.25 / 0.4 % — **not a valid scene**: the camera is inside the ground on both renderers (only the HUD and the minimap are visible) | `CELTIUM_MODEL_MISSING list=378` replayed every frame with nothing captured (`unresolvedTop=[378:x1015]`, same shape as defect 11); its logs went to `validation-console.log`, not `latest.log` |
 | Nomifactory CEu 1.7.7 | AMD 5.25 / 4.0 %, Intel 5.26 / 4.0 % | defect 10 (flat upper sky, as ATM3); defect 12 (GregTech CEu bloom shaders refused, ~10,000 POSITION_TEX batches); 11 batches dropped at a boundary. Clouds also differ (they move between runs) |
 | Project Ozone 3 3.4.11F | AMD 5.16 / 1.1 %, Intel 5.79 / 1.2 % | **no Celtium-origin report at all**; the picture matches (sky gradient, hand, terrain); the residual is cloud motion and HUD text. Pack errors equal to the Celeritas arm (678 vs 679) |
@@ -52,10 +52,14 @@ every pack).
 ![SkyFactory 4 AMD](modpack-reverify/sf4-amd.jpg)
 ![SkyFactory 4 Intel](modpack-reverify/sf4-intel.jpg)
 
-**All the Mods 3** — AMD / Intel: Celtium has no first-person hand (defect 9) and a lighter upper sky (defect 10).
+**All the Mods 3** — AMD / Intel: the hand (defect 9) and the display-list geometry (defect 11) are fixed; the remaining
+difference is the upper-sky band (defect 10) and leaf/lighting noise. `r125`/`r126` against the same Celeritas reference:
+AMD 7.39 / 6.61 %, Intel 7.45 / 6.61 % (was 12.82 / 9.9 %).
 
-![ATM3 AMD](modpack-reverify/atm3-amd.jpg)
-![ATM3 Intel](modpack-reverify/atm3-intel.jpg)
+![ATM3 AMD r125](modpack-reverify/atm3-amd-r125.jpg)
+![ATM3 Intel r126](modpack-reverify/atm3-intel-r126.jpg)
+![ATM3 AMD r122](modpack-reverify/atm3-amd.jpg)
+![ATM3 Intel r122](modpack-reverify/atm3-intel.jpg)
 
 **SevTech** (invalid scene, camera in the ground), **Nomifactory** (flat upper sky), **Project Ozone 3** (match):
 
@@ -152,14 +156,31 @@ are not Celtium's.
 10. **Upper sky is flat fog colour (ATM3 and Nomifactory, both GPUs).** Sampled at x=300: Celtium is
     (179,207,255) from the top row down, Celeritas (152,188,255) at the top grading to (179,207,255) - the sky dome is
     missing or fully fogged, and only the fog colour shows. SF4, RLCraft and PO3 match (useVbo, render distance and
-    fancy graphics are identical across all packs, so it is a mod). Nomifactory has no unresolved list, so defect 11
-    is not the whole cause. The r122 legs run with `-Dceltium.vulkan.skyCensus=true` (CELTIUM_SKY_FRAME / _DRAW) to
-    compare the sky groups against PO3's.
-11. **A display list with no captured quads (ATM3).** `CELTIUM_MODEL_MISSING list=19119 texture=42 capturedQuads=0
-    ... (no GPU mesh available; GL-less cannot replay this list)` and `CELTIUM_MODEL_BUILD missingMeshes=2..5`: some
-    mod's display list is replayed with nothing captured, so it draws nothing. Called once per frame (740 calls in
-    740 frames; SevTech's list 378 likewise), so it is a per-frame draw such as a sky, not an entity. The r122 jar
-    prints the calling game frames with this line (`caller=`).
+    fancy graphics are identical across all packs, so it is a mod). **Cause of the missing geometry found in round 2
+    (see defect 11): the mod's sky lists were never recorded, so their replays drew nothing. The lists are recorded and
+    replayed now (`unresolved=937 → 0` on ATM3), and the stars appear, but the sky *background* band is still flat: the
+    recorded sky plane is drawn fully fogged (`fogSelector=3 fogStart=0 fogEnd=128`, modelview translation
+    `(0,0,-2000)`) while Celeritas shows the plane's own gradient. Next discriminator: compare the clear colour and the
+    fog colour between the two renderers, and the modelview's y translation at the sky draw (the census prints
+    `mvT=(0,0,-2000)`, i.e. no y translation, which puts the plane 16 above the eye instead of 84 below it).**
+11. **(Fixed in round 2, `r125`/`r126`) A display list with no captured quads (ATM3, SevTech).** `CELTIUM_MODEL_MISSING
+    list=19119 texture=42 capturedQuads=0 ... (no GPU mesh available; GL-less cannot replay this list)` and
+    `CELTIUM_MODEL_BUILD missingMeshes=2..5`: a mod's display list was replayed with nothing captured, so it drew
+    nothing. **Two causes, both measured on ATM3 (leg `r124-atm3-amd`):**
+    (a) a list compiled through `GlStateManager.glNewList` never reached the stub's own `glNewList` - the mixin cancels
+    the GL body - so nothing was recorded and every `glCallList` of it resolved to nothing (`celtium/lists[... 
+    unresolved=937]`, and the caller chain named the source: `RenderAstralSkybox.renderSky <- RenderSkybox.render <-
+    RenderGlobal.func_174976_a`); (b) a Tessellator draw inside a *recorded* list was offered to the backend at compile
+    time and the GL body cancelled, so the list was stored with no draw (`CELTIUM_LIST_COMPILED list=16 commands=1
+    draws=0` before, `draws=1 bytes=19152` after).
+    **Fix:** `CeltiumModelCapture.onNewList/onEndList` now open and close the stub's recording as well as the hint's
+    (`compatibilityNewList`/`compatibilityEndList`, the same order the raw-GL path uses), and
+    `WorldVertexBufferUploaderMixin` does not offer a batch while a display list is compiling - the GL body records it
+    as `COMPILED_ARRAYS` instead. **Result (leg `r125-atm3-amd`, jar `0bd17ed5…`):** `celtium/lists[compiled=46
+    replayed=780 unresolved=0 held=45 heldBytes=162672]`, the Astral skybox lists recorded (`CELTIUM_LIST_COMPILED
+    list=19137 ... bytes=8112`) and replayed 660 times, and the stars now differ from the pre-fix frame by 358 pixels.
+    A list with a recorded command list is no longer reported as a missing mesh (`CELTIUM_MODEL_RECORDED_REPLAY`), so
+    the eight `CELTIUM_MODEL_MISSING` lines and the six `missingMeshes=5` lines are gone from the ATM3 log.
 12. **GregTech CEu bloom is refused (Nomifactory).** `CELTIUM_SHADER_PROGRAM_REFUSED program=254/283/284/285
     format=6` from `gregtech.client.shader.Shaders.renderFullImageInFBO <- postprocessing.BloomEffect.blend /
     renderUnreal`; `CELTIUM_REFUSALS_BY_FORMAT {6 no shader program could be prepared for this batch=9990}`. The
@@ -190,16 +211,19 @@ are not Celtium's.
 
 ## Next steps (in order)
 
-1. **Re-shoot every pack's picture on the current jar** (`r123`+): defect 1's fix changes the atlas mips for all of
-   them, so the numbers in the results table above are pre-fix except SF4's AMD row. Intel has not been re-shot for any
-   pack. The batch is `scripts/modpack-reverify.sh .gv-verify/jars/<stage> sf4 atm3 rlcraft sevtech nomi po3`.
-2. Re-confirm the log half of defects 2 and 9 on the next SF4/ATM3 legs (`CELTIUM_COMPACTED_BATCH` present and
+1. **Re-shoot every pack's picture on the current jar** (`r125`+): defect 1's fix changes the atlas mips for all of
+   them, and defects 9/11 change ATM3's frame, so the numbers in the results table above are pre-fix except SF4's AMD
+   row and ATM3's AMD row. Intel has not been re-shot for any pack. The batch is
+   `scripts/modpack-reverify.sh .gv-verify/jars/<stage> sf4 atm3 rlcraft sevtech nomi po3`.
+2. **The sky background band (defect 10) is the remaining large picture difference on ATM3 and Nomifactory.** The
+   geometry is recorded and replayed now; the band is a fog/clear-colour difference on the sky plane. Discriminators, in
+   order: (a) one leg with `-Dceltium.vulkan.immediateFog=false` - if the band becomes the plane's flat colour, the fog
+   is the cause; (b) compare the clear colour the stub records (`recordClearColor`) with the fog colour at the sky draw;
+   (c) the census prints `mvT=(0,0,-2000)` at the sky draw, i.e. no y translation, which puts the plane 16 above the eye
+   instead of 84 below it - check the modelview mirror against the game's own `orientCamera` translation.
+3. Re-confirm the log half of defects 2 and 9 on the next SF4/ATM3 legs (`CELTIUM_COMPACTED_BATCH` present and
    format-0 refusals gone; `1000000008f` gone from `unflushedTargetDropTargets`).
-3. Re-shoot SevTech from above the ground (`-Dceltium.validation.cameraY=` above the spawn terrain, on the same
-   saved world) - the current pair is HUD-only. Suspect for defects 10/11: Advanced Rocketry (in ATM3 and Nomi, not in
-   SF4/RLCraft/PO3) replaces the overworld sky with `RenderPlanetarySky`, whose constructor compiles stars/sky/sky2
-   with the Tessellator inside `glNewList(GL_COMPILE)` and draws them with `glCallList` every frame. In ATM3 no
-   `CELTIUM_DISPLAY_LIST_ORIGIN` was recorded for the unresolved list (the uploader returns early while
-   `TerrainGpuBackends.current()` is null, so a list compiled before the backend exists is never captured).
-4. Reproduce defects 3 and 4 on HEAD with `CELTIUM_RECORD` and fix them.
-5. Only then mark packs verified in docs/modpacks.md and the README.
+4. Re-shoot SevTech from above the ground (`-Dceltium.validation.cameraY=` above the spawn terrain, on the same
+   saved world) - the current pair is HUD-only.
+5. Reproduce defects 3 and 4 on HEAD with `CELTIUM_RECORD` and fix them.
+6. Only then mark packs verified in docs/modpacks.md and the README.

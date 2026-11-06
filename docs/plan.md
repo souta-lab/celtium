@@ -12,7 +12,7 @@ git 履歴にあり（2026-11-06 に docs から削除）、現在の判定と�
 | **E2E-E 1.87.3（≈430 mods）** | **AMD・Intel とも world・validation 0**（fx1）、Xaero raw-FBO identity でも 0（xr1）。0.7.14 用の pack 側置換3件 | [証拠](evidence/e2e-cleanroom07-2026-10-26.md) |
 | **modpack 拡大** | SkyFactory 4 4.2.4: **AMD・Intel world・validation 0**（sf6）。toast 表示中に空が平坦な青になる不具合（非ITEM群が照明payloadで fog を失う）を `76ff182ee` で修正。All the Mods 3 6.1.1・RLCraft 2.9.3・SevTech: Ages 3.2.3・Nomifactory CEu 1.7.7: **AMD・Intel world・validation 0**（atm1・rl2/rl3・st3・nm1）。RLCraft で frame dump 有効時だけ fixture の presented 計数が止まり dump が黒い（present 自体は全成功）＝診断側の未解決。動いた pack は [modpacks.md](<modpacks.md>) へ | — |
 | **画質（4画面＋QMAGNET）** | settings 画素一致、world 16階調超 0.97/1.05 %（AMD/Intel）、menu・creative grid・tab icon 一致 | [証拠](evidence/image-quality-2026-10-28.md) |
-| **画質（modpack の world）** | **葉の暗化を修正**（`r123`）: atlas の whole-image 更新が game 自身の mip を blit 鎖で上書きしていた。SF4 AMD の Celeritas 比較が **3.59 / 5.47 % → 0.67 / 0.02 %**。ATM3 の一人称手（`1565129a2`）と FBP 粒子（`f0efe0055`）は r122 の画像で確認 | [証拠](evidence/modpack-reverify-2026-11-06.md) |
+| **画質（modpack の world）** | **葉の暗化を修正**（`r123`）: atlas の whole-image 更新が game 自身の mip を blit 鎖で上書きしていた。SF4 AMD の Celeritas 比較が **3.59 / 5.47 % → 0.67 / 0.02 %**。ATM3 の一人称手（`1565129a2`）と FBP 粒子（`f0efe0055`）は r122 の画像で確認。**display list の記録漏れを修正**（`r125`/`r126`）: `GlStateManager.glNewList` 経由の list が stub に記録されず replay が空だった（ATM3 の Astral Sorcery skybox、`unresolved=937 → 0`）。ATM3 AMD の Celeritas 比較は **12.82 / 9.9 % → 7.39 / 6.61 %**。上空の帯（defect 10）は fog/clear 色の差として残る | [証拠](evidence/modpack-reverify-2026-11-06.md) |
 | **利用者報告** | パノラマ・エンドポータル・F2・ガラス・残像・退出後ボタン・Xaero（クラッシュ/黒/位置/透け）・ロード画面・F3+T・入室ラグ・移動時の欠け: 修正済み | 各証拠は git 履歴 |
 | **mod自前GLSL** | GTCEu bloom: opt-in（`-Dceltium.vulkan.modPrograms=true`）で native 実行・validation 0、既定は program ごとに拒否・計数。shaderc 同梱 | [証拠](evidence/gregtech-bloom-2026-11-04.md) |
 | **コード整理** | `VulkanTerrainGpuBackend` 22,576 → 21,038 行（IndirectImmediateRuns・ModPrograms・FrameStatsReport・GroupLighting・GroupChange・PixelSignatures・HighlightProbe を分離）、孤立 javadoc 295 件整理 | git log 2026-11-06 |
@@ -20,17 +20,18 @@ git 履歴にあり（2026-11-06 に docs から削除）、現在の判定と�
 ## 引き継ぎ（2026-11-06）
 
 modpack 再検証で見つかった問題の一覧と再現手順は [modpack-reverify-2026-11-06.md](evidence/modpack-reverify-2026-11-06.md)。
-修正済み: 葉の暗化（atlas mip、`r123`）・FBP 粒子の頂点形式（`f0efe0055`）・ATM3 の一人称手（`1565129a2`）。
-未解決: ATM3/Nomi の平坦な上空（defect 10）と display list 未捕捉（defect 11、Advanced Rocketry の惑星スカイが候補）・
-RLCraft の ordering flush / destroyed mesh / menu 境界の破棄・fixture の presented 計数。再検証は
-`scripts/modpack-reverify.sh`。**defect 1 の修正で全 pack の絵が変わるので、画像比較は撮り直しが要る**（Intel は全 pack 未実施）。
+修正済み: 葉の暗化（atlas mip、`r123`）・FBP 粒子の頂点形式（`f0efe0055`）・ATM3 の一人称手（`1565129a2`）・
+display list の記録漏れ（`r125`/`r126`、`GlStateManager.glNewList` 経由の list と compile 中の Tessellator draw）。
+未解決: ATM3/Nomi の上空の帯（defect 10、fog/clear 色の差）・RLCraft の ordering flush / destroyed mesh / menu 境界の破棄・
+fixture の presented 計数。再検証は `scripts/modpack-reverify.sh`。**defect 1 の修正で全 pack の絵が変わるので、
+画像比較は撮り直しが要る**（Intel は ATM3 以外まだ未実施）。
 
 ## 次の作業（優先順）
 
 1. **有名modpackを verified にする**（`docs/modpacks.md` の3条件: validation 0・ログ全文レビュー・同pose Celeritas 画像）。
-   6 pack が pending。defect 1 の修正で絵が変わったので、まず `scripts/modpack-reverify.sh` で AMD/Intel/参照を撮り直し、
-   `pack_verify.py logs` で Celtium 由来の行を分類する。残る Celtium 側の欠陥は defect 10/11（ATM3・Nomi の上空）と
-   defect 3/4（RLCraft の ordering flush・destroyed mesh）。pack 側の非互換は置換として記録する。
+   6 pack が pending。`scripts/modpack-reverify.sh` で AMD/Intel/参照を撮り直し、`pack_verify.py logs` で Celtium 由来の
+   行を分類する。残る Celtium 側の欠陥は defect 10（ATM3・Nomi の上空の帯）と defect 3/4（RLCraft の ordering flush・
+   destroyed mesh）。pack 側の非互換は置換として記録する。
 2. **FPS の全対条件**: p99 の対ごとの揺れの内側。残る CPU 差は mod HUD の GUI 描画（InGameInfo・CreativeCore の
    文字 run が窓 flush を起こす）と GTCEu bloom の terrain pass 前 flush。`flushUploads` の空 poll 削除（`r118-poll`）は
    同一jar A/B `p2poll` 4対で旧挙動 1.012×（対 0.83–1.12、雑音内）＝効果は測定以下、無害なので残置。

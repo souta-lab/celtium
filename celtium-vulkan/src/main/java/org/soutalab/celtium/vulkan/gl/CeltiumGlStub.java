@@ -914,6 +914,24 @@ public final class CeltiumGlStub implements FunctionProvider {
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
     private List<NativeGeometryBuffer> openListGeometry;
 
+    /**
+     * {@return the vertex bytes the compiled lists hold}, for the census line.
+     * <p>
+     * A list's geometry is a CPU copy owned by the stub until the name is replaced or deleted, so the total is what
+     * says whether recording every list is bounded. It is summed on demand: the census prints a handful of times per
+     * run, and the map holds only the lists that captured a draw.
+     */
+    long heldListGeometryBytes() {
+        long bytes = 0L;
+        for (List<NativeGeometryBuffer> buffers : this.displayListGeometry.values()) {
+            for (int i = 0; i < buffers.size(); i++) {
+                NativeGeometryBuffer buffer = buffers.get(i);
+                bytes += (long) buffer.vertexCount() * buffer.stride();
+            }
+        }
+        return bytes;
+    }
+
     private void releaseListPayloads(Integer list) {
         List<NativeGeometryBuffer> geometry = this.displayListGeometry.remove(list.intValue());
         if (geometry != null) {
@@ -1072,6 +1090,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 .append(" noList=").append(listCallsWithoutAList)
                 .append(" nestingOverflow=").append(listReplayNestingOverflow)
                 .append(" held=").append(stub == null ? 0 : stub.displayLists.size())
+                .append(" heldBytes=").append(stub == null ? 0L : stub.heldListGeometryBytes())
                 .append(" distinct=").append(ListCensus.REPLAYS.size());
         if (ListCensus.REPLAYS.isEmpty() && ListCensus.UNRESOLVED.isEmpty()) {
             return text.toString();
@@ -1113,6 +1132,19 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
+     * {@return whether the stub holds a recorded command list for this name}.
+     * <p>
+     * The model path asks this before it reports a list as missing: a list with no captured model quads can still be
+     * replayable, because the stub records the commands of a list compiled through {@code GlStateManager.glNewList} and
+     * a Tessellator draw inside it becomes a {@code COMPILED_ARRAYS} entry. A mod's skybox is exactly that shape, and
+     * reporting it as a missing mesh counted geometry that the GL replay draws.
+     */
+    public static boolean hasRecordedList(int list) {
+        CeltiumGlStub stub = installed;
+        return stub != null && list > 0 && stub.displayLists.containsKey(list);
+    }
+
+    /**
      * Registers one replay into the census without a GL call, so the CPU check can prove an id above the old array's
      * 512 is counted at all.
      *
@@ -1142,6 +1174,9 @@ public final class CeltiumGlStub implements FunctionProvider {
     private int replayDepth;
     private static final int MAX_LIST_NESTING = 64;
     private volatile long displayListsCompiled, displayListsReplayed, displayListsUnresolved;
+    /** How many compiled lists print their contents, so a session with thousands of compiles cannot flood the log. */
+    private static int listCompileLogs;
+    private static final int LIST_COMPILE_LOGS = 16;
     /**
      * The client-array pointer state: {@code glVertexPointer(size, type, stride, pointer)}. GL keeps exactly one of
      * these, and it is the only thing that says how the bound array buffer's bytes are to be read - the bytes alone
@@ -5865,6 +5900,31 @@ public final class CeltiumGlStub implements FunctionProvider {
                         this.legacyListRunBytesByList.put(this.compilingList, this.openListLegacyRunBytes);
                     }
                     this.displayListsCompiled++;
+                    // What a compiled list holds, named once per list for the first few: a list that replays every
+                    // frame and draws nothing is either not recorded at all (no line here) or recorded without a draw
+                    // (draws=0), and the two need different fixes. The geometry bytes are the recorded
+                    // COMPILED_ARRAYS payloads, which is what a replay can actually draw. Only lists carrying a
+                    // non-trivial geometry print: the first compiles of a session are the model parts (a few hundred
+                    // bytes each), while the lists whose absence changes the picture - a sky dome, a mod's skybox -
+                    // are the large ones.
+                    int draws = 0;
+                    long bytes = 0L;
+                    for (int i = 0; i < compiled.size(); i++) {
+                        Object[] entry = compiled.get(i);
+                        if (entry[0] == COMPILED_ARRAYS) {
+                            long[] args = (long[]) entry[1];
+                            draws++;
+                            bytes += args[1] * args[3];
+                        }
+                    }
+                    if (listCompileLogs < LIST_COMPILE_LOGS && bytes >= 4096L) {
+                        listCompileLogs++;
+                        System.out.println("[Celtium] CELTIUM_LIST_COMPILED list=" + this.compilingList
+                                + " commands=" + compiled.size() + " draws=" + draws + " bytes=" + bytes
+                                + " legacyRunBytes=" + this.openListLegacyRunBytes
+                                + " backend=" + (org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends
+                                        .current() != null));
+                    }
                 } else if (this.openListPayloads != null) {
                     for (int i = 0; i < this.openListPayloads.size(); i++) {
                         org.lwjgl.system.MemoryUtil.memFree(this.openListPayloads.get(i));

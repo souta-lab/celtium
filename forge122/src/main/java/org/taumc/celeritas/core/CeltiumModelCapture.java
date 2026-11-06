@@ -33,6 +33,13 @@ public final class CeltiumModelCapture {
             // A capture that cannot start must never stop the game from compiling: the replay path still works.
         }
         CeltiumGllessHint.nativeNewList(list, mode);
+        // The stub records the list's commands, so a replay can draw them. A list compiled through
+        // {@code GlStateManager.glNewList} - ModelRenderer, RenderGlobal's sky, a mod's skybox - never reached the
+        // stub's own {@code glNewList}, so nothing was recorded and every {@code glCallList} of it resolved to
+        // nothing. Measured on ATM3 (leg r124-atm3-amd): Astral Sorcery's skybox lists replayed 937 times with
+        // {@code unresolved=937} and the upper sky stayed the fog colour. The GL body is cancelled below, so this is
+        // the only place the recording can start.
+        CeltiumGlStub.compatibilityNewList(list, mode);
         return true;
     }
 
@@ -42,6 +49,10 @@ public final class CeltiumModelCapture {
      * @return whether the native renderer took it, in which case the caller must cancel the GL body
      */
     public static boolean onEndList() {
+        // Close the stub's recording before the hint clears the open list: the stub keys the compiled list by its own
+        // {@code compilingList}, and {@code nativeEndList} resets it to zero. The raw-GL path
+        // ({@code CeltiumGllessHint.glEndList}) has the same order for the same reason.
+        CeltiumGlStub.compatibilityEndList();
         CeltiumGllessHint.nativeEndList();
         return true;
     }

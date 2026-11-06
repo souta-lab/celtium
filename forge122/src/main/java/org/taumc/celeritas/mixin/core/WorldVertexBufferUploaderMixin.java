@@ -203,6 +203,24 @@ public abstract class WorldVertexBufferUploaderMixin {
         if (backend == null || buffer == null) {
             return;
         }
+        // A display list being compiled does not draw: GL_COMPILE stores the commands and glCallList replays them.
+        // The geometry of a Tessellator draw inside a list is recorded by the stub (COMPILED_ARRAYS) only when the
+        // GL body runs, so offering the batch here would draw it once at compile time and leave the list empty.
+        // Measured shape: a mod's sky dome compiled into a list after the backend came up never appeared, while the
+        // same list replayed every frame with nothing captured (ATM3/Nomifactory, defect 10/11). The origin census
+        // still runs, because it is the only place a list's call site is named.
+        int celtium$compilingList = celtium$listIndex();
+        if (celtium$compilingList > 0) {
+            celtium$noteCompileOrigin(celtium$compilingList);
+            return;
+        }
+        if (celtium$compilingList != 0) {
+            // GL_LIST_INDEX did not answer at all. That is an identity that could not be established, so it is
+            // counted as unknown and kept out of the per-list census; filing it under 0 would name a list that no
+            // replay can ever reach, which is what every model quad did while the stub answered 0 for everything.
+            org.soutalab.celtium.vulkan.VulkanDisplayListCensus.originUnknown(celtium$compilingList,
+                    "list-index-query-failed");
+        }
         celtium$offers++;
         if (celtium$offers % 1000 == 0 && org.soutalab.celtium.vulkan.VulkanDiagnostics.enabled()) {
             // The decision, from the side that makes it: offers, how many the backend accepted, and how often the
@@ -238,52 +256,6 @@ public abstract class WorldVertexBufferUploaderMixin {
             }
             int formatId = celtium$formatId(format);
             celtium$decidedFormat = formatId;
-            // Inside glNewList the geometry is being compiled into a display list rather than drawn. Recording the call site
-            // then is what gives that list an identity: the id alone shifts when something else allocates first.
-            int celtium$listIndex = celtium$listIndex();
-            if (celtium$listIndex > 0) {
-                StackTraceElement[] celtium$stack = new Throwable().getStackTrace();
-                String celtium$origin = "unknown";
-                // Eight frames: the first three name the machinery (uploader, Tessellator, TexturedQuad) and the next
-                // three the model pipeline (ModelBox, compileDisplayList, ModelRenderer.render). The two after that name
-                // the content - ItemRenderer for the hand, RenderPlayer for a player model part - which is what the
-                // cancellation rule needs to tell apart, since the hand is drawn natively and the player model is not.
-                int celtium$taken = 0;
-                for (StackTraceElement celtium$frame : celtium$stack) {
-                    String celtium$name = celtium$frame.getClassName();
-                    // The injected handler lives inside Minecraft's own class, so a package test is not enough: its name carries
-                    // the mixin's marker and has to be skipped explicitly (everything reported the handler before this).
-                    if (celtium$name.startsWith("org.taumc.celeritas") || celtium$name.startsWith("org.soutalab.celtium")
-                            || celtium$name.startsWith("org.spongepowered") || celtium$name.contains("$celeritas$")
-                            || celtium$name.contains("$celtium$")
-                            // The mixin's marker is in the METHOD name, not the class: the injected handler lives inside
-                            // Minecraft's own WorldVertexBufferUploader and reports as a frame of that class, which is
-                            // why every origin came back as the handler itself.
-                            || celtium$frame.getMethodName().contains("$celeritas$")
-                            || celtium$frame.getMethodName().contains("$celtium$")) {
-                        continue;
-                    }
-                    // Three frames, not one: the immediate caller is the uploader and its caller the Tessellator, so a
-                    // single frame named the machinery rather than the content. The chain is what identifies the list.
-                    if (celtium$taken == 0) {
-                        celtium$origin = celtium$name + '.' + celtium$frame.getMethodName();
-                    } else {
-                        celtium$origin = celtium$origin + " <- " + celtium$name + '.' + celtium$frame.getMethodName();
-                    }
-                    celtium$taken++;
-                    if (celtium$taken >= 8) {
-                        break;
-                    }
-                }
-                org.soutalab.celtium.vulkan.VulkanDisplayListCensus.originIfAbsent(celtium$listIndex, celtium$origin);
-                celtium$noteCompileTexture(celtium$listIndex);
-            } else if (celtium$listIndex != 0) {
-                // GL_LIST_INDEX did not answer at all. That is an identity that could not be established, so it is
-                // counted as unknown and kept out of the per-list census; filing it under 0 would name a list that no
-                // replay can ever reach, which is what every model quad did while the stub answered 0 for everything.
-                org.soutalab.celtium.vulkan.VulkanDisplayListCensus.originUnknown(celtium$listIndex,
-                        "list-index-query-failed");
-            }
             // What arrives, not what is accepted. A counter nobody was watching moved when the mapping was fixed - format 1 went
             // to zero while format 6 started being taken - and the way to tell "these batches no longer arrive" from "these
             // batches arrive and are declined" is to count them here, before any decision is made.
@@ -830,6 +802,57 @@ public abstract class WorldVertexBufferUploaderMixin {
             }
         }
         return text.length() == 0 ? "none" : text.toString();
+    }
+
+    /**
+     * Names the call site that is compiling a display list, and the texture it is being compiled under.
+     * <p>
+     * The id alone cannot decide whether a list may be cancelled - a mod that allocates a list first shifts every id -
+     * but the call site can: a list compiled from {@code RenderGlobal.renderSky} is the sky, while a list compiled from
+     * {@code ModelRenderer} is a model part. This runs for every batch that arrives inside {@code glNewList}, which is
+     * the moment the geometry is compiled; the stack walk is bounded to eight frames and the census keeps only the
+     * first origin per list.
+     */
+    private static void celtium$noteCompileOrigin(int listIndex) {
+        try {
+            StackTraceElement[] celtium$stack = new Throwable().getStackTrace();
+            String celtium$origin = "unknown";
+            // Eight frames: the first three name the machinery (uploader, Tessellator, TexturedQuad) and the next
+            // three the model pipeline (ModelBox, compileDisplayList, ModelRenderer.render). The two after that name
+            // the content - ItemRenderer for the hand, RenderPlayer for a player model part - which is what the
+            // cancellation rule needs to tell apart, since the hand is drawn natively and the player model is not.
+            int celtium$taken = 0;
+            for (StackTraceElement celtium$frame : celtium$stack) {
+                String celtium$name = celtium$frame.getClassName();
+                // The injected handler lives inside Minecraft's own class, so a package test is not enough: its name carries
+                // the mixin's marker and has to be skipped explicitly (everything reported the handler before this).
+                if (celtium$name.startsWith("org.taumc.celeritas") || celtium$name.startsWith("org.soutalab.celtium")
+                        || celtium$name.startsWith("org.spongepowered") || celtium$name.contains("$celeritas$")
+                        || celtium$name.contains("$celtium$")
+                        // The mixin's marker is in the METHOD name, not the class: the injected handler lives inside
+                        // Minecraft's own WorldVertexBufferUploader and reports as a frame of that class, which is
+                        // why every origin came back as the handler itself.
+                        || celtium$frame.getMethodName().contains("$celeritas$")
+                        || celtium$frame.getMethodName().contains("$celtium$")) {
+                    continue;
+                }
+                // Three frames, not one: the immediate caller is the uploader and its caller the Tessellator, so a
+                // single frame named the machinery rather than the content. The chain is what identifies the list.
+                if (celtium$taken == 0) {
+                    celtium$origin = celtium$name + '.' + celtium$frame.getMethodName();
+                } else {
+                    celtium$origin = celtium$origin + " <- " + celtium$name + '.' + celtium$frame.getMethodName();
+                }
+                celtium$taken++;
+                if (celtium$taken >= 8) {
+                    break;
+                }
+            }
+            org.soutalab.celtium.vulkan.VulkanDisplayListCensus.originIfAbsent(listIndex, celtium$origin);
+            celtium$noteCompileTexture(listIndex);
+        } catch (RuntimeException | LinkageError ignored) {
+            // A census must never stop the game's rendering.
+        }
     }
 
     /**

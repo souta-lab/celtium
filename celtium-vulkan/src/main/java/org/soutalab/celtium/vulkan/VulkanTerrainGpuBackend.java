@@ -858,6 +858,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + this.modelStats.run0(this.modelDraws)
                 + " texMatrixGroups=" + this.immediateStatistics.texMatrixGroups()
                 + " modelDrawRefusals=" + this.modelDrawRefusals
+                + " modelRecordedReplays=" + this.modelRecordedReplayCalls
                 + " modelFastPath[" + this.modelReplayFastPath.describe() + "]"
                 + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary()
                 + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary()
@@ -15827,6 +15828,15 @@ this.frameBufferOpen = false;
     int modelDrawRefusals;
     /** Model draws asked for with no display list current: immediate geometry, not a missing list. */
     int modelNoListCalls;
+    /**
+     * Model replays whose list has no captured quads but does have a recorded command list, so the GL replay draws it.
+     * <p>
+     * Kept apart from {@link #modelDrawRefusals} and from the missing-mesh counter: a list recorded by the stub is not
+     * lost geometry, and counting it as missing made a mod's skybox read as a renderer defect (ATM3, leg r125-atm3-amd).
+     */
+    int modelRecordedReplayCalls;
+    /** Bounded lines naming the lists that take the recorded replay, so the split is visible in the log. */
+    int modelRecordedReplayLogs;
     /** Bounded entry lines: whether the model draw path is reached at all, and with which state. */
     int modelEntryLogs;
     /** How many build-summary lines have been printed; bounded, because the build repeats as lists appear. */
