@@ -18534,16 +18534,12 @@ this.frameBufferOpen = false;
     private void refreshAtlasMirror() {
         // A terrain material names the atlas and lightmap resources. Whichever GUI/entity texture happened to be
         // bound last is not the terrain material, and querying that binding must not mutate the active unit.
+        //
+        // The fallback that used to sit here asked the same source a second time when the first answer was <= 0, so it
+        // could never change the answer: the GL binding is not available without a GL context, and 1.12.2 binds the
+        // atlas through paths that skip the call (leg gv-cohort-dev10: atlasGlId stayed -1, the pass was skipped and
+        // draws stayed 0). The atlas object owns its name, and that is the one source this reads.
         int atlasId = LightmapIdSource.atlasTextureId();
-        if (atlasId <= 0) {
-            // The GL answer is not available without a GL context - the stub records bindings it is told about,
-            // and 1.12.2 binds the atlas through paths that skip the call. Measured on leg gv-cohort-dev10:
-            // atlasGlId stayed -1, the pass was skipped and draws stayed 0. The atlas object owns its name.
-            int fromGame = org.soutalab.celtium.vulkan.LightmapIdSource.atlasTextureId();
-            if (fromGame > 0) {
-                atlasId = fromGame;
-            }
-        }
         // CELTIUM_TEXTURE_DIAG: off by default. The atlas is the texture whose mip state matters, and this is the
         // only method that ever mirrors it, so the question is asked here - with the binding read rather than set, so
         // nothing the game is drawing can be disturbed.
@@ -18933,7 +18929,11 @@ this.frameBufferOpen = false;
             // in flight from reporting fiction.
             updateTimings();
         }
-        check(vkResetCommandBuffer(this.commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT), "vkResetCommandBuffer");
+        // No VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT: the flag tells the driver it may free the buffer's internal
+        // allocations, and this buffer is reset and re-begun every frame - so the release is paid every frame and the
+        // allocations are re-made every frame. The spec allows either; keeping them is the reuse the frame wants. The
+        // abort paths keep the flag (they are rare and a released buffer is the honest state after a throw).
+        check(vkResetCommandBuffer(this.commandBuffer, 0), "vkResetCommandBuffer");
         this.commandState.reset();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkCommandBufferBeginInfo begin = VkCommandBufferBeginInfo.calloc(stack).sType$Default()

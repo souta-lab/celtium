@@ -4233,8 +4233,7 @@ public final class ValidationClient {
             if (this.celtium$tickSampleCount < this.celtium$tickSamples.length) {
                 this.celtium$tickSamples[this.celtium$tickSampleCount++] = took;
             }
-            if (worldTicks >= Integer.getInteger("celtium.validation.warmFromTick", 400).intValue()
-                    && worldTicks < Integer.getInteger("celtium.validation.warmToTick", 600).intValue()) {
+            if (worldTicks >= WARM_FROM_TICK && worldTicks < WARM_TO_TICK) {
                 warmTickMillis.add(took / 1_000_000.0);
                 warmTickSeries.add(new double[] {worldTicks, took / 1_000_000.0});
                 if (!this.celtium$warmBeginLogged) {
@@ -5587,8 +5586,7 @@ public final class ValidationClient {
                     celtium$uploadColdSubmitWaitWorstFrameMillis = frameMillis;
                 }
             }
-            if (worldTicks >= Integer.getInteger("celtium.validation.warmFromTick", 400).intValue()
-                    && worldTicks < Integer.getInteger("celtium.validation.warmToTick", 600).intValue()) {
+            if (worldTicks >= WARM_FROM_TICK && worldTicks < WARM_TO_TICK) {
                 celtium$uploadWarmSubmitWaitMillis += frameMillis;
                 celtium$uploadWarmSubmitWaits += frameWaits;
                 celtium$uploadWarmFrames++;
@@ -5604,21 +5602,61 @@ public final class ValidationClient {
     }
 
     /**
-     * The warm window's frames over 16.7 ms, in order, with the renderer's pass split, the upload path's share and the
-     * loop timings. {@link #celtium$slowFrames} keeps the run's slowest frames, which are always world-entry frames, so
-     * it never names a spike that happens while moving; this list does. Bounded, built only past the threshold.
+     * The warm window's slowest frames, with the renderer's pass split, the upload path's share and the loop timings.
+     * {@link #celtium$slowFrames} keeps the run's slowest frames, which are always world-entry frames, so it never names
+     * a spike that happens while moving; this list does. Bounded, built only past the threshold.
+     * <p>
+     * Retention is the slowest, not the first over the threshold. The KPI's p99 is a <em>rank</em> - the 43rd slowest
+     * frame of ~4 300 - and the first sixteen frames over 16.7 ms are the world-entry ones, so the first-come list
+     * answered a question about the entry, not about the p99. The threshold is a property
+     * ({@code -Dceltium.validation.warmSpikeMs}, default 16.7) so a leg can ask for the window's slowest frames
+     * whatever their size: {@code warmSpikeMs=0} retains the p99 frame's own profile, which is the evidence the
+     * tick-frame question needs.
      */
     private final List<String> celtium$warmSpikes = new ArrayList<String>();
+    /** The interval of each retained entry, index-aligned with {@link #celtium$warmSpikes}: the replacement key. */
+    private final List<Double> celtium$warmSpikeMillis = new ArrayList<Double>();
+    private static final int WARM_SPIKE_MAX = 16;
+    /**
+     * The measured window, resolved once. These were read with {@code Integer.getInteger} on every frame (and twice
+     * per tick) - a {@code System.getProperty} plus a parse inside the interval being measured, paid by both arms and
+     * by every frame of the window the KPI reads. A JVM argument cannot change mid-run, so the lookup belongs here.
+     */
+    private static final int WARM_FROM_TICK = Integer.getInteger("celtium.validation.warmFromTick", 400);
+    private static final int WARM_TO_TICK = Integer.getInteger("celtium.validation.warmToTick", 600);
+    /** Resolved once: a property lookup per frame is a cost the measured frame pays for its own instrument. */
+    private static final double WARM_SPIKE_MS =
+            Double.parseDouble(System.getProperty("celtium.validation.warmSpikeMs", "16.7"));
 
     private void celtium$recordWarmSpike(double intervalMs, long uploadThisFrameMillis) {
-        if (intervalMs < 16.7D || celtium$warmSpikes.size() >= 16
-                || worldTicks < Integer.getInteger("celtium.validation.warmFromTick", 400).intValue()
-                || worldTicks >= Integer.getInteger("celtium.validation.warmToTick", 600).intValue()) {
+        if (intervalMs < WARM_SPIKE_MS || worldTicks < WARM_FROM_TICK || worldTicks >= WARM_TO_TICK) {
             return;
         }
-        celtium$warmSpikes.add("worldTick=" + worldTicks + " " + Math.round(intervalMs) + "ms passes["
+        // Only a frame slower than the fastest retained one can displace anything, so only those build the entry: its
+        // renderer debug strings are a JFR hotspot of their own (the same reason celtium$recordSlowFrame checks first).
+        int displace = -1;
+        if (celtium$warmSpikes.size() >= WARM_SPIKE_MAX) {
+            displace = 0;
+            for (int i = 1; i < celtium$warmSpikeMillis.size(); i++) {
+                if (celtium$warmSpikeMillis.get(i).doubleValue()
+                        < celtium$warmSpikeMillis.get(displace).doubleValue()) {
+                    displace = i;
+                }
+            }
+            if (intervalMs <= celtium$warmSpikeMillis.get(displace).doubleValue()) {
+                return;
+            }
+        }
+        String entry = "worldTick=" + worldTicks + " " + Math.round(intervalMs) + "ms passes["
                 + celtium$rendererPassSummary() + "] uploadThisFrameMs=" + uploadThisFrameMillis
-                + celtium$loopTimingSnapshot());
+                + celtium$loopTimingSnapshot();
+        if (displace >= 0) {
+            celtium$warmSpikes.set(displace, entry);
+            celtium$warmSpikeMillis.set(displace, Double.valueOf(intervalMs));
+            return;
+        }
+        celtium$warmSpikes.add(entry);
+        celtium$warmSpikeMillis.add(Double.valueOf(intervalMs));
     }
 
     /**
@@ -6864,8 +6902,8 @@ public final class ValidationClient {
         if (worldTicks >= 120 && worldTicks < 200 && previousFrame != 0) {
             frameIntervals.add((now - previousFrame) / 1_000_000.0);
         }
-        int warmFrom = Integer.getInteger("celtium.validation.warmFromTick", 400).intValue();
-        int warmTo = Integer.getInteger("celtium.validation.warmToTick", 600).intValue();
+        int warmFrom = WARM_FROM_TICK;
+        int warmTo = WARM_TO_TICK;
         if (worldTicks >= warmFrom && worldTicks < warmTo && previousFrame != 0) {
             warmFrameIntervals.add((now - previousFrame) / 1_000_000.0);
             (this.celtium$tickCount != this.celtium$tickCountAtPreviousFrame ? warmTickFrameIntervals
@@ -7869,7 +7907,13 @@ public final class ValidationClient {
         // defect as one that is never built, and the p95/p99 pair is what the user's complaint is measured against.
         report.addProperty("slowFrameThresholdMs", Integer.getInteger("celtium.validation.slowFrameMs", 50));
         report.addProperty("slowFrameCount", celtium$slowFrames.size());
+        report.addProperty("warmSpikeThresholdMs", WARM_SPIKE_MS);
+        report.addProperty("warmSpikeCount", celtium$warmSpikes.size());
         report.addProperty("warmSpikes", celtium$warmSpikes.isEmpty() ? "[none]" : String.join(" | ", celtium$warmSpikes));
+        report.addProperty("warmSpikeRetention",
+                "the " + WARM_SPIKE_MAX + " slowest frames of the warm window, not the first " + WARM_SPIKE_MAX
+                        + " over the threshold; warmSpikeMs=0 asks for the window's slowest frames whatever their size,"
+                        + " which is the p99 frame's own profile");
         report.addProperty("slowFrameRetention",
                 "the " + SLOW_FRAME_MAX + " slowest frames of the run, not the first " + SLOW_FRAME_MAX
                         + " over the threshold; entries carry the renderer's phase evidence and the upload path's own"
