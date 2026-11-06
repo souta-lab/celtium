@@ -1877,6 +1877,8 @@ public final class VulkanGlTexture {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
             VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
+            celtium$trace("patch " + pixelWidth + "x" + pixelHeight + " at " + x + "," + y + " depth=" + depth
+                    + " baseline=" + clearedBaseline + " level0Was=" + levelLayout(0), commandBuffer);
             if (clearedBaseline) {
                 celtium$clearPatchBaseline(commandBuffer, stack, barrier);
             }
@@ -2959,6 +2961,7 @@ public final class VulkanGlTexture {
     }
 
     private void recreateImageResources(int newWidth, int newHeight) {
+        celtium$trace("recreate to " + newWidth + "x" + newHeight, null);
         requireOwned("resizing the image");
         if (RECREATE_LOGS < 32) {
             RECREATE_LOGS++;
@@ -3092,6 +3095,7 @@ public final class VulkanGlTexture {
             return "the destination rectangle " + xoffset + "," + yoffset + " " + width + "x" + height
                     + " is not inside the " + this.width() + "x" + this.height() + " mirror";
         }
+        celtium$trace("blitRectangleFrom was=" + this.currentLayout, commandBuffer);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack).sType$Default()
                     .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
@@ -3650,6 +3654,7 @@ public final class VulkanGlTexture {
         }
         int previous = levelLayout(level);
         VkCommandBuffer commandBuffer = context.beginCommands();
+        celtium$trace("mipLevel " + level + " was=" + previous, commandBuffer);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
             barrier.get(0).sType$Default()
@@ -3834,6 +3839,7 @@ public final class VulkanGlTexture {
 
         if (this.deferredCount > 0) submitPatchBatch(); // a deferred animation copy must not land after this write
         VkCommandBuffer commandBuffer = context.beginCommands();
+        celtium$trace("wholeUpload level=" + level + " " + pixelWidth + "x" + pixelHeight, commandBuffer);
         boolean finishedSamplingTransition = false;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
@@ -4033,6 +4039,48 @@ public final class VulkanGlTexture {
      * staging ring may wait or wrap, before a mirror dump reads the image, and when the drain ends.
      * {@code -Dceltium.vulkan.batchTexturePatches=false} keeps one submission per patch.
      */
+    /**
+     * {@code -Dceltium.vulkan.layoutTrace=true}: a ring of the last layout-relevant recordings and submissions of every
+     * mirror with eight or more levels (the atlases), dumped when validation reports a layout error. Leg n3-e2ee-amd
+     * named the 8192x8192 atlas with levels 0..4 left in TRANSFER_DST on the first world frame, and every upload path
+     * reads as balanced; the order of the recordings and submissions is the evidence that is missing.
+     */
+    static final boolean LAYOUT_TRACE = Boolean.getBoolean("celtium.vulkan.layoutTrace");
+    private static final String[] LAYOUT_RING = new String[256];
+    private static int layoutRingNext;
+    private static int layoutDumps;
+
+    private void celtium$trace(String what, VkCommandBuffer commandBuffer) {
+        if (!LAYOUT_TRACE || this.mipLevels < 8) {
+            return;
+        }
+        String line = "img=" + Long.toHexString(this.image) + " " + this.width + "x" + this.height + " " + what
+                + " cb=" + (commandBuffer == null ? "none" : Long.toHexString(commandBuffer.address()))
+                + " batch=" + (this.patchBatch == null ? "none" : Long.toHexString(this.patchBatch.address()))
+                + " batching=" + this.patchBatching + " deferred=" + this.deferredCount
+                + " t=" + System.nanoTime() / 1000L + " thread=" + Thread.currentThread().getName();
+        synchronized (LAYOUT_RING) {
+            LAYOUT_RING[layoutRingNext++ & (LAYOUT_RING.length - 1)] = line;
+        }
+    }
+
+    /** Prints the ring, oldest first; called from the validation callback on a layout error, twice at most. */
+    static void celtium$dumpLayoutTrace(String reason) {
+        if (!LAYOUT_TRACE) {
+            return;
+        }
+        synchronized (LAYOUT_RING) {
+            if (layoutDumps++ >= 2) {
+                return;
+            }
+            System.err.println("[Celtium] CELTIUM_LAYOUT_TRACE begin reason=" + reason + " events=" + layoutRingNext);
+            for (int i = Math.max(0, layoutRingNext - LAYOUT_RING.length); i < layoutRingNext; i++) {
+                System.err.println("[Celtium] CELTIUM_LAYOUT_TRACE " + LAYOUT_RING[i & (LAYOUT_RING.length - 1)]);
+            }
+            System.err.println("[Celtium] CELTIUM_LAYOUT_TRACE end");
+        }
+    }
+
     private static final boolean PATCH_BATCH = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.batchTexturePatches"));
     private boolean patchBatching;
@@ -4050,11 +4098,13 @@ public final class VulkanGlTexture {
         }
         this.patchBatching = true;
         this.regionDeferring = DEFER_PATCH_REGIONS;
+        celtium$trace("beginPatchBatch", null);
         return true;
     }
 
     /** Closes a batch {@link #beginPatchBatch()} opened and submits what it recorded. */
     public void endPatchBatch() {
+        celtium$trace("endPatchBatch", null);
         this.regionDeferring = false;
         this.patchBatching = false;
         submitPatchBatch();
@@ -4131,6 +4181,7 @@ public final class VulkanGlTexture {
             this.patchBatch = context.beginCommands();
         }
         VkCommandBuffer commandBuffer = this.patchBatch;
+        celtium$trace("flushDeferredRegions count=" + count + " depth=" + depth, commandBuffer);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
             barrier.get(0).sType$Default()
@@ -4188,6 +4239,7 @@ public final class VulkanGlTexture {
         flushDeferredRegions();
         VkCommandBuffer batch = this.patchBatch;
         if (batch != null) {
+            celtium$trace("submitPatchBatch", batch);
             this.patchBatch = null;
             this.outstandingUploadFence = context.celtium$submitDeferred(batch, 0L);
         }
