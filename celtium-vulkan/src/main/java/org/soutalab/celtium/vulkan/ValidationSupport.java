@@ -66,7 +66,7 @@ final class ValidationSupport {
             String single = message == null ? "" : message.replace('\n', ' ').replace('\r', ' ').trim();
             System.err.println("Celtium Vulkan validation: severity=" + severityName + " id=" + identifier + " " + single);
             if (VulkanGlTexture.LAYOUT_TRACE && (identifier.contains("09600") || identifier.contains("01197"))) {
-                VulkanGlTexture.celtium$dumpLayoutTrace(identifier);
+                VulkanGlTexture.celtium$dumpLayoutTrace(identifier, single);
             }
             return VK_FALSE;
         });

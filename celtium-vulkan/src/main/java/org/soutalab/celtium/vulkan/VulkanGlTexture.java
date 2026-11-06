@@ -4046,38 +4046,68 @@ public final class VulkanGlTexture {
      * reads as balanced; the order of the recordings and submissions is the evidence that is missing.
      */
     static final boolean LAYOUT_TRACE = Boolean.getBoolean("celtium.vulkan.layoutTrace");
-    private static final String[] LAYOUT_RING = new String[256];
-    private static int layoutRingNext;
+    /** Per image handle, the last 48 events of that image: a long-lived state needs its own history, not a shared ring. */
+    private static final java.util.Map<Long, java.util.ArrayDeque<String>> LAYOUT_HISTORY =
+            new java.util.LinkedHashMap<Long, java.util.ArrayDeque<String>>();
+    private static final java.util.Map<Long, int[]> LAYOUT_EVENT_COUNTS = new java.util.HashMap<Long, int[]>();
     private static int layoutDumps;
 
     private void celtium$trace(String what, VkCommandBuffer commandBuffer) {
-        if (!LAYOUT_TRACE || this.mipLevels < 8) {
+        if (!LAYOUT_TRACE || this.mipLevels < 8 || this.image == VK_NULL_HANDLE) {
             return;
         }
-        String line = "img=" + Long.toHexString(this.image) + " " + this.width + "x" + this.height + " " + what
+        String line = this.width + "x" + this.height + " " + what
                 + " cb=" + (commandBuffer == null ? "none" : Long.toHexString(commandBuffer.address()))
                 + " batch=" + (this.patchBatch == null ? "none" : Long.toHexString(this.patchBatch.address()))
                 + " batching=" + this.patchBatching + " deferred=" + this.deferredCount
+                + " levels=" + java.util.Arrays.toString(java.util.Arrays.copyOf(this.levelLayouts,
+                        Math.min(this.levelLayouts.length, 6)))
                 + " t=" + System.nanoTime() / 1000L + " thread=" + Thread.currentThread().getName();
-        synchronized (LAYOUT_RING) {
-            LAYOUT_RING[layoutRingNext++ & (LAYOUT_RING.length - 1)] = line;
+        synchronized (LAYOUT_HISTORY) {
+            Long key = Long.valueOf(this.image);
+            java.util.ArrayDeque<String> ring = LAYOUT_HISTORY.get(key);
+            if (ring == null) {
+                if (LAYOUT_HISTORY.size() >= 64) {
+                    return;
+                }
+                ring = new java.util.ArrayDeque<String>();
+                LAYOUT_HISTORY.put(key, ring);
+                LAYOUT_EVENT_COUNTS.put(key, new int[1]);
+            }
+            if (ring.size() >= 48) {
+                ring.removeFirst();
+            }
+            ring.addLast(line);
+            LAYOUT_EVENT_COUNTS.get(key)[0]++;
         }
     }
 
-    /** Prints the ring, oldest first; called from the validation callback on a layout error, twice at most. */
-    static void celtium$dumpLayoutTrace(String reason) {
+    /** Prints the history of every traced image whose handle the message names; twice at most. */
+    static void celtium$dumpLayoutTrace(String reason, String message) {
         if (!LAYOUT_TRACE) {
             return;
         }
-        synchronized (LAYOUT_RING) {
-            if (layoutDumps++ >= 2) {
+        synchronized (LAYOUT_HISTORY) {
+            if (layoutDumps >= 2) {
                 return;
             }
-            System.err.println("[Celtium] CELTIUM_LAYOUT_TRACE begin reason=" + reason + " events=" + layoutRingNext);
-            for (int i = Math.max(0, layoutRingNext - LAYOUT_RING.length); i < layoutRingNext; i++) {
-                System.err.println("[Celtium] CELTIUM_LAYOUT_TRACE " + LAYOUT_RING[i & (LAYOUT_RING.length - 1)]);
+            boolean any = false;
+            for (java.util.Map.Entry<Long, java.util.ArrayDeque<String>> entry : LAYOUT_HISTORY.entrySet()) {
+                String hex = "0x" + Long.toHexString(entry.getKey().longValue());
+                if (message == null || !message.contains(hex)) {
+                    continue;
+                }
+                any = true;
+                System.err.println("[Celtium] CELTIUM_LAYOUT_TRACE begin reason=" + reason + " image=" + hex
+                        + " events=" + LAYOUT_EVENT_COUNTS.get(entry.getKey())[0]);
+                for (String line : entry.getValue()) {
+                    System.err.println("[Celtium] CELTIUM_LAYOUT_TRACE " + line);
+                }
+                System.err.println("[Celtium] CELTIUM_LAYOUT_TRACE end");
             }
-            System.err.println("[Celtium] CELTIUM_LAYOUT_TRACE end");
+            if (any) {
+                layoutDumps++;
+            }
         }
     }
 
@@ -4098,13 +4128,14 @@ public final class VulkanGlTexture {
         }
         this.patchBatching = true;
         this.regionDeferring = DEFER_PATCH_REGIONS;
-        celtium$trace("beginPatchBatch", null);
         return true;
     }
 
     /** Closes a batch {@link #beginPatchBatch()} opened and submits what it recorded. */
     public void endPatchBatch() {
-        celtium$trace("endPatchBatch", null);
+        if (this.patchBatch != null || this.deferredCount > 0) {
+            celtium$trace("endPatchBatch", null);
+        }
         this.regionDeferring = false;
         this.patchBatching = false;
         submitPatchBatch();
