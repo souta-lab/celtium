@@ -37,12 +37,14 @@ fixture が `UNCALIBRATED_PRESENTED_IMAGE` を返し KPI が leg を拒否する
 
 1. **FPS の全対条件**（最優先・未達は AMD の p95/p99 pair 3 のみ）: p99 は tick frame で、その超過の 84% は
    client tick（両arm同一）。renderer 分は r8 で gather walk を消して 210us まで減った（block entity 101・
-   terrain 47・lightmap 42・flush 23、`r8kpi-index` の p99 rank）。**あと ~150us で AMD の p99 中央値が ~0.95 に
-   なり、13% の pair ばらつきに耐える**。次の判別: (a) block entity 101us の tick 依存の owner（offer path は
-   5% のみ、`renderCulledBlockEntities` は毎 frame 可視 section を歩く）、(b) terrain 47us と lightmap 42us は
-   ゲーム自身の仕事なので Celeritas との比較測定が先、(c) wave の p99 は world（lightmap 442・flush 324・
-   setupTerrain 161）と gui（+1229）。**regime（wave/定常）を必ず書く**。`flush` は group 数×~1.1us で
-   indirect multi-draw が構造的な答えのまま。chunk-upload budget は KPI scene では発火しない（burst 32 未満）。
+   terrain 47・lightmap 42・flush 23、`r8kpi-index` の p99 rank）。**210us を全部消しても中央値は ~0.96 で、
+   pair 3 は ~1.02 のまま**（Celtium 6.150 対 Celeritas 5.814 には 336us 要る）。よって AMD は**中央値と同時に
+   ばらつき**が要る: 13% の run 間ばらつきは warm 窓に入る wave の尾で、wave の p99 は `gui` +1229・
+   `lightmap` +442・`flush` +324（entity pass ではない）。次の判別: (a) block entity 101us の tick 依存の
+   owner（offer path は 5% のみ、`renderCulledBlockEntities` は毎 frame 可視 section を歩く）、(b) terrain 47us と
+   lightmap 42us はゲーム自身の仕事なので Celeritas との比較測定が先、(c) wave の `gui` +1229us の owner。
+   **regime（wave/定常）を必ず書く**。`flush` は group 数×~1.1us で indirect multi-draw が構造的な答えのまま。
+   chunk-upload budget は KPI scene では発火しない（burst 32 未満）。
 2. **残る Celtium 欠陥**: defect 10（ATM3 の上空、dome の draw は発行・presented に届かない）・defect 12（GTCEu bloom、
    Nomi の 21,885 拒否）・defect 5（menu 境界の破棄）・defect 6（fixture の presented 計数）。pack 側の非互換は置換として記録。
 3. **Xaero radar の entity icon**: 描かれるか未確認（entity の居る scene が必要、`-Dceltium.validation.keepEntities=true`）。

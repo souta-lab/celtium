@@ -136,9 +136,12 @@ spread (5.443 / 5.786 / 6.150, 13 %) met Celeritas's best run (5.814) - the pair
 
 ## What this says to do next
 
-1. **AMD's p99 needs ~3 more points of margin.** The remaining tick-gated renderer excess is 210 us at the p99 rank
-   (block entities 101, terrain 47, lightmap 42, flush 23), and the arithmetic above says ~150 us of it would take the
-   median ratio to ~0.95 - enough for the every-pair condition to survive a 13 % pairing spread.
+1. **AMD's p99 needs more than the remaining renderer excess.** The tick-gated renderer excess left is 210 us at the
+   p99 rank (block entities 101, terrain 47, lightmap 42, flush 23); removing all of it takes the median ratio from
+   0.979 to ~0.96, but pair 3 would still read ~1.02 (Celtium 6.150 against Celeritas 5.814 needs 336 us). So the
+   every-pair condition on AMD needs the **spread** as well as the median: the 13 % run-to-run spread is the wave's
+   tail inside the warm window, and the wave's p99 is `gui` +1 229 us, `lightmap` +442 and `flush` +324 - not the
+   entity pass.
 2. **Block entities are the largest remaining tick-gated render item** (101 us at the p99 rank, 521 us total). The
    offer path is ~5 % of it, so the question is how many block entities are rendered and how often, not the batch path.
 3. **`lightmap` 42 us and `terrain` 47 us are tick-gated** and both are the game's own work; they need a comparative
