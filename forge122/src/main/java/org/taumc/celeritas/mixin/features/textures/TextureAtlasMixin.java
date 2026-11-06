@@ -10,6 +10,7 @@ import org.embeddedt.embeddium.impl.util.collections.quadtree.QuadTree;
 import org.embeddedt.embeddium.impl.util.collections.quadtree.Rect2i;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -65,8 +66,9 @@ public class TextureAtlasMixin implements TextureMapExtension {
             if (backend != null) {
                 backend.beginAnimationUploads(((TextureMap) (Object) this).getGlTextureId());
             }
-        } catch (Throwable ignored) {
-            // A batching hint must never break the animation tick.
+        } catch (Throwable failure) {
+            // A batching hint must never break the animation tick - but it must not fail silently either.
+            celtium$reportAnimationFailure("begin", failure);
         }
     }
 
@@ -78,8 +80,21 @@ public class TextureAtlasMixin implements TextureMapExtension {
             if (backend != null) {
                 backend.endAnimationUploads();
             }
-        } catch (Throwable ignored) {
-            // Same rule as the begin.
+        } catch (Throwable failure) {
+            // Same rule as the begin. Swallowed silently, an "Out of stack space" in the end's flush hid for days
+            // while the half-recorded batch left the atlas in TRANSFER_DST (fix d8cb18595).
+            celtium$reportAnimationFailure("end", failure);
+        }
+    }
+
+    @Unique
+    private static int celtium$animationFailures;
+
+    @Unique
+    private static void celtium$reportAnimationFailure(String half, Throwable failure) {
+        if (celtium$animationFailures++ < 4) {
+            System.out.println("[Celtium] CELTIUM_ANIMATION_BATCH_FAILURE half=" + half + " error=" + failure);
+            failure.printStackTrace(System.out);
         }
     }
 
