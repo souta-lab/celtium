@@ -53,6 +53,10 @@ public class TextureUtilMixin {
     @Inject(method = "func_147955_a", at = @At("HEAD"), require = 0)
     private static void celtium$invalidateAnimatedTexture(int[][] data, int width, int height, int x, int y, boolean blur,
             boolean clamp, org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        // One sprite's frame: the announcement, the stub's capture of the glTexSubImage2D the original body issues,
+        // and the game's own copy into its shared buffer. `anim` (TextureMap.updateAnimations) holds the whole pass;
+        // this name says what one sprite costs inside it.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("animUpload");
         try {
             if (celtium$animationHits < 5) {
                 celtium$animationHits++;
@@ -69,6 +73,16 @@ public class TextureUtilMixin {
         } catch (Throwable ignored) {
             // Same rule as the registration hook: a bookkeeping hint must never break a texture upload.
         }
+    }
+
+    /**
+     * Closes {@code animUpload} at the method's return, so the bracket covers the original body's own
+     * {@code glTexSubImage2D} (the stub's capture) as well as the announcement above it.
+     */
+    @Inject(method = "func_147955_a", at = @At("RETURN"), require = 0)
+    private static void celtium$animatedUploadTimedEnd(int[][] data, int width, int height, int x, int y, boolean blur,
+            boolean clamp, org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("animUpload");
     }
 
     /**

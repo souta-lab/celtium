@@ -4279,7 +4279,12 @@ public final class VulkanGlTexture {
         this.deferredCount = 0;
         this.deferredDepth = 0;
         if (this.patchBatch == null) {
-            this.patchBatch = context.beginCommands();
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("animBatchBegin");
+            try {
+                this.patchBatch = context.beginCommands();
+            } finally {
+                org.soutalab.celtium.vulkan.FramePassTimings.end("animBatchBegin");
+            }
         }
         VkCommandBuffer commandBuffer = this.patchBatch;
         celtium$trace("flushDeferredRegions count=" + count + " depth=" + depth, commandBuffer);
@@ -4354,12 +4359,22 @@ public final class VulkanGlTexture {
     /** Submits the open patch batch, if any; its fence becomes this texture's outstanding upload. */
     private void submitPatchBatch() {
         // Pending regions name slices of the staging ring this submission is about to fence: record them first.
-        flushDeferredRegions();
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("animBatchFlush");
+        try {
+            flushDeferredRegions();
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("animBatchFlush");
+        }
         VkCommandBuffer batch = this.patchBatch;
         if (batch != null) {
             celtium$trace("submitPatchBatch", batch);
             this.patchBatch = null;
-            this.outstandingUploadFence = context.celtium$submitDeferred(batch, 0L);
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("animBatchCmd");
+            try {
+                this.outstandingUploadFence = context.celtium$submitDeferred(batch, 0L);
+            } finally {
+                org.soutalab.celtium.vulkan.FramePassTimings.end("animBatchCmd");
+            }
         }
     }
 

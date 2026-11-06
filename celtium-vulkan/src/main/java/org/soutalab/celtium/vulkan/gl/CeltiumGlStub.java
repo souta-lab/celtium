@@ -8258,7 +8258,15 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (isProxyTarget(target)) {
             return;
         }
-        texSubImageForName(uploadTargetName(target), level, xOffset, yOffset, width, height, format, type, pixels);
+        // The stub's half of an upload: the format conversion and the write into the captured level. Inside the tick
+        // this is the animated sprite's patch, and it is the second conversion of the same pixels the announcement
+        // already converted - `animStub` beside `animMirror` says which of the two owns the cost.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("animStub");
+        try {
+            texSubImageForName(uploadTargetName(target), level, xOffset, yOffset, width, height, format, type, pixels);
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("animStub");
+        }
     }
 
     /** The DSA spelling's producer: the same patch rules, with the texture named by the caller. */

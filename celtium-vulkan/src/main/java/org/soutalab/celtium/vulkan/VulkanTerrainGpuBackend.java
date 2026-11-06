@@ -4482,7 +4482,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         VulkanGlTexture texture = this.animationBatchTexture;
         if (texture != null) {
             this.animationBatchTexture = null;
-            texture.endPatchBatch();
+            // The patch batch's submission: one submit per tick, and the only Vulkan call the animation pass makes
+            // that can block. `anim` holds the whole pass, so this name says whether the submit is the pass's cost.
+            FramePassTimings.begin("animBatchEnd");
+            try {
+                texture.endPatchBatch();
+            } finally {
+                FramePassTimings.end("animBatchEnd");
+            }
         }
     }
 
@@ -4501,7 +4508,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         compareBoundTextureWithGl(bound);
         if (!SKIP_ANIMATED_FLUSH && !this.immediateWindowBusy && queuedGroupUsesTexture(bound)) {
             this.animatedUploadFlushes++;
-            flushPendingBeforeGlDraw();
+            FramePassTimings.begin("animFlush");
+            try {
+                flushPendingBeforeGlDraw();
+            } finally {
+                FramePassTimings.end("animFlush");
+            }
         }
         if (SKIP_ANIMATED_MIRROR) {
             return;
@@ -4522,8 +4534,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // The animation runs in runTick, outside the frame bracket, so it is counted here rather than as a pass: in-world
         // calls only (after the first world pass), with their total and worst time.
         long mirrorStart = this.worldPassSeen ? System.nanoTime() : 0L;
-        if (this.textureRegistry.announceFullPixels(bound, data, width, height, x, y)) {
-            this.textureStats.noteAnimatedImageFill();
+        FramePassTimings.begin("animMirror");
+        try {
+            if (this.textureRegistry.announceFullPixels(bound, data, width, height, x, y)) {
+                this.textureStats.noteAnimatedImageFill();
+            }
+        } finally {
+            FramePassTimings.end("animMirror");
         }
         if (mirrorStart != 0L) {
             long took = System.nanoTime() - mirrorStart;
@@ -4841,10 +4858,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     @Override
     public void invalidateBoundTexture() {
-        this.lastInvalidationOrigin = "invalidateBoundTexture";
-        int bound = NativeTextureBindings.current().texture2d();
-        if (bound != 0) {
-            invalidateTexture(bound);
+        // The per-sprite invalidation the animation hook issues beside the announcement: 16 calls a tick, and the
+        // only Celtium work in the tick that no other name covers.
+        FramePassTimings.begin("animInvalidate");
+        try {
+            this.lastInvalidationOrigin = "invalidateBoundTexture";
+            int bound = NativeTextureBindings.current().texture2d();
+            if (bound != 0) {
+                invalidateTexture(bound);
+            }
+        } finally {
+            FramePassTimings.end("animInvalidate");
         }
     }
 

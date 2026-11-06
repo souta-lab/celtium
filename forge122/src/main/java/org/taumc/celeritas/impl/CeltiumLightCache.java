@@ -1,7 +1,6 @@
 package org.taumc.celeritas.impl;
 
-import it.unimi.dsi.fastutil.longs.Long2FloatLinkedOpenHashMap;
-import it.unimi.dsi.fastutil.longs.Long2IntLinkedOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2LongLinkedOpenHashMap;
 
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.MathHelper;
@@ -66,20 +65,49 @@ public final class CeltiumLightCache {
      * {@code LinkedHashMap<Long, ...>}s: {@code Long.hashCode} of a packed position collides enough to treeify bins
      * ({@code HashMap$TreeNode.getTreeNode} was 3.8% of the client thread with these among its callers), and every
      * lookup boxed its key.
+     * <p>
+     * <b>Invalidation is a generation tag, not a clear.</b> The maps used to be emptied on every world-time or
+     * light-epoch change, and that is O(capacity): a {@code Long2IntLinkedOpenHashMap} of 16 384 slots clears four
+     * arrays (key, value, link, order) - about 320 KB per map, 640 KB for the pair - and the day-cycle skylight sweep
+     * writes light on every tick, so a <em>tick frame</em> paid it while a plain frame did not. Measured on the
+     * paired KPI's scene (leg {@code r12tick2-amd}, {@code CELTIUM_FRAME_TICK_CONSTANTS}): {@code lightCache=73/1}
+     * us, tick frames against plain. The value now carries the generation in its high 32 bits and a lookup compares
+     * it, so an invalidation is one increment and a stale entry is a miss that is overwritten in place. The maps keep
+     * their LRU bound, so the working set is unchanged.
      */
-    private static final int ABSENT = -1;
-    private static final Long2IntLinkedOpenHashMap COMBINED = new Long2IntLinkedOpenHashMap(CAP * 2);
-    private static final Long2FloatLinkedOpenHashMap BRIGHTNESS = new Long2FloatLinkedOpenHashMap(CAP * 2);
+    private static final long ABSENT = 0L;
+    private static final Long2LongLinkedOpenHashMap COMBINED = new Long2LongLinkedOpenHashMap(CAP * 2);
+    private static final Long2LongLinkedOpenHashMap BRIGHTNESS = new Long2LongLinkedOpenHashMap(CAP * 2);
 
     static {
         COMBINED.defaultReturnValue(ABSENT);
-        BRIGHTNESS.defaultReturnValue(Float.NaN);
+        BRIGHTNESS.defaultReturnValue(ABSENT);
+    }
+
+    /** The tag every live entry carries; 0 is never valid, so a fresh map cannot serve a stale value. */
+    private static int generation = 1;
+
+    /** {@return the value tagged with the current generation, or {@link #ABSENT}}. */
+    private static long tagged(int value) {
+        return ((long) generation << 32) | (value & 0xFFFFFFFFL);
+    }
+
+    /** {@return the value a tagged entry carries, or {@link #ABSENT} when the entry is from an older generation}. */
+    private static long untag(long entry) {
+        return (int) (entry >>> 32) == generation ? entry : ABSENT;
     }
 
     private static void putCombined(long key, int value) {
-        COMBINED.putAndMoveToLast(key, value);
+        COMBINED.putAndMoveToLast(key, tagged(value));
         if (COMBINED.size() > CAP) {
-            COMBINED.removeFirstInt();
+            COMBINED.removeFirstLong();
+        }
+    }
+
+    private static void putBrightness(long key, float value) {
+        BRIGHTNESS.putAndMoveToLast(key, tagged(Float.floatToRawIntBits(value)));
+        if (BRIGHTNESS.size() > CAP) {
+            BRIGHTNESS.removeFirstLong();
         }
     }
 
@@ -88,18 +116,23 @@ public final class CeltiumLightCache {
      * block entity per frame.
      */
     public static int combinedLight(World world, BlockPos pos) {
-        if (!ENABLED || !world.isRemote) {
-            return world.getCombinedLight(pos, 0);
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("lightCache");
+        try {
+            if (!ENABLED || !world.isRemote) {
+                return world.getCombinedLight(pos, 0);
+            }
+            rollTick(world);
+            long key = pack(pos.getX(), pos.getY(), pos.getZ());
+            long cached = untag(COMBINED.getAndMoveToLast(key));
+            if (cached != ABSENT) {
+                return (int) cached;
+            }
+            int value = world.getCombinedLight(pos, 0);
+            putCombined(key, value);
+            return value;
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("lightCache");
         }
-        rollTick(world);
-        long key = pack(pos.getX(), pos.getY(), pos.getZ());
-        int cached = COMBINED.getAndMoveToLast(key);
-        if (cached != ABSENT) {
-            return cached;
-        }
-        int value = world.getCombinedLight(pos, 0);
-        putCombined(key, value);
-        return value;
     }
 
     /**
@@ -107,21 +140,26 @@ public final class CeltiumLightCache {
      * particle contract: the check runs at the position itself.
      */
     public static int combinedLightAtPos(World world, double posX, double posY, double posZ) {
-        if (!ENABLED || world == null || !world.isRemote) {
-            BlockPos pos = new BlockPos(posX, posY, posZ);
-            return world != null && world.isBlockLoaded(pos) ? world.getCombinedLight(pos, 0) : 0;
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("lightCache");
+        try {
+            if (!ENABLED || world == null || !world.isRemote) {
+                BlockPos pos = new BlockPos(posX, posY, posZ);
+                return world != null && world.isBlockLoaded(pos) ? world.getCombinedLight(pos, 0) : 0;
+            }
+            rollTick(world);
+            long x = MathHelper.floor(posX), y = MathHelper.floor(posY), z = MathHelper.floor(posZ);
+            long key = pack(x, y, z);
+            long cached = untag(COMBINED.getAndMoveToLast(key));
+            if (cached != ABSENT) {
+                return (int) cached;
+            }
+            BlockPos pos = new BlockPos(x, y, z);
+            int value = world.isBlockLoaded(pos) ? world.getCombinedLight(pos, 0) : 0;
+            putCombined(key, value);
+            return value;
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("lightCache");
         }
-        rollTick(world);
-        long x = MathHelper.floor(posX), y = MathHelper.floor(posY), z = MathHelper.floor(posZ);
-        long key = pack(x, y, z);
-        int cached = COMBINED.getAndMoveToLast(key);
-        if (cached != ABSENT) {
-            return cached;
-        }
-        BlockPos pos = new BlockPos(x, y, z);
-        int value = world.isBlockLoaded(pos) ? world.getCombinedLight(pos, 0) : 0;
-        putCombined(key, value);
-        return value;
     }
 
     /**
@@ -129,65 +167,72 @@ public final class CeltiumLightCache {
      * entity stands in - and the light value is read at eye height.
      */
     public static int entityCombinedLight(World world, double posX, double posYEye, double posZ) {
-        if (!ENABLED || world == null || !world.isRemote) {
-            BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(
-                    MathHelper.floor(posX), 0, MathHelper.floor(posZ));
-            if (world == null || !world.isBlockLoaded(pos)) {
-                return 0;
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("lightCache");
+        try {
+            if (!ENABLED || world == null || !world.isRemote) {
+                BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(
+                        MathHelper.floor(posX), 0, MathHelper.floor(posZ));
+                if (world == null || !world.isBlockLoaded(pos)) {
+                    return 0;
+                }
+                pos.setY(MathHelper.floor(posYEye));
+                return world.getCombinedLight(pos, 0);
             }
-            pos.setY(MathHelper.floor(posYEye));
-            return world.getCombinedLight(pos, 0);
+            rollTick(world);
+            long x = MathHelper.floor(posX), y = MathHelper.floor(posYEye), z = MathHelper.floor(posZ);
+            long key = pack(x, y, z);
+            long cached = untag(COMBINED.getAndMoveToLast(key));
+            if (cached != ABSENT) {
+                return (int) cached;
+            }
+            BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos((int) x, 0, (int) z);
+            int value;
+            if (!world.isBlockLoaded(pos)) {
+                value = 0;
+            } else {
+                pos.setY((int) y);
+                value = world.getCombinedLight(pos, 0);
+            }
+            putCombined(key, value);
+            return value;
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("lightCache");
         }
-        rollTick(world);
-        long x = MathHelper.floor(posX), y = MathHelper.floor(posYEye), z = MathHelper.floor(posZ);
-        long key = pack(x, y, z);
-        int cached = COMBINED.getAndMoveToLast(key);
-        if (cached != ABSENT) {
-            return cached;
-        }
-        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos((int) x, 0, (int) z);
-        int value;
-        if (!world.isBlockLoaded(pos)) {
-            value = 0;
-        } else {
-            pos.setY((int) y);
-            value = world.getCombinedLight(pos, 0);
-        }
-        putCombined(key, value);
-        return value;
     }
 
     /** {@code Entity#getBrightness}: same column check, {@code getLightBrightness} at eye height. */
     public static float entityBrightness(World world, double posX, double posYEye, double posZ) {
-        if (!ENABLED || world == null || !world.isRemote) {
-            BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(
-                    MathHelper.floor(posX), 0, MathHelper.floor(posZ));
-            if (world == null || !world.isBlockLoaded(pos)) {
-                return 0.0F;
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("lightCache");
+        try {
+            if (!ENABLED || world == null || !world.isRemote) {
+                BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(
+                        MathHelper.floor(posX), 0, MathHelper.floor(posZ));
+                if (world == null || !world.isBlockLoaded(pos)) {
+                    return 0.0F;
+                }
+                pos.setY(MathHelper.floor(posYEye));
+                return world.getLightBrightness(pos);
             }
-            pos.setY(MathHelper.floor(posYEye));
-            return world.getLightBrightness(pos);
+            rollTick(world);
+            long x = MathHelper.floor(posX), y = MathHelper.floor(posYEye), z = MathHelper.floor(posZ);
+            long key = pack(x, y, z);
+            long cached = untag(BRIGHTNESS.getAndMoveToLast(key));
+            if (cached != ABSENT) {
+                return Float.intBitsToFloat((int) cached);
+            }
+            BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos((int) x, 0, (int) z);
+            float value;
+            if (!world.isBlockLoaded(pos)) {
+                value = 0.0F;
+            } else {
+                pos.setY((int) y);
+                value = world.getLightBrightness(pos);
+            }
+            putBrightness(key, value);
+            return value;
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("lightCache");
         }
-        rollTick(world);
-        long x = MathHelper.floor(posX), y = MathHelper.floor(posYEye), z = MathHelper.floor(posZ);
-        long key = pack(x, y, z);
-        float cached = BRIGHTNESS.getAndMoveToLast(key);
-        if (!Float.isNaN(cached)) {
-            return cached;
-        }
-        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos((int) x, 0, (int) z);
-        float value;
-        if (!world.isBlockLoaded(pos)) {
-            value = 0.0F;
-        } else {
-            pos.setY((int) y);
-            value = world.getLightBrightness(pos);
-        }
-        BRIGHTNESS.putAndMoveToLast(key, value);
-        if (BRIGHTNESS.size() > CAP) {
-            BRIGHTNESS.removeFirstFloat();
-        }
-        return value;
     }
 
     private static long lightEpochSeen = Long.MIN_VALUE;
@@ -198,8 +243,13 @@ public final class CeltiumLightCache {
         if (now != tick || epoch != lightEpochSeen) {
             tick = now;
             lightEpochSeen = epoch;
-            COMBINED.clear();
-            BRIGHTNESS.clear();
+            // One increment instead of two map clears: the entries stay and are read as misses by their tag. The
+            // wrap is the only case that needs the old behaviour, and it is 4 billion invalidations away.
+            if (++generation == 0) {
+                generation = 1;
+                COMBINED.clear();
+                BRIGHTNESS.clear();
+            }
         }
     }
 

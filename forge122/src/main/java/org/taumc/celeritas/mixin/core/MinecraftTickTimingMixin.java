@@ -23,10 +23,16 @@ public abstract class MinecraftTickTimingMixin {
     @Inject(method = "runTick", at = @At("HEAD"), require = 0)
     private void celtium$tickStarted(CallbackInfo ci) {
         GameLoopTiming.tickStarted();
+        // The tick split (TickTimings): the tick runs between frames, so the frame brackets cannot see it, and the
+        // paired KPI's largest Celtium-specific difference is inside this span. A tick without a world (the title
+        // screen) is not counted, so the window's tick numbers mean what the fixture's worldTicks mean.
+        org.soutalab.celtium.vulkan.TickTimings.beginTick(
+                net.minecraft.client.Minecraft.getMinecraft().world != null);
     }
 
     @Inject(method = "runTick", at = @At("RETURN"), require = 0)
     private void celtium$tickEnded(CallbackInfo ci) {
+        org.soutalab.celtium.vulkan.TickTimings.endTick();
         GameLoopTiming.tickEnded();
     }
 }

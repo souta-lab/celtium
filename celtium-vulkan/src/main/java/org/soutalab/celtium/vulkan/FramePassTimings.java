@@ -103,7 +103,22 @@ public final class FramePassTimings {
             // the accept path (which contains `guiFlush`) and `guiFlush` is the window recording it triggers. The
             // `gui` bracket is 0.4 ms of the frame, and without these two names "the HUD costs 0.4 ms" cannot be split
             // into the game's own HUD work and ours - measured, ours is 0.1 of it.
-            "guiBatch", "guiFlush"};
+            "guiBatch", "guiFlush",
+            // The client tick's own names. The tick runs between frames, so these are recorded by TickTimings (the
+            // frame brackets return early while no frame is open); they live in this table so one name has one index
+            // and the tick report can print them beside the frame's. `anim` is TextureMap.updateAnimations - the whole
+            // animated-sprite pass, which is where the tick's texture work happens - and `animUpload` is one sprite's
+            // upload inside it (the announcement, the stub's capture and the game's own copy). `animMirror`,
+            // `animFlush` and `animStub` split that upload into the three things Celtium adds to it, and
+            // `animBatchEnd` is the patch batch's submission. `lightCache` is Celtium's per-tick light lookup cache,
+            // the other place Celtium's own code runs inside Minecraft.runTick.
+            "anim", "animUpload", "animMirror", "animFlush", "animStub", "animBatchEnd", "lightCache",
+            // The animation batch's own halves, because `animBatchEnd` is 68 us of the tick's 203 us animation pass
+            // over three atlases and the name alone cannot say whether the recording, the command buffer's begin or
+            // its end owns it. `animBatchFlush` is the deferred regions' recording, `animBatchBegin` the command
+            // buffer's acquisition inside it, `animBatchCmd` the end-and-file call, and `animInvalidate` the
+            // per-sprite invalidation the upload hook issues beside the announcement.
+            "animBatchFlush", "animBatchBegin", "animBatchCmd", "animInvalidate"};
 
     private static final int CAPACITY = 512;
 
@@ -140,7 +155,7 @@ public final class FramePassTimings {
         // the frame being judged paid for the instrument judging it. A run that wants the brackets asks for them.
         // TICK_PERCENTILES asks for the same brackets: the report is a split of them, so a leg that sets only the
         // report switch would otherwise print nothing and read as "the instrument measured nothing".
-        return PASS_SPLIT_ENABLED || BRACKETS_ENABLED || TICK_PERCENTILES;
+        return PASS_SPLIT_ENABLED || BRACKETS_ENABLED || TICK_PERCENTILES || TickTimings.enabled();
     }
 
     /** {@code -Dceltium.vulkan.brackets=true}: keep the pass brackets on without the pass-split report. */
@@ -453,7 +468,15 @@ public final class FramePassTimings {
         boolean timingsOn = enabled();
         int counted = timingsOn || COUNT_CALLS ? indexOf(pass) : -1;
         if (counted >= 0) BEGIN_CALLS[counted]++;
-        if (!timingsOn || frameStart == 0L || counted < 0) return;
+        if (!timingsOn) return;
+        // The client tick runs between frames, so `frameStart` is zero there and the frame path below would drop the
+        // bracket. TickTimings keeps its own row and its own report; the name table is shared, so a bracket means the
+        // same thing in both contexts.
+        if (TickTimings.open()) {
+            TickTimings.begin(counted);
+            return;
+        }
+        if (frameStart == 0L || counted < 0) return;
         int i = counted;
         long now = clockNanos();
         boolean outermost = i < TOP_LEVEL.length ? coverage.begin(i, now)
@@ -471,7 +494,12 @@ public final class FramePassTimings {
         if (GUI_PASS.equals(pass)) {
             guiActive = false;
         }
-        if (!enabled() || frameStart == 0L) return;
+        if (!enabled()) return;
+        if (TickTimings.open()) {
+            TickTimings.end(indexOf(pass));
+            return;
+        }
+        if (frameStart == 0L) return;
         int i = indexOf(pass);
         if (i < 0 || starts[i] == 0L) return;
         long now = clockNanos();
@@ -540,6 +568,27 @@ public final class FramePassTimings {
     /** {@return whether per-bracket call counting is on} ({@code -Dceltium.vulkan.passCounts}). */
     public static boolean countsCallsEnabled() {
         return COUNT_CALLS;
+    }
+
+    /**
+     * {@return the bracket index for a name, or -1}, for {@link TickTimings}' own top-level set.
+     * <p>
+     * Package-private on purpose: the name table is this class's, and a second table would let the same name mean two
+     * indices.
+     */
+    static int indexOfName(String pass) {
+        return indexOf(pass);
+    }
+
+    /** {@return how many bracket names exist}, the width of a per-bracket row. */
+    static int bracketCount() {
+        return TOP_LEVEL.length + INSIDE.length;
+    }
+
+    /** {@return the name of one bracket index}, for a report that stores indices rather than strings. */
+    static String nameOf(int index) {
+        if (index < 0) return "?";
+        return index < TOP_LEVEL.length ? TOP_LEVEL[index] : INSIDE[index - TOP_LEVEL.length];
     }
 
     private static int indexOf(String pass) {

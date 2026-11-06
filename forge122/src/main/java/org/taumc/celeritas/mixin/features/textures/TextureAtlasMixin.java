@@ -60,6 +60,10 @@ public class TextureAtlasMixin implements TextureMapExtension {
      */
     @Inject(method = "updateAnimations", at = @At("HEAD"))
     private void celtium$beginAnimationUploads(CallbackInfo ci) {
+        // The whole animated-sprite pass, opened before the batch so the batch's own submission is inside it. This is
+        // the tick's texture work - `renderEngine.tick()` -> `TextureMap.tick()` -> here - and the paired KPI's client
+        // tick is 131 us slower than the reference's with only 33 us of it named.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("anim");
         try {
             org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                     org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
@@ -84,6 +88,9 @@ public class TextureAtlasMixin implements TextureMapExtension {
             // Same rule as the begin. Swallowed silently, an "Out of stack space" in the end's flush hid for days
             // while the half-recorded batch left the atlas in TRANSFER_DST (fix d8cb18595).
             celtium$reportAnimationFailure("end", failure);
+        } finally {
+            // Closed after the batch's submission, so `anim` is the pass and `animBatchEnd` is the submit inside it.
+            org.soutalab.celtium.vulkan.FramePassTimings.end("anim");
         }
     }
 
