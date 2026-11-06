@@ -4213,6 +4213,7 @@ public final class VulkanGlTexture {
         }
         VkCommandBuffer commandBuffer = this.patchBatch;
         celtium$trace("flushDeferredRegions count=" + count + " depth=" + depth, commandBuffer);
+        boolean recorded = false;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
             barrier.get(0).sType$Default()
@@ -4238,22 +4239,30 @@ public final class VulkanGlTexture {
                 if (regions == 0) {
                     continue;
                 }
-                VkBufferImageCopy.Buffer copies = VkBufferImageCopy.calloc(regions, stack);
-                int k = 0;
-                for (int i = 0; i < count; i++) {
-                    int r = i * 5;
-                    if (rects[r] != level) {
-                        continue;
+                // Heap, not the MemoryStack: the first animation tick after a stitch flushes every animated sprite
+                // at once (1730 regions over five levels on E2E-E, leg lt1-e2ee-amd), and five levels' arrays on the
+                // 64 KiB stack threw "Out of stack space" after the opening barrier - the mixin swallows it, and the
+                // half-recorded batch was submitted by the next tick: levels 0..4 left in TRANSFER_DST (5x 09600).
+                VkBufferImageCopy.Buffer copies = VkBufferImageCopy.calloc(regions);
+                try {
+                    int k = 0;
+                    for (int i = 0; i < count; i++) {
+                        int r = i * 5;
+                        if (rects[r] != level) {
+                            continue;
+                        }
+                        VkBufferImageCopy copy = copies.get(k++);
+                        copy.bufferOffset(this.deferredOffsets[i]).bufferRowLength(0).bufferImageHeight(0);
+                        copy.imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level)
+                                .baseArrayLayer(0).layerCount(1);
+                        copy.imageOffset().set(rects[r + 1], rects[r + 2], 0);
+                        copy.imageExtent().set(rects[r + 3], rects[r + 4], 1);
                     }
-                    VkBufferImageCopy copy = copies.get(k++);
-                    copy.bufferOffset(this.deferredOffsets[i]).bufferRowLength(0).bufferImageHeight(0);
-                    copy.imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level)
-                            .baseArrayLayer(0).layerCount(1);
-                    copy.imageOffset().set(rects[r + 1], rects[r + 2], 0);
-                    copy.imageExtent().set(rects[r + 3], rects[r + 4], 1);
+                    vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                            copies);
+                } finally {
+                    copies.free();
                 }
-                vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                        copies);
             }
             barrier.get(0).srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
                     .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
@@ -4261,6 +4270,14 @@ public final class VulkanGlTexture {
                     .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null,
                     barrier);
+            recorded = true;
+        } finally {
+            if (!recorded) {
+                // A batch whose recording stopped between the two barriers leaves its levels in TRANSFER_DST if it
+                // is ever submitted. Freed instead: the patches it held are lost, the layouts stay sampled.
+                this.patchBatch = null;
+                context.celtium$abandonCommands(commandBuffer);
+            }
         }
     }
 
