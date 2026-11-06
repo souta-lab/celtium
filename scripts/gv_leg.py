@@ -64,6 +64,13 @@ E2E_PACKS = {
         "staged": lambda root: root / ".celtium-work/modpack-sf4/staged/mods",
         "exclude": [],
     },
+    # All the Mods 3 6.1.1 (CurseForge 269708 / 3615258): the gist's removals and additions are applied in the staged
+    # directory (.celtium-work/modpack-atm3/SUBSTITUTIONS.md).
+    "atm3": {
+        "instance": lambda root: Path.home() / ".local/share/PrismLauncher/instances/celtium-atm3-6.1.1",
+        "staged": lambda root: root / ".celtium-work/modpack-atm3/staged/mods",
+        "exclude": [],
+    },
 }
 
 
