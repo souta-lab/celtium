@@ -76,7 +76,7 @@
 
 | **画質（4画面＋QMAGNET）** | **settings画素一致・worldは16階調超 0.97/1.05 %（AMD/Intel）。menu背景は両GPU確認済み** | 両GPU PASSED・clean | 実測 | [証拠](evidence/image-quality-2026-10-28.md)・[menu](evidence/menu-capture-2026-11-02.md)。残り: 遠い壁1面の陰影勾配、loadingは参照なし。**creative tab の item icon と hover slotのhighlight を修正**（[highlight](evidence/creative-highlight-line-pipeline-2026-11-02.md)）。**creative grid は現行JARで参照一致**（[検証](evidence/creative-grid-verified-2026-11-03.md)）|
 | **互換・画質・配布** | **0.7.11 で受入完了。0.6.13 は非対応（明示拒否）** | 実測（AMD RX 6400 / Intel UHD 630） | 0.7.11: 完了 / 0.6.13: 対象外 | v0.0.14-alpha `90a7c505…` は qmagnet world で AMD/Intel PASSED・validation 0・画像gate一致。0.6.13（GLFW/LWJGL 3.4.1）はSDL3不在を検出して版を名指しで拒否 |
-| **巨大pack互換（E2E-E 1.87.3）** | **AMD・Intel: fixture PASSED、09600×5残** | n1 | n1 | 0.7.14差はlocal置換3件。09600は名前付きlegで特定中。[証拠](evidence/e2e-cleanroom07-2026-10-26.md) |
+| **巨大pack互換（E2E-E 1.87.3）** | **AMD・Intel: PASSED・validation 0** | fx1 | fx1 | 0.7.14差はlocal置換3件。atlas 09600は`d8cb18595`で解消。[証拠](evidence/e2e-cleanroom07-2026-10-26.md) |
 
 | **Mod自前のGLSL program** | **拒否・計数まで（`51f57cded`）。実行は未実装** | GTCEu scene PASSED・validation 0 | PASSED・validation 0（r7-gt-intel） | `glUseProgram` に route が無く program が常に0→GTCEu bloom の全画面quadが世界投影で描かれていた。現在は program ごとに拒否（4本、全て `Shaders.renderFullImageInFBO`）。bloom は欠落のまま。native 実行は opt-in（`-Dceltium.vulkan.modPrograms=true`）で PASSED（黒は前処理の target ずれ・修正済み）。halo は bloom 層が bloomFBO に描かれず未。**shaderc 同梱**（ゲーム内でjar単体からcompile・描画、AMD。Windows DLLは静的確認のみ、[証拠](evidence/gregtech-bloom-2026-11-04.md)） |
 | **描画制約** | **native VK-only** | 利用者指示 | — | vanilla/Forgeの描画・状態・資源はnative経路が所有。GL変換は「Modが直接使うGL」専用、GL context/fallbackに依存しない |
