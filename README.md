@@ -137,12 +137,12 @@ Vulkan 1.2 alone is not a compatibility guarantee: features are chosen by device
 ## 📦 Install
 
 1. Prepare a Cleanroom Relauncher instance (Cleanroom 0.7.12-alpha or later, LWJGL 3.4.3, Java 25+).
-2. Put `celtium-forge-mc1.12.2-0.2.0.jar` into `mods/`. Use the plain jar, not `-dev` or `-reobf`.
+2. Put `celtium-forge-mc1.12.2-0.2.1.jar` into `mods/`. Use the plain jar, not `-dev` or `-reobf`.
 3. Remove Celeritas: **install one renderer, not both** (the internal mod ID and resource namespace stay `celeritas`).
 4. Use [Pulsar Lighting Engine](https://modrinth.com/mod/pulsar-lighting-engine), not Alfheim (unsupported).
 5. Start the game, enter a world, and check the GUI, menus, creative tabs and tooltips.
 
-Download: [Celtium 0.2.0](https://github.com/souta-lab/celtium/releases/tag/v0.2.0)
+Download: [Celtium 0.2.1](https://github.com/souta-lab/celtium/releases/tag/v0.2.1)
 (sha256 `bf1193b6ba21dc51cd36a5b013607dd58a9ef8bcbc516ca8f24b0c247e9cccee`). The performance numbers above are from
 `main`, which is newer than 0.2.0.
 
