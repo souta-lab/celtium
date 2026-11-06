@@ -172,5 +172,11 @@ are not Celtium's.
 2. Run the mipmap discriminator (defect 1) and fix the leaf darkening.
 3. Verify the r122 fixes (FBP/ATM3 particle repack, defect 2; raw game-framebuffer bind, defect 9) with
    `r122-atm3`/`r122-sf4` legs on the saved worlds against the existing `run-w-<pack>-ref` pictures.
-4. Reproduce defects 3 and 4 on HEAD with `CELTIUM_RECORD` and fix them.
-5. Only then mark packs verified in docs/modpacks.md and the README.
+4. Re-shoot SevTech from above the ground (`-Dceltium.validation.cameraY=` above the spawn terrain, on the same
+   saved world) - the current pair is HUD-only. Suspect for defects 10/11: Advanced Rocketry (in ATM3 and Nomi, not in
+   SF4/RLCraft/PO3) replaces the overworld sky with `RenderPlanetarySky`, whose constructor compiles stars/sky/sky2
+   with the Tessellator inside `glNewList(GL_COMPILE)` and draws them with `glCallList` every frame. In ATM3 no
+   `CELTIUM_DISPLAY_LIST_ORIGIN` was recorded for the unresolved list (the uploader returns early while
+   `TerrainGpuBackends.current()` is null, so a list compiled before the backend exists is never captured).
+5. Reproduce defects 3 and 4 on HEAD with `CELTIUM_RECORD` and fix them.
+6. Only then mark packs verified in docs/modpacks.md and the README.
