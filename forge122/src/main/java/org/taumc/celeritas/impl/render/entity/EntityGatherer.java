@@ -4,7 +4,6 @@ import net.minecraft.client.multiplayer.WorldClient;
 import net.minecraft.entity.Entity;
 import net.minecraft.util.ClassInheritanceMultiMap;
 import net.minecraft.world.chunk.Chunk;
-import org.taumc.celeritas.mixin.core.terrain.ChunkAccessor;
 import org.taumc.celeritas.mixin.core.terrain.ChunkProviderClientAccessor;
 
 import java.util.ArrayList;
@@ -21,10 +20,16 @@ import java.util.List;
  * {@link EntityMembershipEpoch} counts) and re-filters the gathered membership per pass, which is what keeps the
  * predicate evaluated with Forge's actual pass active.
  * <p>
+ * The walk itself is now proportional to the chunks that <em>have</em> entities: {@link EntityBearingChunks} is the
+ * per-world index the original {@code Chunk} methods keep current, and each chunk hands over its own gathered array
+ * ({@link ChunkEntityCache}) instead of being re-iterated section by section. Before that, the walk visited all 1 281
+ * loaded chunks and iterated all sixteen {@code ClassInheritanceMultiMap}s of every chunk the sticky
+ * {@code hasEntities} flag admitted - 112 us of a 1 920 us tick frame on {@code r8kpi-before} with one entity in the
+ * world, and the largest Celtium-owned item in the settled tick frame's excess.
+ * <p>
  * The membership is held in a plain array with a count rather than an {@code ArrayList} fed through a
- * {@code Consumer}: the walk is the tick-gated half of the {@code entities} bracket (54-56 % of the p99 frame's
- * excess), and per entity the list cost three things the array does not - a {@code Consumer} interface dispatch, an
- * {@code ArrayList.add} with its bounds and growth checks, and a null store for every element on the next
+ * {@code Consumer}: per entity the list cost three things the array does not - a {@code Consumer} interface dispatch,
+ * an {@code ArrayList.add} with its bounds and growth checks, and a null store for every element on the next
  * {@code clear()}. The array is grown by doubling and its stale tail is nulled only by the amount the membership
  * shrank, so an unloaded entity is still collectable and a steady-state tick pays no clearing at all.
  * <p>
@@ -98,11 +103,29 @@ public class EntityGatherer {
         int previous = this.gatheredCount;
         this.gatheredCount = 0;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("entGatherWalk");
+        int chunkCount = 0;
         if (provider instanceof ChunkProviderClientAccessor chunks) {
-            // Chunk collections retain multipart entities that are absent from loadedEntityList.
-            for (Chunk chunk : chunks.celeritas$getLoadedChunks().values()) {
-                if (!((ChunkAccessor) chunk).celeritas$getHasEntities()) continue;
-                for (ClassInheritanceMultiMap<Entity> map : chunk.getEntityLists()) map.forEach(this::addGathered);
+            // Chunk collections retain multipart entities that are absent from loadedEntityList. The walk visits only
+            // the chunks that currently hold entities (EntityBearingChunks), and each of those hands over its own
+            // gathered array (ChunkEntityCache), so a steady tick copies a few hundred references instead of visiting
+            // 1 281 loaded chunks and iterating sixteen section maps of each.
+            boolean audit = EntityGatherCensus.audit();
+            for (Chunk chunk : EntityBearingChunks.of(world)) {
+                chunkCount++;
+                ChunkEntityCache cache = (ChunkEntityCache) chunk;
+                Entity[] entities = cache.celtium$gatheredEntities();
+                int count = cache.celtium$gatheredCount();
+                if (count == 0) {
+                    // The index is weakly consistent: a chunk that emptied during this gather is still in it.
+                    continue;
+                }
+                appendAll(entities, count);
+                if (audit) {
+                    auditChunk(chunk, count);
+                }
+            }
+            if (audit && EntityGatherCensus.auditIndexDue()) {
+                auditIndex(chunks, chunkCount);
             }
         } else {
             // A custom provider's loadedEntityList may change without any Chunk mutation hook.
@@ -110,6 +133,7 @@ public class EntityGatherer {
             world.loadedEntityList.forEach(this::addGathered);
         }
         org.soutalab.celtium.vulkan.FramePassTimings.end("entGatherWalk");
+        EntityGatherCensus.gather(chunkCount, this.gatheredCount);
         // Publish only after the complete gather, so a failed producer is retried on the next ask.
         this.gatheredFromWorld = world;
         this.gatheredAtTick = tick;
@@ -118,6 +142,50 @@ public class EntityGatherer {
         if (this.gatheredCount < previous) {
             Arrays.fill(this.gathered, this.gatheredCount, previous, null);
         }
+    }
+
+    /** Appends one chunk's cached membership in one copy, growing the membership by doubling. */
+    private void appendAll(Entity[] entities, int count) {
+        Entity[] membership = this.gathered;
+        int start = this.gatheredCount;
+        int needed = start + count;
+        if (needed > membership.length) {
+            int capacity = membership.length;
+            while (capacity < needed) {
+                capacity <<= 1;
+            }
+            membership = Arrays.copyOf(membership, capacity);
+            this.gathered = membership;
+        }
+        System.arraycopy(entities, 0, membership, start, count);
+        this.gatheredCount = needed;
+    }
+
+    /** The positive control for the cache's one assumption: the chunk's sections must hold what the cache returned. */
+    private static void auditChunk(Chunk chunk, int cached) {
+        int actual = 0;
+        for (ClassInheritanceMultiMap<Entity> map : chunk.getEntityLists()) {
+            actual += map.size();
+        }
+        EntityGatherCensus.audited(actual, cached);
+    }
+
+    /**
+     * The positive control for the index: a full walk of the loaded chunks must find the same number of chunks with
+     * entities that the index handed over. Run every fiftieth gather, so the walk it costs is amortised to nothing.
+     */
+    private static void auditIndex(ChunkProviderClientAccessor chunks, int indexed) {
+        int actual = 0;
+        for (Chunk chunk : chunks.celeritas$getLoadedChunks().values()) {
+            int count = 0;
+            for (ClassInheritanceMultiMap<Entity> map : chunk.getEntityLists()) {
+                count += map.size();
+            }
+            if (count > 0) {
+                actual++;
+            }
+        }
+        EntityGatherCensus.auditedIndex(indexed, actual);
     }
 
     private void addGathered(Entity entity) {

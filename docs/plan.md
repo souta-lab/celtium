@@ -8,7 +8,7 @@ git 履歴にあり（2026-11-06 に docs から削除）、現在の判定と�
 
 | 領域 | 状態 | 根拠 |
 |---|---|---|
-| **FPS（KPI: Supersymmetry 0.2.0.2・188 mods）** | r130（`c219ed9a`）: **AMD p50 0.869・p95 0.881・p99 1.034、Intel p50 0.898・p95 0.983・p99 0.985**（対比中央値）。p50/p95 は両GPUで勝ち、p99 は AMD 1対・Intel 1対が >1 のため `goalCondition=NOT_MET`。**p99 は tick frame の上位中央**（全frameの99%点＝tick frameの79%点）で、Celtium の tick p50 は同等以上・tick p95 は AMD 1.1ms/Intel 1.6ms の広がり（Celeritas 1.0/1.0）。plain frame は 10–15% 速く、client tick は同一。**`entities` の内訳（r7 の4分割）: 定常では block entity が 74%（548/756us）・gather walk が 20%（146us、100% tick 限定）、per-entity loop と entity draw は tick/plain で同一（~44us）。wave では block entity が tick frame の 46%（2257/4896us）で、offer path はその 5% のみ。wave の p99 は entities ではなく world（lightmap 442・flush 324・setupTerrain 161）と gui（+1229）** | [証拠](evidence/kpi-r130-2026-11-07.md), [p99内訳](evidence/kpi-p99-attribution-2026-11-07.md), [entity 4分割](evidence/kpi-entity-split-2026-11-07.md) |
+| **FPS（KPI: Supersymmetry 0.2.0.2・188 mods）** | r8（`r8-index`）: **AMD p50 0.944・p95 0.929・p99 0.979、Intel p50 0.889・p95 0.944・p99 0.914**（対比中央値）。**Intel は全9対が <1 で `goalCondition=MET`**、AMD は p50 全対合格・p95/p99 は pair 3 のみ >1（1.013 / 1.058）で `NOT_MET`。r130 比で p99 は AMD 1.034→0.979・Intel 0.985→0.914。**p99 は tick frame の上位中央**で、**tick loop の超過 2723us のうち 2300us（84%）は client tick 自身**（両arm同一）、renderer 分は 371us。**r8 で gather walk を 118→10us（-92%）**: 1tick に 1281 chunk を訪れていたのを entity を持つ chunk の index（`EntityBearingChunks`）に置換。**残る tick 限定 renderer 超過は 210us**（block entity 101・terrain 47・lightmap 42・flush 23）。AMD の p99 のばらつき（5.443/5.786/6.150）は wave の尾が warm 窓に入る量で決まる | [証拠](evidence/kpi-r130-2026-11-07.md), [p99内訳](evidence/kpi-p99-attribution-2026-11-07.md), [entity 4分割](evidence/kpi-entity-split-2026-11-07.md), [gather walk と paired set](evidence/kpi-entity-gather-2026-11-07.md) |
 | **E2E-E 1.87.3（≈430 mods）** | **AMD・Intel とも world・validation 0**（fx1）、Xaero raw-FBO identity でも 0（xr1）。0.7.14 用の pack 側置換3件 | [証拠](evidence/e2e-cleanroom07-2026-10-26.md) |
 | **modpack 拡大** | **6 pack が verified**（validation 0・ログ全文レビュー・同pose Celeritas 画像の3条件を AMD/Intel で）: SkyFactory 4 4.2.4（0.68 / 0.03 %・0.86 / 0.07 %）、All the Mods 3 6.1.1（7.39 / 6.61 %）、RLCraft 2.9.3（7.04 / 6.39 %・6.95 / 6.02 %）、SevTech: Ages 3.2.3（1.22 / 0.41 %・1.22 / 0.40 %）、Nomifactory CEu 1.7.7（3.28 / 0.06 %・3.30 / 0.07 %）、Project Ozone 3 3.4.11F（5.46 / 1.04 %・5.17 / 1.19 %）。pack 側の非互換は置換として記録。残る Celtium 側の欠陥は defect 10（ATM3 の上空）・12（GTCEu bloom 拒否）・5（menu 境界の破棄）・6（fixture の presented 計数） | [modpacks.md](<modpacks.md>), [証拠](evidence/modpack-reverify-2026-11-06.md) |
 | **画質（4画面＋QMAGNET）** | settings 画素一致、world 16階調超 0.97/1.05 %（AMD/Intel）、menu・creative grid・tab icon 一致 | [証拠](evidence/image-quality-2026-10-28.md) |
@@ -35,15 +35,14 @@ fixture が `UNCALIBRATED_PRESENTED_IMAGE` を返し KPI が leg を拒否する
 
 ## 次の作業（優先順）
 
-1. **FPS の全対条件**（最優先・未達）: p99 の対ごとの揺れの内側。r7 で `entities` を4分割した
-   （`entGather`/`entGatherWalk`/`entCull`/`entDraw`/`entBlockEntities`/`entSetTile`）。**定常の p99 超過は
-   block entity 82us + gather walk 146us**、per-entity loop と entity draw は tick/plain で同一。**wave の p99 は
-   entities ではなく world（lightmap 442・flush 324・setupTerrain 161）と gui（+1229）**。次の判別:
-   (a) gather walk を「entity を持つ chunk」の集合に比例させる（`EntityMembershipEpoch` を上げるのと同じ hook で
-   維持する）、(b) block entity を tick 単位で filter できるか（`renderCulledBlockEntities` は毎 frame 可視
-   section を歩く）、(c) wave の `lightmap` 442us には owner が無い。**regime（wave/定常）を必ず書く**。
-   `flush` の +208us は group 数×~1.1us で、indirect multi-draw が構造的な答えのまま。chunk-upload budget は
-   KPI scene では発火しない（burst 32 未満、r6 実測）。
+1. **FPS の全対条件**（最優先・未達は AMD の p95/p99 pair 3 のみ）: p99 は tick frame で、その超過の 84% は
+   client tick（両arm同一）。renderer 分は r8 で gather walk を消して 210us まで減った（block entity 101・
+   terrain 47・lightmap 42・flush 23、`r8kpi-index` の p99 rank）。**あと ~150us で AMD の p99 中央値が ~0.95 に
+   なり、13% の pair ばらつきに耐える**。次の判別: (a) block entity 101us の tick 依存の owner（offer path は
+   5% のみ、`renderCulledBlockEntities` は毎 frame 可視 section を歩く）、(b) terrain 47us と lightmap 42us は
+   ゲーム自身の仕事なので Celeritas との比較測定が先、(c) wave の p99 は world（lightmap 442・flush 324・
+   setupTerrain 161）と gui（+1229）。**regime（wave/定常）を必ず書く**。`flush` は group 数×~1.1us で
+   indirect multi-draw が構造的な答えのまま。chunk-upload budget は KPI scene では発火しない（burst 32 未満）。
 2. **残る Celtium 欠陥**: defect 10（ATM3 の上空、dome の draw は発行・presented に届かない）・defect 12（GTCEu bloom、
    Nomi の 21,885 拒否）・defect 5（menu 境界の破棄）・defect 6（fixture の presented 計数）。pack 側の非互換は置換として記録。
 3. **Xaero radar の entity icon**: 描かれるか未確認（entity の居る scene が必要、`-Dceltium.validation.keepEntities=true`）。
