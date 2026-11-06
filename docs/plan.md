@@ -10,7 +10,7 @@ git 履歴にあり（2026-11-06 に docs から削除）、現在の判定と�
 |---|---|---|
 | **FPS（KPI: Supersymmetry 0.2.0.2・188 mods）** | r107: **AMD p50 427 vs 407 FPS・p95 +7%・p99 +0.7%、Intel p50 296 vs 273 FPS・p95 +3%・p99 +0.7%**（対比中央値 AMD 0.976/0.935/0.993、Intel 0.940/0.970/0.993）。各GPU 1対が p99 で >1 のため `goalCondition=NOT_MET` | [証拠](evidence/animated-sprite-uploads-2026-11-05.md) |
 | **E2E-E 1.87.3（≈430 mods）** | **AMD・Intel とも world・validation 0**（fx1）、Xaero raw-FBO identity でも 0（xr1）。0.7.14 用の pack 側置換3件 | [証拠](evidence/e2e-cleanroom07-2026-10-26.md) |
-| **modpack 拡大** | SkyFactory 4 4.2.4: **AMD・Intel world・validation 0**（sf4-amd/intel）。Intel の1フレームで空が平坦な青（toast 表示中）＝調査中。動いた pack は [modpacks.md](<modpacks.md>) へ | — |
+| **modpack 拡大** | SkyFactory 4 4.2.4: **AMD・Intel world・validation 0**（sf6）。toast 表示中に空が平坦な青になる不具合（非ITEM群が照明payloadで fog を失う）を `76ff182ee` で修正。動いた pack は [modpacks.md](<modpacks.md>) へ | — |
 | **画質（4画面＋QMAGNET）** | settings 画素一致、world 16階調超 0.97/1.05 %（AMD/Intel）、menu・creative grid・tab icon 一致 | [証拠](evidence/image-quality-2026-10-28.md) |
 | **利用者報告** | パノラマ・エンドポータル・F2・ガラス・残像・退出後ボタン・Xaero（クラッシュ/黒/位置/透け）・ロード画面・F3+T・入室ラグ・移動時の欠け: 修正済み | 各証拠は git 履歴 |
 | **mod自前GLSL** | GTCEu bloom: opt-in（`-Dceltium.vulkan.modPrograms=true`）で native 実行・validation 0、既定は program ごとに拒否・計数。shaderc 同梱 | [証拠](evidence/gregtech-bloom-2026-11-04.md) |

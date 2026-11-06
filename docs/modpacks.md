@@ -9,7 +9,7 @@ for Cleanroom 0.7 are listed per pack and are never Celtium changes. FPS is only
 | --- | --- | --- | --- | --- | --- | --- |
 | Supersymmetry | 0.2.0.2 | 188 | 0.7.14 (relauncher) | world, validation 0; **FPS above Celeritas at p50/p95 on AMD and Intel**, p99 at parity (KPI pack) | r107 `5ff004c26` | `l27kpi-amd`, `l27kpi-intel` |
 | Enigmatica 2: Expert - Extended | 1.87.3 | ≈430 | 0.7.14 (relauncher) | world, **validation 0 on AMD and Intel**, also with Xaero raw-FBO identity | r116 `d8cb18595`, r117 `0403f9f0b` | `fx1-e2ee-amd`, `fx1-e2ee-intel`, `xr1-e2ee-xaero-amd` |
-| SkyFactory 4 | 4.2.4 | 198 | 0.7.14 (relauncher) | world, **validation 0 on AMD and Intel**; open: one Intel frame (tick 211, while a "Recipe Calculation" toast was up) drew the sky above y≈213 as flat saturated blue, tick 200 and AMD are correct | r118 `f5ffa1b15` | `sf4-amd`, `sf4-intel` |
+| SkyFactory 4 | 4.2.4 | 198 | 0.7.14 (relauncher) | world, **validation 0 on AMD and Intel**, sky correct on every dumped frame (a lit-payload bug that turned the sky into a flat band while a mod toast was up was fixed in `76ff182ee`) | r119 `76ff182ee` | `sf6-amd`, `sf6-intel` |
 | Enigmatica 2: Expert | 1.93a | 270 | 0.7.11 | world on both GPUs (2026-11-05; superseded by E2E-E, instance removed 2026-11-06) | 2026-11-05 build | see evidence |
 
 ## Substitutions per pack
