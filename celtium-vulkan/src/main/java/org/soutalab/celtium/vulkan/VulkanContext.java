@@ -385,6 +385,8 @@ public final class VulkanContext {
     private final java.util.ArrayList<DeferredSubmit> pendingBatchedSubmits = new java.util.ArrayList<DeferredSubmit>();
     private SharedBatch pendingBatch;
     /** Batched deferred submits are the default; {@code -Dceltium.vulkan.batchedSubmits=false} restores per-call submits. */
+    /** Lab switch: {@code -Dceltium.vulkan.pollUploadsAlways=true} polls in flushUploads even with nothing to copy. */
+    static final boolean POLL_UPLOADS_ALWAYS = Boolean.getBoolean("celtium.vulkan.pollUploadsAlways");
     private static final boolean BATCHED_SUBMITS =
             !"false".equals(System.getProperty("celtium.vulkan.batchedSubmits", "true"));
     private int batchedFlushes;
@@ -1665,6 +1667,11 @@ public final class VulkanContext {
                     break;
                 }
                 celtium$awaitPresenter();
+            }
+            if (head.batch != null && head.batch == this.pendingBatch) {
+                // Still in the unflushed batch: its fence is not armed, so it reads NOT_READY - known without the
+                // ioctl a vkGetFenceStatus costs.
+                break;
             }
             int status = vkGetFenceStatus(this.device, head.fence);
             if (status == org.lwjgl.vulkan.VK10.VK_NOT_READY) {
@@ -3416,6 +3423,14 @@ public final class VulkanContext {
      * first: the frame's own submission does, at its start.
      */
     public void flushUploads() {
+        if (this.pendingUploads.isEmpty() && !POLL_UPLOADS_ALWAYS) {
+            // Nothing to copy, so no ring slot is needed here. The poll below used to run anyway, on every frame
+            // command submission: vkGetFenceStatus is a kernel ioctl on RADV, and in the warm window of the
+            // Supersymmetry KPI scene this poll was the client thread's largest fence cost (19 of 1111 samples,
+            // profile wp1-cel, 2026-11-06). Reclaim still runs where it is needed: the frame-slot wait, the ring's
+            // own pressure path and beginCommands' command-buffer pressure all poll.
+            return;
+        }
         // Reclaim confirmed batches first: their ring slots are what the copies below may need, and a poll is the
         // only CPU cost confirmation asks for - the waits the ring-pressure path still pays stay bounded by the
         // oldest outstanding batch rather than by whatever else the queue holds.
