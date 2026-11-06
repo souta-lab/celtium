@@ -21010,6 +21010,11 @@ this.frameBufferOpen = false;
 
     void record(String diagnostic) {
         this.diagnostics.add(diagnostic);
+        // Also printed: diagnostics() rebuilds the list on every call, so a recorded failure (an ordering flush that
+        // dropped its batches, a stalled device, a refused window) was discarded unprinted the next time the report or
+        // F3 asked - RLCraft's 741 ordering-flush failures were visible only as a counter. One tag, so the log
+        // limiter bounds it (-Dceltium.debug.logLinesPerTag lifts the bound for a verification run).
+        System.out.println("[Celtium] CELTIUM_RECORD " + diagnostic);
     }
 
     /**
