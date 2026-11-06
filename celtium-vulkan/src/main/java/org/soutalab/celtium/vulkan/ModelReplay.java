@@ -114,7 +114,8 @@ final class ModelReplay {
                         + " captureVersion=" + VulkanModelQuadCapture.captureVersion()
                         + " cachedVersion=" + b.modelMeshBuiltCaptureVersion
                         + " meshBuildFailure=" + b.modelGeometry.modelMeshFailure()
-                        + " (no GPU mesh available; GL-less cannot replay this list)");
+                        + " (no GPU mesh available; GL-less cannot replay this list)"
+                        + " caller=" + celtium$gameCaller());
             }
             return false;
         }
@@ -796,5 +797,32 @@ final class ModelReplay {
         b.recordedImmediateGroups.add(group);
         b.celtium$recordQueuedClearsInPass(group.postClears, group.target);
         group.postClears = null;
+    }
+
+    /**
+     * {@return the game frames that asked for a model list this renderer has no mesh for}, Celtium's own frames
+     * skipped. Printed once per missing list: ATM3 replays list 19119 every frame with no quad ever captured for it
+     * (`celtium/lists unresolvedTop=[19119:x740]`) while Celeritas draws a first-person arm Celtium does not, and the
+     * list id alone cannot say which renderer compiled it.
+     */
+    private static String celtium$gameCaller() {
+        StackTraceElement[] stack = new Throwable().getStackTrace();
+        StringBuilder out = new StringBuilder(320);
+        int kept = 0;
+        for (StackTraceElement frame : stack) {
+            String owner = frame.getClassName();
+            if (owner.startsWith("org.soutalab.") || owner.startsWith("org.taumc.") || owner.startsWith("org.lwjgl.")) {
+                continue;
+            }
+            if (kept > 0) {
+                out.append(" <- ");
+            }
+            String simple = owner.substring(owner.lastIndexOf('.') + 1);
+            out.append(simple).append('.').append(frame.getMethodName());
+            if (++kept == 10) {
+                break;
+            }
+        }
+        return kept == 0 ? "[none]" : out.toString();
     }
 }

@@ -44,4 +44,21 @@ class VulkanImmediateFormatsLayoutTest {
         assertEquals(0, VulkanImmediateFormats.layout(VulkanImmediateFormats.LAYOUT_PARTICLE_NORMAL_PAD, 28, 6));
         assertEquals(0, VulkanImmediateFormats.layout(VulkanImmediateFormats.LAYOUT_PARTICLE_NORMAL_PAD, 32, 4));
     }
+
+    @Test
+    void particleLayoutsFromModsAreRepackedIntoParticleOrder() {
+        assertEquals(VulkanImmediateFormats.PARTICLE,
+                VulkanImmediateFormats.layout(VulkanImmediateFormats.LAYOUT_PARTICLE_NORMAL, 31, 5));
+        assertEquals(VulkanImmediateFormats.PARTICLE,
+                VulkanImmediateFormats.layout(VulkanImmediateFormats.LAYOUT_PARTICLE_LMAP_COLOR, 28, 4));
+        assertEquals(28, VulkanImmediateFormats.compactedStride(VulkanImmediateFormats.LAYOUT_PARTICLE_NORMAL, 31));
+        org.junit.jupiter.api.Assertions.assertArrayEquals(new int[] {0, 28},
+                VulkanImmediateFormats.particleRepack(VulkanImmediateFormats.LAYOUT_PARTICLE_NORMAL, 31));
+        // pos+uv stay, then the colour (source bytes 24..27), then the light map (source bytes 20..23).
+        org.junit.jupiter.api.Assertions.assertArrayEquals(new int[] {0, 20, 24, 4, 20, 4},
+                VulkanImmediateFormats.particleRepack(VulkanImmediateFormats.LAYOUT_PARTICLE_LMAP_COLOR, 28));
+        org.junit.jupiter.api.Assertions.assertNull(
+                VulkanImmediateFormats.particleRepack(VulkanImmediateFormats.LAYOUT_PARTICLE, 28));
+        assertEquals(0, VulkanImmediateFormats.layout(VulkanImmediateFormats.LAYOUT_PARTICLE_NORMAL, 32, 5));
+    }
 }

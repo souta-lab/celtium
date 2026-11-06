@@ -349,16 +349,26 @@ public abstract class WorldVertexBufferUploaderMixin {
             int submitStride = stride;
             long submitAddress = address;
             ByteBuffer celtium$compacted = null;
-            if (formatId == org.soutalab.celtium.vulkan.VulkanImmediateFormats.PARTICLE && stride == 32) {
-                int compactedStride = org.soutalab.celtium.vulkan.VulkanImmediateFormats.compactedStride(
-                        celtium$signature(format), stride);
-                if (compactedStride < stride) {
+            // The same holds for the 31-byte Fancy Block Particles layout and for a particle layout that carries its
+            // light map before its colour: both are rebuilt into PARTICLE's order and width (particleRepack).
+            // Vanilla's own particle format is PARTICLE already; only a mod's format pays for the element text.
+            int[] celtium$repack = formatId == org.soutalab.celtium.vulkan.VulkanImmediateFormats.PARTICLE
+                    && format != DefaultVertexFormats.PARTICLE_POSITION_TEX_COLOR_LMAP
+                    ? org.soutalab.celtium.vulkan.VulkanImmediateFormats.particleRepack(celtium$signature(format), stride)
+                    : null;
+            if (celtium$repack != null) {
+                int compactedStride = 28;
+                {
                     celtium$compacted = org.lwjgl.system.MemoryUtil.memAlloc(
                             Math.multiplyExact(vertices, compactedStride));
                     long to = org.lwjgl.system.MemoryUtil.memAddress(celtium$compacted);
                     for (int i = 0; i < vertices; i++) {
-                        org.lwjgl.system.MemoryUtil.memCopy(address + (long) i * stride,
-                                to + (long) i * compactedStride, compactedStride);
+                        long from = address + (long) i * stride;
+                        long into = to + (long) i * compactedStride;
+                        for (int s = 0; s < celtium$repack.length; s += 2) {
+                            org.lwjgl.system.MemoryUtil.memCopy(from + celtium$repack[s], into, celtium$repack[s + 1]);
+                            into += celtium$repack[s + 1];
+                        }
                     }
                     submitStride = compactedStride;
                     submitAddress = to;

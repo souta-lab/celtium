@@ -264,6 +264,49 @@ public final class VulkanImmediateFormats {
     public static final String LAYOUT_PARTICLE_NORMAL_PAD =
             "3,Position,Float 2,UV,Float 4,Vertex Color,Unsigned Byte 2,UV,Short 3,Normal,Byte 1,Padding,Byte";
 
+    /**
+     * Fancy Block Particles' digging-particle layout ({@code FBPRenderUtil.renderCubeShaded_S}): {@link #LAYOUT_PARTICLE}
+     * followed by a three-byte normal with <b>no</b> padding, 31 bytes. Measured in SkyFactory 4 as
+     * {@code CELTIUM_REFUSALS_BY_FORMAT {0 format 0 (unmapped)...=7260}} with {@code stride 31}: every digging particle
+     * was refused. Its first 28 bytes are PARTICLE and nothing reads the normal, so it is repacked like the padded form.
+     */
+    public static final String LAYOUT_PARTICLE_NORMAL =
+            "3,Position,Float 2,UV,Float 4,Vertex Color,Unsigned Byte 2,UV,Short 3,Normal,Byte";
+    /**
+     * A mod's particle layout with the light map <b>before</b> the colour: the same four elements as
+     * {@link #LAYOUT_PARTICLE} at the same 28 bytes in another order. Measured in All the Mods 3
+     * ({@code CELTIUM_UNMAPPED_LAYOUT width=28 elements=[3,Position,Float 2,UV,Float 2,UV,Short 4,Vertex Color,Unsigned
+     * Byte]}). Repacked by swapping the two four-byte elements back into PARTICLE's order.
+     */
+    public static final String LAYOUT_PARTICLE_LMAP_COLOR =
+            "3,Position,Float 2,UV,Float 2,UV,Short 4,Vertex Color,Unsigned Byte";
+
+    /** PARTICLE as it arrives: the identity, never repacked. */
+    private static final int[] SEGMENTS_PARTICLE_PREFIX = {0, 28};
+    private static final int[] SEGMENTS_PARTICLE_LMAP_COLOR = {0, 20, 24, 4, 20, 4};
+
+    /**
+     * {@return how to rebuild a PARTICLE vertex from one that arrives in another particle layout}, as
+     * {@code (sourceOffset, length)} pairs whose lengths add up to 28, or {@code null} when the layout arrives as
+     * PARTICLE already (or is not a particle layout at all).
+     * <p>
+     * The table's contract (see {@link #compactedStride}) is that the batch handed to the backend has the pipeline's
+     * stride and element order; these layouts keep it by being copied into that shape by the uploader.
+     */
+    public static int[] particleRepack(String elements, int size) {
+        if (elements == null) {
+            return null;
+        }
+        if ((elements.equals(LAYOUT_PARTICLE_NORMAL_PAD) && size == 32)
+                || (elements.equals(LAYOUT_PARTICLE_NORMAL) && size == 31)) {
+            return SEGMENTS_PARTICLE_PREFIX;
+        }
+        if (elements.equals(LAYOUT_PARTICLE_LMAP_COLOR) && size == 28) {
+            return SEGMENTS_PARTICLE_LMAP_COLOR;
+        }
+        return null;
+    }
+
     public static int layout(String elements, int size, int count) {
         if (elements == null) {
             return 0;
@@ -291,6 +334,8 @@ public final class VulkanImmediateFormats {
         // The first 28 bytes of this one are PARTICLE and the shaders read nothing after them; the uploader compacts the
         // copy it hands to the backend so that the stride and the pipeline agree again.
         if (elements.equals(LAYOUT_PARTICLE_NORMAL_PAD) && size == 32 && count == 6) return PARTICLE;
+        if (elements.equals(LAYOUT_PARTICLE_NORMAL) && size == 31 && count == 5) return PARTICLE;
+        if (elements.equals(LAYOUT_PARTICLE_LMAP_COLOR) && size == 28 && count == 4) return PARTICLE;
         return 0;
     }
 
@@ -304,7 +349,7 @@ public final class VulkanImmediateFormats {
      * the backend a second stride for one id.
      */
     public static int compactedStride(String elements, int size) {
-        if (elements != null && elements.equals(LAYOUT_PARTICLE_NORMAL_PAD) && size == 32) {
+        if (particleRepack(elements, size) != null) {
             return 28;
         }
         return size;
