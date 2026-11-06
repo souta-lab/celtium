@@ -33,7 +33,7 @@ standard ("What verified means") is defined there.
 | SkyFactory 4 4.2.4 | AMD 3.60 / 5.5 %, Intel 3.68 / 5.5 % — **AMD 0.67 / 0.02 % after defect 1's fix** (`r123-sf4-final`, same saved world and reference) | defect 2 (FBP particles, 7,260 refusals), defect 1 (leaves), 57 batches dropped at a menu boundary |
 | All the Mods 3 6.1.1 | AMD 12.82 / 9.9 %, Intel 12.85 / 9.9 % (r122) — **AMD 7.39 / 6.61 % after the hand, leaf and display-list fixes** (`r125-atm3-amd` vs `r125-atm3-ref`, same saved world) | defect 9 (no first-person hand, fixed), defect 10 (sky gradient, geometry now drawn but the background band is still flat), defect 11 (display list with 0 captured quads, fixed in `r125`/`r126`), 385/295 batches dropped at a menu boundary (defect 5), a depth copy not read back |
 | SevTech: Ages 3.2.3 | AMD 0.17 / 0.3 %, Intel 0.25 / 0.4 % — **not a valid scene**: the camera is inside the ground on both renderers (only the HUD and the minimap are visible) | `CELTIUM_MODEL_MISSING list=378` replayed every frame with nothing captured (`unresolvedTop=[378:x1015]`, same shape as defect 11); its logs went to `validation-console.log`, not `latest.log` |
-| Nomifactory CEu 1.7.7 | AMD 5.25 / 4.0 %, Intel 5.26 / 4.0 % | defect 10 (flat upper sky, as ATM3); defect 12 (GregTech CEu bloom shaders refused, ~10,000 POSITION_TEX batches); 11 batches dropped at a boundary. Clouds also differ (they move between runs) |
+| Nomifactory CEu 1.7.7 | AMD 5.25 / 4.0 %, Intel 5.26 / 4.0 % (r120) — **AMD 3.28 / 0.06 %, Intel 3.30 / 0.07 % after the display-list fix** (`w-nomi-amd`/`w-nomi-intel` vs `w-nomi-ref`, r126) | defect 10 (flat upper sky) is **gone on this pack**: the display-list recording fix restored the sky geometry and the gradient now matches Celeritas; defect 12 (GregTech CEu bloom shaders refused, 21,885 POSITION_TEX batches) remains; 11 batches dropped at a boundary. Clouds also differ (they move between runs) |
 | Project Ozone 3 3.4.11F | AMD 5.16 / 1.1 %, Intel 5.79 / 1.2 % | **no Celtium-origin report at all**; the picture matches (sky gradient, hand, terrain); the residual is cloud motion and HUD text. Pack errors equal to the Celeritas arm (678 vs 679) |
 
 ### Pictures (for eyes)
@@ -153,7 +153,7 @@ are not Celtium's.
    HEAD `1565129a2`) draws the arm at the same pose as Celeritas —
    [atm3-amd-r122.jpg](modpack-reverify/atm3-amd-r122.jpg). Which mod binds it is still unnamed, and the log half
    (`1000000008f` gone from `unflushedTargetDropTargets`) was not re-read for the same reason as defect 2.
-10. **Upper sky is flat fog colour (ATM3 and Nomifactory, both GPUs).** Sampled at x=300: Celtium is
+10. **Upper sky is flat fog colour (ATM3; Nomifactory's half is fixed).** Sampled at x=300: Celtium is
     (179,207,255) from the top row down, Celeritas (152,188,255) at the top grading to (179,207,255) - the sky dome is
     missing or fully fogged, and only the fog colour shows. SF4, RLCraft and PO3 match (useVbo, render distance and
     fancy graphics are identical across all packs, so it is a mod). **Cause of the missing geometry found in round 2
@@ -163,6 +163,15 @@ are not Celtium's.
     `(0,0,-2000)`) while Celeritas shows the plane's own gradient. Next discriminator: compare the clear colour and the
     fog colour between the two renderers, and the modelview's y translation at the sky draw (the census prints
     `mvT=(0,0,-2000)`, i.e. no y translation, which puts the plane 16 above the eye instead of 84 below it).**
+    **Round 3: Nomifactory's sky is fixed by the same display-list fix** (`w-nomi-amd`/`w-nomi-intel` vs `w-nomi-ref`:
+    3.28 / 0.06 % and 3.30 / 0.07 %, the gradient matches), so the remaining flat sky is ATM3's Astral Sorcery skybox
+    only. Round 3 measurements on ATM3: the dome's draw is issued (`CELTIUM_SKY_DRAW frame=191 clears=387
+    colourClears=94 windowsThisFrame=0 inPass=true target=true batches=1 vertices=676`), the sky is the clear colour
+    (179,207,255) in the presented image, `-Dceltium.vulkan.skyNoFog=true` leaves it (174,201,248) and
+    `-Dceltium.vulkan.skyPoison=true` leaves it (178,206,254) - neither the sky colour (121,166,255) nor magenta - so
+    the dome's pixels are not reaching the presented image on this pack, while the frame image at frame 190 holds a
+    gradient (141,163,201). The next discriminator is the frame image at a *late* frame (the probe is limited to three
+    lines from 190) and the group's modelview at the draw (the offer census prints the GUI modelview `(0,0,-2000)`).
 11. **(Fixed in round 2, `r125`/`r126`) A display list with no captured quads (ATM3, SevTech).** `CELTIUM_MODEL_MISSING
     list=19119 texture=42 capturedQuads=0 ... (no GPU mesh available; GL-less cannot replay this list)` and
     `CELTIUM_MODEL_BUILD missingMeshes=2..5`: a mod's display list was replayed with nothing captured, so it drew

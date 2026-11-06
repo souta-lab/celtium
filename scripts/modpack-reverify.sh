@@ -54,7 +54,15 @@ for pack in "$@"; do
   gen=.gv-verify/run-w-$pack-gen/saves/celtium-validation
   if [ ! -d "$gen" ]; then echo "NO WORLD $pack" >> "$out"; continue; fi
   mkdir -p "$inst/saves" && cp -r "$gen" "$inst/saves/celtium-gen"
-  flags="$base -Dceltium.validation.saveSlot=celtium-gen"
+  # A pack whose world has terrain above the fixture's default (0.5, 100, 0.5) pose needs its own pose. SevTech's
+  # spawn column is a mountain: the camera at y=100 is inside it and the picture is HUD-only on both renderers
+  # (docs/evidence/modpack-reverify-2026-11-06.md, results table). Its spawn (-212, 64, 256) is open ground, so the
+  # pack's legs stand there, 20 blocks above the spawn surface.
+  case $pack in
+    sevtech) pose="-Dceltium.validation.cameraX=-212.5 -Dceltium.validation.cameraY=84 -Dceltium.validation.cameraZ=256.5" ;;
+    *) pose="" ;;
+  esac
+  flags="$base $pose -Dceltium.validation.saveSlot=celtium-gen"
   # shellcheck disable=SC2086
   runleg "$pack" "w-$pack-amd" amd $flags
   # shellcheck disable=SC2086
