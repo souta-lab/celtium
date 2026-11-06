@@ -80,18 +80,25 @@ are not Celtium's.
    client arrays [GL_NORMAL_ARRAY, GL_COLOR_ARRAY, GL_TEXTURE_COORD_ARRAY]`. Fix: add the format to the immediate
    format table (`VulkanImmediateFormats`, `celtium.vulkan.immediateFormats`) with a pipeline that consumes it (the
    lit ITEM family already reads position/uv/colour/normal; the light-map short pair is the new part).
+   **Fixed in `f0efe0055`** (unverified until the r122 SF4 leg): its first 28 bytes are PARTICLE, so it maps to
+   PARTICLE and the uploader repacks each vertex to 28 bytes, like the existing 32-byte padded particle layout. The
+   same commit maps an ATM3 particle layout with the light map before the colour
+   (`CELTIUM_UNMAPPED_LAYOUT width=28 elements=[3,Position,Float 2,UV,Float 2,UV,Short 4,Vertex Color,Unsigned Byte]`)
+   by swapping the two elements back. Verify: `CELTIUM_COMPACTED_BATCH` appears and the format-0 refusals are gone.
 3. **Ordering flush fails with "nested immediate command recording" (RLCraft, intermittent).** One run (`rlbm-amd`,
    r120, Bloodmoon + patched Fugue) counted `orderingFlushFailures=741`, `orderingFlushDroppedBatches=18828`: the
    flush at `VulkanTerrainGpuBackend` (`throw new IllegalStateException("nested immediate command recording")` when
    `commandState.recording() && !frameBufferOpen`) is reached while another recording is open, and the catch drops
    every accepted batch. Not reproduced in the next two RLCraft runs. The failure text and frame were invisible until
    `afc026304`/`CELTIUM_RECORD` (record() used to be cleared unprinted) — rerun RLCraft a few times on HEAD and grep
-   `CELTIUM_RECORD ordering flush failed` for the frame and stack.
+   `CELTIUM_RECORD ordering flush failed` for the frame and stack. The fixed-world legs (RLCraft, SF4, ATM3; AMD and
+   Intel) all reported `orderingFlushFailures=0`.
 4. **"a destroyed mesh cannot be drawn" in a window flush (RLCraft, intermittent, Intel and AMD).**
    `lastWindowFlushFailure=IllegalStateException: a destroyed mesh cannot be drawn at VulkanDynamicMesh.bindAndDraw:299
    <- VulkanImmediateItemPipeline.draw:388`, `windowFlushFailureFrame=2` (the first world frame). A queued ITEM group
    still references a mesh freed before the flush — look at what frees `VulkanDynamicMesh` around world entry (model
-   geometry rebuild, retained geometry, arena). Get the full stack from `CELTIUM_RECORD` on HEAD.
+   geometry rebuild, retained geometry, arena). Get the full stack from `CELTIUM_RECORD` on HEAD. Not seen in the
+   fixed-world legs (`lastWindowFlushFailure=none` on every one).
 5. **Accepted batches dropped at a menu frame boundary (RLCraft 1,126; SF4 57).** `CELTIUM_RECORD menu frame
    boundary dropped N accepted immediate batches whose target never got a pass (targets=[0])` — content accepted for
    the main target during the menu-to-world transition is never drawn (`celtium$dropUnflushedTargetGroups`). One frame
@@ -106,8 +113,16 @@ are not Celtium's.
    backend. The world picture itself is correct.
 9. **First-person hand missing (ATM3, both GPUs).** Celeritas draws the player's arm at the same pose; Celtium's frame
    has none (`docs/evidence/modpack-reverify/atm3-*.jpg`). SF4 and RLCraft draw the hand, so a mod in ATM3 changes how
-   the hand is rendered (check which mod hooks `ItemRenderer.renderItemInFirstPerson` / `renderArmFirstPerson`, and
-   whether the hand pass is refused: grep `CELTIUM_` refusal lines around `renderHand`).
+   the hand is rendered. **Cause found (static, from the AMD leg's log):** the hand batches are model replays
+   (`CELTIUM_MODEL_ENQ texture=19086 target=0x1000000008f ... projKind=perspective mvT=0.276,-1.375,-0.863`) whose
+   target is the synthesized raw identity of framebuffer 143 - which is the game framebuffer itself (created inside
+   `Framebuffer`, `vanillaDepth=1`, colour texture 144 = the main target's `colourTexture=144`), bound by a mod with a
+   raw `glBindFramebuffer`. No pass owns that identity (`CELTIUM_TARGET_IMAGE identity=0x1000000008f routedImage=0x0`),
+   so every batch was dropped at the frame boundary: `unflushedTargetDropTargets=[1000000008f:frames=1480:
+   batches=17748]` - this, not the menu boundary, is ATM3's 18133 `unflushedTargetGroupsDropped`. **Fix
+   `1565129a2`** (unverified until the r122 leg): a raw framebuffer whose colour attachment is the game framebuffer's
+   current colour texture is bound as the game framebuffer (`CELTIUM_RAW_BIND_GAME_FRAMEBUFFER`). Verify: the hand
+   appears, `1000000008f` is gone from `unflushedTargetDropTargets`. Which mod binds it is still unnamed.
 10. **Upper-sky gradient differs (ATM3, both GPUs).** The difference heatmap shows a band across the top of the sky:
     Celtium's upper sky is lighter than Celeritas'. Compare the sky dome / void plane colour and fog at the zenith;
     may share a cause with defect 7's family (sky groups and their fog block).
@@ -137,6 +152,7 @@ are not Celtium's.
 1. Finish the batch for ATM3, SevTech, Nomifactory and PO3 (and add Supersymmetry/E2E-E with the same script), fill
    the results table, and add each pack's Celtium findings here.
 2. Run the mipmap discriminator (defect 1) and fix the leaf darkening.
-3. Add the FBP vertex format (defect 2).
+3. Verify the r122 fixes (FBP/ATM3 particle repack, defect 2; raw game-framebuffer bind, defect 9) with
+   `r122-atm3`/`r122-sf4` legs on the saved worlds against the existing `run-w-<pack>-ref` pictures.
 4. Reproduce defects 3 and 4 on HEAD with `CELTIUM_RECORD` and fix them.
 5. Only then mark packs verified in docs/modpacks.md and the README.
