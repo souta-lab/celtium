@@ -21014,8 +21014,15 @@ this.frameBufferOpen = false;
         // dropped its batches, a stalled device, a refused window) was discarded unprinted the next time the report or
         // F3 asked - RLCraft's 741 ordering-flush failures were visible only as a counter. One tag, so the log
         // limiter bounds it (-Dceltium.debug.logLinesPerTag lifts the bound for a verification run).
-        System.out.println("[Celtium] CELTIUM_RECORD " + diagnostic);
+        // Each distinct message once: some records are informational and repeat every frame (the light map's name),
+        // and thousands of copies would bury the failures this line exists for.
+        if (this.printedRecords.size() < 4096 && this.printedRecords.add(diagnostic)) {
+            System.out.println("[Celtium] CELTIUM_RECORD " + diagnostic);
+        }
     }
+
+    /** The distinct {@link #record} messages already printed; bounded so a message carrying a counter cannot grow it. */
+    private final java.util.Set<String> printedRecords = new java.util.HashSet<String>();
 
     /**
      * Names a render pass for a message, tolerating the absence of one.
