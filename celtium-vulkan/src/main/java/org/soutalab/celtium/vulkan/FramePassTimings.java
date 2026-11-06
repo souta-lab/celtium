@@ -248,6 +248,15 @@ public final class FramePassTimings {
                 .append(" plainFrames=").append(plainCount).append(" p99RankInTick=").append(p99Rank)
                 .append(" (us; tick p50/p99eq/p95 and plain p79, brackets whose tick p99eq differs from plain p79"
                         + " by >= 10)");
+        // The same block's *absolute* costs, which the line above cannot show: its filter keeps only the brackets
+        // whose p99 rank differs from the plain p79, so a bracket that costs the same on both frame kinds - the
+        // offer path, the window machinery, the terrain prepare - is invisible however large it is. That is the
+        // wrong shape for "what does this renderer cost every frame", which is the question a p99 ratio of 0.98
+        // asks. This line prints every bracket whose tick p50 is at least 10 us, as tick p50 / plain p50, so the
+        // constant costs are read directly instead of being inferred from a difference.
+        StringBuilder constants = new StringBuilder("[Celtium] CELTIUM_FRAME_TICK_CONSTANTS tickFrames=")
+                .append(tickCount).append(" plainFrames=").append(plainCount)
+                .append(" (us; tick p50/plain p50, brackets whose tick p50 is >= 10)");
         for (int k = 0; k < PERCENTILE_COLUMNS; k++) {
             int t = 0;
             int p = 0;
@@ -261,14 +270,19 @@ public final class FramePassTimings {
             long tickP99 = tickValues[p99Rank] / 1000L;
             long tickP95 = tickValues[Math.min(tickCount - 1, tickCount * 95 / 100)] / 1000L;
             long plainP79 = plainValues[plainCount * 79 / 100] / 1000L;
+            long plainP50 = plainValues[plainCount / 2] / 1000L;
+            String name = k == 0 ? "frame"
+                    : k <= TOP_LEVEL.length ? TOP_LEVEL[k - 1] : INSIDE[k - 1 - TOP_LEVEL.length];
             if (k == 0 || Math.abs(tickP99 - plainP79) >= 10L) {
-                String name = k == 0 ? "frame"
-                        : k <= TOP_LEVEL.length ? TOP_LEVEL[k - 1] : INSIDE[k - 1 - TOP_LEVEL.length];
                 line.append(' ').append(name).append('=').append(tickP50).append('/').append(tickP99).append('/')
                         .append(tickP95).append('/').append(plainP79);
             }
+            if (k == 0 || tickP50 >= 10L) {
+                constants.append(' ').append(name).append('=').append(tickP50).append('/').append(plainP50);
+            }
         }
         System.out.println(line);
+        System.out.println(constants);
     }
 
     private static void fileTickSplit() {

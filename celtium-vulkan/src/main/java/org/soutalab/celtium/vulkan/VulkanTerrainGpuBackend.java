@@ -1003,19 +1003,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // was recorded as immediate work and is still queued. GL's order is call order, so those draws belong to the
         // frame BEFORE the terrain: leaving them queued submits them after this pass, and the void plane then paints
         // over the terrain it is supposed to be hidden behind.
-        org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainPreflush");
-        try {
-            // What this flush drains is the cost the bracket above measured: the sky, the void plane and the bodies are
-            // recorded before the world and go out here. Counting the groups it hands over says whether the fix is fewer
-            // groups (merge) or a different submit point (record the sky in its own pass).
-            // Read from the queue itself, not DrawCounters.immediateGroups(): that counter only runs when
-            // -Dceltium.vulkan.passCounts is on, so every ordinary run reported groupsPerFrame=0 for a flush that was
-            // draining dozens of groups - the same "zero means the instrument is off" trap the group counter fell into.
-            this.preflushGroupsDrained += this.immediateGroups.size() + (this.currentImmediateMesh == null ? 0 : 1);
-            flushPendingBeforeGlDraw();
-            this.preflushFrames++;
-        } finally {
-            org.soutalab.celtium.vulkan.FramePassTimings.end("terrainPreflush");
+        //
+        // With PREFLUSH_IN_PASS the flush happens inside this pass's own render pass instead of here, where no pass is
+        // open and it therefore costs a window of its own: a render pass begin and end, the acquire and release
+        // barriers, the target routing and the sampling-side transitions, all for the handful of groups the sky is.
+        // Measured on the settled warm window (leg r9const-amd, CELTIUM_FRAME_TICK_CONSTANTS): terrainPreflush is
+        // 102 us of the terrain pass's 185, and the group loop inside it is ~52 of that - the rest is the window.
+        // The in-pass site is the same render pass handle (both are buildFrameRenderPass) and the same order (before
+        // the terrain draws), so the picture is unchanged and one window a frame disappears.
+        if (!PREFLUSH_IN_PASS) {
+            celtium$preflushBeforeTerrain();
         }
         // The pass' work before the first bracket: the pre-flush and the two gates below. Measured separately because
         // the pass reads 0.8 ms against 0.2 ms of brackets and this is the first of the spans that is not covered.
@@ -1024,6 +1021,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
             // barrier recorded into a buffer that was never begun, and a framebuffer destroyed while a stale command buffer
             // still referenced it, both from paths that assumed the frame had been recorded.
+            celtium$preflushIfDeferred();
             return;
         }
         if (this.gpuStalled) {
@@ -1032,10 +1030,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // recording, so the renderer stops drawing and the process keeps running.
             this.terrainStatistics.notePassSkips();
             this.terrainStatistics.setLastSkipReason(pass.name() + ": the GPU stalled");
+            celtium$preflushIfDeferred();
             return;
         }
         if (!renderLists.hasPass(pass)) {
-            // No geometry for this pass; nothing is opened, nothing has to be closed.
+            // No geometry for this pass; nothing is opened, nothing has to be closed. The pre-terrain groups still have
+            // to reach the image before whatever draws next, so a deferred flush runs here - it is the same window the
+            // head of this method used to open, and this is the one early return that is a normal frame.
+            celtium$preflushIfDeferred();
             org.soutalab.celtium.vulkan.FramePassTimings.end("terrainSetup");
             return;
         }
@@ -1048,6 +1050,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (!terrainTargetReady) {
             this.terrainStatistics.notePassSkips();
             this.terrainStatistics.setLastSkipReason(pass.name() + ": no frame target");
+            celtium$preflushIfDeferred();
             return;
         }
         org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainEnsure");
@@ -1058,6 +1061,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // Every early return out of this section closes its bracket: a skipped pass used to leave terrainEnsure
             // open, so the next pass's begin nested inside it and the reported time held the skipped pass's remainder.
             org.soutalab.celtium.vulkan.FramePassTimings.end("terrainEnsure");
+            celtium$preflushIfDeferred();
             return;
         }
         ChunkPrimitiveType primitiveType = this.configuration.getPrimitiveTypeForPass(pass);
@@ -1088,6 +1092,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             record("pass skipped: uniform preparation failed: " + error);
             this.terrainStatistics.notePassSkips();
             org.soutalab.celtium.vulkan.FramePassTimings.end("terrainEnsure");
+            celtium$preflushIfDeferred();
             return;
         }
 
@@ -1115,6 +1120,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.terrainStatistics.setLastSkipReason(pass.name() + ": atlas or lightmap not mirrored");
             record("pass " + nameOf(pass) + " skipped: the block atlas or the lightmap is not mirrored yet");
             org.soutalab.celtium.vulkan.FramePassTimings.end("terrainEnsure");
+            celtium$preflushIfDeferred();
             return;
         }
 
@@ -1157,6 +1163,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // The handoff bracket was opened before beginFrame(); a failed begin must not leave it open, or the next
             // pass's handoff nests inside it and the reported time holds this failure's remainder.
             org.soutalab.celtium.vulkan.FramePassTimings.end("terrainHandoff");
+            celtium$preflushIfDeferred();
             return;
         }
 
@@ -10716,6 +10723,54 @@ this.frameBufferOpen = false;
         }
     }
 
+    /**
+     * {@code -Dceltium.vulkan.preflushInPass=false} restores the pre-terrain flush as a window of its own.
+     * <p>
+     * The flush itself is not optional: the sky, the void plane and the sun are queued immediate work that has to
+     * reach the image before the terrain, or the void plane paints over the terrain it is hidden behind. What the
+     * switch chooses is <em>where</em> it is recorded. Off, it runs at the head of the terrain pass, where no render
+     * pass is open, so {@link #flushPendingBeforeGlDraw()} opens a window: its own render pass begin and end, the
+     * acquire and release barriers, the target routing and the sampling-side transitions. On, the same call is made
+     * after the terrain pass's own {@code vkCmdBeginRenderPass}, so it takes the in-pass path
+     * ({@code drawPendingImmediate}) and the window disappears. The two sites record the same groups in the same
+     * order into compatible render passes, so the picture is the A/B's positive control.
+     */
+    private static final boolean PREFLUSH_IN_PASS = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.preflushInPass", "true"));
+
+    /**
+     * The pre-terrain flush, with the bracket and the counters that say what it drained.
+     * <p>
+     * Read from the queue itself, not {@code DrawCounters.immediateGroups()}: that counter only runs when
+     * {@code -Dceltium.vulkan.passCounts} is on, so every ordinary run reported {@code groupsPerFrame=0} for a flush
+     * that was draining dozens of groups - the same "zero means the instrument is off" trap the group counter fell
+     * into.
+     */
+    private void celtium$preflushBeforeTerrain() {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainPreflush");
+        try {
+            this.preflushGroupsDrained += this.immediateGroups.size() + (this.currentImmediateMesh == null ? 0 : 1);
+            flushPendingBeforeGlDraw();
+            this.preflushFrames++;
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("terrainPreflush");
+        }
+    }
+
+    /**
+     * The deferred pre-terrain flush, for the pass' early returns.
+     * <p>
+     * With {@link #PREFLUSH_IN_PASS} the flush happens inside the pass's render pass, so a pass that returns before
+     * that point would leave the sky, the void plane and the sun queued behind whatever draws next. Every early
+     * return calls this, which is the same window the head of {@code celtium$renderPass} used to open. With the
+     * switch off the head already flushed, so this is a no-op.
+     */
+    private void celtium$preflushIfDeferred() {
+        if (PREFLUSH_IN_PASS) {
+            celtium$preflushBeforeTerrain();
+        }
+    }
+
     void flushPendingBeforeGlDraw() {
         this.flushBeforeGlDrawCalls++;
         if (this.immediateWindowBusy) return;
@@ -14733,6 +14788,13 @@ this.frameBufferOpen = false;
         this.commandState.beginPass(this.activeImmediateTarget);
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(true);
 
+        // The pre-terrain groups, recorded into this pass rather than a window of their own (see the head of
+        // celtium$renderPass). They go before the viewport and the terrain pipeline: each group carries its own
+        // rectangle, and the terrain draws need the pass's full-target one, so setViewportAndScissor has to run
+        // after the last group has set its own.
+        if (PREFLUSH_IN_PASS) {
+            celtium$preflushBeforeTerrain();
+        }
         setViewportAndScissor(stack);
         pipeline.bindPipeline(this.commandBuffer);
         } finally {
