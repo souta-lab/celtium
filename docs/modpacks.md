@@ -9,6 +9,7 @@ for Cleanroom 0.7 are listed per pack and are never Celtium changes. FPS is only
 | --- | --- | --- | --- | --- | --- | --- |
 | Supersymmetry | 0.2.0.2 | 188 | 0.7.14 (relauncher) | world, validation 0; **FPS above Celeritas at p50/p95 on AMD and Intel**, p99 at parity (KPI pack) | r107 `5ff004c26` | `l27kpi-amd`, `l27kpi-intel` |
 | Enigmatica 2: Expert - Extended | 1.87.3 | ≈430 | 0.7.14 (relauncher) | world, **validation 0 on AMD and Intel**, also with Xaero raw-FBO identity | r116 `d8cb18595`, r117 `0403f9f0b` | `fx1-e2ee-amd`, `fx1-e2ee-intel`, `xr1-e2ee-xaero-amd` |
+| SkyFactory 4 | 4.2.4 | 198 | 0.7.14 (relauncher) | world, **validation 0 on AMD and Intel**; open: one Intel frame (tick 211, while a "Recipe Calculation" toast was up) drew the sky above y≈213 as flat saturated blue, tick 200 and AMD are correct | r118 `f5ffa1b15` | `sf4-amd`, `sf4-intel` |
 | Enigmatica 2: Expert | 1.93a | 270 | 0.7.11 | world on both GPUs (2026-11-05; superseded by E2E-E, instance removed 2026-11-06) | 2026-11-05 build | see evidence |
 
 ## Substitutions per pack
@@ -17,6 +18,13 @@ for Cleanroom 0.7 are listed per pack and are never Celtium changes. FPS is only
   its `ICBMEvents` hook (no ICBM in the pack); excluded at leg time: SmoothFont, gnetum, CustomLoadingScreen
   (competing renderers), NothiriumLittleTilesPatch, the pack's older relauncher and FermiumBooter (bundled by
   Cleanroom). Detail: [e2e-cleanroom07-2026-10-26.md](<evidence/e2e-cleanroom07-2026-10-26.md>).
+
+- **SkyFactory 4 4.2.4**: Rongmario's gist - removed FastFurnace, FastWorkbench, FoamFix, JEI, Mercurius,
+  Shadowfacts' Forgelin, Surge, Toast Control; Mekanism/Generators -> Mekanism CE 9.12.15; Flux Networks 4.1.1.34;
+  CraftTweaker 4.1.20.715; added Fugue 0.25.5, Scalar Legacy, Had Enough Items, Forgelin-Continuous; SmoothFont removed
+  (competing font renderer). Legs use `-Dceltium.validation.worldType=default -Dceltium.validation.cameraY=100`: the
+  fixture's superflat options crash Topography (it parses generator options as JSON), and the default pose is
+  underground in a generated world.
 
 ## Adding a pack
 

@@ -90,6 +90,7 @@ not comparable with the Supersymmetry numbers above.
 | --- | --- | --- | --- |
 | Supersymmetry 0.2.0.2 | 188 | performance KPI pack (above); validation-on legs pass | `l27kpi-*` |
 | Enigmatica 2: Expert - Extended 1.87.3 | ≈430 | **world reached, 0 validation errors, AMD and Intel**, also with Xaero's raw-framebuffer identity | `fx1-e2ee-amd`, `fx1-e2ee-intel`, `xr1-e2ee-xaero-amd` |
+| SkyFactory 4 4.2.4 | 198 | **world reached, 0 validation errors, AMD and Intel** (one transient Intel sky frame open) | `sf4-amd`, `sf4-intel` |
 | Enigmatica 2: Expert 1.93a | 270 | passes on both GPUs | [evidence](<docs/evidence/e2e-cleanroom07-2026-10-26.md>) |
 
 E2E-E needs three pack-side substitutions for Cleanroom 0.7.14 (Fugue 0.25.5, CodeChickenLib 3.3.10, Trinity
