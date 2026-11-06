@@ -1326,6 +1326,9 @@ public final class CeltiumGllessHint {
 
     private static final int GL_READ_FRAMEBUFFER = 0x8CA8;
 
+    /** CELTIUM_RAW_BIND_GAME_FRAMEBUFFER lines printed so far. */
+    private static int RAW_GAME_ALIAS_LOGS;
+
     /** CELTIUM_RAW_ATTACH lines printed so far. */
     private static int RAW_ATTACH_LOGS;
 
@@ -1351,6 +1354,18 @@ public final class CeltiumGllessHint {
             return;
         }
         int color = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferColorTexture(framebuffer);
+        // The game's own framebuffer bound by name (ATM3's first-person hand): its draws belong to the main target.
+        long game = backend.celtium$gameIdentityForRawColorTexture(color);
+        if (game != Long.MIN_VALUE) {
+            if (RAW_GAME_ALIAS_LOGS < 4) {
+                RAW_GAME_ALIAS_LOGS++;
+                System.out.println("[Celtium] CELTIUM_RAW_BIND_GAME_FRAMEBUFFER framebuffer=" + framebuffer
+                        + " colorTexture=" + color + " identity=0x" + Long.toHexString(game)
+                        + " (a raw bind of the game framebuffer draws into the main target)");
+            }
+            backend.bindFramebuffer(game, true);
+            return;
+        }
         long identity = org.soutalab.celtium.vulkan.RenderTargetRegistry.rawTargetIdentity(framebuffer, color);
         backend.bindFramebuffer(identity, false);
         int[] extent = color == 0 ? null : org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$textureExtent(color);

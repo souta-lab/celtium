@@ -5823,6 +5823,31 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (colorTexture != 0) {
             this.mainFramebufferColorNames.add(Integer.valueOf(colorTexture));
         }
+        this.gameFramebufferColorTexture = colorTexture;
+    }
+
+    /** The game framebuffer's colour texture as of its latest bind; 0 until one is reported. */
+    private int gameFramebufferColorTexture;
+
+    /**
+     * {@return the game framebuffer's identity when a raw framebuffer's colour attachment is that framebuffer's current
+     * colour texture}, else {@link Long#MIN_VALUE}.
+     * <p>
+     * A mod that binds {@code mc.getFramebuffer().framebufferObject} with a raw {@code glBindFramebuffer} draws into the
+     * game's own image, but the raw bind used to be reported under a synthesized identity ({@code 1<<40 | name}) that no
+     * pass and no image belongs to. Measured in All the Mods 3: the first-person hand is drawn that way into framebuffer
+     * 143 (colour texture 144, the game framebuffer's own), every batch was queued for identity {@code 0x1000000008f}
+     * and dropped at the frame boundary ({@code unflushedTargetDropTargets=[1000000008f:frames=1480:batches=17748]}),
+     * and the presented frame had no hand where Celeritas draws one. The colour texture is compared rather than the GL
+     * name because a name freed by a resize can be reused by a mod's own framebuffer, while the current attachment is
+     * the fact of which image the draws reach.
+     */
+    public long celtium$gameIdentityForRawColorTexture(int colorTexture) {
+        if (colorTexture == 0 || colorTexture != this.gameFramebufferColorTexture
+                || this.gameFramebufferIdentity == Long.MIN_VALUE) {
+            return Long.MIN_VALUE;
+        }
+        return this.gameFramebufferIdentity;
     }
 
     /**
