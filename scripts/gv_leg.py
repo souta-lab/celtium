@@ -92,6 +92,13 @@ E2E_PACKS = {
         "staged": lambda root: root / ".celtium-work/modpack-nomi/staged/mods",
         "exclude": [],
     },
+    # Project Ozone 3 3.4.11F (CurseForge 256289 / 4345063): the gist's changes are applied in the staged directory
+    # (.celtium-work/modpack-po3/SUBSTITUTIONS.md).
+    "po3": {
+        "instance": lambda root: Path.home() / ".local/share/PrismLauncher/instances/celtium-po3-3.4.11F",
+        "staged": lambda root: root / ".celtium-work/modpack-po3/staged/mods",
+        "exclude": [],
+    },
 }
 
 
