@@ -16,6 +16,12 @@ git 履歴にあり（2026-11-06 に docs から削除）、現在の判定と�
 | **mod自前GLSL** | GTCEu bloom: opt-in（`-Dceltium.vulkan.modPrograms=true`）で native 実行・validation 0、既定は program ごとに拒否・計数。shaderc 同梱 | [証拠](evidence/gregtech-bloom-2026-11-04.md) |
 | **コード整理** | `VulkanTerrainGpuBackend` 22,576 → 21,038 行（IndirectImmediateRuns・ModPrograms・FrameStatsReport・GroupLighting・GroupChange・PixelSignatures・HighlightProbe を分離）、孤立 javadoc 295 件整理 | git log 2026-11-06 |
 
+## 引き継ぎ（2026-11-06）
+
+modpack 再検証で見つかった問題の一覧と再現手順は [modpack-reverify-2026-11-06.md](evidence/modpack-reverify-2026-11-06.md)。
+葉の暗化（mipmap）・FBP 粒子の頂点形式未対応・RLCraft の ordering flush / destroyed mesh / menu 境界の破棄・fixture の
+presented 計数が未解決。再検証は `scripts/modpack-reverify.sh`。
+
 ## 次の作業（優先順）
 
 1. **有名modpackを順に動かす**（利用者指示 2026-11-06: 自分で探して動かし、古い pack は消し、動いた pack を
