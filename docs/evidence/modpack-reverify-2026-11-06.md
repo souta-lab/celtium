@@ -31,7 +31,7 @@ standard ("What verified means") is defined there.
 |---|---|---|
 | RLCraft 2.9.3 | AMD 10.69 / 9.3 %, Intel 11.18 / 9.3 % | see defects 3, 4, 5 below; 44 degenerate quads refused (zero area, harmless) |
 | SkyFactory 4 4.2.4 | AMD 3.60 / 5.5 %, Intel 3.68 / 5.5 % | defect 2 (FBP particles, 7,260 refusals), defect 1 (leaves), 57 batches dropped at a menu boundary |
-| All the Mods 3 6.1.1 | (batch running) | |
+| All the Mods 3 6.1.1 | AMD 12.82 / 9.9 %, Intel 12.85 / 9.9 % | defect 9 (no first-person hand), defect 10 (sky gradient), `CELTIUM_MODEL_MISSING` (display list with 0 captured quads), `missingMeshes` 2–5 in model builds, 385/295 batches dropped at a menu boundary (defect 5), a depth copy not read back |
 | SevTech: Ages 3.2.3 | (batch running) | |
 | Nomifactory CEu 1.7.7 | (batch running) | |
 | Project Ozone 3 3.4.11F | (batch running) | |
@@ -51,6 +51,11 @@ every pack).
 
 ![SkyFactory 4 AMD](modpack-reverify/sf4-amd.jpg)
 ![SkyFactory 4 Intel](modpack-reverify/sf4-intel.jpg)
+
+**All the Mods 3** — AMD / Intel: Celtium has no first-person hand (defect 9) and a lighter upper sky (defect 10).
+
+![ATM3 AMD](modpack-reverify/atm3-amd.jpg)
+![ATM3 Intel](modpack-reverify/atm3-intel.jpg)
 
 Every leg: **0 Vulkan validation messages**. Pack-origin log errors (missing models/recipes, signature warnings,
 mod config errors) appear identically in the Celeritas arm (e.g. SF4 373 vs 374 ERROR lines, RLCraft 232 vs 233) and
@@ -99,6 +104,16 @@ are not Celtium's.
    while (a second backend/RenderGlobal in RLCraft). Black periodic frame dumps (`frameDumpCount`) in the same window
    fit the same cause. Not yet proven: log `TerrainGpuBackends.current()` identity per frame against the presenting
    backend. The world picture itself is correct.
+9. **First-person hand missing (ATM3, both GPUs).** Celeritas draws the player's arm at the same pose; Celtium's frame
+   has none (`docs/evidence/modpack-reverify/atm3-*.jpg`). SF4 and RLCraft draw the hand, so a mod in ATM3 changes how
+   the hand is rendered (check which mod hooks `ItemRenderer.renderItemInFirstPerson` / `renderArmFirstPerson`, and
+   whether the hand pass is refused: grep `CELTIUM_` refusal lines around `renderHand`).
+10. **Upper-sky gradient differs (ATM3, both GPUs).** The difference heatmap shows a band across the top of the sky:
+    Celtium's upper sky is lighter than Celeritas'. Compare the sky dome / void plane colour and fog at the zenith;
+    may share a cause with defect 7's family (sky groups and their fog block).
+11. **A display list with no captured quads (ATM3).** `CELTIUM_MODEL_MISSING list=19119 texture=42 capturedQuads=0
+    ... (no GPU mesh available; GL-less cannot replay this list)` and `CELTIUM_MODEL_BUILD missingMeshes=2..5`: some
+    mod's display list is replayed with nothing captured, so it draws nothing.
 7. **(Fixed) SkyFactory 4 sky turned into a flat saturated band while a mod toast was up** — non-ITEM groups carried
    the lit payload over their fog block (`76ff182ee`).
 8. **(Fixed) E2E-E atlas left in TRANSFER_DST (5× VUID-09600)** — deferred-region flush overflowed the MemoryStack
