@@ -8296,6 +8296,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // ~414 group splits per run bought nothing. The enable is in the state key, so a lit batch can never join
             // an unlit group anyway, which is why testing the open group's own enable is enough.
             boolean lightParamsMoved = this.currentImmediateMesh != null
+                    && this.currentGroupFormatId == VulkanImmediateFormats.ITEM
                     && this.currentGroupState.length > 8 && this.currentGroupState[8] != 0
                     && this.immediateState.lightGeneration() != this.currentGroupLightGeneration;
             if (lightParamsMoved) {
@@ -8580,7 +8581,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // BH-05: the lighting belongs to the batch that opened the group, so it is read from the state saved
                 // two lines above while that state is still the live one. Reading it at close time instead let a later
                 // light change shade vertices that had already been accepted.
-                this.currentGroupLightParams = this.lighting.celtium$lightParams(this.currentGroupState, this.currentGroupModelView);
+                // Only the ITEM family reads the lit layout. Every other family reads its fog block at 128..207,
+                // the region the lighting payload occupies, so a payload on, say, the sky dome (POSITION, format 7)
+                // overwrote its fog selector and drew it unfogged: lighting left on by a mod toast's
+                // enableGUIStandardItemLighting (Matter Overdrive's "Recipe Calculation") turned SkyFactory 4's sky
+                // into a flat saturated band with a hard edge (legs sf4-intel/sf5-intel, 2026-11-06). Those families
+                // evaluate no fixed-function lighting, so dropping the payload there changes nothing else.
+                this.currentGroupLightParams = formatId == VulkanImmediateFormats.ITEM
+                        ? this.lighting.celtium$lightParams(this.currentGroupState, this.currentGroupModelView) : null;
                 // The lighting generation captured with the payload: the enable bit is already in the state key, but a
                 // light whose direction or colour changed without a toggle must close the group as well, or the batches
                 // after the change are drawn with the payload of the batch before it (BH-05's remaining half).
