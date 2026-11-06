@@ -11,6 +11,7 @@ for Cleanroom 0.7 are listed per pack and are never Celtium changes. FPS is only
 | Enigmatica 2: Expert - Extended | 1.87.3 | ≈430 | 0.7.14 (relauncher) | world, **validation 0 on AMD and Intel**, also with Xaero raw-FBO identity | r116 `d8cb18595`, r117 `0403f9f0b` | `fx1-e2ee-amd`, `fx1-e2ee-intel`, `xr1-e2ee-xaero-amd` |
 | SkyFactory 4 | 4.2.4 | 198 | 0.7.14 (relauncher) | world, **validation 0 on AMD and Intel**, sky correct on every dumped frame (a lit-payload bug that turned the sky into a flat band while a mod toast was up was fixed in `76ff182ee`) | r119 `76ff182ee` | `sf6-amd`, `sf6-intel` |
 | All the Mods 3 | 6.1.1 | 250 | 0.7.14 (relauncher) | world, **validation 0 on AMD and Intel**, no anomaly in any dumped frame | r119 `76ff182ee` | `atm1-amd`, `atm1-intel` |
+| RLCraft | 2.9.3 | 165 | 0.7.14 (relauncher) | world, **validation 0 on AMD and Intel**; open (diagnostic only): with `frameDumpCount` set, the fixture's presented counter stays 0 and the dumps are black for the first ~1,400 world frames on Intel, although every present succeeds - not seen without the dump flags | r119 `76ff182ee` (AMD), r120 `c3b11e24c` (Intel) | `rl2-amd`, `rl3-intel` |
 | Enigmatica 2: Expert | 1.93a | 270 | 0.7.11 | world on both GPUs (2026-11-05; superseded by E2E-E, instance removed 2026-11-06) | 2026-11-05 build | see evidence |
 
 ## Substitutions per pack
@@ -32,6 +33,14 @@ for Cleanroom 0.7 are listed per pack and are never Celtium changes. FPS is only
   Forgelin, Spark, Toast Control, Unloader; added Fugue 0.25.5, Scalar Legacy, Had Enough Items, Forgelin-Continuous,
   Roughly Enough IDs, LibrarianLib-Continuous 4.22-2.0-3. The pinned MineColonies file is gone from CurseForge, so
   1.12.2-0.11.841 comes from the LDT Team maven. Same leg flags as SkyFactory 4.
+
+- **RLCraft 2.9.3**: Rongmario's gist - removed AttributeFix, Born in a Barn, Block Overlay Fix, Entity Culling
+  (Meldexun), FoamFix, Frame Void Patch, HelpFixer, JEI, LibrarianLib, MixinBootstrap, MixinCompatibility, Quark,
+  Phosphor, PortalDupeBegone, Shadowfacts' Forgelin, Spark, Surge, Toast Control; added Fugue, Scalar Legacy, Had Enough
+  Items, Forgelin-Continuous, LibrarianLib-Continuous, Quark: RotN Edition r1.6-192; updated RenderLib 1.4.5 and
+  Recurrent Complex 1.4.8.7. **Bloodmoon 1.5.3 removed**: its transformer loads a fixed local slot in
+  `EntityRenderer.updateLightmap` that Cleanroom 0.7.14's patched method does not have (`VerifyError` at init, with
+  Celeritas as well; Fugue 0.25.5 has no patch). Same leg flags as SkyFactory 4.
 
 ## Adding a pack
 

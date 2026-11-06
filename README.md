@@ -28,8 +28,8 @@ UI, texture and framebuffer semantics, and mods that call GL directly are served
 - **Faster than Celeritas in a real modpack.** In Supersymmetry 0.2.0.2 (188 mods), current `main` renders more FPS
   than Celeritas 2.5.0-dev at the median and at p95 on both tested GPUs, and is at parity at p99
   ([numbers](#performance)).
-- **Runs well-known packs cleanly.** Enigmatica 2: Expert - Extended, All the Mods 3, SkyFactory 4 and Supersymmetry
-  reach the world with **zero Vulkan validation errors** on AMD and Intel ([compatibility](#modpack-compatibility)).
+- **Runs well-known packs cleanly.** Enigmatica 2: Expert - Extended, All the Mods 3, RLCraft, SkyFactory 4 and
+  Supersymmetry reach the world with **zero Vulkan validation errors** on AMD and Intel ([compatibility](#modpack-compatibility)).
 - **No OpenGL context at all.** Window, swapchain, textures, framebuffers and post effects are Vulkan objects; the
   GL-less layer covers display lists, immediate mode, VBOs, FBOs, shader getters and legacy state for mods.
 - **Measured, not claimed.** Every number in this README comes from a recorded run with its build, GPU, scene and
@@ -92,6 +92,7 @@ not comparable with the Supersymmetry numbers above.
 | Enigmatica 2: Expert - Extended 1.87.3 | ≈430 | **world reached, 0 validation errors, AMD and Intel**, also with Xaero's raw-framebuffer identity | `fx1-e2ee-amd`, `fx1-e2ee-intel`, `xr1-e2ee-xaero-amd` |
 | SkyFactory 4 4.2.4 | 198 | **world reached, 0 validation errors, AMD and Intel** | `sf6-amd`, `sf6-intel` |
 | All the Mods 3 6.1.1 | 250 | **world reached, 0 validation errors, AMD and Intel** | `atm1-amd`, `atm1-intel` |
+| RLCraft 2.9.3 | 165 | **world reached, 0 validation errors, AMD and Intel** (Bloodmoon removed: incompatible with Cleanroom 0.7.14 with any renderer) | `rl2-amd`, `rl3-intel` |
 | Enigmatica 2: Expert 1.93a | 270 | passes on both GPUs | [evidence](<docs/evidence/e2e-cleanroom07-2026-10-26.md>) |
 
 E2E-E needs three pack-side substitutions for Cleanroom 0.7.14 (Fugue 0.25.5, CodeChickenLib 3.3.10, Trinity
