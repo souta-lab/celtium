@@ -423,6 +423,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** Groups retired by the one drain that has no later one: the backend's own last teardown. */
     private long offTargetRecordedBatches, offTargetCompletedBatches;
     private int failImmediateSubmits;
+    /**
+     * Recordings unwound by the double window-flush failure path, so "the abandon also reset the command state"
+     * is a number in the log rather than a claim about the code. A non-zero value beside
+     * {@code orderingFlushFailures=0} is the fix working; a non-zero value beside a non-zero
+     * {@code orderingFlushFailures} would say the unwind is not the whole story.
+     */
+    long abandonedWindowRecordings;
+
+    /** {@return recordings unwound by the double window-flush failure path}. */
+    public long abandonedWindowRecordings() {
+        return this.abandonedWindowRecordings;
+    }
 
     /** Restricted to the small validation scene, so retry is exercised after a real batch was accepted. */
     public void injectImmediateSubmitFailure(int count) {
@@ -11365,12 +11377,30 @@ this.frameBufferOpen = false;
 // An abandoned frame is not "the frame is still recording": the flag must not route the
 // next beginCommands into the buffer whose recording the abandon just discards.
 this.frameBufferOpen = false;
+                        // The recording has to be unwound with the flag, or the state keeps saying "recording"
+                        // while no frame buffer owns it. The recovery submission above is either deferred
+                        // (batchFrameSubmits: submitCommands() returns RECORDED without ending the buffer) or was
+                        // waited on its own slot, so the buffer is not in flight and may be reset here. Without
+                        // this the next ordering flush met `recording() && !frameBufferOpen` and threw "nested
+                        // immediate command recording", dropping every batch it held: measured on RLCraft (leg
+                        // w-rlcraft-amd, r126) as one double window-flush failure at frame 2 followed by four
+                        // nested ordering flushes at frames 3-4 that dropped 2,050 accepted batches.
+                        if (this.commandBuffer != null && this.commandState.recording()) {
+                            check(vkResetCommandBuffer(this.commandBuffer,
+                                    VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT),
+                                    "vkResetCommandBuffer(abandoned window)");
+                            // The reset discards the push constants the cache believes are still in this buffer.
+                            VulkanPushCache.SHARED.invalidate();
+                            this.commandState.reset();
+                            this.abandonedWindowRecordings++;
+                        }
                         this.targetStatistics.addWindowFlushRetainedBatches(retained);
                         this.frameTarget.abandonFrame("accepted geometry retained");
                         record("window flush failed twice at frame " + this.frameId + " ("
                                 + this.lastWindowFlushFailure + "); retained " + retained
                                 + " accepted batches, none dropped, the next frame retries (windowFlushFailures="
-                                + this.targetStatistics.windowFlushFailures() + ")");
+                                + this.targetStatistics.windowFlushFailures()
+                                + ", abandonedRecordings=" + this.abandonedWindowRecordings + ")");
                         return;
                     }
                     this.immediateStatistics.noteImmediateRetryCount();
