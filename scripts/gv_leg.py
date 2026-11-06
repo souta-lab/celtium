@@ -78,6 +78,13 @@ E2E_PACKS = {
         "staged": lambda root: root / ".celtium-work/modpack-rlcraft/staged/mods",
         "exclude": [],
     },
+    # SevTech: Ages 3.2.3 (CurseForge 268208 / 3569915): the gist's removals, additions and updates are applied in the
+    # staged directory (.celtium-work/modpack-sevtech/SUBSTITUTIONS.md).
+    "sevtech": {
+        "instance": lambda root: Path.home() / ".local/share/PrismLauncher/instances/celtium-sevtech-3.2.3",
+        "staged": lambda root: root / ".celtium-work/modpack-sevtech/staged/mods",
+        "exclude": [],
+    },
 }
 
 
