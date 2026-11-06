@@ -8,7 +8,7 @@ git 履歴にあり（2026-11-06 に docs から削除）、現在の判定と�
 
 | 領域 | 状態 | 根拠 |
 |---|---|---|
-| **FPS（KPI: Supersymmetry 0.2.0.2・188 mods）** | r8（`r8-index`）: **AMD p50 0.944・p95 0.929・p99 0.979、Intel p50 0.889・p95 0.944・p99 0.914**（対比中央値）。**Intel は全9対が <1 で `goalCondition=MET`**、AMD は p50 全対合格・p95/p99 は pair 3 のみ >1（1.013 / 1.058）で `NOT_MET`。r130 比で p99 は AMD 1.034→0.979・Intel 0.985→0.914。**p99 は tick frame の上位中央**で、**tick loop の超過 2723us のうち 2300us（84%）は client tick 自身**（両arm同一）、renderer 分は 371us。r8 で gather walk を 118→10us（-92%）。**r9 で定常 frame の絶対コストを計測**（`CELTIUM_FRAME_TICK_CONSTANTS`）: frame 1992us のうち block entity 520（pack の TESR）・flush 309（group loop 191 + window 機構）・gui 371・terrain 185（pre-flush 102）。**pre-terrain flush を terrain pass 自身の render pass 内へ移し、1 frame 1 window 削減**: flush+terrain 494→369us（-125）、画像は 1.29 / 0.23%。AMD の p99 のばらつき（5.443/5.786/6.150）は wave の尾が warm 窓に入る量で決まる | [証拠](evidence/kpi-r130-2026-11-07.md), [p99内訳](evidence/kpi-p99-attribution-2026-11-07.md), [entity 4分割](evidence/kpi-entity-split-2026-11-07.md), [gather walk と paired set](evidence/kpi-entity-gather-2026-11-07.md), [定常コストと pre-flush](evidence/preflush-in-pass-2026-11-07.md) |
+| **FPS（KPI: Supersymmetry 0.2.0.2・188 mods）** | r9（`r9kpi-amd`）: **AMD p50 0.847・p95 0.861・p99 1.005**（対比中央値、3対、負荷ゲート通過・非bypass）。p50/p95 は全3対合格、p99 は rep1/2 で >1（1.037 / 1.005）で `NOT_MET`。r8 比で p50 0.944→0.847・p95 0.929→0.861 と**余裕が約2倍**、Celtium 自身の p99 ばらつきは 13%→4.6% に収束（Celeritas 側は 28%）。Intel は r8 で全9対 <1 の `MET`。**p99 は tick frame の上位中央**で、tick loop の超過 2723us のうち 2300us（84%）は client tick 自身（両arm同一）。**r9 で定常 frame の絶対コストを計測**（`CELTIUM_FRAME_TICK_CONSTANTS`）: frame 1992us のうち block entity 520（pack の TESR）・flush 309（group loop 191 + window 機構）・gui 371・terrain 185（pre-flush 102）。**pre-terrain flush を terrain pass 自身の render pass 内へ移し、1 frame 1 window 削減**: flush+terrain 494→369us（-125）、画像は 1.29 / 0.23%。**残る p99 の差は world-load wave**（wave の p99 はゲームの chunk loading と `updateLightmap`） | [証拠](evidence/kpi-r130-2026-11-07.md), [p99内訳](evidence/kpi-p99-attribution-2026-11-07.md), [entity 4分割](evidence/kpi-entity-split-2026-11-07.md), [gather walk と paired set](evidence/kpi-entity-gather-2026-11-07.md), [定常コストと pre-flush](evidence/preflush-in-pass-2026-11-07.md) |
 | **E2E-E 1.87.3（≈430 mods）** | **AMD・Intel とも world・validation 0**（fx1）、Xaero raw-FBO identity でも 0（xr1）。0.7.14 用の pack 側置換3件 | [証拠](evidence/e2e-cleanroom07-2026-10-26.md) |
 | **modpack 拡大** | **6 pack が verified**（validation 0・ログ全文レビュー・同pose Celeritas 画像の3条件を AMD/Intel で）: SkyFactory 4 4.2.4（0.68 / 0.03 %・0.86 / 0.07 %）、All the Mods 3 6.1.1（7.39 / 6.61 %）、RLCraft 2.9.3（7.04 / 6.39 %・6.95 / 6.02 %）、SevTech: Ages 3.2.3（1.22 / 0.41 %・1.22 / 0.40 %）、Nomifactory CEu 1.7.7（3.28 / 0.06 %・3.30 / 0.07 %）、Project Ozone 3 3.4.11F（5.46 / 1.04 %・5.17 / 1.19 %）。pack 側の非互換は置換として記録。残る Celtium 側の欠陥は defect 10（ATM3 の上空）・12（GTCEu bloom 拒否）・5（menu 境界の破棄）・6（fixture の presented 計数） | [modpacks.md](<modpacks.md>), [証拠](evidence/modpack-reverify-2026-11-06.md) |
 | **画質（4画面＋QMAGNET）** | settings 画素一致、world 16階調超 0.97/1.05 %（AMD/Intel）、menu・creative grid・tab icon 一致 | [証拠](evidence/image-quality-2026-10-28.md) |
@@ -35,14 +35,15 @@ fixture が `UNCALIBRATED_PRESENTED_IMAGE` を返し KPI が leg を拒否する
 
 ## 次の作業（優先順）
 
-1. **FPS の全対条件**（最優先・未達は AMD の p95/p99 pair 3 のみ）: p99 は tick frame で、その超過の 84% は
-   client tick（両arm同一）。**r9 で定常 frame の絶対コストが読めるようになった**（`CELTIUM_FRAME_TICK_CONSTANTS`）:
-   frame 1992us = block entity 520（pack の TESR、offer path は 5%）+ flush 309（group loop 191 は driver の床、
-   残りは window 機構）+ gui 371 + terrain 185 + lightmap 41 + particles 53 + hand 52。**pre-terrain flush を
-   terrain pass 内へ移して 1 window 削減**（flush+terrain 494→369us、画像 1.29 / 0.23%）。次の判別:
-   (a) 残る window は GUI のもの（`guiFlush` 69us）— HUD の group を frame 末尾の別 window から出せるか、
-   (b) `entBlockEntities` 473–520us の内訳（何個の block entity が何us か。census が先）,
-   (c) `lightmap` 38–41us はゲーム自身（Celeritas も同額）。
+1. **FPS の全対条件**（最優先・未達は AMD の p99 のみ）: r9 の paired set で p50 0.847・p95 0.861 は全対合格、
+   p99 1.005 は rep1/2 で >1。**p99 は world-load wave の frame**で、wave の p99 はゲームの chunk loading と
+   `updateLightmap`（+442us）— 定常 frame の削減では動かない。**r9 で定常 frame の絶対コストが読めるようになった**
+   （`CELTIUM_FRAME_TICK_CONSTANTS`）: frame 1992us = block entity 520（pack の TESR、offer path は 5%）+
+   flush 309（group loop 191 は driver の床、残りは window 機構）+ gui 371 + terrain 185 + lightmap 41 +
+   particles 53 + hand 52。**pre-terrain flush を terrain pass 内へ移して 1 window 削減**（flush+terrain
+   494→369us、画像 1.29 / 0.23%）。次の判別: (a) wave の frame で何が 5.5ms を超えるか（wave の p99 を
+   `tickPercentiles` の最初の block で読み、`lightmap` と `gui` の owner を分ける）、(b) 残る window は GUI の
+   もの（`guiFlush` 69us）、(c) `entBlockEntities` 473–520us の内訳（census が先）。
    **regime（wave/定常）と、差か絶対値かを必ず書く**。`flush` は group 数×~1.1us で indirect multi-draw が
    構造的な答えのまま。chunk-upload budget は KPI scene では発火しない（burst 32 未満）。
 2. **残る Celtium 欠陥**: defect 10（ATM3 の上空、dome の draw は発行・presented に届かない）・defect 12（GTCEu bloom、

@@ -125,6 +125,31 @@ switch is what makes that separable; without it the first run would have been re
 
 ![preflush A/B](preflush-in-pass-2026-11-07.png)
 
+## The paired set on this build
+
+Official paired set, AMD RX 6400, Supersymmetry 0.2.0.2, validation off, warm ticks [400,600), `guiScale=3`, 240 s,
+3 repetitions (`r9kpi-amd`). Renderer `19d68cfb…`, fixture `97685d8d…`, reference Celeritas 2.5.0-dev `567dcf8a…`.
+The load guard passed and was not bypassed (initial busy 0.135 cores, external 0.162; limits 2.0 / 0.5).
+
+| rep | Celtium p50 / p95 / p99 (ms) | Celeritas p50 / p95 / p99 (ms) |
+|---|---|---|
+| 1 | 2.131 / 4.076 / 5.300 | 2.358 / 4.519 / 5.114 |
+| 2 | 2.089 / 3.939 / 5.543 | 2.466 / 4.576 / 5.516 |
+| 3 | 2.072 / 4.149 / 5.464 | 2.507 / 5.019 / 6.577 |
+
+| percentile | per-pair ratios | median | r8 (before this round) |
+|---|---|---|---|
+| p50 | 0.904 / 0.847 / 0.826 | **0.847** | 0.944 |
+| p95 | 0.902 / 0.861 / 0.827 | **0.861** | 0.929 |
+| p99 | 1.037 / 1.005 / 0.831 | **1.005** | 0.979 |
+
+`goalCondition=NOT_MET`: p50 and p95 pass on all three pairs, p99 fails on reps 1 and 2. **The p50 and p95 margins
+roughly doubled** (0.944 → 0.847, 0.929 → 0.861) and **Celtium's own p99 spread tightened** from 5.443/5.786/6.150
+(13 %) to 5.300/5.543/5.464 (4.6 %), while Celeritas's p99 spread is 5.114/5.516/6.577 (28 %) - so the p99 is now
+parity against a noisier reference, not a Celtium regression. The remaining p99 gap is the world-load wave, whose p99
+frame is the game's chunk loading and `updateLightmap`, not the renderer: this round's -125 us is a settled-frame
+change and the settled percentiles are exactly where it shows.
+
 ## What this says to do next
 
 1. **The window machinery is now the largest Celtium-owned item after the group loop**: `winBarrier` 15 + `winRecord`
