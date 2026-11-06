@@ -65,6 +65,10 @@ for pack in "$@"; do
     python3 scripts/pack_verify.py logs ".gv-verify/run-w-$pack-$g" --json ".gv-verify/w-$pack-$g-logs.json" >/dev/null 2>&1
     python3 scripts/pack_verify.py picture ".gv-verify/run-w-$pack-$g" ".gv-verify/run-w-$pack-ref" \
       --out ".gv-verify/w-$pack-$g-diff.png" --json ".gv-verify/w-$pack-$g-picture.json" >/dev/null 2>&1
+    # For eyes: a labelled Celtium | Celeritas | difference | 2x crop sheet, embedded in the handoff Markdown.
+    mkdir -p docs/evidence/modpack-reverify
+    python3 scripts/pack_verify.py review ".gv-verify/run-w-$pack-$g" ".gv-verify/run-w-$pack-ref" \
+      --out "docs/evidence/modpack-reverify/$pack-$g.jpg" --title "$pack $g (fixed world, seed 12345678, noon)" >/dev/null 2>&1
   done
   python3 scripts/pack_verify.py logs ".gv-verify/run-w-$pack-ref" --json ".gv-verify/w-$pack-ref-logs.json" >/dev/null 2>&1
   for d in .gv-verify/run-w-"$pack"-*; do rm -rf "$d/saves"; done

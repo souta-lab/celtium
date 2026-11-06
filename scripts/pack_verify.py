@@ -4,6 +4,7 @@
 Usage:
     pack_verify.py logs RUN_DIR [--json OUT]
     pack_verify.py picture CELTIUM_RUN REFERENCE_RUN --out DIFF_PNG [--json OUT]
+    pack_verify.py review CELTIUM_RUN REFERENCE_RUN --out REVIEW.jpg [--title TEXT]   (an image for eyes)
 
 `logs` reads RUN_DIR/logs/latest.log, RUN_DIR/logs/debug.log and RUN_DIR/validation-console.log and collects every
 ERROR/FATAL line, every exception line ("...Exception:"/"...Error:" at the start of a message or a "Caused by:") and
@@ -153,6 +154,48 @@ def picture(celtium_run, reference_run, out):
             "fractionOver24": round(over, 4), "composite": str(out)}
 
 
+def review(celtium_run, reference_run, out, title):
+    """A labelled JPEG for eyes: Celtium | Celeritas on top (half size), the difference heatmap and a 2x crop of the
+    region that differs most below - small enough to embed in a Markdown file and read on GitHub."""
+    from PIL import Image, ImageChops, ImageDraw
+    a_path, b_path = world_picture(celtium_run), world_picture(reference_run)
+    if a_path is None or b_path is None:
+        return {"error": f"missing picture: celtium={a_path} reference={b_path}"}
+    a = Image.open(a_path).convert("RGB")
+    b = Image.open(b_path).convert("RGB")
+    w, h = a.size
+    half = (w // 2, h // 2)
+    peak = ImageChops.difference(a, b).convert("L")
+    heat = peak.point(lambda v: min(255, v * 4)).convert("RGB")
+    # The 160x90 window with the largest summed difference, shown at 2x from both renderers.
+    grid = peak.resize((w // 40, h // 40), Image.BOX)
+    gw, gh = grid.size
+    best, bx, by = -1, 0, 0
+    for y in range(gh - 2):
+        for x in range(gw - 3):
+            total = sum(grid.getpixel((x + i, y + j)) for i in range(4) for j in range(3))
+            if total > best:
+                best, bx, by = total, x, y
+    box = (bx * 40, by * 40, bx * 40 + 160, by * 40 + 120)
+    crop = Image.new("RGB", (half[0], half[1]), "black")
+    crop.paste(a.crop(box).resize((320, 240), Image.NEAREST), (0, 0))
+    crop.paste(b.crop(box).resize((320, 240), Image.NEAREST), (320, 0))
+    sheet = Image.new("RGB", (half[0] * 2, half[1] * 2 + 28), "white")
+    sheet.paste(a.resize(half), (0, 28))
+    sheet.paste(b.resize(half), (half[0], 28))
+    sheet.paste(heat.resize(half), (0, 28 + half[1]))
+    sheet.paste(crop, (half[0], 28 + half[1]))
+    draw = ImageDraw.Draw(sheet)
+    draw.text((6, 8), f"{title}   top: Celtium | Celeritas 2.5.0-dev   bottom: |difference| x4 | "
+              f"most-different region {box} at 2x (Celtium left, Celeritas right)", fill="black")
+    for x, y, label in ((6, 32, "Celtium"), (half[0] + 6, 32, "Celeritas"), (6, 32 + half[1], "difference x4"),
+                        (half[0] + 6, 32 + half[1], "crop: Celtium | Celeritas")):
+        draw.rectangle((x - 2, y - 2, x + 8 * len(label), y + 12), fill="black")
+        draw.text((x, y), label, fill="white")
+    sheet.save(out, "JPEG", quality=82)
+    return {"review": str(out), "mostDifferentRegion": box}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -164,7 +207,15 @@ def main(argv=None):
     p_pic.add_argument("reference_run")
     p_pic.add_argument("--out", required=True)
     p_pic.add_argument("--json")
+    p_rev = sub.add_parser("review")
+    p_rev.add_argument("celtium_run")
+    p_rev.add_argument("reference_run")
+    p_rev.add_argument("--out", required=True)
+    p_rev.add_argument("--title", default="")
     args = parser.parse_args(argv)
+    if args.command == "review":
+        print(json.dumps(review(args.celtium_run, args.reference_run, args.out, args.title)))
+        return 0
     result = logs(args.run) if args.command == "logs" else picture(args.celtium_run, args.reference_run, args.out)
     text = json.dumps(result, indent=1, ensure_ascii=False)
     if args.json:
