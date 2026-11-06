@@ -499,14 +499,6 @@ public final class VulkanDynamicMesh {
     }
 
     /**
-     * {@code -Dceltium.vulkan.arenaStrideFirst=true}: an empty arena mesh takes the stride before its first write, so
-     * its slice starts at a whole number of vertices (what the indirect run path needs). Off by default: on r111 the
-     * same jar with the indirect switches failed its picture with this on and passed with it off (l39stride), and the
-     * default path gains nothing from it. See docs/evidence/array-records-census-2026-11-06.md.
-     */
-    static final boolean ARENA_STRIDE_FIRST = Boolean.getBoolean("celtium.vulkan.arenaStrideFirst");
-
-    /**
      * Copies {@code count} vertices of {@code stride} bytes each from a native address and appends triangle-list
      * indices for {@code indices} (the expansion {@link VulkanImmediateDrawer} produces).
      * <p>
@@ -533,12 +525,6 @@ public final class VulkanDynamicMesh {
         long requiredVertices = this.vertexBytes + addedVertices;
         long requiredIndices = this.indexBytes + (long) indices.length * 4;
         boolean borrowed = this.frameRegion != null;
-        if (ARENA_STRIDE_FIRST && this.vertexBytes == 0L) {
-            // The slice start is aligned to the current layout's stride (celtium$sliceAlignment), and the layout used to
-            // be set only after this write - so an empty arena mesh opened its slice at 16-byte alignment and its bind
-            // offset was not a whole number of vertices (array-records census: 30,896 runs closed on "stride").
-            this.layout = Layout.positionOnly(stride);
-        }
         long vertexTarget = vertexWriteAddress(this.vertexBytes, addedVertices);
         long indexTarget = indexWriteAddress(this.indexBytes, (long) indices.length * 4);
         if (borrowed && this.frameRegion == null) {
@@ -599,12 +585,6 @@ public final class VulkanDynamicMesh {
         long requiredVertices = this.vertexBytes + addedVertices;
         long requiredIndices = this.indexBytes + (long) indices.length * 4;
         boolean borrowed = this.frameRegion != null;
-        if (ARENA_STRIDE_FIRST && this.vertexBytes == 0L) {
-            // The slice start is aligned to the current layout's stride (celtium$sliceAlignment), and the layout used to
-            // be set only after this write - so an empty arena mesh opened its slice at 16-byte alignment and its bind
-            // offset was not a whole number of vertices (array-records census: 30,896 runs closed on "stride").
-            this.layout = Layout.positionOnly(stride);
-        }
         long vertexTarget = vertexWriteAddress(this.vertexBytes, addedVertices);
         long indexTarget = indexWriteAddress(this.indexBytes, (long) indices.length * 4);
         if (borrowed && this.frameRegion == null) {

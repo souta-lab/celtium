@@ -1055,6 +1055,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (pipeline == null) {
             this.terrainStatistics.notePassSkips();
             this.terrainStatistics.setLastSkipReason(pass.name() + ": no pipeline");
+            // Every early return out of this section closes its bracket: a skipped pass used to leave terrainEnsure
+            // open, so the next pass's begin nested inside it and the reported time held the skipped pass's remainder.
+            org.soutalab.celtium.vulkan.FramePassTimings.end("terrainEnsure");
             return;
         }
         ChunkPrimitiveType primitiveType = this.configuration.getPrimitiveTypeForPass(pass);
@@ -1084,6 +1087,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.immediateStatistics.setLastUniformPreparationFailure(String.valueOf(error));
             record("pass skipped: uniform preparation failed: " + error);
             this.terrainStatistics.notePassSkips();
+            org.soutalab.celtium.vulkan.FramePassTimings.end("terrainEnsure");
             return;
         }
 
@@ -1110,6 +1114,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.terrainStatistics.notePassSkips();
             this.terrainStatistics.setLastSkipReason(pass.name() + ": atlas or lightmap not mirrored");
             record("pass " + nameOf(pass) + " skipped: the block atlas or the lightmap is not mirrored yet");
+            org.soutalab.celtium.vulkan.FramePassTimings.end("terrainEnsure");
             return;
         }
 
@@ -1149,6 +1154,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         } catch (RuntimeException | LinkageError error) {
             this.terrainStatistics.notePassErrors();
             record("frame begin failed: " + describe(error));
+            // The handoff bracket was opened before beginFrame(); a failed begin must not leave it open, or the next
+            // pass's handoff nests inside it and the reported time holds this failure's remainder.
+            org.soutalab.celtium.vulkan.FramePassTimings.end("terrainHandoff");
             return;
         }
 
