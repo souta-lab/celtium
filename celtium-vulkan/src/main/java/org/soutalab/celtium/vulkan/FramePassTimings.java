@@ -44,6 +44,12 @@ public final class FramePassTimings {
      * which of its driver-visible calls owns that.
      */
     private static final String[] INSIDE = {"lightmap", "mouseOver", "worldPass", "entities", "particles", "present", "flush", "terrain", "chunkUpload",
+            // The entity pass' four parts, because `entities` is 54-56 % of the p99 frame's excess and the bracket
+            // cannot say which part owns it: the membership gather (tick-gated: the chunk walk runs once per tick),
+            // the per-entity cull (every gathered entity, every pass), the draw itself (the model replays), and the
+            // block entities the second injection renders inside the same bracket. `entGatherWalk` is the walk alone,
+            // so `entGather - entGatherWalk` is the per-pass predicate pass over the gathered membership.
+            "entGather", "entGatherWalk", "entCull", "entDraw", "entBlockEntities", "entSetTile",
             "setupTerrain", "stGraph", "stEvents", "stAsync", "stPrepare", "stUpload", "stUpdate", "stVisible", "stReclaim", "sky", "terrainHandoff", "terrainRecord", "terrainSubmit", "recordPrepare",
             "recordBatch", "prepDescriptors", "prepBarriers", "prepBegin",
             "recBind", "recDraw", "recLoop", "terrainTarget", "terrainSetup", "terrainClose", "terrainPrep", "terrainCapacity", "terrainSharedIndex", "terrainPreflush", "flushCloseGroup",

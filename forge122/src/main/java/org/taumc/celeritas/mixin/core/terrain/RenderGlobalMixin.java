@@ -401,13 +401,16 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         if (!celtium$isGameRenderGlobal()) {
             return;
         }
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("entBlockEntities");
         this.renderer.renderBlockEntities(new CeleritasWorldRenderer.TileEntityRenderContext(damagedBlocks, partialTicks));
+        org.soutalab.celtium.vulkan.FramePassTimings.end("entBlockEntities");
 
         /*
          * Normally, setTileEntities will be empty because we suppress vanilla chunk rendering. However, some mods
          * inject a custom renderer into the set. So we render any TE we find in it.
          * https://github.com/pau101/Fairy-Lights/blob/8a92f770d69be6fa164d24d7a023d828249423bb/src/main/java/com/pau101/fairylights/client/ClientProxy.java#L203
          */
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("entSetTile");
         synchronized(this.setTileEntities) {
             if (!this.setTileEntities.isEmpty()) {
                 TileEntityRendererDispatcher.instance.preDrawBatch();
@@ -419,6 +422,7 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
                 TileEntityRendererDispatcher.instance.drawBatch(pass);
             }
         }
+        org.soutalab.celtium.vulkan.FramePassTimings.end("entSetTile");
 
         this.mc.entityRenderer.disableLightmap();
         this.mc.profiler.endSection();
@@ -465,12 +469,19 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         int pass = net.minecraftforge.client.MinecraftForgeClient.getRenderPass();
         // Cache the expensive chunk-membership walk, not a mod's pass predicate: it is evaluated
         // with Forge's actual pass active, and chunk mutation can invalidate membership within the same tick.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("entGather");
         celeritas$collectedEntities = celeritas$entityGatherer.getLoadedEntityList(world, pass);
+        org.soutalab.celtium.vulkan.FramePassTimings.end("entGather");
         EntityPlayerSP player = this.mc.player;
         BlockPos.MutableBlockPos entityBlockPos = new BlockPos.MutableBlockPos();
         // Apply entity distance scaling
         Entity.setRenderDistanceWeight(MathHelper.clamp((double)this.mc.gameSettings.renderDistanceChunks / 8.0D, 1.0D, 2.5D) * 1);
 
+        // The entity pass' own split, because `entities` is 54-56 % of the p99 frame's excess and the bracket
+        // cannot say which of its four parts owns it: the membership gather (tick-gated), the per-entity cull
+        // (every entity, every pass), the draw itself (the model replays), and the block entities that the
+        // second injection renders inside the same bracket. Each is a different owner and a different fix.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("entCull");
         for(Entity entity : celeritas$collectedEntities[pass]) {
             // Do regular vanilla checks for visibility
             if(!this.renderManager.shouldRender(entity, camera, renderViewX, renderViewY, renderViewZ) && !entity.isRidingOrBeingRiddenBy(player)) {
@@ -487,7 +498,9 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
             if ((entity != renderViewEntity || this.mc.gameSettings.thirdPersonView != 0 || isSleeping)
                     && (entity.posY < 0.0D || entity.posY >= 256.0D || this.world.isBlockLoaded(entityBlockPos.setPos(entity))))
             {
+                org.soutalab.celtium.vulkan.FramePassTimings.begin("entDraw");
                 this.renderManager.renderEntityStatic(entity, partialTicks, false);
+                org.soutalab.celtium.vulkan.FramePassTimings.end("entDraw");
 
                 if (this.isOutlineActive(entity, renderViewEntity, camera))
                 {
@@ -499,6 +512,7 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
                 }
             }
         }
+        org.soutalab.celtium.vulkan.FramePassTimings.end("entCull");
     }
 }
 
