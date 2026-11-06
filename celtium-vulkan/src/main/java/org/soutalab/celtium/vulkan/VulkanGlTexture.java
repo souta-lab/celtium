@@ -355,6 +355,14 @@ public final class VulkanGlTexture {
     private long[] levelWrites = new long[0];
     private long[] levelLastWrite = new long[0];
     /**
+     * The deepest mip level a producer's own patch has written into this image, 0 when only level 0 has arrived.
+     * <p>
+     * This is the level the sampler may reach: the levels above it are either the game's own data (a patch carried them)
+     * or the generated chain of a whole-image write, and only the former justifies a deeper clamp. It is what
+     * {@link #uploadPatchedLevels} hands to {@link #setSamplerReach} once the level-0 coverage is complete.
+     */
+    private int deepestOwnLevel;
+    /**
      * Which tiles of level 0 have been written, so a tiled upload counts as a full initialization.
      *
      * <p>Measured in the 268-mod E2E pack: its block atlas is 8192x8192 (the pack's resource pack plus every mod's
@@ -1584,32 +1592,7 @@ public final class VulkanGlTexture {
                 // the image. A mirror whose mips stay zero renders its far field black; the reload leg showed
                 // exactly that band. Serial tracking keeps a burst of level-0 patches from re-uploading the
                 // whole chain each time.
-                if (this.appliedMipSerials == null) {
-                    this.appliedMipSerials = new long[32];
-                    java.util.Arrays.fill(this.appliedMipSerials, Long.MIN_VALUE);
-                }
-                // Bounded by the image's own levels too: a captured chain deeper than the mirror has no level to go into.
-                for (int lvl = 1; lvl < this.appliedMipSerials.length && lvl < this.mipLevels
-                        && (extentW >> lvl) > 0 && (extentH >> lvl) > 0; lvl++) {
-                    long mipSerial = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
-                            .textureUploadSerial(glTextureId, lvl);
-                    if (mipSerial == Long.MIN_VALUE || mipSerial == this.appliedMipSerials[lvl]) {
-                        continue;
-                    }
-                    int[] mipExtent = this.mipExtentScratch;
-                    java.nio.ByteBuffer mipSurface =
-                            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadRgba8(glTextureId, lvl,
-                                    mipExtent);
-                    if (mipSurface == null
-                            || mipExtent[0] != Math.max(1, extentW >> lvl)
-                            || mipExtent[1] != Math.max(1, extentH >> lvl)
-                            || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub
-                                    .textureLevelHasGamePixels(glTextureId, lvl)) {
-                        break;
-                    }
-                    copyToImage(mipSurface, mipExtent[0], mipExtent[1], lvl, 0, 0);
-                    this.appliedMipSerials[lvl] = mipSerial;
-                }
+                applyCapturedMipLevels(glTextureId, extentW, extentH);
                 this.lastUploadSerial = uploadSerial;
                 if (level != null && !level.owned) {
                     recordCapturedFill(glTextureId, level);
@@ -1663,6 +1646,20 @@ public final class VulkanGlTexture {
             copyToImage(level.pixels, level.width, level.height, 0);
             synchronized (VulkanGlTexture.class) {
                 fullUploadCopyNanos += System.nanoTime() - copyStart;
+            }
+            // The whole-image copy regenerated levels 1..N by blitting level 0 (recordMipChain), which is not what
+            // OpenGL holds: the game's own per-level surfaces are in the stub whenever the producer uploaded them, and
+            // they are the ones the reference samples. Applying them here is what keeps a whole-image refresh from
+            // replacing the game's mips with the darker blit chain - the SkyFactory 4 atlas took exactly this path
+            // after its per-sprite patches and its distant canopy then measured 0.77x the reference's brightness.
+            // The serials are dropped first: the blit just overwrote every level, so a level whose capture serial has
+            // not changed since the last patch still has to be written again.
+            if (this.appliedMipSerials != null) {
+                java.util.Arrays.fill(this.appliedMipSerials, Long.MIN_VALUE);
+            }
+            int ownLevels = applyCapturedMipLevels(glTextureId, level.width, level.height);
+            if (ownLevels > 0) {
+                setSamplerReach(ownLevels);
             }
             commitFullUpload(hash, uploadSerial);
             dumpMirrorPixels(glTextureId);
@@ -1962,6 +1959,20 @@ public final class VulkanGlTexture {
         // printed next to whether it is behind level 0, so a patch that covered only level 0 is visible as a number
         // rather than inferred from the code (audit N07). Diagnostic only, and the dump's own caps apply.
         dumpMirrorPixels(glTextureId);
+        // The sampler's reach follows the content, not a constant. A mirror that holds the producer's own levels 0..N
+        // must let its sampler read them: OpenGL samples up to the game's own GL_TEXTURE_MAX_LEVEL (the pack's
+        // mipmapLevels, 4 by default), and the constant clamp of 1 was a claim about a generated chain, not about the
+        // game's data. Measured on SkyFactory 4: the atlas's producer supplies five levels per sprite
+        // (TextureUtil.uploadTextureMipmap) and all five were applied, yet the mirror's sampler stayed at 1. The
+        // terrain pass has its own atlas sampler (VulkanTerrainPipeline.ATLAS_MAX_LOD), so this raise does not move the
+        // terrain frame - measured, clamp 1 against clamp 4 on one jar: 0.0002 mean pixel difference - it is the other
+        // consumers of the mirror's sampler (GUI, items, entities) that were reading a level the image held and the
+        // sampler refused. Raised only, and only once the level-0 coverage is complete, so a half-uploaded atlas is
+        // never sampled above the levels it holds; a mirror filled by a whole-image write keeps the generated chain and
+        // the default clamp.
+        if (this.fullContentArrived && this.deepestOwnLevel > 0) {
+            setSamplerReach(this.deepestOwnLevel);
+        }
         // The image no longer holds what the last full upload put there, so the hash identifying that content is stale. Without
         // this a later full upload of the same pixels is skipped as a duplicate and the patch survives in a texture that should
         // have been replaced wholesale (audit A06).
@@ -2031,6 +2042,7 @@ public final class VulkanGlTexture {
         }
         if (depth > 0) {
             this.levelZeroWriteSerial = serial;
+            this.deepestOwnLevel = Math.max(this.deepestOwnLevel, depth - 1);
         }
         synchronized (VulkanGlTexture.class) {
             for (int level = 0; level < depth; level++) {
@@ -2876,6 +2888,7 @@ public final class VulkanGlTexture {
         // The new image is empty: any content fact from the image it replaces is gone with it.
         this.levelWrites = new long[this.mipLevels];
         this.levelLastWrite = new long[this.mipLevels];
+        this.deepestOwnLevel = 0;
         // Same for the coverage bitmap: a recreated image has no tiles written yet, and inheriting the old bitmap
         // would call a partially uploaded replacement complete on its first patch.
         this.level0Coverage = null;
@@ -2998,6 +3011,7 @@ public final class VulkanGlTexture {
         invalidateUploadCache();
         this.levelWrites = new long[0];
         this.levelLastWrite = new long[0];
+        this.deepestOwnLevel = 0;
         this.levelLayouts = new int[0];
         VkDevice device = context.device();
         if (view != 0L) {
@@ -3545,6 +3559,62 @@ public final class VulkanGlTexture {
         } catch (Throwable ignored) {
             // Debug-only path: never let a dump failure affect rendering.
         }
+    }
+
+    /**
+     * Applies the game's own per-level surfaces to this image, level by level, and returns the deepest level applied.
+     * <p>
+     * The atlas is the texture this exists for: {@code TextureUtil.uploadTextureMipmap} hands every level of every
+     * sprite over through {@code glTexSubImage2D}, and the stub keeps each level's whole surface. Those levels are
+     * Minecraft's own mips - gamma-space averages that skip fully transparent texels and drop a texel whose average
+     * alpha falls below 96 - and they are what OpenGL samples. The chain this class generates instead
+     * ({@link #recordMipChain}) is a linear blit of level 0: it averages across sprite borders and through transparent
+     * black, so it is darker than the game's own data. Measured on SkyFactory 4: the atlas's whole-image refresh ran
+     * after the per-sprite patches and replaced the game's levels 1..4 with the blit chain, and the distant canopy
+     * measured 0.77x the Celeritas reference's brightness (leaf pixels 32.8/54.8/21.4 against 42.7/72.2/27.1).
+     * <p>
+     * Serial tracking keeps a burst of level-0 writes from re-uploading the whole chain each time. A gap in the chain
+     * ends the reach: a level the game never wrote is not content, and the sampler must not be allowed to reach it.
+     *
+     * @return the deepest level of the contiguous prefix whose content is the game's own, 0 when none was applied
+     */
+    private int applyCapturedMipLevels(int glTextureId, int extentW, int extentH) {
+        if (this.appliedMipSerials == null) {
+            this.appliedMipSerials = new long[32];
+            java.util.Arrays.fill(this.appliedMipSerials, Long.MIN_VALUE);
+        }
+        int deepest = 0;
+        boolean contiguous = true;
+        // Bounded by the image's own levels too: a captured chain deeper than the mirror has no level to go into.
+        for (int lvl = 1; lvl < this.appliedMipSerials.length && lvl < this.mipLevels
+                && (extentW >> lvl) > 0 && (extentH >> lvl) > 0; lvl++) {
+            long mipSerial = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadSerial(glTextureId, lvl);
+            if (mipSerial == Long.MIN_VALUE) {
+                contiguous = false;
+                continue;
+            }
+            if (mipSerial != this.appliedMipSerials[lvl]) {
+                int[] mipExtent = this.mipExtentScratch;
+                java.nio.ByteBuffer mipSurface =
+                        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureUploadRgba8(glTextureId, lvl, mipExtent);
+                if (mipSurface == null
+                        || mipExtent[0] != Math.max(1, extentW >> lvl)
+                        || mipExtent[1] != Math.max(1, extentH >> lvl)
+                        || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                                .textureLevelHasGamePixels(glTextureId, lvl)) {
+                    break;
+                }
+                copyToImage(mipSurface, mipExtent[0], mipExtent[1], lvl, 0, 0);
+                this.appliedMipSerials[lvl] = mipSerial;
+            }
+            if (contiguous) {
+                deepest = lvl;
+            }
+        }
+        if (deepest > 0) {
+            this.deepestOwnLevel = Math.max(this.deepestOwnLevel, deepest);
+        }
+        return deepest;
     }
 
     /**

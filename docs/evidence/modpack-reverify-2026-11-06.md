@@ -30,7 +30,7 @@ standard ("What verified means") is defined there.
 | Pack | Celtium vs Celeritas picture (mean abs diff / pixels > 24) | Celtium-origin log findings |
 |---|---|---|
 | RLCraft 2.9.3 | AMD 10.69 / 9.3 %, Intel 11.18 / 9.3 % | see defects 3, 4, 5 below; 44 degenerate quads refused (zero area, harmless) |
-| SkyFactory 4 4.2.4 | AMD 3.60 / 5.5 %, Intel 3.68 / 5.5 % | defect 2 (FBP particles, 7,260 refusals), defect 1 (leaves), 57 batches dropped at a menu boundary |
+| SkyFactory 4 4.2.4 | AMD 3.60 / 5.5 %, Intel 3.68 / 5.5 % — **AMD 0.67 / 0.02 % after defect 1's fix** (`r123-sf4-final`, same saved world and reference) | defect 2 (FBP particles, 7,260 refusals), defect 1 (leaves), 57 batches dropped at a menu boundary |
 | All the Mods 3 6.1.1 | AMD 12.82 / 9.9 %, Intel 12.85 / 9.9 % | defect 9 (no first-person hand), defect 10 (sky gradient), `CELTIUM_MODEL_MISSING` (display list with 0 captured quads), `missingMeshes` 2–5 in model builds, 385/295 batches dropped at a menu boundary (defect 5), a depth copy not read back |
 | SevTech: Ages 3.2.3 | AMD 0.17 / 0.3 %, Intel 0.25 / 0.4 % — **not a valid scene**: the camera is inside the ground on both renderers (only the HUD and the minimap are visible) | `CELTIUM_MODEL_MISSING list=378` replayed every frame with nothing captured (`unresolvedTop=[378:x1015]`, same shape as defect 11); its logs went to `validation-console.log`, not `latest.log` |
 | Nomifactory CEu 1.7.7 | AMD 5.25 / 4.0 %, Intel 5.26 / 4.0 % | defect 10 (flat upper sky, as ATM3); defect 12 (GregTech CEu bloom shaders refused, ~10,000 POSITION_TEX batches); 11 batches dropped at a boundary. Clouds also differ (they move between runs) |
@@ -71,28 +71,44 @@ are not Celtium's.
 
 ## Celtium defects found (open unless marked)
 
-1. **Distant leaves are darker than Celeritas (both GPUs; SF4, RLCraft).** Close leaves match pixel for pixel; the
-   canopy gets darker with distance (SF4 leaf pixels 20,37,12 vs 39,74,23). Solid blocks, water, sky, HUD and the
-   minimap match. Never seen before because every earlier picture leg seeded `options.txt` from
+1. **(Fixed 2026-11-06, `r123`) Distant leaves are darker than Celeritas (both GPUs; SF4, RLCraft).** Close leaves
+   match pixel for pixel; the canopy gets darker with distance (SF4 leaf pixels 20,37,12 vs 39,74,23). Solid blocks,
+   water, sky, HUD and the minimap match. Never seen before because every earlier picture leg seeded `options.txt` from
    `.celtium-work/options/guiScale3.txt`, which has **`mipmapLevels:0`**; the pack legs use Minecraft's default 4.
-   The atlas sampler is `min=NEAREST mipmapMode=LINEAR maxLod=1` (`CELTIUM_SAMPLER_FILTER glTexture=<atlas>`), and the
-   level 1+ data are the game's own captured mips (`VulkanGlTexture.uploadFromGlTexture`, the `appliedMipSerials`
-   loop). **Next discriminator (queued in the session, may not have run):** the same saved SF4 world with
-   `CELTIUM_LEG_SEED_OPTIONS=.celtium-work/options/guiScale3.txt` (mipmaps off) on both renderers — if the difference
-   vanishes, the cause is mip data or LOD selection for `cutout_mipped`; then compare level-1 texels of a leaf sprite
-   against Minecraft's `TextureUtil.generateMipmapData` (gamma-space average excluding transparent texels).
-2. **Fancy Block Particles' digging particles are not drawn (SF4).** FBP's `FBPRenderUtil.renderCubeShaded_S` draws
+   **Cause, measured in three steps.** (a) The mipmap-off discriminator (`mm0-sf4`, both arms seeded with
+   `guiScale3.txt`) measured **0.48 / 0.06 %** against 3.60 / 5.5 % with mipmaps on, so the difference is entirely in
+   the mip path. (b) The sampler clamp is *not* it: the terrain pass has its own atlas sampler
+   (`VulkanTerrainPipeline.ATLAS_MAX_LOD`, `CELTIUM_ATLAS_SAMPLER maxLod=4 ... gameMaxLevel=4`), and raising the
+   mirror's own reach from 1 to 4 on one jar (`r123-sf4-clamp4` against `r123-sf4-amd`) changed the frame by
+   **0.0002 mean pixel levels, 0 pixels over 24**. (c) The content was it: the atlas's whole-image refresh
+   (`CELTIUM_MIRROR size=4096x4096`, `uploadFromGlTexture`'s whole-image branch) ran *after* the per-sprite patches and
+   regenerated levels 1..12 by blitting level 0 (`recordMipChain`). That blit averages across sprite borders and
+   through transparent black, so it is darker than Minecraft's own mips, which `TextureUtil.generateMipmapData`
+   produces in gamma space, skipping fully transparent texels and dropping a texel whose average alpha falls below 96.
+   The game's own levels were already in the stub (`CELTIUM_MIRROR_PATCH glTexture=273 ... producerDepth=5
+   appliedLevels=5`); the whole-image write replaced them. **Fix:** `VulkanGlTexture.applyCapturedMipLevels` is now
+   called from the whole-image branch too (after dropping the applied serials, because the blit just overwrote every
+   level), and the mirror's sampler reach follows the deepest level the producer actually wrote
+   (`CELTIUM_SAMPLER_REACH glTextureReach=4`). **Result on the same saved world and reference:** AMD
+   **3.59 / 5.47 % → 0.67 / 0.02 %** (`r123-sf4-final`, jar `b2c6ab1d…`, validation 0, `gpuRequirementMet=true`).
+   Picture: [sf4-amd-ownmips.jpg](modpack-reverify/sf4-amd-ownmips.jpg). Intel and RLCraft are not re-shot yet.
+   The old "next discriminator" (compare level-1 texels against `generateMipmapData`) is no longer needed: the
+   producer's levels were never wrong, they were being overwritten.
+2. **(Fixed in `f0efe0055`, picture confirms on `r122-sf4`) Fancy Block Particles' digging particles are not drawn (SF4).** FBP's `FBPRenderUtil.renderCubeShaded_S` draws
    through the Tessellator with vertex format POSITION(3f) TEX(2f) COLOR(4ub) LMAP(2s) NORMAL(3b) = stride 31.
    Celtium has no mapping: `CELTIUM_UNMAPPED_REFUSED format=unmapped ... size=31` and
    `CELTIUM_REFUSALS_BY_FORMAT {0 format 0 (unmapped) ...=7260}`, `CELTIUM_DRAWARRAYS refused=4096 ... stride 31 with
    client arrays [GL_NORMAL_ARRAY, GL_COLOR_ARRAY, GL_TEXTURE_COORD_ARRAY]`. Fix: add the format to the immediate
    format table (`VulkanImmediateFormats`, `celtium.vulkan.immediateFormats`) with a pipeline that consumes it (the
    lit ITEM family already reads position/uv/colour/normal; the light-map short pair is the new part).
-   **Fixed in `f0efe0055`** (unverified until the r122 SF4 leg): its first 28 bytes are PARTICLE, so it maps to
-   PARTICLE and the uploader repacks each vertex to 28 bytes, like the existing 32-byte padded particle layout. The
-   same commit maps an ATM3 particle layout with the light map before the colour
+   **Fixed in `f0efe0055`**: its first 28 bytes are PARTICLE, so it maps to PARTICLE and the uploader repacks each
+   vertex to 28 bytes, like the existing 32-byte padded particle layout. The same commit maps an ATM3 particle layout
+   with the light map before the colour
    (`CELTIUM_UNMAPPED_LAYOUT width=28 elements=[3,Position,Float 2,UV,Float 2,UV,Short 4,Vertex Color,Unsigned Byte]`)
-   by swapping the two elements back. Verify: `CELTIUM_COMPACTED_BATCH` appears and the format-0 refusals are gone.
+   by swapping the two elements back. **Picture evidence:** `r122-sf4` (jar `52ae0ee5…`, HEAD `1565129a2`) draws the
+   pink digging-particle cluster on both sides — [sf4-amd-r122.jpg](modpack-reverify/sf4-amd-r122.jpg), bottom-right
+   crop. The log half of the check (`CELTIUM_COMPACTED_BATCH` present, format-0 refusals gone) was not re-read: that
+   run's `logs/` was deleted with the run directory before it was classified, so the next SF4 leg must re-confirm it.
 3. **Ordering flush fails with "nested immediate command recording" (RLCraft, intermittent).** One run (`rlbm-amd`,
    r120, Bloodmoon + patched Fugue) counted `orderingFlushFailures=741`, `orderingFlushDroppedBatches=18828`: the
    flush at `VulkanTerrainGpuBackend` (`throw new IllegalStateException("nested immediate command recording")` when
@@ -119,7 +135,7 @@ are not Celtium's.
    while (a second backend/RenderGlobal in RLCraft). Black periodic frame dumps (`frameDumpCount`) in the same window
    fit the same cause. Not yet proven: log `TerrainGpuBackends.current()` identity per frame against the presenting
    backend. The world picture itself is correct.
-9. **First-person hand missing (ATM3, both GPUs).** Celeritas draws the player's arm at the same pose; Celtium's frame
+9. **(Fixed in `1565129a2`, picture confirms on `r122-atm3`) First-person hand missing (ATM3, both GPUs).** Celeritas draws the player's arm at the same pose; Celtium's frame
    has none (`docs/evidence/modpack-reverify/atm3-*.jpg`). SF4 and RLCraft draw the hand, so a mod in ATM3 changes how
    the hand is rendered. **Cause found (static, from the AMD leg's log):** the hand batches are model replays
    (`CELTIUM_MODEL_ENQ texture=19086 target=0x1000000008f ... projKind=perspective mvT=0.276,-1.375,-0.863`) whose
@@ -128,9 +144,11 @@ are not Celtium's.
    raw `glBindFramebuffer`. No pass owns that identity (`CELTIUM_TARGET_IMAGE identity=0x1000000008f routedImage=0x0`),
    so every batch was dropped at the frame boundary: `unflushedTargetDropTargets=[1000000008f:frames=1480:
    batches=17748]` - this, not the menu boundary, is ATM3's 18133 `unflushedTargetGroupsDropped`. **Fix
-   `1565129a2`** (unverified until the r122 leg): a raw framebuffer whose colour attachment is the game framebuffer's
-   current colour texture is bound as the game framebuffer (`CELTIUM_RAW_BIND_GAME_FRAMEBUFFER`). Verify: the hand
-   appears, `1000000008f` is gone from `unflushedTargetDropTargets`. Which mod binds it is still unnamed.
+   `1565129a2`**: a raw framebuffer whose colour attachment is the game framebuffer's current colour texture is bound
+   as the game framebuffer (`CELTIUM_RAW_BIND_GAME_FRAMEBUFFER`). **Picture evidence:** `r122-atm3` (jar `52ae0ee5…`,
+   HEAD `1565129a2`) draws the arm at the same pose as Celeritas —
+   [atm3-amd-r122.jpg](modpack-reverify/atm3-amd-r122.jpg). Which mod binds it is still unnamed, and the log half
+   (`1000000008f` gone from `unflushedTargetDropTargets`) was not re-read for the same reason as defect 2.
 10. **Upper sky is flat fog colour (ATM3 and Nomifactory, both GPUs).** Sampled at x=300: Celtium is
     (179,207,255) from the top row down, Celeritas (152,188,255) at the top grading to (179,207,255) - the sky dome is
     missing or fully fogged, and only the fog colour shows. SF4, RLCraft and PO3 match (useVbo, render distance and
@@ -162,21 +180,26 @@ are not Celtium's.
 - ThaumcraftFix needs Fugue ≥ 0.25.5; CodeChickenLib 3.3.8 → 3.3.10; SmoothFont refused by Celtium (SevTech);
   JourneyMap 6.x breaks JourneyMapStages Continuation (use 5.7.1p3); MineColonies' pinned ATM3 file is gone (LDT Team
   maven 0.11.841); Topography crashes on the fixture's superflat options (use generated worlds).
+- **Hwyla 1.8.26 (SF4) can fail mod loading with `Comparison method violates its general contract!`** in
+  `ProxyCommon.loadComplete`: its plugin comparator returns `-1` for *any* plugin in the `mcp.mobius.waila` package
+  instead of comparing, so the order is inconsistent whenever such a plugin is present, and whether TimSort notices
+  depends on the `HashMap` iteration order (identity hashes) — intermittent, pack-side, and it aborted one `r123` leg
+  before the world. Retry the leg; it is not a renderer fault.
 - **Harness pitfalls hit today:** `pgrep -f` patterns that also match the launching shell's own command line; the
   e2e leg's report used to delete `saves` before the world could be copied; `debug.log` repeats `latest.log`.
 
 ## Next steps (in order)
 
-1. Finish the batch for ATM3, SevTech, Nomifactory and PO3 (and add Supersymmetry/E2E-E with the same script), fill
-   the results table, and add each pack's Celtium findings here.
-2. Run the mipmap discriminator (defect 1) and fix the leaf darkening.
-3. Verify the r122 fixes (FBP/ATM3 particle repack, defect 2; raw game-framebuffer bind, defect 9) with
-   `r122-atm3`/`r122-sf4` legs on the saved worlds against the existing `run-w-<pack>-ref` pictures.
-4. Re-shoot SevTech from above the ground (`-Dceltium.validation.cameraY=` above the spawn terrain, on the same
+1. **Re-shoot every pack's picture on the current jar** (`r123`+): defect 1's fix changes the atlas mips for all of
+   them, so the numbers in the results table above are pre-fix except SF4's AMD row. Intel has not been re-shot for any
+   pack. The batch is `scripts/modpack-reverify.sh .gv-verify/jars/<stage> sf4 atm3 rlcraft sevtech nomi po3`.
+2. Re-confirm the log half of defects 2 and 9 on the next SF4/ATM3 legs (`CELTIUM_COMPACTED_BATCH` present and
+   format-0 refusals gone; `1000000008f` gone from `unflushedTargetDropTargets`).
+3. Re-shoot SevTech from above the ground (`-Dceltium.validation.cameraY=` above the spawn terrain, on the same
    saved world) - the current pair is HUD-only. Suspect for defects 10/11: Advanced Rocketry (in ATM3 and Nomi, not in
    SF4/RLCraft/PO3) replaces the overworld sky with `RenderPlanetarySky`, whose constructor compiles stars/sky/sky2
    with the Tessellator inside `glNewList(GL_COMPILE)` and draws them with `glCallList` every frame. In ATM3 no
    `CELTIUM_DISPLAY_LIST_ORIGIN` was recorded for the unresolved list (the uploader returns early while
    `TerrainGpuBackends.current()` is null, so a list compiled before the backend exists is never captured).
-5. Reproduce defects 3 and 4 on HEAD with `CELTIUM_RECORD` and fix them.
-6. Only then mark packs verified in docs/modpacks.md and the README.
+4. Reproduce defects 3 and 4 on HEAD with `CELTIUM_RECORD` and fix them.
+5. Only then mark packs verified in docs/modpacks.md and the README.
