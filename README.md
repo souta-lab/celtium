@@ -4,13 +4,19 @@
 
 **A native Vulkan renderer for Minecraft 1.12.2 on CleanroomMC, built from Celeritas.**
 
-[![Minecraft 1.12.2](https://img.shields.io/badge/Minecraft-1.12.2-62B47A)](#requirements)
-[![CleanroomMC 0.7](https://img.shields.io/badge/loader-CleanroomMC%200.7-7B42BC)](#requirements)
-[![Vulkan 1.2](https://img.shields.io/badge/API-Vulkan%201.2-AC162C?logo=vulkan&logoColor=white)](#requirements)
-[![Release](https://img.shields.io/github/v/release/souta-lab/celtium?include_prereleases&label=release)](https://github.com/souta-lab/celtium/releases)
-[![Status: experimental](https://img.shields.io/badge/status-experimental-orange)](#known-issues)
-[![Tested GPUs](https://img.shields.io/badge/tested%20GPUs-AMD%20%7C%20Intel-555)](#requirements)
-[![License LGPL-3.0](https://img.shields.io/badge/license-LGPL--3.0-blue)](#license-and-attribution)
+<p>
+  <a href="https://github.com/souta-lab/celtium/releases"><img alt="Release" src="https://img.shields.io/github/v/release/souta-lab/celtium?include_prereleases&style=for-the-badge&logo=github&label=release&color=24292f"></a>
+  <a href="#requirements"><img alt="Minecraft 1.12.2" src="https://img.shields.io/badge/Minecraft-1.12.2-3C8527?style=for-the-badge&logo=minecraft&logoColor=white"></a>
+  <a href="#requirements"><img alt="CleanroomMC 0.7" src="https://img.shields.io/badge/CleanroomMC-0.7-7B42BC?style=for-the-badge"></a>
+  <a href="#requirements"><img alt="Vulkan 1.2" src="https://img.shields.io/badge/Vulkan-1.2-AC162C?style=for-the-badge&logo=vulkan&logoColor=white"></a>
+  <a href="#requirements"><img alt="Java 25" src="https://img.shields.io/badge/Java-25-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white"></a>
+</p>
+<p>
+  <a href="#performance"><img alt="FPS vs Celeritas: +2.5% AMD, +6.4% Intel at p50" src="https://img.shields.io/badge/FPS%20vs%20Celeritas-%2B2.5%25%20AMD%20%C2%B7%20%2B6.4%25%20Intel-2A78D6?style=for-the-badge"></a>
+  <a href="#requirements"><img alt="Tested on AMD and Intel" src="https://img.shields.io/badge/tested-AMD%20%C2%B7%20Intel-ED1C24?style=for-the-badge&logo=amd&logoColor=white"></a>
+  <a href="#known-issues"><img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-F59E0B?style=for-the-badge"></a>
+  <a href="#license-and-attribution"><img alt="License LGPL-3.0" src="https://img.shields.io/badge/license-LGPL--3.0-0F6CBD?style=for-the-badge"></a>
+</p>
 
 Celtium creates the game window **without an OpenGL context**. Terrain, entities, items, particles, sky, clouds and
 the GUI are drawn into Vulkan-owned images and presented through a Vulkan swapchain. It is a renderer replacement, not

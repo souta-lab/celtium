@@ -33,8 +33,10 @@ measured, in the units a player uses, and nothing more. These rules apply to eve
 
 ## Badges and structure
 
-- Badges are shields.io badges that link to the README section or page that backs them (requirements, release,
-  known issues, license). Static badges must be updated when the fact changes (loader line, tested GPUs, status).
+- Badges are shields.io badges in `style=for-the-badge`, written as HTML `<a><img></a>` in two `<p>` rows (platform
+  first, then performance/status/license), with a simple-icons logo where one exists. Each links to the README section
+  or page that backs it (requirements, release, performance, known issues, license). Static badges, including the
+  FPS badge, must be updated in the same commit as the fact they state.
 - Order: name and one-line summary, badges, what it is, highlights, performance, modpack compatibility,
   requirements, install, scope, known issues, building and testing, documentation, license and references.
 - Highlights are claims a reader can check in the sections below; no highlight without a number or run behind it.
