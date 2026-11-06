@@ -37,7 +37,12 @@ measured, in the units a player uses, and nothing more. These rules apply to eve
   first, then performance/status/license), with a simple-icons logo where one exists. Each links to the README section
   or page that backs it (requirements, release, performance, known issues, license). Static badges, including the
   FPS badge, must be updated in the same commit as the fact they state.
-- Order: name and one-line summary, badges, what it is, highlights, performance, modpack compatibility,
+- Top of the page, centred: the logo (`docs/img/logo-{light,dark}.svg` through `<picture>`), the name, a one-line
+  summary, the two badge rows, the name-origin line; then a "📑 Contents" list linking every `##` section.
+- Every `##` heading starts with one emoji, and only single-codepoint emoji (no U+FE0F variation selector, so not
+  ⚠️ ⚖️ 🛠️): GitHub keeps the invisible selector in the anchor, which breaks `#-section` links. Anchors are therefore
+  `#-<slug>`; check every internal link resolves after a heading change.
+- Order: name and one-line summary, badges, contents, what it is, highlights, performance, modpack compatibility,
   requirements, install, scope, known issues, building and testing, documentation, license and references.
 - Highlights are claims a reader can check in the sections below; no highlight without a number or run behind it.
 
