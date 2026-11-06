@@ -1,0 +1,29 @@
+# Modpacks run with Celtium
+
+Every pack here was started with Celtium on the verification harness (`scripts/gv-leg.sh`, mode `e2e` or `world`)
+and reached the world. **Goal for every pack: zero Vulkan validation errors and more FPS than Celeritas 2.5.0-dev.**
+A row names the pack version, the mod count, the Celtium build, the GPUs and the runs; pack-side substitutions needed
+for Cleanroom 0.7 are listed per pack and are never Celtium changes. FPS is only given where a paired KPI was run.
+
+| Modpack | Version | Mods | Cleanroom | Result | Celtium build | Runs |
+| --- | --- | --- | --- | --- | --- | --- |
+| Supersymmetry | 0.2.0.2 | 188 | 0.7.14 (relauncher) | world, validation 0; **FPS above Celeritas at p50/p95 on AMD and Intel**, p99 at parity (KPI pack) | r107 `5ff004c26` | `l27kpi-amd`, `l27kpi-intel` |
+| Enigmatica 2: Expert - Extended | 1.87.3 | ≈430 | 0.7.14 (relauncher) | world, **validation 0 on AMD and Intel**, also with Xaero raw-FBO identity | r116 `d8cb18595`, r117 `0403f9f0b` | `fx1-e2ee-amd`, `fx1-e2ee-intel`, `xr1-e2ee-xaero-amd` |
+| Enigmatica 2: Expert | 1.93a | 270 | 0.7.11 | world on both GPUs (2026-11-05; superseded by E2E-E, instance removed 2026-11-06) | 2026-11-05 build | see evidence |
+
+## Substitutions per pack
+
+- **Enigmatica 2: Expert - Extended 1.87.3**: Fugue 0.24.4 -> 0.25.5, CodeChickenLib 3.3.8 -> 3.3.10, Trinity without
+  its `ICBMEvents` hook (no ICBM in the pack); excluded at leg time: SmoothFont, gnetum, CustomLoadingScreen
+  (competing renderers), NothiriumLittleTilesPatch, the pack's older relauncher and FermiumBooter (bundled by
+  Cleanroom). Detail: [e2e-cleanroom07-2026-10-26.md](<evidence/e2e-cleanroom07-2026-10-26.md>).
+
+## Adding a pack
+
+1. Stage the pack's mods with `scripts/pack_stage.py` (pins resolved with `scripts/modpack-compat/cf_file_index.py`),
+   apply the Cleanroom migration notes from Rongmario's gist, and record the substitutions under
+   `.celtium-work/modpack-<pack>/SUBSTITUTIONS.md`.
+2. Add an `E2E_PACKS` preset in `scripts/gv_leg.py` and run `CELTIUM_E2E_PACK=<pack> scripts/gv-leg.sh <leg> <stage> e2e
+   <gpu> 2400` on AMD and Intel.
+3. A pack goes in the table once it reaches the world; the result column states the validation count honestly.
+4. Older copies of a pack are deleted when a newer one replaces them (only the newest set is kept on disk).

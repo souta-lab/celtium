@@ -57,6 +57,13 @@ E2E_PACKS = {
         "exclude": ["SmoothFont-*", "gnetum-*", "NothiriumLittleTilesPatch-*", "CustomLoadingScreen-*",
                     "!cleanroom-relauncher-1.1.4*", "`FermiumBooter-*"],
     },
+    # SkyFactory 4 4.2.4 (CurseForge 296062 / 3565683): Rongmario's gist's removals and replacements are applied in the
+    # staged directory itself (.celtium-work/modpack-sf4/SUBSTITUTIONS.md), so nothing is excluded at leg time.
+    "sf4": {
+        "instance": lambda root: Path.home() / ".local/share/PrismLauncher/instances/celtium-sf4-4.2.4",
+        "staged": lambda root: root / ".celtium-work/modpack-sf4/staged/mods",
+        "exclude": [],
+    },
 }
 
 

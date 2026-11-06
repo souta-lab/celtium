@@ -93,7 +93,8 @@ not comparable with the Supersymmetry numbers above.
 | Enigmatica 2: Expert 1.93a | 270 | passes on both GPUs | [evidence](<docs/evidence/e2e-cleanroom07-2026-10-26.md>) |
 
 E2E-E needs three pack-side substitutions for Cleanroom 0.7.14 (Fugue 0.25.5, CodeChickenLib 3.3.10, Trinity
-without its ICBM hook); none of them is a Celtium change. Mod-level lists: [verifiedmods.md](verifiedmods.md) and
+without its ICBM hook); none of them is a Celtium change. The full list of packs run, with versions, builds, runs and
+substitutions, is [docs/modpacks.md](<docs/modpacks.md>). Mod-level lists: [verifiedmods.md](verifiedmods.md) and
 [notworkingmods.md](notworkingmods.md).
 
 ## Requirements

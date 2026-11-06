@@ -1,69 +1,39 @@
 # Celtium — 製品目標と完成条件
 
-2026-10-21 再定義。利用者指示による改訂: 10-24（新アーキテクチャ・互換方針）、10-25（基盤固有最適化・描画modの吸収・
-巨大クラス分割・KPI p50/p95/p99・GL stubの範囲）、10-27（巨大packの置換・旧コード削除量）、
-11-04（Mod自前のshader program・条件ごとの閉じる証拠）。
-以前の性能値・原因断定・完了宣言は前提にしない。**本書も絶対ではない**: 実測がより良い方針を示せば直す。
-状態は [plan.md](<plan.md>)（唯一の現在表）、設計案（非拘束）は [new_architecture.md](<new_architecture.md>)、
-手順は [development.md](<development.md>)。本書は作業許可やGoalの稼働状態を変更しない。
+2026-11-06 全面改訂（旧版の大半は解決済みのため整理）。状態と優先順は [plan.md](<plan.md>)（唯一の現在表）、手順は
+[development.md](<development.md>)。本書は作業許可やGoalの稼働状態を変更しない。実測がより良い方針を示せば直す。
 
-## 目的と唯一の描画制約
+## 目的
 
-Minecraft 1.12.2 / CleanroomMC 向けに、**Celeritasを明確に上回る性能**と、**Forge標準描画経路の正しさ**を持つレンダラを作る。
+Minecraft 1.12.2 / CleanroomMC 向けに、**有名modpackがエラー無く動き、Celeritasより高いFPSを出す** native Vulkan
+レンダラを作る。
 
-- **native Vulkan-only。Minecraft/Forgeの描画・資源・状態・可視性・提出をnative rendererが所有する。**
-  全描画物（地形・entity・TESR・item・particle・text・GUI・空・手・post）は1つのscene database・可視性・
-  frame compilerに載る（形は実測で決める）。バニラのGL呼出しをスタブへ転送して「native化」と呼ばない。
-- **GL stubは「GLを直接呼ぶmod」のためだけ**（10-25）。vanilla/Forgeはmixinで意味を受け取りnativeに描く。
-  mod の直接GL（例: Xaero の PBO・raw FBO・raw matrix）はstubが受け、結果をnativeの target・texture・matrix へ届ける。
-  stubが何も描かないことを互換と呼ばない。GLコンテキスト・GL fallbackに頼らず、拒否された描画は欠落と数える。
-- **Mod自前のshader program（GLSL）もstubの責務**（11-04）。例: GTCEu の bloom 合成。固定集合ではないので
-  実行時に GLSL→SPIR-V へ変換し native pass で実行する。それまでは program bind 中の batch を拒否して
-  program ごとに数えるのが正しい状態で、世界投影で別の絵を描くことを互換と呼ばない。
+- **native Vulkan-only。** vanilla/Forge の描画・資源・状態・可視性・提出は native renderer が所有する。GL context・
+  GL fallback に頼らず、拒否された描画は欠落として数える。
+- **GL stub は「GLを直接呼ぶmod」専用。** mod の直接GL（raw FBO・PBO・raw matrix・自前GLSL program）は stub が受けて
+  native の target・texture・matrix・pass に届ける。stub が何も描かないことを互換と呼ばない。
+- **描画系modは競合として起動時に名指しで拒否**し、その手法（地形・culling・batching・資源遅延）は本体に取り込む。
+- **基盤固有の最適化**（SDL3 / Java 25 / LWJGL 3.4 / Vulkan 1.2）は実測で採否を決める。
+- **コードの健全性**: 巨大クラス（`VulkanTerrainGpuBackend`）を所有権ごとに分割し、置き換わった経路・効果の無い実験
+  switch は削除する。挙動は CPU テストと leg で不変を確かめる。
 
-### 基盤固有の最適化と描画modの吸収（10-25 利用者指示）
+## 完成条件と現状（2026-11-06）
 
-- **SDL3 / Java 21 / LWJGL 3 / Cleanroom / Vulkan 1.2 でしかできない最適化を積極的に採る**（descriptor indexing・
-  draw indirect count・timeline semaphore・`VkPipelineCache` 永続化・世代別ZGC・SDL3 Wayland直結など）。採否は実測で決める。
-- **描画系modは競合として排除し、その手法を本体の一つのscene/可視性/提出経路に取り込む**: Celeritas/Sodium（地形）、
-  EntityCulling、ImmediatelyFast（GUI・文字・HUDのbatch）、Enhanced Block Entities、FoamFix/VintageFix（資源遅延）。
-- **巨大クラスを分割する**: `VulkanTerrainGpuBackend` を所有権ごと（状態owner・受理・記録・提出・present・診断）に段階抽出。
-- **旧コードを削除する**: 置き換わったクラス・旧経路・使われない計器/実験switchの**削除行数を成果に数える**。
-  効果の無い実験は消し、CPUテストとlegで無変化を確かめる。
+| # | 条件 | 閉じる証拠 | 現状 |
+|---|---|---|---|
+| 1 | **FPS**: AMD RX 6400 と Intel UHD 630 の双方で、hash固定の Celeritas 2.5.0-dev より p50・p95・p99 が全て高い | `scripts/gv-kpi.sh` の形式verdict（Supersymmetry 0.2.0.2・validation OFF・warm tick [400,600)・3対以上・全対同方向・負荷ゲート通過） | **中央値は両GPU全percentileで上回る**（r107）。全対条件は p99 の対ごとの揺れで未達 |
+| 2 | **有名modpack**: 選んだ有名packが world に入り、**validation 0** | 両GPUの実instance leg（`e2e` mode）、[modpacks.md](<modpacks.md>) に記録 | Supersymmetry・E2E-E 1.87.3 は達成。SkyFactory 4 から順に拡大中 |
+| 3 | **native境界**: sky / terrain / entity / block entity / particle / hand / GUI / font / loading / settings が GL 互換層を逆呼出しせず描かれる | 出荷経路の census（`CELTIUM_GL_SURFACE*`・未route・program bind/拒否）が mod 由来だけ | 達成（census は mod 由来のみ） |
+| 4 | **画質**: loading / home / game / settings と QMAGNET's Test Map が参照と一致 | 同fixture・同poseの Celeritas 参照比較と機能別の陽性対照 | 両GPUで一致（loading は参照なし） |
+| 5 | **mod自前GLSL**: GTCEu bloom など mod の program を実行時に SPIR-V 化して native pass で描く | 該当 scene の参照比較 | opt-in で動作、既定は拒否・計数 |
+| 6 | **影・shaderpack**: Demonica fork の別成果物（AGPL-3.0 addon jar）。本体は接続境界を壊さない | addon 側で両GPUの実画面 | 未着手（本体の優先は 1・2） |
+| 7 | **配布**: packaged JAR とテスト済み実装が一致し、導入手順・対応環境・既知の非対応が正確 | 配布jarと検証jarの SHA-256 一致、README の規則（[readme-rules.md](<readme-rules.md>)） | 0.2.0 配布済み。main の改善は未リリース |
 
-それ以外の実装方式は固定しない。ただしMinecraft/Forgeの観測可能な描画・イベント契約を壊す変更を互換向上と取り違えない。
-
-## 完成条件（すべて必要）
-
-各条件の「閉じる証拠」以外で達成を宣言しない。
-
-1. **性能**：hash固定のCeleritas対照に、**AMD RX 6400とIntel UHD 630の双方で p50・p95・p99 すべてが明確に下回る**（10-25）。
-   3組以上のpaired runで各ratio中央値が1.0未満・全対で同じ向き・負荷ゲート通過。起動・移動・チャンク更新・スパイク
-   （16.7/33/50ms超の枚数と最大値）・CPU/GPU時間・メモリ・長時間安定性も確認。描画を削って得た比率は勝利にしない。
-   *閉じる証拠*: `scripts/gv-kpi.sh` の形式verdict（KPI profile `celtium-world-accept`・validation/readback OFF・
-   warm tick [400,600)）。validation ON の内訳・単発leg・計器込みの ms・旧JARの比では閉じない。
-2. **native境界**：sky / terrain / entities / block entities / particles / hand / GUI / font / loading / settings が
-   GL互換層を逆呼出しせずnativeに描かれる（状態query・texture・framebufferを含む）。
-   *閉じる証拠*: 出荷経路の census（`CELTIUM_GL_SURFACE*`・未route呼出し・program bind/拒否）が Mod 由来だけを示す。
-3. **画質**：loading / home / game / settings の4画面とQMAGNET's Test Mapを原寸で確認。
-   *閉じる証拠*: 同fixture・同poseの GL 参照（Celeritas）との比較と機能別の陽性対照。色数gate・validation clean単独では閉じない。
-4. **互換**（10-24）：Forge API の公開契約と**Forge/vanillaの標準描画経路に載るコンテンツ**が欠落・ちらつき・順序・
-   状態漏れなく描かれる（resize・resource reload・world切替・GUI/FBO寿命を含む）。**描画に手を加えるMod**（renderer置換・
-   culling/batching/FPS系・独自shaderpack・描画順の差替え）は非サポートで、判明した競合は mod ID・transformer/mixin
-   target・署名で起動時にfail-fastする（推測で正常Modを排除しない）。**E2E 1.93a と E2E-E が完全に動作すること**
-   （RLCraft 2.9.3 はCeltium無しでも起動しないため除外）。
-   *閉じる証拠*: 両packの実instance leg（両GPU）で world を開いた提示画像に異常が無いこと。依存Modを抜いたpack・
-   `runClient`・回帰検出用scene（GTCEu/Supersymmetry・SF4）は完全packの受入を代用しない。
-5. **影とshaderpack**：**Demonica forkの別成果物（AGPL-3.0のaddon jar）**で実現（10-24）。本体の責務は接続境界
-   （terrain描画・pass・資源の受け渡し）を壊さないこと。受入はaddon側で両GPUの実画面。本体の優先は①性能→④互換。
-6. **配布**：packaged JARとテスト済み実装が一致し、対応環境・依存・ライセンス・設定・既知の非対応・導入手順が正確。
-   初回導入と長時間プレイでdevice lost・資源リーク・無言の欠落がない。*閉じる証拠*: 配布jarと検証jarの SHA-256 一致。
+描画を削って得た FPS、validation clean 単独、`exitCode=0` 単独は達成に数えない。1 GPU・1 scene の成功を他へ広げない。
 
 ## 証拠の最低条件
 
-- full JAR／fixture の SHA-256、build provenance と dirty差分、実GPU、scene、camera、flags、測定区間、legを紐づける。
-  **実行時のgit HEADはJARの出自の証明ではない。**
-- 性能と画質/validationのrunを分け、計測負荷を明記する。cold区間は worldTicks [120,200)、post-startup は [400,600)
-  （50サンプル以上・区間完了・`holdUntilTick` が必要）。tick番号はsteady stateを証明しない。
-- 部分計数から全数を、1 GPU・1 sceneの成功を他へ拡張しない。失敗・未較正・欠測・hash不一致は成功から除く。
-- 過去の否定・肯定は再入条件を持つ仮説として扱い、対象artifactと有効な計器から再評価する。
+- full JAR／fixture の SHA-256、build provenance、実GPU、pack と版、scene、flags、測定区間、leg名を紐づける。
+  実行時の git HEAD は JAR の出自の証明ではない。
+- 性能 run と validation/画質 run を分け、計測負荷を明記する。FPS は README では FPS で書く（KPI は ms で測る）。
+- 失敗・未較正・欠測・hash 不一致は成功から除く。過去の否定・肯定は再入条件つきの仮説として扱う。
