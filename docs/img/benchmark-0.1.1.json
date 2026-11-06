@@ -1,9 +1,9 @@
 {
- "title": "Celtium 0.1.1-alpha vs Celeritas 2.5.0-dev — frame time",
+ "title": "Celtium 0.1.1-alpha vs Celeritas 2.5.0-dev — FPS (acceptance instance)",
  "note": "Median of 3 paired runs, warm ticks 400–600, qmagnet test map (no Xaero), 1280×720, vsync off, Cleanroom 0.7.11. 2026-10-28.",
  "panels": [
   {
-   "name": "AMD Radeon RX 6400 (frame time, lower is better)",
+   "name": "AMD Radeon RX 6400 (FPS, higher is better)",
    "rows": [
     {
      "metric": "p50",
@@ -23,7 +23,7 @@
    ]
   },
   {
-   "name": "Intel UHD Graphics 630 (frame time, lower is better)",
+   "name": "Intel UHD Graphics 630 (FPS, higher is better)",
    "rows": [
     {
      "metric": "p50",

@@ -1,0 +1,46 @@
+{
+ "title": "Celtium (main, r107) vs Celeritas 2.5.0-dev — Supersymmetry 0.2.0.2 (188 mods), FPS",
+ "note": "Median of 3 paired runs per GPU (l27kpi), warm ticks 400–600, 1280×720, vsync off, Cleanroom Relauncher. 2026-11-06.",
+ "panels": [
+  {
+   "name": "AMD Radeon RX 6400 (FPS, higher is better)",
+   "rows": [
+    {
+     "metric": "p50",
+     "celtium": 2.344,
+     "celeritas": 2.459
+    },
+    {
+     "metric": "p95",
+     "celtium": 4.4,
+     "celeritas": 4.68
+    },
+    {
+     "metric": "p99",
+     "celtium": 5.74,
+     "celeritas": 5.588
+    }
+   ]
+  },
+  {
+   "name": "Intel UHD Graphics 630 (FPS, higher is better)",
+   "rows": [
+    {
+     "metric": "p50",
+     "celtium": 3.382,
+     "celeritas": 3.664
+    },
+    {
+     "metric": "p95",
+     "celtium": 5.999,
+     "celeritas": 6.272
+    },
+    {
+     "metric": "p99",
+     "celtium": 7.171,
+     "celeritas": 7.267
+    }
+   ]
+  }
+ ]
+}

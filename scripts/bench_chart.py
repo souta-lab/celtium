@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Draws the README benchmark chart (light and dark SVG) from a paired-KPI summary.
+"""Draws a README benchmark chart (light and dark SVG) from a paired-KPI summary, in FPS.
 
 Input JSON: {"title": str, "note": str, "panels": [{"name": str, "rows": [{"metric": "p50",
-"celtium": ms, "celeritas": ms}, ...]}, ...]}. Lower is better; every bar carries its value, and each
-mark has a <title> so a browser shows it on hover.
+"celtium": ms, "celeritas": ms}, ...]}, ...]}. The source values stay frame times (what the KPI measures);
+the chart shows FPS = 1000 / ms, higher is better (docs/readme-rules.md: the README speaks FPS only).
+Every bar carries its value, and each mark has a <title> so a browser shows it on hover.
+
+Usage: bench_chart.py INPUT.json OUT_DIR [BASENAME=benchmark] -> OUT_DIR/BASENAME-{light,dark}.svg
 """
 import json
 import sys
@@ -28,11 +31,16 @@ ROW_GAP = 14
 VALUE_W = 64
 
 
+def fps(ms):
+    """{return the frame rate of a frame time in milliseconds}."""
+    return 1000.0 / ms
+
+
 def render(data, theme):
     t = THEMES[theme]
     top = 78
     panels = data["panels"]
-    scale_max = max(max(r[k] for k in KEYS) for p in panels for r in p["rows"])
+    scale_max = max(max(fps(r[k]) for k in KEYS) for p in panels for r in p["rows"])
     plot_w = WIDTH - 24 - LABEL_W - VALUE_W
     row_h = 2 * BAR_H + BAR_GAP + ROW_GAP
     out = []
@@ -46,16 +54,16 @@ def render(data, theme):
             out.append(f'<text x="24" y="{ry + BAR_H + 4}" fill="{t["muted"]}" font-size="12">'
                        f'{escape(row["metric"])}</text>')
             for i, key in enumerate(KEYS):
-                value = row[key]
+                value = fps(row[key])
                 w = max(4.0, plot_w * value / scale_max)
                 by = ry + i * (BAR_H + BAR_GAP)
                 x0 = 24 + LABEL_W
                 # Square at the baseline, 4px rounded at the data end.
                 path = (f"M{x0},{by} h{w - 4:.1f} a4,4 0 0 1 4,4 v{BAR_H - 8} a4,4 0 0 1 -4,4 h{-(w - 4):.1f} z")
                 out.append(f'<path d="{path}" fill="{t["series"][i]}"><title>{escape(panel["name"])} '
-                           f'{row["metric"]} {NAMES[i]}: {value:.2f} ms</title></path>')
+                           f'{row["metric"]} {NAMES[i]}: {value:.0f} FPS</title></path>')
                 out.append(f'<text x="{x0 + w + 6:.1f}" y="{by + BAR_H - 2}" fill="{t["ink"]}" '
-                           f'font-size="11">{value:.2f} ms</text>')
+                           f'font-size="11">{value:.0f} FPS</text>')
             y += row_h
         y += PANEL_GAP - ROW_GAP
     height = y + 30
@@ -77,9 +85,10 @@ def render(data, theme):
 def main():
     data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     out_dir = Path(sys.argv[2])
+    base = sys.argv[3] if len(sys.argv) > 3 else "benchmark"
     out_dir.mkdir(parents=True, exist_ok=True)
     for theme in THEMES:
-        (out_dir / f"benchmark-{theme}.svg").write_text(render(data, theme) + "\n", encoding="utf-8")
+        (out_dir / f"{base}-{theme}.svg").write_text(render(data, theme) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":
