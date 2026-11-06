@@ -234,7 +234,10 @@ capture 条件が満たされない）。
 
 ## material順ソートは効かなかった（2026-10-31 A/B）
 
-`-Dceltium.vulkan.sortOpaque=true` のABBA A/B（Susy world、同一JAR・交互2legずつ）: **ON 2.538ms / OFF 2.508ms** = ONが1.2%悪化。理由は構造的で、並べ替えてもgroupごとの**push定数（行列）が異なる**ためbind/pushの削減に繋がらず、ソート自体のコストだけ増える。reorderable母集団は約2割ある（depth-write OFFが最大の非対象）が、それでも効果なし。再入条件は「records方式でpushをレコード化し、array setでtextureを外した状態」で並べ替えること（その時点で初めて並べ替えがrun形成に効く）。
+material順ソートのABBA A/B（Susy world、同一JAR・交互2legずつ）: **ON 2.538ms / OFF 2.508ms** = ONが1.2%悪化。理由は構造的で、並べ替えてもgroupごとの**push定数（行列）が異なる**ためbind/pushの削減に繋がらず、ソート自体のコストだけ増える。reorderable母集団は約2割ある（depth-write OFFが最大の非対象）が、それでも効果なし。再入条件は「records方式でpushをレコード化し、array setでtextureを外した状態」で並べ替えること（その時点で初めて並べ替えがrun形成に効く）。
+**2026-11-07: スイッチと実装（`celtium$buildDrawOrder`・reorderable判定・sortOrder census）を削除した。** 既定OFFで
+測って悪化した実験を残す理由が無く、group loop は到着順を直接読む（挙動不変）。再入するなら indirect/records の
+run 形成と同時に、新しい形で入れる。
 
 ## ATM3 leg の `--duration` は起動込みの実時間上限（2026-10-31）
 

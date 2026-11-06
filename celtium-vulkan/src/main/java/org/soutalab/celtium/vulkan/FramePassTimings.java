@@ -132,7 +132,9 @@ public final class FramePassTimings {
         // Deliberately not VulkanDiagnostics.enabled(): the acceptance fixture always passes celtium.vulkan.validation,
         // and tying the brackets to it put eight name lookups and two clock reads on every group of every acceptance leg -
         // the frame being judged paid for the instrument judging it. A run that wants the brackets asks for them.
-        return PASS_SPLIT_ENABLED || BRACKETS_ENABLED;
+        // TICK_PERCENTILES asks for the same brackets: the report is a split of them, so a leg that sets only the
+        // report switch would otherwise print nothing and read as "the instrument measured nothing".
+        return PASS_SPLIT_ENABLED || BRACKETS_ENABLED || TICK_PERCENTILES;
     }
 
     /** {@code -Dceltium.vulkan.brackets=true}: keep the pass brackets on without the pass-split report. */
@@ -174,6 +176,93 @@ public final class FramePassTimings {
     /** A client tick ended; the next frame to end is a tick frame. */
     public static void noteTick() {
         tickSinceLastFrame = true;
+    }
+
+    /**
+     * {@code -Dceltium.vulkan.tickPercentiles=true}: the same tick/plain split as {@code CELTIUM_FRAME_TICK_PASSES},
+     * but as percentiles of the tick frames instead of means.
+     * <p>
+     * The mean form cannot answer the question the KPI asks. The warm window's p99 is a <em>tick</em> frame - 200 of
+     * ~4 200 frames carry a tick, so the 99th percentile of all frames is the ~79th percentile of the tick frames - and
+     * a mean over 200 tick frames is dominated by the handful of frames that hit a one-off event (the shared index
+     * buffer's single regeneration read 75 us a frame in one block, which is one 14.6 ms frame, not a per-tick cost).
+     * The evidence history has read those means as per-tick costs more than once. This form keeps every frame's own
+     * values and reports, per bracket, the tick frames' p50, the tick percentile that <em>is</em> the all-frames p99,
+     * and the tick p95, beside the plain frames' p79 - so "which bracket owns the p99" is a percentile comparison
+     * rather than an average of outliers.
+     * <p>
+     * Memory is {@code frames x brackets x 8} bytes, allocated only when the switch is on (4 096 frames is ~3 MB).
+     */
+    private static final boolean TICK_PERCENTILES = Boolean.getBoolean("celtium.vulkan.tickPercentiles");
+    private static final int PERCENTILE_FRAMES =
+            Math.max(64, Integer.getInteger("celtium.vulkan.tickPercentileFrames", 4096).intValue());
+    private static final int PERCENTILE_COLUMNS = 1 + TOP_LEVEL.length + INSIDE.length;
+    private static long[][] percentileRows;
+    private static boolean[] percentileIsTick;
+    private static int percentileCount;
+
+    /**
+     * Files one frame for {@link #TICK_PERCENTILES} and prints the percentile report when the buffer is full.
+     * <p>
+     * Called before {@link #fileTickSplit()}, which consumes {@link #tickSinceLastFrame}.
+     */
+    private static void fileTickPercentiles() {
+        if (!TICK_PERCENTILES) {
+            return;
+        }
+        if (percentileRows == null) {
+            percentileRows = new long[PERCENTILE_FRAMES][PERCENTILE_COLUMNS];
+            percentileIsTick = new boolean[PERCENTILE_FRAMES];
+        }
+        long[] row = percentileRows[percentileCount];
+        row[0] = currentFrameTotal;
+        for (int i = 0; i < TOP_LEVEL.length; i++) row[1 + i] = currentTopLevel[i];
+        for (int i = 0; i < INSIDE.length; i++) row[1 + TOP_LEVEL.length + i] = currentInside[i];
+        percentileIsTick[percentileCount] = tickSinceLastFrame;
+        if (++percentileCount < PERCENTILE_FRAMES) {
+            return;
+        }
+        percentileCount = 0;
+        int tickCount = 0;
+        for (int i = 0; i < PERCENTILE_FRAMES; i++) {
+            if (percentileIsTick[i]) tickCount++;
+        }
+        int plainCount = PERCENTILE_FRAMES - tickCount;
+        if (tickCount == 0 || plainCount == 0) {
+            return;
+        }
+        // The all-frames p99 is a tick frame at this rank among the tick frames: the plain frames are the faster
+        // population, so they occupy the low ranks and the p99 lands (0.99 * total - plain) frames into the tick ones.
+        int p99Rank = (int) Math.round(0.99 * PERCENTILE_FRAMES) - plainCount;
+        if (p99Rank < 0) p99Rank = 0;
+        if (p99Rank >= tickCount) p99Rank = tickCount - 1;
+        long[] tickValues = new long[tickCount];
+        long[] plainValues = new long[plainCount];
+        StringBuilder line = new StringBuilder("[Celtium] CELTIUM_FRAME_TICK_PERCENTILES tickFrames=").append(tickCount)
+                .append(" plainFrames=").append(plainCount).append(" p99RankInTick=").append(p99Rank)
+                .append(" (us; tick p50/p99eq/p95 and plain p79, brackets whose tick p99eq differs from plain p79"
+                        + " by >= 10)");
+        for (int k = 0; k < PERCENTILE_COLUMNS; k++) {
+            int t = 0;
+            int p = 0;
+            for (int i = 0; i < PERCENTILE_FRAMES; i++) {
+                if (percentileIsTick[i]) tickValues[t++] = percentileRows[i][k];
+                else plainValues[p++] = percentileRows[i][k];
+            }
+            Arrays.sort(tickValues);
+            Arrays.sort(plainValues);
+            long tickP50 = tickValues[tickCount / 2] / 1000L;
+            long tickP99 = tickValues[p99Rank] / 1000L;
+            long tickP95 = tickValues[Math.min(tickCount - 1, tickCount * 95 / 100)] / 1000L;
+            long plainP79 = plainValues[plainCount * 79 / 100] / 1000L;
+            if (k == 0 || Math.abs(tickP99 - plainP79) >= 10L) {
+                String name = k == 0 ? "frame"
+                        : k <= TOP_LEVEL.length ? TOP_LEVEL[k - 1] : INSIDE[k - 1 - TOP_LEVEL.length];
+                line.append(' ').append(name).append('=').append(tickP50).append('/').append(tickP99).append('/')
+                        .append(tickP95).append('/').append(plainP79);
+            }
+        }
+        System.out.println(line);
     }
 
     private static void fileTickSplit() {
@@ -226,6 +315,8 @@ public final class FramePassTimings {
         residuals[slot] = residual;
         for (int i = 0; i < TOP_LEVEL.length; i++) topLevel[i][slot] = currentTopLevel[i];
         for (int i = 0; i < INSIDE.length; i++) inside[i][slot] = currentInside[i];
+        // Before fileTickSplit(), which consumes the tick flag this reads.
+        fileTickPercentiles();
         fileTickSplit();
         written++;
         Arrays.fill(currentTopLevel, 0L);

@@ -8,7 +8,7 @@ git 履歴にあり（2026-11-06 に docs から削除）、現在の判定と�
 
 | 領域 | 状態 | 根拠 |
 |---|---|---|
-| **FPS（KPI: Supersymmetry 0.2.0.2・188 mods）** | r130（`c219ed9a`）: **AMD p50 0.869・p95 0.881・p99 1.034、Intel p50 0.898・p95 0.983・p99 0.985**（対比中央値）。p50/p95 は両GPUで勝ち、p99 は AMD 1対・Intel 1対が >1 のため `goalCondition=NOT_MET`。**p99 は tick frame の上位中央**（全frameの99%点＝tick frameの79%点）で、Celtium の tick p50 は同等以上・tick p95 は AMD 1.1ms/Intel 1.6ms の広がり（Celeritas 1.0/1.0）。plain frame は 10–15% 速く、client tick は同一 | [証拠](evidence/kpi-r130-2026-11-07.md) |
+| **FPS（KPI: Supersymmetry 0.2.0.2・188 mods）** | r130（`c219ed9a`）: **AMD p50 0.869・p95 0.881・p99 1.034、Intel p50 0.898・p95 0.983・p99 0.985**（対比中央値）。p50/p95 は両GPUで勝ち、p99 は AMD 1対・Intel 1対が >1 のため `goalCondition=NOT_MET`。**p99 は tick frame の上位中央**（全frameの99%点＝tick frameの79%点）で、Celtium の tick p50 は同等以上・tick p95 は AMD 1.1ms/Intel 1.6ms の広がり（Celeritas 1.0/1.0）。plain frame は 10–15% 速く、client tick は同一。**p99 frame の内訳（percentile計器、r6）: entities が超過分の54–56%**、terrain 15%・flush 10%・gui 7%。tick loop の超過は80%が client tick 本体（両arm同一）で、render は+229us のみ | [証拠](evidence/kpi-r130-2026-11-07.md), [p99内訳](evidence/kpi-p99-attribution-2026-11-07.md) |
 | **E2E-E 1.87.3（≈430 mods）** | **AMD・Intel とも world・validation 0**（fx1）、Xaero raw-FBO identity でも 0（xr1）。0.7.14 用の pack 側置換3件 | [証拠](evidence/e2e-cleanroom07-2026-10-26.md) |
 | **modpack 拡大** | **6 pack が verified**（validation 0・ログ全文レビュー・同pose Celeritas 画像の3条件を AMD/Intel で）: SkyFactory 4 4.2.4（0.68 / 0.03 %・0.86 / 0.07 %）、All the Mods 3 6.1.1（7.39 / 6.61 %）、RLCraft 2.9.3（7.04 / 6.39 %・6.95 / 6.02 %）、SevTech: Ages 3.2.3（1.22 / 0.41 %・1.22 / 0.40 %）、Nomifactory CEu 1.7.7（3.28 / 0.06 %・3.30 / 0.07 %）、Project Ozone 3 3.4.11F（5.46 / 1.04 %・5.17 / 1.19 %）。pack 側の非互換は置換として記録。残る Celtium 側の欠陥は defect 10（ATM3 の上空）・12（GTCEu bloom 拒否）・5（menu 境界の破棄）・6（fixture の presented 計数） | [modpacks.md](<modpacks.md>), [証拠](evidence/modpack-reverify-2026-11-06.md) |
 | **画質（4画面＋QMAGNET）** | settings 画素一致、world 16階調超 0.97/1.05 %（AMD/Intel）、menu・creative grid・tab icon 一致 | [証拠](evidence/image-quality-2026-10-28.md) |
@@ -35,12 +35,13 @@ fixture が `UNCALIBRATED_PRESENTED_IMAGE` を返し KPI が leg を拒否する
 
 ## 次の作業（優先順）
 
-1. **FPS の全対条件**（最優先・未達）: p99 の対ごとの揺れの内側。r130 の測定で、残る差は **tick frame の上位中央**だと分かった
-   （plain frame は 10–15% 速く、client tick は同一、tick p50 も同等以上。tick p95−p50 が Celtium 1.1/1.6ms 対 Celeritas 1.0/1.0ms）。
-   機構は immediate path の group 数×~2.3us（`grpDraw` ~1us）: tick frame は group が増えるので Celeritas との差が広がる。
-   次は group 構成の census（`-Dceltium.debug.groupCensus=true`）で tick/plain の group 数を分け、group 数を減らすか
-   per-group の driver call を減らす。`flushUploads` の空 poll 削除（`r118-poll`）は同一jar A/B `p2poll` 4対で旧挙動 1.012×
-   （対 0.83–1.12、雑音内）＝効果は測定以下、無害なので残置。
+1. **FPS の全対条件**（最優先・未達）: p99 の対ごとの揺れの内側。r6 の percentile 計器
+   （`-Dceltium.vulkan.tickPercentiles=true`）で p99 frame の内訳が付いた: **entities が超過分の54–56%**、terrain 15%・
+   flush 10%・gui 7%。tick loop の超過は80%が client tick 本体（両arm同一）なので、render 側の差は小さい。
+   次の判別は **両armの warm-window を tick frame に絞った profile**（2026-11-05 の profile は whole-window で
+   mod HUD を指した）。**warm window の開始位置が regime を決める**（join 後20–30s は chunk-load wave の尾の内側）ので、
+   再現性のためにはどちらの regime を測ったかを書く。`flush` の +208us は group 数×~1.1us で、indirect multi-draw が
+   構造的な答えのまま。chunk-upload budget は KPI scene では発火しない（burst 32 未満、r6 実測）。
 2. **残る Celtium 欠陥**: defect 10（ATM3 の上空、dome の draw は発行・presented に届かない）・defect 12（GTCEu bloom、
    Nomi の 21,885 拒否）・defect 5（menu 境界の破棄）・defect 6（fixture の presented 計数）。pack 側の非互換は置換として記録。
 3. **Xaero radar の entity icon**: 描かれるか未確認（entity の居る scene が必要、`-Dceltium.validation.keepEntities=true`）。

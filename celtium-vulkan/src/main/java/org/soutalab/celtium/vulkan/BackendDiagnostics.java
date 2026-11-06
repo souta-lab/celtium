@@ -214,6 +214,12 @@ final class BackendDiagnostics {
                 + " lastUniformPreparationFailure=" + b.immediateStatistics.lastUniformPreparationFailure()
                 + " regionUploadFailures=" + b.regionUploadFailures
                 + " sectionsLeftUnbuilt=" + b.terrain.sectionsLeftUnbuilt()
+                + " deferredUploads=[batches=" + b.deferredUploadBatches
+                + " outputs=" + b.deferredUploadOutputs
+                + " drains=" + b.deferredUploadDrains
+                + " drained=" + b.deferredUploadDrainedOutputs
+                + " maxQueued=" + b.deferredUploadMaxQueued
+                + " maxDrain=" + b.deferredUploadMaxDrainOutputs + "]"
                 + " terrainIndirect=[offers=" + b.terrain.terrainIndirectOffers()
                 + " calls=" + b.terrain.terrainIndirectCalls()
                 + " draws=" + b.terrain.terrainIndirectDraws()

@@ -253,10 +253,6 @@ final class FrameStatsReport {
                         : b.preflushGroupsDrained / b.preflushFrames) + "]"
                 + " framesNoClear=" + b.framesWithNoClearAtAll
                 + " drawn[perFrame=" + b.celtium$drawnGroupsPerFrame() + "]"
-                + " sortOrder[segments=" + b.drawOrderSegments + " ordered=" + b.drawOrderOpaque
-                + " reject[noPrepared=" + b.reorderRejectNoPrepared + " dw=" + b.reorderRejectDepthWrite
-                + " dt=" + b.reorderRejectDepthTest + " blend=" + b.reorderRejectBlend
-                + " other=" + b.reorderRejectOther + " accept=" + b.reorderAccept + "]]"
                 + " modelMerge[draws=" + b.modelRunsDrawn + " merged=" + b.modelRunsMerged + "]"
                 + " runFlush" + b.indirectRuns.indirectFlushReasons
                 + " refuse" + b.indirectRuns.indirectRefusalCounts

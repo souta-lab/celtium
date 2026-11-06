@@ -13578,6 +13578,21 @@ this.frameBufferOpen = false;
      */
     private static final int UPLOAD_BURST = Integer.getInteger("celtium.vulkan.uploadBurstThreshold", 32).intValue();
     private final java.util.ArrayDeque<DeferredUpload> deferredUploads = new java.util.ArrayDeque<>();
+    /**
+     * What the upload budget did, so "the budget engaged" is a number rather than an inference from the flag.
+     * <p>
+     * The budget is off by default and its re-entry condition is a measurement of the distribution it is aimed at, so
+     * a leg that sets it has to be able to say whether any arrival was actually over the burst threshold, how many
+     * outputs were deferred, how deep the queue got and how many frames the drain spent. Without these, a leg with the
+     * switch on and a leg without it are the same run whenever no burst arrived - and "no change" then reads as "the
+     * budget does not help" when it was never consulted.
+     */
+    long deferredUploadBatches;
+    long deferredUploadOutputs;
+    long deferredUploadDrains;
+    long deferredUploadDrainedOutputs;
+    long deferredUploadMaxQueued;
+    long deferredUploadMaxDrainOutputs;
 
     /** One region's remaining outputs, with the graph trigger that arrives with the batch. */
     private static final class DeferredUpload {
@@ -13601,6 +13616,8 @@ this.frameBufferOpen = false;
         if (UPLOAD_BUDGET <= 0 || this.deferredUploads.isEmpty()) {
             return;
         }
+        this.deferredUploadDrains++;
+        int drained = 0;
         int remaining = UPLOAD_BUDGET;
         while (remaining > 0 && !this.deferredUploads.isEmpty()) {
             DeferredUpload entry = this.deferredUploads.peekFirst();
@@ -13625,7 +13642,12 @@ this.frameBufferOpen = false;
             } finally {
                 releaseUploadList(take);
             }
+            drained += taken;
             remaining -= taken;
+        }
+        this.deferredUploadDrainedOutputs += drained;
+        if (drained > this.deferredUploadMaxDrainOutputs) {
+            this.deferredUploadMaxDrainOutputs = drained;
         }
     }
 
@@ -13701,6 +13723,11 @@ this.frameBufferOpen = false;
             }
             // The lists moved to the queue; the map itself is done with.
             queued.clear();
+            this.deferredUploadBatches++;
+            this.deferredUploadOutputs += results.size();
+            if (this.deferredUploads.size() > this.deferredUploadMaxQueued) {
+                this.deferredUploadMaxQueued = this.deferredUploads.size();
+            }
             return;
         }
         Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queues = this.uploadQueueScratch;
@@ -16146,159 +16173,6 @@ this.frameBufferOpen = false;
     long bufferCensusGroups;
     long bufferCensusArenaBacked;
     long bufferCensusOwning;
-    /**
-     * Order a flush's opaque groups by material before recording them. <b>Off by default</b>, and that is the measured
-     * answer rather than an oversight: the ABBA A/B in {@code docs/verification-traps.md} (Susy world, same JAR,
-     * alternating legs) read ON 2.538 ms against OFF 2.508 ms - 1.2% worse - because the groups' push constants (the
-     * matrices) differ even when their pipeline and descriptor do not, so reordering forms no longer run and only pays
-     * the sort. The earlier "steady window 8.13 to 6.98 ms" measurement was taken with the indirect run path on as
-     * well, which is the condition the re-entry note in the traps file names. This comment said "on by default" while
-     * the field read a property that defaults to false; the code was right and the comment was stale.
-     */
-    private static final boolean SORT_OPAQUE = Boolean.getBoolean("celtium.vulkan.sortOpaque");
-
-    private long[] drawOrderKeys = new long[0];
-    private int[] drawOrderIndices = new int[0];
-    private int[] drawOrder = new int[0];
-    int drawOrderSegments;
-    int drawOrderOpaque;
-
-    /** Why groups fail the reorderable predicate, by first failing condition, for the ordering census. */
-    long reorderRejectNoPrepared, reorderRejectDepthWrite, reorderRejectDepthTest, reorderRejectBlend,
-            reorderAccept, reorderRejectOther;
-
-    /**
-     * {@return whether this group can be reordered by material}.
-     * <p>
-     * Any immediate family whose pipeline tests and writes depth and does not blend: with those on, the colour a pixel ends
-     * with is independent of the order the opaque fragments were recorded in. The textured family was the only one this
-     * asked about when the ordering was written, which left the lit item family - the bulk of a world frame - in arrival
-     * order and the runs short.
-     */
-    private static boolean celtium$reorderable(java.util.List<ImmediateGroup> groups, int index) {
-        ImmediateGroup group = groups.get(index);
-        PreparedImmediate prepared = group.prepared;
-        if (prepared == null) {
-            return false;
-        }
-        Object pipeline = prepared.pipeline;
-        if (pipeline instanceof VulkanImmediateTexturePipeline texture) {
-            return texture.celtium$depthWrites() && texture.celtium$depthTests() && !texture.celtium$blends();
-        }
-        if (pipeline instanceof VulkanImmediateItemPipeline item) {
-            // The lit requirement was what kept the bulk of a world frame in arrival order: the unlit item variant draws
-            // entities and particles that are just as depth-tested, depth-writing and unblended as the lit one, so the
-            // same argument that makes a lit group reorderable applies to it.
-            return item.celtium$depthWrites() && item.celtium$depthTests() && !item.celtium$blends();
-        }
-        if (pipeline instanceof VulkanImmediatePipeline colour) {
-            return colour.celtium$depthWrites() && colour.celtium$depthTests() && !colour.celtium$blends();
-        }
-        return false;
-    }
-
-    /**
-     * {@return the order to record a flush's groups in}: the fully opaque groups by material first, then everything else
-     * in arrival order.
-     * <p>
-     * A group moves only when its pipeline tests depth, writes depth and does not blend, which is the case where the
-     * colour a pixel ends up with is independent of the order its fragments were recorded in. Everything else - blended
-     * HUD and font work, alpha-tested decals, groups for another target - stays exactly where it was.
-     */
-    private int[] celtium$buildDrawOrder(java.util.List<ImmediateGroup> groups) {
-        int count = groups.size();
-        if (this.drawOrder.length < count) {
-            this.drawOrder = new int[Math.max(count, 64)];
-            this.drawOrderKeys = new long[this.drawOrder.length];
-            this.drawOrderIndices = new int[this.drawOrder.length];
-        }
-        long[] keys = this.drawOrderKeys;
-        int[] indices = this.drawOrderIndices;
-        int[] order = this.drawOrder;
-        int pos = 0;
-        int segments = 0;
-        int reorderable = 0;
-        int segmentStart = 0;
-        // One target segment at a time: the loop below keeps groups of another target at their arrival position (they are
-        // handed to keptImmediateGroups), so only the runs of one target can be reordered against each other.
-        while (segmentStart < count) {
-            long segmentTarget = groups.get(segmentStart).target;
-            int segmentEnd = segmentStart;
-            while (segmentEnd < count && groups.get(segmentEnd).target == segmentTarget) {
-                segmentEnd++;
-            }
-            segments++;
-            int opaque = 0;
-            for (int i = segmentStart; i < segmentEnd; i++) {
-                ImmediateGroup group = groups.get(i);
-                PreparedImmediate prepared = group.prepared;
-                if (!celtium$reorderable(groups, i)) {
-                    // The census answers "why so few": a null prepared, depth-write off, depth-test off or a blend each
-                    // remove a different population, and only one of them is what material ordering could ever fix.
-                    PreparedImmediate preparedForReject = group.prepared;
-                    if (preparedForReject == null) {
-                        this.reorderRejectNoPrepared++;
-                    } else {
-                        Object rejectPipeline = preparedForReject.pipeline;
-                        boolean dw = rejectPipeline instanceof VulkanImmediateTexturePipeline t ? t.celtium$depthWrites()
-                                : rejectPipeline instanceof VulkanImmediateItemPipeline it ? it.celtium$depthWrites()
-                                : rejectPipeline instanceof VulkanImmediatePipeline c && c.celtium$depthWrites();
-                        boolean dt = rejectPipeline instanceof VulkanImmediateTexturePipeline t2 ? t2.celtium$depthTests()
-                                : rejectPipeline instanceof VulkanImmediateItemPipeline it2 ? it2.celtium$depthTests()
-                                : rejectPipeline instanceof VulkanImmediatePipeline c2 && c2.celtium$depthTests();
-                        boolean bl = rejectPipeline instanceof VulkanImmediateTexturePipeline t3 ? t3.celtium$blends()
-                                : rejectPipeline instanceof VulkanImmediateItemPipeline it3 ? it3.celtium$blends()
-                                : rejectPipeline instanceof VulkanImmediatePipeline c3 && c3.celtium$blends();
-                        if (!dw) {
-                            this.reorderRejectDepthWrite++;
-                        } else if (!dt) {
-                            this.reorderRejectDepthTest++;
-                        } else if (bl) {
-                            this.reorderRejectBlend++;
-                        } else {
-                            this.reorderRejectOther++;
-                        }
-                    }
-                    continue;
-                }
-                this.reorderAccept++;
-                keys[opaque] = (((long) System.identityHashCode(prepared.pipeline)) * 0x9E3779B97F4A7C15L)
-                        ^ (prepared.descriptor * 0x94D049BB133111EBL);
-                indices[opaque] = i;
-                opaque++;
-            }
-            for (int i = 1; i < opaque; i++) {
-                long key = keys[i];
-                int index = indices[i];
-                int j = i - 1;
-                while (j >= 0 && keys[j] > key) {
-                    keys[j + 1] = keys[j];
-                    indices[j + 1] = indices[j];
-                    j--;
-                }
-                keys[j + 1] = key;
-                indices[j + 1] = index;
-            }
-            for (int i = 0; i < opaque; i++) {
-                order[pos++] = indices[i];
-            }
-            reorderable += opaque;
-            for (int i = segmentStart; i < segmentEnd; i++) {
-                ImmediateGroup group = groups.get(i);
-                PreparedImmediate prepared = group.prepared;
-                boolean opaqueGroup = celtium$reorderable(groups, i);
-                if (!opaqueGroup) {
-                    order[pos++] = i;
-                }
-            }
-            segmentStart = segmentEnd;
-        }
-        this.drawOrderSegments = segments;
-        // Cumulative, not per call: the report compared a last-segment value against a frame's group count and read as
-        // "only 8 groups are reorderable" when the per-frame population is about a fifth of the groups.
-        this.drawOrderOpaque += reorderable;
-        return order;
-    }
     final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap drawKeyCounts =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
     long drawKeyGroups;
@@ -19260,18 +19134,18 @@ this.frameBufferOpen = false;
                     MERGE_CENSUS ? new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap() : null;
             java.util.Set<Integer> censusPipelines = MERGE_CENSUS ? new java.util.HashSet<Integer>() : null;
             int censusArenaBacked = 0;
-            // The frame's groups use about 62 distinct (pipeline, descriptor) pairs and switch almost every group, so
-            // ordering the opaque ones by material is what turns 194 draws into about 62. Only fully opaque groups move:
-            // with depth test and depth write on and no blending, the result of a pixel does not depend on the order the
-            // opaque fragments arrived in. Blended groups and anything from another target keep their arrival order.
-            int[] drawOrder = SORT_OPAQUE ? celtium$buildDrawOrder(groups) : null;
+            // Arrival order. The material reorder that used to be here (and its `sortOpaque` switch) is gone: the ABBA
+            // A/B in docs/verification-traps.md read ON 2.538 ms against OFF 2.508 ms, 1.2% worse, because the groups'
+            // push constants (the matrices) differ even when their pipeline and descriptor do not, so reordering formed
+            // no longer run and only paid the sort. Its re-entry condition - records that carry the push block, so a
+            // reorder can actually form runs - is the indirect path's, not this loop's.
             for (int orderIndex = 0; orderIndex < groups.size(); orderIndex++) {
                 if (SKIP_TEXTURE_IDS != null && SKIP_TEXTURE_IDS.contains(groups.get(orderIndex).texture)) {
                     // Measurement switch: drop only the draws that sample the named textures, so a picture that loses
                     // one element names the draws that put it there. Nothing else about the batch changes.
                     continue;
                 }
-                int groupIndex = drawOrder == null ? orderIndex : drawOrder[orderIndex];
+                int groupIndex = orderIndex;
                 if (org.soutalab.celtium.vulkan.FramePassTimings.countsCallsEnabled()) {
                     // This counter was added for the KPI and is read from the frame report; it is not worth an atomic
                     // increment per group unless the counts are being read. The same switch the bracket counts use.
