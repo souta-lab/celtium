@@ -42,23 +42,32 @@ That is why the p50 ratio (0.847) and the p99 ratio (1.005) disagree: at the med
 Celtium wins by 15 %; at the p99 the frame is more than half work neither renderer owns, and a 147 us renderer win
 becomes a 3 % frame win.
 
-## 3. The extreme tail is the game's HUD, not the world
+## 3. The extreme tail is mostly outside the renderer
 
-The new retention (`-Dceltium.validation.warmSpikeMs=0`, see §5) keeps the warm window's 16 slowest frames with the
-renderer's own pass split. Fourteen of the sixteen are **non-tick** frames whose excess is the `gui` bracket, and our
-share of it is a tenth:
+The new retention (`-Dceltium.validation.warmSpikeMs=0`, see §6) keeps the warm window's 16 slowest frames with the
+renderer's own pass split. **Fifteen of the sixteen are non-tick frames**, and their excess is in three different
+places - which is the point: the renderer's frame bracket is 1.7-3.0 ms on eleven of them while the interval is
+6-10 ms.
 
-| worldTick | interval | frame | world | gui | guiBatch | guiFlush | tick |
+| worldTick | interval | frame bracket | world | gui | guiBatch | guiFlush | where the excess is |
 |---|---|---|---|---|---|---|---|
-| 425 | 12 ms | 11.2 | 2.1 | **9.0** | 0.7 | 0.1 | no |
-| 467 | 10 ms | 9.9 | 1.4 | **8.4** | 1.0 | 0.1 | no |
-| 426 | 7 ms | 6.5 | 1.9 | **4.6** | 0.1 | 0.1 | no |
-| 468 | 10 ms | 5.8 | 1.8 | **3.9** | 0.1 | 0.1 | no |
-| 510 | 24 ms | 23.6 | **23.1** | 0.4 | 0.1 | 0.1 | no |
+| 425 | 12 ms | 11.2 | 2.1 | **9.0** | 0.7 | 0.1 | the game's HUD |
+| 467 | 10 ms | 9.9 | 1.4 | **8.4** | 1.0 | 0.1 | the game's HUD |
+| 426 | 7 ms | 6.5 | 1.9 | **4.6** | 0.1 | 0.1 | the game's HUD |
+| 468 | 10 ms | 5.8 | 1.8 | **3.9** | 0.1 | 0.1 | the game's HUD |
+| 510 | 24 ms | 23.6 | **23.1** | 0.4 | 0.1 | 0.1 | one world pass |
+| 405 | 10 ms | 2.2 | 1.7 | 0.5 | 0.1 | 0.1 | **outside every bracket** |
+| 441 | 9 ms | 2.3 | 1.8 | 0.5 | 0.1 | 0.1 | **outside every bracket** |
+| 534 | 8 ms | 1.7 | 1.3 | 0.3 | 0.1 | 0.1 | **outside every bracket** |
+| 494 | 7 ms | 2.3 | 1.8 | 0.4 | 0.1 | 0.1 | **outside every bracket** |
+| 499 | 7 ms | 2.2 | 1.7 | 0.4 | 0.1 | 0.1 | **outside every bracket** |
 
 The 8-9 ms HUD frames are a mod's overlay inside `GuiIngameForge.renderGameOverlay`; Celtium's accept path and window
 are 0.2-1.1 ms of it. The 23 ms world frame is a one-off (no tick, no GUI) and is the only frame of its size in the
-window. Both arms pay the HUD; neither is a Celtium regression, and neither is the p99 (they sit above it).
+window. **Eleven of the sixteen have a 1.7-3.0 ms frame bracket and a 6-10 ms interval**: 4-8 ms of those frames is
+spent outside every renderer bracket - the present path, Forge's render-tick hooks (the fixture's own handler runs
+there), or a scheduling pause. Both arms pay all of it, and none of it is the p99 (these frames sit above it), but it
+is the p99.5 and it is not renderer work.
 
 ## 4. The structural answer that is not available: the indirect path
 
