@@ -13,6 +13,7 @@ for Cleanroom 0.7 are listed per pack and are never Celtium changes. FPS is only
 | All the Mods 3 | 6.1.1 | 250 | 0.7.14 (relauncher) | world, **validation 0 on AMD and Intel**, no anomaly in any dumped frame | r119 `76ff182ee` | `atm1-amd`, `atm1-intel` |
 | RLCraft | 2.9.3 | 165 | 0.7.14 (relauncher) | world, **validation 0 on AMD and Intel**; open (diagnostic only): with `frameDumpCount` set, the fixture's presented counter stays 0 and the dumps are black for the first ~1,400 world frames on Intel, although every present succeeds - not seen without the dump flags | r119 `76ff182ee` (AMD), r120 `c3b11e24c` (Intel) | `rl2-amd`, `rl3-intel` |
 | SevTech: Ages | 3.2.3 | 247 | 0.7.14 (relauncher) | world, **validation 0 on AMD and Intel**; the pack's own "Getting Started" GUI drawn correctly | r120 `c3b11e24c` | `st3-amd`, `st3-intel` |
+| Nomifactory CEu | 1.7.7 | 149 | 0.7.14 (relauncher, Java 25) | world, **validation 0 on AMD and Intel**; a dark fluid spring's pool matches Celeritas pixel-for-pixel within a few levels (`nm1-ref`) | r120 `c3b11e24c` | `nm1-amd`, `nm1-intel` |
 | Enigmatica 2: Expert | 1.93a | 270 | 0.7.11 | world on both GPUs (2026-11-05; superseded by E2E-E, instance removed 2026-11-06) | 2026-11-05 build | see evidence |
 
 ## Substitutions per pack
@@ -49,6 +50,10 @@ for Cleanroom 0.7 are listed per pack and are never Celtium changes. FPS is only
   updated Better Foliage, Bookshelf, CTM, Chisel, CraftTweaker, Ore Stages, Twilight Forest to their newest 1.12.2
   files and JourneyMap to 5.7.1p3 (6.x dropped the class JourneyMapStages Continuation needs). SmoothFont removed
   (Celtium refuses a competing font renderer at startup).
+
+- **Nomifactory CEu 1.7.7** (GitHub release, CurseForge format): Rongmario's gist - removed Clumps; updated
+  CensoredASM to Chibi 5.34 (the same project, renamed), Forgelin-Continuous 2.4.0.0, VintageFix 0.7.2, UniversalTweaks
+  1.21.0; added Fugue and Scalar Legacy. The gist's "Java 25 causes issues" did not show: the legs ran on Java 25.
 
 ## Adding a pack
 
