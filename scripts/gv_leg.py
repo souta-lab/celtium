@@ -85,6 +85,13 @@ E2E_PACKS = {
         "staged": lambda root: root / ".celtium-work/modpack-sevtech/staged/mods",
         "exclude": [],
     },
+    # Nomifactory CEu 1.7.7 (GitHub release Nomi-CEu/Nomi-CEu 1.7.7): the gist's changes are applied in the staged
+    # directory (.celtium-work/modpack-nomi/SUBSTITUTIONS.md).
+    "nomi": {
+        "instance": lambda root: Path.home() / ".local/share/PrismLauncher/instances/celtium-nomi-1.7.7",
+        "staged": lambda root: root / ".celtium-work/modpack-nomi/staged/mods",
+        "exclude": [],
+    },
 }
 
 
