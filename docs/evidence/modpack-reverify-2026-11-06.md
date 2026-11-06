@@ -4,6 +4,49 @@ This is the single list of what the full-log, picture-vs-Celeritas re-verificati
 whoever continues the work. Status of each pack lives in [docs/modpacks.md](<../modpacks.md>); the verification
 standard ("What verified means") is defined there.
 
+## Round 4 (2026-11-07): the four pending packs are verified, and defect 3's root cause is fixed
+
+Batch `scripts/modpack-reverify.sh .gv-verify/jars/r126-recorded sf4 rlcraft sevtech po3` (jar `1471b300…`, log
+`.gv-verify/reverify-r4.out`). Every leg: **validation 0**, `gpuRequirementMet=true` on the named device, the 16-line
+log cap lifted, no `fail*`/`refuse*` switch. Pictures are the same saved world, seed 12345678, noon, cameraY=100
+(SevTech: its own pose).
+
+| Pack | AMD picture | Intel picture | Celtium-origin log lines |
+|---|---|---|---|
+| SkyFactory 4 4.2.4 | **0.68 / 0.03 %** | **0.86 / 0.07 %** | only `CELTIUM_VERIFY` (`unflushedTargetGroupsDropped=49`/`43`, `refusals=0`) |
+| RLCraft 2.9.3 | **7.04 / 6.39 %** | **6.95 / 6.02 %** | defects 3/4 reproduced on AMD (`orderingFlushFailures=4`, `orderingFlushDroppedBatches=2050`, `windowFlushFailures=1`), defect 5 (`unflushedTargetGroupsDropped=1042`/`1314`), `refusedDegenerate=32` (Intel) |
+| SevTech: Ages 3.2.3 | **1.22 / 0.41 %** | **1.22 / 0.40 %** | only `CELTIUM_VERIFY` (`unflushedTargetGroupsDropped=63`, `refusals=0`) |
+| Project Ozone 3 3.4.11F | **5.46 / 1.04 %** | **5.17 / 1.19 %** | **none at all** |
+
+Pack-origin errors equal the Celeritas arm in every pack (SF4 373/12 vs 374/12, RLCraft 232/53 vs 233/53, SevTech
+502/35 vs 509/35, PO3 678/215 vs 679/215). PO3's residual is its own HUD text (a mod's day/biome/dimension overlay)
+and cloud motion; RLCraft's is particles and leaf/lighting noise. Review sheets: `sf4-{amd,intel}.jpg`,
+`rlcraft-{amd,intel}.jpg`, `sevtech-{amd,intel}.jpg`, `po3-{amd,intel}.jpg` in `modpack-reverify/`.
+
+**Defect 3's root cause, measured and fixed (`r129`).** The RLCraft AMD leg reproduced the sequence the earlier
+rounds only saw intermittently:
+
+```
+CELTIUM_RECORD retrying unsubmitted immediate window: IllegalStateException: a destroyed mesh cannot be drawn
+CELTIUM_RECORD window flush failed twice at frame 2 (...); retained 46 accepted batches, none dropped, the next frame retries
+CELTIUM_RECORD ordering flush failed at frame 3, its 9 accepted batches were dropped ...: nested immediate command recording
+CELTIUM_RECORD ordering flush failed at frame 4, its 1997 accepted batches were dropped ...: nested immediate command recording
+```
+
+The double window-flush failure path cleared `frameBufferOpen` but did not unwind the command state. With
+`batchFrameSubmits` on (the default) the recovery submission inside the catch returns `RECORDED` without ending the
+buffer, so the state kept saying "recording" while no frame buffer owned it; the next ordering flush met
+`recording() && !frameBufferOpen` and threw, dropping every batch it held (2,050 over frames 3-4). The fix resets the
+command buffer and the state on that path, the same unwind the abort branch and `PostChainBridge` already perform,
+and counts it as `abandonedRecordings=`. Defect 4 itself is self-healing (the window retains its batches and the next
+frame retries); what was not self-healing was the state it left behind.
+
+**A/B on the same saved world (leg `r129-rl-amd`, jar `c219ed9a…`):** the double failure reproduced **twice**
+(`windowFlushFailures=2`, `abandonedRecordings=1` at frame 2 and `=2` at frame 3) and the nested flushes are gone —
+`orderingFlushFailures=0`, `orderingFlushDroppedBatches=0` against `r126`'s `4` / `2,050`. The picture improved with
+it: 7.04 / 6.39 % → **6.76 / 5.87 %**. The failure being present in both arms is the positive control: the leg did
+not simply stop reaching the path.
+
 ## How the re-verification works (reproduce with these)
 
 - **Batch:** `scripts/modpack-reverify.sh .gv-verify/jars/<stage> sf4 atm3 rlcraft sevtech nomi po3` (log in
@@ -113,14 +156,19 @@ are not Celtium's.
    pink digging-particle cluster on both sides — [sf4-amd-r122.jpg](modpack-reverify/sf4-amd-r122.jpg), bottom-right
    crop. The log half of the check (`CELTIUM_COMPACTED_BATCH` present, format-0 refusals gone) was not re-read: that
    run's `logs/` was deleted with the run directory before it was classified, so the next SF4 leg must re-confirm it.
-3. **Ordering flush fails with "nested immediate command recording" (RLCraft, intermittent).** One run (`rlbm-amd`,
-   r120, Bloodmoon + patched Fugue) counted `orderingFlushFailures=741`, `orderingFlushDroppedBatches=18828`: the
-   flush at `VulkanTerrainGpuBackend` (`throw new IllegalStateException("nested immediate command recording")` when
-   `commandState.recording() && !frameBufferOpen`) is reached while another recording is open, and the catch drops
-   every accepted batch. Not reproduced in the next two RLCraft runs. The failure text and frame were invisible until
-   `afc026304`/`CELTIUM_RECORD` (record() used to be cleared unprinted) — rerun RLCraft a few times on HEAD and grep
-   `CELTIUM_RECORD ordering flush failed` for the frame and stack. The fixed-world legs (RLCraft, SF4, ATM3; AMD and
-   Intel) all reported `orderingFlushFailures=0`.
+3. **(Fixed in `r129`) Ordering flush fails with "nested immediate command recording" (RLCraft, intermittent).** One
+   run (`rlbm-amd`, r120, Bloodmoon + patched Fugue) counted `orderingFlushFailures=741`,
+   `orderingFlushDroppedBatches=18828`: the flush at `VulkanTerrainGpuBackend` (`throw new
+   IllegalStateException("nested immediate command recording")` when `commandState.recording() && !frameBufferOpen`)
+   is reached while another recording is open, and the catch drops every accepted batch. Not reproduced in the next
+   two RLCraft runs. The failure text and frame were invisible until `afc026304`/`CELTIUM_RECORD` (record() used to be
+   cleared unprinted). **Round 4 reproduced it on HEAD (`w-rlcraft-amd`, r126: `orderingFlushFailures=4`,
+   `orderingFlushDroppedBatches=2050`) and named the cause: the double window-flush failure path (defect 4) cleared
+   `frameBufferOpen` without unwinding the command state, and with `batchFrameSubmits` on the recovery submission
+   returns `RECORDED` without ending the buffer, so the state stayed "recording" with no frame buffer owning it.**
+   The fix resets the command buffer and the state on that path and counts `abandonedRecordings=`; the A/B is in the
+   round-4 section above (`r129`: `orderingFlushFailures=0`, `orderingFlushDroppedBatches=0`, same double failure
+   reproduced twice).
 4. **"a destroyed mesh cannot be drawn" in a window flush (RLCraft, intermittent, Intel and AMD).**
    `lastWindowFlushFailure=IllegalStateException: a destroyed mesh cannot be drawn at VulkanDynamicMesh.bindAndDraw:299
    <- VulkanImmediateItemPipeline.draw:388`, `windowFlushFailureFrame=2` (the first world frame). A queued ITEM group
