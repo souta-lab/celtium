@@ -10,7 +10,9 @@ replacement, not an OpenGL-to-Vulkan translator: native passes follow Minecraft'
 particle, UI, texture and framebuffer semantics.
 
 > **Status: experimental, 0.2.0 (2026-11-04).** Rendering fidelity and error-free operation improved a lot in 0.2.0,
-> but the performance goal is **not met**: the paired KPI against Celeritas is **1.189** (`NOT_MET`). Complete modpack
+> On current `main` (2026-11-06) Celtium is **faster than Celeritas at every median percentile on both GPUs** in a
+> 188-mod pack (AMD **427 vs 407 FPS** at p50, Intel **296 vs 273 FPS**; [table](#modpack-fps-current-main-2026-11-06)), but the
+> paired-KPI goal is still formally `NOT_MET` because one pair per GPU crosses 1 at p99. Complete modpack
 > compatibility and all-scene correctness are not claimed. The single current status table is
 > [docs/plan.md](<docs/plan.md>); release notes are [Japanese](<docs/releases/0.2.0.md>) /
 > [English](<docs/releases/0.2.0-en.md>).
@@ -72,7 +74,35 @@ Download: [Celtium 0.2.0](https://github.com/souta-lab/celtium/releases/tag/v0.2
 
 ## Performance
 
-### Current paired KPI against Celeritas (0.2.0)
+### Modpack FPS (current main, 2026-11-06)
+
+Paired KPI on build r107 (`5ff004c26`, renderer `7752059a…`) against Celeritas 2.5.0-dev, in the Cleanroom Relauncher
+modpack instance `celtium-world-accept` (**188 mods**, save `qmagnet`). Scene `world`, pose
+`x=217.5 y=48 z=217.5 yaw=180 pitch=10`, `guiScale=3`, `renderDistance=12`, vsync off, 1280×720, validation off.
+3 interleaved pairs × 240 s per GPU; values are the median of the 3 pairs over the warm window (world ticks 400–600).
+FPS is 1000 / frame time, so the p95/p99 columns are the frame rate of the slowest 5% / 1% of frames.
+
+| GPU | percentile | Celtium | Celeritas | Celtium / Celeritas (frame time) |
+| --- | --- | --- | --- | --- |
+| AMD RX 6400 | p50 | **427 FPS** (2.34 ms) | 407 FPS (2.46 ms) | **0.976** |
+| | p95 | **227 FPS** (4.40 ms) | 214 FPS (4.68 ms) | **0.935** |
+| | p99 | 174 FPS (5.74 ms) | 179 FPS (5.59 ms) | **0.993** (pair-wise median) |
+| Intel UHD 630 | p50 | **296 FPS** (3.38 ms) | 273 FPS (3.66 ms) | **0.940** |
+| | p95 | **167 FPS** (6.00 ms) | 159 FPS (6.27 ms) | **0.970** |
+| | p99 | 139 FPS (7.17 ms) | 138 FPS (7.27 ms) | **0.993** (pair-wise median) |
+
+The ratio column is the median of the per-pair ratios, which is why it can differ from the ratio of the two medians.
+Every median ratio is below 1 on both GPUs, but `goalCondition` stays `NOT_MET`: it requires every pair below 1,
+and one pair per GPU crossed 1 at p99 (AMD 1.121, Intel 1.081). A second AMD run (`l28kpi-amd`) gave p50 0.918,
+p95 0.905 and p99 0.991. At p99 the two renderers are at parity within pair-to-pair noise. Evidence:
+[docs/evidence/animated-sprite-uploads-2026-11-05.md](<docs/evidence/animated-sprite-uploads-2026-11-05.md>).
+
+Compatibility in a larger pack: **Enigmatica 2: Expert - Extended 1.87.3** (≈430 mods, Cleanroom 0.7.14) reaches the
+world with validation 0 on both GPUs (legs `fx1-e2ee-amd`/`fx1-e2ee-intel`; three local pack substitutions for
+Cleanroom 0.7.14, see [docs/evidence/e2e-cleanroom07-2026-10-26.md](<docs/evidence/e2e-cleanroom07-2026-10-26.md>)).
+Those are correctness legs, not FPS measurements.
+
+### Paired KPI at the 0.2.0 release (2026-11-04)
 
 Measured on the **same Cleanroom Relauncher modpack instance as the tester**, `celtium-world-accept`
 (**192 mods**, save `qmagnet`), not a bare client. Scene `world`, pose `x=217.5 y=48 z=217.5 yaw=180 pitch=10`,
@@ -114,8 +144,8 @@ only as context and are not comparable.
 
 ## Known issues
 
-- **FPS is 1.189 against Celeritas and not met.** The accept path and windows remain; Intel's p99 (1.048) is also
-  unresolved.
+- **The FPS goal is formally not met.** On current main every median percentile beats Celeritas on both GPUs, but the
+  goal needs every pair below 1, and p99 is at parity within noise. The remaining CPU gap is mod HUD GUI drawing.
 - **Menu/tooltip/creative tabs** are confirmed by scenes but need a re-check in the tester environment.
 - **Not implemented**: cube maps / 3D textures / MSAA / compute / blit / copyImage / some DSA / stencil
   (ModularUI's Stencil#reset uses mask 0x400).
