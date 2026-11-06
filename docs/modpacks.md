@@ -12,6 +12,7 @@ for Cleanroom 0.7 are listed per pack and are never Celtium changes. FPS is only
 | SkyFactory 4 | 4.2.4 | 198 | 0.7.14 (relauncher) | world, **validation 0 on AMD and Intel**, sky correct on every dumped frame (a lit-payload bug that turned the sky into a flat band while a mod toast was up was fixed in `76ff182ee`) | r119 `76ff182ee` | `sf6-amd`, `sf6-intel` |
 | All the Mods 3 | 6.1.1 | 250 | 0.7.14 (relauncher) | world, **validation 0 on AMD and Intel**, no anomaly in any dumped frame | r119 `76ff182ee` | `atm1-amd`, `atm1-intel` |
 | RLCraft | 2.9.3 | 165 | 0.7.14 (relauncher) | world, **validation 0 on AMD and Intel**; open (diagnostic only): with `frameDumpCount` set, the fixture's presented counter stays 0 and the dumps are black for the first ~1,400 world frames on Intel, although every present succeeds - not seen without the dump flags | r119 `76ff182ee` (AMD), r120 `c3b11e24c` (Intel) | `rl2-amd`, `rl3-intel` |
+| SevTech: Ages | 3.2.3 | 247 | 0.7.14 (relauncher) | world, **validation 0 on AMD and Intel**; the pack's own "Getting Started" GUI drawn correctly | r120 `c3b11e24c` | `st3-amd`, `st3-intel` |
 | Enigmatica 2: Expert | 1.93a | 270 | 0.7.11 | world on both GPUs (2026-11-05; superseded by E2E-E, instance removed 2026-11-06) | 2026-11-05 build | see evidence |
 
 ## Substitutions per pack
@@ -41,6 +42,13 @@ for Cleanroom 0.7 are listed per pack and are never Celtium changes. FPS is only
   Recurrent Complex 1.4.8.7. **Bloodmoon 1.5.3 removed**: its transformer loads a fixed local slot in
   `EntityRenderer.updateLightmap` that Cleanroom 0.7.14's patched method does not have (`VerifyError` at init, with
   Celeritas as well; Fugue 0.25.5 has no patch). Same leg flags as SkyFactory 4.
+
+- **SevTech: Ages 3.2.3**: Rongmario's gist - removed BetterFPS, Clumps, FastFurnace, FastWorkbench, FoamFix,
+  JustEnoughIDs, JEI, JourneyMapStages, Quick Leaf Decay, RandomPatches, Shadowfacts' Forgelin, Toast Control; added
+  Fugue, Scalar Legacy, Had Enough Items, Forgelin-Continuous, Roughly Enough IDs, JourneyMapStages Continuation 2.2.0;
+  updated Better Foliage, Bookshelf, CTM, Chisel, CraftTweaker, Ore Stages, Twilight Forest to their newest 1.12.2
+  files and JourneyMap to 5.7.1p3 (6.x dropped the class JourneyMapStages Continuation needs). SmoothFont removed
+  (Celtium refuses a competing font renderer at startup).
 
 ## Adding a pack
 
