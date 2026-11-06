@@ -299,7 +299,6 @@ public final class ImmediateGroup {
         clearForReuse();
     }
 
-    /** Clears the fields the accept path may set after construction; {@link #reset} and {@link #recycle} share it. */
     /** {@return this group's array holding {@code source}'s values}, reusing the existing one when it is long enough. */
     private int[] copyState(int[] source) {
         if (source == null) {
@@ -314,6 +313,7 @@ public final class ImmediateGroup {
         return owned;
     }
 
+    /** Clears the fields the accept path may set after construction; {@link #reset} and {@link #recycle} share it. */
     private void clearForReuse() {
         this.modelRun = null;
         this.color = null;

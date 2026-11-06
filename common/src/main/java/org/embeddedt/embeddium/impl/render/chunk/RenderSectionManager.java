@@ -247,10 +247,6 @@ public abstract class RenderSectionManager {
         return false;
     }
 
-    /**
-     * Terrain-pass update: run the terrain search (unless the shadow pass already ran it this frame) and the
-     * per-frame camera bookkeeping.
-     */
     /** {@code -Dceltium.debug.searchJoinCensus=true}: how often renderLayer joined the search, and why. */
     private static final boolean JOIN_CENSUS = Boolean.getBoolean("celtium.debug.searchJoinCensus");
     private long joinCensusLayers;
@@ -258,6 +254,10 @@ public abstract class RenderSectionManager {
     /** The viewport this frame's terrain search was submitted from; see {@link #renderLayer}. */
     private Viewport lastTerrainViewport;
 
+    /**
+     * Terrain-pass update: run the terrain search (unless the shadow pass already ran it this frame) and the
+     * per-frame camera bookkeeping.
+     */
     public void update(Viewport positionedViewport, int frame, boolean spectator) {
         if (!this.isInShadowPass()) {
             this.lastTerrainViewport = positionedViewport;

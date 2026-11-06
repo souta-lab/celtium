@@ -121,6 +121,14 @@ public final class TerrainRenderer {
 
     private final Map<RenderRegion, RegionResources> regionResources = new ConcurrentHashMap<RenderRegion, RegionResources>();
 
+    /**
+     * Sections whose geometry the last {@code uploadMeshes} could not put on the GPU (BH-25).
+     * <p>
+     * Filled when a region's upload throws and drained by {@link VulkanTerrainGpuBackend#consumeFailedUploads()} on the caller's next line, so
+     * the section manager can leave exactly those sections un-committed and queued for another build. A set rather than
+     * a count because the caller needs the identity, and identity is the whole point: the section must not be marked
+     * built.
+     */
     private final Set<RenderSection> failedUploads = Collections.newSetFromMap(new IdentityHashMap<RenderSection, Boolean>());
 
     /**

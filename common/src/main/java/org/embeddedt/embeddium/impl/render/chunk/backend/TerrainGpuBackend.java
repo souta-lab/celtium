@@ -236,7 +236,6 @@ public interface TerrainGpuBackend {
     default void announceTextureUpload(int glTextureId, java.awt.image.BufferedImage image) {
     }
 
-    /** Announces a dynamic texture's write, which arrives as a flat pixel array. */
     /**
      * Announces a dynamic texture write together with the size the game already knows, so the backend does not have to
      * ask OpenGL for it ({@code glGetTexLevelParameteri}). The pixel array alone says nothing about the shape, and the
@@ -246,6 +245,7 @@ public interface TerrainGpuBackend {
         announceDynamicTexture(pixels);
     }
 
+    /** Announces a dynamic texture's write, which arrives as a flat pixel array. */
     default void announceDynamicTexture(int[] pixels) {
     }
 

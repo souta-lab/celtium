@@ -549,7 +549,6 @@ public final class VulkanContext {
         return context;
     }
 
-    /** The Vulkan instance that owns the device. */
     /**
      * {@return whether the logical device was created with this extension}.
      * <p>
@@ -587,6 +586,7 @@ public final class VulkanContext {
         return name != null && this.instance != null && this.enabledInstanceExtensions.contains(name);
     }
 
+    /** The Vulkan instance that owns the device. */
     public VkInstance instance() {
         return this.instance;
     }
@@ -612,12 +612,12 @@ public final class VulkanContext {
         return this.queueFamilyIndex;
     }
 
-    /** Driver-reported name of the matched device, for diagnostics. */
     /** {@return the device's 2D image dimension limit (16384 when it has not been queried)}. */
     public int maxImageDimension2D() {
         return this.maxImageDimension2D > 0 ? this.maxImageDimension2D : 16384;
     }
 
+    /** Driver-reported name of the matched device, for diagnostics. */
     public String deviceName() {
         return this.deviceName;
     }
@@ -708,6 +708,24 @@ public final class VulkanContext {
     }
 
     /**
+     * Names a Vulkan object in validation messages, so a layout or lifetime error says which texture it is about
+     * instead of only a handle. A no-op unless validation (and with it debug utils) is on; never throws.
+     */
+    public void celtium$nameObject(int objectType, long handle, String name) {
+        if (this.debugMessenger == VK_NULL_HANDLE || handle == VK_NULL_HANDLE || this.device == null) {
+            return;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            org.lwjgl.vulkan.VkDebugUtilsObjectNameInfoEXT info = org.lwjgl.vulkan.VkDebugUtilsObjectNameInfoEXT
+                    .calloc(stack).sType$Default().objectType(objectType).objectHandle(handle)
+                    .pObjectName(stack.UTF8(name));
+            EXTDebugUtils.vkSetDebugUtilsObjectNameEXT(this.device, info);
+        } catch (RuntimeException | LinkageError ignored) {
+            // A name is a diagnostic: a binding or loader without it must not affect rendering.
+        }
+    }
+
+    /**
      * Frees a command buffer that was begun and will not be submitted.
      * <p>
      * The copy path's native route pre-checks everything it can before {@link #beginCommands()}, but a recording that
@@ -720,13 +738,6 @@ public final class VulkanContext {
         }
     }
 
-    /**
-     * Ends recording, submits the command buffer to the context queue, waits for the queue to go idle and frees the
-     * command buffer. The wait is what makes the bootstrap-quality upload path safe: when this method returns, the
-     * recorded copies have completed and the staging memory can be reused or destroyed.
-     * <p>
-     * Render thread only.
-     */
     /**
      * Ends and submits a command buffer, waiting on one semaphore and signalling another.
      * <p>
@@ -962,6 +973,13 @@ public final class VulkanContext {
         return this.submitReasons;
     }
 
+    /**
+     * Ends recording, submits the command buffer to the context queue, waits for the queue to go idle and frees the
+     * command buffer. The wait is what makes the bootstrap-quality upload path safe: when this method returns, the
+     * recorded copies have completed and the staging memory can be reused or destroyed.
+     * <p>
+     * Render thread only.
+     */
     public void endCommands(VkCommandBuffer commandBuffer) {
         if (commandBuffer == null) {
             throw new IllegalArgumentException("commandBuffer must not be null");
@@ -1254,16 +1272,6 @@ public final class VulkanContext {
     }
 
     /**
-     * Submits every queued deferred submission in one {@code vkQueueSubmit} call: one VkSubmitInfo per entry, each
-     * keeping its own command buffer and wait/signal semaphores, and the batch's single shared fence armed by the
-     * call. The render thread measured its deferred submits at roughly one driver call each - the queue saw about
-     * eight group closes per frame inside the offer path alone - so the entries are gathered and the fence's
-     * completion stands for all of them; per-submit order on one queue is preserved by array order.
-     * <p>
-     * Every path that could observe a submission completes or starts must flush first: a fence a caller was handed
-     * is only armed when this submits, so awaiting it before the flush is a stall of the caller's own making.
-     */
-    /**
      * Wall time inside the enforced submission of the deferred list. This is the path the frame statistics' earlier
      * counters did not see: the batched entries are enqueued elsewhere and only submitted here, so the profile put 55%
      * of the client thread's samples in vkQueueSubmit while the counted calls read a few hundred microseconds.
@@ -1284,6 +1292,16 @@ public final class VulkanContext {
                 + " submitInfosSaved=" + savedSubmitInfos + "]";
     }
 
+    /**
+     * Submits every queued deferred submission in one {@code vkQueueSubmit} call: one VkSubmitInfo per entry, each
+     * keeping its own command buffer and wait/signal semaphores, and the batch's single shared fence armed by the
+     * call. The render thread measured its deferred submits at roughly one driver call each - the queue saw about
+     * eight group closes per frame inside the offer path alone - so the entries are gathered and the fence's
+     * completion stands for all of them; per-submit order on one queue is preserved by array order.
+     * <p>
+     * Every path that could observe a submission completes or starts must flush first: a fence a caller was handed
+     * is only armed when this submits, so awaiting it before the flush is a stall of the caller's own making.
+     */
     public void celtium$flushBatchedSubmits() {
         if (this.pendingBatchedSubmits.isEmpty()) {
             return;
@@ -1475,7 +1493,6 @@ public final class VulkanContext {
     public static long presenterJoins;
     public static long presenterJobs;
 
-    /** Waits for the worker's queue work, then frees a batch it could not submit; a no-op without a job in flight. */
     /** The only recoverable asynchronous present results are success and a changed swapchain. */
     static boolean presenterResultIsFatal(int result) {
         return result != VK_SUCCESS
@@ -1483,6 +1500,7 @@ public final class VulkanContext {
                 && result != org.lwjgl.vulkan.KHRSwapchain.VK_ERROR_OUT_OF_DATE_KHR;
     }
 
+    /** Waits for the worker's queue work, then frees a batch it could not submit; a no-op without a job in flight. */
     public void celtium$awaitPresenter() {
         java.util.concurrent.Future<?> job = this.presenterJob;
         if (job == null) {
@@ -3239,10 +3257,6 @@ public final class VulkanContext {
     }
 
     /**
-     * Records the staged copy and submits it. Queue submission is the implicit memory dependency that makes the
-     * host writes to the coherent staging memory visible to the transfer read; no explicit barrier is needed.
-     */
-    /**
      * Reserves {@code bytes} of the staging ring for one copy of the frame's pending batch.
      *
      * @return the byte offset to write at inside the ring's mapped memory, or -1 when the copy is larger than a slot
@@ -3809,6 +3823,10 @@ public final class VulkanContext {
                 + celtium$describeDeferred();
     }
 
+    /**
+     * Records the staged copy and submits it. Queue submission is the implicit memory dependency that makes the
+     * host writes to the coherent staging memory visible to the transfer read; no explicit barrier is needed.
+     */
     private void recordStagingCopy(long destination, long destinationOffset, long length) {
         VkCommandBuffer commandBuffer = beginCommands();
         try (MemoryStack stack = MemoryStack.stackPush()) {

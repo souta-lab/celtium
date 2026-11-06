@@ -676,10 +676,6 @@ public final class VulkanDynamicMesh {
     }
 
     /**
-     * Issues the batch with 32-bit indices and no vertex offset. The caller binds the pipeline, the descriptor sets
-     * and the vertex buffer first, exactly as the terrain path does.
-     */
-    /**
      * Whether the draw call itself is skipped: {@code -Dceltium.debug.skipDrawCalls=true}, off by default.
      * <p>
      * A measurement switch, not a mode: it keeps every bind, push and state change and drops only
@@ -691,6 +687,10 @@ public final class VulkanDynamicMesh {
     /** Set by the backend's parity A/B ({@code -Dceltium.debug.abParity=skipDraw}) so one arm skips the call. */
     public static boolean abSkipDraw;
 
+    /**
+     * Issues the batch with 32-bit indices and no vertex offset. The caller binds the pipeline, the descriptor sets
+     * and the vertex buffer first, exactly as the terrain path does.
+     */
     public void draw(VkCommandBuffer commandBuffer) {
         if (this.indexCount == 0 || this.vertexCount == 0) {
             return;

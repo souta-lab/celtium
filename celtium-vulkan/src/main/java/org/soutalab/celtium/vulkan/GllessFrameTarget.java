@@ -853,23 +853,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return this.gameClearLatched;
     }
 
-    /**
-     * Clears what the game asked {@code glClear} to clear while no GL framebuffer existed to clear.
-     * <p>
-     * This is not a nicety: a depth buffer that is never cleared holds undefined values for the whole session, and
-     * every draw that tests depth against them fails, which is a frame of nothing rather than a wrong pixel. The
-     * request is carried over from the stub because {@code glClear} is the game's, not ours - the colour it names is
-     * the sky or the menu background, and the depth is what makes the next draw's test meaningful.
-     * <p>
-     * A latched clear - one the game issued while its own main framebuffer was bound - is preferred, and carries the
-     * colour and depth of the moment it was asked for. The live read is the fallback for a clear that was issued with
-     * no binding change after it, and it is the path that used to run always: it reads {@code glClearColor} at the
-     * acquire, one frame late, which is how the entity-outline framebuffer's transparent black came to clear the
-     * delivered image (the black region). Both counts are reported, so a run says which path its frames took.
-     * <p>
-     * The image is in {@link #COLOR_RENDER_LAYOUT} here, which is {@code VK_IMAGE_LAYOUT_GENERAL}, one of the two
-     * layouts {@code vkCmdClear*Image} accepts, so no extra transition is needed.
-     */
     /** Clears dropped because they named one of the game's own framebuffers rather than the delivered frame. */
     private int gameClearsDroppedForeignTarget;
     /** The last such clear's framebuffer name, so the drop is attributable. */
@@ -888,6 +871,23 @@ public final class GllessFrameTarget implements FrameImageTarget {
     /** Scratch for the clear colour a replay reads; refilled before every use. */
     private final float[] clearColourScratch = new float[4];
 
+    /**
+     * Clears what the game asked {@code glClear} to clear while no GL framebuffer existed to clear.
+     * <p>
+     * This is not a nicety: a depth buffer that is never cleared holds undefined values for the whole session, and
+     * every draw that tests depth against them fails, which is a frame of nothing rather than a wrong pixel. The
+     * request is carried over from the stub because {@code glClear} is the game's, not ours - the colour it names is
+     * the sky or the menu background, and the depth is what makes the next draw's test meaningful.
+     * <p>
+     * A latched clear - one the game issued while its own main framebuffer was bound - is preferred, and carries the
+     * colour and depth of the moment it was asked for. The live read is the fallback for a clear that was issued with
+     * no binding change after it, and it is the path that used to run always: it reads {@code glClearColor} at the
+     * acquire, one frame late, which is how the entity-outline framebuffer's transparent black came to clear the
+     * delivered image (the black region). Both counts are reported, so a run says which path its frames took.
+     * <p>
+     * The image is in {@link #COLOR_RENDER_LAYOUT} here, which is {@code VK_IMAGE_LAYOUT_GENERAL}, one of the two
+     * layouts {@code vkCmdClear*Image} accepts, so no extra transition is needed.
+     */
     private void applyGameClears(VkCommandBuffer command) {
         boolean first = this.neverCleared;
         boolean latched = this.gameClearLatched;

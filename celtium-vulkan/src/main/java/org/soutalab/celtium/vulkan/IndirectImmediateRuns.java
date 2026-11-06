@@ -235,7 +235,6 @@ final class IndirectImmediateRuns {
         return true;
     }
 
-    /** Issues the open run as one vkCmdDrawIndexedIndirect. */
     /** Where an indirect run was closed, by short reason, for the run-formation census. */
     final java.util.Map<String, Integer> indirectFlushReasons = new java.util.LinkedHashMap<String, Integer>();
     /** Why groups were refused before a run could start, by short name. */
@@ -247,6 +246,7 @@ final class IndirectImmediateRuns {
     }
 
 
+    /** Issues the open run as one vkCmdDrawIndexedIndirect. */
     void celtium$flushIndirectRun() {
         celtium$flushIndirectRun("unknown");
     }

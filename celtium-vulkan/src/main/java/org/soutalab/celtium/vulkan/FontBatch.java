@@ -753,15 +753,6 @@ public final class FontBatch {
     }
 
     /**
-     * Closes the open run, offers it - and any run retained for the current target, oldest first - to the sink, and
-     * counts how the run went out: an intervening submission, a group/pass/frame boundary, or a state change.
-     * <p>
-     * The run is marked inactive <em>before</em> the submission so the submission's own entry flush cannot see it
-     * again. A run the sink refuses or that throws is copied into the retention queue instead of being dropped: it is
-     * offered again at the next flush, and while a retained run waits for its target, later runs for that target queue
-     * behind it so the glyphs cannot be drawn out of order.
-     */
-    /**
      * The projection or model-view array a run carries, reused when it is unchanged from the previous run.
      * <p>
      * Every run used to clone both matrices - 128 bytes and a GC candidate per text run, twice that when the shadow pass
@@ -788,6 +779,15 @@ public final class FontBatch {
     private float[] lastRunProjection;
     private float[] lastRunModelView;
 
+    /**
+     * Closes the open run, offers it - and any run retained for the current target, oldest first - to the sink, and
+     * counts how the run went out: an intervening submission, a group/pass/frame boundary, or a state change.
+     * <p>
+     * The run is marked inactive <em>before</em> the submission so the submission's own entry flush cannot see it
+     * again. A run the sink refuses or that throws is copied into the retention queue instead of being dropped: it is
+     * offered again at the next flush, and while a retained run waits for its target, later runs for that target queue
+     * behind it so the glyphs cannot be drawn out of order.
+     */
     public void celtium$flushPendingFontBatch(String how) {
         // Every call is counted, before any early return: the classified counters below only move when a run was
         // actually open, so a stream of calls that find nothing to submit was invisible - which is the shape the

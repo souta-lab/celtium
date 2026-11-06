@@ -3514,15 +3514,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * 65 drawn, so the loss is real and per-batch rather than inferred from a group total.
      */
 
-    /**
-     * Sets the offer stage and counts how many offers reached it (BH-15's open question).
-     * <p>
-     * The stage field alone reaches a report only when a refusal names it, so an offer that stops between the offer
-     * increment and the acceptance increment leaves no trace: the terrain legs read {@code offTargetOffered=793} with
-     * {@code acceptedForOtherTargets=7} and every refusal counter at zero, which is a contradiction no existing
-     * counter resolves. This histogram is the counter that resolves it - the highest stage with a non-zero count is
-     * where the missing offers stop.
-     */
     /** {@return the per-offer-stage average nanoseconds, for the batch-timing summary}. */
     String offerStageNanosSummary() {
         StringBuilder text = new StringBuilder(" offerStages[nanosPerReached");
@@ -3535,6 +3526,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return text.append(']').toString();
     }
 
+    /**
+     * Sets the offer stage and counts how many offers reached it (BH-15's open question).
+     * <p>
+     * The stage field alone reaches a report only when a refusal names it, so an offer that stops between the offer
+     * increment and the acceptance increment leaves no trace: the terrain legs read {@code offTargetOffered=793} with
+     * {@code acceptedForOtherTargets=7} and every refusal counter at zero, which is a contradiction no existing
+     * counter resolves. This histogram is the counter that resolves it - the highest stage with a non-zero count is
+     * where the missing offers stop.
+     */
     private void celtium$offerStage(int stage) {
         if (BATCH_TIMINGS && stage > 0) {
             this.offerStageMarks[stage - 1] = System.nanoTime();
@@ -3756,6 +3756,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private final float[] glProjection = new float[16];
     private final float[] glModelView = new float[16];
 
+    /** A/B-only switch for proving the exact same JAR fixes deferred font-state ordering. Default on. */
+    private static final boolean FONT_DRAW_STATE_BOUNDARY_ENABLED =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.fontDrawStateBoundary", "true"));
+
     /**
      * A draw-state change is a boundary for the coalesced font run, exactly like a matrix change is: the run's quads
      * were appended under the old state and the group's capture reads the live one at submit, so a run that outlives
@@ -3770,10 +3774,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * is why the flush is a no-op when the value does not change: {@code GlStateManager} calls its setters on its own
      * cache misses too, and a no-op must not split a run.
      */
-    /** A/B-only switch for proving the exact same JAR fixes deferred font-state ordering. Default on. */
-    private static final boolean FONT_DRAW_STATE_BOUNDARY_ENABLED =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.fontDrawStateBoundary", "true"));
-
     private void celtium$fontDrawStateBoundary() {
         if (!FONT_DRAW_STATE_BOUNDARY_ENABLED) {
             return;
@@ -5836,15 +5836,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /**
-     * The colour texture behind a bound framebuffer, and its size.
-     * <p>
-     * The identity alone says which target a batch belongs to; this says which image stands for its pixels. With no
-     * OpenGL context there is nothing to ask for an attachment, so the association is made where the framebuffer is
-     * bound. It is what lets a pass that reads another pass's framebuffer - the entity outline reads the silhouette
-     * framebuffer - be routed to the right image, and what lets the game's composite find that image by the texture
-     * name it binds.
-     */
-    /**
      * Records which identity the game's own framebuffer field names, and its colour attachment.
      * <p>
      * Called by {@code FramebufferMixin} on every framebuffer bind, with {@code mc.framebuffer}'s identity and colour
@@ -5959,6 +5950,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
     }
 
+    /**
+     * The colour texture behind a bound framebuffer, and its size.
+     * <p>
+     * The identity alone says which target a batch belongs to; this says which image stands for its pixels. With no
+     * OpenGL context there is nothing to ask for an attachment, so the association is made where the framebuffer is
+     * bound. It is what lets a pass that reads another pass's framebuffer - the entity outline reads the silhouette
+     * framebuffer - be routed to the right image, and what lets the game's composite find that image by the texture
+     * name it binds.
+     */
     @Override
     public void bindFramebufferColorTexture(long framebufferIdentity, int colorTexture, int width, int height) {
         this.publishedTextures.bindColorTexture(framebufferIdentity, colorTexture, width, height);
@@ -13780,7 +13780,6 @@ this.frameBufferOpen = false;
         updateTimingsBody();
     }
 
-    /** The original timing update, called once per frame from the wrapper above. */
     /**
      * Writes the frame's end-of-frame GPU timestamp, the pair to the start written when its command buffer opened.
      * <p>
@@ -13805,6 +13804,7 @@ this.frameBufferOpen = false;
         this.frameGpuTimed = true;
     }
 
+    /** The original timing update, called once per frame from the wrapper above. */
     private void updateTimingsBody() {
         if (this.timestampPool == 0 || !this.timestampsUsable
                 || (this.timestampSlots == 0 && !this.immediatePassTimed && !this.frameGpuTimed)) {
@@ -14524,14 +14524,6 @@ this.frameBufferOpen = false;
     int regionUploadFailures;
     String lastRegionUploadFailure = "none";
     /**
-     * Sections whose geometry the last {@code uploadMeshes} could not put on the GPU (BH-25).
-     * <p>
-     * Filled when a region's upload throws and drained by {@link #consumeFailedUploads()} on the caller's next line, so
-     * the section manager can leave exactly those sections un-committed and queued for another build. A set rather than
-     * a count because the caller needs the identity, and identity is the whole point: the section must not be marked
-     * built.
-     */
-    /**
      * Sections a failed region upload left un-built, counted for the acceptance (BH-25). Before the fix the same
      * failure left them marked built, so this number was invisible: it was zero because nothing distinguished the two.
      */
@@ -15020,6 +15012,28 @@ this.frameBufferOpen = false;
     }
 
     /**
+     * Lab switch for the clear-attribution latch, on by default, and the control the latch has to be measured against.
+     * <p>
+     * Off is the pre-latch behaviour: nothing consumes the stub's pending clears at a framebuffer change, so
+     * {@code GllessFrameTarget.applyGameClears} reads whatever mask and live {@code glClearColor} are pending at the
+     * <em>next</em> window acquire - which for the entity-outline framebuffer is its transparent black, applied to the
+     * delivered image mid-frame. The latch has to be shown to change the picture, not just to compile, and this is how
+     * one jar produces both legs: same build, same scene, same fixture, one property apart. The two runs and what they
+     * measured are named in the task-8 report.
+     * <p>
+     * It is a nullable Boolean rather than a primitive so the report can say "the latch was on by default" instead of
+     * reading a false as if it had been asked for.
+     */
+
+    /** {@return whether the clear-attribution latch is enabled for this process}, defaulting to on. */
+    static boolean celtium$gameClearLatchEnabled() {
+        return GAME_CLEAR_LATCH;
+    }
+
+    /** Scratch for the clear colour a latch reads; copied out before anything can reuse it. */
+    private final float[] gameClearLatchRgba = new float[4];
+
+    /**
      * Attributes the game's pending {@code glClear} request to the framebuffer that was bound when it was issued.
      * <p>
      * A GL clear belongs to the framebuffer bound at the moment it is called, and the game clears three of them every
@@ -15043,28 +15057,6 @@ this.frameBufferOpen = false;
      * {@code clearOffTarget} / {@code clearChainPair} with exactly those values (transparent black, depth 1). What
      * this method must not do is let that request reach the frame image, which is what it did.
      */
-    /**
-     * Lab switch for the clear-attribution latch, on by default, and the control the latch has to be measured against.
-     * <p>
-     * Off is the pre-latch behaviour: nothing consumes the stub's pending clears at a framebuffer change, so
-     * {@code GllessFrameTarget.applyGameClears} reads whatever mask and live {@code glClearColor} are pending at the
-     * <em>next</em> window acquire - which for the entity-outline framebuffer is its transparent black, applied to the
-     * delivered image mid-frame. The latch has to be shown to change the picture, not just to compile, and this is how
-     * one jar produces both legs: same build, same scene, same fixture, one property apart. The two runs and what they
-     * measured are named in the task-8 report.
-     * <p>
-     * It is a nullable Boolean rather than a primitive so the report can say "the latch was on by default" instead of
-     * reading a false as if it had been asked for.
-     */
-
-    /** {@return whether the clear-attribution latch is enabled for this process}, defaulting to on. */
-    static boolean celtium$gameClearLatchEnabled() {
-        return GAME_CLEAR_LATCH;
-    }
-
-    /** Scratch for the clear colour a latch reads; copied out before anything can reuse it. */
-    private final float[] gameClearLatchRgba = new float[4];
-
     private void celtium$latchGameClearAtTargetChange() {
         if (!celtium$gameClearLatchEnabled()) {
             // Control leg: leave the request pending, exactly as it was before this latch existed, so the live read
@@ -15747,25 +15739,6 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * Builds a vertex mesh for every captured display list whose geometry changed, and retires the meshes whose lists
-     * did (audit N02).
-     * <p>
-     * This is the model path's first step: the quads were captured while {@code ModelRenderer} compiled its parts into
-     * display lists, and a GL display list is replayed under the current matrix (measured: the same list shows a
-     * different translation at compile and replay time and still draws correctly), so the geometry only needs the
-     * replay-time matrix. Building the mesh here, on the render thread at a safe point, keeps the {@code callList} hook
-     * itself free of allocation. Nothing is drawn yet - the counter says how many lists have a mesh ready.
-     * <p>
-     * The unit of change is a display list's compile generation, not the number of lists in the capture. Every mesh is
-     * stamped with the generation it was built from and is reused exactly as it is while its list's generation is
-     * unchanged, so one new list no longer rebuilds every mesh in the scene and the rebuild cost stops growing with the
-     * list count. A mesh whose generation has moved on - a recompile, a delete, or an id that came back - is retired
-     * through {@link VulkanDynamicMesh#retire()}, which hands its buffers to the renderer's retire queue: they are
-     * destroyed only after a wait that succeeded, never while a command buffer recorded earlier may still name them.
-     * The table is replaced only after the whole build succeeded, so a failure leaves the previous meshes in place, and
-     * the meshes that attempt created are released before it returns.
-     */
-    /**
      * Registers a wrapper in the shared texture array, creating the array on first use.
      * <p>
      * Nothing draws through it yet: this is the registration half of the shared-descriptor design, and the count it reports
@@ -15805,6 +15778,25 @@ this.frameBufferOpen = false;
         }
     }
 
+    /**
+     * Builds a vertex mesh for every captured display list whose geometry changed, and retires the meshes whose lists
+     * did (audit N02).
+     * <p>
+     * This is the model path's first step: the quads were captured while {@code ModelRenderer} compiled its parts into
+     * display lists, and a GL display list is replayed under the current matrix (measured: the same list shows a
+     * different translation at compile and replay time and still draws correctly), so the geometry only needs the
+     * replay-time matrix. Building the mesh here, on the render thread at a safe point, keeps the {@code callList} hook
+     * itself free of allocation. Nothing is drawn yet - the counter says how many lists have a mesh ready.
+     * <p>
+     * The unit of change is a display list's compile generation, not the number of lists in the capture. Every mesh is
+     * stamped with the generation it was built from and is reused exactly as it is while its list's generation is
+     * unchanged, so one new list no longer rebuilds every mesh in the scene and the rebuild cost stops growing with the
+     * list count. A mesh whose generation has moved on - a recompile, a delete, or an id that came back - is retired
+     * through {@link VulkanDynamicMesh#retire()}, which hands its buffers to the renderer's retire queue: they are
+     * destroyed only after a wait that succeeded, never while a command buffer recorded earlier may still name them.
+     * The table is replaced only after the whole build succeeded, so a failure leaves the previous meshes in place, and
+     * the meshes that attempt created are released before it returns.
+     */
     void celtium$buildModelMeshes() {
         // The table, its generation-driven builder and the lending rule moved to ModelGeometryCache (R3a).
         // The capture version is recorded first so the model draw path can ask for one extra build per new capture

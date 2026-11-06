@@ -38,7 +38,6 @@ final class GroupLighting {
         return fresh;
     }
 
-    /** As {@link #celtium$lightParams(int[], float[])}, written into {@code into} when the caller copies it out at once. */
     /** Filled by the two-arg form before it decides whether a group needs its own array. */
     final float[] lightParamsScratch = new float[20];
     float[] lastLightParams;
@@ -87,6 +86,7 @@ final class GroupLighting {
         return b.modelReplayProjection;
     }
 
+    /** As {@link #celtium$lightParams(int[], float[])}, written into {@code into} when the caller copies it out at once. */
     float[] celtium$lightParams(int[] state, float[] modelView, float[] into) {
         if (modelView == null || modelView.length < 11) {
             return null;

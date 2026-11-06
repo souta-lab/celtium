@@ -280,7 +280,6 @@ public final class RenderTargetRegistry {
 
     // ---------------------------------------------------------------- generation
 
-    /** {@return the frame-target generation}: bumped by the backend whenever it replaces the frame image. */
     /**
      * The latch the model-draw gate reads: whether the frame target's identity is known.
      * <p>
@@ -500,6 +499,7 @@ public final class RenderTargetRegistry {
         return this.replacementInProgress;
     }
 
+    /** {@return the frame-target generation}: bumped by the backend whenever it replaces the frame image. */
     public long generation() {
         return this.generation;
     }

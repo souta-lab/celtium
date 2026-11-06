@@ -860,6 +860,16 @@ public final class VulkanTerrainPipeline {
         return texture.key() ^ (texture.view() * 31L);
     }
 
+    /** The pipeline handle this object created; for the audit that compares what is bound with what was written. */
+    public long pipelineHandle() {
+        return this.pipeline;
+    }
+
+    /** The descriptor set this object writes and binds for a frame slot; see {@link #pipelineHandle()}. */
+    public long descriptorSetHandle(int slot) {
+        return this.descriptorSets[slot & (DESCRIPTOR_SLOTS - 1)];
+    }
+
     /**
      * Binds the descriptor set of this pipeline with the dynamic uniform buffer offset of the current draw.
      *
@@ -871,16 +881,6 @@ public final class VulkanTerrainPipeline {
      *                               alignment or range rules (fail here instead of letting the validation layers or
      *                               the GPU produce undefined fog and region offsets)
      */
-    /** The pipeline handle this object created; for the audit that compares what is bound with what was written. */
-    public long pipelineHandle() {
-        return this.pipeline;
-    }
-
-    /** The descriptor set this object writes and binds for a frame slot; see {@link #pipelineHandle()}. */
-    public long descriptorSetHandle(int slot) {
-        return this.descriptorSets[slot & (DESCRIPTOR_SLOTS - 1)];
-    }
-
     public void bindDescriptors(VkCommandBuffer commandBuffer, long uniformBufferOffset) {
         bindDescriptors(commandBuffer, uniformBufferOffset, 0);
     }

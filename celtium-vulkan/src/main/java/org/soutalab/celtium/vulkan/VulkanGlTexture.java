@@ -2408,12 +2408,6 @@ public final class VulkanGlTexture {
                 + " deleted=" + this.deleted + " full=" + this.fullContentArrived);
     }
 
-    /**
-     * The native {@code VkSampler} handle of this texture, for {@code VkDescriptorImageInfo}. See {@link #view()}
-     * for why the handle is a {@code long}. It stays valid until {@link #delete()}.
-     *
-     * @return the sampler handle
-     */
     /** Identity for caches: the view plus the generation, so a reused handle cannot resurrect a stale entry. */
     public long key() {
         return ((this.view * 31L) ^ this.generation) * 31L + samplingLayout();
@@ -2469,6 +2463,12 @@ public final class VulkanGlTexture {
         }
     }
 
+    /**
+     * The native {@code VkSampler} handle of this texture, for {@code VkDescriptorImageInfo}. See {@link #view()}
+     * for why the handle is a {@code long}. It stays valid until {@link #delete()}.
+     *
+     * @return the sampler handle
+     */
     public long sampler() {
         logZeroHandle("sampler");
         return sampler;
@@ -2805,6 +2805,8 @@ public final class VulkanGlTexture {
             LongBuffer handle = stack.mallocLong(1);
             check(vkCreateImage(device, createImage, null, handle), "vkCreateImage(mirrored texture)");
             image = handle.get(0);
+            context.celtium$nameObject(VK_OBJECT_TYPE_IMAGE, image, "gl" + this.encodeLabel + " " + newWidth + "x"
+                    + newHeight + " mips=" + this.mipLevels);
 
             VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
             vkGetImageMemoryRequirements(device, image, requirements);
@@ -4384,14 +4386,6 @@ public final class VulkanGlTexture {
     }
 
     /**
-     * Refuses a write, a resize or a diagnostic copy on a wrapper whose image belongs to someone else.
-     * <p>
-     * A shared image is handed over for sampling only. Writing it would overwrite the frame the owner rendered into
-     * it, resizing it would replace a resource the owner still holds, and reading it through the mirror dump would
-     * transition it out of the layout the handshake promised. All three are refused with the reason rather than
-     * silently doing the wrong thing to another owner's image.
-     */
-    /**
      * {@return whether this wrapper owns its image}, i.e. whether an upload may write it.
      * <p>
      * A wrapper published over an image the renderer owns - a framebuffer's colour attachment - shares that image, and
@@ -4404,6 +4398,14 @@ public final class VulkanGlTexture {
         return this.ownsImage;
     }
 
+    /**
+     * Refuses a write, a resize or a diagnostic copy on a wrapper whose image belongs to someone else.
+     * <p>
+     * A shared image is handed over for sampling only. Writing it would overwrite the frame the owner rendered into
+     * it, resizing it would replace a resource the owner still holds, and reading it through the mirror dump would
+     * transition it out of the layout the handshake promised. All three are refused with the reason rather than
+     * silently doing the wrong thing to another owner's image.
+     */
     private void requireOwned(String what) {
         requireAlive();
         if (!this.ownsImage) {

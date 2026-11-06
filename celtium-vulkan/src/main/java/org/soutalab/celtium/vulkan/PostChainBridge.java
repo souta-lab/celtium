@@ -542,14 +542,6 @@ b.frameBufferOpen = false;
     }
 
     /**
-     * Moves every published frame texture to the layout its next use needs.
-     * <p>
-     * Two uses alternate on the same image: the pass that draws the game's framebuffer into the pair attaches it, which
-     * declares GENERAL, and the pass that samples it through the published name has a descriptor declaring
-     * SHADER_READ_ONLY_OPTIMAL. {@code general} picks which one is next; the sampling side is the transition that was
-     * missing, and its absence is the VUID-vkCmdDraw-None-09600 the vsync leg reported at vkQueueSubmit.
-     */
-    /**
      * Name-to-image resolution cached for the transition loop, rebuilt only when the publication set or a chain pair
      * changes. The loop runs once per window (about fifty a frame on a world scene), and it used to prune and rebuild
      * its map views on every one of them.
@@ -659,6 +651,14 @@ b.frameBufferOpen = false;
         }
     }
 
+    /**
+     * Moves every published frame texture to the layout its next use needs.
+     * <p>
+     * Two uses alternate on the same image: the pass that draws the game's framebuffer into the pair attaches it, which
+     * declares GENERAL, and the pass that samples it through the published name has a descriptor declaring
+     * SHADER_READ_ONLY_OPTIMAL. {@code general} picks which one is next; the sampling side is the transition that was
+     * missing, and its absence is the VUID-vkCmdDraw-None-09600 the vsync leg reported at vkQueueSubmit.
+     */
     void celtium$transitionPublishedFrameTextures(boolean general) {
         celtium$transitionPublishedFrameTextures(general, 0L);
     }

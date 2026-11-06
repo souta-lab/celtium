@@ -193,6 +193,12 @@ public final class VulkanSwapchain {
     }
 
 
+    /** How many presents between surface-size queries; the query costs about 0.13 ms. */
+    private static final int CAPS_CHECK_INTERVAL = 8;
+    private int capsCheckCountdown;
+    /** At least this long between surface-size queries, whatever the present rate. */
+    private static final long CAPS_CHECK_MIN_NANOS = 100_000_000L;
+    private long capsCheckedNanos = Long.MIN_VALUE / 2;
     /**
      * Whether the last acquire or present said the swapchain no longer matches the surface.
      * <p>
@@ -201,12 +207,6 @@ public final class VulkanSwapchain {
      * signal it keys off, and since the backend already creates the swapchain lazily, dropping it and letting the next
      * present ask for one is the whole rebuild.
      */
-    /** How many presents between surface-size queries; the query costs about 0.13 ms. */
-    private static final int CAPS_CHECK_INTERVAL = 8;
-    private int capsCheckCountdown;
-    /** At least this long between surface-size queries, whatever the present rate. */
-    private static final long CAPS_CHECK_MIN_NANOS = 100_000_000L;
-    private long capsCheckedNanos = Long.MIN_VALUE / 2;
     private boolean outOfDate;
     private int acquireOutOfDate;
     /** Presents a solid marker colour instead of the frame, so the screen can be attributed to this path. */
@@ -1594,7 +1594,6 @@ public final class VulkanSwapchain {
         }
     }
 
-    /** {@return the next acquire semaphore, creating the pool on first use}, or 0 when creation failed. */
     /**
      * Replaces the acquire semaphore a failed acquire was handed with a fresh one.
      * <p>
@@ -1677,6 +1676,7 @@ public final class VulkanSwapchain {
                 + " acquirePoolGrowths=" + this.acquireSemaphorePoolGrowths;
     }
 
+    /** {@return the next acquire semaphore, creating the pool on first use}, or 0 when creation failed. */
     private long acquireSemaphore(MemoryStack stack) {
         int count = Math.max(2, this.images.length);
         if (this.acquireSemaphores == null) {
@@ -2002,7 +2002,6 @@ public final class VulkanSwapchain {
         return result == VK_SUCCESS ? null : "present image: vkQueueSubmit failed with " + result;
     }
 
-    /** Drops the recorded blit set: the queue is drained first because a previous present may still read them. */
     /**
      * {@return how a queue drain before cleanup must be treated}: "destroy" when the queue confirmed idle, "destroy-
      * device-lost" when the device is gone (the objects went with it, and a wait cannot confirm anything), "preserve"
@@ -2089,6 +2088,7 @@ public final class VulkanSwapchain {
         return "unconfirmed=" + this.unconfirmedDrains + " deviceLost=" + this.deviceLostDrains;
     }
 
+    /** Drops the recorded blit set: the queue is drained first because a previous present may still read them. */
     private void discardPreRecorded() {
         this.preRecordedSourceImage = VK_NULL_HANDLE;
         this.preRecordedSwapchain = VK_NULL_HANDLE;

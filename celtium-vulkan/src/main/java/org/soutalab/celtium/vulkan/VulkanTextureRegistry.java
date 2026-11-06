@@ -545,10 +545,6 @@ public final class VulkanTextureRegistry {
                 + " patchLevels[" + VulkanGlTexture.mirrorLevelSummary() + "]";
     }
 
-    /**
-     * {@return the Vulkan mirror of the given GL texture, creating it if needed}, or {@code null} when the name is 0
-     * or the mirror could not be created - the caller then refuses the batch instead of drawing with a wrong image.
-     */
     /** As {@link #get(int)}, with linear filtering - for the lightmap, whose GL texture is filtered linearly. */
     public VulkanGlTexture getLinear(int glTextureId) {
         return get(glTextureId, false);
@@ -560,6 +556,10 @@ public final class VulkanTextureRegistry {
         return entry == null ? null : entry.texture;
     }
 
+    /**
+     * {@return the Vulkan mirror of the given GL texture, creating it if needed}, or {@code null} when the name is 0
+     * or the mirror could not be created - the caller then refuses the batch instead of drawing with a wrong image.
+     */
     public VulkanGlTexture get(int glTextureId) {
         // A direct-mapped memo over the map lookup: the callers resolve the same name several times in a row (the JFR
         // census showed get() calling get() with the same argument, and the draw path asks once per group), and the map
@@ -767,7 +767,6 @@ public final class VulkanTextureRegistry {
         }
     }
 
-    /** @param nearestFilter see {@link VulkanGlTexture#create(VulkanContext, int, int, boolean)} */
     /** FBO rendering invalidates the old CPU announcement; future sampling must read the returned game texture. */
     public void invalidateRenderedTexture(int id) {
         this.announcedImages.remove(id);
@@ -2139,6 +2138,7 @@ public final class VulkanTextureRegistry {
     private static final boolean SAMPLER_CONFIRM_EARLY = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.samplerConfirmEarly", "true"));
 
+    /** @param nearestFilter see {@link VulkanGlTexture#create(VulkanContext, int, int, boolean)} */
     public VulkanGlTexture get(int glTextureId, boolean nearestFilter) {
         if (glTextureId == 0) {
             return null;
@@ -2346,12 +2346,12 @@ public final class VulkanTextureRegistry {
         }
     }
 
-    /** {@return how many textures have been mirrored so far}, for the verification line */
     /** {@return how many mirrors were refreshed in place rather than recreated} */
     public int inPlaceRefreshes() {
         return this.inPlaceRefreshes;
     }
 
+    /** {@return how many textures have been mirrored so far}, for the verification line */
     public int mirrorCount() {
         return this.mirrorCount;
     }

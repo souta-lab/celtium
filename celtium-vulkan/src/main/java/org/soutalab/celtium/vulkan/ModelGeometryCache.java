@@ -38,7 +38,6 @@ public final class ModelGeometryCache {
     private final VulkanModelQuadCapture.Scratch snapshotScratch = new VulkanModelQuadCapture.Scratch();
 
     /** The built meshes, keyed by display-list id, or null when they have not been built. */
-    /** The built meshes, keyed by display-list id, or null when they have not been built. */
     private it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<VulkanDynamicMesh> modelMeshes;
 
     /** One-entry memo over {@link #meshFor}: consecutive replays often ask for the same list again. */
@@ -125,7 +124,6 @@ public final class ModelGeometryCache {
     }
 
     /** {@return how many replays asked for a list this cache has no mesh for}. */
-    /** Display lists a replay asked for that this renderer has no captured mesh for, and the bounded log of them. */
     public int modelMissingMeshes() {
         return this.modelMissingMeshes;
     }
