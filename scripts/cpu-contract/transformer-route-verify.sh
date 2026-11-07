@@ -24,8 +24,8 @@ asm="$(find_one "$modules" 'asm-9.*.jar')"
 asm_tree="$(find_one "$modules" 'asm-tree-9.*.jar')"
 fastutil="$(find_one "$modules" 'fastutil-8.*.jar')"
 launchwrapper="$(find_one "$modules" 'launchwrapper-*.jar')"
-mixin="$(find_one "$HOME/.local/share/PrismLauncher/libraries/org/spongepowered/mixin" 'mixin-*.jar')"
-log4j="$(find_one "$HOME/.local/share/PrismLauncher/libraries/org/apache/logging/log4j/log4j-api" 'log4j-api-*.jar')"
+mixin="$(find_one "$root/.gv-verify/lib" 'mixin-*.jar')"
+log4j="$(find_one "$root/.gv-verify/lib" 'log4j-api-*.jar')"
 # The query phase drives the stub's own dispatch entry, and the stub's static initialiser builds libffi trampolines -
 # so the LWJGL natives have to be loadable. They are LWJGL's own library (no GL context and no driver is touched); the
 # alternative was a check that skips itself on the machines that need it least.
