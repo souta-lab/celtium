@@ -2402,15 +2402,25 @@ public final class VulkanContext {
             }
             Object messengerInfo = null;
             if (validation) {
-                if (!ValidationBridge.available()) {
-                    // The debug-utils callback API changed in LWJGL 3.4: 3.4.1 has VkDebugUtilsMessengerCallbackEXT, 3.4.3
-                    // the ...EXTI interface. The renderer itself works on either, so only a run that *asks* for
-                    // validation needs 3.4.3 - and it must say so instead of reporting a clean run it never measured.
-                    throw new IllegalStateException("Validation was requested with -D" + VALIDATION_PROPERTY
-                            + "=true, but this LWJGL Vulkan binding is older than 3.4.3 (no"
-                            + " VkDebugUtilsMessengerCallbackEXTI). Install lwjgl-vulkan 3.4.3 or run without validation.");
+                // Validation is a diagnostic, not a requirement: a machine without the layer or the debug-utils
+                // extension must still start. The tester's AMD crash was a requested-but-missing layer whose
+                // InvocationTargetException surfaced as "validation support is present but could not be reached".
+                String unavailable = ValidationBridge.unavailableReason();
+                if (unavailable != null) {
+                    System.err.println("[Celtium] CELTIUM_VALIDATION_UNAVAILABLE reason=" + unavailable
+                            + " (continuing without validation)");
+                    validation = false;
+                } else {
+                    try {
+                        messengerInfo = ValidationBridge.enable(this, stack, createInfo);
+                    } catch (IllegalStateException error) {
+                        // The layer is installed but the messenger could not be built (a binding or native-callback
+                        // mismatch). Validation is still a diagnostic: start without it and say why.
+                        System.err.println("[Celtium] CELTIUM_VALIDATION_UNAVAILABLE reason=" + error.getMessage()
+                                + " (continuing without validation)");
+                        validation = false;
+                    }
                 }
-                messengerInfo = ValidationBridge.enable(this, stack, createInfo);
             }
             if (!enabledInstanceExtensions.isEmpty()) {
                 enabledInstanceExtensions.add(0, EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME);

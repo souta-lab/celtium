@@ -32,6 +32,32 @@ final class ValidationBridge {
         }
     }
 
+    /**
+     * {@return why validation cannot be enabled here, or {@code null} when it can}.
+     * <p>
+     * The checks live here, before {@link #enable} touches the instance create info, so a machine without the layer or
+     * the debug-utils extension can continue without validation instead of failing device creation. The tester's AMD
+     * crash was exactly this: validation was requested, the layer was not installed, and the reflective call's
+     * {@link java.lang.reflect.InvocationTargetException} hid the reason behind "could not be reached".
+     */
+    static String unavailableReason() {
+        if (!available()) {
+            return "this LWJGL Vulkan binding is older than 3.4.3 (no VkDebugUtilsMessengerCallbackEXTI)";
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            if (!VulkanContext.instanceExtensionNames(stack)
+                    .contains(org.lwjgl.vulkan.EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME)) {
+                return "the loader does not offer " + org.lwjgl.vulkan.EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+            }
+            if (!VulkanContext.instanceLayerNames(stack).contains(VulkanContext.VALIDATION_LAYER_NAME)) {
+                return "the layer " + VulkanContext.VALIDATION_LAYER_NAME + " is not installed";
+            }
+        } catch (RuntimeException | LinkageError error) {
+            return "the Vulkan loader could not be queried: " + error;
+        }
+        return null;
+    }
+
     static Object enable(VulkanContext context, MemoryStack stack, VkInstanceCreateInfo createInfo) {
         try {
             Class<?> support = Class.forName(SUPPORT);
@@ -39,6 +65,9 @@ final class ValidationBridge {
                     VkInstanceCreateInfo.class);
             enable.setAccessible(true);
             return enable.invoke(null, context, stack, createInfo);
+        } catch (java.lang.reflect.InvocationTargetException error) {
+            Throwable cause = error.getCause() == null ? error : error.getCause();
+            throw new IllegalStateException("validation support failed: " + cause, cause);
         } catch (ReflectiveOperationException | LinkageError error) {
             throw new IllegalStateException("validation support is present but could not be reached: " + error, error);
         }
