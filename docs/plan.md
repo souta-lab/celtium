@@ -8,7 +8,7 @@ git 履歴にあり（2026-11-06 に docs から削除）、現在の判定と�
 
 | 領域 | 状態 | 根拠 |
 |---|---|---|
-| **FPS（KPI: Supersymmetry 0.2.0.2・188 mods）** | r12（`r12kpi-amd`、renderer `a3de00e6`）: **AMD p50 0.889・p95 0.895・p99 0.948**（対比中央値、3対、負荷ゲート通過・非bypass、external 0.174、6 run とも validation 0・PASSED）。**tick frame が r11 の 1.094/1.093 から 0.993/0.996 へ抜けて p50 0.965 と全percentileで対比以上**、plain は 0.885/0.898/0.884。**未達は p99 の1対のみ**（rep3 1.147。Celtium tick 6.104/6.500 対 Celeritas 5.211/5.469 で両armが逆方向に外れた pair 外れ、`disturbedRepetitions` は空）。**r12 で tick の内訳を計測**（`TickTimings`）: tick の `anim`（`TextureMap.updateAnimations`）が **201us**、うち Celtium 自身が `animMirror` 30・`animStub` 28・`animBatchFlush` 65 = **123us** で KPI の +131us と一致。`animBatchBegin`/`animBatchCmd` は <5us なので submit ではなく**領域記録**がコスト。**light cache の invalidation を O(capacity) から世代タグ O(1) へ**（`lightCache` は tick frame 73us / plain 1us だった）。 | [tick分割とlight cache](evidence/tick-split-2026-11-07.md), [p99の構成](evidence/p99-composition-2026-11-07.md), [pre-flushとp99の正体](evidence/preflush-empty-pass-2026-11-07.md) |
+| **FPS（KPI: Supersymmetry 0.2.0.2・188 mods）** | **r13（`r13kpi-amd`、renderer `25d73c78`）: AMD p50 0.893・p95 0.877・p99 0.980 で `goalCondition=MET`**（3対すべて <1.0、負荷ゲート通過・非bypass、external 0.164、6 run とも validation 0・PASSED、`disturbedRepetitions` 空）。**動いたのは中央値ではなく裾**: Celtium の tick frame p50 が3rep とも対比以下（4.755/4.908/4.927 対 4.954/5.284/5.122、r12 は rep3 で負け）、tick p90 の広がりが 89us（対比 443us）。r12 の p99 失敗は rep3 の pair 外れだった。**r13 の変更は tick の重複変換の除去**: `func_147955_a` の announcement が既に mirror へ適用した patch を stub がもう一度変換・capture していた（`animStub` 27us/16call）。one-shot token で skip（`announcedCaptureSkips=16960`/`17041`）し、`animUpload` は 72→46us（同一16call/tick）。**tick frame の Celtium 仕事は合計 ~236us（tick 123 + renderer ~113）で、4.7-4.9ms の 5% が上限**。renderer 側の内訳は `lightmap` 173us（両arm共通）・`dynUpload/dynAnnounce/dynMirror` 46us・`lightCache` 19us。 | [capture skip と tick frame の内訳](evidence/anim-capture-skip-2026-11-07.md), [tick分割とlight cache](evidence/tick-split-2026-11-07.md) |
 | **E2E-E 1.87.3（≈430 mods）** | **AMD・Intel とも world・validation 0**（fx1）、Xaero raw-FBO identity でも 0（xr1）。0.7.14 用の pack 側置換3件 | [証拠](evidence/e2e-cleanroom07-2026-10-26.md) |
 | **modpack 拡大** | **6 pack が verified**（validation 0・ログ全文レビュー・同pose Celeritas 画像の3条件を AMD/Intel で）: SkyFactory 4 4.2.4（0.68 / 0.03 %・0.86 / 0.07 %）、All the Mods 3 6.1.1（7.39 / 6.61 %）、RLCraft 2.9.3（7.04 / 6.39 %・6.95 / 6.02 %）、SevTech: Ages 3.2.3（1.22 / 0.41 %・1.22 / 0.40 %）、Nomifactory CEu 1.7.7（3.28 / 0.06 %・3.30 / 0.07 %）、Project Ozone 3 3.4.11F（5.46 / 1.04 %・5.17 / 1.19 %）。pack 側の非互換は置換として記録。残る Celtium 側の欠陥は defect 10（ATM3 の上空）・12（GTCEu bloom 拒否）・5（menu 境界の破棄）・6（fixture の presented 計数） | [modpacks.md](<modpacks.md>), [証拠](evidence/modpack-reverify-2026-11-06.md) |
 | **画質（4画面＋QMAGNET）** | settings 画素一致、world 16階調超 0.97/1.05 %（AMD/Intel）、menu・creative grid・tab icon 一致 | [証拠](evidence/image-quality-2026-10-28.md) |
@@ -35,15 +35,13 @@ fixture が `UNCALIBRATED_PRESENTED_IMAGE` を返し KPI が leg を拒否する
 
 ## 次の作業（優先順）
 
-1. **FPS の全対条件**（最優先・未達は AMD の p99 の1対のみ）: r12 で **tick frame が対比以上**（p50 0.965・p90 0.993・p95 0.996）になり、
-   全frame p99 の中央値は **0.948**。残る失敗は rep3 の p99 1.147 で、両armが逆方向に外れた pair 外れ（Celtium tick 6.104/6.500 対
-   Celeritas 5.211/5.469）。**余裕には tick frame の p90 を ~0.9 にする必要**があり、tick の Celtium 仕事は 123us/2410us（5%）なので
-   半分にしても 1%。**次は renderer の絶対コスト**（tick frame の flush 188-247us・terrain 277・guiBatch 91-110・dyn 38・setupTerrain 47・
-   sky 41）と、split が名指しした2件: `animStub` 28us（announcement が既に供給した patch を stub がもう一度 capture している）と
-   `animBatchFlush` 65us（mirror の領域コピー記録＝driver の領域単価）。**regime（定常/未定常）と、差か絶対値かを必ず書く**。
-   **r11 で空passの pre-flush window を削除**（`preflushWhenEmpty`、同tick画像 0.1/0.07% で不変、world-entry の `terrainPreflush`
-   125→<10us。warm window では inert）。**r12 で tick の内訳計器 `TickTimings`**（`-Dceltium.vulkan.tickTimings=true`、warm window
-   [400,600) 固定）と **light cache の世代タグ化**（tick frame 73us→O(1)）。
+1. **FPS の全対条件（AMD は達成、Intel が残り）**: r13 で AMD は `goalCondition=MET`（p50 0.893・p95 0.877・p99 0.980、
+   3対すべて <1.0）。**次は同一 stage `r13-fix` の Intel paired set**（`CELTIUM_KPI_GPU=intel`）で両GPUを揃える。
+   p99 の余裕は 2% しかないので、**余裕を作るなら tick frame の Celtium 仕事 236us のうち残る `animBatchFlush` 66us
+   （3 batch × 2 barrier + 1 copy、RADV は region ごとに meta op）と `dynMirror`/`dynAnnounce` 28us（16x16 lightmap）**。
+   `animMirror` 30us は `toRgba` + staging への二度書き。**regime（定常/未定常）と、差か絶対値かを必ず書く**。
+   **r11 で空passの pre-flush window を削除**、**r12 で tick の内訳計器 `TickTimings`** と light cache の世代タグ化、
+   **r13 で announcement が適用済みの patch の capture を one-shot で skip**（`announcedCaptureSkips`）。
 2. **残る Celtium 欠陥**: defect 10（ATM3 の上空、dome の draw は発行・presented に届かない）・defect 12（GTCEu bloom、
    Nomi の 21,885 拒否）・defect 5（menu 境界の破棄）・defect 6（fixture の presented 計数）。pack 側の非互換は置換として記録。
 3. **Xaero radar の entity icon**: 描かれるか未確認（entity の居る scene が必要、`-Dceltium.validation.keepEntities=true`）。

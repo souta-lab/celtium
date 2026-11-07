@@ -523,6 +523,17 @@ public final class VulkanTextureRegistry {
     }
 
     /**
+     * {@return whether this GL name is an image its owner published}.
+     * <p>
+     * {@link #announceFullPixels} answers {@code true} for such a name without touching it - the owner's pixels are
+     * the content, not the game's upload - so a caller that wants to know whether an announcement actually applied
+     * pixels has to ask this first. The animation path's one-shot capture skip is exactly that caller.
+     */
+    public boolean isExternalImage(int glTextureId) {
+        return this.externalImages.containsKey((int) (glTextureId));
+    }
+
+    /**
      * {@return the per-registry image counts plus the two process-wide texture facts}, so a run's report says whether
      * the owner's publish arrived, whether the shared layout handshake is bound to its submissions, and which mip
      * levels the animated patches reached.

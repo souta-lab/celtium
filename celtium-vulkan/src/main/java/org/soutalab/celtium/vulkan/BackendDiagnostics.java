@@ -432,6 +432,10 @@ final class BackendDiagnostics {
                 + " imageUploadsSkipped="
                 + (b.textureRegistry != null ? b.textureRegistry.imageUploadsSkipped() : 0)
                 + " announcedUploads=" + b.textureStats.announcedUploads() + " animatedImageFills=" + b.textureStats.animatedImageFills()
+                // The animation announcement's one-shot skip: a patch whose capture the announcement made
+                // unnecessary. It is a saving, not a loss, so it is counted beside the fills it replaces.
+                + " announcedCaptureSkips="
+                + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$announcedCaptureSkips()
                 + " textureCopiesServed=" + b.textureCopyService.textureCopiesServed()
                 + " textureCopiesRefused=" + b.textureCopyService.textureCopiesRefused()
                 + " textureCopiesReusedInFrame=" + b.textureCopyService.textureCopiesReusedInFrame()

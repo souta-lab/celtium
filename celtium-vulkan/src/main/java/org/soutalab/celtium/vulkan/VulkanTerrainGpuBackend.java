@@ -4538,6 +4538,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         try {
             if (this.textureRegistry.announceFullPixels(bound, data, width, height, x, y)) {
                 this.textureStats.noteAnimatedImageFill();
+                // The original body of func_147955_a issues the glTexSubImage2D for this same region next, and the
+                // stub would convert those pixels a second time to write a capture the mirror no longer needs. The
+                // token is one shot and matched on the region, so a body that uploads something else drops it. A
+                // published image is excluded: announceFullPixels answers true for one without applying anything,
+                // and skipping the capture there would lose the only copy of the pixels.
+                if (!this.textureRegistry.isExternalImage(bound)) {
+                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteAnnouncedPatch(0, x, y, width, height);
+                }
             }
         } finally {
             FramePassTimings.end("animMirror");

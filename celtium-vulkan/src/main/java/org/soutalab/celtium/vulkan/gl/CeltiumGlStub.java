@@ -8252,11 +8252,59 @@ public final class CeltiumGlStub implements FunctionProvider {
         return String.format(java.util.Locale.ROOT, "%.1f nonZero=%d/%d", (double) sum / bytes, nonZero, bytes);
     }
 
+    /**
+     * The one patch the animation announcement has already converted and applied to the mirror.
+     * <p>
+     * {@code TextureUtil.func_147955_a} announces a sprite's frame at HEAD and then runs the original body, which
+     * issues the {@code glTexSubImage2D} for the same region. The announcement converts those pixels and writes them
+     * into the mirror; the stub's capture then converts the identical pixels a second time and pastes them into the
+     * captured level, which is the {@code animStub} bracket beside {@code animMirror}. The capture exists so that
+     * {@code fillFromCapture} can establish a mirror that does not exist yet, and a mirror the announcement just
+     * updated does exist - so for exactly that one call the second conversion buys nothing.
+     * <p>
+     * One shot, matched on the region and cleared by the first {@code texSubImage} whatever it is: the announcement
+     * and the upload it announces are adjacent statements in the same method, so no other upload can intervene, and a
+     * token that does not match is dropped rather than left for a later call. A refused announcement never sets one.
+     */
+    private static int celtium$announcedLevel;
+    private static int celtium$announcedX;
+    private static int celtium$announcedY;
+    private static int celtium$announcedWidth;
+    private static int celtium$announcedHeight;
+    private static boolean celtium$announcedPending;
+    /** Patches whose capture the announcement made unnecessary; the count is the saving, not a loss. */
+    private static long celtium$announcedCaptureSkips;
+
+    /** Arms the one-shot skip for the patch an announcement just applied. See the fields above. */
+    public static void celtium$noteAnnouncedPatch(int level, int x, int y, int width, int height) {
+        celtium$announcedLevel = level;
+        celtium$announcedX = x;
+        celtium$announcedY = y;
+        celtium$announcedWidth = width;
+        celtium$announcedHeight = height;
+        celtium$announcedPending = true;
+    }
+
+    /** {@return how many captures the announcement made unnecessary} */
+    public static long celtium$announcedCaptureSkips() {
+        return celtium$announcedCaptureSkips;
+    }
+
     /** The one tex-sub-image producer: the dispatch case and the transformer's route both land here. */
     private void texSubImage(int target, int level, int xOffset, int yOffset, int width, int height, int format,
             int type, long pixels) {
         if (isProxyTarget(target)) {
             return;
+        }
+        if (celtium$announcedPending) {
+            boolean announced = celtium$announcedLevel == level && celtium$announcedX == xOffset
+                    && celtium$announcedY == yOffset && celtium$announcedWidth == width
+                    && celtium$announcedHeight == height;
+            celtium$announcedPending = false;
+            if (announced) {
+                celtium$announcedCaptureSkips++;
+                return;
+            }
         }
         // The stub's half of an upload: the format conversion and the write into the captured level. Inside the tick
         // this is the animated sprite's patch, and it is the second conversion of the same pixels the announcement
@@ -8363,12 +8411,33 @@ public final class CeltiumGlStub implements FunctionProvider {
         // all-zero first patch on an undefined surface from being "identical" - GL did write pixels there,
         // and the flag/serial are what downstream readers use to tell the surface is defined.
         boolean identical = existing.gamePixels;
-        for (int row = 0; identical && row < height; row++) {
-            int dst = (dstY + row) * destinationStride + dstX * 4;
-            int src = row * sourceStride;
-            for (int i = 0; i < sourceStride; i++) {
-                if (existing.data.get(dst + i) != patch.get(src + i)) {
-                    identical = false;
+        if (identical) {
+            // Eight bytes a call, on the same absolute positions the copy below uses. The per-byte loop this replaces
+            // was 1,024 checked ByteBuffer.get pairs for a 16x16 sprite, and the compare is most of what `animStub`
+            // measured once the conversion was skipped: a row is a whole number of texels, so the long chunks never
+            // straddle a row and the tail is at most three bytes.
+            long existingAddress = memAddress(existing.data);
+            long patchAddress = memAddress(patch);
+            for (int row = 0; row < height; row++) {
+                long dst = existingAddress + (long) (dstY + row) * destinationStride + (long) dstX * 4L;
+                long src = patchAddress + (long) row * sourceStride;
+                int i = 0;
+                for (; i + 8 <= sourceStride; i += 8) {
+                    if (memGetLong(dst + i) != memGetLong(src + i)) {
+                        identical = false;
+                        break;
+                    }
+                }
+                if (!identical) {
+                    break;
+                }
+                for (; i < sourceStride; i++) {
+                    if (MemoryUtil.memGetByte(dst + i) != MemoryUtil.memGetByte(src + i)) {
+                        identical = false;
+                        break;
+                    }
+                }
+                if (!identical) {
                     break;
                 }
             }
