@@ -154,6 +154,34 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         return this.uiRenderPass;
     }
+
+    /**
+     * The render pass a mod's own framebuffer draws through: the frame pass' attachments and subpass with the depth
+     * attachment cleared and discarded. Created on first use, like the standalone UI pass.
+     * <p>
+     * Only the window path's chain-pair branch uses it. The terrain pass' bound-target path keeps the frame pass,
+     * because terrain pipelines read and write the depth buffer. See
+     * {@link VulkanTerrainPipeline#createChainPairRenderPass} for why the frame pass' pipelines are compatible with
+     * this one and what it saves.
+     */
+    long chainPairRenderPass() {
+        if (this.chainPairRenderPass == 0L) {
+            this.chainPairRenderPass = VulkanTerrainPipeline.createChainPairRenderPass(this.context);
+            record("chain-pair render pass created (depth cleared and discarded)");
+        }
+        return this.chainPairRenderPass;
+    }
+
+    /**
+     * {@code -Dceltium.vulkan.chainPairDiscardDepth=false} draws a mod's own framebuffer through the frame pass again,
+     * loading and storing the pair's depth. On by default; the switch is the A/B for the picture, because the only
+     * thing that can say whether discarding the depth kept the picture is the same-pose comparison.
+     */
+    static final boolean CHAIN_PAIR_DISCARD_DEPTH = !"false".equalsIgnoreCase(
+            System.getProperty("celtium.vulkan.chainPairDiscardDepth", "true"));
+
+    /** The chain-pair render pass handle, or 0 before the first mod-framebuffer window asked for it. */
+    long chainPairRenderPass;
     int targetWidth;
     int targetHeight;
     /**
@@ -11398,15 +11426,25 @@ this.frameBufferOpen = false;
                         }
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("winSubmit");
-                    this.frameCoordinator.submitCommands();
+                    org.soutalab.celtium.vulkan.FrameCoordinator.Submission submission =
+                            this.frameCoordinator.submitCommands();
                     org.soutalab.celtium.vulkan.FramePassTimings.end("winSubmit");
                     // No drain here: the submission is queued and its semaphore contract is complete, so endFrame
                     // does not need the GPU to have finished - the wait used to be bookkeeping, and the poll keeps
                     // that bookkeeping without paying a queue-wide wait for it. Whatever is confirmed frees what its
                     // sequence covers; this window's own confirmation arrives at the next poll or at the bounded
                     // wait the next reuse of its slot pays.
+                    //
+                    // A window whose submission stayed in the frame's own recording (RECORDED) put nothing on the
+                    // queue, so this poll cannot confirm anything the previous poll did not already see: the
+                    // confirmation is lazy by construction and the next frame's begin polls. Measured on the KPI
+                    // scene (leg r15split-amd, 2026-11-07), the GTCEu bloom chain's 15 windows a frame made this the
+                    // window's largest unnamed item - 20.6 polls a frame, each a vkGetFenceStatus per pending slot,
+                    // for a queue that had not been given anything since the frame opened.
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("winEnd");
-                    celtium$pollCompletedSlots();
+                    if (celtium$windowPollNeeded(submission)) {
+                        celtium$pollCompletedSlots();
+                    }
                     this.frameTarget.endFrame();
                     org.soutalab.celtium.vulkan.FramePassTimings.end("winEnd");
                     opened = false;
@@ -12689,6 +12727,24 @@ this.frameBufferOpen = false;
                 && !acquireNeeded && !replacementInProgress;
     }
 
+    /**
+     * {@return whether the end of a window has to poll the frame slots}.
+     * <p>
+     * Only a window whose submission reached the queue can have changed what a poll would see. {@code RECORDED} is the
+     * batched path's answer when the frame's command buffer is still open: the segment's commands stay in it and the
+     * queue is given nothing until the frame boundary, so a poll here re-reads fences the previous poll already read.
+     * {@code SKIPPED} is the stalled device's answer: nothing was recorded, so there is no fence to ask about. The
+     * confirmation is lazy by design - the next frame's {@code beginCommands} polls - so skipping it defers
+     * bookkeeping rather than losing it.
+     * <p>
+     * Measured on the KPI scene (leg {@code r15split-amd}, 2026-11-07, renderer {@code 1ae204dd}): 20.6 polls a frame
+     * over 19.6 windows, of which the GTCEu bloom chain's 15 are all {@code RECORDED}. Extracted so the rule can be
+     * exercised without a device; a green test here is not evidence that a poll was skipped in a frame.
+     */
+    static boolean celtium$windowPollNeeded(org.soutalab.celtium.vulkan.FrameCoordinator.Submission submission) {
+        return submission == org.soutalab.celtium.vulkan.FrameCoordinator.Submission.QUEUED;
+    }
+
     /** Records a render pass containing nothing but the pending immediate groups. */
     private void recordImmediateOnlyPass(MemoryStack stack, VulkanTerrainPipeline terrain) {
         // Everything this method does before the window's prefix: the target routing, the pair clear, the begin-info.
@@ -12710,6 +12766,12 @@ this.frameBufferOpen = false;
             return;
         }
         long renderPass = terrain != null ? terrain.renderPass() : uiRenderPass();
+        // The render pass this window's pass is actually begun with. It is the frame pass for every window that
+        // attaches the frame image or one of the owned pairs, and the chain-pair pass for a mod's own framebuffer
+        // (see the chain-identity branch below). Kept apart from {@code renderPass} so the off-target fallback path
+        // still builds its framebuffer against the frame pass: a frame framebuffer begun with the chain-pair pass
+        // would clear and discard the world's depth.
+        long passRenderPass = renderPass;
         // Which image this pass draws into: the frame's, or one of the two owned pairs. The rule is by identity,
         // because identity is the only thing that separates the two streams that used to share one image.
         long framebuffer;
@@ -12858,7 +12920,15 @@ this.frameBufferOpen = false;
                         this.wsOffClearNanos += now - this.wsMark;
                         this.wsMark = now;
                     }
-                    framebuffer = ensureChainPairFramebuffer(renderPass);
+                    // A mod's own framebuffer has no depth attachment, so its pass clears and discards the pair's
+                    // depth instead of loading and storing it. The render pass is compatible with the frame pass'
+                    // pipelines (same attachment formats, samples and subpass references - load and store operations
+                    // are not part of the compatibility rule), so the same immediate and mod-program pipelines draw
+                    // here. The framebuffer cache is keyed by render pass, so this pass gets its own handle.
+                    if (CHAIN_PAIR_DISCARD_DEPTH) {
+                        passRenderPass = chainPairRenderPass();
+                    }
+                    framebuffer = ensureChainPairFramebuffer(passRenderPass);
                     this.passAttachedColorImage = offTarget.chainPairColorImage(chainIdentityValue);
                     // The pass's render area cannot exceed the framebuffer's - a chain pair at the game's
                     // framebuffer size (the fixture's 256x256) is smaller than the window's, and the render area
@@ -12973,7 +13043,7 @@ this.frameBufferOpen = false;
             this.wsMark = now;
         }
         org.lwjgl.vulkan.VkRenderPassBeginInfo begin =
-                celtium$windowBeginInfo(renderPass, framebuffer, passWidth, passHeight);
+                celtium$windowBeginInfo(passRenderPass, framebuffer, passWidth, passHeight);
         if (WINDOW_SPLIT) {
             long now = System.nanoTime();
             this.wsBeginNanos += now - this.wsMark;
@@ -14617,6 +14687,10 @@ this.frameBufferOpen = false;
         if (this.uiRenderPass != 0) {
             org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(), this.uiRenderPass, null);
             this.uiRenderPass = 0;
+        }
+        if (this.chainPairRenderPass != 0) {
+            org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(), this.chainPairRenderPass, null);
+            this.chainPairRenderPass = 0;
         }
         for (VulkanBuffer buffer : this.sharedIndexBuffers.values()) {
             buffer.delete();
@@ -16981,6 +17055,20 @@ this.frameBufferOpen = false;
             area.extent().set(width, height);
             this.cachedWindowBegin.sType$Default().renderPass(renderPass).framebuffer(framebuffer)
                     .renderArea(area);
+            // The chain-pair pass clears its depth attachment, so it needs a clear value for it: the count must cover
+            // the highest attachment index with a CLEAR load op (VUID-VkRenderPassBeginInfo-clearValueCount-00902,
+            // which the first leg of this change reported 20 times before this line existed). The frame pass loads
+            // both attachments, so it needs none - and passing none is what it has always done.
+            if (renderPass == this.chainPairRenderPass && this.chainPairRenderPass != 0L) {
+                if (this.cachedWindowClearValues == null) {
+                    this.cachedWindowClearValues = org.lwjgl.vulkan.VkClearValue.calloc(2);
+                }
+                // Attachment 0 loads, so its value is ignored; attachment 1 is the depth, cleared to the far plane.
+                this.cachedWindowClearValues.get(1).depthStencil().depth(1.0f).stencil(0);
+                this.cachedWindowBegin.clearValueCount(2).pClearValues(this.cachedWindowClearValues);
+            } else {
+                this.cachedWindowBegin.clearValueCount(0).pClearValues(null);
+            }
             this.cachedWindowBeginPass = renderPass;
             this.cachedWindowBeginFramebuffer = framebuffer;
             this.cachedWindowBeginWidth = width;
@@ -16989,6 +17077,9 @@ this.frameBufferOpen = false;
         }
         return this.cachedWindowBegin;
     }
+
+    /** The clear values the chain-pair pass' begin needs (depth only); allocated on first use. */
+    private org.lwjgl.vulkan.VkClearValue.Buffer cachedWindowClearValues;
 
     /** Counts one window opening against the frame that asked for it, printing the first few callers. */
     private void celtium$noteWindowOpenSite() {

@@ -1162,7 +1162,7 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
     }
 
     private void createRenderPass(MemoryStack stack, VkDevice device) {
-        renderPass = buildFrameRenderPass(stack, device);
+        renderPass = buildFrameRenderPass(stack, device, false);
     }
 
     /**
@@ -1172,11 +1172,39 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
      */
     static long createFrameRenderPass(VulkanContext context) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            return buildFrameRenderPass(stack, context.device());
+            return buildFrameRenderPass(stack, context.device(), false);
         }
     }
 
-    private static long buildFrameRenderPass(MemoryStack stack, VkDevice device) {
+    /**
+     * Builds the render pass a mod's own framebuffer draws through: the frame pass' attachments and subpass, with the
+     * depth attachment cleared and discarded instead of loaded and stored.
+     * <p>
+     * <b>Why this is legal to use with the frame pass' pipelines.</b> Vulkan's render-pass compatibility rule compares
+     * the attachment formats, samples and the subpass' attachment references - not the load and store operations
+     * (VUID-vkCmdBeginRenderPass-renderPass-06045 and the "Render Pass Compatibility" section). So a pipeline built
+     * against the frame pass may be bound inside this one, which is what lets the same immediate and mod-program
+     * pipelines draw here.
+     * <p>
+     * <b>Why it is worth a second render pass.</b> A mod's bloom chain binds framebuffers that have no depth
+     * attachment at all, so its passes never read or write depth. Under the frame pass every one of them loaded and
+     * stored the pair's full depth image: measured on the KPI scene (legs {@code r15ab-on-amd} / {@code r15ab-off-amd},
+     * same jar, {@code modPrograms} the only difference), drawing the chain costs 585 us a frame of which only 224 us
+     * is the window recording - the rest is the passes themselves, and the depth traffic is the part the mod never
+     * asked for. {@code CLEAR} is a fast clear (no read) and {@code DONT_CARE} writes nothing back, so the depth
+     * traffic drops to the clear alone.
+     * <p>
+     * The picture is unchanged because the chain's draws have {@code depthWrite=false}: with the frame pass' LOAD the
+     * depth held whatever the previous pass left (nothing wrote it), and with CLEAR it holds 1.0 - the same value a
+     * fresh framebuffer has, and the value a {@code LESS} test at the quad's z passes against either way.
+     */
+    static long createChainPairRenderPass(VulkanContext context) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            return buildFrameRenderPass(stack, context.device(), true);
+        }
+    }
+
+    private static long buildFrameRenderPass(MemoryStack stack, VkDevice device, boolean discardDepth) {
         VkAttachmentDescription.Buffer attachments = VkAttachmentDescription.calloc(2, stack);
         VkAttachmentDescription color = attachments.get(0);
         color.format(COLOR_FORMAT)
@@ -1202,6 +1230,13 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
                 .stencilStoreOp(VK_ATTACHMENT_STORE_OP_DONT_CARE)
                 .initialLayout(DEPTH_ATTACHMENT_LAYOUT)
                 .finalLayout(DEPTH_ATTACHMENT_LAYOUT);
+        if (discardDepth) {
+            // The mod's own framebuffer has no depth attachment, so nothing reads what a previous pass left and
+            // nothing reads what this one writes. CLEAR is a fast clear and DONT_CARE writes nothing back; the
+            // attachment format, samples and reference are unchanged, which is what keeps the frame pass' pipelines
+            // compatible with this pass.
+            depth.loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR).storeOp(VK_ATTACHMENT_STORE_OP_DONT_CARE);
+        }
 
         VkAttachmentReference.Buffer colorReferences = VkAttachmentReference.calloc(1, stack);
         colorReferences.get(0).attachment(0).layout(COLOR_ATTACHMENT_LAYOUT);
