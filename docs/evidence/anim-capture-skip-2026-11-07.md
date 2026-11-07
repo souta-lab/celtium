@@ -98,10 +98,33 @@ feeding the collector, so the pauses that landed in the p99 stopped landing ther
 measurement**: this round did not instrument GC, and the two paired sets are separate runs on a machine whose load
 average differs. What the set does establish is that the build meets the condition with three clean pairs.
 
-## 5. Intel
+## 5. Intel, on the same stage: also MET
 
-See the handoff: the Intel paired set on the same stage is the next measurement, because the goal needs both GPUs and
-this round's set is AMD only.
+`r13kpi-intel` (Intel UHD Graphics 630 (CFL GT2), same stage `r13-fix`, same flags, 3 reps, load guard passed and not
+bypassed: initial busy 0.147, external 0.173, limits 2.0 / 0.5; all six runs `fixtureStatus=PASSED`, validation 0,
+`gpuRequirementMet=true`, `disturbedRepetitions` empty):
+
+| rep | Celtium p50/p95/p99 (ms) | Celeritas p50/p95/p99 (ms) | p50 | p95 | p99 |
+|---|---|---|---|---|---|
+| 1 | 3.404 / 6.089 / 7.167 | 3.595 / 6.113 / 7.232 | 0.947 | 0.997 | 0.991 |
+| 2 | 3.245 / 5.982 / 7.069 | 3.730 / 6.284 / 7.220 | 0.870 | 0.952 | 0.979 |
+| 3 | 3.396 / 5.905 / 7.280 | 3.651 / 6.037 / 7.285 | 0.930 | 0.978 | 0.999 |
+| **median** | | | **0.930** | **0.978** | **0.991** |
+
+`verdict=NOT_SLOWER`, **`goalCondition=MET`**. Split medians: plain 0.930 / 0.916 / 0.966, tick p50 0.990, tick p90
+0.983, tick p95 1.017, tick p99 0.766.
+
+**Both GPUs now meet the goal's performance condition on the same stage**: AMD p50 0.893 / p95 0.877 / p99 0.980 and
+Intel 0.930 / 0.978 / 0.991, every pair below 1.0, twelve runs with validation 0 and a real device line. **The margins
+are thin** - Intel's p99 pairs are 0.991 / 0.979 / 0.999 and its p95 0.997 / 0.952 / 0.978 - so the condition is met
+but not with room to spare, and the next round's job is to widen it rather than to re-shoot it.
+
+## 6. What this does not close
+
+The goal's other conditions are untouched by this round: defect 10 (ATM3's flat upper sky), defect 12 (GTCEu bloom's
+21,885 format-6 refusals on Nomifactory), defect 5 (the menu-boundary drop) and defect 6 (RLCraft's AMD leg reporting
+`FAILED_PRESENTED_IMAGE` while the picture is present) are all still open, and objective 4's "zero Celtium-origin
+refusals" is not met while defect 12 stands.
 
 ## Reproduce
 
