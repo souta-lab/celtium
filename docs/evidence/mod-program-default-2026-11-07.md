@@ -116,3 +116,7 @@ the barrier keyed on `targetRegistry.currentIdentity()` the same passes draw wit
    The target is the per-window overhead, not the passes' pixels.
 3. **Nomi's picture** must be re-shot with the new default: its 21,885 format-6 refusals are gone, and the chain now
    draws, so the r126 picture numbers in [modpacks.md](../modpacks.md) are pre-change.
+4. **Celeritas's arm was not instrumented for the chain's draw count.** The claim that it draws the 15 passes rests on
+   it being a GL renderer that does not intercept `glUseProgram`/the draw, plus its frame time: 2.408 ms against
+   Celtium's chain-free 2.149 ms, a 0.26 ms difference that a 15-pass chain fits and a dropped chain does not. A GL-side
+   draw count in the Celeritas arm would settle it and is the first thing to add if the comparison is questioned.
