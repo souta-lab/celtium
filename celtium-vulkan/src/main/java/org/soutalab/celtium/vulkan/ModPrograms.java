@@ -1,7 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
 /**
- * A mod's own shader programs drawn natively (opt-in, -Dceltium.vulkan.modPrograms=true): pipeline cache, prepared draws, input readback and the per-program report. Moved out of {@link VulkanTerrainGpuBackend} unchanged (2026-11-06).
+ * A mod's own shader programs drawn natively (default on, -Dceltium.vulkan.modPrograms=false to refuse them): pipeline cache, prepared draws, input readback and the per-program report. Moved out of {@link VulkanTerrainGpuBackend} unchanged (2026-11-06).
  */
 final class ModPrograms {
     private final VulkanTerrainGpuBackend b;
@@ -11,12 +11,24 @@ final class ModPrograms {
     }
 
     /**
-     * Whether a mod's own program draws the batches it can. <b>Opt-in</b> ({@code -Dceltium.vulkan.modPrograms=true}):
-     * on the GTCEu scene every bloom pass draws with validation clean, but the passes into the game's framebuffer turn
-     * the whole world black (legs r17-r20-gt; r21-gt with {@code modProgramsToMain=false} is PASSED and pixel-normal),
-     * so the default keeps refusing until that is understood. See docs/evidence/gregtech-bloom-2026-11-04.md.
+     * Whether a mod's own program draws the batches it can. <b>On by default</b>; {@code
+     * -Dceltium.vulkan.modPrograms=false} turns it off for an A/B.
+     * <p>
+     * It was opt-in while the passes into the game's framebuffer blacked the world out (legs r17-r20-gt). That was the
+     * stale-target read fixed in round 9 of docs/evidence/gregtech-bloom-2026-11-04.md: the window prefix asked
+     * {@code activeImmediateTarget} before it was assigned for the window, so the read barrier never ran before the
+     * copy. Keyed on {@code targetRegistry.currentIdentity()} the same passes draw with validation clean and the world
+     * is pixel-normal (r42-gt), and a program that cannot be lowered or compiled is still refused and counted per
+     * program - so the default no longer has to be "refuse everything a mod brought".
+     * <p>
+     * Measured on the GTCEu scene (legs {@code gt1-amd}/{@code gt2-amd}, 2026-11-07, renderer {@code 25d73c78}): the
+     * chain's 16 passes draw, {@code CELTIUM_SHADER_PROGRAM_REFUSED} is 0, and the lamp row's mean RGB rises from
+     * 170.8/173.4/168.3 to 210.1/212.7/207.6 against the GL reference's 243.0/245.5/240.6 - the emissive composite
+     * arrives, the halo does not yet (the bloom layer's terrain geometry is usually not built: {@code
+     * CELTIUM_LAYER_GEOMETRY layer=Bloom ... passes=[TerrainRenderPass[name=bloom]=false]}).
      */
-    static final boolean MOD_PROGRAMS = Boolean.getBoolean("celtium.vulkan.modPrograms");
+    static final boolean MOD_PROGRAMS =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modPrograms", "true"));
     /** Lab switch: {@code -Dceltium.vulkan.modProgramsOpaqueToMain=false} refuses blend-off passes into it. */
     static final boolean MOD_PROGRAMS_REFUSE_OPAQUE_MAIN =
             "false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramsOpaqueToMain", "true"));

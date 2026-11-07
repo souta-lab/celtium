@@ -114,8 +114,8 @@
 | `celtium.debug.logLinesPerTag` | `Integer.getInteger` | [CeltiumLogLimiter.java:23](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumLogLimiter.java#L23>) |
 | `celtium.debug.markTrace` | `Boolean.getBoolean` | [RenderGlobalMixin.java:317](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/terrain/RenderGlobalMixin.java#L317>) |
 | `celtium.debug.mirrorFontAtlas` | `Boolean.getBoolean` | [CeltiumFontAtlas.java:45](<../forge122/src/main/java/org/taumc/celeritas/impl/font/CeltiumFontAtlas.java#L45>) |
-| `celtium.debug.modProgramReadback` | `Boolean.getBoolean` | [ModPrograms.java:203](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L203>) |
-| `celtium.debug.modProgramTrace` | `Integer.getInteger` | [ModPrograms.java:27](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L27>) |
+| `celtium.debug.modProgramReadback` | `Boolean.getBoolean` | [ModPrograms.java:215](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L215>) |
+| `celtium.debug.modProgramTrace` | `Integer.getInteger` | [ModPrograms.java:39](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L39>) |
 | `celtium.debug.modelLightFrame` | `Long.getLong` | [ModelReplay.java:458](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L458>) |
 | `celtium.debug.modelRecords` | `Integer.getInteger` | [VulkanModelInstances.java:98](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModelInstances.java#L98>), [VulkanModelInstances.java:179](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModelInstances.java#L179>) |
 | `celtium.debug.noAffineBake` | `Boolean.getBoolean` | [VulkanTerrainGpuBackend.java:9332](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L9332>) |
@@ -654,11 +654,11 @@
 | `celtium.vulkan.modProgramAdditive` | `Boolean.getBoolean` | [VulkanModProgramPipeline.java:394](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModProgramPipeline.java#L394>) |
 | `celtium.vulkan.modProgramDepth` | `System.getProperty` | [VulkanModProgramPipeline.java:215](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModProgramPipeline.java#L215>) |
 | `celtium.vulkan.modProgramSkipDraw` | `Boolean.getBoolean` | [VulkanModProgramPipeline.java:395](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModProgramPipeline.java#L395>) |
-| `celtium.vulkan.modPrograms` | `Boolean.getBoolean` | [ModPrograms.java:19](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L19>) |
-| `celtium.vulkan.modProgramsOpaqueToMain` | `System.getProperty` | [ModPrograms.java:22](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L22>) |
-| `celtium.vulkan.modProgramsSampleMain` | `System.getProperty` | [ModPrograms.java:31](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L31>) |
-| `celtium.vulkan.modProgramsToMain` | `System.getProperty` | [ModPrograms.java:25](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L25>) |
-| `celtium.vulkan.modReadBarrier` | `System.getProperty` | [ModPrograms.java:206](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L206>) |
+| `celtium.vulkan.modPrograms` | `System.getProperty` | [ModPrograms.java:31](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L31>) |
+| `celtium.vulkan.modProgramsOpaqueToMain` | `System.getProperty` | [ModPrograms.java:34](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L34>) |
+| `celtium.vulkan.modProgramsSampleMain` | `System.getProperty` | [ModPrograms.java:43](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L43>) |
+| `celtium.vulkan.modProgramsToMain` | `System.getProperty` | [ModPrograms.java:37](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L37>) |
+| `celtium.vulkan.modReadBarrier` | `System.getProperty` | [ModPrograms.java:218](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L218>) |
 | `celtium.vulkan.modelDraw` | `System.getProperty` | [VulkanTerrainGpuBackend.java:18249](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L18249>) |
 | `celtium.vulkan.modelDrawOnlyList` | `Integer.getInteger` | [VulkanTerrainGpuBackend.java:18236](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L18236>) |
 | `celtium.vulkan.modelMatrixLines` | `Integer.getInteger` | [VulkanTerrainGpuBackend.java:16479](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L16479>) |
@@ -1079,8 +1079,8 @@
 | `CELTIUM_MODEL_STATE` | [ModelReplay.java:263](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L263>) |
 | `CELTIUM_MOD_DRAW_ORDER` | [VulkanTerrainGpuBackend.java:19812](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L19812>) |
 | `CELTIUM_MOD_PROGRAM_LINKED` | [ModProgramRegistry.java:154](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/ModProgramRegistry.java#L154>) |
-| `CELTIUM_MOD_READBACK` | [ModPrograms.java:319](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L319>) |
-| `CELTIUM_MOD_READBACK_PROBE` | [ModPrograms.java:263](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L263>) |
+| `CELTIUM_MOD_READBACK` | [ModPrograms.java:331](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L331>) |
+| `CELTIUM_MOD_READBACK_PROBE` | [ModPrograms.java:275](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L275>) |
 | `CELTIUM_MOD_SHADERC` | [ModProgramRegistry.java:140](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/ModProgramRegistry.java#L140>) |
 | `CELTIUM_MOUSEOVER` | [ValidationClient.java:12744](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L12744>) |
 | `CELTIUM_MULT_MATRIX` | [CeltiumGlStub.java:6600](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L6600>) |

@@ -8,13 +8,13 @@ git 履歴にあり（2026-11-06 に docs から削除）、現在の判定と�
 
 | 領域 | 状態 | 根拠 |
 |---|---|---|
-| **FPS（KPI: Supersymmetry 0.2.0.2・188 mods）** | **r13（`r13kpi-amd`/`r13kpi-intel`、renderer `25d73c78`）: 両GPUで `goalCondition=MET`** — AMD p50 0.893・p95 0.877・p99 0.980、Intel 0.930・0.978・0.991。**3対すべて <1.0**、負荷ゲート通過・非bypass、12 run とも validation 0・PASSED・`gpuRequirementMet=true`、`disturbedRepetitions` 空。**ただし余裕は薄い**（Intel p99 は 0.991/0.979/0.999）。**動いたのは中央値ではなく裾**: Celtium の tick frame p50 が AMD 3rep とも対比以下、tick p90 の広がり 89us（対比 443us）。r12 の p99 失敗は rep3 の pair 外れだった。**r13 の変更は tick の重複変換の除去**: `func_147955_a` の announcement が既に mirror へ適用した patch を stub がもう一度変換・capture していた（`animStub` 27us/16call）。one-shot token で skip（`announcedCaptureSkips=16960`/`17041`）し、`animUpload` は 72→46us（同一16call/tick）。**tick frame の Celtium 仕事は合計 ~236us（tick 123 + renderer ~113）で 4.7-4.9ms の 5% が上限**。renderer 側は `lightmap` 173us（両arm共通）・`dyn*` 46us・`lightCache` 19us。 | [capture skip と tick frame の内訳](evidence/anim-capture-skip-2026-11-07.md), [tick分割とlight cache](evidence/tick-split-2026-11-07.md) |
+| **FPS（KPI: Supersymmetry 0.2.0.2・188 mods）** | **r14（`r14kpi-amd`/`r14kpi-intel`、renderer `1ae204dd`）: `goalCondition=NOT_MET`** — AMD p50 1.099・p95 1.056・p99 1.113。**これは正直な比較に直した結果**: KPI scene は GTCEu の bloom chain（15 full-screen pass/frame）を毎フレーム bind し、r13 までは既定の opt-in がその全 batch を拒否していた（`shaderProgramRefusals=194,775`/12,985 frame = 15/frame、`CELTIUM_PROGRAM_BOUND ... Shaders.renderFullImageInFBO`）。Celeritas は同じ chain を描くので、**r13 の 0.893/0.877/0.980 は「描画を削って得た FPS」**で goal.md は達成に数えない。r14 で `modPrograms` を既定 on にし chain を描くと p50 2.694ms（対比 2.408）で 1.099。**コストの内訳**: window 5.0→19.6/frame、`windowRecordMillis` 215→421us/frame、p50 +545us。**次の標的は per-window overhead**（15 window × ~36us）で、GPU の画素ではない。 | [証拠](evidence/mod-program-default-2026-11-07.md) |
 | **E2E-E 1.87.3（≈430 mods）** | **AMD・Intel とも world・validation 0**（fx1）、Xaero raw-FBO identity でも 0（xr1）。0.7.14 用の pack 側置換3件 | [証拠](evidence/e2e-cleanroom07-2026-10-26.md) |
 | **modpack 拡大** | **6 pack が verified**（validation 0・ログ全文レビュー・同pose Celeritas 画像の3条件を AMD/Intel で）: SkyFactory 4 4.2.4（0.68 / 0.03 %・0.86 / 0.07 %）、All the Mods 3 6.1.1（7.39 / 6.61 %）、RLCraft 2.9.3（7.04 / 6.39 %・6.95 / 6.02 %）、SevTech: Ages 3.2.3（1.22 / 0.41 %・1.22 / 0.40 %）、Nomifactory CEu 1.7.7（3.28 / 0.06 %・3.30 / 0.07 %）、Project Ozone 3 3.4.11F（5.46 / 1.04 %・5.17 / 1.19 %）。pack 側の非互換は置換として記録。残る Celtium 側の欠陥は defect 10（ATM3 の上空）・12（GTCEu bloom 拒否）・5（menu 境界の破棄）・6（fixture の presented 計数） | [modpacks.md](<modpacks.md>), [証拠](evidence/modpack-reverify-2026-11-06.md) |
 | **画質（4画面＋QMAGNET）** | settings 画素一致、world 16階調超 0.97/1.05 %（AMD/Intel）、menu・creative grid・tab icon 一致 | [証拠](evidence/image-quality-2026-10-28.md) |
 | **画質（modpack の world）** | **葉の暗化を修正**（`r123`）: atlas の whole-image 更新が game 自身の mip を blit 鎖で上書きしていた。SF4 AMD の Celeritas 比較が **3.59 / 5.47 % → 0.67 / 0.02 %**。ATM3 の一人称手（`1565129a2`）と FBP 粒子（`f0efe0055`）は r122 の画像で確認。**display list の記録漏れを修正**（`r125`/`r126`）: `GlStateManager.glNewList` 経由の list が stub に記録されず replay が空だった（ATM3 の Astral Sorcery skybox、`unresolved=937 → 0`）。ATM3 AMD の Celeritas 比較は **12.82 / 9.9 % → 7.39 / 6.61 %**、Nomi は **5.25 / 4.0 % → 3.28 / 0.06 %**（AMD）・**3.30 / 0.07 %**（Intel）で上空の帯も解消。ATM3 の上空の帯（defect 10）は Astral Sorcery の skybox で残る | [証拠](evidence/modpack-reverify-2026-11-06.md) |
 | **利用者報告** | パノラマ・エンドポータル・F2・ガラス・残像・退出後ボタン・Xaero（クラッシュ/黒/位置/透け）・ロード画面・F3+T・入室ラグ・移動時の欠け: 修正済み | 各証拠は git 履歴 |
-| **mod自前GLSL** | GTCEu bloom: opt-in（`-Dceltium.vulkan.modPrograms=true`）で native 実行・validation 0、既定は program ごとに拒否・計数。shaderc 同梱 | [証拠](evidence/gregtech-bloom-2026-11-04.md) |
+| **mod自前GLSL** | GTCEu bloom: **既定で native 実行**（`-Dceltium.vulkan.modPrograms=false` で拒否に戻せる）。chain の 16 pass が描画・validation 0・program 拒否 0、lamp row は 170.8→210.1（GL 参照 243.0）。**halo は未達**: bloom layer の terrain geometry が通常 build されない（`CELTIUM_LAYER_GEOMETRY layer=Bloom ... passes=[...=false]`）。 | [証拠](evidence/mod-program-default-2026-11-07.md) |
 | **コード整理** | `VulkanTerrainGpuBackend` 22,576 → 21,038 行（IndirectImmediateRuns・ModPrograms・FrameStatsReport・GroupLighting・GroupChange・PixelSignatures・HighlightProbe を分離）、孤立 javadoc 295 件整理 | git log 2026-11-06 |
 
 ## 引き継ぎ（2026-11-07）
@@ -26,8 +26,10 @@ display list の記録漏れ（`r125`/`r126`）・**defect 3 の nested ordering
 （RLCraft で 2,050 batch）。同じ失敗を両armで再現した A/B で `orderingFlushFailures=0`・画像 7.04 / 6.39 % →
 6.76 / 5.87 %。**6 pack すべて verified**（`w-sf4-*`・`w-rlcraft-*`・`w-sevtech-*`・`w-po3-*`、r126）。
 未解決: ATM3 の上空の帯（defect 10、Astral Sorcery の skybox で dome の draw は発行されるが presented 画像に届かない）・
-menu 境界の破棄（defect 5、43–1,314 batch/pack）・GTCEu bloom の program 拒否（defect 12）・fixture の presented 計数
-（defect 6、RLCraft の AMD leg が `FAILED_PRESENTED_IMAGE` になるが絵は正しい）。再検証は `scripts/modpack-reverify.sh`。
+menu 境界の破棄（defect 5、43–1,314 batch/pack）・fixture の presented 計数
+（defect 6、RLCraft の AMD leg が `FAILED_PRESENTED_IMAGE` になるが絵は正しい）。**defect 12（GTCEu bloom の program 拒否）は
+r14 で既定 on にして解消**（拒否 0、chain が描く）が、halo は bloom layer の geometry 待ちで、**Nomi の画像は撮り直しが必要**。
+再検証は `scripts/modpack-reverify.sh`。
 
 **KPI leg は `-Dceltium.validation.guiScale=3` を共有flagで渡す**（2026-11-07 実測）: `celtium-world-accept` の
 `options.txt` が `guiScale:2` になり、参照floorの calibration key（`guiScale=3`）と一致しなくなった。渡さないと
@@ -35,18 +37,20 @@ fixture が `UNCALIBRATED_PRESENTED_IMAGE` を返し KPI が leg を拒否する
 
 ## 次の作業（優先順）
 
-1. **FPS の余裕（条件は達成、余裕が薄い）**: r13 で **両GPU `goalCondition=MET`**（AMD 0.893/0.877/0.980、Intel
-   0.930/0.978/0.991、3対すべて <1.0）。**Intel の p99 は 0.991/0.979/0.999 で再測定すれば落ちうる**ので、次は余裕を作る。
-   tick frame の Celtium 仕事 236us のうち残る **`animBatchFlush` 66us**（3 batch × 2 barrier + 1 copy、RADV は region
-   ごとに meta op → 全 region を1 dispatch にするのが筋）、**`animMirror` 30us**（`toRgba` + staging への二度書き）、
-   **`dynMirror`/`dynAnnounce` 28us**（16x16 lightmap）、`lightCache` 19us。**regime（定常/未定常）と、差か絶対値かを
-   必ず書く**。**r11 で空passの pre-flush window を削除**、**r12 で tick の内訳計器 `TickTimings`** と light cache の
-   世代タグ化、**r13 で announcement が適用済みの patch の capture を one-shot で skip**（`announcedCaptureSkips`）。
-2. **残る Celtium 欠陥**: defect 10（ATM3 の上空、dome の draw は発行・presented に届かない）・defect 12（GTCEu bloom、
-   Nomi の 21,885 拒否）・defect 5（menu 境界の破棄）・defect 6（fixture の presented 計数）。pack 側の非互換は置換として記録。
-3. **Xaero radar の entity icon**: 描かれるか未確認（entity の居る scene が必要、`-Dceltium.validation.keepEntities=true`）。
-4. **巨大クラス分割の継続**と効果の無い実験 switch の削除（挙動不変、CPU テストで確認）。
-5. **影・shaderpack**: Demonica fork の別 jar（AGPL-3.0）。本体の 1・2 の後。
+1. **FPS: 正直な比較では未達（r14 で `NOT_MET`、AMD 1.099/1.056/1.113）**。原因は r13 まで既定が拒否していた
+   GTCEu bloom chain の 15 full-screen pass/frame で、r14 に描くようにしたら p50 が 2.149→2.694ms（対比 2.408）に
+   なった。**標的は per-window overhead**: chain が window を 5.0→19.6/frame に増やし、`windowRecordMillis` が
+   215→421us/frame、残り ~340us は各 chain window が直前の window を flush させる分・barrier・submit。
+   **15 window × ~36us を削る**のが本筋（GPU の画素ではない）。r13 の 0.893/0.877/0.980 は chain を落とした計測なので
+   現在の判定に使わない。tick frame 側の残り（`animBatchFlush` 66us・`animMirror` 30us・`dyn*` 28us）は第2群。
+2. **bloom の halo**: bloom layer の terrain geometry が通常 build されない（`CELTIUM_LAYER_GEOMETRY layer=Bloom ...
+   passes=[TerrainRenderPass[name=bloom]=false]`、同じ scene で `true` の回もある）。`terrainToBoundTarget` の routing は
+   動く（`gt1-amd` で 4 frame 発火）ので、次は runtime 追加 layer の build の pass set を読む。
+3. **残る Celtium 欠陥**: defect 10（ATM3 の上空）・defect 5（menu 境界の破棄）・defect 6（fixture の presented 計数）。
+   **Nomi の画像は r14 の既定で撮り直す**（21,885 拒否は 0 になり chain が描くので r126 の数値は変更前）。
+4. **Xaero radar の entity icon**: 描かれるか未確認（entity の居る scene が必要、`-Dceltium.validation.keepEntities=true`）。
+5. **巨大クラス分割の継続**と効果の無い実験 switch の削除（挙動不変、CPU テストで確認）。
+6. **影・shaderpack**: Demonica fork の別 jar（AGPL-3.0）。本体の 1・2 の後。
 
 ## 棄却済み（再入条件が無い限り再開しない）
 
