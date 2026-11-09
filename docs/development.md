@@ -94,6 +94,43 @@ scripts/gv-leg.sh <fresh-leg> <stage-dir> plain amd 200
 `presentedBlackFraction` のような数値ごと読む。同じlegを2回回して差分を語る場合は、stageのfixtureを
 固定すること（rendererだけを変える）。
 
+### 最小インスタンス（pack不要の leg）
+
+pack の無い素の Cleanroom インスタンスでも `plain` leg は通る。2026-11-09 に再構築した環境で
+`r7mini` が **PASSED**（AMD RX 6400、`fixtureStatus=PASSED`、48 秒）。作り方:
+
+```sh
+cd ~/.local/share/PrismLauncher/instances
+mkdir -p celtium-mini/minecraft/{mods,config}
+cp Supersymmetry/mmc-pack.json celtium-mini/
+cp Supersymmetry/minecraft/config/relauncher.json celtium-mini/minecraft/config/
+cp "Supersymmetry/minecraft/mods/!cleanroom-relauncher-1.3.0.jar" celtium-mini/minecraft/mods/
+printf '[General]\nname=celtium-mini\nInstanceType=OneSix\nOverrideJava=true\nJavaPath=%s\nOverrideMemory=true\nMaxMemAlloc=4096\nMinMemAlloc=1024\n' \
+  "$HOME/.gradle/jdks/temurin-8-amd64-linux.2/bin/java" > celtium-mini/instance.cfg
+CELTIUM_INSTANCE_COHORT=$PWD/../../.local/share/PrismLauncher/instances/celtium-mini \
+  scripts/gv-leg.sh <leg> .gv-verify/jars/<stage> plain amd 180
+```
+
+`relauncher.json` の `selectedVersion` は `0.7.14-alpha`、`targetJavaVersion` は 25。ランチャー JVM は Java 8
+（`launchwrapper` が URLClassLoader を要求する）、ゲーム JVM は relauncher が用意する Zulu 25。
+`plain` は平坦な受け入れ scene なので pack も save も要らない。
+
+### pack インスタンスを素の CurseForge zip から作る場合の注意（2026-11-09）
+
+Prism の GUI を使わずに pack を展開すると、**公開 pack は Cleanroom 0.7.14 でそのまま動かない**ものが多い。
+実測した停止点:
+
+- **jar 名**: `{projectID}-{fileID}.jar` にすると FML の classpath 順が変わり、複数の mod が同梱する
+  `kotlin-reflect` の勝者が変わる。Forgelin-Continuous の `KotlinAdapter` が `getObjectInstance()` で null を
+  受け取り `IllegalAccessException` で落ちた。CurseForge の実ファイル名に戻すと 155 個が直り、mod 構築が進んだ。
+- **`!cleanroom-relauncher` の二重化**: pack 同梱の 1.1.4 と手動の 1.3.0 を両方置くと衝突する。1.3.0 だけ残す。
+- **Supersymmetry**: `dropt` が `com.cleanroommc.hackery.ReflectionHackery` を要求するが、Cleanroom 0.7.11/0.7.14
+  のどちらの profile にも `hackery` は無い。`dropt` を外すと `pyrotech` が要求する。
+- **PO3**: `EnderCoreTransformer` が ASM 9 で `Class versions V1_5 or less must use F_NEW frames` を投げる
+  （pack 側の古い ASM 使用）。Cleanroom 0.7.11/0.7.14 とも ASM 9.10.1 なので version 差ではない。
+
+したがって pack leg の前に [modpacks.md](<modpacks.md>) の「Substitutions per pack」を適用する必要がある。
+
 正典は [gv-leg.sh](<../scripts/gv-leg.sh>) → [gv_leg.py](<../scripts/gv_leg.py>) → [prism_validation.py](<../scripts/prism_validation.py>)。
 未追跡の `.gv-verify/` 内の古いrunner/harnessは使わない。CLIは `scripts/gv-leg.sh --help`。
 
