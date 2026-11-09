@@ -1,4 +1,4 @@
-"""Regression for the intentional LWJGL Vulkan Java binding without core/native bundling."""
+"""Regression for the intentional LWJGL Vulkan and shaderc bindings without core/native bundling."""
 import importlib.util
 from pathlib import Path
 import unittest
@@ -23,6 +23,24 @@ class PackagedVulkanModuleTests(unittest.TestCase):
                      "org/joml/Matrix4f.class", "com/google/gson/Gson.class"):
             with self.subTest(name=name):
                 self.assertTrue(module.unexpected_runtime_entry(name))
+
+    def test_embedded_shaderc_java_module_is_accepted(self):
+        for name in ("org/lwjgl/util/", "org/lwjgl/util/shaderc/",
+                     "org/lwjgl/util/shaderc/Shaderc.class",
+                     "org/lwjgl/util/shaderc/GLSLang.class"):
+            with self.subTest(name=name):
+                self.assertFalse(module.unexpected_runtime_entry(name))
+
+    def test_shaderc_natives_are_the_only_accepted_natives(self):
+        for name in ("linux/x64/org/lwjgl/shaderc/libshaderc.so",
+                     "windows/x64/org/lwjgl/shaderc/shaderc.dll"):
+            with self.subTest(name=name):
+                self.assertFalse(module.unexpected_native_entry(name))
+        for name in ("linux/x64/org/lwjgl/liblwjgl.so",
+                     "windows/x64/org/lwjgl/lwjgl.dll",
+                     "org/lwjgl/system/liblwjgl.dylib", "nested.jar"):
+            with self.subTest(name=name):
+                self.assertTrue(module.unexpected_native_entry(name))
 
 
 if __name__ == "__main__":
