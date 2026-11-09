@@ -13,6 +13,15 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # Six test modules under scripts/tests (and scripts/cpu-contract/menu-region-floor-check.py, which a
+      # seventh loads) read committed frames with Pillow (`from PIL import Image`). The runner's system
+      # Python has no Pillow, so those tests errored at import and the suite reported FAILED (errors=8)
+      # without ever running them. The library is a test dependency, not an optional tool, so it is
+      # installed here, the way the minecraft-1122 job installs glslang-tools.
+      - name: Install the image library the checks import
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-pil
       - name: Test development-process safety (no GPU or game)
         run: |
           python3 -m unittest discover -s scripts/tests -p 'test_*.py'

@@ -90,6 +90,7 @@ def license_errors(jar, names, repository):
         "grondag/bitraster/": "licenses/bitraster-LICENSE",
         "org/embeddedt/embeddium/impl/shadow/joml/": "META-INF/LICENSE",
         "org/lwjgl/vulkan/": "licenses/lwjgl-LICENSE",
+        "org/lwjgl/util/shaderc/": "licenses/shaderc-LICENSE",
     }
     census = {}
     for prefix, notice in coverage.items():
@@ -103,11 +104,33 @@ def license_errors(jar, names, repository):
 
 
 def unexpected_runtime_entry(name):
-    """The one bundled LWJGL module must not open the door to core/native dependencies."""
+    """The bundled LWJGL modules must not open the door to core/native dependencies.
+
+    Two LWJGL modules are embedded on purpose: the Vulkan Java bindings, and the shaderc Java binding
+    (org/lwjgl/util/shaderc/), which a mod's own GLSL programs compile through (ModShaderCompiler;
+    forge122/build.gradle.kts). Everything else under org/lwjgl/ - core, OpenGL, SDL, GLFW - belongs to
+    Cleanroom and must not ride along.
+    """
+    if name.endswith("/"):
+        return False  # a package-directory entry carries no code
     return (name.startswith(("org/joml/", "com/google/gson/"))
             or (name.startswith("org/lwjgl/")
-                and name != "org/lwjgl/"  # package-directory entry is harmless
-                and not name.startswith("org/lwjgl/vulkan/")))
+                and not name.startswith(("org/lwjgl/vulkan/", "org/lwjgl/util/shaderc/"))))
+
+
+# The shaderc natives are the one deliberate exception to the no-natives rule in verify(): the binding
+# loads libshaderc from its own class loader, i.e. from the mod jar at LWJGL's own layout paths, so the
+# two x64 natives ship inside the jar (decided 2026-11-05; forge122/build.gradle.kts). Any other native
+# library or nested jar is still an error.
+SHADERC_NATIVES = {
+    "linux/x64/org/lwjgl/shaderc/libshaderc.so",
+    "windows/x64/org/lwjgl/shaderc/shaderc.dll",
+}
+
+
+def unexpected_native_entry(name):
+    return (name.endswith((".so", ".dll", ".dylib", ".jnilib", ".jar"))
+            and name not in SHADERC_NATIVES)
 
 
 def verify(path):
@@ -209,6 +232,7 @@ def verify(path):
             "docs/upstream-README.md": "docs/upstream-README.md",
             "licenses/bitraster-LICENSE": "common/src/main/java/grondag/bitraster/LICENSE",
             "licenses/lwjgl-LICENSE": "licenses/lwjgl-LICENSE",
+            "licenses/shaderc-LICENSE": "licenses/shaderc-LICENSE",
         }
         for entry, original in notices.items():
             if entry in names and jar.read(entry) != (repository / original).read_bytes():
@@ -218,13 +242,14 @@ def verify(path):
         errors.extend(license_problems)
 
         for name in entries:
-            # Only Vulkan Java bindings are intentionally embedded. Core LWJGL, SDL,
-            # OpenGL, native binaries, and all other LWJGL modules belong to Cleanroom.
+            # Only the Vulkan and shaderc Java bindings are intentionally embedded, plus the two
+            # shaderc natives named in SHADERC_NATIVES. Core LWJGL, SDL, OpenGL, other native
+            # binaries, and all other LWJGL modules belong to Cleanroom.
             if unexpected_runtime_entry(name):
                 errors.append(f"Unexpected bundled runtime / unrelocated dependency: {name}")
             if name.startswith("org/soutalab/celtium/validation/"):
                 errors.append(f"Validation fixture must not be embedded in the mod: {name}")
-            if name.endswith((".so", ".dll", ".dylib", ".jnilib", ".jar")):
+            if unexpected_native_entry(name):
                 errors.append(f"Unexpected native library or nested jar: {name}")
             if name.endswith(".class"):
                 data = jar.read(name)
