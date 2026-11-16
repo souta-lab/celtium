@@ -141,4 +141,42 @@ class BufferLogicalSizeBoundsTest {
             MemoryUtil.memFree(small);
         }
     }
+
+    @Test
+    void bufferSubDataRefusesShrunkLogicalSizeAndOverflow() throws Exception {
+        int buf = genAndBind(64, (byte) 0x11);
+        ByteBuffer small = MemoryUtil.memAlloc(16);
+        ByteBuffer marker = MemoryUtil.memAlloc(16);
+        ByteBuffer out = MemoryUtil.memAlloc(16);
+        try {
+            for (int i = 0; i < 16; i++) {
+                small.put(i, (byte) 0x33);
+                marker.put(i, (byte) 0x55);
+            }
+            call("glBindBuffer", GL_ARRAY_BUFFER, buf);
+            call("glBufferData", GL_ARRAY_BUFFER, 16, MemoryUtil.memAddress(small), GL_STATIC_DRAW);
+
+            // 1. Offset + size past shrunk 16B logical size (still within 64B backing) must be refused.
+            call("glBufferSubData", GL_ARRAY_BUFFER, 8L, 16L, MemoryUtil.memAddress(marker));
+            this.stub.readBuffer(buf, 0L, 16L, MemoryUtil.memAddress(out));
+            assertEquals((byte) 0x33, out.get(8),
+                    "glBufferSubData must not overwrite past shrunk logical size");
+
+            // 2. Overflowing offset + size where (int) offset == 0 and (int) size == 8 must not wrap negative and clobber offset 0.
+            call("glBufferSubData", GL_ARRAY_BUFFER, 0x7FFF_FFFF_0000_0000L, 0x0000_0001_0000_0008L,
+                    MemoryUtil.memAddress(marker));
+            this.stub.readBuffer(buf, 0L, 16L, MemoryUtil.memAddress(out));
+            assertEquals((byte) 0x33, out.get(0),
+                    "glBufferSubData must reject overflowing offset + size without clobbering offset 0");
+
+            // 3. Overflowing offset near Long.MAX_VALUE must return cleanly instead of throwing IllegalArgumentException.
+            call("glBufferSubData", GL_ARRAY_BUFFER, Long.MAX_VALUE - 4L, 16L, MemoryUtil.memAddress(marker));
+            this.stub.readBuffer(buf, 0L, 16L, MemoryUtil.memAddress(out));
+            assertEquals((byte) 0x33, out.get(0));
+        } finally {
+            MemoryUtil.memFree(small);
+            MemoryUtil.memFree(marker);
+            MemoryUtil.memFree(out);
+        }
+    }
 }

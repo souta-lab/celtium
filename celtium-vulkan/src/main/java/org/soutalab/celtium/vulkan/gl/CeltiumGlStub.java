@@ -7993,7 +7993,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         ByteBuffer storage = this.bufferStore.get(name);
         int logicalSize = this.logicalSizeOf(name, storage == null ? 0 : storage.capacity());
-        if (storage == null || data == 0L || size <= 0 || offset < 0 || offset + size > logicalSize) {
+        if (storage == null || data == 0L || mapRangeOffset(offset, size, logicalSize) < 0L) {
             return;
         }
         ByteBuffer source = MemoryUtil.memByteBuffer(data, (int) size);
