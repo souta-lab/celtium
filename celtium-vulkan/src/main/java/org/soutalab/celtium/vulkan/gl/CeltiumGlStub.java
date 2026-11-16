@@ -1816,23 +1816,28 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Records the array-buffer binding, as the stub's own {@code glBindBuffer} case does. */
     public static void celtium$bindBuffer(int target, int name) {
-        if (target == GL_ARRAY_BUFFER) {
-            NativeGeometryBuffer.bindId(name);
-        }
         CeltiumGlStub stub = installed;
         if (stub == null) {
+            if (target == GL_ARRAY_BUFFER) {
+                NativeGeometryBuffer.bindId(name);
+            }
             return;
         }
-        if (target == GL_PIXEL_PACK_BUFFER) {
-            stub.pixelPackBuffer = name;
+        stub.bindBuffer(target, name);
+    }
+
+    private void bindBuffer(int target, int name) {
+        if (target == GL_ARRAY_BUFFER) {
+            NativeGeometryBuffer.bindId(name);
+        } else if (target == GL_PIXEL_PACK_BUFFER) {
+            this.pixelPackBuffer = name;
+            return;
+        } else if (target == GL_PIXEL_UNPACK_BUFFER) {
+            this.pixelUnpackBuffer = name;
             return;
         }
-        if (target == GL_PIXEL_UNPACK_BUFFER) {
-            stub.pixelUnpackBuffer = name;
-            return;
-        }
-        if (target >= 0 && target < stub.bufferBindings.length) {
-            stub.bufferBindings[target] = name;
+        if (target >= 0 && target < this.bufferBindings.length) {
+            this.bufferBindings[target] = name;
         }
     }
 
@@ -5737,12 +5742,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 delete(fn, c);
                 return 0L;
             case SEM_BIND_BUFFER:
-                if ((int) a0 == GL_ARRAY_BUFFER) {
-                    NativeGeometryBuffer.bindId((int) a1);
-                }
-                if ((int) a0 >= 0 && (int) a0 < this.bufferBindings.length) {
-                    this.bufferBindings[(int) a0] = (int) a1;
-                }
+                this.bindBuffer((int) a0, (int) a1);
                 return 0L;
             case SEM_BIND_TEXTURE:
                 if ((int) a0 == GL_TEXTURE_2D) this.textures.bindTexture2d((int) a1);
@@ -6763,6 +6763,12 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (NativeGeometryBuffer.boundId() == name) NativeGeometryBuffer.unbind();
         this.bufferStore.remove(name);
         this.bufferLogicalSize.remove(name);
+        if (this.pixelPackBuffer == name) {
+            this.pixelPackBuffer = 0;
+        }
+        if (this.pixelUnpackBuffer == name) {
+            this.pixelUnpackBuffer = 0;
+        }
         for (int target = 0; target < this.bufferBindings.length; target++) {
             if (this.bufferBindings[target] == name) {
                 this.bufferBindings[target] = 0;
@@ -8255,7 +8261,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The mean byte value of the bytes an upload is about to read from a pixel unpack buffer, for the PBO log line. */
     private static String celtium$pboMean(ByteBuffer storage, long offset, long bytes) {
-        if (storage == null || offset < 0L || offset + bytes > storage.capacity() || bytes <= 0L) {
+        if (storage == null || mapRangeOffset(offset, bytes, storage.capacity()) < 0L) {
             return "n/a";
         }
         long sum = 0L;
@@ -8504,11 +8510,13 @@ public final class CeltiumGlStub implements FunctionProvider {
     private ByteBuffer uploadToRgba8(int width, int height, int format, int type, long pixels) {
         if (this.pixelUnpackBuffer > 0) {
             // With an unpack buffer bound, pixels is an offset into it. The buffer's storage is this stub's own block,
-            // so the offset is resolved to an address inside it - bounds-checked against the rows GL would read.
+            // so the offset is resolved to an address inside it - bounds-checked against the buffer's logical size.
             ByteBuffer storage = this.bufferStore.get(this.pixelUnpackBuffer);
-            long needed = (long) width * (long) height * 4L;
-            if (storage != null && pixels >= 0L && width > 0 && height > 0
-                    && pixels + needed <= storage.capacity()) {
+            int logicalSize = storage == null ? 0
+                    : this.logicalSizeOf(this.pixelUnpackBuffer, storage.capacity());
+            if (storage != null && width > 0 && height > 0
+                    && (long) width * (long) height <= logicalSize / 4L
+                    && mapRangeOffset(pixels, (long) width * (long) height * 4L, logicalSize) >= 0L) {
                 pixels = memAddress(storage) + pixels;
                 int bound = this.pixelUnpackBuffer;
                 this.pixelUnpackBuffer = 0;
@@ -9404,12 +9412,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         long capacity = Long.MAX_VALUE;
         if (stub.pixelPackBuffer > 0) {
             // With a pack buffer bound the argument is an offset into it: resolve it against the buffer's storage,
-            // and refuse an offset outside it rather than write through a small integer taken as an address.
+            // and refuse an offset outside its logical size rather than write through a small integer or stale tail.
             ByteBuffer storage = stub.bufferStore.get(stub.pixelPackBuffer);
-            if (storage == null || address < 0L || address >= storage.capacity()) {
+            int logicalSize = storage == null ? 0
+                    : stub.logicalSizeOf(stub.pixelPackBuffer, storage.capacity());
+            if (storage == null || address < 0L || address >= logicalSize) {
                 return;
             }
-            capacity = storage.capacity() - address;
+            capacity = logicalSize - address;
             address = memAddress(storage) + address;
         }
         Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
@@ -9793,7 +9803,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         } else {
             String[] layoutRefusal = new String[1];
             long storageBase = (clientMemory || storage == null) ? 0L : memAddress(storage, 0);
-            int storageCapacity = storage == null ? 0 : storage.capacity();
+            int storageCapacity = (clientMemory || storage == null) ? 0
+                    : (nativeBuffer != null ? storage.capacity() : this.logicalSizeOf(buffer, storage.capacity()));
             formatId = celtium$drawArrayFormat(this.vertexPointerStride, celtium$otherArrayMask(), count, first,
                     clientMemory, storageBase, storageCapacity, layoutRefusal);
             reason = layoutRefusal[0];
@@ -9840,9 +9851,11 @@ public final class CeltiumGlStub implements FunctionProvider {
                     pointerOnlyDecoded++;
                 }
             } else {
-                end = offset + asked;
-                if (end > storage.capacity()) {
-                    reason = "the draw reads to byte " + end + " of a " + storage.capacity() + "-byte buffer";
+                int logicalSize = nativeBuffer != null ? storage.capacity()
+                        : this.logicalSizeOf(buffer, storage.capacity());
+                if (mapRangeOffset(offset, asked, logicalSize) < 0L) {
+                    reason = "the draw reads offset " + offset + " + " + asked + " bytes of a "
+                            + logicalSize + "-byte buffer";
                 }
             }
         }

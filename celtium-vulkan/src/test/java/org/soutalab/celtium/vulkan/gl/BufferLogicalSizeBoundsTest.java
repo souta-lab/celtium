@@ -9,6 +9,7 @@ import java.nio.ByteBuffer;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
  * {@code readBuffer} and {@code copyBuffer} must honour {@code bufferLogicalSize} after {@code glBufferData} shrinks a
@@ -117,6 +118,27 @@ class BufferLogicalSizeBoundsTest {
         } finally {
             MemoryUtil.memFree(small);
             MemoryUtil.memFree(out);
+        }
+    }
+
+    @Test
+    void unpackBufferTextureUploadRefusesOffsetsPastShrunkLogicalSize() throws Exception {
+        int pbo = genAndBind(64, (byte) 0x55);
+        ByteBuffer small = MemoryUtil.memAlloc(4);
+        try {
+            small.putInt(0, 0x11223344);
+            // Shrink PBO to 4 bytes while keeping the underlying 64-byte ByteBuffer.
+            call("glBindBuffer", 0x88EC, pbo); // GL_PIXEL_UNPACK_BUFFER
+            call("glBufferData", 0x88EC, 4, MemoryUtil.memAddress(small), GL_STATIC_DRAW);
+
+            Method uploadToRgba8 = CeltiumGlStub.class.getDeclaredMethod(
+                    "uploadToRgba8", int.class, int.class, int.class, int.class, long.class);
+            uploadToRgba8.setAccessible(true);
+            Object result = uploadToRgba8.invoke(this.stub, 4, 4, 0x1908, 0x1401, 0L);
+            assertNull(result,
+                    "PBO upload of 4x4 RGBA8 (64B) must be refused when buffer was shrunk to 4B logical size");
+        } finally {
+            MemoryUtil.memFree(small);
         }
     }
 }
