@@ -10304,7 +10304,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private boolean celtium$splitArraysValid(int sourceStride, int count, int first, boolean clientMemory,
             long storageBase, int storageCapacity, String[] refusalOut) {
-        if (!celtium$texColorPointersKnown()) {
+        if (first < 0 || count <= 0 || !celtium$texColorPointersKnown()) {
             return false;
         }
         int texStride = this.texCoordPointerStride > 0 ? this.texCoordPointerStride : 8;
@@ -10312,11 +10312,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         int colorStride = this.colorPointerStride > 0 ? this.colorPointerStride : (floatColor ? 16 : 4);
         long texBytes = (long) (count - 1) * texStride + 8L;
         long colorBytes = (long) (count - 1) * colorStride + (floatColor ? 16L : 4L);
+        long texFirstBytes = (long) first * texStride;
+        long colorFirstBytes = (long) first * colorStride;
         long texFrom;
         long colorFrom;
         if (clientMemory) {
-            texFrom = this.texCoordPointerOffset + (long) first * texStride;
-            colorFrom = this.colorPointerOffset + (long) first * colorStride;
+            try {
+                texFrom = Math.addExact(this.texCoordPointerOffset, texFirstBytes);
+                colorFrom = Math.addExact(this.colorPointerOffset, colorFirstBytes);
+            } catch (ArithmeticException overflow) {
+                return false;
+            }
             if (!celtium$readableMapping(texFrom, texBytes)) {
                 refusalOut[0] = "the split texture array at 0x" + Long.toHexString(this.texCoordPointerOffset)
                         + " is not readable for " + count + " vertices";
@@ -10336,18 +10342,18 @@ public final class CeltiumGlStub implements FunctionProvider {
                         + this.colorPointerOffset;
                 return false;
             }
-            if (this.texCoordPointerOffset + texBytes > storageCapacity) {
-                refusalOut[0] = "the split texture array reads to byte " + (this.texCoordPointerOffset + texBytes)
-                        + " of a " + storageCapacity + "-byte buffer";
+            if (this.texCoordPointerOffset > storageCapacity - texFirstBytes
+                    || mapRangeOffset(this.texCoordPointerOffset + texFirstBytes, texBytes, storageCapacity) < 0L) {
+                refusalOut[0] = "the split texture array reads past the end of a " + storageCapacity + "-byte buffer";
                 return false;
             }
-            if (this.colorPointerOffset + colorBytes > storageCapacity) {
-                refusalOut[0] = "the split colour array reads to byte " + (this.colorPointerOffset + colorBytes)
-                        + " of a " + storageCapacity + "-byte buffer";
+            if (this.colorPointerOffset > storageCapacity - colorFirstBytes
+                    || mapRangeOffset(this.colorPointerOffset + colorFirstBytes, colorBytes, storageCapacity) < 0L) {
+                refusalOut[0] = "the split colour array reads past the end of a " + storageCapacity + "-byte buffer";
                 return false;
             }
-            texFrom = storageBase + this.texCoordPointerOffset + (long) first * texStride;
-            colorFrom = storageBase + this.colorPointerOffset + (long) first * colorStride;
+            texFrom = storageBase + this.texCoordPointerOffset + texFirstBytes;
+            colorFrom = storageBase + this.colorPointerOffset + colorFirstBytes;
         }
         this.texColorRepackTexBase = texFrom;
         this.texColorRepackColorBase = colorFrom;
