@@ -588,9 +588,6 @@ final class BackendDiagnostics {
                 + " groupsDiscardedAtFullTeardown=" + b.immediateStatistics.groupsDiscardedAtFullTeardown()
                 + " immediateWindows=" + b.immediateStatistics.immediateWindows()
                 + " immediateWindowsThisFrame=" + b.immediateStatistics.immediateWindowsThisFrame()
-                + " stickyWindowsMerged=" + b.stickyWindowsMerged
-                + " stickyPassCloses=" + b.stickyPassCloses
-                + " stickyBarrierCloses=" + b.stickyBarrierCloses
                 + " pendingImmediateIndices=" + b.pendingImmediateIndices
                 + " immediateGroupsPending=" + b.immediateGroups.size()
                 + " recordedGroupsHeld=" + b.recordedImmediateGroups.size()
