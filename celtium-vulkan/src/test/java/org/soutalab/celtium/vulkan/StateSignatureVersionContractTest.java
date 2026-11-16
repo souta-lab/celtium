@@ -252,4 +252,66 @@ class StateSignatureVersionContractTest {
         }
         assertEquals(previous, state.stateVersion());
     }
+
+    /**
+     * Value-keyed cache hits and real cache misses reuse the captured signature buffer without aliasing or losing
+     * materialized state updates.
+     */
+    @Test
+    void offerStateKeyCacheHandlesValueHitsAndRealMissesWithoutAliasing() throws Exception {
+        java.lang.reflect.Field uf = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        uf.setAccessible(true);
+        sun.misc.Unsafe unsafe = (sun.misc.Unsafe) uf.get(null);
+        VulkanTerrainGpuBackend b = (VulkanTerrainGpuBackend) unsafe.allocateInstance(VulkanTerrainGpuBackend.class);
+        VulkanGlState state = new VulkanGlState();
+        setBackendField(b, "immediateState", state);
+        setBackendField(b, "targetRegistry", new RenderTargetRegistry());
+        setBackendField(b, "immediateStatistics", new ImmediateStatistics());
+        setBackendField(b, "colorMaskHistogram", new long[16]);
+        setBackendField(b, "celtium$signatureCache", new int[ModelReplayFastPath.SIGNATURE]);
+        setBackendField(b, "celtium$stateSignature", new int[ModelReplayFastPath.SIGNATURE]);
+        int[] scratch = new int[16];
+        setBackendField(b, "celtium$stateScratch", scratch);
+        setBackendField(b, "celtium$keyCacheKeys", new long[16]);
+        setBackendField(b, "celtium$keyCacheStates", new long[16]);
+        setBackendField(b, "celtium$keyCacheEnvironments", new long[16]);
+        setBackendField(b, "celtium$keyCacheWindowTargets", new int[16]);
+        setBackendField(b, "celtium$keyCacheFormats", new int[16]);
+        setBackendField(b, "celtium$keyCacheValids", new boolean[16]);
+        setBackendField(b, "celtium$keyCacheSignatures", new int[16][ModelReplayFastPath.SIGNATURE]);
+
+        // Initial miss with blend=false
+        state.blendEnabled(false);
+        long keyOff = b.celtium$offerStateKey(2);
+        assertEquals(0, scratch[0]);
+        assertTrue(b.celtium$stateKeyCacheSummary().startsWith("0/1["));
+
+        // Exact repeat -> version hit
+        assertEquals(keyOff, b.celtium$offerStateKey(2));
+        assertTrue(b.celtium$stateKeyCacheSummary().startsWith("1/1["));
+
+        // Real miss with blend=true -> must update key, scratch, and swapped slot signature
+        state.blendEnabled(true);
+        long keyOn = b.celtium$offerStateKey(2);
+        assertNotEquals(keyOff, keyOn);
+        assertEquals(1, scratch[0]);
+        assertTrue(b.celtium$stateKeyCacheSummary().startsWith("1/2["));
+
+        // Round-trip toggle (true -> false -> true): stateVersion moves, signature matches slot 2 -> value hit
+        state.blendEnabled(false);
+        state.blendEnabled(true);
+        assertEquals(keyOn, b.celtium$offerStateKey(2));
+        assertTrue(b.celtium$stateKeyCacheSummary().startsWith("2/2["), b.celtium$stateKeyCacheSummary());
+        assertTrue(b.celtium$stateKeyCacheSummary().contains("valueHits=1"), b.celtium$stateKeyCacheSummary());
+
+        // Subsequent repeat with unchanged stateVersion -> version hit again
+        assertEquals(keyOn, b.celtium$offerStateKey(2));
+        assertTrue(b.celtium$stateKeyCacheSummary().startsWith("3/2["));
+    }
+
+    private static void setBackendField(Object target, String name, Object value) throws Exception {
+        java.lang.reflect.Field field = VulkanTerrainGpuBackend.class.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(target, value);
+    }
 }

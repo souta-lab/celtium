@@ -9412,6 +9412,11 @@ this.frameBufferOpen = false;
         NativeTextureEnvironment currentEnvironment = NativeTextureEnvironment.current();
         long environmentVersion = currentEnvironment.version();
         int windowTarget = this.targetRegistry.currentIdentity() == 0L ? 1 : 0;
+        celtium$stateSignature(out, stateVersion, currentEnvironment, environmentVersion, windowTarget);
+    }
+
+    private void celtium$stateSignature(int[] out, long stateVersion, NativeTextureEnvironment currentEnvironment,
+            long environmentVersion, int windowTarget) {
         if (celtium$signatureCacheHit(stateVersion, environmentVersion, windowTarget,
                 this.celtium$signatureCacheState, this.celtium$signatureCacheEnvironment,
                 this.celtium$signatureCacheWindowTarget)) {
@@ -9571,7 +9576,7 @@ this.frameBufferOpen = false;
         }
     }
 
-    private final int[] celtium$stateSignature = new int[ModelReplayFastPath.SIGNATURE];
+    private int[] celtium$stateSignature = new int[ModelReplayFastPath.SIGNATURE];
     /** The captured state's scratch: shared, so anything that keeps the values past the next offer must clone it. */
     private final int[] celtium$stateScratch = new int[16];
     /**
@@ -9630,7 +9635,7 @@ this.frameBufferOpen = false;
      * here from the capture: it counts groups, and its counters are named {@code *Groups}, so counting it once per
      * group rather than once per offer is what makes the names true.
      */
-    private long celtium$offerStateKey(int formatId) {
+    long celtium$offerStateKey(int formatId) {
         long stateVersion = this.immediateState.keyStateVersion();
         NativeTextureEnvironment currentEnvironment = NativeTextureEnvironment.current();
         long environmentVersion = currentEnvironment.version();
@@ -9654,10 +9659,12 @@ this.frameBufferOpen = false;
         // and back (l21miss-amd: half the remaining misses recomputed an identical key). The key is a pure function of
         // the layout id and the state signature (celtium$stateFromSignature and celtium$stateKey read nothing else), so
         // a signature equal to the slot's own answers with the slot's key; only the versions are refreshed.
-        if (this.celtium$keyCacheValids[slot] && this.celtium$keyCacheFormats[slot] == formatId) {
-            int[] probe = this.celtium$keyValueProbe;
-            celtium$stateSignature(probe);
-            if (java.util.Arrays.equals(probe, this.celtium$keyCacheSignatures[slot])) {
+        // Read directly into celtium$stateSignature so a real miss reuses it without re-capturing or copying back.
+        boolean sameFormatValid = this.celtium$keyCacheValids[slot] && this.celtium$keyCacheFormats[slot] == formatId;
+        int[] signature = this.celtium$stateSignature;
+        if (sameFormatValid) {
+            celtium$stateSignature(signature, stateVersion, currentEnvironment, environmentVersion, windowTarget);
+            if (java.util.Arrays.equals(signature, this.celtium$keyCacheSignatures[slot])) {
                 this.celtium$keyCacheStates[slot] = stateVersion;
                 this.celtium$keyCacheEnvironments[slot] = environmentVersion;
                 this.celtium$keyCacheWindowTargets[slot] = windowTarget;
@@ -9675,12 +9682,17 @@ this.frameBufferOpen = false;
         else if (environmentVersion != this.celtium$keyCacheEnvironments[slot]) this.celtium$keyMissEnvironment++;
         else this.celtium$keyMissWindow++;
         this.celtium$offerStateFresh = false;
-        celtium$materializeOfferState();
+        long captureStarted = BATCH_TIMINGS ? System.nanoTime() : 0L;
+        if (!sameFormatValid) {
+            celtium$stateSignature(signature, stateVersion, currentEnvironment, environmentVersion, windowTarget);
+        }
+        celtium$materializeSignature(signature, captureStarted);
         long key = celtium$stateKey(formatId, this.celtium$stateScratch);
         if (this.celtium$keyCacheValids[slot] && key == this.celtium$keyCacheKeys[slot]) this.celtium$keyMissSameKey++;
         this.celtium$keyCacheKeys[slot] = key;
-        System.arraycopy(this.celtium$stateSignature, 0, this.celtium$keyCacheSignatures[slot], 0,
-                this.celtium$keyCacheSignatures[slot].length);
+        int[] previousSlotSignature = this.celtium$keyCacheSignatures[slot];
+        this.celtium$keyCacheSignatures[slot] = signature;
+        this.celtium$stateSignature = previousSlotSignature;
         this.celtium$keyCacheStates[slot] = stateVersion;
         this.celtium$keyCacheEnvironments[slot] = environmentVersion;
         this.celtium$keyCacheWindowTargets[slot] = windowTarget;
@@ -9737,6 +9749,10 @@ this.frameBufferOpen = false;
         long started = BATCH_TIMINGS ? System.nanoTime() : 0L;
         int[] signature = this.celtium$stateSignature;
         celtium$stateSignature(signature);
+        celtium$materializeSignature(signature, started);
+    }
+
+    private void celtium$materializeSignature(int[] signature, long started) {
         celtium$stateFromSignature(signature, this.celtium$stateScratch);
         celtium$noteStateStatistics(this.celtium$stateScratch, signature[SIGNATURE_COLOR_MASK]);
         this.celtium$offerStateFresh = true;
@@ -9768,7 +9784,6 @@ this.frameBufferOpen = false;
     /** Hits answered by an equal signature after the version moved, and the per-slot signatures they compare. */
     private long celtium$keyValueHits;
     private final int[][] celtium$keyCacheSignatures = new int[OFFER_KEY_CACHE_SLOTS][ModelReplayFastPath.SIGNATURE];
-    private final int[] celtium$keyValueProbe = new int[ModelReplayFastPath.SIGNATURE];
     /** Whether {@link #celtium$stateScratch} holds the state the current offer key was taken under. */
     private boolean celtium$offerStateFresh;
 
