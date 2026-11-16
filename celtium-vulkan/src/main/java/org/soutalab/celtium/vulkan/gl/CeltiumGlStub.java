@@ -4893,19 +4893,29 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
         }
         StringBuilder keys = new StringBuilder();
-        java.util.List<java.util.Map.Entry<Long, Integer>> sorted =
-                new java.util.ArrayList<java.util.Map.Entry<Long, Integer>>(stub.patchKeys.entrySet());
-        sorted.sort((a, b) -> Integer.compare(b.getValue().intValue(), a.getValue().intValue()));
+        java.util.List<long[]> sorted = new java.util.ArrayList<long[]>(stub.patchKeys.size());
+        it.unimi.dsi.fastutil.longs.LongIterator patchKeyIter = stub.patchKeys.keySet().iterator();
+        while (patchKeyIter.hasNext()) {
+            long key = patchKeyIter.nextLong();
+            sorted.add(new long[] { key, stub.patchKeys.get(key) });
+        }
+        sorted.sort((a, b) -> Long.compare(b[1], a[1]));
         for (int i = 0; i < Math.min(4, sorted.size()); i++) {
-            java.util.Map.Entry<Long, Integer> e = sorted.get(i);
-            keys.append(" ").append(e.getKey().longValue() >>> 16).append('.')
-                    .append(e.getKey().longValue() & 0xFFL).append('=').append(e.getValue());
-            TexCapture stored = stub.texCaptures.get(e.getKey());
+            long[] entry = sorted.get(i);
+            long key = entry[0];
+            keys.append(" ").append(key >>> 16).append('.').append(key & 0xFFL).append('=').append(entry[1]);
+            TexCapture stored = stub.texCaptures.get(key);
             keys.append(stored == null
                     ? "[none]"
                     : "[" + stored.width + "x" + stored.height + "@" + stored.x + "," + stored.y
                             + (stored.gamePixels ? "" : ",undef") + "]");
         }
+        StringBuilder branches = new StringBuilder("{");
+        appendPatchBranch(branches, "backlog", stub.patchBranchBacklog);
+        appendPatchBranch(branches, "surface", stub.patchBranchSurface);
+        appendPatchBranch(branches, "lone", stub.patchBranchLone);
+        appendPatchBranch(branches, "paste", stub.patchBranchPaste);
+        branches.append('}');
         return "texture capture: levels=" + stub.texCaptures.size()
                 + " full=" + stub.fullCaptures.get()
                 + " patches=" + stub.subCaptures.get()
@@ -4916,8 +4926,18 @@ public final class CeltiumGlStub implements FunctionProvider {
                 + " backlog=" + backlogPatches + "/" + stub.texPatchBytes + "B@" + (topName >>> 16)
                 + "." + (topName & 0xFFL)
                 + " patchKeys=" + keys
-                + " branches=" + stub.patchBranches
+                + " branches=" + branches
                 + " bytes=" + bytes;
+    }
+
+    private static void appendPatchBranch(StringBuilder out, String name, int count) {
+        if (count <= 0) {
+            return;
+        }
+        if (out.length() > 1) {
+            out.append(", ");
+        }
+        out.append(name).append('=').append(count);
     }
 
     private final org.soutalab.celtium.vulkan.NativeRasterState raster;
@@ -8040,9 +8060,13 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private static final long MAX_CAPTURE_BYTES = 64L * 1024L * 1024L;
     /** Per-key patch-write census: which (name,level) the captured sub-image writes actually land on. */
-    private final java.util.Map<Long, Integer> patchKeys = new java.util.HashMap<Long, Integer>();
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap patchKeys =
+            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
     /** Which texSubImage branch each patch took, for the capture-layout question. */
-    private final java.util.Map<String, Integer> patchBranches = new java.util.HashMap<String, Integer>();
+    private int patchBranchBacklog;
+    private int patchBranchSurface;
+    private int patchBranchLone;
+    private int patchBranchPaste;
     /**
      * Patches a level could not hold at full extent - the budget above - stay in a per-level backlog, which the
      * mirror path replays as region writes. This is how a big atlas fills at all: its sprite uploads are raw
@@ -8362,7 +8386,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         long key = texLevelKey(name, level);
-        this.patchKeys.merge(Long.valueOf(key), Integer.valueOf(1), Integer::sum);
+        this.patchKeys.addTo(key, 1);
         TexCapture existing = this.texCaptures.get(key);
         if (existing == null) {
             // A patch into a level whose size is already recorded: filed at patch size it would pose as the whole
@@ -8376,7 +8400,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     && (x != 0 || y != 0 || width != extent[0] || height != extent[1])) {
                 long pixels2 = (long) extent[0] * extent[1];
                 if (pixels2 > MAX_CAPTURE_BYTES / 4L) {
-                    this.patchBranches.merge("backlog", Integer.valueOf(1), Integer::sum);
+                    this.patchBranchBacklog++;
                     // Over the capture budget the patch goes to the per-level backlog instead of posing as the
                     // whole level - the case that built the E2E atlas's mirror at the first sprite's 1125x1125 and
                     // refused every later patch "outside the mirror". The mirror path replays the backlog as
@@ -8402,7 +8426,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                         this.texUploadSerial.incrementAndGet());
                 this.texCaptures.put(key, existing);
                 this.undefinedExtents.incrementAndGet();
-                this.patchBranches.merge("surface", Integer.valueOf(1), Integer::sum);
+                this.patchBranchSurface++;
             }
         }
         if (existing == null) {
@@ -8412,14 +8436,14 @@ public final class CeltiumGlStub implements FunctionProvider {
             this.texCaptures.put(key,
                     new TexCapture(width, height, patch, true, this.texUploadSerial.incrementAndGet(), x, y));
             this.subCaptures.incrementAndGet();
-            this.patchBranches.merge("lone", Integer.valueOf(1), Integer::sum);
+            this.patchBranchLone++;
             return;
         }
         // A capture may itself be a patch at an offset (the over-budget path above files one at its own x,y), so
         // the position this patch writes inside the record is the level position minus the record's origin.
         int dstX = x - existing.x;
         int dstY = y - existing.y;
-        this.patchBranches.merge("paste", Integer.valueOf(1), Integer::sum);
+        this.patchBranchPaste++;
         if (dstX < 0 || dstY < 0 || dstX + width > existing.width || dstY + height > existing.height) {
             this.unconvertedUploads.incrementAndGet();
             return;
