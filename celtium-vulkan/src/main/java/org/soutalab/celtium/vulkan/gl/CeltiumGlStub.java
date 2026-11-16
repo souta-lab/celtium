@@ -6821,9 +6821,11 @@ public final class CeltiumGlStub implements FunctionProvider {
                     + " callers=[" + callers + "]");
         }
         this.textures.delete(name);
-        it.unimi.dsi.fastutil.longs.LongIterator bindings = this.textureBindings.keySet().iterator();
-        while (bindings.hasNext()) {
-            if (this.textureBindings.get(bindings.nextLong()) == name) bindings.remove();
+        if (!this.textureBindings.isEmpty()) {
+            it.unimi.dsi.fastutil.longs.LongIterator bindings = this.textureBindings.keySet().iterator();
+            while (bindings.hasNext()) {
+                if (this.textureBindings.get(bindings.nextLong()) == name) bindings.remove();
+            }
         }
         forgetTexture(name);
     }
@@ -6834,22 +6836,40 @@ public final class CeltiumGlStub implements FunctionProvider {
         // same one. Leaving the parameters behind handed the new object the old wrap/filter (measured: WRAP_S stayed
         // CLAMP_TO_EDGE where the default is REPEAT, #389), and the records are capped, so a long session of reloads would
         // eventually stop recording new ones.
-        long keySpace = ((long) name) << 32;
-        it.unimi.dsi.fastutil.longs.LongIterator keys = this.texParams.keySet().iterator();
-        while (keys.hasNext()) {
-            long key = keys.nextLong();
-            if ((key & 0xFFFFFFFF00000000L) == keySpace) {
-                keys.remove();
+        if (!this.texParams.isEmpty()) {
+            long keySpace = ((long) name) << 32;
+            it.unimi.dsi.fastutil.longs.LongIterator keys = this.texParams.keySet().iterator();
+            while (keys.hasNext()) {
+                long key = keys.nextLong();
+                if ((key & 0xFFFFFFFF00000000L) == keySpace) {
+                    keys.remove();
+                }
             }
         }
-        for (int level = 0; level < 256; level++) {
+        int maxLevel = this.maxRecordedTexLevel;
+        if (maxLevel < 0) {
+            return;
+        }
+        boolean hasLevels = !this.texLevels.isEmpty();
+        boolean hasCaptures = !this.texCaptures.isEmpty();
+        boolean hasBacklog = !this.texPatchBacklog.isEmpty();
+        if (!hasLevels && !hasCaptures && !hasBacklog) {
+            return;
+        }
+        for (int level = 0; level <= maxLevel; level++) {
             long key = texLevelKey(name, level);
-            this.texLevels.remove(key);
-            this.texCaptures.remove(key);
-            java.util.List<TexCapture> pending = this.texPatchBacklog.remove(key);
-            if (pending != null) {
-                for (TexCapture capture : pending) {
-                    this.texPatchBytes -= capture.data.capacity();
+            if (hasLevels) {
+                this.texLevels.remove(key);
+            }
+            if (hasCaptures) {
+                this.texCaptures.remove(key);
+            }
+            if (hasBacklog) {
+                java.util.List<TexCapture> pending = this.texPatchBacklog.remove(key);
+                if (pending != null) {
+                    for (TexCapture capture : pending) {
+                        this.texPatchBytes -= capture.data.capacity();
+                    }
                 }
             }
         }
@@ -7925,8 +7945,19 @@ public final class CeltiumGlStub implements FunctionProvider {
      * The shared record key: texture name in the high bits, level in the low byte. {@link #texLevels} and
      * {@link #texCaptures} agree on it, so a level's extent and its pixels are found the same way.
      */
+    /** Highest low-byte mip level written to texLevels/texCaptures/texPatchBacklog so forgetTexture avoids 256-probes. */
+    private int maxRecordedTexLevel = -1;
+
     private static long texLevelKey(int name, int level) {
         return ((long) name << 16) | (level & 0xFFL);
+    }
+
+    private long putTexLevelKey(int name, int level) {
+        int masked = level & 0xFF;
+        if (masked > this.maxRecordedTexLevel) {
+            this.maxRecordedTexLevel = masked;
+        }
+        return ((long) name << 16) | masked;
     }
 
     /**
@@ -7967,7 +7998,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The extent record for a texture already named, as the DSA storage forms carry it. */
     private void recordExtentForName(int name, int level, int internal, int width, int height) {
-        int[] previous = this.texLevels.put(texLevelKey(name, level), new int[] { width, height, internal });
+        int[] previous = this.texLevels.put(putTexLevelKey(name, level), new int[] { width, height, internal });
         if (level == 0 && previous != null && (previous[0] != width || previous[1] != height)
                 && previous[0] * previous[1] >= 1024 * 1024 && RESPECIFIED_LINES.getAndDecrement() > 0) {
             // A large level re-specified at another size: the texture name was handed to something else (a mod that
@@ -8202,7 +8233,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         // Publishing a new record instead of rewriting the old one, so a reader polling the level sees one whole image.
-        this.texCaptures.put(key,
+        this.texCaptures.put(putTexLevelKey(targetName, level),
                 new TexCapture(width, extentHeight, rgba, true, this.texUploadSerial.incrementAndGet()));
         this.fullCaptures.incrementAndGet();
     }
@@ -8266,7 +8297,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         // allocateDirect promises storage, not zeroed storage: HotSpot can hand back recycled memory for a small
         // buffer, and a garbage surface is exactly the silently wrong atlas this path exists to prevent.
         MemoryUtil.memSet(memAddress(zeros), 0, bytes);
-        this.texCaptures.put(texLevelKey(name, level),
+        this.texCaptures.put(putTexLevelKey(name, level),
                 new TexCapture(width, height, zeros, false, this.texUploadSerial.incrementAndGet()));
         this.undefinedExtents.incrementAndGet();
     }
@@ -8412,7 +8443,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     java.util.List<TexCapture> pending = this.texPatchBacklog.get(key);
                     if (pending == null) {
                         pending = new java.util.ArrayList<TexCapture>();
-                        this.texPatchBacklog.put(key, pending);
+                        this.texPatchBacklog.put(putTexLevelKey(name, level), pending);
                     }
                     pending.add(new TexCapture(width, height, patch, true,
                             this.texUploadSerial.incrementAndGet(), x, y));
@@ -8424,7 +8455,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 MemoryUtil.memSet(memAddress(surface), 0, pixels2 * 4L);
                 existing = new TexCapture(extent[0], extent[1], surface, false,
                         this.texUploadSerial.incrementAndGet());
-                this.texCaptures.put(key, existing);
+                this.texCaptures.put(putTexLevelKey(name, level), existing);
                 this.undefinedExtents.incrementAndGet();
                 this.patchBranchSurface++;
             }
@@ -8433,7 +8464,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             // Over the capture budget, or no extent recorded at all: keep the patch as a patch-sized capture with
             // its offset, so the mirror path can write it into the extent-sized image as a region instead of
             // treating the patch as the whole level.
-            this.texCaptures.put(key,
+            this.texCaptures.put(putTexLevelKey(name, level),
                     new TexCapture(width, height, patch, true, this.texUploadSerial.incrementAndGet(), x, y));
             this.subCaptures.incrementAndGet();
             this.patchBranchLone++;
@@ -8669,7 +8700,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         for (int level = 0; level <= mipmapLevels; level++) {
             int levelWidth = width >> level;
             int levelHeight = height >> level;
-            stub.texLevels.put(texLevelKey(name, level), new int[] { levelWidth, levelHeight, GL_RGBA });
+            stub.texLevels.put(stub.putTexLevelKey(name, level), new int[] { levelWidth, levelHeight, GL_RGBA });
             stub.undefinedLevel(name, level, levelWidth, levelHeight, 1);
         }
     }
