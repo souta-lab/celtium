@@ -4942,20 +4942,37 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     private final org.soutalab.celtium.vulkan.NativeRasterState raster;
     private final org.soutalab.celtium.vulkan.NativeTextureBindings textures;
+    private final ReadableMemoryRanges.Provider readableRangeProvider;
 
     private CeltiumGlStub() {
         this(org.soutalab.celtium.vulkan.NativeRasterState.current(),
-                org.soutalab.celtium.vulkan.NativeTextureBindings.current());
+                org.soutalab.celtium.vulkan.NativeTextureBindings.current(),
+                ReadableMemoryRanges.defaultProvider());
+    }
+
+    CeltiumGlStub(ReadableMemoryRanges.Provider readableRangeProvider) {
+        this(org.soutalab.celtium.vulkan.NativeRasterState.current(),
+                org.soutalab.celtium.vulkan.NativeTextureBindings.current(),
+                readableRangeProvider);
     }
 
     private CeltiumGlStub(org.soutalab.celtium.vulkan.NativeRasterState raster) {
-        this(raster, new org.soutalab.celtium.vulkan.NativeTextureBindings(raster));
+        this(raster, new org.soutalab.celtium.vulkan.NativeTextureBindings(raster),
+                ReadableMemoryRanges.defaultProvider());
     }
 
     private CeltiumGlStub(org.soutalab.celtium.vulkan.NativeRasterState raster,
             org.soutalab.celtium.vulkan.NativeTextureBindings textures) {
+        this(raster, textures, ReadableMemoryRanges.defaultProvider());
+    }
+
+    private CeltiumGlStub(org.soutalab.celtium.vulkan.NativeRasterState raster,
+            org.soutalab.celtium.vulkan.NativeTextureBindings textures,
+            ReadableMemoryRanges.Provider readableRangeProvider) {
         this.raster = raster;
         this.textures = textures;
+        this.readableRangeProvider = readableRangeProvider != null
+                ? readableRangeProvider : ReadableMemoryRanges.defaultProvider();
         // -1 is "no binding recorded": texture and buffer names are generated ids and never negative, while 0 is
         // the GL "unbound" name a caller can legitimately store.
         this.textureBindings.defaultReturnValue(-1);
@@ -10269,15 +10286,15 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int FORMAT_PARTICLE = 5;
 
     /**
-     * {@return whether {@code [address, address + bytes)} lies inside one readable mapping of this process}.
+     * {@return whether {@code [address, address + bytes)} lies inside readable mapping(s) of this process}.
      * <p>
      * This is the weak entry point, used only when the owned-buffer publication does not describe the draw. A client
      * pointer carries no length and no owner: it is a process address the game wrote, and dereferencing one that is
      * stale, freed or never valid faults the JVM, which is a worse outcome than the blank menu this task exists to
      * fix. So the mapping list the kernel already keeps is read once and cached, and a draw is only decoded when the
-     * whole range it asks for is inside a single readable mapping. A miss refreshes the list once, because a buffer
-     * allocated since the last read is a legitimate miss; a second miss for the same address is a refusal, and the
-     * refresh rate is bounded so a run cannot turn a bad pointer into a parsing loop.
+     * whole range it asks for is covered by committed readable mapping(s) with no unmapped gap. A miss refreshes the
+     * list once, because a buffer allocated since the last read is a legitimate miss; a second miss for the same
+     * address is a refusal, and the refresh rate is bounded so a run cannot turn a bad pointer into a parsing loop.
      * <p>
      * What this is <em>not</em>: an ownership or lifetime record. A hit says the range is readable at this moment, not
      * that it is still the game's buffer or that it will stay mapped; the cached list can also go stale between
@@ -10285,9 +10302,10 @@ public final class CeltiumGlStub implements FunctionProvider {
      * authoritative statement about a client-array draw is the {@link #publishClientArrayBuffer owned-buffer
      * publication}; this function exists for the calls that do not come through Minecraft's uploader.
      * <p>
-     * Linux-only by construction ({@code /proc/self/maps}); where that file cannot be read this returns false, so a
-     * pointer-only client-memory draw stays a named refusal rather than becoming an unguarded read - and on such a
-     * system the owned-buffer path still decodes the game's own batches.
+     * Supported on Linux ({@code /proc/self/maps}) and Windows ({@code VirtualQuery} via FFM); on other systems where
+     * no mapping provider is available this returns false, so a pointer-only client-memory draw stays a named refusal
+     * rather than becoming an unguarded read - and on such a system the owned-buffer path still decodes the game's
+     * own batches.
      */
     private boolean celtium$readableMapping(long address, long bytes) {
         if (address <= 0L || bytes <= 0L) {
@@ -10299,11 +10317,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         } catch (ArithmeticException overflow) {
             return false;
         }
-        ReadableRange[] ranges = this.readableRanges;
-        if (ranges == null || celtium$inRange(ranges, address, end) < 0) {
+        ReadableMemoryRanges.Range[] ranges = this.readableRanges;
+        if (ranges == null || !ReadableMemoryRanges.containsBounds(ranges, address, end)) {
             ranges = celtium$refreshReadableMappings();
-            int hit = celtium$inRange(ranges, address, end);
-            if (hit < 0) {
+            if (!ReadableMemoryRanges.containsBounds(ranges, address, end)) {
                 return false;
             }
             this.readableRanges = ranges;
@@ -10659,41 +10676,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
-    /** The index of the range containing {@code [start,end)}, or -1. */
-    private static int celtium$inRange(ReadableRange[] ranges, long start, long end) {
-        int low = 0;
-        int high = ranges.length - 1;
-        while (low <= high) {
-            int mid = (low + high) >>> 1;
-            ReadableRange range = ranges[mid];
-            if (end <= range.start) {
-                high = mid - 1;
-            } else if (start >= range.end) {
-                low = mid + 1;
-            } else if (start >= range.start && end <= range.end) {
-                return mid;
-            } else {
-                // Overlaps the mapping but is not contained in it: straddles two mappings, which is not readable as
-                // one contiguous run.
-                return -1;
-            }
-        }
-        return -1;
-    }
-
-    /** One readable mapping: {@code [start, end)}. */
-    private static final class ReadableRange {
-        final long start;
-        final long end;
-
-        ReadableRange(long start, long end) {
-            this.start = start;
-            this.end = end;
-        }
-    }
-
     /** The cached mapping list, refreshed on a miss; volatile because the list is replaced, never mutated. */
-    private volatile ReadableRange[] readableRanges;
+    private volatile ReadableMemoryRanges.Range[] readableRanges;
     /** How often the list has been re-read, and when the last read happened: a bound on the refresh rate. */
     private int readableMappingRefreshes;
     private long readableMappingLastRefreshNanos;
@@ -10702,59 +10686,28 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final boolean TRACE_GL_CALLS = Boolean.getBoolean("celtium.glstub.trace");
     /** Same reasoning: the strict-symbol check is consulted on the unresolved-symbol path of every dispatch. */
     private static final boolean STRICT_SYMBOLS = Boolean.getBoolean("celtium.vulkan.strictSymbols");
-    /** The mapping census reads /proc/self/maps, which only exists on Linux; elsewhere it answers "nothing readable". */
-    private static final boolean PROC_SELF_MAPS_AVAILABLE = System.getProperty("os.name", "")
-            .toLowerCase(java.util.Locale.ROOT).contains("linux");
     private static final long READABLE_MAPPING_REFRESH_INTERVAL_NANOS = 100L * 1000L * 1000L;
 
-    private ReadableRange[] celtium$refreshReadableMappings() {
-        if (!PROC_SELF_MAPS_AVAILABLE) {
-            return new ReadableRange[0];
+    private ReadableMemoryRanges.Range[] celtium$refreshReadableMappings() {
+        if (!this.readableRangeProvider.available()) {
+            return new ReadableMemoryRanges.Range[0];
         }
         long now = System.nanoTime();
         if (this.readableMappingRefreshes >= READABLE_MAPPING_REFRESH_LIMIT
-                || now - this.readableMappingLastRefreshNanos < READABLE_MAPPING_REFRESH_INTERVAL_NANOS) {
-            ReadableRange[] current = this.readableRanges;
-            return current == null ? new ReadableRange[0] : current;
+                || (this.readableMappingRefreshes > 0
+                        && now - this.readableMappingLastRefreshNanos < READABLE_MAPPING_REFRESH_INTERVAL_NANOS)) {
+            ReadableMemoryRanges.Range[] current = this.readableRanges;
+            return current == null ? new ReadableMemoryRanges.Range[0] : current;
         }
         this.readableMappingRefreshes++;
         this.readableMappingLastRefreshNanos = now;
-        java.util.List<ReadableRange> ranges = new java.util.ArrayList<ReadableRange>();
+        ReadableMemoryRanges.Range[] array;
         try {
-            java.io.BufferedReader reader = new java.io.BufferedReader(
-                    new java.io.InputStreamReader(new java.io.FileInputStream("/proc/self/maps"), "US-ASCII"));
-            try {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    // "7f0a1c000000-7f0a1c021000 rw-p 00000000 00:00 0 ..." - the permission field is the second.
-                    int dash = line.indexOf('-');
-                    int space = line.indexOf(' ');
-                    if (dash <= 0 || space <= dash + 1 || space + 1 >= line.length()) {
-                        continue;
-                    }
-                    if (line.charAt(space + 1) != 'r') {
-                        continue;
-                    }
-                    long start = Long.parseUnsignedLong(line.substring(0, dash).trim(), 16);
-                    long stop = Long.parseUnsignedLong(line.substring(dash + 1, space).trim(), 16);
-                    if (stop > start) {
-                        ranges.add(new ReadableRange(start, stop));
-                    }
-                }
-            } finally {
-                reader.close();
-            }
-        } catch (java.io.IOException | RuntimeException error) {
+            array = ReadableMemoryRanges.normalize(this.readableRangeProvider.read());
+        } catch (Throwable error) {
             readableMappingFailure = String.valueOf(error);
-            return new ReadableRange[0];
+            return new ReadableMemoryRanges.Range[0];
         }
-        java.util.Collections.sort(ranges, new java.util.Comparator<ReadableRange>() {
-            @Override
-            public int compare(ReadableRange left, ReadableRange right) {
-                return Long.compare(left.start, right.start);
-            }
-        });
-        ReadableRange[] array = ranges.toArray(new ReadableRange[0]);
         this.readableRanges = array;
         readableMappingRanges = array.length;
         return array;
@@ -10762,13 +10715,13 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /**
      * Diagnostics for the mapping guard: how many client-memory draws it let through, how many readable ranges the
-     * last read of {@code /proc/self/maps} found, and why that read failed if it did. Static because the census line is
-     * static, and one process has one mapping list.
+     * last platform mapping read found, and why that read failed if it did. Static because the census line is static,
+     * and one process has one mapping list.
      * <p>
      * The mapping guard is a <em>guard</em>, not an ownership record: it answers "is this range readable right now",
-     * not "who owns it, how long does it live, or is it still the buffer the game meant". It is also Linux-only. The
-     * authoritative client-memory entry point is the owned-buffer publication below; these two counters exist to keep
-     * the two apart in a run.
+     * not "who owns it, how long does it live, or is it still the buffer the game meant". The authoritative
+     * client-memory entry point is the owned-buffer publication below; these two counters exist to keep the two apart
+     * in a run.
      */
     private static volatile long clientPointerAccepted;
     private static volatile long ownedClientBufferDecoded;
