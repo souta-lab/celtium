@@ -29,8 +29,7 @@ require(JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_25)) {
 }
 
 rootProject.name = "celtium-1122"
-include("common", "forge122", "celtium-probe", "celtium-vulkan")
+include("common", "forge122", "celtium-vulkan")
 project(":common").projectDir = file("../common")
 project(":forge122").projectDir = file("../forge122")
-project(":celtium-probe").projectDir = file("../celtium-probe")
 project(":celtium-vulkan").projectDir = file("../celtium-vulkan")

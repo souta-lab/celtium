@@ -42,7 +42,7 @@ public class CeleritasVintage {
     @EventHandler
     public void onInit(FMLInitializationEvent event) {
         ClientCommandHandler.instance.registerCommand(new CeltiumCommand());
-        LOGGER.info("Celtium terrain backend: {}. Optional Vulkan capability query: /celtium probe",
+        LOGGER.info("Celtium terrain backend: {}. Optional Vulkan device check: /celtium vulkan",
                 org.soutalab.celtium.forge.TerrainBackendStatus.describe());
         if ((Boolean) Launch.blackboard.get("fml.deobfuscatedEnvironment")) {
             ClientCommandHandler.instance.registerCommand(new TogglePassCommand());

@@ -169,7 +169,6 @@ public final class BenchFixture {
     private Field vsyncField;
     private Field hideGuiField;
     private String vsyncApplied = "not attempted";
-    private String capabilitiesProbe = "not attempted";
 
     private int chunkPlaced;
     private int chunkPlaceFailures;
@@ -242,9 +241,6 @@ public final class BenchFixture {
             worldTicks++;
             // Identical scene for every configuration: the same sun angle, the same lightmap, no weather.
             pinScene(mc);
-            if (worldTicks == 2) {
-                probeCapabilities(mc);
-            }
             if (phase == Phase.CHUNK) {
                 placeChunkBlocks(mc);
             }
@@ -446,28 +442,6 @@ public final class BenchFixture {
         if (mc.world.getWorldInfo().getThunderTime() < 100000) {
             mc.world.getWorldInfo().setThunderTime(1000000);
         }
-    }
-
-    /**
-     * Runs the renderer's own capability command, outside the measured window.
-     * <p>
-     * The benchmark's device evidence must be the renderer's, not a restatement of it: the same query the
-     * {@code /celtium probe} command runs writes {@code logs/celtium-capabilities.json}, which lists the Vulkan devices
-     * the loader enumerated. The pinned upstream reference has no such class, and that absence is recorded as a fact
-     * rather than treated as a failure.
-     */
-    private void probeCapabilities(Minecraft mc) {
-        try {
-            Class<?> entry = Class.forName("org.soutalab.celtium.probe.CeltiumProbe");
-            String json = (String) entry.getMethod("inspectCurrentContextJson").invoke(null);
-            Path output = mc.gameDir.toPath().resolve("logs/celtium-capabilities.json");
-            Files.createDirectories(output.getParent());
-            Files.write(output, (json + "\n").getBytes(StandardCharsets.UTF_8));
-            capabilitiesProbe = "written";
-        } catch (Throwable error) {
-            capabilitiesProbe = "unavailable: " + error.getClass().getSimpleName();
-        }
-        System.out.println("[CeltiumBench] capability probe: " + capabilitiesProbe);
     }
 
     /**
@@ -902,7 +876,6 @@ public final class BenchFixture {
         field(json, "glRendererString", glRendererString, true);
         field(json, "glVersionString", glVersionString, true);
         field(json, "reportWrittenFromExitHook", Boolean.valueOf(fromExitHook), true);
-        field(json, "capabilitiesProbe", capabilitiesProbe, true);
         numbers(json, "frameTimesMs", frameMs, true);
         numbers(json, "chunkDrainFrameTimesMs", chunkFrameMs, true);
         strings(json, "debugStringsAtWindowStart", debugAtStart, true);

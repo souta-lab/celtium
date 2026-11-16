@@ -18,27 +18,23 @@ import java.nio.file.Path;
 /** Loading/registering this command does not initialize LWJGL or the Vulkan loader. */
 public final class CeltiumCommand extends CommandBase {
     @Override public String getName() { return "celtium"; }
-    @Override public String getUsage(ICommandSender sender) { return "/celtium [probe|vulkan]"; }
+    @Override public String getUsage(ICommandSender sender) { return "/celtium [vulkan]"; }
     @Override public int getRequiredPermissionLevel() { return 0; }
 
     @Override
     public void execute(MinecraftServer server, ICommandSender sender, String[] args) {
         if (args.length == 0) {
             sender.sendMessage(new TextComponentString("Celtium terrain backend: " + TerrainBackendStatus.describe()
-                    + ". /celtium probe writes a capability report, /celtium vulkan creates a Vulkan device for this GPU;"
+                    + ". /celtium vulkan creates a Vulkan device for this GPU;"
                     + " native Vulkan terrain is under development."));
             return;
         }
-        if (args.length != 1 || (!"probe".equals(args[0]) && !"vulkan".equals(args[0]))) {
+        if (args.length != 1 || !"vulkan".equals(args[0])) {
             sender.sendMessage(new TextComponentString(getUsage(sender)));
             return;
         }
         Minecraft minecraft = Minecraft.getMinecraft();
-        if ("probe".equals(args[0])) {
-            minecraft.addScheduledTask(() -> probe(minecraft, sender));
-        } else {
-            minecraft.addScheduledTask(() -> vulkan(minecraft, sender));
-        }
+        minecraft.addScheduledTask(() -> vulkan(minecraft, sender));
     }
 
     /**
@@ -74,34 +70,14 @@ public final class CeltiumCommand extends CommandBase {
         }
     }
 
-    private static void probe(Minecraft minecraft, ICommandSender sender) {
-        try {
-            // Optional binding classes are resolved only after an explicit command, on the render thread.
-            // Stock Forge/LWJGL 2 or older relocated LWJGL setups can keep using the existing GL backend.
-            Class<?> entry = Class.forName("org.soutalab.celtium.probe.CeltiumProbe");
-            String json = withLiveTerrainBackend((String) entry.getMethod("inspectCurrentContextJson").invoke(null));
-            Path output = minecraft.gameDir.toPath().resolve("logs/celtium-capabilities.json");
-            Files.createDirectories(output.getParent());
-            Files.write(output, (json + "\n").getBytes(StandardCharsets.UTF_8));
-            sender.sendMessage(new TextComponentString("Celtium capability report: " + output + ". This does not verify shared depth or enable Vulkan terrain."));
-        } catch (ReflectiveOperationException | java.io.IOException | RuntimeException | LinkageError error) {
-            Throwable cause = error instanceof InvocationTargetException ? ((InvocationTargetException) error).getTargetException() : error;
-            if (cause instanceof VirtualMachineError) throw (VirtualMachineError) cause;
-            if (cause instanceof ThreadDeath) throw (ThreadDeath) cause;
-            CeleritasVintage.logger().warn("Celtium capability probe failed; the OpenGL renderer remains active", cause);
-            sender.sendMessage(new TextComponentString("Celtium probe unavailable: " + cause.getClass().getSimpleName() + ". See the client log; terrain backend: "
-                    + TerrainBackendStatus.name() + "."));
-        }
-    }
-
     /**
      * Fills in the terrain backend this process is actually running, and says where the value came from.
      * <p>
-     * Both reports used to carry a compile-time {@code effectiveTerrainBackend=opengl} and
+     * The bootstrap report used to carry a compile-time {@code effectiveTerrainBackend=opengl} and
      * {@code nativeTerrainImplemented=false}, which is the opposite of the truth in a GL-less run whose native renderer
      * is drawing the world: measured in the 268-mod E2E leg, where {@code logs/celtium-vulkan-device.json} said
      * {@code opengl} while the same run reported {@code CELTIUM_NATIVE_DEVICE name="AMD Radeon RX 6400"} and presented
-     * a world frame. The bootstrap and the capability query cannot see the renderer; this command runs inside the
+     * a world frame. The bootstrap cannot see the renderer; this command runs inside the
      * client and can, so the value is set here and {@code terrainBackendSource} records that it was observed rather
      * than assumed. The acceptance fixture now checks the report against the live backend, not against a constant.
      */

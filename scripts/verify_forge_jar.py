@@ -159,8 +159,7 @@ def verify(path):
             "org/soutalab/celtium/forge/CeltiumCommand.class",
             "org/embeddedt/embeddium/impl/shadow/joml/Matrix4f.class",
         }
-        for prefix, module in (("org/soutalab/celtium/probe/", "celtium-probe"),
-                               ("org/soutalab/celtium/vulkan/", "celtium-vulkan")):
+        for prefix, module in (("org/soutalab/celtium/vulkan/", "celtium-vulkan"),):
             sources = repository / module / "src/main/java" / prefix
             required.update(prefix + source.stem + ".class" for source in sources.glob("*.java"))
         # Recursive coverage of the packages whose absence still leaves a jar that starts and draws nothing (#392): the GL

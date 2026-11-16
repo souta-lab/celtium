@@ -3675,7 +3675,6 @@ public final class ValidationClient {
                 report.addProperty("celtiumCommandRegistered", present);
                 if (present) {
                     report.addProperty("statusCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium"));
-                    report.addProperty("probeCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium probe"));
                     report.addProperty("vulkanCommandResult", ClientCommandHandler.instance.executeCommand(mc.player, "/celtium vulkan"));
                     // The replies are report data, not part of the scene: left in the chat they covered the lower left of
                     // the native arm's capture, which the reference arm (no such command) never shows.
@@ -7519,46 +7518,12 @@ public final class ValidationClient {
                         + worldFrames + " (threshold " + Integer.getInteger("celtium.validation.minWorldFrames", 100).intValue()
                         + "), worldTicks=" + worldTicks);
             }
-            Path probe = mc.gameDir.toPath().resolve("logs/celtium-capabilities.json");
             if (report.get("celtiumCommandRegistered").getAsBoolean()) {
-                if (report.get("statusCommandResult").getAsInt() != 1 || report.get("probeCommandResult").getAsInt() != 1) {
+                if (report.get("statusCommandResult").getAsInt() != 1) {
                     throw new IllegalStateException("A Celtium client command did not execute");
                 }
-                JsonObject capabilities = JsonParser.parseString(new String(Files.readAllBytes(probe), StandardCharsets.UTF_8)).getAsJsonObject();
-                // Two different claims. The capability query reports what the device could do, and it must never claim
-                // a proven depth roundtrip - no query proves one. Its terrain-backend fields are the process's live
-                // backend, which the command fills in from the renderer, so those are checked for agreement rather
-                // than for a constant: the fields used to be hardcoded `opengl`/false and this check enforced the
-                // constant, which is how a GL-less run that drew terrain natively could report OpenGL and pass.
-                boolean nativeLive = celtium$vulkanBackend() != null;
-                String reportedBackend = capabilities.has("effectiveTerrainBackend")
-                        ? capabilities.get("effectiveTerrainBackend").getAsString() : "missing";
-                boolean reportedNative = capabilities.has("nativeTerrainImplemented")
-                        && capabilities.get("nativeTerrainImplemented").getAsBoolean();
-                if (capabilities.get("depthRoundtripVerified").getAsBoolean()) {
-                    throw new IllegalStateException("Capability command claimed a depth roundtrip it did not prove");
-                }
-                // Only a file the command wrote can be checked for agreement: the source field says where the value
-                // came from, and another writer (the bench fixture asks CeltiumProbe directly) leaves it at the honest
-                // default. Asserting agreement on such a file would fail a leg over a report nothing claims is an
-                // observation, so the source is recorded and the judgement is skipped instead.
-                String backendSource = capabilities.has("terrainBackendSource")
-                        ? capabilities.get("terrainBackendSource").getAsString() : "missing";
-                report.addProperty("capabilitiesBackendSource", backendSource);
-                if (backendSource.startsWith("not observed by the")) {
-                    report.addProperty("capabilitiesBackendAgreesWithLive",
-                            "not judged: the file was not written by the capability command (" + backendSource + ")");
-                } else {
-                    if (!reportedBackend.equals(nativeLive ? "vulkan" : "opengl") || reportedNative != nativeLive) {
-                        throw new IllegalStateException("Capability command disagrees with the live terrain backend:"
-                                + " the report says " + reportedBackend + "/" + reportedNative + ", the live backend is "
-                                + (nativeLive ? "vulkan" : "opengl"));
-                    }
-                    report.addProperty("capabilitiesBackendAgreesWithLive", Boolean.TRUE);
-                }
-                report.add("capabilities", capabilities);
             }
-            checkVulkanBootstrap(mc, probe.getParent());
+            checkVulkanBootstrap(mc, mc.gameDir.toPath().resolve("logs"));
             report.addProperty("worldFrames", worldFrames);
             report.addProperty("worldTicks", worldTicks);
             // What the frame was actually drawn with, not what the fixture asked for: two runs of one jar differ on a

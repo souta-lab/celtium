@@ -33,7 +33,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: gradle/actions/setup-gradle@v4.4.4
       - name: Test GPU-independent Vulkan and GL compatibility contracts
         run: |
           python3 scripts/cpu-contract/loading_capture_boundary_check.py
@@ -60,12 +59,6 @@ jobs:
           python3 scripts/cpu-contract/glless_early_install_check.py
           python3 scripts/cpu-contract/glless_transformer_injection_check.py
           python3 scripts/cpu-contract/glless_lwjgl3_surface_check.py
-      - name: Test and package isolated capability probe
-        run: ./gradlew -p celtium-probe test distZip --console=plain
-      - uses: actions/upload-artifact@v4
-        with:
-          name: celtium-probe
-          path: celtium-probe/build/distributions/*.zip
 
   minecraft-1122:
     runs-on: ubuntu-24.04

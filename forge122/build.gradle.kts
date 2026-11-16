@@ -100,9 +100,6 @@ configurations {
 }
 
 dependencies {
-    // Own Java-8-compatible classes only. LWJGL and native libraries belong to the active loader.
-    implementation(project(":celtium-probe", configuration = "modEmbed")) { isTransitive = false }
-    modEmbedDependencies(project(":celtium-probe", configuration = "modEmbed")) { isTransitive = false }
     // In-mod Vulkan bootstrap/backend classes. Keep LWJGL core/platform/native modules supplied by Cleanroom.
     implementation(project(":celtium-vulkan", configuration = "modEmbed")) { isTransitive = false }
     modEmbedDependencies(project(":celtium-vulkan", configuration = "modEmbed")) { isTransitive = false }

@@ -81,7 +81,7 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
-// Mirror celtium-probe: the mod consumes exactly this jar, with no runtime dependencies and no
+// The mod consumes exactly this jar, with no runtime dependencies and no
 // classes/resources directory variants for Gradle to confuse on RFG's shadow classpath.
 configurations {
     modEmbed {
