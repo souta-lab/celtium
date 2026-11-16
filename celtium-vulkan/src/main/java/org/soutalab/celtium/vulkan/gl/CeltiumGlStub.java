@@ -8799,7 +8799,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         // which is the property a persistent mapping needs; a larger request still has to move it.
         ByteBuffer storage = this.bufferStore.get(name);
         if (storage == null || storage.capacity() < size) {
-            storage = ByteBuffer.allocateDirect((int) size);
+            storage = ByteBuffer.allocateDirect((int) size).order(java.nio.ByteOrder.nativeOrder());
             this.bufferStore.put(name, storage);
         }
         if (data != 0L) {
@@ -9618,14 +9618,19 @@ public final class CeltiumGlStub implements FunctionProvider {
                 || (stride != 12 && stride != 16 && stride != 20 && stride != 24 && stride != 32)) {
             return;
         }
+        NativeGeometryBuffer bound = NativeGeometryBuffer.bound();
+        int boundName = NativeGeometryBuffer.boundId();
         java.nio.ByteBuffer vertices;
         try {
-            NativeGeometryBuffer bound = NativeGeometryBuffer.bound();
-            vertices = bound == null ? null : bound.compatibilityView();
+            vertices = bound != null ? bound.compatibilityView()
+                    : boundName == 0 ? null : this.bufferStore.get(boundName);
         } catch (RuntimeException error) {
             return;
         }
-        boolean clientVertices = vertices == null;
+        boolean clientVertices = boundName == 0;
+        if (!clientVertices && vertices == null) {
+            return;
+        }
         long vertexBase;
         int vertexCapacity;
         if (clientVertices) {
@@ -9636,13 +9641,15 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
             vertexCapacity = 0;
         } else {
+            int logicalVertexSize = bound != null ? vertices.capacity()
+                    : this.logicalSizeOf(boundName, vertices.capacity());
             long offset = this.vertexPointerOffset;
-            if (offset < 0 || offset > vertices.capacity()) {
+            if (offset < 0L || offset > logicalVertexSize) {
                 return;
             }
             // A VBO pointer offset is part of the description, not a client address: the batch starts at it.
             vertexBase = memAddress(vertices, 0) + offset;
-            vertexCapacity = vertices.capacity() - (int) offset;
+            vertexCapacity = logicalVertexSize - (int) offset;
         }
         // The same layout decision the unindexed decoder makes: the format id and the refusal reason.
         String[] layoutRefusal = new String[1];
@@ -9657,10 +9664,11 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         int elementName = boundBuffer(0x8893); // GL_ELEMENT_ARRAY_BUFFER
+        NativeGeometryBuffer elements = null;
         java.nio.ByteBuffer elementView = null;
         if (elementName > 0) {
             try {
-                NativeGeometryBuffer elements = NativeGeometryBuffer.find(elementName);
+                elements = NativeGeometryBuffer.find(elementName);
                 elementView = elements != null ? elements.compatibilityView() : this.bufferStore.get(elementName);
             } catch (RuntimeException error) {
                 return;
@@ -9673,11 +9681,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (indexSize == 0 || indices < 0) {
             return;
         }
+        long indexBytes = (long) count * indexSize;
         if (elementView != null) {
-            if (indices + (long) count * indexSize > elementView.capacity()) {
+            int elementLogicalSize = elements != null ? elementView.capacity()
+                    : this.logicalSizeOf(elementName, elementView.capacity());
+            if (mapRangeOffset(indices, indexBytes, elementLogicalSize) < 0L) {
                 return;
             }
-        } else if (!celtium$readableMapping(indices, count * indexSize)) {
+        } else if (!celtium$readableMapping(indices, indexBytes)) {
             // No element buffer bound: the GL meaning of the pointer is client memory, read only when the range is
             // mapped - the same guard the client vertex path uses.
             return;
@@ -9686,6 +9697,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stride == 32 && formatId != 8 && formatId != 9) {
             return;
         }
+        java.nio.ByteBuffer elementReader = elementView == null ? null
+                : elementView.duplicate().order(java.nio.ByteOrder.nativeOrder());
         java.nio.ByteBuffer expanded = org.lwjgl.system.MemoryUtil.memAlloc(count * stride);
         java.nio.ByteBuffer packed = null;
         try {
@@ -9694,24 +9707,23 @@ public final class CeltiumGlStub implements FunctionProvider {
             for (int i = 0; i < count; i++) {
                 long at = indices + (long) i * indexSize;
                 int index;
-                if (elementView != null) {
-                    index = indexSize == 1 ? elementView.get((int) at) & 0xFF
-                            : indexSize == 2 ? elementView.getShort((int) at) & 0xFFFF
-                            : elementView.getInt((int) at);
+                if (elementReader != null) {
+                    index = indexSize == 1 ? elementReader.get((int) at) & 0xFF
+                            : indexSize == 2 ? elementReader.getShort((int) at) & 0xFFFF
+                            : elementReader.getInt((int) at);
                 } else {
                     index = indexSize == 1 ? org.lwjgl.system.MemoryUtil.memGetByte(at) & 0xFF
                             : indexSize == 2 ? org.lwjgl.system.MemoryUtil.memGetShort(at) & 0xFFFF
                             : org.lwjgl.system.MemoryUtil.memGetInt(at);
                 }
-                if (baseVertex != 0) {
-                    index += baseVertex;
-                }
-                if (index < 0 || index >= vertexCount) {
+                long resolvedIndex = (type == 0x1405 ? Integer.toUnsignedLong(index) : index) + (long) baseVertex;
+                if (resolvedIndex < 0L || resolvedIndex >= vertexCount) {
                     return;
                 }
-                selected[i] = index;
-                if (index > maxIndex) {
-                    maxIndex = index;
+                int resolved = (int) resolvedIndex;
+                selected[i] = resolved;
+                if (resolved > maxIndex) {
+                    maxIndex = resolved;
                 }
             }
             if (clientVertices && maxIndex >= 0

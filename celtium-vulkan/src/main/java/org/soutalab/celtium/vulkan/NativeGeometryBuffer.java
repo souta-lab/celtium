@@ -130,7 +130,7 @@ public final class NativeGeometryBuffer implements AutoCloseable {
     /** Only the raw-GL mod adapter needs a client-array view. Native draws never decode this view. */
     public ByteBuffer compatibilityView() {
         requireOpen();
-        return this.data == null ? null : this.data.asReadOnlyBuffer();
+        return this.data == null ? null : this.data.asReadOnlyBuffer().order(this.data.order());
     }
 
     public void bind() {
