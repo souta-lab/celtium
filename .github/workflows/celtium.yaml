@@ -117,3 +117,59 @@ jobs:
         with:
           name: celtium-forge-1122
           path: build-1122/build/libs/**/*.jar
+
+  # The renderer's own suite on the other desktop OSes. Until v0.2.2-rc1 every job ran on Ubuntu, and a Linux-only
+  # assumption in the GL stub (its readable-range guard read /proc/self/maps, which exists only on Linux) shipped to
+  # Windows users as entity models that never rendered. This job exists so the next OS assumption fails here instead:
+  # :celtium-vulkan:test loads the host OS's real LWJGL/shaderc natives and runs the provider-selection code for the
+  # host, and the check scripts below are pure file inspection. The full Forge build (:forge122:packageJar) stays on
+  # the Ubuntu legs - the jar it ships is platform-independent, and the RetroFuturaGradle pipeline is not part of what
+  # this job verifies.
+  vulkan-multi-os:
+    name: vulkan (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            21
+            25
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      # The shader compiler is pinned to the same upstream release on both legs (Khronos glslang 16.6.0, the official
+      # release archives) and put on PATH. The build is deliberately NOT handed -Pglslang_validator: its own candidate
+      # resolution - the PATH lookup, including the Windows .exe probe - is what runs, so this job is also the
+      # regression test for that lookup. The Windows archive ships only glslang.exe (upstream renamed the validator
+      # binary in glslang 15), so it is staged under the historical name the build tries first; the build's final
+      # candidate would find it under its new name as well.
+      - name: Install the shader compiler (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri 'https://github.com/KhronosGroup/glslang/releases/download/16.6.0/glslang-16.6.0-windows-x86_64-release.zip' -OutFile glslang.zip
+          Expand-Archive glslang.zip -DestinationPath glslang-dist
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\glslang-bin" | Out-Null
+          Copy-Item glslang-dist\bin\glslang.exe "$env:RUNNER_TEMP\glslang-bin\glslangValidator.exe"
+          echo "$env:RUNNER_TEMP\glslang-bin" >> $env:GITHUB_PATH
+      - name: Install the shader compiler (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          curl -sL -o glslang.zip 'https://github.com/KhronosGroup/glslang/releases/download/16.6.0/glslang-16.6.0-macos-universal-release.zip'
+          unzip -q glslang.zip -d glslang-dist
+          chmod +x glslang-dist/bin/*
+          echo "$PWD/glslang-dist/bin" >> "$GITHUB_PATH"
+      - name: Test celtium-vulkan
+        shell: bash
+        run: ./gradlew -p build-1122 :celtium-vulkan:test --console=plain --stacktrace
+      - name: Run the OS-portable check scripts
+        shell: bash
+        run: |
+          python3 scripts/check_agent_docs.py
+          python3 scripts/instrument-index.py --check
