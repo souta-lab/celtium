@@ -9061,7 +9061,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * so it is taken only while the bounded shape set is still being filled.
      */
     private static String celtium$paramSite() {
-        return TEX_PARAM_SHAPES.size() < 24 ? celtium$callSite(5) : "";
+        return org.soutalab.celtium.vulkan.VulkanDiagnostics.withinLimit(TEX_PARAM_SHAPES.size(), 24)
+                ? celtium$callSite(5) : "";
     }
 
     /** The first element of an array-valued texture parameter: every scalar pname this record carries is one wide. */
