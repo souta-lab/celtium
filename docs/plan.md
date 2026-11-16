@@ -1,7 +1,8 @@
 # Celtium 現状表（唯一の現在状態表）
 
-2026-11-06 全面改訂。開発ベース **0.2.2**（[build定義](<../build-1122/build.gradle.kts>)）、最新リリース候補
-[**0.2.2-rc1**](<releases/0.2.2-rc1.md>)（2026-11-16、Windows 描画修正の候補。直近の正式リリースは [v0.2.2](<releases/0.2.2.md>)、2026-11-07）。製品の出口は [goal.md](<goal.md>)。旧い表・日記・証拠は
+2026-11-06 全面改訂。開発ベース **0.2.2**（[build定義](<../build-1122/build.gradle.kts>)）、次期リリース
+[**0.2.3**](<releases/0.2.3.md>)（マルチ OS 検証リリース、タグ発行待ち。最新リリース候補は
+[0.2.2-rc1](<releases/0.2.2-rc1.md>)（2026-11-16、Windows 描画修正の候補）、直近の正式リリースは [v0.2.2](<releases/0.2.2.md>)、2026-11-07）。製品の出口は [goal.md](<goal.md>)。旧い表・日記・証拠は
 git 履歴にあり（2026-11-06 に docs から削除）、現在の判定として読み戻さない。
 
 ## 現状（main・2026-11-06）
@@ -16,6 +17,7 @@ git 履歴にあり（2026-11-06 に docs から削除）、現在の判定と�
 | **利用者報告** | パノラマ・エンドポータル・F2・ガラス・残像・退出後ボタン・Xaero（クラッシュ/黒/位置/透け）・ロード画面・F3+T・入室ラグ・移動時の欠け: 修正済み | 各証拠は git 履歴 |
 | **mod自前GLSL** | GTCEu bloom: **既定で native 実行**（`-Dceltium.vulkan.modPrograms=false` で拒否に戻せる）。chain の 16 pass が描画・validation 0・program 拒否 0、lamp row は 170.8→210.1（GL 参照 243.0）。**halo は未達**: bloom layer の terrain geometry が通常 build されない（`CELTIUM_LAYER_GEOMETRY layer=Bloom ... passes=[...=false]`）。 | [証拠](evidence/mod-program-default-2026-11-07.md) |
 | **コード整理** | `VulkanTerrainGpuBackend` 22,576 → 21,038 行（IndirectImmediateRuns・ModPrograms・FrameStatsReport・GroupLighting・GroupChange・PixelSignatures・HighlightProbe を分離）、孤立 javadoc 295 件整理 | git log 2026-11-06 |
+| **CI・マルチ OS** | **3 OS で同一スイートが green**: Ubuntu の従来 leg（`minecraft-1122`・`probe`）に加え、`vulkan-multi-os` マトリクスが Windows（`windows-latest`）・macOS（`macos-latest`）で `:celtium-vulkan:test`（94 suites / 462 tests）と OS 非依存検査を実行し全 leg 成功（run 43877915571）。前提として OS 依存監査を実施し、実欠陥 5 件を修正（テスト用 LWJGL natives の Linux 固定、シェーダコンパイラの `.exe` 探索と `glslang` 改名追随、CI の Ubuntu 単独、macOS の読み取り範囲プロバイダ欠落）。Forge のパッケージング（`:forge122:packageJar`）は Ubuntu leg のまま。実機でのゲーム内描画確認は Windows・macOS とも未実施 | [workflow](<../.github/workflows/celtium.yaml>)、[run 43877915571](https://github.com/souta-lab/celtium/actions/runs/43877915571) |
 
 ## 引き継ぎ（2026-11-07）
 
