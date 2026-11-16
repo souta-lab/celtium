@@ -1923,37 +1923,46 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Reads a byte range out of a buffer mirror into the caller's address. */
-    private void readBuffer(int name, long offset, long size, long out) {
-        if (name == 0 || out == 0L || offset < 0 || size <= 0 || offset > Integer.MAX_VALUE) {
+    void readBuffer(int name, long offset, long size, long out) {
+        if (name == 0 || out == 0L || offset < 0L || size <= 0L) {
             return;
         }
         ByteBuffer view;
+        long capacity;
         try {
             NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
             view = nativeBuffer != null ? nativeBuffer.compatibilityView() : this.bufferStore.get(name);
+            if (view == null) {
+                return;
+            }
+            capacity = nativeBuffer != null ? view.capacity() : this.logicalSizeOf(name, view.capacity());
         } catch (RuntimeException error) {
             return;
         }
-        if (view == null || offset + size > view.capacity()) {
+        if (mapRangeOffset(offset, size, capacity) < 0L) {
             return;
         }
         MemoryUtil.memCopy(MemoryUtil.memAddress(view) + offset, out, size);
     }
 
     /** Copies a byte range between two buffer mirrors; the native and heap forms use their own writes. */
-    private void copyBuffer(int readName, int writeName, long readOffset, long writeOffset, long size) {
-        if (readName == 0 || writeName == 0 || readOffset < 0 || writeOffset < 0 || size <= 0
-                || readOffset > Integer.MAX_VALUE || writeOffset > Integer.MAX_VALUE) {
+    void copyBuffer(int readName, int writeName, long readOffset, long writeOffset, long size) {
+        if (readName == 0 || writeName == 0 || readOffset < 0L || writeOffset < 0L || size <= 0L) {
             return;
         }
         ByteBuffer source;
+        long readCapacity;
         try {
             NativeGeometryBuffer nativeRead = NativeGeometryBuffer.find(readName);
             source = nativeRead != null ? nativeRead.compatibilityView() : this.bufferStore.get(readName);
+            if (source == null) {
+                return;
+            }
+            readCapacity = nativeRead != null ? source.capacity() : this.logicalSizeOf(readName, source.capacity());
         } catch (RuntimeException error) {
             return;
         }
-        if (source == null || readOffset + size > source.capacity()) {
+        if (mapRangeOffset(readOffset, size, readCapacity) < 0L) {
             return;
         }
         ByteBuffer slice = source.duplicate();
@@ -1963,13 +1972,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         try {
             NativeGeometryBuffer nativeWrite = NativeGeometryBuffer.find(writeName);
             if (nativeWrite != null) {
-                if (writeOffset + size <= nativeWrite.byteSize()) {
+                if (mapRangeOffset(writeOffset, size, nativeWrite.byteSize()) >= 0L) {
                     nativeWrite.write(writeOffset, slice);
                 }
                 return;
             }
             ByteBuffer destination = this.bufferStore.get(writeName);
-            if (destination != null && writeOffset + size <= destination.capacity()) {
+            if (destination != null
+                    && mapRangeOffset(writeOffset, size, this.logicalSizeOf(writeName, destination.capacity())) >= 0L) {
                 ByteBuffer out = destination.duplicate();
                 out.position((int) writeOffset);
                 out.put(slice);
@@ -2265,10 +2275,13 @@ public final class CeltiumGlStub implements FunctionProvider {
             NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
             if (nativeBuffer != null) {
                 capacity = nativeBuffer.byteSize();
-                if (size <= 0) {
-                    size = capacity;
+                if (offset < 0L || offset >= capacity) {
+                    return;
                 }
-                if (offset < 0 || size < 0 || offset + size > capacity) {
+                if (size <= 0L) {
+                    size = capacity - offset;
+                }
+                if (mapRangeOffset(offset, size, capacity) < 0L) {
                     return;
                 }
                 byte[] zeros = new byte[(int) Math.min(size, 1 << 16)];
@@ -2287,11 +2300,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (storage == null) {
             return;
         }
-        capacity = storage.capacity();
-        if (size <= 0) {
+        capacity = stub.logicalSizeOf(name, storage.capacity());
+        if (offset < 0L || offset >= capacity) {
+            return;
+        }
+        if (size <= 0L) {
             size = capacity - offset;
         }
-        if (offset < 0 || size < 0 || offset + size > capacity) {
+        if (mapRangeOffset(offset, size, capacity) < 0L) {
             return;
         }
         org.lwjgl.system.MemoryUtil.memSet(org.lwjgl.system.MemoryUtil.memAddress(storage) + offset, 0, size);
