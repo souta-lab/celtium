@@ -10862,20 +10862,25 @@ this.frameBufferOpen = false;
     void flushPendingBeforeGlDraw() {
         this.flushBeforeGlDrawCalls++;
         if (this.immediateWindowBusy) return;
-        // This hook runs on every GL draw call (1.35e8 in one measured session). With no group open, no geometry lease
-        // and no held glyph run, closing has nothing to do but take two timing brackets and null two fields, so the
-        // common case returns before any of it. The close itself keeps its brackets for the callers that have work.
-        if (this.currentImmediateMesh == null && this.currentGeometryLease == null
-                && !this.fontBatch.celtium$hasPendingWork()) {
+        // This hook runs on every GL draw call (1.35e8 in one measured session). With no group open, no geometry lease,
+        // no held glyph run and no pre-closed groups queued, closing has nothing to do but take two timing brackets and
+        // null two fields, so the common case returns before any of it. Pre-closed groups (retained submissions, model
+        // replay, compositor submits) still need flushing even when nothing is currently open.
+        boolean hasOpenWork = this.currentImmediateMesh != null
+                || this.currentGeometryLease != null
+                || this.fontBatch.celtium$hasPendingWork();
+        if (!hasOpenWork && this.immediateGroups.isEmpty()) {
             return;
         }
-        org.soutalab.celtium.vulkan.FramePassTimings.begin("flushCloseGroup");
-        try {
-            closeCurrentImmediateGroup();
-        } finally {
-            org.soutalab.celtium.vulkan.FramePassTimings.end("flushCloseGroup");
+        if (hasOpenWork) {
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("flushCloseGroup");
+            try {
+                closeCurrentImmediateGroup();
+            } finally {
+                org.soutalab.celtium.vulkan.FramePassTimings.end("flushCloseGroup");
+            }
+            if (this.immediateGroups.isEmpty()) return;
         }
-        if (this.immediateGroups.isEmpty()) return;
         this.flushBeforeGlDrawWithGroups++;
         // Counted here, not at the entry: the open group is appended to the list by closeCurrentImmediateGroup above,
         // so at the entry almost every call looked empty and the census attributed only the loading phase.
