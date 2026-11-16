@@ -19,6 +19,24 @@ tasks.withType(JavaCompile).configureEach {
 // reports a diagnostic instead of failing.
 def lwjglVersion = providers.gradleProperty('celtium_mod_lwjgl_version').getOrElse('3.4.3')
 
+// The test runtime loads the real shaderc library, so its natives must match the host that runs the tests: the
+// classifier used to be pinned to natives-linux, which handed a Windows or macOS test JVM a Linux .so and failed
+// the binding's own initialiser there - the same failure the four-part-notation comment in the dependencies block
+// describes, one OS over. LWJGL names these classifiers natives-<os>[-arm64]; the arm64 variants are what Apple
+// Silicon and ARM Linux hosts load.
+def lwjglNativesClassifier = {
+    def os = System.getProperty('os.name', '').toLowerCase(java.util.Locale.ROOT)
+    def arch = System.getProperty('os.arch', '').toLowerCase(java.util.Locale.ROOT)
+    def arm = arch.contains('aarch64') || arch.contains('arm64')
+    if (os.contains('win')) {
+        return 'natives-windows'
+    }
+    if (os.contains('mac')) {
+        return arm ? 'natives-macos-arm64' : 'natives-macos'
+    }
+    return arm ? 'natives-linux-arm64' : 'natives-linux'
+}()
+
 // The Vulkan terrain backend implements the mod's own interfaces, so it compiles against the shared core.
 // The core classes are provided by the mod at runtime; nothing is bundled here.
 def coreProject = findProject(':common')
@@ -68,11 +86,11 @@ dependencies {
     // the natives jar never resolved - the test then failed on the binding being present without its library.
     // The core natives are required as well: the shaderc binding's initialiser needs liblwjgl.so first, and its absence
     // was what the load failure actually said once the diagnosis printed the cause chain instead of the first message.
-    testRuntimeOnly 'org.lwjgl:lwjgl:' + lwjglVersion + ':natives-linux'
+    testRuntimeOnly 'org.lwjgl:lwjgl:' + lwjglVersion + ':' + lwjglNativesClassifier
     testImplementation 'org.lwjgl:lwjgl-vulkan'
     // Mod GLSL lowering (ModGlslTranslatorTest) is checked by compiling its output with the real compiler.
     testImplementation 'org.lwjgl:lwjgl-shaderc'
-    testRuntimeOnly 'org.lwjgl:lwjgl-shaderc:' + lwjglVersion + ':natives-linux'
+    testRuntimeOnly 'org.lwjgl:lwjgl-shaderc:' + lwjglVersion + ':' + lwjglNativesClassifier
     testImplementation 'com.google.code.gson:gson:2.10.1'
     // The replay transform's composition is matrix arithmetic, and its unit tests have to be able to check it; the
     // mod still gets joml from the installation (compileOnly above) and nothing is bundled by this.
@@ -206,10 +224,19 @@ abstract class CeltiumCompileShaders extends DefaultTask {
             directories.addAll(path.split(File.pathSeparator).findAll { !it.isEmpty() })
         }
         directories.addAll(['/usr/bin', '/usr/local/bin', '/bin'])
+        // Windows executables carry the .exe suffix and a probe for the bare name never matches one, so the PATH
+        // candidate silently never resolved on Windows even with the compiler installed and on PATH - the build
+        // there failed with the not-found message until the compiler was handed over with -Pglslang_validator.
+        def names = [name]
+        if (System.getProperty('os.name', '').toLowerCase(java.util.Locale.ROOT).contains('win')) {
+            names.add(name + '.exe')
+        }
         for (directory in directories) {
-            def candidate = new File(directory, name)
-            if (candidate.canExecute()) {
-                return candidate.absolutePath
+            for (candidateName in names) {
+                def candidate = new File(directory, candidateName)
+                if (candidate.canExecute()) {
+                    return candidate.absolutePath
+                }
             }
         }
         return null
@@ -219,7 +246,8 @@ abstract class CeltiumCompileShaders extends DefaultTask {
     private static String compilerNotFound(List<String> candidates) {
         return "glslangValidator was not found. Looked at: ${candidates.join(', ')}.\n" +
                 "The shaders are compiled into the packaged resources, so this task cannot be skipped - install the " +
-                "compiler (Debian/Ubuntu: 'apt-get install glslang-tools') or point the build at one with " +
+                "compiler (Debian/Ubuntu: 'apt-get install glslang-tools'; macOS: 'brew install glslang'; Windows: " +
+                "the Khronos glslang release, with glslangValidator.exe on PATH) or point the build at one with " +
                 "-Pglslang_validator=/absolute/path/to/glslangValidator."
     }
 
@@ -271,6 +299,10 @@ def compileTerrainShaders = tasks.register('compileTerrainShaders', CeltiumCompi
             compilerPath.get(),
             new File(workspaceRoot, '.celtium-work/gpu-tools/extracted/usr/bin/glslangValidator').absolutePath,
             'glslangValidator',
+            // Upstream renamed the validator binary to glslang (glslang 15+); the official release archives for
+            // Windows ship only glslang.exe. Same program, so it is accepted as the last candidate - after the
+            // historical name, so a machine that has both keeps using the one it uses today.
+            'glslang',
     ])
     spirvDirectory.set(terrainSpirvOutput)
 }
