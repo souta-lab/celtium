@@ -10302,7 +10302,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * authoritative statement about a client-array draw is the {@link #publishClientArrayBuffer owned-buffer
      * publication}; this function exists for the calls that do not come through Minecraft's uploader.
      * <p>
-     * Supported on Linux ({@code /proc/self/maps}) and Windows ({@code VirtualQuery} via FFM); on other systems where
+     * Supported on Linux ({@code /proc/self/maps}), Windows ({@code VirtualQuery} via FFM) and macOS
+     * ({@code mach_vm_region} via FFM); on other systems where
      * no mapping provider is available this returns false, so a pointer-only client-memory draw stays a named refusal
      * rather than becoming an unguarded read - and on such a system the owned-buffer path still decodes the game's
      * own batches.

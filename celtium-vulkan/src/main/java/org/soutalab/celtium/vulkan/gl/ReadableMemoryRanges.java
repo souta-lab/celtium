@@ -43,6 +43,17 @@ final class ReadableMemoryRanges {
         long query(long address, long mbiAddress, long mbiSize);
     }
 
+    /**
+     * Abstracts one {@code mach_vm_region} call so the macOS region walker can be unit-tested off-macOS.
+     * {@code addressInOut[0]} takes the search start and returns the region base (the region containing or
+     * following the start), {@code sizeOut[0]} returns the region size and {@code protectionOut[0]} the
+     * {@code VM_PROT_*} bits. Returns a {@code kern_return_t} ({@code 0} = {@code KERN_SUCCESS}).
+     */
+    @FunctionalInterface
+    interface MachVmRegionFn {
+        int region(long[] addressInOut, long[] sizeOut, int[] protectionOut);
+    }
+
     private static final int MEM_COMMIT = 0x1000;
     private static final int PAGE_READONLY = 0x02;
     private static final int PAGE_READWRITE = 0x04;
@@ -58,6 +69,13 @@ final class ReadableMemoryRanges {
     private static final long MAX_USER_ADDRESS_32 = 0x1_0000_0000L;
     private static final int MAX_VIRTUAL_QUERY_STEPS = 1_000_000;
 
+    private static final int KERN_SUCCESS = 0;
+    private static final int VM_PROT_READ = 0x1;
+    private static final int VM_REGION_BASIC_INFO_64 = 9;
+    private static final int VM_REGION_BASIC_INFO_64_COUNT = 10;
+    private static final int VM_REGION_BASIC_INFO_64_SIZE = 40;
+    private static final int MAX_MACH_VM_REGION_STEPS = 1_000_000;
+
     private static final Range[] EMPTY = new Range[0];
 
     private ReadableMemoryRanges() {}
@@ -66,6 +84,10 @@ final class ReadableMemoryRanges {
         String osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         if (osName.contains("linux")) {
             return LinuxProcMapsProvider.INSTANCE;
+        }
+        // "darwin" contains "win", so the macOS branch must be tested before the Windows one.
+        if (osName.contains("mac") || osName.contains("darwin")) {
+            return MacMachVmRegionProvider.INSTANCE;
         }
         if (osName.contains("win")) {
             return WindowsVirtualQueryProvider.INSTANCE;
@@ -256,6 +278,45 @@ final class ReadableMemoryRanges {
         return ranges.toArray(EMPTY);
     }
 
+    /** {@return whether a Mach VM region's {@code VM_PROT_*} bits include read permission}. */
+    static boolean isMacReadable(int protection) {
+        return (protection & VM_PROT_READ) != 0;
+    }
+
+    /**
+     * Walks the process address space with {@code mach_vm_region} and returns all readable ranges. Each call
+     * yields the region containing or following the cursor, so advancing the cursor to the region end enumerates
+     * every region exactly once; a non-zero {@code kern_return_t} (e.g. {@code KERN_INVALID_ADDRESS} past the last
+     * region) ends the walk.
+     */
+    static Range[] collectMacRanges(MachVmRegionFn machVmRegion) {
+        List<Range> ranges = new ArrayList<>();
+        long[] address = new long[1];
+        long[] size = new long[1];
+        int[] protection = new int[1];
+        long cursor = 0L;
+        for (int step = 0; step < MAX_MACH_VM_REGION_STEPS && cursor >= 0L; step++) {
+            address[0] = cursor;
+            if (machVmRegion.region(address, size, protection) != KERN_SUCCESS) {
+                break;
+            }
+            long base = address[0];
+            long regionSize = size[0];
+            if (base < 0L || regionSize <= 0L) {
+                break;
+            }
+            long end = regionSize > Long.MAX_VALUE - base ? Long.MAX_VALUE : base + regionSize;
+            if (isMacReadable(protection[0]) && end > base) {
+                ranges.add(new Range(base, end));
+            }
+            if (end <= cursor) {
+                break;
+            }
+            cursor = end;
+        }
+        return ranges.toArray(EMPTY);
+    }
+
     private enum UnavailableProvider implements Provider {
         INSTANCE;
 
@@ -398,6 +459,181 @@ final class ReadableMemoryRanges {
                 adapted = MethodHandles.explicitCastArguments(adapted,
                         MethodType.methodType(long.class, long.class, long.class, long.class));
                 return new Binding(adapted, pointerSize, null);
+            } catch (Throwable error) {
+                return new Binding(null, 0, error);
+            }
+        }
+    }
+
+    /**
+     * macOS {@code mach_vm_region} provider (libSystem, via JDK 22+ {@code java.lang.foreign} downcall handles),
+     * the Mach analogue of the Windows {@code VirtualQuery} walk. Resolved reflectively so the module compiles
+     * cleanly with {@code options.release = 21}. The task port comes from the {@code mach_task_self} function
+     * where libSystem exports it, falling back to the {@code mach_task_self_} global.
+     */
+    private enum MacMachVmRegionProvider implements Provider {
+        INSTANCE;
+
+        private static final class Binding {
+            final MethodHandle machVmRegion;
+            final int task;
+            final Throwable failure;
+
+            Binding(MethodHandle machVmRegion, int task, Throwable failure) {
+                this.machVmRegion = machVmRegion;
+                this.task = task;
+                this.failure = failure;
+            }
+        }
+
+        private static volatile Binding cachedBinding;
+
+        @Override
+        public boolean available() {
+            return true;
+        }
+
+        @Override
+        public Range[] read() throws Exception {
+            Binding binding = binding();
+            if (binding.failure != null) {
+                if (binding.failure instanceof Exception exception) {
+                    throw exception;
+                }
+                throw new IllegalStateException("macOS mach_vm_region binding failed", binding.failure);
+            }
+            ByteBuffer addressBuf = MemoryUtil.memAlloc(8);
+            ByteBuffer sizeBuf = MemoryUtil.memAlloc(8);
+            ByteBuffer infoBuf = MemoryUtil.memAlloc(VM_REGION_BASIC_INFO_64_SIZE);
+            ByteBuffer infoCountBuf = MemoryUtil.memAlloc(4);
+            ByteBuffer objectNameBuf = MemoryUtil.memAlloc(8);
+            try {
+                long addressAddr = MemoryUtil.memAddress(addressBuf);
+                long sizeAddr = MemoryUtil.memAddress(sizeBuf);
+                long infoAddr = MemoryUtil.memAddress(infoBuf);
+                long infoCountAddr = MemoryUtil.memAddress(infoCountBuf);
+                long objectNameAddr = MemoryUtil.memAddress(objectNameBuf);
+                return collectMacRanges((addressInOut, sizeOut, protectionOut) -> {
+                    MemoryUtil.memPutLong(addressAddr, addressInOut[0]);
+                    MemoryUtil.memPutInt(infoCountAddr, VM_REGION_BASIC_INFO_64_COUNT);
+                    int kr;
+                    try {
+                        kr = (int) binding.machVmRegion.invokeExact(binding.task, addressAddr, sizeAddr,
+                                VM_REGION_BASIC_INFO_64, infoAddr, infoCountAddr, objectNameAddr);
+                    } catch (Throwable error) {
+                        throw new IllegalStateException("mach_vm_region invocation failed", error);
+                    }
+                    if (kr != KERN_SUCCESS) {
+                        return kr;
+                    }
+                    addressInOut[0] = MemoryUtil.memGetLong(addressAddr);
+                    sizeOut[0] = MemoryUtil.memGetLong(sizeAddr);
+                    // vm_region_basic_info_64 starts with the protection field.
+                    protectionOut[0] = MemoryUtil.memGetInt(infoAddr);
+                    return KERN_SUCCESS;
+                });
+            } finally {
+                MemoryUtil.memFree(addressBuf);
+                MemoryUtil.memFree(sizeBuf);
+                MemoryUtil.memFree(infoBuf);
+                MemoryUtil.memFree(infoCountBuf);
+                MemoryUtil.memFree(objectNameBuf);
+            }
+        }
+
+        private static Binding binding() {
+            Binding existing = cachedBinding;
+            if (existing != null) {
+                return existing;
+            }
+            synchronized (MacMachVmRegionProvider.class) {
+                existing = cachedBinding;
+                if (existing != null) {
+                    return existing;
+                }
+                Binding created = initBinding();
+                cachedBinding = created;
+                return created;
+            }
+        }
+
+        private static Binding initBinding() {
+            try {
+                Class<?> arenaClass = Class.forName("java.lang.foreign.Arena");
+                Class<?> segmentClass = Class.forName("java.lang.foreign.MemorySegment");
+                Class<?> linkerClass = Class.forName("java.lang.foreign.Linker");
+                Class<?> lookupClass = Class.forName("java.lang.foreign.SymbolLookup");
+                Class<?> layoutClass = Class.forName("java.lang.foreign.MemoryLayout");
+                Class<?> valueLayoutClass = Class.forName("java.lang.foreign.ValueLayout");
+                Class<?> funcDescClass = Class.forName("java.lang.foreign.FunctionDescriptor");
+                Class<?> optionClass = Class.forName("java.lang.foreign.Linker$Option");
+
+                Object arena = arenaClass.getMethod("ofAuto").invoke(null);
+                Object linker = linkerClass.getMethod("nativeLinker").invoke(null);
+                Object addressLayout = valueLayoutClass.getField("ADDRESS").get(null);
+                Object intLayout = valueLayoutClass.getField("JAVA_INT").get(null);
+
+                Object lookup = lookupClass.getMethod("libraryLookup", String.class, arenaClass)
+                        .invoke(null, "libSystem.dylib", arena);
+                Optional<?> regionSymbol = (Optional<?>) lookupClass.getMethod("find", String.class)
+                        .invoke(lookup, "mach_vm_region");
+                if (regionSymbol.isEmpty()) {
+                    return new Binding(null, 0, new UnsatisfiedLinkError("mach_vm_region not found in libSystem"));
+                }
+
+                Object emptyOptions = Array.newInstance(optionClass, 0);
+
+                int task;
+                Optional<?> taskFnSymbol = (Optional<?>) lookupClass.getMethod("find", String.class)
+                        .invoke(lookup, "mach_task_self");
+                if (taskFnSymbol.isPresent()) {
+                    Object noArgs = Array.newInstance(layoutClass, 0);
+                    Object taskDesc = funcDescClass.getMethod("of", layoutClass, noArgs.getClass())
+                            .invoke(null, intLayout, noArgs);
+                    MethodHandle taskSelf = (MethodHandle) linkerClass
+                            .getMethod("downcallHandle", segmentClass, funcDescClass, emptyOptions.getClass())
+                            .invoke(linker, taskFnSymbol.get(), taskDesc, emptyOptions);
+                    task = (int) taskSelf.invokeExact();
+                } else {
+                    Optional<?> taskVarSymbol = (Optional<?>) lookupClass.getMethod("find", String.class)
+                            .invoke(lookup, "mach_task_self_");
+                    if (taskVarSymbol.isEmpty()) {
+                        return new Binding(null, 0,
+                                new UnsatisfiedLinkError("neither mach_task_self nor mach_task_self_ in libSystem"));
+                    }
+                    Object taskSegment = segmentClass.getMethod("reinterpret", long.class)
+                            .invoke(taskVarSymbol.get(), 4L);
+                    Class<?> ofIntClass = Class.forName("java.lang.foreign.ValueLayout$OfInt");
+                    task = (int) segmentClass.getMethod("get", ofIntClass, long.class)
+                            .invoke(taskSegment, intLayout, 0L);
+                }
+
+                Object argLayouts = Array.newInstance(layoutClass, 7);
+                Array.set(argLayouts, 0, intLayout);
+                Array.set(argLayouts, 1, addressLayout);
+                Array.set(argLayouts, 2, addressLayout);
+                Array.set(argLayouts, 3, intLayout);
+                Array.set(argLayouts, 4, addressLayout);
+                Array.set(argLayouts, 5, addressLayout);
+                Array.set(argLayouts, 6, addressLayout);
+                Object descriptor = funcDescClass.getMethod("of", layoutClass, argLayouts.getClass())
+                        .invoke(null, intLayout, argLayouts);
+
+                MethodHandle downcall = (MethodHandle) linkerClass
+                        .getMethod("downcallHandle", segmentClass, funcDescClass, emptyOptions.getClass())
+                        .invoke(linker, regionSymbol.get(), descriptor, emptyOptions);
+
+                MethodHandles.Lookup mhLookup = MethodHandles.lookup();
+                MethodHandle ofAddress = mhLookup.findStatic(segmentClass, "ofAddress",
+                        MethodType.methodType(segmentClass, long.class));
+                // The pointer parameters are not contiguous (the flavor int sits between them), so the
+                // ofAddress filters are applied in two passes: info/infoCount/objectName first, then the
+                // address/size out-pointers.
+                MethodHandle adapted = MethodHandles.filterArguments(downcall, 4, ofAddress, ofAddress, ofAddress);
+                adapted = MethodHandles.filterArguments(adapted, 1, ofAddress, ofAddress);
+                adapted = MethodHandles.explicitCastArguments(adapted, MethodType.methodType(
+                        int.class, int.class, long.class, long.class, int.class, long.class, long.class, long.class));
+                return new Binding(adapted, task, null);
             } catch (Throwable error) {
                 return new Binding(null, 0, error);
             }

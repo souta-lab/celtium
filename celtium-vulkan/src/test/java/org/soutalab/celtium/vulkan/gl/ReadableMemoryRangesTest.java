@@ -262,6 +262,76 @@ class ReadableMemoryRangesTest {
         assertEquals(new Range(0x1C000L, 0x1E000L), collected32[1]);
     }
 
+    private static final int VM_PROT_NONE = 0x0;
+    private static final int VM_PROT_READ = 0x1;
+    private static final int VM_PROT_WRITE = 0x2;
+    private static final int VM_PROT_EXECUTE = 0x4;
+    private static final int KERN_INVALID_ADDRESS = 1;
+
+    @Test
+    void macProtectionFilterRequiresReadPermission() {
+        assertTrue(ReadableMemoryRanges.isMacReadable(VM_PROT_READ));
+        assertTrue(ReadableMemoryRanges.isMacReadable(VM_PROT_READ | VM_PROT_WRITE));
+        assertTrue(ReadableMemoryRanges.isMacReadable(VM_PROT_READ | VM_PROT_EXECUTE));
+
+        assertFalse(ReadableMemoryRanges.isMacReadable(VM_PROT_NONE));
+        assertFalse(ReadableMemoryRanges.isMacReadable(VM_PROT_WRITE));
+        assertFalse(ReadableMemoryRanges.isMacReadable(VM_PROT_EXECUTE));
+        assertFalse(ReadableMemoryRanges.isMacReadable(VM_PROT_WRITE | VM_PROT_EXECUTE));
+    }
+
+    @Test
+    void macMachVmRegionWalkerCollectsReadableRegionsOnly() {
+        record RegionEntry(long base, long size, int protection) {}
+        List<RegionEntry> layout = List.of(
+                new RegionEntry(0x00000L, 0x4000L, VM_PROT_READ | VM_PROT_EXECUTE),
+                new RegionEntry(0x08000L, 0x2000L, VM_PROT_NONE),
+                new RegionEntry(0x0A000L, 0x2000L, VM_PROT_READ | VM_PROT_WRITE),
+                new RegionEntry(0x0C000L, 0x1000L, VM_PROT_WRITE),
+                new RegionEntry(0x0D000L, 0x1000L, VM_PROT_READ)
+        );
+
+        // mach_vm_region semantics: yields the region containing or following the search address.
+        ReadableMemoryRanges.MachVmRegionFn region = (addressInOut, sizeOut, protectionOut) -> {
+            for (RegionEntry entry : layout) {
+                if (addressInOut[0] < entry.base() + entry.size()) {
+                    addressInOut[0] = entry.base();
+                    sizeOut[0] = entry.size();
+                    protectionOut[0] = entry.protection();
+                    return 0;
+                }
+            }
+            return KERN_INVALID_ADDRESS;
+        };
+
+        Range[] collected = ReadableMemoryRanges.normalize(ReadableMemoryRanges.collectMacRanges(region));
+        assertEquals(3, collected.length);
+        assertEquals(new Range(0x00000L, 0x04000L), collected[0]);
+        assertEquals(new Range(0x0A000L, 0x0C000L), collected[1]);
+        assertEquals(new Range(0x0D000L, 0x0E000L), collected[2]);
+        assertTrue(ReadableMemoryRanges.contains(collected, 0x0B000L, 0x1000L));
+        assertFalse(ReadableMemoryRanges.contains(collected, 0x08000L, 0x1000L));
+        assertFalse(ReadableMemoryRanges.contains(collected, 0x0C000L, 0x1000L));
+    }
+
+    @Test
+    void macMachVmRegionWalkerTerminatesOnFailureAndStuckProbes() {
+        ReadableMemoryRanges.MachVmRegionFn failing = (addressInOut, sizeOut, protectionOut) -> KERN_INVALID_ADDRESS;
+        assertEquals(0, ReadableMemoryRanges.collectMacRanges(failing).length);
+
+        // A probe that keeps returning the same region must not loop forever; the duplicate it
+        // yields before the stuck check fires is coalesced by normalize, as with the Windows walker.
+        ReadableMemoryRanges.MachVmRegionFn stuck = (addressInOut, sizeOut, protectionOut) -> {
+            addressInOut[0] = 0x1000L;
+            sizeOut[0] = 0x1000L;
+            protectionOut[0] = VM_PROT_READ;
+            return 0;
+        };
+        Range[] collected = ReadableMemoryRanges.normalize(ReadableMemoryRanges.collectMacRanges(stuck));
+        assertEquals(1, collected.length);
+        assertEquals(new Range(0x1000L, 0x2000L), collected[0]);
+    }
+
     @Test
     void linuxProcMapsParserKeepsReadableMappingsOnly() throws Exception {
         String maps = """
