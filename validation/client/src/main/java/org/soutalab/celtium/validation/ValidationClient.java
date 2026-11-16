@@ -764,6 +764,12 @@ public final class ValidationClient {
         String completionError = "none";
         /** The requested path this identity's file is a kept copy of, or "none" when the file is that path itself. */
         String keptFrom = "none";
+        int skipsAtRequest = -1;
+        int attemptsAtRequest = -1;
+        int backendIdentityAtRequest;
+        int backendIdentityAtCompletion;
+        java.lang.ref.WeakReference<Object> requestedBackend;
+        PresentedFrameTracker.WindowSnapshot windowAtRequest;
 
         PictureEvidence(String stage, String source, java.nio.file.Path image, int requestedAtTick,
                 int worldFramesAtRequest, int presentedFramesAtRequest, int requestedWidth, int requestedHeight,
@@ -919,6 +925,9 @@ public final class ValidationClient {
      */
     private int celtium$presentedFramesHighWater;
     private int celtium$presentedHighWaterBeforeArrival = -1;
+    private int celtium$skipsAtArrival = -1;
+    private int celtium$backendIdentityChangeLogs;
+    private final PresentedFrameTracker celtium$frameTracker = new PresentedFrameTracker();
     /**
      * The acceptance floor for a dimension run: world frames the target dimension itself drew, with no screen over
      * them, before the capture means anything. A capture taken while the download-terrain screen is up is a loading
@@ -4535,6 +4544,7 @@ public final class ValidationClient {
                 // fixture's own world-frame counter.
                 celtium$presentedFramesAtArrival = celtium$presentedFrameCount();
                 celtium$presentedHighWaterBeforeArrival = celtium$presentedFramesHighWater;
+                celtium$skipsAtArrival = celtium$backendInt("celtium$presentSkips");
                 celtium$dimensionTrace("CELTIUM_DIM_ARRIVED tick=" + worldTicks + " client=" + mc.player.dimension
                         + " world=" + mc.world.provider.getDimension() + " screen=" + celtium$screenName(mc)
                         + " worldFrames=" + worldFrames + " presentedFrames=" + celtium$presentedFramesAtArrival
@@ -4897,29 +4907,39 @@ public final class ValidationClient {
             // and a dimension change recreates the frame target the counter lives in, so the two only track inside one
             // target's lifetime. Both numbers are sampled here, every world frame, so the report can say which of the
             // two it is looking at instead of inferring it.
-            int presentedNow = celtium$presentedFrameCount();
-            if (presentedNow > 0 && celtium$firstPresentedWorldFrame < 0) {
-                celtium$firstPresentedWorldFrame = worldFrames;
+            Object liveBackend = celtium$vulkanBackend();
+            int backendId = celtium$backendIdentity(liveBackend);
+            int presentedNow = celtium$presentedFrameCount(liveBackend);
+            int skipsNow = celtium$backendInt(liveBackend, "celtium$presentSkips");
+            int attemptsNow = celtium$backendInt(liveBackend, "celtium$presentAttempts");
+            int hookCallsNow = celtium$backendInt(liveBackend, "celtium$presentHookCalls");
+            PresentedFrameTracker.FrameObservation observation = celtium$frameTracker.onWorldFrame(
+                    worldFrames, backendId, presentedNow, skipsNow, attemptsNow, hookCallsNow);
+            celtium$firstPresentedWorldFrame = celtium$frameTracker.firstPresentedWorldFrame();
+            celtium$presentedFramesHighWater = celtium$frameTracker.presentedFramesHighWater();
+            if (observation.backendChanged) {
+                report.addProperty("backendIdentityChanges", Integer.valueOf(celtium$frameTracker.backendIdentityChanges()));
+                report.addProperty("lastBackendIdentityChangeWorldFrame", Integer.valueOf(worldFrames));
+                report.addProperty("currentBackendIdentity", Integer.toHexString(backendId));
+                if (celtium$backendIdentityChangeLogs < 16) {
+                    celtium$backendIdentityChangeLogs++;
+                    System.out.println("celtium validation: backend identity changed worldFrame=" + worldFrames
+                            + " from=0x" + Integer.toHexString(observation.previousBackendIdentity)
+                            + " to=0x" + Integer.toHexString(observation.currentBackendIdentity)
+                            + " presented=" + presentedNow + " skips=" + skipsNow);
+                }
             }
-            if (presentedNow > celtium$presentedFramesHighWater) {
-                celtium$presentedFramesHighWater = presentedNow;
-            }
-            // A drop in the presented counter is the renderer's own statement that a new world has adopted the
-            // window-owned instance and restarted its numbering (VulkanTerrainGpuBackend.celtium$adoptTerrainState).
-            // That instant - not the tick the fixture asked for the world - is where the second world's window starts,
-            // and the assertion below compares deltas measured from it. The counter is sampled every world frame, so the
-            // restart is seen within one frame of happening.
-            if (celtium$lastPresentedSample >= 0 && presentedNow < celtium$lastPresentedSample) {
-                celtium$presentedCounterRestarts++;
+            if (observation.counterRestarted) {
+                celtium$presentedCounterRestarts = celtium$frameTracker.presentedCounterRestarts();
                 celtium$previousPresentedAtWorldStart = celtium$presentedAtWorldStart;
                 celtium$previousWorldFramesAtWorldStart = celtium$worldFramesAtWorldStart;
                 celtium$presentedAtWorldStart = presentedNow;
                 celtium$worldFramesAtWorldStart = worldFrames;
                 report.addProperty("presentedCounterRestarts", Integer.valueOf(celtium$presentedCounterRestarts));
                 report.addProperty("presentedRestartAtWorldFrame", Integer.valueOf(worldFrames));
-                report.addProperty("presentedRestartFrom", Integer.valueOf(celtium$lastPresentedSample));
+                report.addProperty("presentedRestartFrom", Integer.valueOf(observation.restartFrom));
                 String line = "CELTIUM_PRESENT_COUNTER_RESTART worldFrame=" + worldFrames + " from="
-                        + celtium$lastPresentedSample + " to=" + presentedNow + " worldStarts=" + celtium$worldStarts;
+                        + observation.restartFrom + " to=" + observation.restartTo + " worldStarts=" + celtium$worldStarts;
                 System.out.println("[Celtium] " + line);
             }
             celtium$lastPresentedSample = presentedNow;
@@ -8463,7 +8483,11 @@ public final class ValidationClient {
 
     /** The renderer's presented-frame counter, or -1 when the live terrain backend is not the Vulkan one. */
     private static int celtium$presentedFrameCount() {
-        Object count = celtium$backendCall("celtium$presentedFrameCount", new Class<?>[0]);
+        return celtium$presentedFrameCount(celtium$vulkanBackend());
+    }
+
+    private static int celtium$presentedFrameCount(Object backend) {
+        Object count = celtium$backendCall(backend, "celtium$presentedFrameCount", new Class<?>[0]);
         return count instanceof Integer ? ((Integer) count).intValue() : -1;
     }
 
@@ -8474,8 +8498,16 @@ public final class ValidationClient {
      * failing the run: the reference leg (upstream Celeritas) has no such backend at all.
      */
     private static int celtium$backendInt(String accessor) {
-        Object value = celtium$backendCall(accessor, new Class<?>[0]);
+        return celtium$backendInt(celtium$vulkanBackend(), accessor);
+    }
+
+    private static int celtium$backendInt(Object backend, String accessor) {
+        Object value = celtium$backendCall(backend, accessor, new Class<?>[0]);
         return value instanceof Integer ? ((Integer) value).intValue() : -1;
+    }
+
+    private static int celtium$backendIdentity(Object backend) {
+        return backend == null ? 0 : System.identityHashCode(backend);
     }
 
     /**
@@ -8488,10 +8520,20 @@ public final class ValidationClient {
      * at observation.
      */
     private Integer celtium$presentedDumpWrittenFrame(PictureEvidence evidence) {
-        Object frame = celtium$backendCall("celtium$presentedDumpWrittenFrameFor",
-                new Class<?>[] { String.class }, evidence.image.getFileName().toString());
+        String fileName = evidence.image.getFileName().toString();
+        Object live = celtium$vulkanBackend();
+        Object frame = celtium$backendCall(live, "celtium$presentedDumpWrittenFrameFor",
+                new Class<?>[] { String.class }, fileName);
         if (frame instanceof Integer && ((Integer) frame).intValue() > 0) {
             return (Integer) frame;
+        }
+        Object requested = evidence.requestedBackend == null ? null : evidence.requestedBackend.get();
+        if (requested != null && requested != live) {
+            Object requestedFrame = celtium$backendCall(requested, "celtium$presentedDumpWrittenFrameFor",
+                    new Class<?>[] { String.class }, fileName);
+            if (requestedFrame instanceof Integer && ((Integer) requestedFrame).intValue() > 0) {
+                return (Integer) requestedFrame;
+            }
         }
         return null;
     }
@@ -8967,7 +9009,10 @@ public final class ValidationClient {
 
     /** Invokes one of the backend's own methods by reflection, or null when there is no backend or the call fails. */
     private static Object celtium$backendCall(String method, Class<?>[] types, Object... arguments) {
-        Object backend = celtium$vulkanBackend();
+        return celtium$backendCall(celtium$vulkanBackend(), method, types, arguments);
+    }
+
+    private static Object celtium$backendCall(Object backend, String method, Class<?>[] types, Object... arguments) {
         if (backend == null) {
             return null;
         }
@@ -9107,8 +9152,14 @@ public final class ValidationClient {
 
     private PictureEvidence celtium$requestPresentedDump(Minecraft mc, String stage) {
         java.nio.file.Path image = celtium$picturePath(stage, "presented");
+        Object backend = celtium$vulkanBackend();
         PictureEvidence evidence = new PictureEvidence(stage, SOURCE_PRESENTED_DUMP, image, worldTicks, worldFrames,
-                celtium$presentedFrameCount(), mc.displayWidth, mc.displayHeight, BINDING_OBSERVED_PRESENT);
+                celtium$presentedFrameCount(backend), mc.displayWidth, mc.displayHeight, BINDING_OBSERVED_PRESENT);
+        evidence.skipsAtRequest = celtium$backendInt(backend, "celtium$presentSkips");
+        evidence.attemptsAtRequest = celtium$backendInt(backend, "celtium$presentAttempts");
+        evidence.backendIdentityAtRequest = celtium$backendIdentity(backend);
+        evidence.requestedBackend = backend == null ? null : new java.lang.ref.WeakReference<Object>(backend);
+        evidence.windowAtRequest = celtium$frameTracker.snapshotCurrentWindow();
         try {
             // A stale file would make "the image appeared" mean nothing. The path is per-run, but re-running the same
             // command with a pinned run id in the same game directory is exactly what the harness does, so both files
@@ -9119,11 +9170,11 @@ public final class ValidationClient {
             evidence.completionError = "a stale file at " + celtium$relative(image) + " could not be cleared: " + error;
         }
         boolean requested = false;
-        Object dumped = celtium$backendCall("celtium$dumpPresentedImage", new Class<?>[] { java.nio.file.Path.class },
-                image);
+        Object dumped = celtium$backendCall(backend, "celtium$dumpPresentedImage",
+                new Class<?>[] { java.nio.file.Path.class }, image);
         if (dumped instanceof Boolean) {
             requested = ((Boolean) dumped).booleanValue();
-        } else if (celtium$vulkanBackend() != null) {
+        } else if (backend != null) {
             evidence.completionError = "the presented-image dump could not be requested";
         }
         if (requested) {
@@ -9298,7 +9349,11 @@ public final class ValidationClient {
                 continue;
             }
             iterator.remove();
-            int observed = celtium$presentedFrameCount();
+            Object live = celtium$vulkanBackend();
+            evidence.backendIdentityAtCompletion = celtium$backendIdentity(live);
+            Object requested = evidence.requestedBackend == null ? null : evidence.requestedBackend.get();
+            Object observationBackend = (requested != null && requested != live) ? requested : live;
+            int observed = celtium$presentedFrameCount(observationBackend);
             // Two paths answer a request: the queued one is written at the next present, and the immediate one (used
             // when no further present is coming) is written from the last presented image at the request frame. Both
             // are the frame the request named, so both counters are accepted; anything else is a different frame.
@@ -11629,15 +11684,21 @@ public final class ValidationClient {
                 // window, and the whole-run numbers are recorded beside it.
                 int sinceArrival = evidence.presentedFrame - celtium$presentedFramesAtArrival;
                 int framesInTarget = celtium$framesInTargetDimension;
-                report.addProperty("pictureFrameDelta_" + stage, Integer.valueOf(sinceArrival - framesInTarget));
+                int skipsSinceArrival = (evidence.skipsAtRequest >= 0 && celtium$skipsAtArrival >= 0)
+                        ? Math.max(0, evidence.skipsAtRequest - celtium$skipsAtArrival) : 0;
+                int expectedSinceArrival = Math.max(0, framesInTarget - skipsSinceArrival);
+                report.addProperty("picturePresentSkipsSinceArrival_" + stage, Integer.valueOf(skipsSinceArrival));
+                report.addProperty("pictureFrameDelta_" + stage, Integer.valueOf(sinceArrival - expectedSinceArrival));
                 report.addProperty("pictureFrameScope_" + stage, "dimension window: presented counter restarted at the"
                         + " arrival (" + celtium$presentedFramesAtArrival + " at it, high-water "
                         + celtium$presentedHighWaterBeforeArrival + " before); the picture's frame " + evidence.presentedFrame
-                        + " is " + sinceArrival + " presents into the window, which drew " + framesInTarget + " frames");
-                if (sinceArrival < framesInTarget - 1) {
+                        + " is " + sinceArrival + " presents into the window, which drew " + framesInTarget + " frames"
+                        + (skipsSinceArrival > 0 ? " (" + skipsSinceArrival + " skipped presents)" : ""));
+                if (sinceArrival < expectedSinceArrival - 1) {
                     failures.add("the picture for " + where + " is " + sinceArrival + " presents after the arrival in"
-                            + " dimension " + celtium$dimension + ", fewer than the " + framesInTarget + " frames that"
-                            + " dimension drew (presentedFrame=" + evidence.presentedFrame + ", at arrival="
+                            + " dimension " + celtium$dimension + ", fewer than the " + expectedSinceArrival
+                            + " expected frames (" + framesInTarget + " drawn, " + skipsSinceArrival
+                            + " skipped presents; presentedFrame=" + evidence.presentedFrame + ", at arrival="
                             + celtium$presentedFramesAtArrival + ")");
                 }
                 return;
@@ -11645,53 +11706,56 @@ public final class ValidationClient {
             // Both counters only track inside one renderer lifetime, and a run can hold more than one world: a
             // dimension change recreates the frame target (the branch above), and a quit-to-title and rejoin makes the
             // window-owned renderer adopt again, restarting its presented counter while worldFrames spans both worlds.
-            // The assertion is therefore made inside the window the picture belongs to - the current world, whose start
-            // sampled both counters (zero for the first world, so a single-world run compares exactly what it always
-            // did) - and the whole-run delta is recorded beside it so the scoping is visible rather than implied.
-            // The window the capture belongs to: a restart recorded after the capture's world frame began a later
-            // window, so the picture is judged in the one before it.
-            boolean restartAfterCapture = celtium$worldFramesAtWorldStart > captureWorldFrames;
-            int windowPresentedStart = restartAfterCapture ? celtium$previousPresentedAtWorldStart
-                    : celtium$presentedAtWorldStart;
-            int windowFramesStart = restartAfterCapture ? celtium$previousWorldFramesAtWorldStart
-                    : celtium$worldFramesAtWorldStart;
-            report.addProperty("pictureRestartAfterCapture_" + stage, Boolean.valueOf(restartAfterCapture));
-            int presentedInWorld = evidence.presentedFrame - windowPresentedStart;
-            int framesInWorld = captureWorldFrames - windowFramesStart;
-            int delta = presentedInWorld - framesInWorld;
+            // Pre-first-present skips and backend identity changes are tracked by PresentedFrameTracker so the active
+            // window's skips and starts are attributed instead of failing as missing world presents.
+            PresentedFrameTracker.VerdictEvaluation evaluation = celtium$frameTracker.evaluate(
+                    captureWorldFrames, evidence.presentedFrame, evidence.presentedFramesAtRequest,
+                    evidence.skipsAtRequest, evidence.attemptsAtRequest, evidence.windowAtRequest);
             int wholeRunDelta = evidence.presentedFrame - captureWorldFrames;
-            // This assertion compares the picture's presented frame with the world frames the world drew, which is the
-            // same claim only while every world frame presents. A run whose presents lag its frames fails here for a
-            // reason these two numbers do not yet attribute, so both counters and their deficit are recorded at the
-            // verdict. Measured in the 268-mod E2E leg (runtime-e2e-268-amd-pr92-stack-scope): 146 presents against
-            // 153 world frames, and the deficit existed at the dump request already (145 against 153), so the dump did
-            // not create it. Recorded, not yet explained.
+            report.addProperty("pictureRestartAfterCapture_" + stage, Boolean.valueOf(evaluation.restartAfterCapture));
             report.addProperty("picturePresentedAtVerdict_" + stage,
                     Integer.valueOf(celtium$presentedFrameCount()));
-            // The renderer's own arithmetic, so the deficit is attributed in the same run rather than inferred: skips
-            // are frames whose present call was declined before the swapchain, and attempts minus presented is what the
-            // swapchain refused. A deficit that is neither is frames that never reached the present call at all.
             report.addProperty("picturePresentSkipsAtVerdict_" + stage,
                     Integer.valueOf(celtium$backendInt("celtium$presentSkips")));
             report.addProperty("picturePresentAttemptsAtVerdict_" + stage,
                     Integer.valueOf(celtium$backendInt("celtium$presentAttempts")));
-            // The third term: a frame that never reached the present entry point is neither declined nor failed, and
-            // the entry counter is not restarted when a world adopts the window-time backend, so it spans the process.
             report.addProperty("picturePresentHookCallsAtVerdict_" + stage,
                     Integer.valueOf(celtium$backendInt("celtium$presentHookCalls")));
-            report.addProperty("pictureWorldFrameDeficit_" + stage, Integer.valueOf(framesInWorld - presentedInWorld));
-            report.addProperty("pictureFrameDelta_" + stage, Integer.valueOf(delta));
+            report.addProperty("picturePresentSkipsInWindow_" + stage, Integer.valueOf(evaluation.skipsInWindow));
+            report.addProperty("picturePresentAttemptsInWindow_" + stage, Integer.valueOf(evaluation.attemptsInWindow));
+            report.addProperty("pictureFailedAttemptsInWindow_" + stage, Integer.valueOf(evaluation.failedAttemptsInWindow));
+            report.addProperty("pictureExpectedPresented_" + stage, Integer.valueOf(evaluation.expectedPresented));
+            report.addProperty("pictureBackendIdentityAtRequest_" + stage,
+                    Integer.toHexString(evidence.backendIdentityAtRequest));
+            report.addProperty("pictureBackendIdentityAtCompletion_" + stage,
+                    Integer.toHexString(evidence.backendIdentityAtCompletion));
+            report.addProperty("pictureBackendIdentityAtVerdict_" + stage,
+                    Integer.toHexString(celtium$backendIdentity(celtium$vulkanBackend())));
+            report.addProperty("pictureWorldFrameDeficit_" + stage,
+                    Integer.valueOf(evaluation.framesInWorld - evaluation.presentedInWorld));
+            report.addProperty("pictureFrameDeltaUnadjusted_" + stage, Integer.valueOf(evaluation.unadjustedDelta));
+            report.addProperty("pictureFrameDelta_" + stage, Integer.valueOf(evaluation.delta));
             report.addProperty("pictureFrameDeltaWholeRun_" + stage, Integer.valueOf(wholeRunDelta));
             report.addProperty("pictureFrameScope_" + stage, "world window " + (celtium$worldStarts + 1) + ": the"
-                    + " picture's frame " + evidence.presentedFrame + " is " + presentedInWorld + " presents into this"
-                    + " world (presented counter " + windowPresentedStart + " at its start), which drew "
-                    + framesInWorld + " frames (worldFrames " + windowFramesStart + " at its start, "
-                    + captureWorldFrames + " at the capture); the whole-run delta is " + wholeRunDelta);
-            if (Math.abs(delta) > 1) {
+                    + " picture's frame " + evidence.presentedFrame + " is " + evaluation.presentedInWorld
+                    + " presents into this world (presented counter " + evaluation.window.presentedStart
+                    + " at its start, backend=0x" + Integer.toHexString(evaluation.window.backendIdentity)
+                    + "), which drew " + evaluation.framesInWorld + " frames (worldFrames "
+                    + evaluation.window.framesStart + " at its start, " + captureWorldFrames
+                    + " at the capture; skipsInWindow=" + evaluation.skipsInWindow
+                    + ", expected=" + evaluation.expectedPresented
+                    + (evaluation.usedPreFirstPresentAnchor
+                            ? ", anchored after pre-first-present zero window at frame "
+                                    + celtium$frameTracker.lastZeroPresentedWorldFrame()
+                            : "")
+                    + "); the whole-run delta is " + wholeRunDelta);
+            if (!evaluation.passed) {
                 failures.add("the picture for " + where + " is the frame the renderer presented at "
-                        + evidence.presentedFrame + ", which is " + delta + " away from the " + framesInWorld
-                        + " world frames this world drew before the capture: the frame in the file is not the frame"
-                        + " the capture is about (whole-run delta " + wholeRunDelta + ")");
+                        + evidence.presentedFrame + ", which is " + evaluation.delta + " away from the "
+                        + evaluation.expectedPresented + " expected presents (" + evaluation.framesInWorld
+                        + " world frames minus " + evaluation.skipsInWindow + " skipped presents; unadjusted delta "
+                        + evaluation.unadjustedDelta + ", whole-run delta " + wholeRunDelta
+                        + "): the frame in the file is not the frame the capture is about");
             }
         }
     }
