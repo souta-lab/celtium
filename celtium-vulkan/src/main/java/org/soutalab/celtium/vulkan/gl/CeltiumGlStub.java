@@ -9033,8 +9033,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Recorded values, keyed {@code (textureName << 32) | pname}. Bounded: past the limit the call is counted. */
-    private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<Integer> texParams =
-            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap texParams =
+            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
     private final java.util.concurrent.atomic.AtomicInteger texParamCalls =
             new java.util.concurrent.atomic.AtomicInteger();
     private final java.util.concurrent.atomic.AtomicInteger texParamUnbound =
@@ -9111,12 +9111,12 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         long key = texParamKey(textureName, pname);
-        if (this.texParams.get(key) == null
+        if (!this.texParams.containsKey(key)
                 && this.texParams.size() >= TEX_PARAM_RECORD_LIMIT) {
             this.texParamOverflow.incrementAndGet();
             return;
         }
-        this.texParams.put(key, Integer.valueOf(value));
+        this.texParams.put(key, value);
         celtium$bumpTextureParameterVersion((int) (key >>> 32));
         int calls = this.texParamCalls.incrementAndGet();
         if (org.soutalab.celtium.vulkan.VulkanDiagnostics.withinLimit(TEX_PARAM_SHAPES.size(), 24)) {
@@ -9207,9 +9207,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         CeltiumGlStub stub = installed;
         if (stub != null && textureName > 0) {
-            Integer recorded = stub.texParams.get(texParamKey(textureName, pname));
-            if (recorded != null) {
-                return recorded.intValue();
+            long key = texParamKey(textureName, pname);
+            if (stub.texParams.containsKey(key)) {
+                return stub.texParams.get(key);
             }
         }
         switch (pname) {
@@ -9236,8 +9236,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null || textureName <= 0) {
             return -1;
         }
-        Integer recorded = stub.texParams.get(texParamKey(textureName, pname));
-        return recorded == null ? -1 : recorded.intValue();
+        long key = texParamKey(textureName, pname);
+        return stub.texParams.containsKey(key) ? stub.texParams.get(key) : -1;
     }
 
     /**
@@ -9250,7 +9250,8 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@return whether the game set this pname on this texture} - false for the GL defaults. */
     public static boolean textureParameterRecorded(int textureName, int pname) {
-        return recordedTextureParameter(textureName, pname) != -1;
+        CeltiumGlStub stub = installed;
+        return stub != null && textureName > 0 && stub.texParams.containsKey(texParamKey(textureName, pname));
     }
 
     /** The named texture parameters, bounded: the record census and the query answers. */
@@ -9261,20 +9262,21 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         int repeat = 0;
         int clamp = 0;
-        for (Map.Entry<Long, Integer> entry : stub.texParams.entrySet()) {
-            int pname = (int) (entry.getKey().longValue() & 0xFFFFFFFFL);
+        it.unimi.dsi.fastutil.ints.IntOpenHashSet textures = new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
+        it.unimi.dsi.fastutil.longs.LongIterator keys = stub.texParams.keySet().iterator();
+        while (keys.hasNext()) {
+            long key = keys.nextLong();
+            textures.add((int) (key >>> 32));
+            int pname = (int) (key & 0xFFFFFFFFL);
             if (pname != GL_TEXTURE_WRAP_S && pname != GL_TEXTURE_WRAP_T) {
                 continue;
             }
-            if (entry.getValue().intValue() == GL_REPEAT) {
+            int value = stub.texParams.get(key);
+            if (value == GL_REPEAT) {
                 repeat++;
-            } else if (entry.getValue().intValue() == GL_CLAMP_TO_EDGE) {
+            } else if (value == GL_CLAMP_TO_EDGE) {
                 clamp++;
             }
-        }
-        java.util.Set<Integer> textures = new java.util.HashSet<>();
-        for (Long key : stub.texParams.keySet()) {
-            textures.add(Integer.valueOf((int) (key.longValue() >>> 32)));
         }
         return "texture params: recorded=" + stub.texParams.size() + " textures=" + textures.size()
                 + " wrapRepeat=" + repeat + " wrapClamp=" + clamp
