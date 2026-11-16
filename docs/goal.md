@@ -17,17 +17,17 @@ Minecraft 1.12.2 / CleanroomMC 向けに、**有名modpackがエラー無く動�
 - **コードの健全性**: 巨大クラス（`VulkanTerrainGpuBackend`）を所有権ごとに分割し、置き換わった経路・効果の無い実験
   switch は削除する。挙動は CPU テストと leg で不変を確かめる。
 
-## 完成条件と現状（2026-11-06）
+## 完成条件と現状（2026-11-07）
 
 | # | 条件 | 閉じる証拠 | 現状 |
 |---|---|---|---|
-| 1 | **FPS**: AMD RX 6400 と Intel UHD 630 の双方で、hash固定の Celeritas 2.5.0-dev より p50・p95・p99 が全て高い | `scripts/gv-kpi.sh` の形式verdict（Supersymmetry 0.2.0.2・validation OFF・warm tick [400,600)・3対以上・全対同方向・負荷ゲート通過） | **中央値は両GPU全percentileで上回る**（r107）。全対条件は p99 の対ごとの揺れで未達 |
-| 2 | **有名modpack**: 選んだ有名packが world に入り、**validation 0** | 両GPUの実instance leg（`e2e` mode）、[modpacks.md](<modpacks.md>) に記録 | Supersymmetry・E2E-E 1.87.3 は達成。SkyFactory 4 から順に拡大中 |
+| 1 | **FPS**: AMD RX 6400 と Intel UHD 630 の双方で、hash固定の Celeritas 2.5.0-dev より p50・p95・p99 が全て高い | `scripts/gv-kpi.sh` の形式verdict（Supersymmetry 0.2.0.2・validation OFF・warm tick [400,600)・3対以上・全対同方向・負荷ゲート通過） | **`goalCondition=NOT_MET`**（r14 `r14kpi-amd`/`r14kpi-intel`、bloom 既定 on 時は AMD p50 1.099・p95 1.056・p99 1.113、Intel p50 1.204・p95 1.084・p99 1.080。r107/r13 は GTCEu bloom chain 15 pass を拒否していたため達成に数えない。0.2.2/現 main の再計測は未実施） |
+| 2 | **有名modpack**: 選んだ有名packが world に入り、**validation 0** | 両GPUの実instance leg（`e2e` mode）、[modpacks.md](<modpacks.md>) に記録 | 6 pack（SF4・ATM3・RLCraft・SevTech・PO3・Nomifactory CEu [r126、r14後の再撮影待ち]）が **verified**、Supersymmetry・E2E-E は **partial**（validation 0、ログ全文/同pose画像比較待ち） |
 | 3 | **native境界**: sky / terrain / entity / block entity / particle / hand / GUI / font / loading / settings が GL 互換層を逆呼出しせず描かれる | 出荷経路の census（`CELTIUM_GL_SURFACE*`・未route・program bind/拒否）が mod 由来だけ | 達成（census は mod 由来のみ） |
 | 4 | **画質**: loading / home / game / settings と QMAGNET's Test Map が参照と一致 | 同fixture・同poseの Celeritas 参照比較と機能別の陽性対照 | 両GPUで一致（loading は参照なし） |
-| 5 | **mod自前GLSL**: GTCEu bloom など mod の program を実行時に SPIR-V 化して native pass で描く | 該当 scene の参照比較 | opt-in で動作、既定は拒否・計数 |
+| 5 | **mod自前GLSL**: GTCEu bloom など mod の program を実行時に SPIR-V 化して native pass で描く | 該当 scene の参照比較 | **既定で native 実行**（r14 より `modPrograms` 既定 on、`-Dceltium.vulkan.modPrograms=false` で拒否に戻せる）。GTCEu bloom chain 16 pass が描画・validation 0・program 拒否 0、emissive composite 到達。**halo は未達**（bloom layer の terrain geometry 未生成） |
 | 6 | **影・shaderpack**: Demonica fork の別成果物（AGPL-3.0 addon jar）。本体は接続境界を壊さない | addon 側で両GPUの実画面 | 未着手（本体の優先は 1・2） |
-| 7 | **配布**: packaged JAR とテスト済み実装が一致し、導入手順・対応環境・既知の非対応が正確 | 配布jarと検証jarの SHA-256 一致、README の規則（[readme-rules.md](<readme-rules.md>)） | 0.2.0 配布済み。main の改善は未リリース |
+| 7 | **配布**: packaged JAR とテスト済み実装が一致し、導入手順・対応環境・既知の非対応が正確 | 配布jarと検証jarの SHA-256 一致、README の規則（[readme-rules.md](<readme-rules.md>)） | **0.2.2** 配布済み（2026-11-07）。現 main の再計測・配布自動化は未完 |
 
 描画を削って得た FPS、validation clean 単独、`exitCode=0` 単独は達成に数えない。1 GPU・1 scene の成功を他へ広げない。
 

@@ -108,7 +108,7 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
   比較していて**一度も一致せず**（descriptor は戻り値型を含む）、`glGetBooleanv(GL_COLOR_WRITEMASK)` が同一
   frame の `glGetFloatv` の `1111` に対して `0000`、`glGetTexParameteriv(GL_TEXTURE_MIN_FILTER)` が scene の
   設定した `GL_LINEAR` に対して `0` を返した。今は `descriptor.startsWith("(IJ)")`/`startsWith("(IIJ)")` で
-  専用ハンドラに入る。検証は `scripts/cpu-contract/TransformerRouteVerifierCheck` の phase 5（変換後の実 class の
+  専用ハンドラに入る。検証は `scripts/cpu-contract/TransformerRouteVerifierCheck.java` の phase 5（変換後の実 class の
   method body が専用 hint を呼ぶこと）と phase 6（stub を install して変換後の native を**実行**し、boolean/
   float/tex の答えを読む）。fixture は `attrib*` に `cmB=`（boolean 幅）と `textureFilter=`/
   `textureFilterExpected=` を併記し、checker が「同じ状態は全ての幅で同じ値」「設定した filter が返る」を主張する。
@@ -151,9 +151,9 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
   作り直すので、古い extent は以後の patch 境界と whole-texture 判定を誤らせる）。
   計器は `CELTIUM_DIRECT_SUPPLY` の `arm` と `full`、`pass skipped` の理由行 |
 
-⇒ 2026-10-29 時点の「`SEM_BEGIN` は記録のみ、`glVertex3f` は no-op」は**当時の事実**であり、現在は上の表の状態。
-legacy capture は既定offのまま: 受入は[plan.md](plan.md)のgateどおり（validation 0・device lost 0・AMD/Intelの
-world+menu leg）で、それまで既定を反転しない。頂点は取るが、**画面に出ることをGPUで確認していない**。
+⇒ 2026-10-29 時点の「`SEM_BEGIN` は記録のみ、`glVertex3f` は no-op」は**当時の事実**であり、2026-11-02 以降は**既定ON**
+（下の「現在地（2026-11-02、既定ON）」参照）。AMD RX 6400 と Intel UHD 630 の world+menu leg（`r13f`/`r13g`）で
+validation clean・device lost 0 を確認済みで、`-Dceltium.gless.legacyImmediate=false` で従来の記録のみ/no-op に戻せる。
 
 ## 参考実装と採用順位
 

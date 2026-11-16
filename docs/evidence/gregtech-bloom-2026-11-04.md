@@ -357,7 +357,7 @@ transition) reads the same stale field.
 Both existing calls `celtium$queuedForTargetUsesPublished(this.activeImmediateTarget)` (the immediate-only window and
 the terrain pass) ran before that field is assigned for the pass, so they asked about the previous pass's target.
 They now ask `targetRegistry.currentIdentity()`. Renderer `f4f1993d…`: glow-outline A/B leg `r45-glow` (the
-re-run recipe of glow-outline-2026-11-03.md) **verdict=PASS**, outline 2723 px (0.295%), control 28/7, noise 3.51%,
+re-run recipe of the 2026-11-03 glow-outline check, archived in git history) **verdict=PASS**, outline 2723 px (0.295%), control 28/7, noise 3.51%,
 validation 0; `r44-world-intel` (Intel UHD 630, world-accept) PASSED, validation 0, gpuRequirementMet=true.
 
 ## Round 10: libshaderc ships in the jar (2026-11-05, user decision)

@@ -129,8 +129,7 @@ HEI loaded, the item list, search bar and tooltips draw natively, and the run is
 with the picture gate's own verdict quoted. A leg that merely starts is not acceptance - and neither is one
 that never got the slot.
 
-**Measured 2026-10-12 (reference half first, candidate half below; owner gui-text, record
-`docs/history/2026-10-12-hei-acceptance.md`).**
+**Measured 2026-10-12 (reference half first, candidate half below; owner gui-text, archived 2026-10-12 HEI acceptance record removed from `docs/` on 2026-11-06 — git history only).**
 The reference says what the mod's screens should look like; the candidate half (further down) says what Celtium
 draws, and it is the candidate half that decides this row.
 Four reference legs were taken with upstream Celeritas `d12425eaaf184e79` (jar sha256
@@ -178,8 +177,8 @@ the last `CELTIUM_VERIFY` line, `via=fixture end`). Measured against the referen
   that screen: HEI's own search-box text is pixel-identical to the reference (0 / 675), and the item-count and
   hotbar regions match at `mean|d|=0.000`. Two candidate builds give the same numbers, so it is not a capture
   race. It is the user's dark-text complaint on a real mod screen, reported to the renderer owners rather than
-  fixed here (`docs/history/2026-10-12-hei-acceptance.md`, instrument
-  `scripts/cpu-contract/font-shadow-main-check.py`).
+  fixed here (archived 2026-10-12 HEI acceptance record removed from `docs/` on 2026-11-06 — git history only;
+  instrument `scripts/cpu-contract/font-shadow-main-check.py`).
 
 **At the historical 2026-10-12 build**, the row was **"HEI loads; the reference is established; the candidate's item list, icons, filter and screen
 transitions match it, and the tooltip text does not"** - the mod's own screens are accepted except for that
@@ -205,7 +204,7 @@ This section records the older terrain-only cohort. The 2026-10-13 **current HEI
 GUI evidence is above**; "no content mods" below applies only to that older cohort, not the new AMD/Intel
 HEI acceptance legs.
 
-Measured on the runs cited in `docs/plan.md` and `docs/history/scope-and-limits.md`; the mod set is what the harness puts in the
+Measured on the runs cited in `docs/plan.md` and the archived `scope-and-limits` record (removed from `docs/` on 2026-11-06; git history only); the mod set is what the harness puts in the
 run's own game directory, read from that directory and from the run log, not from the Prism instance:
 
 | Component | Version | Role | Verified |
@@ -256,7 +255,7 @@ Mods that draw through Minecraft's own entry points - `Tessellator`, `BufferBuil
 
 | Mod / caller | What it does | Status | Evidence |
 |---|---|---|---|
-| Vanilla renderers (entities, particles, sky, GUI, text) | The same entry points | Captured where a pipeline exists; refused with a reason and drawn by GL where not | per-format histogram and `CELTIUM_GROUP_BOUNDS` in the 2026-10-11 GL-less runs; GUI/HUD regions compared against the stored GL reference (`docs/history/scope-and-limits.md` §1) |
+| Vanilla renderers (entities, particles, sky, GUI, text) | The same entry points | Captured where a pipeline exists; refused with a reason and drawn by GL where not | per-format histogram and `CELTIUM_GROUP_BOUNDS` in the 2026-10-11 GL-less runs; GUI/HUD regions compared against the stored GL reference (archived `scope-and-limits` §1 in git history) |
 | Validation fixture (`org.soutalab.celtium.validation`) | Forge render event drawing `POSITION_COLOR` quads with `Tessellator`/`BufferBuilder`/`GlStateManager` | **Corrected:** it is the primary instrument now, not "not yet usable". Its batches are accepted and counted per format, and its presented-frame dumps are the picture evidence for every GL-less acceptance | `docs/plan.md` §0.114-§0.147; `celtium offer decisions: offers=5000 accepted=4892 glBodyCompleted=154` in a 2026-10-11 GL-less run |
 | ITEM-format callers (`RenderItem` path) | 28-byte `POSITION_TEX_COLOR` batches | **Corrected:** the layout is mapped to id 4 and accepted (`id4=3752/3752` in a 2026-10-11 GL-less run); a sprite-scale difference against the reference is open and is **not** the GUI model-view - all 1344 measured groups carry model-view scale `(16,-16,16)` | run `gs-item2`, jar `c42e3eebe6d0858f`; reported to the pipelines/texture owners |
 

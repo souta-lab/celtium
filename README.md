@@ -17,7 +17,7 @@
   <a href="#-requirements"><img alt="Java 25" src="https://img.shields.io/badge/Java-25-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white"></a>
 </p>
 <p align="center">
-  <a href="#-performance"><img alt="FPS vs Celeritas: +2.5% AMD, +6.4% Intel at p50" src="https://img.shields.io/badge/FPS%20vs%20Celeritas-%2B2.5%25%20AMD%20%C2%B7%20%2B6.4%25%20Intel-2A78D6?style=for-the-badge"></a>
+  <a href="#-performance"><img alt="FPS goal vs Celeritas: NOT MET (r14, bloom on)" src="https://img.shields.io/badge/FPS_goal-NOT_MET_(r14%2C_bloom_on)-D97706?style=for-the-badge"></a>
   <a href="#-requirements"><img alt="Tested on AMD and Intel" src="https://img.shields.io/badge/tested-AMD%20%C2%B7%20Intel-ED1C24?style=for-the-badge&logo=amd&logoColor=white"></a>
   <a href="#-known-issues"><img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-F59E0B?style=for-the-badge"></a>
   <a href="#-license-and-attribution"><img alt="License LGPL-3.0" src="https://img.shields.io/badge/license-LGPL--3.0-0F6CBD?style=for-the-badge"></a>
@@ -29,7 +29,7 @@
 ## 📑 Contents
 
 - [✨ Highlights](#-highlights)
-- [🚀 Performance](#-performance) — [📊 modpack FPS](#-modpack-fps-supersymmetry-0202-188-mods--current-main) · [⏳ historical](#-historical-011-alpha-on-the-small-acceptance-instance)
+- [🚀 Performance](#-performance) — [📊 modpack FPS](#-modpack-fps-supersymmetry-0202-188-mods--r14) · [⏳ historical](#-historical-011-alpha-on-the-small-acceptance-instance)
 - [🧩 Modpack compatibility](#-modpack-compatibility)
 - [📋 Requirements](#-requirements) · [📦 Install](#-install) · [🎯 Scope](#-scope) · [🚧 Known issues](#-known-issues)
 - [🔧 Building and testing](#-building-and-testing) · [📚 Documentation](#-documentation)
@@ -42,12 +42,15 @@ UI, texture and framebuffer semantics, and mods that call GL directly are served
 
 ## ✨ Highlights
 
-- **Faster than Celeritas in a real modpack.** In Supersymmetry 0.2.0.2 (188 mods), current `main` renders more FPS
-  than Celeritas 2.5.0-dev at the median and at p95 on both tested GPUs, and is at parity at p99
-  ([numbers](#-performance)).
-- **Runs well-known packs.** Enigmatica 2: Expert - Extended, All the Mods 3, Nomifactory CEu, RLCraft, SevTech: Ages,
-  SkyFactory 4 and Supersymmetry reach the world with **zero Vulkan validation errors** on AMD and Intel; the full log
-  review and picture-vs-Celeritas comparison per pack are in progress ([what verified means](docs/modpacks.md)) ([compatibility](#-modpack-compatibility)).
+- **Measured honestly against Celeritas in a real modpack.** In Supersymmetry 0.2.0.2 (188 mods), enabling mod shader
+  programs by default (r14, `1ae204dd`) draws GTCEu's 15-pass bloom chain natively with `goalCondition=NOT_MET`
+  (−9.0% FPS on AMD RX 6400 and −16.9% FPS on Intel UHD 630 at p50, pair median; [numbers](#-performance)); round 15
+  (`0.2.2`) timing re-measurement is pending.
+- **Runs well-known packs.** SkyFactory 4, All the Mods 3, RLCraft, SevTech: Ages, Project Ozone 3 and Nomifactory CEu
+  (r126, pre-r14 picture re-shoot pending) are **verified** with zero Vulkan validation errors, full log review and
+  same-pose Celeritas picture comparison on AMD and Intel; Supersymmetry and E2E-E (≈430 mods) reach the world with
+  zero validation errors (**partial**, full log/picture review pending) ([what verified means](docs/modpacks.md))
+  ([compatibility](#-modpack-compatibility)).
 - **No OpenGL context at all.** Window, swapchain, textures, framebuffers and post effects are Vulkan objects; the
   GL-less layer covers display lists, immediate mode, VBOs, FBOs, shader getters and legacy state for mods.
 - **Measured, not claimed.** Every number in this README comes from a recorded run with its build, GPU, scene and
@@ -59,32 +62,32 @@ All numbers are **FPS (higher is better)**: the median over paired runs of the f
 (world ticks 400–600). p50 is the typical frame; p95/p99 are the slowest 5% / 1% of frames, i.e. stutter.
 Celtium and the reference alternate pair by pair on the same machine, so drift cancels out.
 
-### 📊 Modpack FPS: Supersymmetry 0.2.0.2 (188 mods) — current `main`
+### 📊 Modpack FPS: Supersymmetry 0.2.0.2 (188 mods) — r14
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/modpack-supersymmetry-dark.svg">
-  <img alt="FPS of Celtium (main, r107) and Celeritas 2.5.0-dev at p50, p95 and p99 in Supersymmetry 0.2.0.2 on AMD RX 6400 and Intel UHD 630" src="docs/img/modpack-supersymmetry-light.svg">
+  <img alt="FPS of Celtium (r14, 1ae204dd, bloom on) and Celeritas 2.5.0-dev at p50, p95 and p99 in Supersymmetry 0.2.0.2 on AMD RX 6400 and Intel UHD 630" src="docs/img/modpack-supersymmetry-light.svg">
 </picture>
 
-| GPU | | Celtium | Celeritas 2.5.0-dev | Celtium vs Celeritas |
+| GPU | | Celtium | Celeritas 2.5.0-dev | Celtium vs Celeritas (pair median) |
 | --- | --- | --- | --- | --- |
-| AMD Radeon RX 6400 | p50 | **427 FPS** | 407 FPS | **+2.5%** |
-| | p95 | **227 FPS** | 214 FPS | **+7.0%** |
-| | p99 | 174 FPS | 179 FPS | +0.7% (pair median) |
-| Intel UHD Graphics 630 | p50 | **296 FPS** | 273 FPS | **+6.4%** |
-| | p95 | **167 FPS** | 159 FPS | **+3.1%** |
-| | p99 | 139 FPS | 138 FPS | +0.7% (pair median) |
+| AMD Radeon RX 6400 | p50 | 374 FPS | **411 FPS** | −9.0% |
+| | p95 | 208 FPS | **219 FPS** | −5.3% |
+| | p99 | 165 FPS | **182 FPS** | −10.2% |
+| Intel UHD Graphics 630 | p50 | 222 FPS | **267 FPS** | −16.9% |
+| | p95 | 138 FPS | **156 FPS** | −7.7% |
+| | p99 | 115 FPS | **134 FPS** | −7.4% |
 
-**Setup:** Supersymmetry 0.2.0.2 (GregTech CEu based, 188 mods) on a Cleanroom Relauncher instance, save `qmagnet`,
-pose `x=217.5 y=48 z=217.5 yaw=180 pitch=10`, render distance 12, GUI scale 3, 1280×720, vsync off, validation off.
-Build r107 (`5ff004c26`), 3 pairs × 240 s per GPU (runs `l27kpi-amd` / `l27kpi-intel`, 2026-11-06).
-The last column is the median of the per-pair ratios, so it can differ from the two FPS medians; a second AMD run
-(`l28kpi-amd`) measured +8.9% / +10.5% / +0.9%. The project goal, every pair faster at every percentile, is **not yet
-met**: one pair per GPU was slower at p99, which is within the pair-to-pair noise at that percentile.
-Evidence: [docs/evidence/animated-sprite-uploads-2026-11-05.md](<docs/evidence/animated-sprite-uploads-2026-11-05.md>).
-
-The 0.2.0 release (2026-11-04) measured on the same pack was still behind Celeritas (about 16% fewer FPS at p50);
-the gap was closed on `main` after the release.
+**Setup and verdict (`goalCondition=NOT_MET`):** Supersymmetry 0.2.0.2 (GregTech CEu based, 188 mods) on a Cleanroom
+Relauncher instance, KPI world scene (`qmagnet`, GUI scale 3, vsync off, validation off). Build r14 (`1ae204dd`) vs
+Celeritas 2.5.0-dev (`567dcf8a`), fixture `f15ba461`, 3 pairs × 240 s per GPU (runs `r14kpi-amd` / `r14kpi-intel`,
+2026-11-07). The table shows the median rep's FPS (`1000 / ms`) per arm, and the last column is the FPS change
+derived from the median of the per-pair ratios, so it can differ from the ratio of the two medians. Earlier `r107` /
+`r13` runs showed higher FPS only because `modPrograms` defaulted to off and skipped GTCEu's 15-pass bloom chain, which
+[docs/goal.md](<docs/goal.md>) excludes as dropped rendering. Round 15 (`0.2.2`, window-poll skip and chain-pair depth
+discard) has not yet been re-measured in a paired KPI run on an idle machine (pending).
+Evidence: [docs/evidence/mod-program-default-2026-11-07.md](<docs/evidence/mod-program-default-2026-11-07.md>),
+[docs/evidence/window-poll-and-chain-depth-2026-11-07.md](<docs/evidence/window-poll-and-chain-depth-2026-11-07.md>).
 
 ### ⏳ Historical: 0.1.1-alpha on the small acceptance instance
 
@@ -104,16 +107,21 @@ not comparable with the Supersymmetry numbers above.
 
 ## 🧩 Modpack compatibility
 
+"Verified" in [docs/modpacks.md](<docs/modpacks.md>) means all three on AMD RX 6400 and Intel UHD 630: (1) zero Vulkan
+validation messages, (2) `latest.log` and `debug.log` read in full, and (3) world picture compared against Celeritas
+2.5.0-dev at the same pose and seed.
+
 | Modpack | Mods | Result | Run |
 | --- | --- | --- | --- |
-| Supersymmetry 0.2.0.2 | 188 | performance KPI pack (above); validation-on legs pass | `l27kpi-*` |
-| Enigmatica 2: Expert - Extended 1.87.3 | ≈430 | **world reached, 0 validation errors, AMD and Intel**, also with Xaero's raw-framebuffer identity | `fx1-e2ee-amd`, `fx1-e2ee-intel`, `xr1-e2ee-xaero-amd` |
-| SkyFactory 4 4.2.4 | 198 | world reached, 0 Vulkan validation errors on AMD and Intel; **log and picture verification pending** | `sf6-amd`, `sf6-intel` |
-| All the Mods 3 6.1.1 | 250 | world reached, 0 Vulkan validation errors on AMD and Intel; **log and picture verification pending** | `atm1-amd`, `atm1-intel` |
-| RLCraft 2.9.3 | 165 | world reached, 0 Vulkan validation errors on AMD and Intel; **log and picture verification pending** (Bloodmoon removed: incompatible with Cleanroom 0.7.14 with any renderer) | `rl2-amd`, `rl3-intel` |
-| SevTech: Ages 3.2.3 | 247 | world reached, 0 Vulkan validation errors on AMD and Intel; **log and picture verification pending** | `st3-amd`, `st3-intel` |
-| Nomifactory CEu 1.7.7 | 149 | world reached, 0 Vulkan validation errors on AMD and Intel; **log and picture verification pending** | `nm1-amd`, `nm1-intel` |
-| Enigmatica 2: Expert 1.93a | 270 | passes on both GPUs | [evidence](<docs/evidence/e2e-cleanroom07-2026-10-26.md>) |
+| Supersymmetry 0.2.0.2 | 188 | **partial** — world reached, validation 0 on AMD and Intel; calibrated picture gate PASSED (`wl1-amd`/`wl1-intel`); full log review pending | `l27kpi-*`, `r14kpi-*` |
+| Enigmatica 2: Expert - Extended 1.87.3 | ≈430 | **partial** — world reached, validation 0 on AMD and Intel, also with Xaero's raw-FBO identity; picture gate PASSED (`fx1`); full log review and same-pose Celeritas picture pending | `fx1-e2ee-amd`, `fx1-e2ee-intel`, `xr1-e2ee-xaero-amd` |
+| SkyFactory 4 4.2.4 | 198 | **verified** — world reached, validation 0, full log review and same-pose Celeritas picture on AMD (0.68 / 0.03%) and Intel (0.86 / 0.07%) | `w-sf4-amd`, `w-sf4-intel`, `w-sf4-ref` |
+| All the Mods 3 6.1.1 | 250 | **verified** — world reached, validation 0, full log review and same-pose Celeritas picture on AMD (7.39 / 6.61%) and Intel (7.45 / 6.61%); upper-sky band residual (defect 10) tracked | `r125-atm3-amd`, `r126-atm3-intel`, `r125-atm3-ref` |
+| RLCraft 2.9.3 | 165 | **verified** — world reached, validation 0, full log review and same-pose Celeritas picture on AMD (7.04 / 6.39%, `r129-rl-amd` 6.76 / 5.87%) and Intel (6.95 / 6.02%); Bloodmoon removed (Cleanroom 0.7.14 incompatible); AMD fixture reports `FAILED_PRESENTED_IMAGE` from defect 6 (presented counter; picture present, validation 0) | `w-rlcraft-amd`, `w-rlcraft-intel`, `w-rlcraft-ref`, `r129-rl-amd` |
+| SevTech: Ages 3.2.3 | 247 | **verified** — world reached, validation 0, full log review and same-pose Celeritas picture on AMD (1.22 / 0.41%) and Intel (1.22 / 0.40%) | `w-sevtech-amd`, `w-sevtech-intel`, `w-sevtech-ref` |
+| Project Ozone 3 3.4.11F | 262 | **verified** — world reached, validation 0, full log review and same-pose Celeritas picture on AMD (5.46 / 1.04%) and Intel (5.17 / 1.19%) | `w-po3-amd`, `w-po3-intel`, `w-po3-ref` |
+| Nomifactory CEu 1.7.7 | 149 | **verified (pre-r14)** — world reached, validation 0, full log review and same-pose Celeritas picture at r126 on AMD (3.28 / 0.06%) and Intel (3.30 / 0.07%); **picture re-shoot pending** after r14 enabled mod shader programs by default | `w-nomi-amd`, `w-nomi-intel`, `w-nomi-ref` |
+| Enigmatica 2: Expert 1.93a | 270 | world reached on both GPUs (2026-11-05; superseded by E2E-E) | [evidence](<docs/evidence/e2e-cleanroom07-2026-10-26.md>) |
 
 E2E-E needs three pack-side substitutions for Cleanroom 0.7.14 (Fugue 0.25.5, CodeChickenLib 3.3.10, Trinity
 without its ICBM hook); none of them is a Celtium change. The full list of packs run, with versions, builds, runs and
@@ -142,9 +150,9 @@ Vulkan 1.2 alone is not a compatibility guarantee: features are chosen by device
 4. Use [Pulsar Lighting Engine](https://modrinth.com/mod/pulsar-lighting-engine), not Alfheim (unsupported).
 5. Start the game, enter a world, and check the GUI, menus, creative tabs and tooltips.
 
-Download: [Celtium 0.2.2](https://github.com/souta-lab/celtium/releases/tag/v0.2.2)
-(sha256 `bf1193b6ba21dc51cd36a5b013607dd58a9ef8bcbc516ca8f24b0c247e9cccee`). The performance numbers above are from
-`main`, which is newer than 0.2.0.
+Download: [Celtium 0.2.2](https://github.com/souta-lab/celtium/releases/tag/v0.2.2).
+The r14 performance numbers above predate round 15 (`0.2.2`); post-`0.2.2` paired KPI re-measurement on current `main`
+is pending.
 
 ## 🎯 Scope
 
@@ -157,8 +165,12 @@ Download: [Celtium 0.2.2](https://github.com/souta-lab/celtium/releases/tag/v0.2
 
 ## 🚧 Known issues
 
-- **Performance goal not yet met in every pair**: medians are ahead of Celeritas on both GPUs, but p99 is at parity
-  and one pair per GPU was slower. The largest remaining CPU cost is mod HUD text/GUI drawing.
+- **Performance goal not yet met (`goalCondition=NOT_MET` in r14)**: with mod shader programs enabled by default,
+  GTCEu's 15-pass bloom chain adds per-window overhead (~15 windows/frame), leaving p50/p95/p99 behind Celeritas on
+  both GPUs; a paired KPI re-measurement for `0.2.2` / current `main` is pending.
+- **Open rendering and fixture defects**: ATM3 upper-sky band (defect 10, Astral Sorcery skybox), GTCEu bloom halo
+  (bloom-layer terrain geometry is usually not built), menu-boundary batch drops (defect 5), and RLCraft AMD fixture
+  presented-frame counting (defect 6).
 - **Not implemented**: cube maps, 3D textures, MSAA, compute, blit, copyImage, parts of DSA, and stencil (ModularUI's
   `Stencil#reset` uses mask `0x400`).
 - **Xaero's Minimap radar entity icons** are not confirmed to draw.
@@ -191,7 +203,7 @@ README rules: [docs/readme-rules.md](<docs/readme-rules.md>). Working agreements
 
 - Current status and priorities: [docs/plan.md](<docs/plan.md>)
 - Measurements and scene evidence: [docs/evidence](<docs/evidence>)
-- Release notes: [0.2.0 (English)](<docs/releases/0.2.0-en.md>) · [0.2.0 (Japanese)](<docs/releases/0.2.0.md>)
+- Release notes: [0.2.2 (English)](<docs/releases/0.2.2-en.md>) · [0.2.2 (Japanese)](<docs/releases/0.2.2.md>) (earlier notes in `docs/releases/`)
 
 ## 📜 License and attribution
 

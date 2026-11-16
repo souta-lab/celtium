@@ -432,7 +432,7 @@ descriptor は戻り値型を含む（`(IJ)V`）ので**一度も一致しない
 
 **規約**: route の検証は (a) 変換後の実 class の method body が**専用の hint を呼んでいる**こと（`glGetZero` で
 ないこと）と、(b) その route を**実行して答えを読む**ことの両方で行う
-（`scripts/cpu-contract/TransformerRouteVerifierCheck` の phase 5/6）。descriptor の比較は戻り値型まで含めるか
+（`scripts/cpu-contract/TransformerRouteVerifierCheck.java` の phase 5/6）。descriptor の比較は戻り値型まで含めるか
 `startsWith` を使う。「ロードできた」「例外が出ない」「0 が返った」は route が生きている証拠ではない。
 陽性対照は route を旧実装に戻して phase 5/6 が FAIL すること（実測: `query natives routed=3/8`,
 `boolean=0111 float=1010 texFilter=0x0`）。

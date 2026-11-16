@@ -35,7 +35,17 @@ while true; do
 done
 trap 'rm -f "$lock"' EXIT
 
-export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk-amd64}"
+# build-1122/settings.gradle.kts requires JDK 25+ to run Gradle; check standard paths when JAVA_HOME is unset.
+if [ -z "${JAVA_HOME:-}" ]; then
+    if [ -d /usr/lib/jvm/java-25-openjdk-amd64 ]; then
+        JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64
+    elif [ -d "$HOME/.local/opt/jdk25" ]; then
+        JAVA_HOME="$HOME/.local/opt/jdk25"
+    else
+        JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64
+    fi
+fi
+export JAVA_HOME
 # A default has to be two arguments, not one string: `"${@:-a b}"` passes "a b" as a single task name and Gradle answers
 # "project 'packageJar ' not found".
 if [ "$#" -eq 0 ]; then

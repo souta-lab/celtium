@@ -1,24 +1,24 @@
 {
- "title": "Celtium (main, r107) vs Celeritas 2.5.0-dev — Supersymmetry 0.2.0.2 (188 mods), FPS",
- "note": "Median of 3 paired runs per GPU (l27kpi), warm ticks 400–600, 1280×720, vsync off, Cleanroom Relauncher. 2026-11-06.",
+ "title": "Celtium (r14, 1ae204dd, bloom on) vs Celeritas 2.5.0-dev — Supersymmetry 0.2.0.2 (188 mods), FPS",
+ "note": "Median of 3 paired runs per GPU (r14kpi, goalCondition=NOT_MET), warm ticks 400–600, guiScale 3, vsync off. 2026-11-07; 0.2.2 re-shoot pending.",
  "panels": [
   {
    "name": "AMD Radeon RX 6400 (FPS, higher is better)",
    "rows": [
     {
      "metric": "p50",
-     "celtium": 2.344,
-     "celeritas": 2.459
+     "celtium": 2.673,
+     "celeritas": 2.432
     },
     {
      "metric": "p95",
-     "celtium": 4.4,
-     "celeritas": 4.68
+     "celtium": 4.797,
+     "celeritas": 4.568
     },
     {
      "metric": "p99",
-     "celtium": 5.74,
-     "celeritas": 5.588
+     "celtium": 6.076,
+     "celeritas": 5.502
     }
    ]
   },
@@ -27,18 +27,18 @@
    "rows": [
     {
      "metric": "p50",
-     "celtium": 3.382,
-     "celeritas": 3.664
+     "celtium": 4.512,
+     "celeritas": 3.74
     },
     {
      "metric": "p95",
-     "celtium": 5.999,
-     "celeritas": 6.272
+     "celtium": 7.251,
+     "celeritas": 6.421
     },
     {
      "metric": "p99",
-     "celtium": 7.171,
-     "celeritas": 7.267
+     "celtium": 8.659,
+     "celeritas": 7.477
     }
    ]
   }
