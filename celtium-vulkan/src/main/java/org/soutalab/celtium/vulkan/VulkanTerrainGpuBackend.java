@@ -1792,6 +1792,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The terrain domain's counters (refactoring plan R2). */
     final TerrainStatistics terrainStatistics = new TerrainStatistics();
 
+    /**
+     * The frame-level terrain budget (item 328, V-03): per-frame vertex/draw caps with counted drops, and the
+     * adaptive rebuild allowance with last-good reuse, consulted by {@code recordRenderPass} and keyed to
+     * {@code frameId}. The counters it accumulates are reported by {@link BackendDiagnostics}.
+     */
+    final TerrainFrameBudget terrainBudget = new TerrainFrameBudget();
+    private int terrainBudgetPrints;
+    private long lastTerrainBudgetLineFrame = Long.MIN_VALUE;
+
     /** The model mesh table, its builder and the lending rule (refactoring plan R3a). */
     final ModelGeometryCache modelGeometry = new ModelGeometryCache();
 
@@ -6263,6 +6272,27 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (orphans != null) {
             for (Long identity : orphans) celtium$forgetDeletedFramebuffer(identity.longValue());
         }
+        // The generation discipline for the name itself (item 328, V-04): the stub's delete funnel reaches this
+        // hook on every route, so the records keyed by this texture name are forgotten here, where a recycled
+        // name cannot inherit its predecessor's state. The vanilla TextureUtil route has always run the
+        // reallocation forget below; a mod deleting a texture directly skipped it, and everything it covers -
+        // the mirror registry, the publication colour record, the atlas/lightmap names - survived with the
+        // dead name's state. The depth side was worse: the publication depth record's forget had no production
+        // caller at all, and the shared depth store item 314 added was never forgotten, so a same-extent
+        // recycled depth name silently inherited the previous texture's shared depth image.
+        this.publishedTextures.forgetDepthTexture(texture);
+        this.mainFramebufferColorNames.remove(texture);
+        if (texture != 0 && !this.gpuStalled && this.context != null && !this.context.celtium$isDeviceLost()) {
+            long depthKey = RenderTargetRegistry.rawColorTextureIdentity(texture);
+            GllessFrameTarget target = offTargetTarget();
+            if (target != null) {
+                target.forgetSharedDepth(depthKey);
+            }
+            if (this.frameTarget instanceof GllessFrameTarget mainTarget && mainTarget != target) {
+                mainTarget.forgetSharedDepth(depthKey);
+            }
+        }
+        onGlTextureReallocated(texture);
     }
 
     /**
@@ -15106,6 +15136,24 @@ this.frameBufferOpen = false;
 
     // ------------------------------------------------------------------ draw path
 
+    /**
+     * Prints the finished frame's budget line when that frame dropped a batch or reused a snapshot
+     * (item 328, V-03). Bounded like the other censuses: the first few eventful frames print in full, after
+     * which the cumulative account in {@link BackendDiagnostics} carries the numbers.
+     */
+    private void printFinishedTerrainBudgetWindow() {
+        if (!this.terrainBudget.finishedHadEvents()
+                || this.terrainBudget.finishedFrame() == this.lastTerrainBudgetLineFrame
+                || this.terrainBudgetPrints >= 12) {
+            return;
+        }
+        this.terrainBudgetPrints++;
+        this.lastTerrainBudgetLineFrame = this.terrainBudget.finishedFrame();
+        String line = "CELTIUM_TERRAIN_BUDGET " + this.terrainBudget.finishedSummary();
+        System.out.println("[Celtium] " + line);
+        record(line);
+    }
+
     private void recordRenderPass(MemoryStack stack,
                                   VulkanTerrainPipeline pipeline,
                                   ChunkRenderMatrices matrices,
@@ -15116,6 +15164,11 @@ this.frameBufferOpen = false;
                                   boolean useBlockFaceCulling,
                                   ChunkPrimitiveType primitiveType) {
         this.terrainStatistics.noteTerrainPasses();
+        // One budget window per presented frame, shared by every pass of the frame (item 328, V-03). Rolling
+        // it here also finishes the previous frame's window, whose line is printed below when it saw a drop
+        // or a reuse.
+        this.terrainBudget.beginFrame(this.frameId);
+        printFinishedTerrainBudgetWindow();
         // The slot lives past the prepare bracket: the end-of-pass timestamp is recorded after the draw loop.
         int timestampSlot = -1;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("recordPrepare");
@@ -15272,9 +15325,27 @@ this.frameBufferOpen = false;
                     if (cached == null || !cached.isValidFor(renderList.getSectionsWithGeometry(),
                             renderList.getSectionsWithGeometryCount(), occlusionCamera.intX, occlusionCamera.intY,
                             occlusionCamera.intZ)) {
-                        cached = BatchAssembler.createCachedBatch(region, storage, renderList, occlusionCamera, pass,
-                                useBlockFaceCulling, null, (commands, ignored, ignoredPass) -> null);
-                        storage.storeCachedMultiDrawBatch(cacheParams, cached);
+                        // The budget's rebuild discipline (item 328, V-03): rebuilds are rate-limited per
+                        // frame, the allowance adapting to their measured cost. A stored batch whose rebuild
+                        // is deferred is drawn as-is below - the storage deletes a stored batch the moment
+                        // any of its sections' meshes change, so a stored batch always references live arena
+                        // ranges and only its visibility selection can be stale. A region with no stored
+                        // batch has no last-good to reuse, so its first build always proceeds and is counted
+                        // separately rather than charged to the allowance.
+                        boolean hasStored = cached != null;
+                        if (!hasStored || this.terrainBudget.rebuildAllowed()) {
+                            long rebuildStarted = System.nanoTime();
+                            cached = BatchAssembler.createCachedBatch(region, storage, renderList, occlusionCamera, pass,
+                                    useBlockFaceCulling, null, (commands, ignored, ignoredPass) -> null);
+                            storage.storeCachedMultiDrawBatch(cacheParams, cached);
+                            if (hasStored) {
+                                this.terrainBudget.noteRebuild(System.nanoTime() - rebuildStarted);
+                            } else {
+                                this.terrainBudget.noteForcedFirstBuild(System.nanoTime() - rebuildStarted);
+                            }
+                        } else {
+                            this.terrainBudget.noteDeferredReuse();
+                        }
                     }
                 } finally {
                     org.soutalab.celtium.vulkan.FramePassTimings.end("recordBatch");
@@ -15288,6 +15359,16 @@ this.frameBufferOpen = false;
             }
 
             VulkanMultiDrawBatch batch = (VulkanMultiDrawBatch) cached.getBatch();
+
+            // The budget's draw cap (item 328, V-03): the batch is charged whole - vertices by the index
+            // shape's rule, draws by its command count - and dropped whole when it would cross either cap,
+            // the drop counted rather than silent. A partial charge would break the indirect path's
+            // one-call-per-batch shape, so the cap applies at batch granularity.
+            long chargeVertices = this.terrainBudget.verticesOf(batch, pass.isSorted());
+            if (!this.terrainBudget.tryConsumeDraw(chargeVertices, batch.size())) {
+                this.terrainBudget.noteDroppedBatch(chargeVertices, batch.size());
+                continue;
+            }
 
             if (this.readbackSlots < 8) {
                 // One slot per pass, so the readback covers the batch each pass actually draws rather than only the

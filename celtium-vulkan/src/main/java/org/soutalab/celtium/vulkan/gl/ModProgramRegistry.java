@@ -2,6 +2,7 @@ package org.soutalab.celtium.vulkan.gl;
 
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.List;
@@ -99,6 +100,13 @@ public final class ModProgramRegistry {
 
     private static final Int2ObjectOpenHashMap<String> SHADER_SOURCES = new Int2ObjectOpenHashMap<>();
     private static final Int2ObjectOpenHashMap<Program> PROGRAMS = new Int2ObjectOpenHashMap<>();
+    /**
+     * Shader names deleted while a live program still referenced them (item 328, V-04). GL defers such a
+     * deletion until detach, so the source is retained for the referencing program - but the name itself is
+     * spent: if it is attached afresh (recycled by the driver for a new shader object), the retained source
+     * must not be what a link compiles. A fresh {@code glShaderSource} for the name spends the marker.
+     */
+    private static final IntOpenHashSet DELETED_SHADERS = new IntOpenHashSet();
     /** Uniform writes to a location no linked program names: counted, so a lost value is visible. */
     private static int unmatchedUniformWrites;
     private static boolean reportedUnavailable;
@@ -118,12 +126,21 @@ public final class ModProgramRegistry {
     /** {@code glShaderSource}: the stage's text, concatenated as GL concatenates the strings. */
     public static void shaderSource(int shader, String source) {
         SHADER_SOURCES.put(shader, source);
+        // A fresh source is the current incarnation speaking for itself; any deletion marker the name
+        // carried is spent.
+        DELETED_SHADERS.remove(shader);
     }
 
     /** {@code glAttachShader}. */
     public static void attach(int program, int shader) {
         Program p = getOrCreateProgram(program);
         if (!p.shaders.contains(shader)) {
+            // A name deleted while attached elsewhere and now attached afresh is a new shader object: in GL
+            // it starts with no source, so its predecessor's retained source is dropped here rather than
+            // compiled by this program's link. A later glShaderSource re-arms the name.
+            if (DELETED_SHADERS.remove(shader)) {
+                SHADER_SOURCES.remove(shader);
+            }
             p.shaders.add(shader);
         }
     }
@@ -579,7 +596,42 @@ public final class ModProgramRegistry {
 
     /** {@code glDeleteProgram}. Shaders are kept: GL deletes them only when detached, and mods reuse them. */
     public static void deleteProgram(int id) {
-        PROGRAMS.remove(id);
+        Program removed = PROGRAMS.remove(id);
+        if (removed != null) {
+            // Sources whose deletion was deferred while this program referenced them are released once no
+            // live program references them any more (item 328, V-04).
+            for (int i = 0, n = removed.shaders.size(); i < n; i++) {
+                int shader = removed.shaders.getInt(i);
+                if (DELETED_SHADERS.contains(shader) && !referencedByLiveProgram(shader)) {
+                    DELETED_SHADERS.remove(shader);
+                    SHADER_SOURCES.remove(shader);
+                }
+            }
+        }
+    }
+
+    /**
+     * {@code glDeleteShader} (item 328, V-04). An unreferenced shader's source is forgotten with it, so the
+     * name's next owner starts empty as GL promises. A shader still referenced by a live program keeps its
+     * source for that program (GL defers the deletion until detach) and is marked deleted instead, which is
+     * what {@link #attach} and {@link #deleteProgram} consult.
+     */
+    public static void deleteShader(int id) {
+        if (referencedByLiveProgram(id)) {
+            DELETED_SHADERS.add(id);
+        } else {
+            DELETED_SHADERS.remove(id);
+            SHADER_SOURCES.remove(id);
+        }
+    }
+
+    private static boolean referencedByLiveProgram(int shader) {
+        for (Program p : PROGRAMS.values()) {
+            if (p.shaders.contains(shader)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static int unmatchedUniformWrites() {
@@ -590,6 +642,7 @@ public final class ModProgramRegistry {
     static void clear() {
         SHADER_SOURCES.clear();
         PROGRAMS.clear();
+        DELETED_SHADERS.clear();
         unmatchedUniformWrites = 0;
     }
 }

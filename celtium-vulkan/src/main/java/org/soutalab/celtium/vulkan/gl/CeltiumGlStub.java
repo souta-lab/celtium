@@ -6828,6 +6828,15 @@ public final class CeltiumGlStub implements FunctionProvider {
                 if ("glDeleteBuffers".equals(fn.name)) {
                     forgetBuffer(name);
                 }
+                if ("glDeleteProgram".equals(fn.name)) {
+                    // The registry's entry carries lowered SPIR-V and live uniform values; leaving it behind
+                    // handed both to whatever object recycled the name (item 328, V-04). Until now only the
+                    // forge122 transformer route reached the registry's delete.
+                    ModProgramRegistry.deleteProgram(name);
+                }
+                if ("glDeleteShader".equals(fn.name)) {
+                    ModProgramRegistry.deleteShader(name);
+                }
             }
         }
     }
@@ -6886,6 +6895,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                     + " callers=[" + callers + "]");
         }
         this.textures.delete(name);
+        // The "allocated without data" classification belongs to the deleted object (item 328, V-04): the
+        // TextureUtil route removed it in forgetTextureAllocation, the raw route left it standing, and a
+        // recycled name was then read as render-target idiom it never declared.
+        this.nullAllocatedNames.remove(name);
         if (!this.textureBindings.isEmpty()) {
             it.unimi.dsi.fastutil.longs.LongIterator bindings = this.textureBindings.keySet().iterator();
             while (bindings.hasNext()) {
@@ -6897,6 +6910,14 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Invalidates storage/content for replacement. Unlike deletion, allocation must preserve the current binding. */
     private void forgetTexture(int name) {
+        // The name's diagnostic and version records belong to the deleted object too (item 328, V-04): a
+        // recycled name must not inherit its predecessor's first-bind site in refusal messages, nor its
+        // parameter version - the version feeds the sampler re-confirm comparison in VulkanGlTexture, where a
+        // stale count could stand in for a confirmation the new object never had.
+        this.firstBindSites.remove(name);
+        if (name >= 0 && name < this.texParamVersions.length) {
+            this.texParamVersions[name] = 0;
+        }
         // Parameters are recorded per texture name, and TextureUtil.allocateTexture deletes a name and re-uploads to the
         // same one. Leaving the parameters behind handed the new object the old wrap/filter (measured: WRAP_S stayed
         // CLAMP_TO_EDGE where the default is REPEAT, #389), and the records are capped, so a long session of reloads would

@@ -506,6 +506,16 @@ final class BackendDiagnostics {
                 + " idleWaitTimeouts=" + b.submissionStatistics.idleWaitTimeouts() + " idleWaitRetries=" + b.submissionStatistics.idleWaitRetries()
                 + " terrainPasses=" + b.terrainStatistics.terrainPasses() + " immediateOnlyPasses=" + b.terrainStatistics.immediateOnlyPasses()
                 + " worldPassBoundaryFlushes=" + b.terrainStatistics.worldPassBoundaryFlushes()
+                // Item 328 (V-03): the terrain frame budget's cumulative account - what the per-frame caps
+                // dropped and what the rebuild discipline deferred or reused - so a leg that hit either says
+                // so in the summary the fixture reads, not only in the bounded stdout line.
+                + " terrainBudgetDroppedBatches=" + b.terrainBudget.totalDroppedBatches()
+                + " terrainBudgetDroppedDraws=" + b.terrainBudget.totalDroppedDraws()
+                + " terrainBudgetDroppedVertices=" + b.terrainBudget.totalDroppedVertices()
+                + " terrainBudgetRebuilds=" + b.terrainBudget.totalRebuilds()
+                + " terrainBudgetDeferred=" + b.terrainBudget.totalDeferredRebuilds()
+                + " terrainBudgetReused=" + b.terrainBudget.totalReusedSnapshots()
+                + " terrainBudgetForced=" + b.terrainBudget.totalForcedFirstBuilds()
                 // task-51's prerequisite: the upload path's queue drain and volume, on the line the fixture actually
                 // reports. VulkanContext.bootstrapQueueWaits is incremented by b.beginCommands()'s vkQueueWaitIdle and
                 // was printed only by CELTIUM_WAIT_CENSUS from VulkanContext.delete(), which appears in no run at all -
