@@ -20,13 +20,20 @@ import org.taumc.celeritas.impl.extensions.SpriteExtension;
 import org.taumc.celeritas.impl.extensions.TextureMapExtension;
 
 import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Mixin(TextureMap.class)
 public class TextureAtlasMixin implements TextureMapExtension {
     @Shadow
     @Final
     private Map<String, TextureAtlasSprite> mapUploadedSprites;
+
+    @Shadow
+    @Final
+    private List<TextureAtlasSprite> listAnimatedSprites;
 
     private QuadTree<TextureAtlasSprite> celeritas$quadTree;
 
@@ -108,9 +115,66 @@ public class TextureAtlasMixin implements TextureMapExtension {
     @ModifyExpressionValue(method = "updateAnimations", at = @At(value = "INVOKE", target = "Ljava/util/List;iterator()Ljava/util/Iterator;"))
     private Iterator<TextureAtlasSprite> getFilteredIterator(Iterator<TextureAtlasSprite> iterator) {
         if (CeleritasVintage.options().performance.animateOnlyVisibleTextures) {
-            return Iterators.filter(iterator, sprite -> ((SpriteExtension)sprite).celeritas$shouldUpdate());
+            return Iterators.filter(iterator, sprite -> {
+                celtium$animTotal++;
+                if (((SpriteExtension) sprite).celeritas$shouldUpdate()) {
+                    celtium$animTicked++;
+                    if (celtium$animTickedNames.size() < 24) {
+                        celtium$animTickedNames.add(sprite.getIconName());
+                    }
+                    return true;
+                }
+                return false;
+            });
         } else {
             return iterator;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // CELTIUM_ANIM_TICK: the tick-count instrument for the visible-only
+    // animation gate above (absorption item 330, 2026-11-17). The gate
+    // itself is the Celeritas-lineage mechanism - per-section animated
+    // sprites marked from the render lists, plus UV-query and item-render
+    // marking for entity/item sprites - and this counter is its ongoing
+    // proof: per window of calls it prints how many animated sprites the
+    // atlas holds against how many actually ticked. With the option off
+    // the two numbers are equal by construction (the RETURN half counts
+    // the whole list), so an A/B leg reads directly off the log.
+    // ------------------------------------------------------------------
+
+    @Unique
+    private static long celtium$animCalls;
+
+    @Unique
+    private static long celtium$animTotal;
+
+    @Unique
+    private static long celtium$animTicked;
+
+    @Unique
+    private static final Set<String> celtium$animTickedNames = new LinkedHashSet<>();
+
+    @Unique
+    private static final int CELTIUM_ANIM_TICK_WINDOW = 200;
+
+    @Inject(method = "updateAnimations", at = @At("RETURN"))
+    private void celtium$countAnimationTicks(CallbackInfo ci) {
+        boolean gated = CeleritasVintage.options().performance.animateOnlyVisibleTextures;
+        if (!gated) {
+            int all = this.listAnimatedSprites.size();
+            celtium$animTotal += all;
+            celtium$animTicked += all;
+        }
+        if (++celtium$animCalls % CELTIUM_ANIM_TICK_WINDOW == 0) {
+            System.out.println("[Celtium] CELTIUM_ANIM_TICK calls=" + CELTIUM_ANIM_TICK_WINDOW
+                    + " total=" + celtium$animTotal
+                    + " ticked=" + celtium$animTicked
+                    + " gated=" + gated
+                    + " tickedNames=" + celtium$animTickedNames);
+            celtium$animTotal = 0;
+            celtium$animTicked = 0;
+            celtium$animTickedNames.clear();
         }
     }
 }
