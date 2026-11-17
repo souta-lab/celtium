@@ -734,6 +734,308 @@ public final class RenderTargetRegistry {
         return entry == null ? Long.MIN_VALUE : entry[1];
     }
 
+    // ---------------------------------------------------------------- named targets (BH-14 extension)
+
+    /** Kind of a named render target; shadow depth targets carry a comparison sampler. */
+    public enum TargetKind {
+        COLOR(false, false),
+        DEPTH(true, false),
+        SHADOW_DEPTH(true, true);
+
+        private final boolean depth;
+        private final boolean comparisonSampler;
+
+        TargetKind(boolean depth, boolean comparisonSampler) {
+            this.depth = depth;
+            this.comparisonSampler = comparisonSampler;
+        }
+
+        public boolean isDepth() {
+            return this.depth;
+        }
+
+        public boolean usesComparisonSampler() {
+            return this.comparisonSampler;
+        }
+    }
+
+    /** Generic image format class for declared named targets. */
+    public enum TargetFormatClass {
+        RGBA8_UNORM(37, false),
+        RGBA16_FLOAT(97, false),
+        RGBA32_FLOAT(109, false),
+        R11G11B10_FLOAT(122, false),
+        DEPTH32_FLOAT(126, true),
+        DEPTH24_STENCIL8(129, true);
+
+        private final int vkFormat;
+        private final boolean depth;
+
+        TargetFormatClass(int vkFormat, boolean depth) {
+            this.vkFormat = vkFormat;
+            this.depth = depth;
+        }
+
+        public int vkFormat() {
+            return this.vkFormat;
+        }
+
+        public boolean isDepth() {
+            return this.depth;
+        }
+    }
+
+    /** Resolution rule for a named target: either proportional to the frame size or a fixed pixel extent. */
+    public record TargetSizing(boolean scaled, float scaleX, float scaleY, int fixedWidth, int fixedHeight) {
+        public TargetSizing {
+            if (scaled) {
+                if (!Float.isFinite(scaleX) || scaleX <= 0.0f || !Float.isFinite(scaleY) || scaleY <= 0.0f) {
+                    throw new IllegalArgumentException(
+                            "named target scale must be finite and > 0, got (" + scaleX + ", " + scaleY + ")");
+                }
+            } else if (fixedWidth <= 0 || fixedHeight <= 0) {
+                throw new IllegalArgumentException(
+                        "named target fixed extent must be > 0, got " + fixedWidth + "x" + fixedHeight);
+            }
+        }
+
+        public static TargetSizing scaled(float scale) {
+            return scaled(scale, scale);
+        }
+
+        public static TargetSizing scaled(float scaleX, float scaleY) {
+            return new TargetSizing(true, scaleX, scaleY, 0, 0);
+        }
+
+        public static TargetSizing fixed(int width, int height) {
+            return new TargetSizing(false, 1.0f, 1.0f, width, height);
+        }
+
+        public int resolveWidth(int frameWidth) {
+            if (!this.scaled) {
+                return this.fixedWidth;
+            }
+            if (frameWidth <= 0) {
+                throw new IllegalArgumentException("frameWidth must be > 0, got " + frameWidth);
+            }
+            return Math.max(1, Math.round(frameWidth * this.scaleX));
+        }
+
+        public int resolveHeight(int frameHeight) {
+            if (!this.scaled) {
+                return this.fixedHeight;
+            }
+            if (frameHeight <= 0) {
+                throw new IllegalArgumentException("frameHeight must be > 0, got " + frameHeight);
+            }
+            return Math.max(1, Math.round(frameHeight * this.scaleY));
+        }
+    }
+
+    /** How a named target's contents are initialized before its first write. */
+    public enum TargetClearPolicy {
+        CLEAR_EACH_FRAME,
+        CLEAR_ON_CREATE,
+        DONT_CARE
+    }
+
+    /** Declaration of an independent named render target. */
+    public record NamedTargetSpec(
+            String name,
+            TargetKind kind,
+            TargetFormatClass formatClass,
+            TargetSizing sizing,
+            TargetClearPolicy clearPolicy,
+            float clearRed,
+            float clearGreen,
+            float clearBlue,
+            float clearAlpha,
+            float clearDepth) {
+        public NamedTargetSpec {
+            if (name == null || name.isBlank()) {
+                throw new IllegalArgumentException("named target name must not be blank");
+            }
+            if (kind == null || formatClass == null || sizing == null || clearPolicy == null) {
+                throw new IllegalArgumentException("named target kind, formatClass, sizing and clearPolicy are required");
+            }
+            if (kind.isDepth() != formatClass.isDepth()) {
+                throw new IllegalArgumentException("named target kind " + kind
+                        + " is incompatible with format class " + formatClass);
+            }
+            if (!Float.isFinite(clearRed) || !Float.isFinite(clearGreen) || !Float.isFinite(clearBlue)
+                    || !Float.isFinite(clearAlpha) || !Float.isFinite(clearDepth)
+                    || clearDepth < 0.0f || clearDepth > 1.0f) {
+                throw new IllegalArgumentException("named target clear values must be finite and depth in [0, 1]");
+            }
+        }
+
+        public static NamedTargetSpec color(String name, TargetFormatClass formatClass, TargetSizing sizing,
+                                            TargetClearPolicy clearPolicy) {
+            return new NamedTargetSpec(name, TargetKind.COLOR, formatClass, sizing, clearPolicy,
+                    0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+        }
+
+        public static NamedTargetSpec color(String name, TargetFormatClass formatClass, TargetSizing sizing,
+                                            TargetClearPolicy clearPolicy, float red, float green, float blue,
+                                            float alpha) {
+            return new NamedTargetSpec(name, TargetKind.COLOR, formatClass, sizing, clearPolicy,
+                    red, green, blue, alpha, 1.0f);
+        }
+
+        public static NamedTargetSpec depth(String name, TargetFormatClass formatClass, TargetSizing sizing,
+                                            TargetClearPolicy clearPolicy) {
+            return new NamedTargetSpec(name, TargetKind.DEPTH, formatClass, sizing, clearPolicy,
+                    0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+        }
+
+        public static NamedTargetSpec shadowDepth(String name, TargetFormatClass formatClass, TargetSizing sizing,
+                                                  TargetClearPolicy clearPolicy) {
+            return new NamedTargetSpec(name, TargetKind.SHADOW_DEPTH, formatClass, sizing, clearPolicy,
+                    0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+        }
+    }
+
+    /** Allocation and layout bookkeeping for one declared named target. */
+    public static final class NamedTargetState {
+        private final NamedTargetSpec spec;
+        private long image;
+        private long view;
+        private long sampler;
+        private int width;
+        private int height;
+        private int layout;
+        private long generation;
+        private long clearedFrame = -1L;
+
+        NamedTargetState(NamedTargetSpec spec, long image, long view, long sampler, int width, int height,
+                         int layout, long generation) {
+            this.spec = spec;
+            this.image = image;
+            this.view = view;
+            this.sampler = sampler;
+            this.width = width;
+            this.height = height;
+            this.layout = layout;
+            this.generation = generation;
+        }
+
+        public NamedTargetSpec spec() {
+            return this.spec;
+        }
+
+        public long image() {
+            return this.image;
+        }
+
+        public long view() {
+            return this.view;
+        }
+
+        public long sampler() {
+            return this.sampler;
+        }
+
+        public int width() {
+            return this.width;
+        }
+
+        public int height() {
+            return this.height;
+        }
+
+        public int layout() {
+            return this.layout;
+        }
+
+        public long generation() {
+            return this.generation;
+        }
+
+        public long clearedFrame() {
+            return this.clearedFrame;
+        }
+    }
+
+    private final Map<String, NamedTargetSpec> namedTargetSpecs = new java.util.LinkedHashMap<>();
+    private final Map<String, NamedTargetState> namedTargetStates = new java.util.LinkedHashMap<>();
+
+    /** Declares an independent named target; duplicate names are rejected. */
+    public void declareNamedTarget(NamedTargetSpec spec) {
+        if (spec == null) {
+            throw new IllegalArgumentException("named target spec must not be null");
+        }
+        if (this.namedTargetSpecs.containsKey(spec.name())) {
+            throw new IllegalArgumentException("duplicate named target: " + spec.name());
+        }
+        this.namedTargetSpecs.put(spec.name(), spec);
+    }
+
+    public boolean hasNamedTarget(String name) {
+        return name != null && this.namedTargetSpecs.containsKey(name);
+    }
+
+    public NamedTargetSpec namedTarget(String name) {
+        return name == null ? null : this.namedTargetSpecs.get(name);
+    }
+
+    public java.util.Collection<NamedTargetSpec> namedTargets() {
+        return java.util.Collections.unmodifiableCollection(this.namedTargetSpecs.values());
+    }
+
+    public int namedTargetCount() {
+        return this.namedTargetSpecs.size();
+    }
+
+    /** Records an allocated Vulkan image/view/sampler for a declared named target. */
+    public NamedTargetState noteNamedTargetAllocated(String name, long image, long view, long sampler,
+                                                     int width, int height, int layout) {
+        NamedTargetSpec spec = this.namedTargetSpecs.get(name);
+        if (spec == null) {
+            throw new IllegalArgumentException("undeclared named target: " + name);
+        }
+        if (image == 0L || view == 0L || sampler == 0L || width <= 0 || height <= 0) {
+            throw new IllegalArgumentException("named target allocation requires non-zero handles and extent");
+        }
+        NamedTargetState existing = this.namedTargetStates.get(name);
+        long nextGeneration = existing == null ? 1L : existing.generation + 1L;
+        NamedTargetState state = new NamedTargetState(spec, image, view, sampler, width, height, layout, nextGeneration);
+        this.namedTargetStates.put(name, state);
+        return state;
+    }
+
+    public NamedTargetState namedTargetState(String name) {
+        return name == null ? null : this.namedTargetStates.get(name);
+    }
+
+    public void noteNamedTargetLayout(String name, int layout) {
+        NamedTargetState state = this.namedTargetStates.get(name);
+        if (state != null) {
+            state.layout = layout;
+        }
+    }
+
+    public void noteNamedTargetCleared(String name, long frameSerial) {
+        NamedTargetState state = this.namedTargetStates.get(name);
+        if (state != null) {
+            state.clearedFrame = frameSerial;
+        }
+    }
+
+    public void forgetNamedTargetAllocation(String name) {
+        if (name != null) {
+            this.namedTargetStates.remove(name);
+        }
+    }
+
+    public void clearNamedTargetAllocations() {
+        this.namedTargetStates.clear();
+    }
+
+    public void clearNamedTargets() {
+        this.namedTargetStates.clear();
+        this.namedTargetSpecs.clear();
+    }
+
     private static String hex(long value) {
         return value == Long.MIN_VALUE ? "unset" : "0x" + Long.toHexString(value);
     }

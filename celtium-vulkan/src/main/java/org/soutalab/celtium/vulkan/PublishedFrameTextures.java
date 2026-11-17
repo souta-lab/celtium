@@ -206,6 +206,98 @@ final class PublishedFrameTextures {
         return this.republished;
     }
 
+    /** Published descriptor view for a declared named render target. */
+    record NamedTargetTexture(
+            String name,
+            long image,
+            long view,
+            long sampler,
+            int width,
+            int height,
+            int vkFormat,
+            boolean depth,
+            boolean comparisonSampler,
+            int layout,
+            long generation) {
+    }
+
+    private final Map<String, NamedTargetTexture> namedPublished = new ConcurrentHashMap<>();
+
+    void putNamedPublished(NamedTargetTexture texture) {
+        if (texture == null || texture.name() == null || texture.name().isBlank()) {
+            throw new IllegalArgumentException("named published texture requires a valid name");
+        }
+        this.publishedVersion++;
+        this.namedPublished.put(texture.name(), texture);
+    }
+
+    NamedTargetTexture publishedNamed(String name) {
+        return name == null ? null : this.namedPublished.get(name);
+    }
+
+    void removeNamedPublished(String name) {
+        if (name == null) {
+            return;
+        }
+        if (this.namedPublished.remove(name) != null) {
+            this.publishedVersion++;
+        }
+    }
+
+    void clearNamedPublished() {
+        if (!this.namedPublished.isEmpty()) {
+            this.publishedVersion++;
+            this.namedPublished.clear();
+        }
+    }
+
+    int publishedNamedCount() {
+        return this.namedPublished.size();
+    }
+
+    java.util.Set<Map.Entry<String, NamedTargetTexture>> publishedNamedEntries() {
+        return this.namedPublished.entrySet();
+    }
+
+    /** Synchronizes allocated named targets from {@code registry} into this publication table. */
+    void syncNamedTargets(RenderTargetRegistry registry) {
+        if (registry == null || registry.namedTargetCount() == 0) {
+            clearNamedPublished();
+            return;
+        }
+        java.util.Iterator<String> existing = this.namedPublished.keySet().iterator();
+        while (existing.hasNext()) {
+            String name = existing.next();
+            if (registry.namedTargetState(name) == null) {
+                existing.remove();
+                this.publishedVersion++;
+            }
+        }
+        for (RenderTargetRegistry.NamedTargetSpec spec : registry.namedTargets()) {
+            RenderTargetRegistry.NamedTargetState state = registry.namedTargetState(spec.name());
+            if (state == null) {
+                continue;
+            }
+            NamedTargetTexture next = new NamedTargetTexture(
+                    spec.name(),
+                    state.image(),
+                    state.view(),
+                    state.sampler(),
+                    state.width(),
+                    state.height(),
+                    spec.formatClass().vkFormat(),
+                    spec.kind().isDepth(),
+                    spec.kind().usesComparisonSampler(),
+                    state.layout(),
+                    state.generation());
+            NamedTargetTexture prev = this.namedPublished.get(spec.name());
+            if (!next.equals(prev)) {
+                this.namedPublished.put(spec.name(), next);
+                this.publishedVersion++;
+            }
+        }
+    }
+
     /** {@return the publication counters in the order the verification line prints them}. */
     String summary() {
         return "publishedFrameTexturesCreated=" + this.created
