@@ -68,7 +68,13 @@ public class SodiumGameOptions implements OptionStorage<SodiumGameOptions> {
         public boolean useEntityCulling = true;
         public boolean useFogOcclusion = true;
         public boolean useBlockFaceCulling = true;
-        public boolean useCompactVertexFormat = false;
+        // Default ON (item 351, D23): the compact 24-byte vertex is the honest packing floor for the
+        // full terrain attribute set - every word in it is fully allocated (position 63/64 bits,
+        // colour 32, texcoord 36 across two sites, draw/light 32, rdhFactor 4x8-bit bilinear colour
+        // correction), so no smaller stride keeps every layout's semantics. The 32-byte vanilla-like
+        // format stays one option away for content that needs full float position/UV precision.
+        // Saved configs keep their stored value; this default governs fresh configurations only.
+        public boolean useCompactVertexFormat = true;
         @SerializedName("use_translucent_face_sorting_v2")
         public boolean useTranslucentFaceSorting = true;
         public boolean useRenderPassOptimization = true;
