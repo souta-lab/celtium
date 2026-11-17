@@ -32,11 +32,20 @@ final class PostChainBridge {
         if (!b.celtium$postChainAvailable() || passes == null || passes.isEmpty()) {
             return false;
         }
+        // The stage gate (item 327, Vulcanizator V-01/V-02): a switched-off or quarantined post chain answers
+        // false before any work - the caller's GL chain carries the frame, and a quarantined executor is never
+        // retried. The trip itself was recorded once by the gate; per-frame silence is correct here.
+        if (!StageGate.system().enabled(StageGate.Stage.POST_CHAIN)) {
+            return false;
+        }
         try {
             if (b.postChain == null) {
                 b.postChain = VulkanPostChain.create(b.context, b.frameTarget);
             }
         } catch (RuntimeException | LinkageError error) {
+            // A creation that failed on this context and target fails identically every frame: quarantine the
+            // stage instead of retrying the corpse on every subsequent frame (item 327).
+            StageGate.system().trip(StageGate.Stage.POST_CHAIN, error);
             b.record("post chain executor creation failed: " + b.describe(error));
             return false;
         }
@@ -115,7 +124,11 @@ final class PostChainBridge {
             // this recording's: the token names it, so any other submission's success (a terrain pass, the next
             // frame, a buffer that was reset or abandoned) cannot commit these targets. N05 item 1.
             b.postChain.commitPasses(chainRecording);
+            StageGate.system().noteSuccess(StageGate.Stage.POST_CHAIN);
         } catch (RuntimeException | LinkageError error) {
+            // Counted toward the stage's quarantine (item 327): three consecutive submission failures
+            // quarantine the post chain for the session; the GL chain carries those frames meanwhile.
+            StageGate.system().noteFailure(StageGate.Stage.POST_CHAIN, error);
             VulkanGlTexture.abandonLayoutRecording(b.commandBuffer,
                     "post chain submission failed: " + b.describe(error));
             b.record("post chain submission failed: " + b.describe(error));
