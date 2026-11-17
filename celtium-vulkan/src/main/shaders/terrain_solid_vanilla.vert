@@ -277,9 +277,8 @@ void main() {
     }
     vec4 lightColor = _sample_lightmap(u_LightTex, lightCoord);
     v_Color = _vert_color * lightColor;
-    if (dynamicLevel > 0.0) {
-        v_Color = vec4(0.0, dynamicLevel / 15.0, 0.0, 1.0); // TEMP item-326 heat probe
-    }
+    // TEMP item-326 dual probe: red = baked block-light coord, green = dynamic level.
+    v_Color = vec4(clamp(lightCoord.x / 240.0, 0.0, 1.0), clamp(dynamicLevel / 15.0, 0.0, 1.0), 0.0, 1.0);
     v_RdhFactor.rgb *= lightColor.rgb;
 
     int corner = gl_VertexIndex & 3;
