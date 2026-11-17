@@ -846,9 +846,10 @@ public final class CeltiumGllessHint {
             case 0x8824: // GL_MAX_DRAW_BUFFERS - the same ledger
                 value = 8;
                 break;
-            case 0x8B4D: // GL_MAX_GEOMETRY_TEXTURE_IMAGE_UNITS - geometry is not a lowered stage;
-                // the value is the stub's own answer, unchanged (the combined limit is 0x8F39, above)
-                value = 16;
+            case 0x8B4D: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS as LWJGL2 names it (GL20's constant
+                // is 35661) - the stub's TEXTURE_UNITS_COMBINED, as on 0x8F39 above; the geometry
+                // limit's own pname (0x8C29) stays unanswered, geometry not being a lowered stage
+                value = 64;
                 break;
             case 0x8869: // GL_MAX_VERTEX_ATTRIBS
                 value = 16;

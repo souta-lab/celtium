@@ -7029,8 +7029,12 @@ public final class CeltiumGlStub implements FunctionProvider {
      * allocates one descriptor per declared sampler, so no smaller native cap exists. Combined is the
      * per-stage count times the two stages whose sampler descriptors the pipeline binds (vertex and
      * fragment) - not the driver's 160, which prices per-stage binding points that this renderer's
-     * single shared unit table does not have. The bootstrap hint carries the same numbers as literals
-     * for the window before this provider is installed.
+     * single shared unit table does not have. Combined is answered on both pnames that carry the
+     * question: 0x8F39, and 0x8B4D - the value LWJGL2's GL20 assigns to
+     * GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS (35661, javap-verified on the game's 2.9.4 jar), which is
+     * the pname GLSM's sampler-cache sizing actually sends. The geometry limit's own pname (0x8C29)
+     * stays unanswered, geometry not being a lowered stage. The bootstrap hint carries the same
+     * numbers as literals for the window before this provider is installed.
      */
     static final int TEXTURE_UNITS_PER_STAGE = 32;
     static final int TEXTURE_UNITS_COMBINED = 64;
@@ -7380,8 +7384,14 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return TEXTURE_UNITS_PER_STAGE;
             case 0x8F39: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS - per-stage x the two stages served
                 return TEXTURE_UNITS_COMBINED;
-            case 0x8B4D: // GL_MAX_GEOMETRY_TEXTURE_IMAGE_UNITS - geometry is not a lowered stage; unchanged
-                return 16;
+            case 0x8B4D: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS as LWJGL2 names it: GL20's constant is
+                // 35661 (javap-verified on the game's 2.9.4 jar), so this is the pname the combined
+                // query actually arrives on - GLSM sizes its sampler-object cache from it, and the 16
+                // this case used to return (a geometry label the value never measured) sized that
+                // cache to 16 and overflowed it on the first deferred pass (leg 10, 2026-11-17). The
+                // geometry limit's own pname is 0x8C29, which stays unanswered (0): geometry is not
+                // a lowered stage. The value is the combined backing, as on 0x8F39 above.
+                return TEXTURE_UNITS_COMBINED;
             default:
                 return Integer.MIN_VALUE;
         }
