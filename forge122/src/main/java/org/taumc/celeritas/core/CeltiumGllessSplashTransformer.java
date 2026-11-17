@@ -3,6 +3,7 @@ package org.taumc.celeritas.core;
 import net.minecraft.launchwrapper.IClassTransformer;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
@@ -19,9 +20,20 @@ import org.objectweb.asm.Opcodes;
  * reports recommend {@code enabled=false} in {@code config/splash.properties} - this is that, one step earlier.
  * {@code getMaxTextureSize} is left alone: it has no {@code enabled} guard and the atlas needs its answer, which the
  * mixin still supplies.
+ * <p>
+ * The replaced {@code start()} keeps one instruction from the original body, under a guard: the shared-context
+ * hand-off, {@code shared.makeCurrent()}, executed only if a shared context exists. Another mod's required mixin
+ * injection can anchor on that call inside {@code start()} (measured 2026-11-17, leg 3 of the Demonica pairing in
+ * {@code SPLASH-DESIGN-2026-11-17.md}: with the call gone, the injection check failed 0/1 and
+ * {@code SplashProgress} would not load at all). Under this surface a shared context is never created - the field
+ * only the original body assigned stays null - so the guarded call never executes and the hand-off it marks does
+ * not happen; what the replacement preserves is the call site, in the conditional form the original's sequence
+ * implied (create, then make current). If a shared context somehow did exist, calling the real
+ * {@code makeCurrent()} would be the correct behaviour.
  */
 public class CeltiumGllessSplashTransformer implements IClassTransformer {
     private static final String TARGET = "net.minecraftforge.fml.client.SplashProgress";
+    private static final String TARGET_INTERNAL = "net/minecraftforge/fml/client/SplashProgress";
     private static final String CLIENT = "net.minecraftforge.fml.client.FMLClientHandler";
     private static final int ASM_API = 9 << 16;
 
@@ -72,10 +84,28 @@ public class CeltiumGllessSplashTransformer implements IClassTransformer {
                 }
                 // Replace the shared-GL-context thread with the native loading-screen lifetime.
                 target.visitCode();
+                if ("start".equals(methodName)) {
+                    // The original body hands the main thread a shared context here (create, then makeCurrent)
+                    // before the splash thread spawns. That context cannot exist on this surface, so the
+                    // hand-off is kept only as the guarded call: the field is null whenever this transformer
+                    // has run, the invoke never executes, and the injection point another mod anchors on
+                    // inside start() stays real (see the class javadoc). The merge point's frame is exact:
+                    // both paths arrive with an empty stack and this body uses no locals.
+                    Label noSharedContext = new Label();
+                    target.visitFieldInsn(Opcodes.GETSTATIC, TARGET_INTERNAL, "shared",
+                            "Lcom/cleanroommc/client/sdl/SharedGLContext;");
+                    target.visitJumpInsn(Opcodes.IFNULL, noSharedContext);
+                    target.visitFieldInsn(Opcodes.GETSTATIC, TARGET_INTERNAL, "shared",
+                            "Lcom/cleanroommc/client/sdl/SharedGLContext;");
+                    target.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                            "com/cleanroommc/client/sdl/SharedGLContext", "makeCurrent", "()V", false);
+                    target.visitLabel(noSharedContext);
+                    target.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+                }
                 target.visitMethodInsn(Opcodes.INVOKESTATIC,
                         "org/taumc/celeritas/core/CeltiumLoadingProgress", methodName, "()V", false);
                 target.visitInsn(Opcodes.RETURN);
-                target.visitMaxs(0, 0);
+                target.visitMaxs("start".equals(methodName) ? 1 : 0, 0);
                 target.visitEnd();
                 System.out.println("[Celtium] CELTIUM_GLSTUB stubbed SplashProgress." + methodName
                         + " (the splash needs a shared GL context a GLFW_NO_API window cannot provide)");
