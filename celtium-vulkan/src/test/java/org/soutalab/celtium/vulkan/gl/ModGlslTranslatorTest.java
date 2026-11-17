@@ -114,6 +114,28 @@ class ModGlslTranslatorTest {
         assertTrue(clash.failure().contains("uniform k"), clash.failure());
     }
 
+    @Test
+    void lowersFormatlessFragmentStorageImagesWithoutRenamingImageBuiltins() {
+        String fragment = "uniform image2D colorimg0;\nvoid main() { vec4 v = imageLoad(colorimg0, ivec2(0)); "
+                + "imageStore(colorimg0, ivec2(0), v); gl_FragColor = v; }";
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, fragment);
+        assertTrue(result.ok(), result.failure());
+        assertEquals(List.of(new ModGlslTranslator.ImageBinding("colorimg0", "image2D", 0)), result.images());
+        assertTrue(result.fragment().contains("layout(set = 0, binding = 0) uniform image2D colorimg0;"));
+        assertTrue(result.fragment().contains("imageLoad(colorimg0"));
+        assertTrue(result.fragment().contains("imageStore(colorimg0"));
+    }
+
+    @Test
+    void namesUnsupportedImageShapesAndStages() {
+        assertTrue(ModGlslTranslator.translate("uniform image2D vertexImage; void main(){gl_Position=vec4(0.0);}",
+                "void main(){gl_FragColor=vec4(1.0);}").failure().contains("vertexImage"));
+        assertTrue(ModGlslTranslator.translate(QUAD_VERTEX,
+                "uniform image3D volume; void main(){gl_FragColor=vec4(1.0);}").failure().contains("volume"));
+        assertTrue(ModGlslTranslator.translate(QUAD_VERTEX,
+                "uniform image2D images[2]; void main(){gl_FragColor=vec4(1.0);}").failure().contains("images"));
+    }
+
     /**
      * A mod's real shaders, when a directory of them is named by {@code CELTIUM_MOD_SHADER_DIR}: every {@code *.frag}
      * paired with the directory's single {@code *.vert} (the shape GTCEu's {@code Shaders} uses) must lower and

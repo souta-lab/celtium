@@ -154,6 +154,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int SEM_BLEND_EQUATION_SEPARATE = 67; // (rgbMode, alphaMode) -> the two equations
     private static final int SEM_LIST_BASE = 75;      // (base) -> the offset glCallLists adds to every name
     private static final int SEM_CALL_LISTS = 76;     // (count, type, address) -> execute a run of display lists
+    private static final int SEM_BIND_IMAGE_TEXTURE = 77; // full GL image-unit tuple -> native ledger
 
     /** One function-table row: name, return type, arg types, semantics. */
     private static final class Fn {
@@ -322,6 +323,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         // ---- texture bindings/images: size tracking feeds glGetTexLevelParameter (FML probes the max texture
         // size by uploading proxy images) and the pixel capture the Vulkan mirrors are built from.
         fn("glBindTexture", R_VOID, SEM_BIND_TEXTURE, A_INT, A_INT);
+        fn("glBindImageTexture", R_VOID, SEM_BIND_IMAGE_TEXTURE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
         fn("glActiveTexture", R_VOID, SEM_ACTIVE_TEXTURE, A_INT);
         fn("glTexImage1D", R_VOID, SEM_TEXIMAGE_PIXELS, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
         fn("glTexImage2D", R_VOID, SEM_TEXIMAGE_PIXELS, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
@@ -508,7 +510,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glTextureImage2DEXT",
                 "glTextureSubImage2D", "glNamedTexImage2DEXT", "glNamedCopyTexSubImage2DEXT", "glTextureStorage2D",
                 "glGenerateTextureMipmap", "glBindTextureUnit",
-                "glBindImageTexture", "glTexBuffer", "glTexBufferRange",
+                "glTexBuffer", "glTexBufferRange",
                 "glUniformBlockBinding",
                 "glUseProgramStages", "glActiveShaderProgram", "glProgramUniform1i", "glProgramUniform1f",
                 "glProgramUniform2f", "glProgramUniform3f", "glProgramUniform4f", "glProgramUniform1iv",
@@ -5786,6 +5788,11 @@ public final class CeltiumGlStub implements FunctionProvider {
                 else this.textureBindings.put(texBindKey((int) a0), (int) a1);
                 noteBindSite((int) a1);
                 return 0L;
+            case SEM_BIND_IMAGE_TEXTURE:
+                org.soutalab.celtium.vulkan.NativeImageBindings.current().bind((int) c[0], (int) c[1], (int) c[2],
+                        c[3] != 0L, (int) c[4], (int) c[5], (int) c[6]);
+                noteImageBind((int) c[0], (int) c[1]);
+                return 0L;
             case SEM_ACTIVE_TEXTURE:
                 // The unit index, not the raw enum: the getter adds the GL_TEXTURE0 base back, and a stored enum made
                 // every save/restore round trip add another base (measured as the 0x84C0 ladder in the game's own
@@ -6814,6 +6821,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private void deleteTexture(int name) {
+        org.soutalab.celtium.vulkan.NativeImageBindings.current().delete(name);
         if (name != 0) {
             Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
@@ -6958,9 +6966,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 value = GlContextTerms.versionString();
                 break;
             case 0x1F03: // GL_EXTENSIONS
-                // Empty on purpose, and indexed extensions answer NULL: this renderer interprets no extension, so it
-                // names none. Claiming an extension whose entry points are no-ops is the same defect as claiming 4.6.
-                value = "";
+                // The one named extension is backed by the native image binding and storage-image pipeline.
+                value = "GL_ARB_shader_image_load_store";
+                noteExtensionAnswer("lwjgl2", value, 1);
                 break;
             case 0x8B8C: // GL_SHADING_LANGUAGE_VERSION
                 // Decided separately from GL_VERSION and by the same rule: the shaders this renderer actually takes are
@@ -6977,8 +6985,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private long stringIndexed(int pname, int index) {
-        // Only GL_EXTENSIONS answers by index - empty list, so anything beyond 0 is NULL.
-        return 0L;
+        return pname == 0x1F03 && index == 0 ? intern("GL_ARB_shader_image_load_store") : 0L;
     }
 
     private long intern(String ascii) {
@@ -7007,6 +7014,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     static final int TEXTURE_UNITS_PER_STAGE = 32;
     static final int TEXTURE_UNITS_COMBINED = 64;
+    /** The native image binding ledger and descriptor model both have eight per-program image slots. */
+    public static final int IMAGE_UNITS_PER_PROGRAM = org.soutalab.celtium.vulkan.NativeImageBindings.IMAGE_UNITS_PER_PROGRAM;
 
     /** Pnames whose answers {@link #noteTextureUnitAnswer} reports once: the texture-unit limit family. */
     private static final java.util.Set<Integer> TEXUNIT_ANSWER_LOGGED =
@@ -7031,6 +7040,25 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** Image-unit query census: one line for the sole pname, regardless of scalar or array query surface. */
+    private static final java.util.Set<Integer> IMGUNIT_ANSWER_LOGGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Image bind census: at most 32 distinct (unit, texture) first sightings for the life of this JVM. */
+    private static final java.util.Set<String> IMAGE_BINDS_LOGGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final java.util.Set<String> EXT_ANSWER_LOGGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    public static void noteExtensionAnswer(String surface, String extensions, int count) {
+        if (EXT_ANSWER_LOGGED.add(surface))
+            System.out.println("[Celtium] CELTIUM_EXT_ANSWER surface=" + surface + " extensions=" + extensions + " count=" + count);
+    }
+    public static void noteImageUnitAnswer(int pname, int value) {
+        if (pname == 0x8F38 && IMGUNIT_ANSWER_LOGGED.add(Integer.valueOf(pname)))
+            System.out.println("[Celtium] CELTIUM_IMGUNIT_ANSWER pname=0x8f38 value=" + value);
+    }
+    private static void noteImageBind(int unit, int texture) {
+        String key = unit + ":" + texture;
+        if (IMAGE_BINDS_LOGGED.size() < 32 && IMAGE_BINDS_LOGGED.add(key))
+            System.out.println("[Celtium] CELTIUM_IMAGE_BIND unit=" + unit + " texture=" + texture);
+    }
+
     /**
      * {@return the stub's answer to {@code glGetInteger(pname)} for the tracked scalar parameters}, or
      * {@link Integer#MIN_VALUE} when the pname is array-valued or untracked - the same values {@link #getInts} writes,
@@ -7045,6 +7073,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         int value = stub.getIntegerValue(pname);
         noteTextureUnitAnswer(pname, value);
+        noteImageUnitAnswer(pname, value);
         return value;
     }
 
@@ -7317,7 +7346,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return mask >= 0 ? mask : Integer.MIN_VALUE;
             }
             case 0x821D: // GL_NUM_EXTENSIONS
-                return 0;
+                noteExtensionAnswer("lwjgl2", "GL_ARB_shader_image_load_store", 1);
+                return 1;
+            case 0x8F38: // GL_MAX_IMAGE_UNITS - the native image binding ledger size
+                return IMAGE_UNITS_PER_PROGRAM;
             case 0x84FF: // GL_MAX_TEXTURE_MAX_ANISOTROPY - the sampler path does not filter anisotropically
                 return 1;
             case 0x8872: // GL_MAX_TEXTURE_IMAGE_UNITS - the per-stage count the binding ledger backs
@@ -7387,6 +7419,9 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x8872: // GL_MAX_TEXTURE_IMAGE_UNITS - the per-stage count the binding ledger backs
                 value = TEXTURE_UNITS_PER_STAGE;
                 break;
+            case 0x8F38: // GL_MAX_IMAGE_UNITS - the native image binding ledger size
+                value = IMAGE_UNITS_PER_PROGRAM;
+                break;
             case 0x0B33: // GL_LIST_INDEX - the list glNewList opened, 0 when none is open
                 // This is the answer the model capture reads to decide whether a quad belongs to a list. It asked the
                 // driver and got 0, refused the quad with `reason=unknown-list`, and nothing drew the model - so the
@@ -7404,6 +7439,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 }
         }
         noteTextureUnitAnswer(pname, value);
+        noteImageUnitAnswer(pname, value);
         memPutInt(out, value);
     }
 

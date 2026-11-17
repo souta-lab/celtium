@@ -41,18 +41,21 @@ public final class VulkanModProgramPipeline {
         public final String label;
         /** The images the pass samples, for the mid-frame readback instrument only. */
         public final VulkanGlTexture[] inputs;
+        /** Storage images whose layouts are transitioned around the fragment draw. */
+        public final VulkanGlTexture[] images;
 
         Draw(VulkanModProgramPipeline pipeline, ByteBuffer uniforms, long samplerSet, String label,
-             VulkanGlTexture[] inputs) {
+             VulkanGlTexture[] inputs, VulkanGlTexture[] images) {
             this.pipeline = pipeline;
             this.uniforms = uniforms;
             this.samplerSet = samplerSet;
             this.label = label;
             this.inputs = inputs;
+            this.images = images;
         }
 
         public void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, long[] bindCache) {
-            this.pipeline.draw(commandBuffer, mesh, this.uniforms, this.samplerSet, bindCache);
+            this.pipeline.draw(commandBuffer, mesh, this.uniforms, this.samplerSet, this.images, bindCache);
         }
     }
 
@@ -60,6 +63,8 @@ public final class VulkanModProgramPipeline {
     private final List<ModGlslTranslator.Attribute> attributes;
     private final List<ModGlslTranslator.SamplerBinding> samplers;
     private final int samplerCount;
+    private final List<ModGlslTranslator.ImageBinding> images;
+    private final int imageCount;
     private final int pushBytes;
     /** Whether the pass blends (its render state as built); the readback instrument looks for the blend-off copy. */
     boolean blends;
@@ -72,11 +77,14 @@ public final class VulkanModProgramPipeline {
     private static final int MAX_SETS = 64;
 
     private VulkanModProgramPipeline(VulkanContext context, List<ModGlslTranslator.Attribute> attributes,
-                                     List<ModGlslTranslator.SamplerBinding> samplers, int pushBytes) {
+                                     List<ModGlslTranslator.SamplerBinding> samplers,
+                                     List<ModGlslTranslator.ImageBinding> images, int pushBytes) {
         this.context = context;
         this.attributes = attributes;
         this.samplers = samplers;
         this.samplerCount = samplers.size();
+        this.images = images;
+        this.imageCount = images.size();
         this.pushBytes = pushBytes;
     }
 
@@ -112,7 +120,11 @@ public final class VulkanModProgramPipeline {
                                                   int formatId, VulkanImmediateTexturePipeline like) {
         ModGlslTranslator.Result lowered = program.lowered();
         VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, lowered.attributes(), lowered.samplers(),
-                lowered.uniformBlockSize());
+                lowered.images(), lowered.uniformBlockSize());
+        if (!lowered.images().isEmpty() && !context.celtium$storageImagesWithoutFormat()) {
+            throw new IllegalStateException("storage images without format qualifiers are not supported by this device "
+                    + "(shaderStorageImageRead/WriteWithoutFormat=false)");
+        }
         try {
             built.createLayouts();
             built.createPipeline(program.vertexSpirv(), program.fragmentSpirv(), formatId,
@@ -151,7 +163,7 @@ public final class VulkanModProgramPipeline {
             bindings.add(new ModGlslTranslator.SamplerBinding("input" + i, "sampler2D", i));
         }
         VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, attrs,
-                java.util.Collections.unmodifiableList(bindings), Math.max(0, pushBytes));
+                java.util.Collections.unmodifiableList(bindings), List.of(), Math.max(0, pushBytes));
         try {
             built.createLayouts();
             built.createPipeline(vertexSpirv, fragmentSpirv, VulkanImmediateFormats.POSITION_TEX, renderPass, cull,
@@ -166,16 +178,26 @@ public final class VulkanModProgramPipeline {
 
     /** Creates a prepared draw bound to this pipeline. */
     public Draw createDraw(ByteBuffer uniforms, long samplerSet, String label, VulkanGlTexture[] inputs) {
-        return new Draw(this, uniforms, samplerSet, label, inputs);
+        return new Draw(this, uniforms, samplerSet, label, inputs, new VulkanGlTexture[0]);
+    }
+
+    public Draw createDraw(ByteBuffer uniforms, long descriptorSet, String label, VulkanGlTexture[] inputs,
+                           VulkanGlTexture[] images) {
+        return new Draw(this, uniforms, descriptorSet, label, inputs, images);
     }
 
     private void createLayouts() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer handle = stack.mallocLong(1);
-            VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(this.samplerCount, stack);
+            VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(this.samplerCount + this.imageCount, stack);
             for (int i = 0; i < this.samplerCount; i++) {
                 bindings.get(i).binding(i).descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                         .descriptorCount(1).stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT);
+            }
+            for (int i = 0; i < this.imageCount; i++) {
+                bindings.get(this.samplerCount + i).binding(this.samplerCount + i)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE).descriptorCount(1)
+                        .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT);
             }
             VkDescriptorSetLayoutCreateInfo setInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack).sType$Default()
                     .pBindings(bindings);
@@ -195,9 +217,14 @@ public final class VulkanModProgramPipeline {
                     "vkCreatePipelineLayout(mod program)");
             this.pipelineLayout = handle.get(0);
 
-            if (this.samplerCount > 0) {
-                VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(1, stack);
-                sizes.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(MAX_SETS * this.samplerCount);
+            if (this.samplerCount + this.imageCount > 0) {
+                VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc((this.samplerCount > 0 ? 1 : 0)
+                        + (this.imageCount > 0 ? 1 : 0), stack);
+                int sizeIndex = 0;
+                if (this.samplerCount > 0) sizes.get(sizeIndex++).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                        .descriptorCount(MAX_SETS * this.samplerCount);
+                if (this.imageCount > 0) sizes.get(sizeIndex).type(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                        .descriptorCount(MAX_SETS * this.imageCount);
                 VkDescriptorPoolCreateInfo poolInfo = VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
                         .maxSets(MAX_SETS).pPoolSizes(sizes);
                 check(vkCreateDescriptorPool(this.context.device(), poolInfo, null, handle),
@@ -314,9 +341,12 @@ public final class VulkanModProgramPipeline {
      * exhausted, which the caller refuses as a missing draw.
      */
     public long samplerSet(VulkanGlTexture[] textures) {
-        if (this.samplerCount == 0) {
-            return 0L;
-        }
+        return samplersAndImages(textures, new VulkanGlTexture[0]);
+    }
+
+    /** Builds the one descriptor set from sampler bindings followed by storage-image bindings. */
+    public long samplersAndImages(VulkanGlTexture[] textures, VulkanGlTexture[] imageTextures) {
+        if (this.samplerCount + this.imageCount == 0) return 0L;
         StringBuilder key = new StringBuilder();
         long[] views = new long[this.samplerCount];
         long[] samplers = new long[this.samplerCount];
@@ -327,7 +357,12 @@ public final class VulkanModProgramPipeline {
             samplers[i] = textures[i].sampler();
             layouts[i] = textures[i].samplingLayout();
         }
-        return allocateOrReuseSamplerSet(key.toString(), views, samplers, layouts);
+        long[] imageViews = new long[this.imageCount];
+        for (int i = 0; i < this.imageCount; i++) {
+            key.append("img:").append(imageTextures[i].key()).append(',');
+            imageViews[i] = imageTextures[i].view();
+        }
+        return allocateOrReuseDescriptorSet(key.toString(), views, samplers, layouts, imageViews);
     }
 
     /** Allocates or reuses a descriptor set binding explicit image views, samplers and layouts. */
@@ -340,10 +375,11 @@ public final class VulkanModProgramPipeline {
             key.append(views[i]).append(':').append(samplers[i]).append(':').append(layouts[i])
                     .append(':').append(generations[i]).append(',');
         }
-        return allocateOrReuseSamplerSet(key.toString(), views, samplers, layouts);
+        return allocateOrReuseDescriptorSet(key.toString(), views, samplers, layouts, new long[0]);
     }
 
-    private long allocateOrReuseSamplerSet(String key, long[] views, long[] samplers, int[] layouts) {
+    private long allocateOrReuseDescriptorSet(String key, long[] views, long[] samplers, int[] layouts,
+                                              long[] imageViews) {
         Long cached = this.setsByTextures.get(key);
         if (cached != null) {
             return cached.longValue();
@@ -359,13 +395,20 @@ public final class VulkanModProgramPipeline {
                 return 0L;
             }
             long set = handle.get(0);
-            VkDescriptorImageInfo.Buffer images = VkDescriptorImageInfo.calloc(this.samplerCount, stack);
-            VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(this.samplerCount, stack);
+            VkDescriptorImageInfo.Buffer imageInfos = VkDescriptorImageInfo.calloc(this.samplerCount + this.imageCount, stack);
+            VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(this.samplerCount + this.imageCount, stack);
             for (int i = 0; i < this.samplerCount; i++) {
-                images.get(i).imageLayout(layouts[i]).imageView(views[i]).sampler(samplers[i]);
+                imageInfos.get(i).imageLayout(layouts[i]).imageView(views[i]).sampler(samplers[i]);
                 writes.get(i).sType$Default().dstSet(set).dstBinding(i)
                         .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(1)
-                        .pImageInfo(VkDescriptorImageInfo.create(images.address(i), 1));
+                        .pImageInfo(VkDescriptorImageInfo.create(imageInfos.address(i), 1));
+            }
+            for (int i = 0; i < this.imageCount; i++) {
+                int index = this.samplerCount + i;
+                imageInfos.get(index).imageLayout(VK_IMAGE_LAYOUT_GENERAL).imageView(imageViews[i]).sampler(VK_NULL_HANDLE);
+                writes.get(index).sType$Default().dstSet(set).dstBinding(index)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE).descriptorCount(1)
+                        .pImageInfo(VkDescriptorImageInfo.create(imageInfos.address(index), 1));
             }
             vkUpdateDescriptorSets(this.context.device(), writes, null);
             this.setsByTextures.put(key, Long.valueOf(set));
@@ -434,9 +477,14 @@ public final class VulkanModProgramPipeline {
     }
 
     void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer uniforms, long samplerSet,
-              long[] bindCache) {
+              VulkanGlTexture[] images, long[] bindCache) {
         if (this.pipeline == VK_NULL_HANDLE || mesh == null || mesh.isEmpty()) {
             return;
+        }
+        // A descriptor may only name GENERAL once it has been transitioned there in this command buffer. Keep this
+        // before pipeline/set binding so the bound descriptor and its declared layout agree from first use.
+        if (!SKIP_DRAW_CALL) {
+            for (VulkanGlTexture image : images) image.ensureGeneralLayout(commandBuffer);
         }
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
         // The shared caches describe the immediate variants' layouts: after this pipeline they are stale. The next
@@ -463,6 +511,7 @@ public final class VulkanModProgramPipeline {
             return;
         }
         mesh.bindAndDraw(commandBuffer, bindCache);
+        for (VulkanGlTexture image : images) image.ensureSampledLayout(commandBuffer);
     }
 
     private static final boolean FORCE_ADDITIVE_OPAQUE = Boolean.getBoolean("celtium.vulkan.modProgramAdditive");

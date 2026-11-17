@@ -43,12 +43,15 @@ public final class ModGlslTranslator {
     /** A sampler uniform and the binding it was given. */
     public record SamplerBinding(String name, String type, int binding) { }
 
+    /** A fragment storage image and the descriptor binding assigned after all combined samplers. */
+    public record ImageBinding(String name, String type, int binding) { }
+
     /** A vertex input and the location it was given. */
     public record Attribute(String name, String type, int location) { }
 
     /** The lowered program, or why it could not be lowered. */
     public record Result(String vertex, String fragment, List<Attribute> attributes, List<UniformMember> uniforms,
-                         int uniformBlockSize, List<SamplerBinding> samplers, List<String> varyings,
+                         int uniformBlockSize, List<SamplerBinding> samplers, List<ImageBinding> images, List<String> varyings,
                          String failure) {
         public boolean ok() {
             return this.failure == null;
@@ -64,6 +67,8 @@ public final class ModGlslTranslator {
             "(?<![\\w.])(attribute|varying|uniform)\\s+(?:(?:lowp|mediump|highp)\\s+)?(\\w+)\\s+([^;{}()]+);");
     private static final Pattern DECLARATOR = Pattern.compile("^\\s*(\\w+)\\s*(?:\\[\\s*(\\d+)\\s*\\])?\\s*(?:=.*)?$");
     private static final Pattern MAIN = Pattern.compile("\\bvoid\\s+main\\s*\\(\\s*(?:void)?\\s*\\)");
+    private static final Pattern LAID_OUT_IMAGE = Pattern.compile(
+            "layout\\s*\\(([^)]*)\\)\\s*uniform\\s+(?:[iu]?image\\w+)\\s+(\\w+)");
 
     private ModGlslTranslator() {
     }
@@ -78,7 +83,7 @@ public final class ModGlslTranslator {
         try {
             return translateOrThrow(vertexSource, fragmentSource);
         } catch (IllegalArgumentException outside) {
-            return new Result(null, null, List.of(), List.of(), 0, List.of(), List.of(), outside.getMessage());
+            return new Result(null, null, List.of(), List.of(), 0, List.of(), List.of(), List.of(), outside.getMessage());
         }
     }
 
@@ -98,6 +103,14 @@ public final class ModGlslTranslator {
     private static Result translateOrThrow(String vertexSource, String fragmentSource) {
         if (vertexSource == null) {
             vertexSource = FIXED_FUNCTION_VERTEX;
+        }
+        Matcher laidOutImage = LAID_OUT_IMAGE.matcher(strip(fragmentSource));
+        if (laidOutImage.find()) {
+            String qualifier = laidOutImage.group(1).trim();
+            String reason = qualifier.matches("(?:rgba|rg|r)[a-zA-Z0-9_]*")
+                    ? "has a format qualifier, which the storage-image descriptor path does not preserve"
+                    : "has a layout qualifier, which the storage-image descriptor path does not preserve";
+            throw new IllegalArgumentException("image uniform " + laidOutImage.group(2) + " " + reason);
         }
         String vertex = renameReserved(strip(vertexSource));
         String fragment = renameReserved(strip(fragmentSource));
@@ -137,6 +150,18 @@ public final class ModGlslTranslator {
                 samplers.add(new SamplerBinding(glName(d.name), d.type, samplers.size()));
                 continue;
             }
+            if (d.type.toLowerCase(java.util.Locale.ROOT).contains("image")) {
+                if (!List.of("image2D", "iimage2D", "uimage2D").contains(d.type)) {
+                    throw new IllegalArgumentException("image uniform " + d.name + " has unsupported image type " + d.type);
+                }
+                if (vertexDecls.stream().anyMatch(v -> v.name.equals(d.name) && "uniform".equals(v.qualifier))) {
+                    throw new IllegalArgumentException("image uniform " + d.name + " in the vertex stage is not lowered");
+                }
+                if (d.arrayLength != 0) {
+                    throw new IllegalArgumentException("image uniform arrays are not lowered: " + d.name);
+                }
+                continue;
+            }
             int[] layout = std140(d.type, d.arrayLength);
             offset = align(offset, layout[0]);
             members.add(new UniformMember(glName(d.name), d.type, d.arrayLength, offset, layout[1]));
@@ -146,6 +171,12 @@ public final class ModGlslTranslator {
         if (blockSize > MAX_PUSH_BYTES) {
             throw new IllegalArgumentException("uniform block of " + blockSize + " bytes exceeds the " + MAX_PUSH_BYTES
                     + "-byte push-constant floor");
+        }
+        List<ImageBinding> images = new ArrayList<>();
+        for (Declaration d : uniforms.values()) {
+            if (List.of("image2D", "iimage2D", "uimage2D").contains(d.type)) {
+                images.add(new ImageBinding(glName(d.name), d.type, samplers.size() + images.size()));
+            }
         }
 
         List<Attribute> attributes = new ArrayList<>();
@@ -180,6 +211,10 @@ public final class ModGlslTranslator {
         for (SamplerBinding s : samplers) {
             common.append("layout(set = 0, binding = ").append(s.binding).append(") uniform ").append(s.type)
                     .append(' ').append(glslName(s.name)).append(";\n");
+        }
+        for (ImageBinding image : images) {
+            common.append("layout(set = 0, binding = ").append(image.binding).append(") uniform ")
+                    .append(image.type).append(' ').append(glslName(image.name)).append(";\n");
         }
 
         StringBuilder vs = new StringBuilder("#version 450\n").append(common);
@@ -222,6 +257,7 @@ public final class ModGlslTranslator {
         fs.append(fragment).append("\nvoid main() {\n    celtium_user_main();\n}\n");
         return new Result(vs.toString(), fs.toString(), Collections.unmodifiableList(attributes),
                 Collections.unmodifiableList(members), blockSize, Collections.unmodifiableList(samplers),
+                Collections.unmodifiableList(images),
                 Collections.unmodifiableList(varyings), null);
     }
 

@@ -117,7 +117,7 @@ public final class ModProgramRegistry {
             }
         }
         p.lowered = fragment == null
-                ? new ModGlslTranslator.Result(null, null, List.of(), List.of(), 0, List.of(), List.of(),
+                ? new ModGlslTranslator.Result(null, null, List.of(), List.of(), 0, List.of(), List.of(), List.of(),
                         "no fragment stage attached (" + p.shaders.size() + " shaders)")
                 : ModGlslTranslator.translate(vertex, fragment);
         p.nameByLocation.clear();
@@ -127,6 +127,12 @@ public final class ModProgramRegistry {
             }
             for (ModGlslTranslator.SamplerBinding sampler : p.lowered.samplers()) {
                 mapName(p, sampler.name());
+            }
+            // Image uniforms take locations too: Iris asks glGetUniformLocation for colorimg<i> and writes the
+            // image unit back with glUniform1i, the same uniform-value model as the samplers - an unmapped name
+            // would silently drop that write and every image would resolve to unit 0.
+            for (ModGlslTranslator.ImageBinding image : p.lowered.images()) {
+                mapName(p, image.name());
             }
         }
         p.vertexSpirv = null;
@@ -156,7 +162,7 @@ public final class ModProgramRegistry {
                 + (p.compiled() ? " spirvBytes=" + (p.vertexSpirv.length + p.fragmentSpirv.length)
                         : " compileFailure=" + p.compileFailure)
                 + (p.lowered.ok()
-                        ? " lowered=true samplers=" + p.lowered.samplers().size() + " uniformBytes="
+                        ? " lowered=true samplers=" + p.lowered.samplers().size() + " images=" + p.lowered.images().size() + " uniformBytes="
                                 + p.lowered.uniformBlockSize() + " vertex=" + (vertex == null ? "fixed-function" : "own")
                         : " lowered=false reason=" + p.lowered.failure()));
         return p;

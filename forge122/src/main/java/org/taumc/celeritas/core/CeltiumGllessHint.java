@@ -18,6 +18,15 @@ package org.taumc.celeritas.core;
 public final class CeltiumGllessHint {
     private static boolean applied;
 
+    private static void noteHintOnce(String key, String line) {
+        String property = "celtium.instrument." + key;
+        synchronized (System.getProperties()) {
+            if (System.getProperty(property) != null) return;
+            System.setProperty(property, "1");
+        }
+        System.out.println(line);
+    }
+
     private CeltiumGllessHint() {
     }
 
@@ -29,17 +38,10 @@ public final class CeltiumGllessHint {
     // takes). Reflection only, and never throws: a surface whose capabilities do not exist yet is retried on a
     // later call, and a surface that cannot be read at all reports itself unavailable once instead of failing
     // the query it rode in on.
-    private static volatile boolean capsProbeLwjgl3Done;
-    private static volatile boolean capsProbeLwjgl2Done;
-
     static void noteCapsProbe() {
-        if (!capsProbeLwjgl3Done) {
-            capsProbeLwjgl3Done = probeCapabilities("lwjgl3", "org.lwjgl.opengl.GL", "getCapabilities");
-        }
-        if (!capsProbeLwjgl2Done) {
-            capsProbeLwjgl2Done = probeCapabilities("lwjgl2", "org.lwjgl.opengl.GLContext", "getCapabilities")
-                    || probeCapabilities("lwjgl2", "org.lwjglx.opengl.GLContext", "getCapabilities");
-        }
+        probeCapabilities("lwjgl3", "org.lwjgl.opengl.GL", "getCapabilities");
+        probeCapabilities("lwjgl2", "org.lwjgl.opengl.GLContext", "getCapabilities");
+        probeCapabilities("lwjgl2", "org.lwjglx.opengl.GLContext", "getCapabilities");
     }
 
     private static boolean probeCapabilities(String surface, String holderClass, String getter) {
@@ -52,6 +54,11 @@ public final class CeltiumGllessHint {
         }
         if (caps == null) {
             return false;
+        }
+        String key = "celtium.instrument.CELTIUM_CAPS_PROBE." + surface;
+        synchronized (System.getProperties()) {
+            if (System.getProperty(key) != null) return true;
+            System.setProperty(key, "1");
         }
         StringBuilder line = new StringBuilder("[Celtium] CELTIUM_CAPS_PROBE surface=").append(surface)
                 .append(" caps=").append(caps.getClass().getName());
@@ -160,7 +167,8 @@ public final class CeltiumGllessHint {
      * the {@code GlContextTerms} version string for GL_VERSION ({@code "3.0.0 Celtium"} by default, the version
      * whose gates are all backed, per the stub's own note; the core terms when a core-profile context was
      * requested at creation, per {@code GlContextTerms}),
-     * {@code ""} for GL_EXTENSIONS (this renderer interprets no extension), {@code "1.20"} for the shading language -
+     * {@code GL_ARB_shader_image_load_store} for GL_EXTENSIONS (the storage-image entry points are backed),
+     * {@code "1.20"} for the shading language -
      * because the two GL surfaces have to agree: one of them being parseable and the other not is a crash, not a
      * difference of opinion.
      */
@@ -181,7 +189,9 @@ public final class CeltiumGllessHint {
                 value = org.soutalab.celtium.vulkan.gl.GlContextTerms.versionString();
                 break;
             case 0x1F03: // GL_EXTENSIONS
-                value = "";
+                value = "GL_ARB_shader_image_load_store";
+                noteHintOnce("CELTIUM_EXT_ANSWER.lwjgl3", "[Celtium] CELTIUM_EXT_ANSWER surface=lwjgl3 extensions="
+                        + value + " count=1");
                 break;
             case 0x8B8C: // GL_SHADING_LANGUAGE_VERSION
             case 0x821B: // GL_SHADING_LANGUAGE_VERSION_ARB - the same question, the ARB spelling
@@ -870,7 +880,13 @@ public final class CeltiumGllessHint {
                 value = 16;
                 break;
             case 0x821D: // GL_NUM_EXTENSIONS
-                value = 0;
+                value = 1;
+                noteHintOnce("CELTIUM_EXT_ANSWER.lwjgl3", "[Celtium] CELTIUM_EXT_ANSWER surface=lwjgl3 extensions="
+                        + "GL_ARB_shader_image_load_store count=1");
+                break;
+            case 0x8F38: // GL_MAX_IMAGE_UNITS - eight slots in NativeImageBindings and the storage descriptor model
+                value = 8;
+                noteHintOnce("CELTIUM_IMGUNIT_ANSWER.lwjgl3", "[Celtium] CELTIUM_IMGUNIT_ANSWER pname=0x8f38 value=8");
                 break;
             case 0x0B33: // GL_LIST_INDEX - the display list glNewList opened, 0 when none is
                 // This is the answer the model capture reads to decide whether a quad belongs to a list. The

@@ -90,8 +90,9 @@ final class ModPrograms {
 
     /**
      * {@return the prepared draw for a mod program}: a pipeline with the render state of {@code standard} (what the
-     * batch would have been drawn with), the program's packed uniforms, and its samplers resolved from the texture
-     * units their uniforms name. Null, with {@link #lastModProgramFailure}, when any of that is missing.
+     * batch would have been drawn with), the program's packed uniforms, its samplers resolved from their texture units,
+     * and its fragment storage images resolved from the image-unit ledger. Null, with
+     * {@link #lastModProgramFailure}, when any required image or descriptor is missing or cannot be transitioned.
      */
     PreparedImmediate celtium$modPrepared(org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program program,
                                                   int programId, int formatId, PreparedImmediate standard) {
@@ -144,6 +145,32 @@ final class ModPrograms {
                     .append(" own=").append(texture.celtium$ownsImage())
                     .append(" layout=").append(texture.samplingLayout()).append('}');
         }
+        org.soutalab.celtium.vulkan.gl.ModGlslTranslator.ImageBinding[] imageBindings =
+                program.lowered().images().toArray(new org.soutalab.celtium.vulkan.gl.ModGlslTranslator.ImageBinding[0]);
+        VulkanGlTexture[] imageTextures = new VulkanGlTexture[imageBindings.length];
+        org.soutalab.celtium.vulkan.NativeImageBindings imageLedger =
+                org.soutalab.celtium.vulkan.NativeImageBindings.current();
+        for (int i = 0; i < imageBindings.length; i++) {
+            var image = imageBindings[i];
+            int[] unitValue = program.ints(image.name());
+            int unit = unitValue == null || unitValue.length == 0 ? 0 : unitValue[0];
+            int name = imageLedger.texture(unit);
+            if (name <= 0) return celtium$modFailure(programId, "image " + image.name() + " (unit " + unit + ") is not bound");
+            VulkanGlTexture texture = celtium$modSamplerTexture(name);
+            if (texture == null || texture.view() == 0L)
+                return celtium$modFailure(programId, "image " + image.name() + " (unit " + unit + ", texture "
+                        + name + ") has no native image");
+            if (b.celtium$samplesCurrentTargetColor(name))
+                return celtium$modFailure(programId, "image " + image.name() + " (unit " + unit + ", texture "
+                        + name + ") is the colour image of the framebuffer being drawn into");
+            if (texture.celtium$ownsImage())
+                return celtium$modFailure(programId, "image " + image.name() + " (unit " + unit + ", texture "
+                        + name + ") is a mirrored texture whose layout the storage path cannot transition");
+            imageTextures[i] = texture;
+            inputs.append(" img ").append(image.name()).append('=').append(unit).append(":tex").append(name)
+                    .append("{wimg=0x").append(Long.toHexString(texture.image())).append(" layout=")
+                    .append(texture.foreignLayout()).append('}');
+        }
         if (MOD_PROGRAMS_REFUSE_OPAQUE_MAIN && !like.celtium$colorBlend().blend()
                 && b.currentFramebufferIdentity == b.targetRegistry.mainIdentity()) {
             return celtium$modFailure(programId, "a blend-off pass into the game's framebuffer and "
@@ -153,9 +180,9 @@ final class ModPrograms {
             return celtium$modFailure(programId, "the pass draws into the game's framebuffer and "
                     + "-Dceltium.vulkan.modProgramsToMain=false refuses that");
         }
-        long set = pipeline.samplerSet(textures);
-        if (textures.length > 0 && set == 0L) {
-            return celtium$modFailure(programId, "no sampler set could be allocated");
+        long set = pipeline.samplersAndImages(textures, imageTextures);
+        if (textures.length + imageTextures.length > 0 && set == 0L) {
+            return celtium$modFailure(programId, "no descriptor set could be allocated");
         }
         long[] targetColour = b.framebufferColorTexture(b.currentFramebufferIdentity);
         GllessFrameTarget pairOwner = b.offTargetTarget();
@@ -173,7 +200,7 @@ final class ModPrograms {
                 + " target=0x" + Long.toHexString(b.currentFramebufferIdentity) + " inputs=[" + inputs.toString().trim()
                 + "]" : null;
         return new PreparedImmediate(new VulkanModProgramPipeline.Draw(pipeline,
-                VulkanModProgramPipeline.packUniforms(program), set, label, textures), set, 0L);
+                VulkanModProgramPipeline.packUniforms(program), set, label, textures, imageTextures), set, 0L);
     }
 
     /**

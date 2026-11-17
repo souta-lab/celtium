@@ -2601,6 +2601,8 @@ public final class VulkanContext {
 
     /** Whether multiDrawIndirect was reported by the device and therefore enabled at creation. */
     private boolean multiDrawIndirectSupported;
+    private boolean storageImageReadWithoutFormatSupported;
+    private boolean storageImageWriteWithoutFormatSupported;
     /** Whether drawIndirectFirstInstance was reported by the device and therefore enabled at creation. */
     private boolean drawIndirectFirstInstanceSupported;
     /** VkPhysicalDeviceLimits.maxDrawIndirectCount, a limit rather than a feature (0 when unreported). */
@@ -2609,6 +2611,11 @@ public final class VulkanContext {
     /** {@return whether the device was created with {@code multiDrawIndirect} enabled}. */
     public boolean multiDrawIndirectEnabled() {
         return this.multiDrawIndirectSupported;
+    }
+
+    /** Both Vulkan formatless storage-image capabilities were queried and enabled at logical-device creation. */
+    public boolean celtium$storageImagesWithoutFormat() {
+        return this.storageImageReadWithoutFormatSupported && this.storageImageWriteWithoutFormatSupported;
     }
 
     /**
@@ -2949,8 +2956,12 @@ public final class VulkanContext {
             org.lwjgl.vulkan.VkPhysicalDeviceFeatures enabledFeatures = org.lwjgl.vulkan.VkPhysicalDeviceFeatures.calloc(stack);
             this.multiDrawIndirectSupported = supportedFeatures.multiDrawIndirect();
             this.drawIndirectFirstInstanceSupported = supportedFeatures.drawIndirectFirstInstance();
+            this.storageImageReadWithoutFormatSupported = supportedFeatures.shaderStorageImageReadWithoutFormat();
+            this.storageImageWriteWithoutFormatSupported = supportedFeatures.shaderStorageImageWriteWithoutFormat();
             enabledFeatures.multiDrawIndirect(this.multiDrawIndirectSupported);
             enabledFeatures.drawIndirectFirstInstance(this.drawIndirectFirstInstanceSupported);
+            enabledFeatures.shaderStorageImageReadWithoutFormat(this.storageImageReadWithoutFormatSupported);
+            enabledFeatures.shaderStorageImageWriteWithoutFormat(this.storageImageWriteWithoutFormatSupported);
             org.lwjgl.vulkan.VkPhysicalDeviceProperties deviceProperties =
                     org.lwjgl.vulkan.VkPhysicalDeviceProperties.calloc(stack);
             vkGetPhysicalDeviceProperties(this.physicalDevice, deviceProperties);
