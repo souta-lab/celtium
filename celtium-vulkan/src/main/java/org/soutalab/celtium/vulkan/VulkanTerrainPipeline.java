@@ -149,6 +149,23 @@ public final class VulkanTerrainPipeline {
             VK_FORMAT_R8G8B8A8_SNORM,    // 4: a_RdhFactor 4 x signed byte, normalized
     };
 
+    /**
+     * Demonica's extended chunk vertex format ({@code ExtendedChunkVertexType} over the vanilla-like base),
+     * transcribed for the attributes this backend's shaders read. The base attributes keep their vanilla-like
+     * formats and offsets; the format's own additions ({@code mc_midTexCoord}, {@code at_tangent},
+     * {@code iris_Normal}, {@code mc_Entity} at bytes 28..43) are the shader pack's, are not declared by this
+     * backend's vertex module, and so need no attribute descriptions. There is deliberately no fifth entry:
+     * the extended format has no {@code a_RdhFactor} (its encoder defines the value as zero for every vertex),
+     * and byte 28 in this format is {@code mc_midTexCoord}, so the vanilla layout's fifth attribute would read
+     * another attribute's data. The extended vertex module feeds {@code v_RdhFactor} the constant zero instead.
+     */
+    private static final int[] EXTENDED_ATTRIBUTE_FORMATS = {
+            VK_FORMAT_R32G32B32_SFLOAT,  // 0: a_PosId     3 x float
+            VK_FORMAT_R8G8B8A8_UNORM,    // 1: a_Color     4 x unsigned byte, normalized
+            VK_FORMAT_R32G32_SFLOAT,     // 2: a_TexCoord  2 x float
+            VK_FORMAT_R32_UINT,          // 3: a_LightCoord 1 x unsigned int, raw
+    };
+
     /** VanillaLikeChunkVertex: positions and texture coordinates are floats, so no unpacking is needed. */
     private static final int[] VANILLA_ATTRIBUTE_FORMATS = {
             VK_FORMAT_R32G32B32_SFLOAT,  // 0: a_PosId     3 x float
@@ -185,6 +202,15 @@ public final class VulkanTerrainPipeline {
      */
     private static int[] vanillaAttributeOffsets() {
         return new int[] { 0, COLOUR_ATTR_OFFSET, 16, 24, 28 };
+    }
+
+    /**
+     * {@return the extended layout's attribute offsets: the vanilla-like base's first four, built at call time
+     * for the same class-initialisation reason as {@link #vanillaAttributeOffsets()}, so the colour-offset
+     * probe reads the same in both layouts}.
+     */
+    private static int[] extendedAttributeOffsets() {
+        return new int[] { 0, COLOUR_ATTR_OFFSET, 16, 24 };
     }
 
     /**
@@ -228,6 +254,13 @@ public final class VulkanTerrainPipeline {
             if (stride == 32) {
                 return new VertexLayout(32, VANILLA_ATTRIBUTE_FORMATS, vanillaAttributeOffsets(),
                         SpirvShaders.SOLID_VERTEX_VANILLA);
+            }
+            if (stride == 44) {
+                // Demonica's extended format as ComplementaryReimagined r5.9.3 produces it: the vanilla-like
+                // base without a_RdhFactor, then mc_midTexCoord, at_tangent, iris_Normal and mc_Entity
+                // (VERTEX44-DESIGN-2026-11-17.md). Only the base is declared; see EXTENDED_ATTRIBUTE_FORMATS.
+                return new VertexLayout(44, EXTENDED_ATTRIBUTE_FORMATS, extendedAttributeOffsets(),
+                        SpirvShaders.SOLID_VERTEX_EXTENDED);
             }
             throw new IllegalArgumentException("Terrain pass '" + passName + "' uses a " + stride
                     + " byte vertex format that the Vulkan backend does not implement; OpenGL stays active");

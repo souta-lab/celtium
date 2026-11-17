@@ -38,6 +38,12 @@ public final class SpirvShaders {
     /** Vertex module for the uncompressed VanillaLikeChunkVertex layout (stride 32). */
     public static final String SOLID_VERTEX_VANILLA = "terrain_solid_vanilla.vert";
 
+    /**
+     * Vertex module for Demonica's extended chunk vertex layout (stride 44): the vanilla-like base without
+     * {@code a_RdhFactor}, whose value the extended encoder defines as zero for every vertex.
+     */
+    public static final String SOLID_VERTEX_EXTENDED = "terrain_solid_extended.vert";
+
     /** Classpath name of the SOLID terrain pass fragment module. */
     public static final String SOLID_FRAGMENT = "terrain_solid.frag";
 

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32B32_SFLOAT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32_UINT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
 
 /**
@@ -43,6 +44,23 @@ class TerrainVertexLayoutTest {
         assertEquals(SpirvShaders.SOLID_VERTEX, layout.vertexModule);
         assertArrayEquals(new int[] { 0, 8, 12, 16, 20 }, layout.offsets,
                 "the packed layout is not affected by the vanilla colour offset");
+    }
+
+    @Test
+    void theExtendedLayoutDeclaresOnlyTheBaseAttributes() {
+        VulkanTerrainPipeline.VertexLayout layout =
+                VulkanTerrainPipeline.VertexLayout.forVertexStride(44, "solid");
+        assertEquals(44, layout.stride,
+                "Demonica's extended format, as the leg-12 pack load measured it, is a 44-byte vertex");
+        assertEquals(SpirvShaders.SOLID_VERTEX_EXTENDED, layout.vertexModule,
+                "the extended format has no a_RdhFactor, so it needs the module that feeds the factor as zero");
+        assertArrayEquals(new int[] { 0, 12, 16, 24 }, layout.offsets,
+                "the base attributes keep their vanilla-like offsets; byte 28 is mc_midTexCoord, not a_RdhFactor");
+        assertEquals(4, layout.formats.length,
+                "the pack's extended attributes at bytes 28..43 are not declared by this backend's shaders");
+        assertEquals(VK_FORMAT_R32G32B32_SFLOAT, layout.formats[0]);
+        assertEquals(VK_FORMAT_R8G8B8A8_UNORM, layout.formats[1]);
+        assertEquals(VK_FORMAT_R32_UINT, layout.formats[3]);
     }
 
     @Test
