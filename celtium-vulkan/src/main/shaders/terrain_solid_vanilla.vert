@@ -272,6 +272,9 @@ void main() {
     // the exact baked integer and the sample is bit-identical to the unraised one.
     vec2 lightCoord = vec2(_vert_tex_light_coord);
     float dynamicLevel = _dynamic_block_light(worldPosition);
+    if (int(dynLights.u_DynamicLightInfo.x + 0.5) > 0) {
+        dynamicLevel = 15.0; // TEMP item-326 delivery probe: unconditional raise
+    }
     if (dynamicLevel > 0.0) {
         lightCoord.x = max(lightCoord.x, min(dynamicLevel, 15.0) * 16.0);
     }
