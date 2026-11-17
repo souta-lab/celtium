@@ -312,6 +312,15 @@ what would move a row from here into the refusal table above.
 | Particle Culling | Filters which particles are submitted rather than replacing a renderer; under Celtium the submission path it hooks is itself replaced, so the mechanism belongs inside Celtium |
 | FPS Reducer | No renderer conflict: it throttles the frame rate from outside the paths Celtium owns |
 
+## Built into Celtium
+
+Mechanisms Celtium has taken in from the field, reimplemented in its own shape. Each entry names its origin;
+the full accounting (license route, proving measurement) is in the absorption ledger the project keeps.
+
+| Origin | What Celtium took in |
+|---|---|
+| Vulcanizator (survival layer) | The failure-isolation discipline, as of 2026-11-17 (item 327): every native stage that can fail independently has a kill switch (`-Dceltium.vulkan.stage.terrainPipelines=off`, `-Dceltium.vulkan.stage.postChain=off`) consulted *before* any native work, so on a hostile driver the dangerous call is never made; a stage that fails at runtime quarantines itself for the session instead of being retried every frame (a failed post-chain creation trips immediately, three consecutive submission failures trip the threshold), while its fallback — a skipped pass, the caller's GL chain — carries the frame. Hardware profiles that measurement has shown dangerous are gated before start in a recorded table (`HardwareProfileGates`; first entry: the async presenter defaults off on Windows, where external testing twice lost the Vulkan device), and the options loader migrates stale config values this build mishandles back to their safe values at load, logged (first rule: a stored non-zero chunk fade-in duration, BH-33). The isolation policy is pinned by an offline fault-injection test suite in the test tree |
+
 ## What is measured, and how
 
 Two separate things, never merged into one claim: **(a) binary/API compatibility** - the mod loads and its calls arrive,
