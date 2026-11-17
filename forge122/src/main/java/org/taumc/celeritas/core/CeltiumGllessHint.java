@@ -21,6 +21,56 @@ public final class CeltiumGllessHint {
     private CeltiumGllessHint() {
     }
 
+    // ---- CELTIUM_CAPS_PROBE (IMGUNIT-DESIGN-2026-11-17 section 1.3) --------------------------------------------
+    // One-shot per surface: the first time this hint answers a glGetIntegerv, print the four capability flags the
+    // image-unit verdict reads - OpenGL33 / OpenGL42 / GL_ARB_shader_image_load_store /
+    // GL_EXT_shader_image_load_store - from BOTH capabilities objects a consumer can hold: LWJGL3's
+    // GL.getCapabilities() and LWJGL2's GLContext.getCapabilities() (the object GLSM's GLStateManager.preInit
+    // takes). Reflection only, and never throws: a surface whose capabilities do not exist yet is retried on a
+    // later call, and a surface that cannot be read at all reports itself unavailable once instead of failing
+    // the query it rode in on.
+    private static volatile boolean capsProbeLwjgl3Done;
+    private static volatile boolean capsProbeLwjgl2Done;
+
+    static void noteCapsProbe() {
+        if (!capsProbeLwjgl3Done) {
+            capsProbeLwjgl3Done = probeCapabilities("lwjgl3", "org.lwjgl.opengl.GL", "getCapabilities");
+        }
+        if (!capsProbeLwjgl2Done) {
+            capsProbeLwjgl2Done = probeCapabilities("lwjgl2", "org.lwjgl.opengl.GLContext", "getCapabilities")
+                    || probeCapabilities("lwjgl2", "org.lwjglx.opengl.GLContext", "getCapabilities");
+        }
+    }
+
+    private static boolean probeCapabilities(String surface, String holderClass, String getter) {
+        Object caps;
+        try {
+            Class<?> holder = Class.forName(holderClass, false, CeltiumGllessHint.class.getClassLoader());
+            caps = holder.getMethod(getter).invoke(null);
+        } catch (Throwable unavailable) {
+            return false; // not created yet (or no such surface in this JVM): a later query retries
+        }
+        if (caps == null) {
+            return false;
+        }
+        StringBuilder line = new StringBuilder("[Celtium] CELTIUM_CAPS_PROBE surface=").append(surface)
+                .append(" caps=").append(caps.getClass().getName());
+        for (String flag : new String[] {"OpenGL33", "OpenGL42", "GL_ARB_shader_image_load_store",
+                "GL_EXT_shader_image_load_store"}) {
+            line.append(' ').append(flag).append('=').append(capabilityFlag(caps, flag));
+        }
+        System.out.println(line.toString());
+        return true;
+    }
+
+    private static String capabilityFlag(Object caps, String field) {
+        try {
+            return String.valueOf(caps.getClass().getField(field).getBoolean(caps));
+        } catch (Throwable unreadable) {
+            return "unreadable";
+        }
+    }
+
 
     /** {@return whether this host carries the SDL3 LWJGL binding}, which only the 0.7 generation does. */
     private static boolean sdl3Present() {
@@ -757,6 +807,7 @@ public final class CeltiumGllessHint {
      * uninitialised memory.
      */
     public static void glGetIntegerv(int pname, long params) {
+        noteCapsProbe();
         if (params == 0L) {
             return;
         }
