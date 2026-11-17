@@ -8,6 +8,7 @@ import org.embeddedt.embeddium.impl.gl.device.CommandList;
 import org.embeddedt.embeddium.impl.gl.device.RenderDevice;
 import org.embeddedt.embeddium.impl.gl.shader.*;
 import org.embeddedt.embeddium.impl.render.chunk.fog.FogService;
+import org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService;
 import org.embeddedt.embeddium.impl.render.chunk.shader.*;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkVertexType;
@@ -117,6 +118,16 @@ public abstract class ShaderChunkRenderer implements ChunkRenderer {
      */
     public FogService getFogService() {
         return this.environment.fogService();
+    }
+
+    /**
+     * The shading-time dynamic light sources available to a backend that draws terrain itself. The
+     * default is {@link DynamicLightService#EMPTY} - the vanilla look, in which a held torch lights
+     * nothing - because the service needs game state only the platform renderer has; the platform's
+     * renderer overrides this with its own implementation.
+     */
+    public DynamicLightService getDynamicLightService() {
+        return DynamicLightService.EMPTY;
     }
 
     protected void begin(TerrainRenderPass pass) {
