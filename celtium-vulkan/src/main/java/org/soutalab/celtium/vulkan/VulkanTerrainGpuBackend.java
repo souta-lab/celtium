@@ -17935,6 +17935,20 @@ this.frameBufferOpen = false;
      */
     public String celtium$serveTextureCopy(int destName, int level, int xoffset, int yoffset,
             int x, int y, int width, int height, int readFbo) {
+        // The depth route first: a copy whose destination is a recorded depth texture, out of a read
+        // framebuffer that records a depth attachment, is a GPU depth copy between the two textures' shared
+        // depth images - not a colour readback. The colour service has no depth resolution and refuses such
+        // a copy by name ("framebuffer N is not an image this renderer owns"); the measured case is Iris's
+        // pre-translucent shadow depth copy, refused every leg until this route existed.
+        if (level == 0 && destName != 0
+                && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferForDepthTexture(destName) != 0) {
+            int sourceDepthTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                    .celtium$framebufferDepthTexture(readFbo);
+            if (sourceDepthTexture != 0) {
+                return celtium$serveDepthCopy(sourceDepthTexture, destName, x, y, width, height,
+                        xoffset, yoffset);
+            }
+        }
         // Thin delegate: the copy path lives in TextureCopyService, and this signature is what the GL-less stub calls.
         long copyStarted = System.nanoTime();
         String copyResult = this.textureCopyService.serveTextureCopy(destName, level, xoffset, yoffset, x, y, width,
@@ -17942,6 +17956,162 @@ this.frameBufferOpen = false;
         this.textureCopyNanos += System.nanoTime() - copyStarted;
         this.textureCopyCalls++;
         return copyResult;
+    }
+
+    /** Depth copies served on the native route, counted apart from the colour service's served/refused. */
+    private int depthCopiesServed;
+    /** Bounded CELTIUM_DEPTH_COPY lines. */
+    private int depthCopyLogs;
+
+    /**
+     * Serves one depth copy between two depth textures' shared depth images, natively: the pending groups
+     * flush first (the colour service's ordering contract — the copy must read what the game has already
+     * drawn), then a {@code vkCmdCopyImage} over the depth aspect is recorded and submitted ahead of
+     * everything the game records from here on. No host readback: the destination is a GPU depth texture
+     * the same frame's programs sample, which is the whole shape the colour service cannot serve.
+     * <p>
+     * Layout discipline is the shared store's: each image is transitioned from its recorded layout to its
+     * transfer layout, the source is restored to the layout it came from, and the destination is left in
+     * {@code SHADER_READ_ONLY_OPTIMAL} — its next reader is a sampler, and any later attachment or copy
+     * transitions from the recorded layout, which the store now names.
+     *
+     * @return {@code "served"} when the copy was recorded and submitted, otherwise a reason that names itself
+     */
+    public String celtium$serveDepthCopy(int sourceDepthTexture, int destDepthTexture,
+            int x, int y, int width, int height, int xoffset, int yoffset) {
+        if (sourceDepthTexture == 0 || destDepthTexture == 0 || width <= 0 || height <= 0) {
+            return "invalid depth copy arguments: source=" + sourceDepthTexture + " dest=" + destDepthTexture
+                    + " " + width + "x" + height;
+        }
+        GllessFrameTarget target = offTargetTarget();
+        if (target == null) {
+            return "the depth copy has no frame target to serve from";
+        }
+        long sourceKey = RenderTargetRegistry.rawColorTextureIdentity(sourceDepthTexture);
+        long destKey = RenderTargetRegistry.rawColorTextureIdentity(destDepthTexture);
+        long sourceImage = target.sharedDepthImage(sourceKey);
+        long destImage = target.sharedDepthImage(destKey);
+        if (sourceImage == 0L || destImage == 0L) {
+            return "the depth copy's " + (sourceImage == 0L ? "source" : "destination") + " texture "
+                    + (sourceImage == 0L ? sourceDepthTexture : destDepthTexture)
+                    + " is not in the shared depth store (its framebuffer's pair never borrowed it)";
+        }
+        int[] sourceExtent = target.sharedDepthExtent(sourceKey);
+        int[] destExtent = target.sharedDepthExtent(destKey);
+        if (sourceExtent == null || destExtent == null
+                || x < 0 || y < 0 || x + width > sourceExtent[0] || y + height > sourceExtent[1]
+                || xoffset < 0 || yoffset < 0 || xoffset + width > destExtent[0]
+                || yoffset + height > destExtent[1]) {
+            return "the depth copy rectangle " + x + "," + y + " " + width + "x" + height + " -> "
+                    + xoffset + "," + yoffset + " is not inside the shared depth images";
+        }
+        flushPendingBeforeGlDraw();
+        int sourceFrom = target.sharedDepthLayout(sourceKey);
+        int destFrom = target.sharedDepthLayout(destKey);
+        org.lwjgl.vulkan.VkCommandBuffer commands = this.context.beginCommands();
+        try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer barriers =
+                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(2, stack);
+            org.lwjgl.vulkan.VkImageMemoryBarrier sourceBarrier = barriers.get(0);
+            sourceBarrier.sType$Default().image(sourceImage)
+                    .oldLayout(sourceFrom).newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .srcAccessMask(depthLayoutAccess(sourceFrom))
+                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT);
+            sourceBarrier.subresourceRange().set(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            org.lwjgl.vulkan.VkImageMemoryBarrier destBarrier = barriers.get(1);
+            destBarrier.sType$Default().image(destImage)
+                    .oldLayout(destFrom).newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .srcAccessMask(depthLayoutAccess(destFrom))
+                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT);
+            destBarrier.subresourceRange().set(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commands,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barriers);
+
+            org.lwjgl.vulkan.VkImageCopy.Buffer region = org.lwjgl.vulkan.VkImageCopy.calloc(1, stack);
+            region.get(0).srcSubresource().set(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1);
+            region.get(0).srcOffset().set(x, y, 0);
+            region.get(0).dstSubresource().set(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1);
+            region.get(0).dstOffset().set(xoffset, yoffset, 0);
+            region.get(0).extent().set(width, height, 1);
+            org.lwjgl.vulkan.VK10.vkCmdCopyImage(commands, sourceImage,
+                    org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destImage,
+                    org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
+
+            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer back =
+                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(2, stack);
+            org.lwjgl.vulkan.VkImageMemoryBarrier sourceBack = back.get(0);
+            sourceBack.sType$Default().image(sourceImage)
+                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .newLayout(sourceFrom == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED
+                            ? GllessFrameTarget.DEPTH_RENDER_LAYOUT : sourceFrom)
+                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT)
+                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                            | org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                            | org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT);
+            sourceBack.subresourceRange().set(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            org.lwjgl.vulkan.VkImageMemoryBarrier destBack = back.get(1);
+            destBack.sType$Default().image(destImage)
+                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                    .newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT);
+            destBack.subresourceRange().set(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commands,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, back);
+
+            org.lwjgl.vulkan.VkCommandBuffer submitted = commands;
+            commands = null;
+            this.context.celtium$submitDeferred(submitted, 0L);
+            this.context.celtium$flushBatchedSubmits();
+        } catch (RuntimeException | LinkageError error) {
+            if (commands != null && !this.context.celtium$isDeviceLost()) {
+                this.context.celtium$abandonCommands(commands);
+            }
+            if (this.context.celtium$isDeviceLost()) {
+                throw error;
+            }
+            return "the native depth copy threw: " + error;
+        }
+        target.noteSharedDepthLayout(sourceKey,
+                sourceFrom == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED
+                        ? GllessFrameTarget.DEPTH_RENDER_LAYOUT : sourceFrom);
+        target.noteSharedDepthLayout(destKey, org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        this.depthCopiesServed++;
+        if (this.depthCopyLogs < 8) {
+            this.depthCopyLogs++;
+            System.out.println("[Celtium] CELTIUM_DEPTH_COPY source=" + sourceDepthTexture + " dest="
+                    + destDepthTexture + " " + width + "x" + height + " servedFrom=native-depth"
+                    + " served=" + this.depthCopiesServed);
+        }
+        return "served";
+    }
+
+    /** {@return the access mask a depth image in {@code layout} may have pending}, for the copy's barriers. */
+    private static int depthLayoutAccess(int layout) {
+        if (layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED) {
+            return 0;
+        }
+        if (layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+            return org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT;
+        }
+        if (layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+            return org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT;
+        }
+        if (layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+            return org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT;
+        }
+        return org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                | org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     }
 
     /**

@@ -109,6 +109,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int SEM_GET_TEX_ENV_FV = 51; // (target,pname,out) -> the recorded floats
     private static final int SEM_COPY_TEX_IMAGE = 52;    // copy from the bound read framebuffer into a texture level
     private static final int SEM_COPY_TEX_SUB_IMAGE = 53; // the same, into a sub-rectangle
+    private static final int SEM_BLIT_FRAMEBUFFER = 78;  // framebuffer-to-framebuffer blit (the depth bit is served)
     private static final int SEM_TEX_PARAM_I = 54;     // (target,pname,param) -> texture parameter of the bound texture
     private static final int SEM_TEX_PARAM_IV = 55;    // (target,pname,values) -> the same, from an array
     private static final int SEM_TEX_PARAM_I_DSA = 56; // (texture,pname,param) -> the same, texture named directly
@@ -412,6 +413,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         // image for the bound read framebuffer, which is a different component's resource.
         fn("glCopyTexImage2D", R_VOID, SEM_COPY_TEX_IMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
         fn("glCopyTexSubImage2D", R_VOID, SEM_COPY_TEX_SUB_IMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
+        fn("glBlitFramebuffer", R_VOID, SEM_BLIT_FRAMEBUFFER, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT,
+                A_INT, A_INT);
         // glReadPixels is the same question the copies answer, asked into a client buffer: the bound read framebuffer's
         // rectangle from the image the renderer owns. It used to sit in the no-op list, which left every caller's
         // buffer zeroed - the fixture's format-2 readback measured "all mismatch" and ScreenShotHelper's screenshots
@@ -514,7 +517,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glPopAttrib", "glPushClientAttrib", "glPopClientAttrib", "glSelectBuffer", "glFeedbackBuffer", "glInitNames",
                 "glPushName", "glPopName", "glLoadName", "glRasterPos2f", "glRasterPos3f", "glBitmap",
                 "glCopyPixels", "glDrawPixels",
-                "glBlitFramebuffer", "glFramebufferTexture2D", "glFramebufferTexture", "glFramebufferTexture1D",
+                "glFramebufferTexture2D", "glFramebufferTexture", "glFramebufferTexture1D",
                 "glFramebufferTexture3D", "glFramebufferTextureLayer", "glFramebufferRenderbuffer",
                 "glRenderbufferStorage", "glRenderbufferStorageMultisample",
                 "glTexSubImage1D", "glTexSubImage3D",
@@ -5901,6 +5904,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                 celtium$noteTextureCopy(fn.name, (int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4],
                         (int) c[5], (int) c[6], (int) c[7]);
                 return 0L;
+            case SEM_BLIT_FRAMEBUFFER:
+                celtium$noteBlitFramebuffer((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4],
+                        (int) c[5], (int) c[6], (int) c[7], (int) c[8], (int) c[9]);
+                return 0L;
             case SEM_READ_PIXELS:
                 serveReadPixels((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4], (int) c[5], c[6]);
                 return 0L;
@@ -9769,6 +9776,69 @@ public final class CeltiumGlStub implements FunctionProvider {
                     + " source=" + x + "," + y + " " + width + "x" + height
                     + " readFbo=" + this.readFbo + " drawFbo=" + this.drawFbo
                     + " servedFrom=" + servedFrom + " requests=" + this.textureCopyRequests
+                    + " site=[" + celtium$callSite(8) + "]");
+        }
+    }
+
+    /** GL_DEPTH_BUFFER_BIT. */
+    private static final int DEPTH_BUFFER_BIT = 0x00000100;
+    /** GL_NEAREST, the only filter a depth blit may name. */
+    private static final int FILTER_NEAREST = 0x2600;
+
+    private long blitDepthRequests;
+    private static final java.util.Set<String> BLIT_DEPTH_SHAPES =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * A {@code glBlitFramebuffer}, which was a table noop until the depth form needed a route: Iris's
+     * pre-translucent shadow depth copy takes the blit form on the first frame after its targets are created
+     * ({@code ShadowRenderTargets.copyPreTranslucentDepth}, the dirty-flag branch) and the texture-copy form
+     * in steady state, so serving only the copy left the first frame's snapshot silently dropped. The depth
+     * bit between two framebuffers that both record depth attachments routes to the backend's native depth
+     * copy — equal extents only, where a copy and a NEAREST blit agree. Colour bits keep the historical noop:
+     * no measured caller blits colour under GL-less, and the line below counts only what this handler decides.
+     */
+    private void celtium$noteBlitFramebuffer(int srcX0, int srcY0, int srcX1, int srcY1,
+            int dstX0, int dstY0, int dstX1, int dstY1, int mask, int filter) {
+        if ((mask & DEPTH_BUFFER_BIT) == 0) {
+            return;
+        }
+        this.blitDepthRequests++;
+        int sourceTexture = this.framebufferDepthTextures.get(this.readFbo);
+        int destTexture = this.framebufferDepthTextures.get(this.drawFbo);
+        int width = srcX1 - srcX0;
+        int height = srcY1 - srcY0;
+        String servedFrom;
+        if (sourceTexture == 0 || destTexture == 0) {
+            servedFrom = "refused-depth-unrecorded: readFbo=" + this.readFbo + " drawFbo=" + this.drawFbo
+                    + " sourceTexture=" + sourceTexture + " destTexture=" + destTexture;
+        } else if (width <= 0 || height <= 0 || dstX1 - dstX0 != width || dstY1 - dstY0 != height
+                || filter != FILTER_NEAREST) {
+            servedFrom = "refused-depth-shape: src=" + width + "x" + height + " dst=" + (dstX1 - dstX0) + "x"
+                    + (dstY1 - dstY0) + " filter=0x" + Integer.toHexString(filter)
+                    + " (only an equal-extent NEAREST depth blit is a copy)";
+        } else {
+            try {
+                Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+                servedFrom = backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan
+                        ? vulkan.celtium$serveDepthCopy(sourceTexture, destTexture, srcX0, srcY0, width, height,
+                                dstX0, dstY0)
+                        : "refused-no-vulkan-backend";
+            } catch (RuntimeException | LinkageError error) {
+                servedFrom = "refused-serve-failed: " + error;
+            }
+            if ("served".equals(servedFrom)) {
+                servedFrom = "native-depth";
+            }
+        }
+        String key = width + "x" + height + "/readFbo=" + this.readFbo + "/drawFbo=" + this.drawFbo
+                + "/" + servedFrom;
+        if (BLIT_DEPTH_SHAPES.size() < 8 && BLIT_DEPTH_SHAPES.add(key)) {
+            System.out.println("[Celtium] CELTIUM_BLIT_DEPTH glBlitFramebuffer"
+                    + " source=" + srcX0 + "," + srcY0 + " " + width + "x" + height
+                    + " dest=" + dstX0 + "," + dstY0
+                    + " readFbo=" + this.readFbo + " drawFbo=" + this.drawFbo
+                    + " servedFrom=" + servedFrom + " requests=" + this.blitDepthRequests
                     + " site=[" + celtium$callSite(8) + "]");
         }
     }
