@@ -75,6 +75,8 @@ public final class VulkanSwapchain {
     /** The present modes the surface offered at that attempt, by name. */
     private String presentModesOffered = "not enumerated";
     private String reconciliation = "not reconciled";
+    /** Whether this swapchain's images were given defined content at creation, and how (issue #422). */
+    private String imageInitialization = "not attempted";
     private long acquireSemaphore = VK_NULL_HANDLE;
 
     /**
@@ -1031,7 +1033,8 @@ public final class VulkanSwapchain {
     public String describe() {
         return "swapchain: platform=" + this.platform + " format=" + this.format + " colourSpace="
                 + this.colorSpace + " presentMode=" + this.presentMode + " images=" + this.images.length + " size="
-                + this.width + "x" + this.height + " " + offeredVersusRequested();
+                + this.width + "x" + this.height + " " + offeredVersusRequested()
+                + " init=[" + this.imageInitialization + "]";
     }
 
     /**
@@ -2529,7 +2532,63 @@ public final class VulkanSwapchain {
                 }
                 this.views[i] = viewHandle.get(0);
             }
+            this.imageInitialization = initializeImages(stack, swapchainUsage);
+            System.out.println("[Celtium] CELTIUM_SWAPCHAIN_INIT " + this.imageInitialization);
             return true;
+        }
+    }
+
+    /**
+     * {@return whether a swapchain created with this usage may be given defined content at creation}.
+     * <p>
+     * The clear is a transfer, so it needs the same TRANSFER_DST bit the present blit itself needs: a surface that
+     * does not offer it cannot be blitted to either, and the dropped bit is already named in the argument summary.
+     * Pure, so the contract can be checked without a device.
+     */
+    static boolean imageInitializationWanted(int usage) {
+        return (usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) != 0;
+    }
+
+    /**
+     * Gives every image of the new swapchain defined content: opaque black, ending in PRESENT_SRC_KHR.
+     * <p>
+     * A swapchain image's content is undefined until something writes it. The present blit is normally that
+     * something, but it writes the frame image's content - and a frame the renderer has not fully written (the
+     * first frames after a rebuild at world join are the reported case) passes its own undefined regions through
+     * to the screen. On AMD hardware undefined image content characteristically appears as purple blocks (issue
+     * #422: random purple squares on the loading screen when joining a world). Clearing here means no image this
+     * swapchain owns can ever be presented undefined, whatever the frame that later fills it does. The frame
+     * target's own images carry the same rule at their first acquire ({@code GllessFrameTarget}'s
+     * {@code neverCleared}); the swapchain's images were the ones without it.
+     * <p>
+     * The submission is the context's one-shot path, which waits for its own fence: when this returns, the images
+     * hold the clear. A failure is recorded rather than failed into creation - the swapchain is usable either
+     * way, and the record says which of the two a leg ran with.
+     *
+     * @return what was done, for {@link #describe()} and the console line
+     */
+    private String initializeImages(MemoryStack stack, int usage) {
+        if (!imageInitializationWanted(usage)) {
+            return "skipped: the surface offered no TRANSFER_DST usage, so no clear could be recorded";
+        }
+        try {
+            VkCommandBuffer commands = this.context.beginCommands();
+            VkClearColorValue color = VkClearColorValue.calloc(stack);
+            color.float32(0, 0.0f);
+            color.float32(1, 0.0f);
+            color.float32(2, 0.0f);
+            color.float32(3, 1.0f);
+            VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack);
+            range.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
+            for (long image : this.images) {
+                transitionToTransferDst(stack, commands, image);
+                vkCmdClearColorImage(commands, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, color, range);
+                transitionToPresent(stack, commands, image);
+            }
+            this.context.endCommands(commands);
+            return "cleared " + this.images.length + " images to opaque black at creation";
+        } catch (RuntimeException | LinkageError error) {
+            return "failed: " + error;
         }
     }
 
