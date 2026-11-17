@@ -143,7 +143,37 @@ public final class VulkanModProgramPipeline {
             built.createLayouts();
             built.createPipeline(program.vertexSpirv(), program.fragmentSpirv(), formatId,
                     like.celtium$renderPassHandle(), like.celtium$cull(), like.celtium$depthTest(),
-                    like.celtium$depthWrite(), like.celtium$depthCompareOp(), like.celtium$colorBlend(), true);
+                    like.celtium$depthWrite(), like.celtium$depthCompareOp(), like.celtium$colorBlend(), true, 1);
+        } catch (RuntimeException | LinkageError failure) {
+            built.delete();
+            throw failure;
+        }
+        return built;
+    }
+
+    /**
+     * Builds the pipeline against an explicit render pass with {@code colorAttachments} colour attachments -
+     * the multi-target form, for a program whose fragment shader writes several outputs into a framebuffer
+     * that attaches that many targets. The blend state is the {@code like} variant's, applied to every
+     * attachment: GL has one blend state for all draw buffers unless a mod sets the per-buffer form, which the
+     * translator does not lower.
+     */
+    public static VulkanModProgramPipeline create(VulkanContext context, ModProgramRegistry.Program program,
+                                                  int formatId, VulkanImmediateTexturePipeline like,
+                                                  long renderPass, int colorAttachments) {
+        ModGlslTranslator.Result lowered = program.lowered();
+        VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, lowered.attributes(), lowered.samplers(),
+                lowered.images(), lowered.uniformBlockSize());
+        if (!lowered.images().isEmpty() && !context.celtium$storageImagesWithoutFormat()) {
+            throw new IllegalStateException("storage images without format qualifiers are not supported by this device "
+                    + "(shaderStorageImageRead/WriteWithoutFormat=false)");
+        }
+        try {
+            built.createLayouts();
+            built.createPipeline(program.vertexSpirv(), program.fragmentSpirv(), formatId,
+                    renderPass, like.celtium$cull(), like.celtium$depthTest(),
+                    like.celtium$depthWrite(), like.celtium$depthCompareOp(), like.celtium$colorBlend(), true,
+                    colorAttachments);
         } catch (RuntimeException | LinkageError failure) {
             built.delete();
             throw failure;
@@ -182,7 +212,7 @@ public final class VulkanModProgramPipeline {
             built.createLayouts();
             built.createPipeline(vertexSpirv, fragmentSpirv, VulkanImmediateFormats.POSITION_TEX, renderPass, cull,
                     depthTest, depthWrite, depthCompareOp,
-                    colorBlend != null ? colorBlend : VulkanColorBlendState.legacy(), false);
+                    colorBlend != null ? colorBlend : VulkanColorBlendState.legacy(), false, 1);
         } catch (RuntimeException | LinkageError failure) {
             built.delete();
             throw failure;
@@ -250,7 +280,8 @@ public final class VulkanModProgramPipeline {
 
     private void createPipeline(byte[] vertexSpirv, byte[] fragmentSpirv, int formatId, long renderPass, int cull,
                                 boolean depthTest, boolean depthWrite, int depthCompareOp,
-                                VulkanColorBlendState colorBlend, boolean honourModProgramFlags) {
+                                VulkanColorBlendState colorBlend, boolean honourModProgramFlags,
+                                int colorAttachments) {
         ByteBuffer vertexCode = MemoryUtil.memAlloc(vertexSpirv.length).put(vertexSpirv).flip();
         ByteBuffer fragmentCode = MemoryUtil.memAlloc(fragmentSpirv.length).put(fragmentSpirv).flip();
         long vertexModule = VK_NULL_HANDLE;
@@ -317,12 +348,19 @@ public final class VulkanModProgramPipeline {
                         VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE, VK_BLEND_OP_ADD, VK_BLEND_OP_ADD, 0xF);
             }
             this.blends = effectiveBlend.blend();
-            VkPipelineColorBlendAttachmentState.Buffer blendAttachment = VkPipelineColorBlendAttachmentState.calloc(1, stack);
-            blendAttachment.get(0).blendEnable(effectiveBlend.blend())
-                    .srcColorBlendFactor(effectiveBlend.srcColor()).dstColorBlendFactor(effectiveBlend.dstColor())
-                    .colorBlendOp(effectiveBlend.colorOp())
-                    .srcAlphaBlendFactor(effectiveBlend.srcAlpha()).dstAlphaBlendFactor(effectiveBlend.dstAlpha())
-                    .alphaBlendOp(effectiveBlend.alphaOp()).colorWriteMask(effectiveBlend.writeMask());
+            // One blend attachment state per colour attachment the render pass has: the count must match the
+            // pass's subpass, and the state is the same for each - GL applies one blend state to every draw
+            // buffer, so a multi-target program blends all its outputs the way it blends its first.
+            int blendCount = Math.max(1, colorAttachments);
+            VkPipelineColorBlendAttachmentState.Buffer blendAttachment =
+                    VkPipelineColorBlendAttachmentState.calloc(blendCount, stack);
+            for (int i = 0; i < blendCount; i++) {
+                blendAttachment.get(i).blendEnable(effectiveBlend.blend())
+                        .srcColorBlendFactor(effectiveBlend.srcColor()).dstColorBlendFactor(effectiveBlend.dstColor())
+                        .colorBlendOp(effectiveBlend.colorOp())
+                        .srcAlphaBlendFactor(effectiveBlend.srcAlpha()).dstAlphaBlendFactor(effectiveBlend.dstAlpha())
+                        .alphaBlendOp(effectiveBlend.alphaOp()).colorWriteMask(effectiveBlend.writeMask());
+            }
             VkPipelineColorBlendStateCreateInfo blend = VkPipelineColorBlendStateCreateInfo.calloc(stack).sType$Default()
                     .logicOpEnable(false).pAttachments(blendAttachment);
             // The same dynamic states as the immediate variants, so the group loop's per-group commands stay valid.

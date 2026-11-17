@@ -43,30 +43,42 @@ final class ModPrograms {
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramsSampleMain", "true"));
     final java.util.Map<ModProgramKey, VulkanModProgramPipeline> modProgramPipelines = new java.util.HashMap<>();
 
-    /** A mod program pipeline's identity: both SPIR-V arrays and the variant it is built like, by reference. */
+    /**
+     * A mod program pipeline's identity: both SPIR-V arrays and the variant it is built like, by reference, plus
+     * the render pass it is built against and its colour count. The pass belongs in the key because a pipeline is
+     * only valid inside a compatible pass: the same program drawn into a one-colour target and into a
+     * multi-target framebuffer needs two pipelines, and the {@code like} variant's own pass is the one-colour
+     * case of the same fact.
+     */
     static final class ModProgramKey {
         private final byte[] vertex;
         private final byte[] fragment;
         private final int formatId;
         private final Object like;
+        private final long renderPass;
+        private final int colorCount;
 
-        ModProgramKey(byte[] vertex, byte[] fragment, int formatId, Object like) {
+        ModProgramKey(byte[] vertex, byte[] fragment, int formatId, Object like, long renderPass, int colorCount) {
             this.vertex = vertex;
             this.fragment = fragment;
             this.formatId = formatId;
             this.like = like;
+            this.renderPass = renderPass;
+            this.colorCount = colorCount;
         }
 
         @Override
         public boolean equals(Object other) {
             return other instanceof ModProgramKey k && k.vertex == this.vertex && k.fragment == this.fragment
-                    && k.formatId == this.formatId && k.like == this.like;
+                    && k.formatId == this.formatId && k.like == this.like
+                    && k.renderPass == this.renderPass && k.colorCount == this.colorCount;
         }
 
         @Override
         public int hashCode() {
-            return ((System.identityHashCode(this.vertex) * 31 + System.identityHashCode(this.fragment)) * 31
-                    + this.formatId) * 31 + System.identityHashCode(this.like);
+            return ((((System.identityHashCode(this.vertex) * 31 + System.identityHashCode(this.fragment)) * 31
+                    + this.formatId) * 31 + System.identityHashCode(this.like)) * 31
+                    + (int) (this.renderPass ^ (this.renderPass >>> 32))) * 31 + this.colorCount;
         }
     }
     private static final VulkanGlTexture[] EMPTY_TEXTURES = new VulkanGlTexture[0];
@@ -75,6 +87,8 @@ final class ModPrograms {
     private org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program lastModProgram;
     private int lastModFormatId = -1;
     private Object lastModLike;
+    private long lastModRenderPass;
+    private int lastModColorCount = -1;
     private VulkanModProgramPipeline lastModPipeline;
     String lastModProgramFailure = "none";
 
@@ -106,18 +120,34 @@ final class ModPrograms {
             return celtium$modFailure(programId, "the batch's own variant is "
                     + standard.pipeline.getClass().getSimpleName() + ", not a textured one");
         }
+        // The target's colour count decides both the refusal and the pass: a program writing more fragment
+        // outputs than the target attaches has nowhere to write them (and a pipeline built for it against a
+        // one-colour pass is invalid outright), while a multi-target target needs the pipeline built against
+        // its own count's pass.
+        int targetColors = celtium$modTargetColors();
+        String mrtRefusal = celtium$mrtRefusal(program.lowered().fragOutputCount(), targetColors);
+        if (mrtRefusal != null) {
+            return celtium$modFailure(programId, mrtRefusal);
+        }
+        long targetRenderPass = targetColors > 1
+                ? b.chainPairRenderPass(targetColors) : like.celtium$renderPassHandle();
         VulkanModProgramPipeline pipeline;
         if (program == this.lastModProgram && formatId == this.lastModFormatId && like == this.lastModLike
+                && targetRenderPass == this.lastModRenderPass && targetColors == this.lastModColorCount
                 && this.lastModPipeline != null) {
             pipeline = this.lastModPipeline;
         } else {
             // Keyed by the objects themselves: identity hash codes are not unique, so a key built from them could hand
             // one program's pipeline to another (and, after a world teardown, to a pipeline built like a released one).
-            ModProgramKey key = new ModProgramKey(program.vertexSpirv(), program.fragmentSpirv(), formatId, like);
+            ModProgramKey key = new ModProgramKey(program.vertexSpirv(), program.fragmentSpirv(), formatId, like,
+                    targetRenderPass, targetColors);
             pipeline = this.modProgramPipelines.get(key);
             if (pipeline == null) {
                 try {
-                    pipeline = VulkanModProgramPipeline.create(b.context, program, formatId, like);
+                    pipeline = targetColors > 1
+                            ? VulkanModProgramPipeline.create(b.context, program, formatId, like,
+                                    targetRenderPass, targetColors)
+                            : VulkanModProgramPipeline.create(b.context, program, formatId, like);
                 } catch (RuntimeException | LinkageError failure) {
                     return celtium$modFailure(programId, "pipeline: " + failure.getMessage());
                 }
@@ -126,6 +156,8 @@ final class ModPrograms {
             this.lastModProgram = program;
             this.lastModFormatId = formatId;
             this.lastModLike = like;
+            this.lastModRenderPass = targetRenderPass;
+            this.lastModColorCount = targetColors;
             this.lastModPipeline = pipeline;
         }
         int samplerCount = pipeline.samplerCount();
@@ -232,6 +264,35 @@ final class ModPrograms {
         }
         return new PreparedImmediate(new VulkanModProgramPipeline.Draw(pipeline,
                 VulkanModProgramPipeline.packUniforms(program), set, label, textures, imageTextures), set, 0L);
+    }
+
+    /**
+     * {@return how many colour targets the framebuffer the program is being prepared for attaches}: the main
+     * framebuffer's one, and for a mod's own framebuffer the publication record's count - the same record the
+     * window sizes its pass from, so the pipeline and the pass cannot disagree about the target.
+     */
+    private int celtium$modTargetColors() {
+        long identity = b.currentFramebufferIdentity;
+        if (identity == b.targetRegistry.mainIdentity()) {
+            return 1;
+        }
+        return Math.max(1, b.publishedTextures.colorAttachmentCount(identity));
+    }
+
+    /**
+     * {@return why a program with {@code fragOutputs} fragment outputs cannot draw into a target with
+     * {@code targetColors} colour attachments}, or null when it can. A program writing fewer outputs than the
+     * target attaches can draw - the unwritten attachments keep what the pass loaded - but one writing more has
+     * outputs with no attachment, which no pipeline can honour. Static and pure so the rule is pinned without a
+     * device.
+     */
+    static String celtium$mrtRefusal(int fragOutputs, int targetColors) {
+        int targets = Math.max(1, targetColors);
+        if (fragOutputs > targets) {
+            return "program writes " + fragOutputs + " fragment outputs but the target attaches "
+                    + targets + " colour target" + (targets == 1 ? "" : "s");
+        }
+        return null;
     }
 
     /**
