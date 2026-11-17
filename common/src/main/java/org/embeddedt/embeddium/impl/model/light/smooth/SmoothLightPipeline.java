@@ -135,17 +135,20 @@ public class SmoothLightPipeline implements LightPipeline {
      * Flags: IS_ALIGNED, IS_PARTIAL
      */
     private void applyAlignedPartialFace(AoNeighborInfo neighborInfo, ModelQuadView quad, int x, int y, int z, ModelQuadFacing dir, QuadLightData out) {
+        AoFaceData faceData = this.getCachedFaceData(x, y, z, dir, true);
+        if (!faceData.hasUnpackedLightData()) {
+            faceData.unpackLightData();
+        }
+        float[] weights = this.weights;
         for (int i = 0; i < 4; i++) {
             // Clamp the vertex positions to the block's boundaries to prevent weird errors in lighting
             float cx = clamp(quad.getX(i));
             float cy = clamp(quad.getY(i));
             float cz = clamp(quad.getZ(i));
 
-            float[] weights = this.weights;
             neighborInfo.calculateCornerWeights(cx, cy, cz, weights);
-            this.applyAlignedPartialFaceVertex(x, y, z, dir, weights, true);
-            out.br[i] = lastAo;
-            out.lm[i] = getLightMapCoord(lastSl, lastBl);
+            out.br[i] = faceData.getBlendedShade(weights);
+            out.lm[i] = getLightMapCoord(faceData.getBlendedSkyLight(weights), faceData.getBlendedBlockLight(weights));
         }
     }
 

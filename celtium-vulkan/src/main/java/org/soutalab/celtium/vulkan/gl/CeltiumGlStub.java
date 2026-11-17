@@ -196,6 +196,16 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     static {
+        registerNamesAndQueries();
+        registerBuffersAndTextures();
+        registerStateAndDraws();
+        registerNoops();
+        for (int i = 0; i < TABLE.size(); i++) {
+            IDS.putIfAbsent(TABLE.get(i).name, Integer.valueOf(i));
+        }
+    }
+
+    private static void registerNamesAndQueries() {
         // ---- names: every generator returns a fresh id; the same table's delete frees it for reporting only
         fn("glGenTextures", R_INT, SEM_GEN, A_INT, A_PTR);
         fn("glGenBuffers", R_INT, SEM_GEN, A_INT, A_PTR);
@@ -308,6 +318,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glGetQueryObjectuiv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
         fn("glGetQueryObjecti64v", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
         fn("glGetQueryObjectui64v", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
+    }
+
+    private static void registerBuffersAndTextures() {
         // ---- buffer storage: glBufferData allocates, glMapBuffer returns the storage address
         fn("glBufferData", R_VOID, SEM_BUFFER_DATA, A_INT, A_LONG, A_PTR, A_INT);
         fn("glNamedBufferData", R_VOID, SEM_BUFFER_DATA, A_INT, A_LONG, A_PTR, A_INT);
@@ -389,6 +402,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glMultMatrixf", R_VOID, SEM_MULT_MATRIX, A_PTR);
         fn("glMultMatrixd", R_VOID, SEM_MULT_MATRIX, A_PTR);
         fn("glMatrixMode", R_VOID, SEM_MATRIX_MODE, A_INT);
+    }
+
+    private static void registerStateAndDraws() {
         // Copy-from-framebuffer. The main menu's panorama is built with these: renderSkybox draws the six 256x256
         // cube faces into the window and copies each into the skybox texture, and the blur passes copy their own
         // targets. Registered rather than left in the no-op list so the request is named and counted: under GL-less
@@ -461,6 +477,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glCreateQueries", R_VOID, SEM_GEN, A_INT, A_INT, A_PTR);
         fn("glCreateTransformFeedbacks", R_VOID, SEM_GEN, A_INT, A_PTR);
         fn("glCreateProgramPipelines", R_VOID, SEM_GEN, A_INT, A_PTR);
+    }
+
+    private static void registerNoops() {
         // ---- state-set no-ops: the fixed-function and raster state the Vulkan side mirrors or owns
         String[] noops = {
                 "glBindRenderbuffer",
@@ -520,9 +539,6 @@ public final class CeltiumGlStub implements FunctionProvider {
             // Rough signature for the table: every arg marshals as int/pointer uniformly - the noop discards them,
             // so an arg count is all the trampoline needs.
             fn(name, R_VOID, SEM_NOOP, new byte[] { A_PTR, A_PTR, A_PTR, A_PTR, A_PTR, A_PTR, A_PTR, A_PTR });
-        }
-        for (int i = 0; i < TABLE.size(); i++) {
-            IDS.putIfAbsent(TABLE.get(i).name, Integer.valueOf(i));
         }
     }
 

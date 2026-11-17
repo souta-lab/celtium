@@ -193,6 +193,9 @@ public class ChunkBuilder {
      * machine-specific tuning: the only constants are a dimensionless headroom ratio and a safety cap.</p>
      */
     public void tickSchedulingBudget(ChunkJobMetricsTracker metrics) {
+        if (!ENABLE_ADAPTIVE_SCHEDULING) {
+            return;
+        }
         long now = System.nanoTime();
 
         if (this.lastTickNanos != 0) {
@@ -201,12 +204,6 @@ public class ChunkBuilder {
         }
 
         this.lastTickNanos = now;
-
-        if (!ENABLE_ADAPTIVE_SCHEDULING) {
-            // Legacy behavior: the target stays pinned at the floor, so getSchedulingBudget() yields the fixed
-            // per-worker budget.
-            return;
-        }
 
         int previousTarget = this.targetInFlight;
 

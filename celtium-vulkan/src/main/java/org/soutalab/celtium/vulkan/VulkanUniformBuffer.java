@@ -27,6 +27,8 @@ final class VulkanUniformBuffer {
     private long memory;
     private long mappedAddress;
     private long size;
+    private ByteBuffer mappedView;
+    private long deviceAlignment;
 
     VulkanUniformBuffer(VulkanContext context, long initialSize) {
         this.context = context;
@@ -43,7 +45,12 @@ final class VulkanUniformBuffer {
 
     /** The mapped range. Writes through this view are visible to the GPU after the owning queue submission. */
     ByteBuffer mapped() {
-        return MemoryUtil.memByteBuffer(this.mappedAddress, (int) this.size);
+        ByteBuffer view = this.mappedView;
+        if (view == null && this.mappedAddress != 0L && this.size > 0L) {
+            view = MemoryUtil.memByteBuffer(this.mappedAddress, (int) this.size);
+            this.mappedView = view;
+        }
+        return view;
     }
 
     /**
@@ -127,6 +134,9 @@ final class VulkanUniformBuffer {
         this.memory = allocation.memory;
         this.mappedAddress = allocation.mappedAddress;
         this.size = allocation.size;
+        this.mappedView = allocation.mappedAddress != 0L && allocation.size > 0L
+                ? MemoryUtil.memByteBuffer(allocation.mappedAddress, (int) allocation.size)
+                : null;
     }
 
     /**
@@ -203,6 +213,7 @@ final class VulkanUniformBuffer {
     }
 
     void delete() {
+        this.mappedView = null;
         if (this.mappedAddress != 0) {
             vkUnmapMemory(this.context.device(), this.memory);
             this.mappedAddress = 0;
@@ -236,12 +247,16 @@ final class VulkanUniformBuffer {
     }
 
     private long alignToDevice(long value) {
-        long alignment = 256;
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            org.lwjgl.vulkan.VkPhysicalDeviceProperties properties =
-                    org.lwjgl.vulkan.VkPhysicalDeviceProperties.calloc(stack);
-            vkGetPhysicalDeviceProperties(this.context.physicalDevice(), properties);
-            alignment = Math.max(256, properties.limits().minUniformBufferOffsetAlignment());
+        long alignment = this.deviceAlignment;
+        if (alignment == 0L) {
+            alignment = 256;
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                org.lwjgl.vulkan.VkPhysicalDeviceProperties properties =
+                        org.lwjgl.vulkan.VkPhysicalDeviceProperties.calloc(stack);
+                vkGetPhysicalDeviceProperties(this.context.physicalDevice(), properties);
+                alignment = Math.max(256, properties.limits().minUniformBufferOffsetAlignment());
+            }
+            this.deviceAlignment = alignment;
         }
         long mask = alignment - 1;
         return Math.max(1024, (value + mask) & ~mask);

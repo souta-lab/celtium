@@ -47,6 +47,7 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
      * same in a picture - nothing appears - so the first draw of each layer reports whether the lists carry the pass.
      */
     private final java.util.Set<String> celtium$layerGeometryReported = new java.util.HashSet<String>();
+    private long celtium$layerGeometryReportedMask;
 
     /** Draws seen per layer, so the geometry census waits for a world that has been built rather than the loading screen. */
     private final java.util.Map<String, Integer> celtium$layerDrawCounts =
@@ -207,8 +208,15 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
      * {@code BLOOM}) and a name is what a log reader can match against the mod.
      */
     private void celtium$reportLayerGeometry(BlockRenderLayer renderLayer) {
+        int ordinal = renderLayer.ordinal();
+        if (ordinal >= 0 && ordinal < 64 && (this.celtium$layerGeometryReportedMask & (1L << ordinal)) != 0L) {
+            return;
+        }
         String name = renderLayer.name();
         if (this.celtium$layerGeometryReported.contains(name)) {
+            if (ordinal >= 0 && ordinal < 64) {
+                this.celtium$layerGeometryReportedMask |= (1L << ordinal);
+            }
             return;
         }
         Integer count = this.celtium$layerDrawCounts.get(name);
@@ -223,13 +231,13 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
                 return;
             }
             var lists = manager.getRenderLists();
-            // The first draws of a world are the loading screen's empty lists: reporting there says "no geometry" for
-            // every layer and settles nothing. The count above waits for the world; this checks the lists are carrying
-            // regions at all before the pass flags are believed.
             if (lists.getNumRegions() == 0) {
                 return;
             }
             this.celtium$layerGeometryReported.add(name);
+            if (ordinal >= 0 && ordinal < 64) {
+                this.celtium$layerGeometryReportedMask |= (1L << ordinal);
+            }
             var passes = manager.getRenderPassConfiguration().vanillaRenderStages().get(renderLayer);
             StringBuilder report = new StringBuilder();
             if (passes != null) {

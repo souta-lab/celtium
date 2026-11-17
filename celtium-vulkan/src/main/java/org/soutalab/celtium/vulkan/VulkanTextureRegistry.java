@@ -184,7 +184,8 @@ public final class VulkanTextureRegistry {
     /** Invalidations of a published name that were ignored, because its content is live. */
     private int externalInvalidatesIgnored;
     /** GL names whose publication has been named in the log, so a per-frame publish cannot flood it. */
-    private final java.util.Set<Integer> externalLogged = new java.util.HashSet<Integer>();
+    private final it.unimi.dsi.fastutil.ints.IntOpenHashSet externalLogged =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     private int mirrorCount;
     private int mirrorDeferredLines;
 
@@ -407,8 +408,7 @@ public final class VulkanTextureRegistry {
                             : image == 0L || view == 0L ? "no image or view handle" : "no usable size"));
             return null;
         }
-        Integer id = Integer.valueOf(glTextureId);
-        VulkanGlTexture existing = this.externalImages.get((int) (id));
+        VulkanGlTexture existing = this.externalImages.get(glTextureId);
         if (existing != null && existing.standsFor(image, view, width, height)) {
             this.externalRepublishes++;
             return existing;
@@ -416,10 +416,10 @@ public final class VulkanTextureRegistry {
         if (existing != null) {
             // Same name, different handles: the owner replaced its image, so this wrapper stands for a resource that
             // no longer exists. Dropped (the image itself is the owner's) rather than kept as a stale view.
-            this.externalImages.remove((int) (id));
+            this.externalImages.remove(glTextureId);
             retireExternal(glTextureId, existing, "GL texture " + glTextureId + " was published with new handles");
         }
-        Entry superseded = this.entries.remove((int) (id));
+        Entry superseded = this.entries.remove(glTextureId);
         celtium$noteLargeRemoval(glTextureId, superseded, "superseded by a published image");
         celtium$dropMemoFor(glTextureId);
         if (superseded != null) {
@@ -444,15 +444,15 @@ public final class VulkanTextureRegistry {
             this.rejectPatch("external image for GL texture " + glTextureId + " could not be published: " + error);
             return null;
         }
-        this.externalImages.put((int) (id), shared);
+        this.externalImages.put(glTextureId, shared);
         // Publishing also supersedes an owned mirror or a previous negative lookup. Queued groups must resolve
         // the new owner even when this is the name's first external publication (no retireExternal call occurred).
         this.mutations++;
         celtium$dropMemoFor(glTextureId);
-        this.fullyInitialized.add(id);
+        this.fullyInitialized.add(glTextureId);
         this.staleIds.remove(glTextureId);
         this.externalPublished++;
-        if (this.externalLogged.size() < 8 && this.externalLogged.add(id)) {
+        if (this.externalLogged.size() < 8 && this.externalLogged.add(glTextureId)) {
             System.out.println("[Celtium] CELTIUM_EXTERNAL_IMAGE published glTexture=" + glTextureId
                     + " image=0x" + Long.toHexString(image) + " view=0x" + Long.toHexString(view)
                     + " size=" + width + "x" + height + " layout=GENERAL owner=renderer"
@@ -473,13 +473,12 @@ public final class VulkanTextureRegistry {
      * @return whether an entry was dropped
      */
     public boolean unpublishExternalImage(int glTextureId) {
-        Integer id = Integer.valueOf(glTextureId);
-        VulkanGlTexture existing = this.externalImages.remove((int) (id));
+        VulkanGlTexture existing = this.externalImages.remove(glTextureId);
         if (existing == null) {
             return false;
         }
         this.externalUnpublished++;
-        this.fullyInitialized.remove(id);
+        this.fullyInitialized.remove(glTextureId);
         retireExternal(glTextureId, existing, "GL texture " + glTextureId + " was unpublished");
         return true;
     }
@@ -668,7 +667,7 @@ public final class VulkanTextureRegistry {
                             + entry.width + "x" + entry.height + ")");
                     return;
                 }
-                this.fullyInitialized.add(Integer.valueOf(glTextureId));
+                this.fullyInitialized.add(glTextureId);
                 // And on the image itself, which is what the descriptor decision reads. Writing only the set here is what
                 // kept "the mirror for texture N has never received its full content" true after a full supply.
                 entry.texture.markFullContentArrived();
@@ -689,8 +688,7 @@ public final class VulkanTextureRegistry {
      * the directly held atlas into a readback that overwrote a correct mirror with zeros.
      */
     public boolean canSkipReadback(int glTextureId) {
-        Integer id = Integer.valueOf(glTextureId);
-        VulkanGlTexture external = this.externalImages.get((int) (id));
+        VulkanGlTexture external = this.externalImages.get(glTextureId);
         if (external != null) {
             // Live content, and no readback could improve on it: this image is what its owner is rendering into
             // right now, so a GL readback (which under the stub delivers nothing at all) could only replace it with
@@ -698,7 +696,7 @@ public final class VulkanTextureRegistry {
             skipDecisionLog(glTextureId, "the image is published by its owner and its content is live", true);
             return true;
         }
-        if (!this.fullyInitialized.contains(id)) {
+        if (!this.fullyInitialized.contains(glTextureId)) {
             skipDecisionLog(glTextureId, "not fully initialized", false);
             return false;
         }
@@ -709,7 +707,7 @@ public final class VulkanTextureRegistry {
         // left with a patch (or with nothing at all) while this method answered "the readback is unnecessary" - the
         // terrain sampled undefined texels and drew them as black. A mirror whose whole content never arrived may not
         // have its supply skipped; once it has, the generation comparison below is the economy it was meant to be.
-        Entry entry = this.entries.get((int) (id));
+        Entry entry = this.entries.get(glTextureId);
         if (entry == null || !entry.texture.hasFullContent()) {
             skipDecisionLog(glTextureId, "the mirror holds no whole content", false);
             return false;
@@ -732,11 +730,11 @@ public final class VulkanTextureRegistry {
             return;
         }
         skipDecisionLogs++;
-        Entry entry = this.entries.get((int) (glTextureId));
+        Entry entry = this.entries.get(glTextureId);
         System.out.println("[Celtium] CELTIUM_SKIP_DECISION glTexture=" + glTextureId + " skip=" + decision
                 + " because " + why + " entry=" + (entry == null ? "none"
                         : entry.width + "x" + entry.height + " full=" + entry.texture.hasFullContent())
-                + " fullyInitialized=" + this.fullyInitialized.contains(Integer.valueOf(glTextureId)));
+                + " fullyInitialized=" + this.fullyInitialized.contains(glTextureId));
     }
 
     /** Consumes the CPU application that made a readback unnecessary, so the next write is judged on its own. */
@@ -763,18 +761,18 @@ public final class VulkanTextureRegistry {
 
     /** Records one CPU application into the image, whatever producer it came from. */
     private void recordApplication(int glTextureId, boolean wholeTexture) {
-        Integer id = Integer.valueOf(glTextureId);
-        this.announceCounter = this.announceCounter + 1; setAnnouncedGeneration(id, this.announceCounter);
+        this.announceCounter = this.announceCounter + 1;
+        setAnnouncedGeneration(glTextureId, this.announceCounter);
         if (wholeTexture) {
-            this.fullyInitialized.add(id);
+            this.fullyInitialized.add(glTextureId);
             return;
         }
-        Entry entry = this.entries.get((int) (id));
+        Entry entry = this.entries.get(glTextureId);
         if (entry != null && entry.texture.hasFullContent()) {
             // The image is sample-ready after either full coverage or a defined blank baseline followed by a patch.
             // Keep the registry's initialization gate aligned with the image; this does not mean the producer wrote
             // every texel of a sparse texture.
-            this.fullyInitialized.add(id);
+            this.fullyInitialized.add(glTextureId);
         }
     }
 
@@ -816,8 +814,7 @@ public final class VulkanTextureRegistry {
         // A generation, not the image identity: Minecraft updates a DynamicTexture in place, so the same BufferedImage
         // object arrives with different pixels. The generation changes on every announcement and is consumed when the
         // mirror is built from it, which is what makes "already converted this one" safe to skip.
-        setAnnouncedGeneration(glTextureId,
-                Integer.valueOf(this.announceCounter = this.announceCounter + 1));
+        setAnnouncedGeneration(glTextureId, ++this.announceCounter);
     }
 
     /** {@return the announced images converted to RGBA bytes}, or null when this texture has none. */
@@ -853,7 +850,11 @@ public final class VulkanTextureRegistry {
             out.position(0).limit(w * h * 4);
             return out;
         }
-        if (dataBuffer instanceof java.awt.image.DataBufferInt intBuffer) {
+        if (dataBuffer instanceof java.awt.image.DataBufferInt intBuffer
+                && (image.getType() == java.awt.image.BufferedImage.TYPE_INT_ARGB
+                        || image.getType() == java.awt.image.BufferedImage.TYPE_INT_ARGB_PRE)
+                && raster.getMinX() == 0 && raster.getMinY() == 0
+                && raster.getWidth() == w && raster.getHeight() == h) {
             // The game's textures are TYPE_INT_ARGB, so their pixels are already an int[] of ARGB words and the AWT
             // colour-model conversion is pure overhead: the JFR of the world window put BufferedImage.getRGB and
             // DirectColorModel.getRGB at the top of the client thread (55 and 30 samples) - more than the terrain
@@ -863,15 +864,16 @@ public final class VulkanTextureRegistry {
             pixels = new int[w * h];
             image.getRGB(0, 0, w, h, pixels, 0, w);
         }
-        // Pack into the RGBA byte order the Vulkan image wants with one bulk put: the per-component form wrote four bytes
-        // per pixel through memPutByte, which is the same pattern that made the presented dump cost 284 ms.
-        int[] rgba = new int[pixels.length];
-        for (int pixel = 0; pixel < pixels.length; pixel++) {
+        // Stream directly into the off-heap buffer without allocating a duplicate int[] (which cost 69 MiB on a
+        // 4096x4224 font atlas) or a DirectIntBufferU wrapper.
+        long address = org.lwjgl.system.MemoryUtil.memAddress(out);
+        int count = Math.min(w * h, pixels.length);
+        for (int pixel = 0; pixel < count; pixel++) {
             int argb = pixels[pixel];
             // Little-endian int order in memory is r,g,b,a, so the byte that lands first is the red one.
-            rgba[pixel] = ((argb >>> 16) & 0xFF) | (argb & 0xFF00) | ((argb & 0xFF) << 16) | (argb & 0xFF000000);
+            int rgbaWord = (argb & 0xFF00FF00) | ((argb >>> 16) & 0xFF) | ((argb & 0xFF) << 16);
+            org.lwjgl.system.MemoryUtil.memPutInt(address + (long) pixel * 4L, rgbaWord);
         }
-        org.lwjgl.system.MemoryUtil.memIntBuffer(org.lwjgl.system.MemoryUtil.memAddress(out), rgba.length).put(rgba);
         out.position(0).limit(w * h * 4);
         return out;
     }
@@ -1303,7 +1305,7 @@ public final class VulkanTextureRegistry {
             }
         }
         boolean wholeTexture = x == 0 && y == 0 && entry.width == width && entry.height == height;
-        if (!wholeTexture && !this.fullyInitialized.contains(Integer.valueOf(glTextureId))) {
+        if (!wholeTexture && !this.fullyInitialized.contains(glTextureId)) {
             // Under the stub a level whose extent the game already allocated is defined GL state - allocated with
             // undefined content, modelled as zeros - and a patch into it is a legal write, not a guess at an image
             // nobody sized. Accepting it is also the only way the coverage rule above can ever reach "full" for an
@@ -1823,7 +1825,8 @@ public final class VulkanTextureRegistry {
      *       invalidated the mirror already handed its pixels over" a fact rather than an assumption.</li>
      * </ul>
      */
-    private final java.util.Set<Integer> fullyInitialized = new java.util.HashSet<Integer>();
+    private final it.unimi.dsi.fastutil.ints.IntOpenHashSet fullyInitialized =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     /** The generation already present in the image, per texture: consumed by a readback skip or by a mirror build. */
     private int[] consumedGenerationByTexture = new int[4096];
 
@@ -1900,34 +1903,33 @@ public final class VulkanTextureRegistry {
             lifecycleLogs++;
             System.out.println("[Celtium] CELTIUM_LIFECYCLE forgetTexture id=" + glTextureId
                     + " seq=" + (++this.lifecycleSerial)
-                    + " hadEntry=" + this.entries.containsKey((int) (glTextureId))
-                    + " announcedUnconsumed=" + announcementUnconsumed(Integer.valueOf(glTextureId)));
+                    + " hadEntry=" + this.entries.containsKey(glTextureId)
+                    + " announcedUnconsumed=" + announcementUnconsumed(glTextureId));
         }
-        Integer id = Integer.valueOf(glTextureId);
         // A published image is dropped, never destroyed: the registry does not own it, and its owner (the renderer's
         // off-target pair, or whatever else published it) is the only thing that may free it. The GL name is going
         // away, so the wrapper goes with it - but only the wrapper's sampler is released.
-        VulkanGlTexture external = this.externalImages.remove((int) (id));
+        VulkanGlTexture external = this.externalImages.remove(glTextureId);
         if (external != null) {
             this.externalUnpublished++;
             retireExternal(glTextureId, external, "GL texture " + glTextureId + " was forgotten by its owner");
         }
-        Entry entry = this.entries.remove((int) (id));
+        Entry entry = this.entries.remove(glTextureId);
         celtium$noteLargeRemoval(glTextureId, entry, "forgetTexture");
         celtium$dropMemoFor(glTextureId);
         // A deleted name's id is free for reuse, and the deferral is an answer about the content the previous owner
         // had: keeping it would let the next texture under this name inherit "nothing writes this" until its serial
         // happened to differ from a number that described different pixels.
         this.deferrals.forget(glTextureId);
-        this.fullyInitialized.remove(id);
+        this.fullyInitialized.remove(glTextureId);
         // The GL name is free for reuse the moment it is deleted ("its name is free for reuse"), so the label that
         // says which source filled *this* name's mirror must go with the entry. It did not, and `splashSourcedGroups`
         // - which counts groups sampling a mirror whose source is `announced-int[]`, i.e. exactly this label - could
         // therefore attribute the next texture under the same name to the previous one's source. Measured on the
         // panorama: `forgetTexture id=8 hadEntry=true` fires, no announcement follows for id 8, and the mirror is
         // refilled by an int[] upload, so the stale label is precisely the case that matters here.
-        this.mirrorSourceById.remove(id);
-        if (announcementUnconsumed(id)) {
+        this.mirrorSourceById.remove(glTextureId);
+        if (announcementUnconsumed(glTextureId)) {
             // The GL-less case, and the reason this is not the plain removal below: the game's own upload utility
             // deletes the id inside the very call that announced its image
             // ({@code TextureUtil.uploadTextureImageAllocate} -> {@code allocateTexture} -> {@code deleteTexture}),
@@ -1938,13 +1940,12 @@ public final class VulkanTextureRegistry {
             // which is what keeps a name that was deleted and reused for something else from sampling old pixels.
             this.retainedAnnouncements++;
         } else {
-            clearGeneration(id);
-            clearGeneration(id);
-            if (this.announcedImages.remove(id) != null) {
+            clearGeneration(glTextureId);
+            if (this.announcedImages.remove(glTextureId) != null) {
                 // A pending announcement dropped with the mirror. Counted per name because the GUI defect turns on it:
                 // an announcement that has not been turned into a mirror yet is pixels the game handed over and this
                 // method threw away - and the texture is then left to the captured upload, or to nothing.
-                this.droppedAnnouncementsById.put(id.intValue(), this.droppedAnnouncementsById.get(id.intValue()) + 1);
+                this.droppedAnnouncementsById.put(glTextureId, this.droppedAnnouncementsById.get(glTextureId) + 1);
             }
         }
         if (entry != null) {
@@ -2154,14 +2155,10 @@ public final class VulkanTextureRegistry {
         if (glTextureId == 0) {
             return null;
         }
-        // One box per lookup: this method used to run Integer.valueOf at every one of its map gets - up to ten on the
-        // stale path - on a call the immediate path makes twice per group. Names past the Integer cache (-128..127)
-        // allocate each time, so the single box is the win, not the lookups it keys.
-        Integer id = Integer.valueOf(glTextureId);
         // Published images are resolved before every other source: their content is live (the renderer is writing
         // that image right now), so no announcement and no captured upload could describe it, and a mirror built
         // from either would be a second image under a name that already stands for the frame's own.
-        VulkanGlTexture external = this.externalImages.get((int) (glTextureId));
+        VulkanGlTexture external = this.externalImages.get(glTextureId);
         if (external != null) {
             HIT_CALLS++;
             return external;
@@ -2174,7 +2171,7 @@ public final class VulkanTextureRegistry {
         // Hoisting it costs one map lookup on a path that already does several, and the method itself returns
         // immediately when nothing moved.
         if (SAMPLER_CONFIRM_EARLY) {
-            samplerEntry = this.entries.get((int) (glTextureId));
+            samplerEntry = this.entries.get(glTextureId);
             if (samplerEntry != null) {
                 samplerEntry.texture.confirmSamplerStateFromRecord(glTextureId);
             }
@@ -2188,19 +2185,20 @@ public final class VulkanTextureRegistry {
             // The conversion is 1.17 ms per call and it ran on almost every batch: the announcement stayed pending, so the
             // same image was turned into RGBA again and again. A consumed generation means the mirror already holds these
             // pixels, and this lookup is then a plain hit.
-            int current = announcedGenerationOfInt(id);
-            int consumed = consumedGenerationOfInt(id);
-            if (current != 0 && current == consumed && this.entries.get((int) (id)) != null) {
+            int current = announcedGenerationOfInt(glTextureId);
+            int consumed = consumedGenerationOfInt(glTextureId);
+            Entry cachedEntry = SAMPLER_CONFIRM_EARLY ? samplerEntry : this.entries.get(glTextureId);
+            if (current != 0 && current == consumed && cachedEntry != null) {
                 ANNOUNCED_SKIPS++;
                 HIT_CALLS++;
-                return this.entries.get((int) (id)).texture;
+                return cachedEntry.texture;
             }
             long announcedStart = System.nanoTime();
             try {
                 VulkanGlTexture converted = this.fromImage(glTextureId, announced, nearestFilter);
                 if (converted != null) {
                     if (current != 0) {
-                        setConsumedGeneration(id, current);
+                        setConsumedGeneration(glTextureId, current);
                     }
                     return converted;
                 }
@@ -2214,14 +2212,14 @@ public final class VulkanTextureRegistry {
             }
         }
         // Nothing between the early lookup and here mutates the table unless an announcement was consumed.
-        Entry existing = SAMPLER_CONFIRM_EARLY && announced == null ? samplerEntry : this.entries.get((int) (glTextureId));
+        Entry existing = SAMPLER_CONFIRM_EARLY && announced == null ? samplerEntry : this.entries.get(glTextureId);
         if (existing != null) {
             // The confirmation runs at the head of this method (BH-23) so the announcement path cannot skip it; with
             // the measurement control off it runs here instead, which is the pre-fix order.
             if (!SAMPLER_CONFIRM_EARLY) {
                 existing.texture.confirmSamplerStateFromRecord(glTextureId);
             }
-            if (!this.staleIds.isEmpty() && this.staleIds.remove(id)) {
+            if (!this.staleIds.isEmpty() && this.staleIds.remove(glTextureId)) {
                 if (canSkipReadback(glTextureId)) {
                     // The write that made this texture stale announced its pixels, and they are already in this image:
                     // the refresh the direct path skips must be skipped here too, or registry-held textures (anything
@@ -2286,7 +2284,7 @@ public final class VulkanTextureRegistry {
         }
         if (fillFromCapture(glTextureId, nearestFilter, false)) {
             HIT_CALLS++;
-            return this.entries.get((int) (id)).texture;
+            return this.entries.get(glTextureId).texture;
         }
         // Nothing announced, nothing captured, and no readback either: remember that this name had no source at this
         // content, so the next lookup does not pay for the same answer.

@@ -17,6 +17,7 @@ import java.util.List;
 public final class VulkanRetireQueue {
 
     private static final List<Runnable> PENDING = new ArrayList<Runnable>();
+    private static volatile boolean hasPending;
     private static long retired;
     private static long flushed;
 
@@ -27,15 +28,25 @@ public final class VulkanRetireQueue {
     public static synchronized void retire(Runnable destroyer) {
         PENDING.add(destroyer);
         retired++;
+        hasPending = true;
     }
 
     /** Performs every pending destruction. Only safe once a wait for device idle has actually succeeded. */
-    public static synchronized int flush() {
+    public static int flush() {
+        if (!hasPending) {
+            return 0;
+        }
+        return flushSynchronized();
+    }
+
+    private static synchronized int flushSynchronized() {
         if (PENDING.isEmpty()) {
+            hasPending = false;
             return 0;
         }
         List<Runnable> batch = new ArrayList<Runnable>(PENDING);
         PENDING.clear();
+        hasPending = false;
         for (Runnable destroyer : batch) {
             try {
                 destroyer.run();

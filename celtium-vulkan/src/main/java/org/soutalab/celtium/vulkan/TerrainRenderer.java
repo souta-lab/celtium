@@ -899,30 +899,24 @@ public final class TerrainRenderer {
     }
 
     void logFirstVertex(java.util.List<TerrainRenderer.PendingMesh> pending) {
-        for (TerrainRenderer.PendingMesh mesh : pending) {
-            if (mesh.parts != null && mesh.sectionFirstColor != null) {
-                int colour = mesh.sectionFirstColor[mesh.sectionIndex];
-                colourCounts.put(colour, colourCounts.get(colour) + 1);
+        if (VulkanDiagnostics.enabled()) {
+            for (TerrainRenderer.PendingMesh mesh : pending) {
+                if (mesh.parts != null && mesh.sectionFirstColor != null) {
+                    int colour = mesh.sectionFirstColor[mesh.sectionIndex];
+                    colourCounts.put(colour, colourCounts.get(colour) + 1);
+                }
             }
-        }
-        this.colourBatches++;
-        if ((this.colourBatches == 1 || this.colourBatches % 20 == 0) && VulkanDiagnostics.enabled()) {
-            java.util.List<it.unimi.dsi.fastutil.ints.Int2IntMap.Entry> entries =
-                    new java.util.ArrayList<>(colourCounts.int2IntEntrySet());
-            java.util.Collections.sort(entries, (a, b) -> b.getIntValue() - a.getIntValue());
-            StringBuilder line = new StringBuilder("mesh colour census (batches=" + this.colourBatches + "):");
-            for (int i = 0; i < Math.min(5, entries.size()); i++) {
-                line.append(" 0x").append(Integer.toHexString(entries.get(i).getIntKey()))
-                        .append(" x").append(entries.get(i).getIntValue());
-            }
-            record(line.toString());
-        }
-        if (verticesLogged >= 8) {
-            return;
-        }
-        for (TerrainRenderer.PendingMesh mesh : pending) {
-            if (mesh.parts != null && mesh.sectionFirstColor != null) {
-                // Counted for every mesh, not just the first few, so a colour that only some sections carry shows up.
+            this.colourBatches++;
+            if (this.colourBatches == 1 || this.colourBatches % 20 == 0) {
+                java.util.List<it.unimi.dsi.fastutil.ints.Int2IntMap.Entry> entries =
+                        new java.util.ArrayList<>(colourCounts.int2IntEntrySet());
+                java.util.Collections.sort(entries, (a, b) -> b.getIntValue() - a.getIntValue());
+                StringBuilder line = new StringBuilder("mesh colour census (batches=" + this.colourBatches + "):");
+                for (int i = 0; i < Math.min(5, entries.size()); i++) {
+                    line.append(" 0x").append(Integer.toHexString(entries.get(i).getIntKey()))
+                            .append(" x").append(entries.get(i).getIntValue());
+                }
+                record(line.toString());
             }
         }
         if (verticesLogged >= 8) {

@@ -107,6 +107,8 @@ public final class VulkanSwapchain {
     private int renderFinishedPoolRebuilds;
     private int renderFinishedCursor;
     private int presentTraces;
+    private final long[] presentWaitSemaphores = new long[2];
+    private final long[] presentSignalSemaphores = new long[2];
     /** Partly built semaphore pools that were rolled back instead of abandoned (BH-20), for the report. */
     private int semaphorePoolRollbacks;
     /** Present-support refusals, synthetic or real (BH-19): the count that says the branch is reachable. */
@@ -1391,9 +1393,13 @@ public final class VulkanSwapchain {
                         + " (queued to the presenter)";
             }
             long submitStartedNanos = System.nanoTime();
+            this.presentWaitSemaphores[0] = acquire;
+            this.presentWaitSemaphores[1] = bridgeWaitSemaphore;
+            this.presentSignalSemaphores[0] = renderFinished;
+            this.presentSignalSemaphores[1] = bridgeDone;
             String submitError = submitPreRecorded(stack, recorded,
-                    new long[] {acquire, bridgeWaitSemaphore},
-                    new long[] {renderFinished, bridgeDone});
+                    this.presentWaitSemaphores,
+                    this.presentSignalSemaphores);
             presentSubmitNanos += System.nanoTime() - submitStartedNanos;
             if (submitError != null) {
                 if ("retire".equals(presentStageDisposition(true, true, false))) {

@@ -42,10 +42,14 @@ public final class ImmediateFogState implements org.embeddedt.embeddium.impl.ren
         this.mirrored = true;
     }
     private float alpha;
+    private final float[] cachedFogColor = new float[] {0.0f, 0.0f, 0.0f, 1.0f};
     public void color(float r, float g, float b) { color(r, g, b, 1.0f); }
     public void color(float r, float g, float b, float a) {
         if (this.red != r || this.green != g || this.blue != b) this.boundaries.flushBeforeChange();
         this.red = r; this.green = g; this.blue = b; this.alpha = a; this.mirrored = true;
+        this.cachedFogColor[0] = r;
+        this.cachedFogColor[1] = g;
+        this.cachedFogColor[2] = b;
     }
     public float colorAlpha() { return this.alpha; }
     public boolean enabled() { return this.enabled; }
@@ -55,7 +59,7 @@ public final class ImmediateFogState implements org.embeddedt.embeddium.impl.ren
     @Override public float getFogDensity() { return this.density; }
     @Override public float getFogCutoff() { return this.end; }
     @Override public int getFogShapeIndex() { return 0; }
-    @Override public float[] getFogColor() { return new float[] {this.red, this.green, this.blue, 1.0f}; }
+    @Override public float[] getFogColor() { return this.cachedFogColor; }
     @Override public org.embeddedt.embeddium.impl.render.chunk.shader.ChunkFogMode getFogMode() {
         return org.embeddedt.embeddium.impl.render.chunk.shader.ChunkFogMode.fromGLMode(this.enabled ? this.glMode : 0);
     }
@@ -185,16 +189,15 @@ public final class ImmediateFogState implements org.embeddedt.embeddium.impl.ren
         if (selector == 0 || captured == null) {
             return (selector == 0) != (captured == null);
         }
-        float[] now = this.compareScratch;
-        now[0] = selector;
-        now[1] = this.density;
-        now[2] = this.start;
-        now[3] = this.end;
-        now[4] = this.red;
-        now[5] = this.green;
-        now[6] = this.blue;
-        now[7] = 1.0f;
-        return !java.util.Arrays.equals(now, captured);
+        return captured.length != 8
+                || Float.floatToIntBits(captured[0]) != Float.floatToIntBits(selector)
+                || Float.floatToIntBits(captured[1]) != Float.floatToIntBits(this.density)
+                || Float.floatToIntBits(captured[2]) != Float.floatToIntBits(this.start)
+                || Float.floatToIntBits(captured[3]) != Float.floatToIntBits(this.end)
+                || Float.floatToIntBits(captured[4]) != Float.floatToIntBits(this.red)
+                || Float.floatToIntBits(captured[5]) != Float.floatToIntBits(this.green)
+                || Float.floatToIntBits(captured[6]) != Float.floatToIntBits(this.blue)
+                || Float.floatToIntBits(captured[7]) != Float.floatToIntBits(1.0f);
     }
 
     /**

@@ -491,7 +491,7 @@ public final class FramePassTimings {
         // map lookup the index needs. With the timings on, both are wanted and the lookup is paid once as before.
         // Measured: with the timings off, FramePassTimings.end was 1.4% of the client thread's JFR samples in
         // HashMap tree-bin lookups, because every bracket close in the frame went through the map.
-        if (GUI_PASS.equals(pass)) {
+        if (pass == GUI_PASS || (guiActive && GUI_PASS.equals(pass))) {
             guiActive = false;
         }
         if (!enabled()) return;

@@ -164,21 +164,8 @@ final class ModelReplay {
             // "0,0,-1.001,-1" - which is exactly what the one-quad image showed: model quads laid out in screen space.
             float[] projectionNow = b.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_PROJECTION);
             // Scratch, as is the remapped projection: a queued group clones what it keeps (enqueue below).
-            float[] modelViewNow = b.modelReplayView;
-            System.arraycopy(b.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW), 0, modelViewNow, 0, 16);
-            // Six pairings were measured for the model view (mirror 5.80 % of the entity frame, identity 8.08, the
-            // captured compile-time matrix 13.19, GL's live view 18.30, the mirror's rotation with GL's translation 18.40,
-            // GL's projection too 18.49): no translation helping and a rotation helping says the vertices are already in
-            // the view space of the moment they were captured in, so what has to be applied is the change of camera since
-            // then - V_now * C_compile^-1, which is what ModelViewRelativizer composes.
-            // V_now * C_compile^-1, with the matrices and the inverse reused and the identity short-circuited: the three
-            // Matrix4f temporaries and an inversion per replay were ~128 allocations a frame, and the capture answers the
-            // identity for every list, so nearly all of that work composed the live view with itself.
-            try {
-                b.modelViewRelativizer.makeRelative(modelViewNow, listId);
-            } catch (RuntimeException | LinkageError error) {
-                b.modelLastRefusal = "relative view failed: " + error;
-            }
+            float[] modelViewNow = b.immediateState.peekMatrix(VulkanGlState.MATRIX_MODE_MODELVIEW);
+            b.modelViewRelativizer.makeRelative(modelViewNow, listId);
             // The remap is cached by the projection contents: it is installed per pass, and this path asked for the same
             // sixteen floats once per replay. The suspicion that the live projection had already been remapped was tested
             // with a switch that copied it through unchanged: the difference grew from 4.56 % to 6.01 % of the crop, so the

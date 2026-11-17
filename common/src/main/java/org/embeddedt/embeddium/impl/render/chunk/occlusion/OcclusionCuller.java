@@ -131,6 +131,7 @@ public class OcclusionCuller {
     /** Bounded report state for the visibility search. */
     private static int celtium$visibleReports;
     private static int celtium$lastVisibleCount = -1;
+    private static final boolean FORCE_NO_OCCLUSION = Boolean.getBoolean("celtium.vulkan.forceNoOcclusion");
 
     public OcclusionCuller(SectionLattice lattice, int minSectionY, int maxSectionY, boolean rasterOcclusion) {
         this.lattice = lattice;
@@ -248,7 +249,7 @@ public class OcclusionCuller {
         // walk still reports one, so every edge out of the root is rejected. The two candidates are the connectedness
         // test and the frustum, and turning occlusion culling off keeps the frustum and drops the connectedness test,
         // so the visible count in that mode says which one is rejecting. Set celtium.vulkan.forceNoOcclusion to run it.
-        if (Boolean.getBoolean("celtium.vulkan.forceNoOcclusion")) {
+        if (FORCE_NO_OCCLUSION) {
             useOcclusionCulling = false;
         }
         this.rasterActive = this.rasterOccluder != null && useOcclusionCulling && viewport.getVpMatrix() != null;
@@ -370,10 +371,13 @@ public class OcclusionCuller {
             int regionId = regionOfCell[idx];
             long sm = sectionMeta[idx];
             int compactMeta = PackedSectionMetadata.toCompactMeta(sm);
-            int regionX = regionOrigin(chunkX, RenderRegion.REGION_WIDTH_SH, RenderRegion.REGION_BLOCK_WIDTH);
-            int regionY = regionOrigin(chunkY, RenderRegion.REGION_HEIGHT_SH, RenderRegion.REGION_BLOCK_HEIGHT);
-            int regionZ = regionOrigin(chunkZ, RenderRegion.REGION_LENGTH_SH, RenderRegion.REGION_BLOCK_LENGTH);
-            int classification = cache.classify(regionId, regionX, regionY, regionZ);
+            int classification = cache.cached(regionId);
+            if (classification == RegionCullCache.UNCOMPUTED) {
+                int regionX = regionOrigin(chunkX, RenderRegion.REGION_WIDTH_SH, RenderRegion.REGION_BLOCK_WIDTH);
+                int regionY = regionOrigin(chunkY, RenderRegion.REGION_HEIGHT_SH, RenderRegion.REGION_BLOCK_HEIGHT);
+                int regionZ = regionOrigin(chunkZ, RenderRegion.REGION_LENGTH_SH, RenderRegion.REGION_BLOCK_LENGTH);
+                classification = cache.classify(regionId, regionX, regionY, regionZ);
+            }
 
             // Fully-inside regions need no per-section tests and outside regions
             // are not traversed. Sections in a partial region are checked

@@ -77,33 +77,39 @@ public class ModelQuadFlags {
      * @return {@code true} if the quad's vertices match Minecraft's canonical baked order
      *         for the given face, {@code false} otherwise
      */
-    private static boolean canonicalVertexOrder(ModelQuadView quad, ModelQuadFacing face, float minX, float minY, float minZ,
-                                                float maxX, float maxY, float maxZ) {
+    private static boolean canonicalVertexOrder(
+            ModelQuadFacing face,
+            float x0, float y0, float z0,
+            float x1, float y1, float z1,
+            float x2, float y2, float z2,
+            float x3, float y3, float z3,
+            float minX, float minY, float minZ,
+            float maxX, float maxY, float maxZ) {
         return switch (face) {
-            case NEG_Y -> MathUtil.roughlyEqual(quad.getX(0), minX) && MathUtil.roughlyEqual(quad.getY(0), minY) && MathUtil.roughlyEqual(quad.getZ(0), maxZ)
-                    && MathUtil.roughlyEqual(quad.getX(1), minX) && MathUtil.roughlyEqual(quad.getY(1), minY) && MathUtil.roughlyEqual(quad.getZ(1), minZ)
-                    && MathUtil.roughlyEqual(quad.getX(2), maxX) && MathUtil.roughlyEqual(quad.getY(2), minY) && MathUtil.roughlyEqual(quad.getZ(2), minZ)
-                    && MathUtil.roughlyEqual(quad.getX(3), maxX) && MathUtil.roughlyEqual(quad.getY(3), minY) && MathUtil.roughlyEqual(quad.getZ(3), maxZ);
-            case POS_Y -> MathUtil.roughlyEqual(quad.getX(0), minX) && MathUtil.roughlyEqual(quad.getY(0), maxY) && MathUtil.roughlyEqual(quad.getZ(0), minZ)
-                    && MathUtil.roughlyEqual(quad.getX(1), minX) && MathUtil.roughlyEqual(quad.getY(1), maxY) && MathUtil.roughlyEqual(quad.getZ(1), maxZ)
-                    && MathUtil.roughlyEqual(quad.getX(2), maxX) && MathUtil.roughlyEqual(quad.getY(2), maxY) && MathUtil.roughlyEqual(quad.getZ(2), maxZ)
-                    && MathUtil.roughlyEqual(quad.getX(3), maxX) && MathUtil.roughlyEqual(quad.getY(3), maxY) && MathUtil.roughlyEqual(quad.getZ(3), minZ);
-            case NEG_Z -> MathUtil.roughlyEqual(quad.getX(0), maxX) && MathUtil.roughlyEqual(quad.getY(0), maxY) && MathUtil.roughlyEqual(quad.getZ(0), minZ)
-                    && MathUtil.roughlyEqual(quad.getX(1), maxX) && MathUtil.roughlyEqual(quad.getY(1), minY) && MathUtil.roughlyEqual(quad.getZ(1), minZ)
-                    && MathUtil.roughlyEqual(quad.getX(2), minX) && MathUtil.roughlyEqual(quad.getY(2), minY) && MathUtil.roughlyEqual(quad.getZ(2), minZ)
-                    && MathUtil.roughlyEqual(quad.getX(3), minX) && MathUtil.roughlyEqual(quad.getY(3), maxY) && MathUtil.roughlyEqual(quad.getZ(3), minZ);
-            case POS_Z -> MathUtil.roughlyEqual(quad.getX(0), minX) && MathUtil.roughlyEqual(quad.getY(0), maxY) && MathUtil.roughlyEqual(quad.getZ(0), maxZ)
-                    && MathUtil.roughlyEqual(quad.getX(1), minX) && MathUtil.roughlyEqual(quad.getY(1), minY) && MathUtil.roughlyEqual(quad.getZ(1), maxZ)
-                    && MathUtil.roughlyEqual(quad.getX(2), maxX) && MathUtil.roughlyEqual(quad.getY(2), minY) && MathUtil.roughlyEqual(quad.getZ(2), maxZ)
-                    && MathUtil.roughlyEqual(quad.getX(3), maxX) && MathUtil.roughlyEqual(quad.getY(3), maxY) && MathUtil.roughlyEqual(quad.getZ(3), maxZ);
-            case NEG_X -> MathUtil.roughlyEqual(quad.getX(0), minX) && MathUtil.roughlyEqual(quad.getY(0), maxY) && MathUtil.roughlyEqual(quad.getZ(0), minZ)
-                    && MathUtil.roughlyEqual(quad.getX(1), minX) && MathUtil.roughlyEqual(quad.getY(1), minY) && MathUtil.roughlyEqual(quad.getZ(1), minZ)
-                    && MathUtil.roughlyEqual(quad.getX(2), minX) && MathUtil.roughlyEqual(quad.getY(2), minY) && MathUtil.roughlyEqual(quad.getZ(2), maxZ)
-                    && MathUtil.roughlyEqual(quad.getX(3), minX) && MathUtil.roughlyEqual(quad.getY(3), maxY) && MathUtil.roughlyEqual(quad.getZ(3), maxZ);
-            case POS_X -> MathUtil.roughlyEqual(quad.getX(0), maxX) && MathUtil.roughlyEqual(quad.getY(0), maxY) && MathUtil.roughlyEqual(quad.getZ(0), maxZ)
-                    && MathUtil.roughlyEqual(quad.getX(1), maxX) && MathUtil.roughlyEqual(quad.getY(1), minY) && MathUtil.roughlyEqual(quad.getZ(1), maxZ)
-                    && MathUtil.roughlyEqual(quad.getX(2), maxX) && MathUtil.roughlyEqual(quad.getY(2), minY) && MathUtil.roughlyEqual(quad.getZ(2), minZ)
-                    && MathUtil.roughlyEqual(quad.getX(3), maxX) && MathUtil.roughlyEqual(quad.getY(3), maxY) && MathUtil.roughlyEqual(quad.getZ(3), minZ);
+            case NEG_Y -> MathUtil.roughlyEqual(x0, minX) && MathUtil.roughlyEqual(y0, minY) && MathUtil.roughlyEqual(z0, maxZ)
+                    && MathUtil.roughlyEqual(x1, minX) && MathUtil.roughlyEqual(y1, minY) && MathUtil.roughlyEqual(z1, minZ)
+                    && MathUtil.roughlyEqual(x2, maxX) && MathUtil.roughlyEqual(y2, minY) && MathUtil.roughlyEqual(z2, minZ)
+                    && MathUtil.roughlyEqual(x3, maxX) && MathUtil.roughlyEqual(y3, minY) && MathUtil.roughlyEqual(z3, maxZ);
+            case POS_Y -> MathUtil.roughlyEqual(x0, minX) && MathUtil.roughlyEqual(y0, maxY) && MathUtil.roughlyEqual(z0, minZ)
+                    && MathUtil.roughlyEqual(x1, minX) && MathUtil.roughlyEqual(y1, maxY) && MathUtil.roughlyEqual(z1, maxZ)
+                    && MathUtil.roughlyEqual(x2, maxX) && MathUtil.roughlyEqual(y2, maxY) && MathUtil.roughlyEqual(z2, maxZ)
+                    && MathUtil.roughlyEqual(x3, maxX) && MathUtil.roughlyEqual(y3, maxY) && MathUtil.roughlyEqual(z3, minZ);
+            case NEG_Z -> MathUtil.roughlyEqual(x0, maxX) && MathUtil.roughlyEqual(y0, maxY) && MathUtil.roughlyEqual(z0, minZ)
+                    && MathUtil.roughlyEqual(x1, maxX) && MathUtil.roughlyEqual(y1, minY) && MathUtil.roughlyEqual(z1, minZ)
+                    && MathUtil.roughlyEqual(x2, minX) && MathUtil.roughlyEqual(y2, minY) && MathUtil.roughlyEqual(z2, minZ)
+                    && MathUtil.roughlyEqual(x3, minX) && MathUtil.roughlyEqual(y3, maxY) && MathUtil.roughlyEqual(z3, minZ);
+            case POS_Z -> MathUtil.roughlyEqual(x0, minX) && MathUtil.roughlyEqual(y0, maxY) && MathUtil.roughlyEqual(z0, maxZ)
+                    && MathUtil.roughlyEqual(x1, minX) && MathUtil.roughlyEqual(y1, minY) && MathUtil.roughlyEqual(z1, maxZ)
+                    && MathUtil.roughlyEqual(x2, maxX) && MathUtil.roughlyEqual(y2, minY) && MathUtil.roughlyEqual(z2, maxZ)
+                    && MathUtil.roughlyEqual(x3, maxX) && MathUtil.roughlyEqual(y3, maxY) && MathUtil.roughlyEqual(z3, maxZ);
+            case NEG_X -> MathUtil.roughlyEqual(x0, minX) && MathUtil.roughlyEqual(y0, maxY) && MathUtil.roughlyEqual(z0, minZ)
+                    && MathUtil.roughlyEqual(x1, minX) && MathUtil.roughlyEqual(y1, minY) && MathUtil.roughlyEqual(z1, minZ)
+                    && MathUtil.roughlyEqual(x2, minX) && MathUtil.roughlyEqual(y2, minY) && MathUtil.roughlyEqual(z2, maxZ)
+                    && MathUtil.roughlyEqual(x3, minX) && MathUtil.roughlyEqual(y3, maxY) && MathUtil.roughlyEqual(z3, maxZ);
+            case POS_X -> MathUtil.roughlyEqual(x0, maxX) && MathUtil.roughlyEqual(y0, maxY) && MathUtil.roughlyEqual(z0, maxZ)
+                    && MathUtil.roughlyEqual(x1, maxX) && MathUtil.roughlyEqual(y1, minY) && MathUtil.roughlyEqual(z1, maxZ)
+                    && MathUtil.roughlyEqual(x2, maxX) && MathUtil.roughlyEqual(y2, minY) && MathUtil.roughlyEqual(z2, minZ)
+                    && MathUtil.roughlyEqual(x3, maxX) && MathUtil.roughlyEqual(y3, maxY) && MathUtil.roughlyEqual(z3, minZ);
             case UNASSIGNED -> false;
         };
     }
@@ -113,48 +119,65 @@ public class ModelQuadFlags {
      * certain optimizations.
      */
     public static int getQuadFlags(ModelQuadView quad, ModelQuadFacing face, int existingFlags) {
-        float minX = 32.0F;
-        float minY = 32.0F;
-        float minZ = 32.0F;
-
-        float maxX = -32.0F;
-        float maxY = -32.0F;
-        float maxZ = -32.0F;
-
         int numVertices = 4;
         if (quad instanceof BakedQuadView bakedQuad) {
             numVertices = Math.min(numVertices, bakedQuad.getVerticesCount());
         }
 
+        float minX = 32.0F, minY = 32.0F, minZ = 32.0F;
+        float maxX = -32.0F, maxY = -32.0F, maxZ = -32.0F;
+        float x0 = 0.0F, y0 = 0.0F, z0 = 0.0F;
+        float x1 = 0.0F, y1 = 0.0F, z1 = 0.0F;
+        float x2 = 0.0F, y2 = 0.0F, z2 = 0.0F;
+        float x3 = 0.0F, y3 = 0.0F, z3 = 0.0F;
         boolean degenerate = false, nonOpaqueColor = false;
 
-        for (int i = 0; i < numVertices; ++i) {
-            float x = quad.getX(i);
-            float y = quad.getY(i);
-            float z = quad.getZ(i);
+        if (numVertices == 4) {
+            x0 = quad.getX(0); y0 = quad.getY(0); z0 = quad.getZ(0);
+            x1 = quad.getX(1); y1 = quad.getY(1); z1 = quad.getZ(1);
+            x2 = quad.getX(2); y2 = quad.getY(2); z2 = quad.getZ(2);
+            x3 = quad.getX(3); y3 = quad.getY(3); z3 = quad.getZ(3);
 
-            minX = Math.min(minX, x);
-            minY = Math.min(minY, y);
-            minZ = Math.min(minZ, z);
-            maxX = Math.max(maxX, x);
-            maxY = Math.max(maxY, y);
-            maxZ = Math.max(maxZ, z);
+            minX = Math.min(Math.min(x0, x1), Math.min(x2, x3));
+            minY = Math.min(Math.min(y0, y1), Math.min(y2, y3));
+            minZ = Math.min(Math.min(z0, z1), Math.min(z2, z3));
+            maxX = Math.max(Math.max(x0, x1), Math.max(x2, x3));
+            maxY = Math.max(Math.max(y0, y1), Math.max(y2, y3));
+            maxZ = Math.max(Math.max(z0, z1), Math.max(z2, z3));
 
-            for (int j = 0; j < i; ++j) {
-                float px = quad.getX(j);
-                float py = quad.getY(j);
-                float pz = quad.getZ(j);
+            degenerate = (MathUtil.roughlyEqual(x0, x1) && MathUtil.roughlyEqual(y0, y1) && MathUtil.roughlyEqual(z0, z1))
+                    || (MathUtil.roughlyEqual(x0, x2) && MathUtil.roughlyEqual(y0, y2) && MathUtil.roughlyEqual(z0, z2))
+                    || (MathUtil.roughlyEqual(x1, x2) && MathUtil.roughlyEqual(y1, y2) && MathUtil.roughlyEqual(z1, z2))
+                    || (MathUtil.roughlyEqual(x0, x3) && MathUtil.roughlyEqual(y0, y3) && MathUtil.roughlyEqual(z0, z3))
+                    || (MathUtil.roughlyEqual(x1, x3) && MathUtil.roughlyEqual(y1, y3) && MathUtil.roughlyEqual(z1, z3))
+                    || (MathUtil.roughlyEqual(x2, x3) && MathUtil.roughlyEqual(y2, y3) && MathUtil.roughlyEqual(z2, z3));
 
-                if (MathUtil.roughlyEqual(px, x) &&
-                        MathUtil.roughlyEqual(py, y) &&
-                        MathUtil.roughlyEqual(pz, z)) {
-                    degenerate = true;
-                    break;
+            nonOpaqueColor = ((quad.getColor(0) & quad.getColor(1) & quad.getColor(2) & quad.getColor(3)) >>> 24) != 255;
+        } else {
+            for (int i = 0; i < numVertices; ++i) {
+                float x = quad.getX(i);
+                float y = quad.getY(i);
+                float z = quad.getZ(i);
+
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                minZ = Math.min(minZ, z);
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, y);
+                maxZ = Math.max(maxZ, z);
+
+                for (int j = 0; j < i; ++j) {
+                    if (MathUtil.roughlyEqual(quad.getX(j), x)
+                            && MathUtil.roughlyEqual(quad.getY(j), y)
+                            && MathUtil.roughlyEqual(quad.getZ(j), z)) {
+                        degenerate = true;
+                        break;
+                    }
                 }
-            }
 
-            if(ColorABGR.unpackAlpha(quad.getColor(i)) != 255) {
-                nonOpaqueColor = true;
+                if (ColorABGR.unpackAlpha(quad.getColor(i)) != 255) {
+                    nonOpaqueColor = true;
+                }
             }
         }
 
@@ -164,7 +187,7 @@ public class ModelQuadFlags {
             case X -> minY >= 0.0001f || minZ >= 0.0001f || maxY <= 0.9999F || maxZ <= 0.9999F;
             case Y -> minX >= 0.0001f || minZ >= 0.0001f || maxX <= 0.9999F || maxZ <= 0.9999F;
             case Z -> minX >= 0.0001f || minY >= 0.0001f || maxX <= 0.9999F || maxY <= 0.9999F;
-        }) || !canonicalVertexOrder(quad, face, minX, minY, minZ, maxX, maxY, maxZ);
+        }) || numVertices != 4 || !canonicalVertexOrder(face, x0, y0, z0, x1, y1, z1, x2, y2, z2, x3, y3, z3, minX, minY, minZ, maxX, maxY, maxZ);
 
         boolean parallel = switch(face.getAxis()) {
             case X -> minX == maxX;

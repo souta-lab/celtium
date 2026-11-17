@@ -88,7 +88,9 @@ public abstract class DefaultChunkRenderer extends ShaderChunkRenderer {
             long timestamp = System.nanoTime();
 
             useBlockFaceCulling = useBlockFaceCulling && !renderPass.isSorted();
-            var cacheParams = new SectionRenderDataStorage.BatchCacheParams(useBlockFaceCulling);
+            var cacheParams = useBlockFaceCulling
+                    ? SectionRenderDataStorage.BATCH_CACHE_CULLING
+                    : SectionRenderDataStorage.BATCH_CACHE_NO_CULLING;
 
             while (iterator.hasNext()) {
                 ChunkRenderList renderList = iterator.next();

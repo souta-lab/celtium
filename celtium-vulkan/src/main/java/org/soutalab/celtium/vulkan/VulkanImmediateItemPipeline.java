@@ -511,8 +511,13 @@ public final class VulkanImmediateItemPipeline {
             return 0L;
         }
         long descriptorKey = (texture.key() * 31L) + lightmap.key();
+        if (descriptorKey == this.lastLitDescriptorKey && this.lastLitDescriptorSet != 0L) {
+            return this.lastLitDescriptorSet;
+        }
         long cachedSet = this.setsByTextureView.get(descriptorKey);
         if (cachedSet != 0L) {
+            this.lastLitDescriptorKey = descriptorKey;
+            this.lastLitDescriptorSet = cachedSet;
             return cachedSet;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -546,12 +551,17 @@ public final class VulkanImmediateItemPipeline {
             VulkanDescriptorWrites.note(write, "VulkanImmediateItemPipeline");
             vkUpdateDescriptorSets(this.context.device(), write, null);
             this.setsByTextureView.put(descriptorKey, set);
+            this.lastLitDescriptorKey = descriptorKey;
+            this.lastLitDescriptorSet = set;
             VulkanImmediateTexturePipeline.DESCRIPTOR_KEYS_CACHED.incrementAndGet();
             return set;
         } catch (RuntimeException | LinkageError error) {
             return 0L;
         }
     }
+
+    private long lastLitDescriptorKey = -1L;
+    private long lastLitDescriptorSet;
 
     /**
      * Creates one more pool and appends it to {@link #descriptorPools}; the item family shares the textured family's

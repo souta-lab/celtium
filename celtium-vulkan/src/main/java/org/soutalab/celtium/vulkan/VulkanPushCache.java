@@ -67,10 +67,9 @@ final class VulkanPushCache {
             }
             return true;
         }
-        // Bulk comparison, not a byte loop: the block is 224 bytes and the immediate path asks this once per group, so
-        // the byte-at-a-time form put ~250 ByteBuffer.get calls on every group's path. ByteBuffer.equals compares the
-        // remaining contents through Bits.equals, which is the vectorised comparison.
-        if (!this.cacheView(data, length).equals(this.cachedBytes(length))) {
+        // Vectorised comparison without duplicating or mutating the caller's ByteBuffer: data.remaining() already
+        // equals length, and ByteBuffer.mismatch compares [position..limit) directly via ArraysSupport.vectorizedMismatch.
+        if (this.cachedBytes(length).mismatch(data) != -1) {
             this.issued++;
             return true;
         }
@@ -94,8 +93,8 @@ final class VulkanPushCache {
         if (this.bytes.length != length) {
             this.bytes = new byte[length];
         }
-        // One bulk read into the cache array: the byte loop here was the copy half of the same cost.
-        this.cacheView(data, length).get(this.bytes, 0, length);
+        // Absolute bulk read into the cache array: leaves data's position untouched and allocates no duplicate view.
+        data.get(data.position(), this.bytes, 0, length);
         this.commandBuffer = commandBuffer;
         this.pipelineLayout = pipelineLayout;
     }

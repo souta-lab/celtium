@@ -339,6 +339,7 @@ public final class ImmediateGroup {
         this.retireSequence = 0L;
         this.textureImage = null;
         this.textureMutations = 0L;
+        this.textureArrayIndex = -1;
     }
 }
 

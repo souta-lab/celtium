@@ -383,6 +383,7 @@ public final class VulkanContext {
      * flushes first: waiting on an unarmed fence would read as a stall that is really just "not submitted yet".
      */
     private final java.util.ArrayList<DeferredSubmit> pendingBatchedSubmits = new java.util.ArrayList<DeferredSubmit>();
+    private final java.util.ArrayList<DeferredSubmit> flushBatchScratch = new java.util.ArrayList<DeferredSubmit>();
     private SharedBatch pendingBatch;
     /** Batched deferred submits are the default; {@code -Dceltium.vulkan.batchedSubmits=false} restores per-call submits. */
     /** Lab switch: {@code -Dceltium.vulkan.pollUploadsAlways=true} polls in flushUploads even with nothing to copy. */
@@ -425,13 +426,16 @@ public final class VulkanContext {
      * (the first attempt recorded the handle and lost the device: plan.md 0.224).
      */
     private final java.util.List<PendingUpload> pendingUploads = new java.util.ArrayList<PendingUpload>();
+    private final java.util.ArrayDeque<PendingUpload> pendingUploadPool = new java.util.ArrayDeque<PendingUpload>();
+    private static final int PENDING_UPLOAD_POOL_CAP = 1024;
+    private java.util.Set<String> cachedDeviceExtensionNames;
 
     /** One pending copy: where it goes, where its bytes already are, and how many. */
     private static final class PendingUpload {
-        private final VulkanBuffer target;
-        private final long destinationOffset;
-        private final long stagingOffset;
-        private final long size;
+        private VulkanBuffer target;
+        private long destinationOffset;
+        private long stagingOffset;
+        private long size;
 
         private PendingUpload(VulkanBuffer target, long destinationOffset, long stagingOffset, long size) {
             this.target = target;
@@ -439,6 +443,34 @@ public final class VulkanContext {
             this.stagingOffset = stagingOffset;
             this.size = size;
         }
+
+        private void set(VulkanBuffer target, long destinationOffset, long stagingOffset, long size) {
+            this.target = target;
+            this.destinationOffset = destinationOffset;
+            this.stagingOffset = stagingOffset;
+            this.size = size;
+        }
+    }
+
+    private PendingUpload obtainPendingUpload(VulkanBuffer target, long destinationOffset, long stagingOffset,
+            long size) {
+        PendingUpload entry = this.pendingUploadPool.pollFirst();
+        if (entry == null) {
+            return new PendingUpload(target, destinationOffset, stagingOffset, size);
+        }
+        entry.set(target, destinationOffset, stagingOffset, size);
+        return entry;
+    }
+
+    private void recyclePendingUploads() {
+        for (int i = 0, n = this.pendingUploads.size(); i < n; i++) {
+            PendingUpload entry = this.pendingUploads.get(i);
+            entry.target = null;
+            if (this.pendingUploadPool.size() < PENDING_UPLOAD_POOL_CAP) {
+                this.pendingUploadPool.addLast(entry);
+            }
+        }
+        this.pendingUploads.clear();
     }
     private long uploadCopiesBatched;
     private long uploadCopiesFlushed;
@@ -561,9 +593,7 @@ public final class VulkanContext {
         if (name == null || this.device == null || this.physicalDevice == null) {
             return false;
         }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            return deviceExtensionNames(stack, this.physicalDevice).contains(name);
-        }
+        return celtium$cachedDeviceExtensions().contains(name);
     }
 
     /** {@return whether the physical device offers this extension}, enabled or not; false when it cannot be asked. */
@@ -571,10 +601,22 @@ public final class VulkanContext {
         if (name == null || this.physicalDevice == null) {
             return false;
         }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            return deviceExtensionNames(stack, this.physicalDevice).contains(name);
+        try {
+            return celtium$cachedDeviceExtensions().contains(name);
         } catch (RuntimeException | LinkageError ignored) {
             return false;
+        }
+    }
+
+    private java.util.Set<String> celtium$cachedDeviceExtensions() {
+        java.util.Set<String> cached = this.cachedDeviceExtensionNames;
+        if (cached != null) {
+            return cached;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            cached = deviceExtensionNames(stack, this.physicalDevice);
+            this.cachedDeviceExtensionNames = cached;
+            return cached;
         }
     }
 
@@ -1311,8 +1353,9 @@ public final class VulkanContext {
         celtium$awaitPresenter();
         SharedBatch batch = this.pendingBatch;
         this.pendingBatch = null;
-        java.util.ArrayList<DeferredSubmit> entries =
-                new java.util.ArrayList<DeferredSubmit>(this.pendingBatchedSubmits);
+        java.util.ArrayList<DeferredSubmit> entries = this.flushBatchScratch;
+        entries.clear();
+        entries.addAll(this.pendingBatchedSubmits);
         this.pendingBatchedSubmits.clear();
         Throwable submitError = submitBatch(batch, entries);
         if (submitError != null) {
@@ -1320,12 +1363,14 @@ public final class VulkanContext {
             this.deviceLost = true;
             // Some chunks may already be executing, and this failure might be
             // VK_ERROR_DEVICE_LOST. Freeing their buffers/fence is unsafe.
-            abandonFailedBatch(batch, entries);
+            abandonFailedBatch(batch, new java.util.ArrayList<DeferredSubmit>(entries));
+            entries.clear();
             if (submitError instanceof RuntimeException runtime) {
                 throw runtime;
             }
             throw (LinkageError) submitError;
         }
+        entries.clear();
     }
 
     /** About 14 KiB of MemoryStack per chunk, leaving room for frames the callers already hold. */
@@ -1918,7 +1963,7 @@ public final class VulkanContext {
             this.uploadCopiesByKind[kind]++;
             this.uploadBytesByKind[kind] += length;
         }
-        this.pendingUploads.add(new PendingUpload(target, destinationOffset, stagingOffset, paddedLength));
+        this.pendingUploads.add(obtainPendingUpload(target, destinationOffset, stagingOffset, paddedLength));
         this.uploadCopiesBatched++;
     }
 
@@ -1957,7 +2002,7 @@ public final class VulkanContext {
             this.uploadCopiesByKind[kind]++;
             this.uploadBytesByKind[kind] += source.remaining();
         }
-        this.pendingUploads.add(new PendingUpload(target, destinationOffset, stagingOffset, paddedLength));
+        this.pendingUploads.add(obtainPendingUpload(target, destinationOffset, stagingOffset, paddedLength));
         this.uploadCopiesBatched++;
     }
 
@@ -3407,8 +3452,8 @@ public final class VulkanContext {
 
     /** Zeroes the padding bytes of one ring copy, so a copy never publishes uninitialised staging bytes. */
     private void celtium$zeroUploadTail(long stagingOffset, long length, long paddedLength) {
-        for (long i = length; i < paddedLength; i++) {
-            MemoryUtil.memPutByte(this.uploadRingMapped + stagingOffset + i, (byte) 0);
+        if (length < paddedLength) {
+            MemoryUtil.memSet(this.uploadRingMapped + stagingOffset + length, 0, paddedLength - length);
         }
     }
 
@@ -3475,8 +3520,12 @@ public final class VulkanContext {
                 // ranges are replaced on every sort. An execution dependency is enough for a read-then-write hazard.
                 vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, null);
-                VkBufferCopy.Buffer copy = VkBufferCopy.calloc(1, stack);
-                for (PendingUpload pending : this.pendingUploads) {
+                int maxBatchRegions = Math.min(64, this.pendingUploads.size());
+                VkBufferCopy.Buffer copyRegions = VkBufferCopy.calloc(maxBatchRegions, stack);
+                long batchDestination = VK_NULL_HANDLE;
+                int batchCount = 0;
+                for (int i = 0, n = this.pendingUploads.size(); i < n; i++) {
+                    PendingUpload pending = this.pendingUploads.get(i);
                     // Resolved here, not at record time: a growth between the two replaced the handle, and the offset
                     // stayed valid, so the copy belongs in the buffer the object has now. A destination that is gone
                     // resolves to VK_NULL_HANDLE - the arena or the world it belonged to was released, nothing reads
@@ -3486,11 +3535,22 @@ public final class VulkanContext {
                         this.uploadSkippedDeletedDestinations++;
                         continue;
                     }
-                    copy.get(0).srcOffset(pending.stagingOffset).dstOffset(pending.destinationOffset)
+                    if (batchCount > 0 && (destination != batchDestination || batchCount == maxBatchRegions)) {
+                        copyRegions.position(0).limit(batchCount);
+                        vkCmdCopyBuffer(commandBuffer, this.uploadRingBuffer, batchDestination, copyRegions);
+                        batchCount = 0;
+                    }
+                    batchDestination = destination;
+                    copyRegions.limit(maxBatchRegions);
+                    copyRegions.get(batchCount).srcOffset(pending.stagingOffset).dstOffset(pending.destinationOffset)
                             .size(pending.size);
-                    vkCmdCopyBuffer(commandBuffer, this.uploadRingBuffer, destination, copy);
+                    batchCount++;
                     copies++;
                     uploadSlotMask |= 1L << (int) (pending.stagingOffset / UPLOAD_SLOT_BYTES);
+                }
+                if (batchCount > 0) {
+                    copyRegions.position(0).limit(batchCount);
+                    vkCmdCopyBuffer(commandBuffer, this.uploadRingBuffer, batchDestination, copyRegions);
                 }
                 // The copies are transfer writes; making them available to every later stage here means the caller's
                 // submission needs no barrier of its own. One barrier per batch, not per copy.
@@ -3521,7 +3581,7 @@ public final class VulkanContext {
                 enqueued = true;
             } finally {
                 this.uploadCopiesFlushed += this.pendingUploads.size();
-                this.pendingUploads.clear();
+                recyclePendingUploads();
                 for (int slot = 0; slot < this.uploadSlotCursor.length; slot++) {
                     this.uploadSlotCursor[slot] = 0L;
                     // A slot the batch read stays closed until the batch's fence confirms it; a refused submission

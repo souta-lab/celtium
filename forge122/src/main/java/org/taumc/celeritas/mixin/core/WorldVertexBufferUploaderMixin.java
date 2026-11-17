@@ -168,6 +168,8 @@ public abstract class WorldVertexBufferUploaderMixin {
 
     private static final Map<VertexFormat, Integer> celtium$formatIds =
             Collections.synchronizedMap(new WeakHashMap<VertexFormat, Integer>());
+    private static VertexFormat celtium$lastFormat;
+    private static int celtium$lastFormatId;
 
     // cancellable = true is what makes info.cancel() mean anything: with it false - the default - cancel() throws, and
     // this injector's broad catch swallowed that exception, so the original GL draw ran for every batch the backend had
@@ -536,21 +538,72 @@ public abstract class WorldVertexBufferUploaderMixin {
         if (format == null) {
             return 0;
         }
+        if (format == celtium$lastFormat) {
+            return celtium$lastFormatId;
+        }
+        if (format == DefaultVertexFormats.POSITION_TEX_COLOR) {
+            celtium$lastFormat = format;
+            return celtium$lastFormatId = 2;
+        }
+        if (format == DefaultVertexFormats.POSITION_COLOR) {
+            celtium$lastFormat = format;
+            return celtium$lastFormatId = 1;
+        }
+        if (format == DefaultVertexFormats.ITEM) {
+            celtium$lastFormat = format;
+            return celtium$lastFormatId = 4;
+        }
+        if (format == DefaultVertexFormats.PARTICLE_POSITION_TEX_COLOR_LMAP) {
+            celtium$lastFormat = format;
+            return celtium$lastFormatId = 5;
+        }
+        if (format == DefaultVertexFormats.POSITION_TEX) {
+            celtium$lastFormat = format;
+            return celtium$lastFormatId = 6;
+        }
+        if (format == DefaultVertexFormats.BLOCK) {
+            celtium$lastFormat = format;
+            return celtium$lastFormatId = 3;
+        }
+        if (format == DefaultVertexFormats.POSITION) {
+            celtium$lastFormat = format;
+            return celtium$lastFormatId = 7;
+        }
+        if (format == DefaultVertexFormats.POSITION_TEX_COLOR_NORMAL) {
+            celtium$lastFormat = format;
+            return celtium$lastFormatId = 8;
+        }
+        if (format == DefaultVertexFormats.POSITION_TEX_NORMAL) {
+            celtium$lastFormat = format;
+            return celtium$lastFormatId = 9;
+        }
+        if (format == DefaultVertexFormats.POSITION_NORMAL) {
+            celtium$lastFormat = format;
+            return celtium$lastFormatId = 10;
+        }
+        if (format == DefaultVertexFormats.OLDMODEL_POSITION_TEX_NORMAL) {
+            celtium$lastFormat = format;
+            return celtium$lastFormatId = 11;
+        }
+        if (format == DefaultVertexFormats.POSITION_TEX_LMAP_COLOR) {
+            celtium$lastFormat = format;
+            return celtium$lastFormatId = 12;
+        }
         Integer cached = celtium$formatIds.get(format);
         if (cached != null) {
-            return cached.intValue();
+            int id = cached.intValue();
+            celtium$lastFormat = format;
+            celtium$lastFormatId = id;
+            return id;
         }
         int id = celtium$mappedId(format);
         if (id == 0) {
-            // The list and the width together did not name a layout. If one of vanilla's own constants has this element list
-            // then the table and the game disagree about the width, which is a defect in this file rather than an unmapped
-            // mod format - and it is exactly the shape of the id-8/id-9 error, which nothing reported while it was live.
             celtium$reportSignatureMismatch(format);
         }
         if (id != 0) {
-            // Only hits are cached. A miss depends on the stride this upload happens to carry, and storing it meant the
-            // first encounter's verdict was reused for every later one - the second half of why the mapping appeared deaf.
             celtium$formatIds.put(format, Integer.valueOf(id));
+            celtium$lastFormat = format;
+            celtium$lastFormatId = id;
         }
         return id;
     }

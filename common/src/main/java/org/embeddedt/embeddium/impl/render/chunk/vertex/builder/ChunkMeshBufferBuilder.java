@@ -59,6 +59,14 @@ public class ChunkMeshBufferBuilder {
         this.count += vertices.length;
     }
 
+    private static final byte[] BILINEAR_LUT = new byte[1021];
+
+    static {
+        for (int factor = -510; factor <= 510; factor++) {
+            BILINEAR_LUT[factor + 510] = (byte) Math.round(factor * (127.0F / 510.0F));
+        }
+    }
+
     private static void postprocessVertices(ChunkVertexEncoder.Vertex[] vertices) {
         if (vertices.length != 4) {
             for (var vertex : vertices) {
@@ -71,21 +79,28 @@ public class ChunkMeshBufferBuilder {
         int color1 = vertices[1].color;
         int color2 = vertices[2].color;
         int color3 = vertices[3].color;
-        // TODO can likely do SWAR tricks if performance is an issue
+        if (color0 == color1 && color0 == color2 && color0 == color3) {
+            vertices[0].rdhFactor = 0;
+            vertices[1].rdhFactor = 0;
+            vertices[2].rdhFactor = 0;
+            vertices[3].rdhFactor = 0;
+            return;
+        }
         int factor = encodeBilinearCorrection(color3, color1, color0, color2, 0)
                 | encodeBilinearCorrection(color3, color1, color0, color2, 8) << 8
                 | encodeBilinearCorrection(color3, color1, color0, color2, 16) << 16
                 | encodeBilinearCorrection(color3, color1, color0, color2, 24) << 24;
 
-        for (var vertex : vertices) {
-            vertex.rdhFactor = factor;
-        }
+        vertices[0].rdhFactor = factor;
+        vertices[1].rdhFactor = factor;
+        vertices[2].rdhFactor = factor;
+        vertices[3].rdhFactor = factor;
     }
 
     private static int encodeBilinearCorrection(int positive0, int positive1, int negative0, int negative1, int shift) {
         int factor = ((positive0 >> shift) & 0xFF) + ((positive1 >> shift) & 0xFF)
                 - ((negative0 >> shift) & 0xFF) - ((negative1 >> shift) & 0xFF);
-        return Math.round(factor * (127.0F / 510.0F)) & 0xFF;
+        return BILINEAR_LUT[factor + 510] & 0xFF;
     }
 
     private void grow(int bytesNeeded) {

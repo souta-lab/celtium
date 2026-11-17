@@ -28,6 +28,8 @@ public final class NativeTextureEnvironment {
      * coarse: a change to a unit or pname nothing reads costs a miss, never a wrong draw.
      */
     private long version;
+    private int unit0Mode = MODULATE;
+    private int unit0Rgb = MODULATE;
 
     @SuppressWarnings("unchecked")
     public NativeTextureEnvironment(NativeTextureBindings bindings, NativeRasterState boundaries) {
@@ -47,6 +49,10 @@ public final class NativeTextureEnvironment {
     }
 
     public int unitParameter(int unit, int pname) {
+        if (unit == 0) {
+            if (pname == MODE) return this.unit0Mode;
+            if (pname == RGB) return this.unit0Rgb;
+        }
         int value = this.parameters[unit].get(pname);
         if (value != UNSET) return value;
         if (pname == MODE || pname == RGB || pname == ALPHA) return MODULATE;
@@ -63,6 +69,10 @@ public final class NativeTextureEnvironment {
         if (unitParameter(unit, pname) == value) return;
         this.boundaries.flushBeforeChange();
         this.parameters[unit].put(pname, value);
+        if (unit == 0) {
+            if (pname == MODE) this.unit0Mode = value;
+            else if (pname == RGB) this.unit0Rgb = value;
+        }
         this.snapshotValid = false;
         this.version++;
     }

@@ -1905,7 +1905,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * and an identity whose attachment is one of them is main. Re-read at adoption too, because the census for the
      * adopted identity is filled by the same bind that reports it.
      */
-    final java.util.Set<Integer> mainFramebufferColorNames = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<Integer, Boolean>());
+    final it.unimi.dsi.fastutil.ints.IntOpenHashSet mainFramebufferColorNames =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     private int framebufferCensusLogs;
     /** Bounded CELTIUM_FBO_PUBLISH_REFUSED lines: which exit a framebuffer colour-texture publication took, and why. */
     private int fboPublishRefusalLogs;
@@ -5232,7 +5233,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             reportSkippedGluPerspective(fovDegrees, aspect, near, far);
             return false;
         }
-        float[] before = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
+        boolean wantGluReport = this.gluPerspectiveShapes.size() < 12
+                && this.mirroredGluPerspectives <= GLU_PERSPECTIVE_CENSUS_CALLS;
+        float[] before = wantGluReport ? this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION) : null;
         // The mirrored loadIdentity this call site always performs, applied to the projection stack whether or not the
         // mirror's mode still points at it: the stack whose value GL is replacing is the projection stack.
         int mode = this.immediateState.matrixMode();
@@ -5241,7 +5244,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.immediateState.matrixMode(mode);
         this.perspective(fovDegrees, aspect, near, far);
         this.mirroredGluPerspectives++;
-        reportGluPerspective(fovDegrees, aspect, near, far, before);
+        if (before != null) {
+            reportGluPerspective(fovDegrees, aspect, near, far, before);
+        }
         return true;
     }
 
@@ -5939,7 +5944,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.gameFramebufferIdentity = identity;
         this.framebufferIdentityIsMain.put(identity, true);
         if (colorTexture != 0) {
-            this.mainFramebufferColorNames.add(Integer.valueOf(colorTexture));
+            this.mainFramebufferColorNames.add(colorTexture);
         }
         this.gameFramebufferColorTexture = colorTexture;
     }
@@ -6464,7 +6469,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         int height = reported == null || reported[2] <= 0 ? this.targetHeight : (int) reported[2];
         boolean isMain = identity == this.targetRegistry.mainIdentity() || identity == this.gameFramebufferIdentity
                 || this.framebufferIdentityIsMain.get(identity)
-                || this.mainFramebufferColorNames.contains(Integer.valueOf(glTextureName));
+                || this.mainFramebufferColorNames.contains(glTextureName);
         String route = GllessFrameTarget.routeLabelForBinding(identity, isMain);
         if (this.framebufferCensusLogs < 12) {
             this.framebufferCensusLogs++;
@@ -6640,7 +6645,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (isMain) {
             int mainName = framebufferColorTextureName(targetIdentity);
             if (mainName != 0) {
-                this.mainFramebufferColorNames.add(Integer.valueOf(mainName));
+                this.mainFramebufferColorNames.add(mainName);
             }
             // The main pass flushes with no target filter, so it has to know which identity "main" means: without this it drew
             // every pending group, including the ones offered for another framebuffer, which is why the off-target pass found
@@ -8151,48 +8156,58 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_MATRIX, System.nanoTime() - matrixCaptureStart);
             int boundTexture = this.immediateState.boundTextureName();
-            if (boundTexture != 0) {
-                // GL samples a never-allocated texture as black; draw it with a 1x1 black mirror instead of refusing the
-                // batch. The test is the stub's extent only: an earlier version asked the registry first, and a
-                // registry.get() on a name with no entry runs the capture path - per batch, in this hot loop. Measured
-                // on ATM3: warm P50 20.3 ms against 4.3 ms with the same flags and the previous jar.
-                //
-                // One lookup, not two: the width and the height are the same record (`texLevels` is keyed by
-                // (name, level)), so asking for them separately hashed the same key twice on every offer. Measured on
-                // the accept profile (leg r45b-accept, client thread, 1824 samples): the pair is ~0.2% of the frame,
-                // small but paid on each of ~220 offers.
-                long extentStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
-                boolean hasExtent = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelExtent(
-                        boundTexture, 0, this.textureExtentScratch);
-                if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_EXTENT, System.nanoTime() - extentStart);
-                // Either dimension missing is "no extent": a valid upload records both, so a record with one zero
-                // cannot describe a surface. The test used to require both to be zero, which would let a half-record
-                // through to the sampler.
-                if (!hasExtent || this.textureExtentScratch[0] <= 0 || this.textureExtentScratch[1] <= 0) {
-                    this.blackTextureSubstitutions++;
-                    boundTexture = blackTextureId();
-                    if (this.blackTextureSubstitutions == 1) {
-                        System.out.println("[Celtium] CELTIUM_INCOMPLETE_TEXTURE_BLACK format=" + formatId
-                                + " (a bound texture with no recorded extent now samples black, as GL does)");
-                    }
-                }
-            }
-            this.currentImmediateTexture = boundTexture;
-            if (boundTexture != 0 && VulkanTextureFault.shouldFail("immediate")) {
-                this.textureUploadFailures++;
-                this.lastTextureUploadFailure = "immediate " + boundTexture;
-                this.immediateLastRefusal = "texture upload fault";
-                this.flushPendingBeforeGlDraw();
-                return false;
-            }
-            if (!this.immediateState.texture2dEnabled() || celtium$layoutHasNoTexture(formatId)) {
+            boolean usesWhiteTexture = !this.immediateState.texture2dEnabled() || celtium$layoutHasNoTexture(formatId);
+            if (usesWhiteTexture) {
                 // Vanilla draws the sky with texturing switched off and the gradient in the vertex colours. Sampling
                 // the texture that happens to be bound then washes that out - measured as the sky going flat, 74.7% of
                 // the top third of the frame differing. A white 1x1 mirror leaves the vertex colours as they are.
                 // The same substitution covers the layouts that have no texture coordinate at all (POSITION and
                 // POSITION_NORMAL): their shaders declare no sampler, so any image is correct, and the white one is the
                 // only one this path is guaranteed to be able to mirror.
+                if (boundTexture != 0 && VulkanTextureFault.shouldFail("immediate")) {
+                    this.textureUploadFailures++;
+                    this.lastTextureUploadFailure = "immediate " + boundTexture;
+                    this.immediateLastRefusal = "texture upload fault";
+                    this.flushPendingBeforeGlDraw();
+                    return false;
+                }
                 boundTexture = whiteTextureId();
+                this.currentImmediateTexture = boundTexture;
+            } else {
+                if (boundTexture != 0) {
+                    // GL samples a never-allocated texture as black; draw it with a 1x1 black mirror instead of refusing the
+                    // batch. The test is the stub's extent only: an earlier version asked the registry first, and a
+                    // registry.get() on a name with no entry runs the capture path - per batch, in this hot loop. Measured
+                    // on ATM3: warm P50 20.3 ms against 4.3 ms with the same flags and the previous jar.
+                    //
+                    // One lookup, not two: the width and the height are the same record (`texLevels` is keyed by
+                    // (name, level)), so asking for them separately hashed the same key twice on every offer. Measured on
+                    // the accept profile (leg r45b-accept, client thread, 1824 samples): the pair is ~0.2% of the frame,
+                    // small but paid on each of ~220 offers.
+                    long extentStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
+                    boolean hasExtent = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelExtent(
+                            boundTexture, 0, this.textureExtentScratch);
+                    if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_EXTENT, System.nanoTime() - extentStart);
+                    // Either dimension missing is "no extent": a valid upload records both, so a record with one zero
+                    // cannot describe a surface. The test used to require both to be zero, which would let a half-record
+                    // through to the sampler.
+                    if (!hasExtent || this.textureExtentScratch[0] <= 0 || this.textureExtentScratch[1] <= 0) {
+                        this.blackTextureSubstitutions++;
+                        boundTexture = blackTextureId();
+                        if (this.blackTextureSubstitutions == 1) {
+                            System.out.println("[Celtium] CELTIUM_INCOMPLETE_TEXTURE_BLACK format=" + formatId
+                                    + " (a bound texture with no recorded extent now samples black, as GL does)");
+                        }
+                    }
+                }
+                this.currentImmediateTexture = boundTexture;
+                if (boundTexture != 0 && VulkanTextureFault.shouldFail("immediate")) {
+                    this.textureUploadFailures++;
+                    this.lastTextureUploadFailure = "immediate " + boundTexture;
+                    this.immediateLastRefusal = "texture upload fault";
+                    this.flushPendingBeforeGlDraw();
+                    return false;
+                }
             }
             long matrixCopyStart = BATCH_TIMINGS ? System.nanoTime() : 0;
             if (MIRRORED_MATRICES && this.matricesDirty) {
@@ -8261,63 +8276,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     boundProgram != 0 && boundProgram != Integer.MIN_VALUE ? this.modPrograms.celtium$executableModProgram(boundProgram, formatId)
                             : null;
             if (boundProgram != 0 && modDrawProgram == null) {
-                // 8 is the entity layout: position, texture, colour and a normal the shaders do not read.
                 celtium$offerStage(9);
-        if (formatId == 8 && !this.entityProgramLogged) {
-                    // The entity layout is refused in every scene (acceptedByFormat 8:0). Which program is bound when it
-                    // is offered decides whether the custom-program shutter is what keeps entities on GL - and that is
-                    // what the depth write-back depends on.
-                    this.entityProgramLogged = true;
-                    System.out.println("[Celtium] CELTIUM_ENTITY_REFUSED program=" + boundProgram
-                            + " texture=" + boundTexture);
-                    StackTraceElement[] entityStack = new Throwable().getStackTrace();
-                    StringBuilder entityFrames = new StringBuilder();
-                    for (int i = 1; i < Math.min(entityStack.length, 10); i++) {
-                        entityFrames.append(" <- ").append(entityStack[i].getClassName()).append('.')
-                                .append(entityStack[i].getMethodName()).append(':').append(entityStack[i].getLineNumber());
-                    }
-                    System.out.println("[Celtium] CELTIUM_ENTITY_REFUSED_SITE" + entityFrames);
-                }
-                this.immediateLastRefusal = "a custom shader program is bound";
-                // Named once per program: the spider scene refuses 1470 batches here, and which program they belong to
-                // decides whether the entity path can be supported natively at all (which is what would let the depth
-                // write-back go). The id is the only handle GL offers; the count says how dominant it is.
-                // The vertex layout matters as much as the program: the vanilla outline group's mask pass draws entity
-                // models while the blur and composite passes are full-screen quads, so which format each refused program
-                // uses says which of them a native pass has to reproduce.
-                String programKey = boundProgram + "/fmt" + formatId;
-                Integer seenCount = this.shaderProgramRefusedIds.get(programKey);
-                this.shaderProgramRefusedIds.put(programKey,
-                        Integer.valueOf(seenCount == null ? 1 : seenCount.intValue() + 1));
-                this.shaderProgramRefusedPrograms.put(boundProgram,
-                        this.shaderProgramRefusedPrograms.get(boundProgram) + 1);
-                if (seenCount == null) {
-                    org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program modProgram =
-                            org.soutalab.celtium.vulkan.gl.ModProgramRegistry.program(boundProgram);
-                    System.out.println("[Celtium] CELTIUM_SHADER_PROGRAM_REFUSED program=" + boundProgram
-                            + " format=" + formatId
-                            // Whether the program could run natively: lowered by the stub's registry, and how many
-                            // of its uniform writes arrived (a zero says the values would be missing, not the code).
-                            + " lowered=" + (modProgram == null ? "unseen"
-                                    : modProgram.lowered() == null ? "unlinked" : modProgram.lowered().ok())
-                            + " uniformWrites=" + (modProgram == null ? 0 : modProgram.uniformWrites())
-                            + " (first batch refused with this program bound)");
-                    // The call site, once per program: the id and the format say a custom program drew coloured quads,
-                    // which is not enough to know what to support. The stack names it.
-                    StackTraceElement[] stack = new Throwable().getStackTrace();
-                    StringBuilder frames = new StringBuilder();
-                    for (int i = 1; i < Math.min(stack.length, 9); i++) {
-                        frames.append(" <- ").append(stack[i].getClassName()).append('.')
-                                .append(stack[i].getMethodName()).append(':').append(stack[i].getLineNumber());
-                    }
-                    System.out.println("[Celtium] CELTIUM_SHADER_PROGRAM_REFUSED_SITE" + frames);
-                }
-                this.immediateLastRefusal = "no shader program could be prepared for this batch";
-                this.immediateStatistics.noteShaderProgramRefusals();
-                this.immediateStatistics.noteRefusedBeforeAppend();
-                // Close the span before refusing, or this return leaves its depth at one for the rest of the frame and
-                // every later span of the same name is neither started nor added - which is how a bracket that names a
-                // cost ends up reporting a smaller one as more batches refuse.
+                celtium$recordCustomProgramRefusal(boundProgram, formatId, boundTexture);
                 org.soutalab.celtium.vulkan.FramePassTimings.end("offPrepare");
                 this.flushPendingBeforeGlDraw();
                 return false;
@@ -9146,6 +9106,47 @@ this.frameBufferOpen = false;
             this.flushPendingBeforeGlDraw();
             return false;
         }
+    }
+
+    private void celtium$recordCustomProgramRefusal(int boundProgram, int formatId, int boundTexture) {
+        if (formatId == 8 && !this.entityProgramLogged) {
+            this.entityProgramLogged = true;
+            System.out.println("[Celtium] CELTIUM_ENTITY_REFUSED program=" + boundProgram
+                    + " texture=" + boundTexture);
+            StackTraceElement[] entityStack = new Throwable().getStackTrace();
+            StringBuilder entityFrames = new StringBuilder();
+            for (int i = 1; i < Math.min(entityStack.length, 10); i++) {
+                entityFrames.append(" <- ").append(entityStack[i].getClassName()).append('.')
+                        .append(entityStack[i].getMethodName()).append(':').append(entityStack[i].getLineNumber());
+            }
+            System.out.println("[Celtium] CELTIUM_ENTITY_REFUSED_SITE" + entityFrames);
+        }
+        String programKey = boundProgram + "/fmt" + formatId;
+        Integer seenCount = this.shaderProgramRefusedIds.get(programKey);
+        this.shaderProgramRefusedIds.put(programKey,
+                Integer.valueOf(seenCount == null ? 1 : seenCount.intValue() + 1));
+        this.shaderProgramRefusedPrograms.put(boundProgram,
+                this.shaderProgramRefusedPrograms.get(boundProgram) + 1);
+        if (seenCount == null) {
+            org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program modProgram =
+                    org.soutalab.celtium.vulkan.gl.ModProgramRegistry.program(boundProgram);
+            System.out.println("[Celtium] CELTIUM_SHADER_PROGRAM_REFUSED program=" + boundProgram
+                    + " format=" + formatId
+                    + " lowered=" + (modProgram == null ? "unseen"
+                            : modProgram.lowered() == null ? "unlinked" : modProgram.lowered().ok())
+                    + " uniformWrites=" + (modProgram == null ? 0 : modProgram.uniformWrites())
+                    + " (first batch refused with this program bound)");
+            StackTraceElement[] stack = new Throwable().getStackTrace();
+            StringBuilder frames = new StringBuilder();
+            for (int i = 1; i < Math.min(stack.length, 9); i++) {
+                frames.append(" <- ").append(stack[i].getClassName()).append('.')
+                        .append(stack[i].getMethodName()).append(':').append(stack[i].getLineNumber());
+            }
+            System.out.println("[Celtium] CELTIUM_SHADER_PROGRAM_REFUSED_SITE" + frames);
+        }
+        this.immediateLastRefusal = "no shader program could be prepared for this batch";
+        this.immediateStatistics.noteShaderProgramRefusals();
+        this.immediateStatistics.noteRefusedBeforeAppend();
     }
 
     /**
@@ -10015,12 +10016,14 @@ this.frameBufferOpen = false;
         return this.maxLineWidth;
     }
 
+    private final java.nio.FloatBuffer lineWidthScratch = org.lwjgl.BufferUtils.createFloatBuffer(1);
+
     /** {@return the line width OpenGL currently has set}, or 1.0 when it cannot be read. */
     private float celtium$requestedLineWidth() {
         try {
-            java.nio.FloatBuffer width = org.lwjgl.BufferUtils.createFloatBuffer(1);
-            org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_LINE_WIDTH, width);
-            return width.get(0);
+            this.lineWidthScratch.clear();
+            org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_LINE_WIDTH, this.lineWidthScratch);
+            return this.lineWidthScratch.get(0);
         } catch (RuntimeException | LinkageError ignored) {
             return 1.0F;
         }
@@ -14880,6 +14883,7 @@ this.frameBufferOpen = false;
         }
         setViewportAndScissor(stack);
         pipeline.bindPipeline(this.commandBuffer);
+        pipeline.pushMatrices(this.commandBuffer, vulkanProjection(matrices.projection()), matrices.modelView());
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("prepBegin");
         }
@@ -14889,7 +14893,7 @@ this.frameBufferOpen = false;
 
         Iterator<ChunkRenderList> iterator = renderLists.iterator(pass.isReverseOrder());
         SectionRenderDataStorage.BatchCacheParams cacheParams =
-                new SectionRenderDataStorage.BatchCacheParams(useBlockFaceCulling);
+                useBlockFaceCulling ? BATCH_CACHE_CULLING : BATCH_CACHE_NO_CULLING;
         boolean indexBound = false;
 
         while (iterator.hasNext()) {
@@ -14979,7 +14983,6 @@ this.frameBufferOpen = false;
                     System.out.println("[Celtium] CELTIUM_GROUP_DEPTH row" + this.groupDepthRowsSeen + "=" + row);
                 }
             }
-            pipeline.pushMatrices(this.commandBuffer, vulkanProjection(matrices.projection()), matrices.modelView());
 
             this.terrain.bindVertexBuffer(this.commandBuffer, stack, resources);
             if (!indexBound) {
@@ -15007,7 +15010,6 @@ this.frameBufferOpen = false;
                     System.out.println("[Celtium] CELTIUM_DRAWN_SECTIONS pass=" + nameOf(pass) + " " + colors
                             + " firstVertexBytes=" + head);
                 }
-                command0Logged++;
                 record("firstDraw region=" + region.getId() + " pass=" + nameOf(pass)
                         + " stride=" + this.commonVertexStride
                         + " vertexArenaBytes=" + resources.vertexArena.deviceAllocatedMemoryL()
@@ -16526,7 +16528,15 @@ this.frameBufferOpen = false;
 
 
     /** GL name -> the chain-pair identity its published image belongs to. MIN_VALUE/absent = not a chain image. */
-    final java.util.Map<Integer, Long> publishedFrameImageIdentities = new java.util.HashMap<Integer, Long>();
+    final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap publishedFrameImageIdentities =
+            createPublishedFrameImageIdentities();
+
+    private static it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap createPublishedFrameImageIdentities() {
+        it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap map =
+                new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
+        map.defaultReturnValue(Long.MIN_VALUE);
+        return map;
+    }
 
 
     /** Hashes one accepted batch's source bytes with its state and matrix, and counts a previous-frame repeat. */
@@ -19602,11 +19612,12 @@ this.frameBufferOpen = false;
                 }
                 org.soutalab.celtium.vulkan.FramePassTimings.end("rcResolve");
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("rcPush");
-                if (PUSH_COMPONENT_CENSUS) {
+                boolean isModDraw = prepared.pipeline instanceof VulkanModProgramPipeline.Draw;
+                if (!isModDraw && PUSH_COMPONENT_CENSUS) {
                     celtium$notePushComponents(group);
                 }
-                long pushBlockKey = PUSH_BLOCK_CACHE ? celtium$pushBlockKey(group) : 0L;
-                boolean pushBlockCached = PUSH_BLOCK_CACHE && celtium$copyPushBlock(pushBlockKey, push);
+                long pushBlockKey = (!isModDraw && PUSH_BLOCK_CACHE) ? celtium$pushBlockKey(group) : 0L;
+                boolean pushBlockCached = isModDraw || (PUSH_BLOCK_CACHE && celtium$copyPushBlock(pushBlockKey, push));
                 if (!pushBlockCached) {
                 // The fill below is left unindented inside this guard on purpose: it is ninety lines of column writes
                 // whose offsets are the shader contract, and re-indenting them would bury that contract in the diff.
@@ -19744,8 +19755,8 @@ this.frameBufferOpen = false;
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("grpPrep");
                 org.soutalab.celtium.vulkan.FramePassTimings.end("rcPush");
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("rcViewport");
-                try (MemoryStack groupStack = MemoryStack.stackPush()) {
-                    celtium$setGroupViewport(groupStack, group);
+                {
+                    celtium$setGroupViewport(stack, group);
                     // After the viewport and before the draw: the read-back records what the command will actually fetch
                     // from the group's slice, which is the one fact the accept-time reads cannot supply.
                     this.highlightProbe.celtium$probeReadBack(group, mesh);
@@ -20201,11 +20212,13 @@ this.frameBufferOpen = false;
             this.immediateOffTargetViewports++;
         }
         if (x0 != this.passVpX || y != this.passVpY || width != this.passVpW || height != this.passVpH) {
-            org.lwjgl.vulkan.VkViewport.Buffer vkViewport = org.lwjgl.vulkan.VkViewport.calloc(1, stack);
-            vkViewport.get(0).x((float) x0).y((float) y)
-                    .width((float) width).height((float) height)
-                    .minDepth(0.0f).maxDepth(1.0f);
-            vkCmdSetViewport(this.commandBuffer, 0, vkViewport);
+            try (MemoryStack vpStack = MemoryStack.stackPush()) {
+                org.lwjgl.vulkan.VkViewport.Buffer vkViewport = org.lwjgl.vulkan.VkViewport.calloc(1, vpStack);
+                vkViewport.get(0).x((float) x0).y((float) y)
+                        .width((float) width).height((float) height)
+                        .minDepth(0.0f).maxDepth(1.0f);
+                vkCmdSetViewport(this.commandBuffer, 0, vkViewport);
+            }
             this.passVpX = x0;
             this.passVpY = y;
             this.passVpW = width;
@@ -20285,10 +20298,12 @@ this.frameBufferOpen = false;
         }
         if (scissorX != this.passScX || scissorY != this.passScY
                 || scissorWidth != this.passScW || scissorHeight != this.passScH) {
-            org.lwjgl.vulkan.VkRect2D.Buffer scissor = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
-            scissor.get(0).offset().set(scissorX, scissorY);
-            scissor.get(0).extent().set(scissorWidth, scissorHeight);
-            vkCmdSetScissor(this.commandBuffer, 0, scissor);
+            try (MemoryStack scStack = MemoryStack.stackPush()) {
+                org.lwjgl.vulkan.VkRect2D.Buffer scissor = org.lwjgl.vulkan.VkRect2D.calloc(1, scStack);
+                scissor.get(0).offset().set(scissorX, scissorY);
+                scissor.get(0).extent().set(scissorWidth, scissorHeight);
+                vkCmdSetScissor(this.commandBuffer, 0, scissor);
+            }
             this.passScX = scissorX;
             this.passScY = scissorY;
             this.passScW = scissorWidth;
@@ -20427,6 +20442,11 @@ this.frameBufferOpen = false;
         }
     }
 
+    private static final SectionRenderDataStorage.BatchCacheParams BATCH_CACHE_CULLING =
+            new SectionRenderDataStorage.BatchCacheParams(true);
+    private static final SectionRenderDataStorage.BatchCacheParams BATCH_CACHE_NO_CULLING =
+            new SectionRenderDataStorage.BatchCacheParams(false);
+
     /** z' = (z + w) / 2: GL's [-1, 1] clip depth onto Vulkan's [0, 1]. Read-only; was a new array per call. */
     private static final float[] CLIP_DEPTH_REMAP = {1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0.5f, 0f, 0f, 0f, 0.5f, 1f};
 
@@ -20435,16 +20455,13 @@ this.frameBufferOpen = false;
      * matrix mirrored from OpenGL can be used unchanged for depth in Vulkan.
      */
     static void remapClipDepth(float[] projection, float[] result) {
-        float[] remap = CLIP_DEPTH_REMAP;
-        for (int column = 0; column < 4; column++) {
-            for (int row = 0; row < 4; row++) {
-                float sum = 0.0f;
-                for (int k = 0; k < 4; k++) {
-                    sum += remap[k * 4 + row] * projection[column * 4 + k];
-                }
-                result[column * 4 + row] = sum;
-            }
+        if (projection != result) {
+            System.arraycopy(projection, 0, result, 0, 16);
         }
+        result[2] = 0.5f * (projection[2] + projection[3]);
+        result[6] = 0.5f * (projection[6] + projection[7]);
+        result[10] = 0.5f * (projection[10] + projection[11]);
+        result[14] = 0.5f * (projection[14] + projection[15]);
     }
 
     /**
@@ -20498,14 +20515,30 @@ this.frameBufferOpen = false;
      * multiply afterwards, and the model view's translation - which the three-column form dropped - is carried by the product.
      */
     private static void pushCombinedMatrixInto(float[] projection, float[] modelView, ByteBuffer push, int base) {
-        for (int column = 0; column < 4; column++) {
-            for (int row = 0; row < 4; row++) {
-                float sum = 0.0f;
-                for (int k = 0; k < 4; k++) {
-                    sum += projection[k * 4 + row] * modelView[column * 4 + k];
-                }
-                push.putFloat(base + column * 16 + row * 4, sum);
+        if (modelView[0] == 1.0f && modelView[5] == 1.0f && modelView[10] == 1.0f && modelView[15] == 1.0f
+                && modelView[1] == 0.0f && modelView[2] == 0.0f && modelView[3] == 0.0f
+                && modelView[4] == 0.0f && modelView[6] == 0.0f && modelView[7] == 0.0f
+                && modelView[8] == 0.0f && modelView[9] == 0.0f && modelView[11] == 0.0f
+                && modelView[12] == 0.0f && modelView[13] == 0.0f && modelView[14] == 0.0f) {
+            for (int i = 0; i < 16; i++) {
+                push.putFloat(base + (i << 2), projection[i]);
             }
+            return;
+        }
+        float p0 = projection[0], p1 = projection[1], p2 = projection[2], p3 = projection[3];
+        float p4 = projection[4], p5 = projection[5], p6 = projection[6], p7 = projection[7];
+        float p8 = projection[8], p9 = projection[9], p10 = projection[10], p11 = projection[11];
+        float p12 = projection[12], p13 = projection[13], p14 = projection[14], p15 = projection[15];
+        for (int col = 0; col < 16; col += 4) {
+            float m0 = modelView[col];
+            float m1 = modelView[col + 1];
+            float m2 = modelView[col + 2];
+            float m3 = modelView[col + 3];
+            int dst = base + (col << 2);
+            push.putFloat(dst, p0 * m0 + p4 * m1 + p8 * m2 + p12 * m3);
+            push.putFloat(dst + 4, p1 * m0 + p5 * m1 + p9 * m2 + p13 * m3);
+            push.putFloat(dst + 8, p2 * m0 + p6 * m1 + p10 * m2 + p14 * m3);
+            push.putFloat(dst + 12, p3 * m0 + p7 * m1 + p11 * m2 + p15 * m3);
         }
     }
 

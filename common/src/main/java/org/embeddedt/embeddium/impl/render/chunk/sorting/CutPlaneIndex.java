@@ -55,8 +55,14 @@ public final class CutPlaneIndex<T> {
 
             buckets[axis] = keys.toLongArray();
 
+            var axisMap = this.bucketsByAxis[axis];
             for (long key : buckets[axis]) {
-                this.bucketsByAxis[axis].computeIfAbsent(key, k -> new ReferenceOpenHashSet<>()).add(owner);
+                ReferenceOpenHashSet<T> set = axisMap.get(key);
+                if (set == null) {
+                    set = new ReferenceOpenHashSet<>();
+                    axisMap.put(key, set);
+                }
+                set.add(owner);
             }
         }
 
@@ -143,7 +149,10 @@ public final class CutPlaneIndex<T> {
         double hiLocal = hi - registration.origin[axis];
 
         for (float cut : registration.cuts[axis]) {
-            if (cut > loLocal && cut <= hiLocal) {
+            if (cut > hiLocal) {
+                break;
+            }
+            if (cut > loLocal) {
                 this.reported.add(owner);
                 out.accept(owner);
                 return;

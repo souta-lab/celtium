@@ -232,9 +232,9 @@ public final class VulkanModelQuadCapture {
             // compile can be a different model part.
             geometry.source = celtium$callSite(6);
             try {
-                java.nio.FloatBuffer matrix = org.lwjgl.BufferUtils.createFloatBuffer(16);
-                org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, matrix);
-                matrix.get(geometry.modelView);
+                MATRIX_SCRATCH.clear();
+                org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, MATRIX_SCRATCH);
+                MATRIX_SCRATCH.get(0, geometry.modelView, 0, 16);
             } catch (RuntimeException | LinkageError ignored) {
                 // A missing matrix is not a wrong quad; matrixForList then reports the identity, exactly as before.
             }
@@ -248,13 +248,11 @@ public final class VulkanModelQuadCapture {
             // can set its own transform. Counting the quads whose matrix differs from the first says how much of the model
             // path's residual that approximation can explain.
             try {
-                java.nio.FloatBuffer matrix = org.lwjgl.BufferUtils.createFloatBuffer(16);
-                org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, matrix);
-                float[] now = new float[16];
-                matrix.get(now);
+                MATRIX_SCRATCH.clear();
+                org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_MODELVIEW_MATRIX, MATRIX_SCRATCH);
                 boolean same = true;
                 for (int i = 0; i < 16; i++) {
-                    if (Math.abs(now[i] - geometry.modelView[i]) > 1e-4f) {
+                    if (Math.abs(MATRIX_SCRATCH.get(i) - geometry.modelView[i]) > 1e-4f) {
                         same = false;
                         break;
                     }
@@ -732,6 +730,7 @@ public final class VulkanModelQuadCapture {
     }
 
     private static final float[] EMPTY_FLOATS = new float[0];
+    private static final java.nio.FloatBuffer MATRIX_SCRATCH = org.lwjgl.BufferUtils.createFloatBuffer(16);
 
     /** {@return whether the list was captured with geometry}, filling {@code out} in place. */
     public static synchronized boolean snapshotInto(int listId, Scratch out) {

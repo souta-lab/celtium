@@ -615,9 +615,7 @@ final class VulkanModelInstances {
             vkCmdPushConstants(commandBuffer, this.pipelineLayout,
                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, constants);
             // The full path always pushes; recording the block here lets the next cached run skip it when identical.
-            for (int i = 0; i < ModelRunConstants.BYTES; i++) {
-                this.lastConstants[i] = constants.get(i);
-            }
+            constants.get(0, this.lastConstants, 0, ModelRunConstants.BYTES);
             this.lastConstantsValid = true;
             this.drawSets.put(0, textureSet).put(1, this.recordsSet);
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
