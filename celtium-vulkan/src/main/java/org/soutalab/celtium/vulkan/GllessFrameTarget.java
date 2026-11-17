@@ -1495,6 +1495,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
     }
 
+    /** {@return the slot an image fills in the identity's chain pair}, or -1 when it fills none. */
+    public int chainPairColorSlotForImage(long identity, long image) {
+        Pair pair = existingChainPair(identity);
+        return pair == null ? -1 : pair.colorSlotForImage(image);
+    }
+
     /**
      * A framebuffer can be sampled before its first draw (vanilla's empty outline target does this every frame).
      * Initialize the owned attachment, rather than manufacturing an unwritten texture mirror under its name.
@@ -1888,6 +1894,22 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 return this.colorView;
             }
             return slot > 0 && slot - 1 < this.extraColorCount ? this.extraColorViews[slot - 1] : 0L;
+        }
+
+        /** {@return the slot an image fills in this pair} (0 = its own colour image), or -1 when it fills none. */
+        private int colorSlotForImage(long image) {
+            if (image == 0L) {
+                return -1;
+            }
+            if (image == this.colorImage) {
+                return 0;
+            }
+            for (int i = 0; i < this.extraColorCount; i++) {
+                if (this.extraColorImages[i] == image) {
+                    return i + 1;
+                }
+            }
+            return -1;
         }
 
         /** {@return a copy of the live extra colour images} (slots 1..), or null when there are none. */

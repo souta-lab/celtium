@@ -173,6 +173,54 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /**
+     * The chain-pair render pass for a framebuffer with {@code colorAttachments} colour targets, cached per
+     * count. Always the discard-depth form: the flag's A/B ({@link #CHAIN_PAIR_DISCARD_DEPTH}) compares the
+     * one-colour picture, and a multi-target framebuffer's depth is the chain's own either way - no pass reads
+     * it back. A count of 1 is the ordinary chain pass above.
+     */
+    long chainPairRenderPass(int colorAttachments) {
+        if (colorAttachments <= 1) {
+            return chainPairRenderPass();
+        }
+        long cached = this.chainPairRenderPassesByCount[colorAttachments];
+        if (cached == 0L) {
+            cached = VulkanTerrainPipeline.createChainPairRenderPass(this.context, colorAttachments);
+            this.chainPairRenderPassesByCount[colorAttachments] = cached;
+            record("chain-pair MRT render pass created (colors=" + colorAttachments + ")");
+        }
+        return cached;
+    }
+
+    /** {@return whether a render pass is one of the chain-pair passes} (any colour count). */
+    boolean isChainPairRenderPass(long renderPass) {
+        if (renderPass == 0L) {
+            return false;
+        }
+        if (renderPass == this.chainPairRenderPass) {
+            return true;
+        }
+        for (int count = 2; count < this.chainPairRenderPassesByCount.length; count++) {
+            if (this.chainPairRenderPassesByCount[count] == renderPass) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** {@return how many colour attachments a chain-pair render pass has}, or 0 when it is not one. */
+    int chainPairRenderPassColorCount(long renderPass) {
+        if (renderPass != 0L && renderPass == this.chainPairRenderPass) {
+            return 1;
+        }
+        for (int count = 2; count < this.chainPairRenderPassesByCount.length; count++) {
+            if (this.chainPairRenderPassesByCount[count] == renderPass) {
+                return count;
+            }
+        }
+        return 0;
+    }
+
+    /**
      * {@code -Dceltium.vulkan.chainPairDiscardDepth=false} draws a mod's own framebuffer through the frame pass again,
      * loading and storing the pair's depth. On by default; the switch is the A/B for the picture, because the only
      * thing that can say whether discarding the depth kept the picture is the same-pose comparison.
@@ -182,6 +230,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** The chain-pair render pass handle, or 0 before the first mod-framebuffer window asked for it. */
     long chainPairRenderPass;
+    /** The multi-target chain-pair render passes, indexed by colour attachment count (2..8 used). */
+    final long[] chainPairRenderPassesByCount = new long[9];
     int targetWidth;
     int targetHeight;
     /**
@@ -227,6 +277,33 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * the sampling-side transition at that site was moving the image the pass was about to attach.
      */
     long passAttachedColorImage;
+    /**
+     * Every colour image the pass being begun attaches, for a multi-target window (index = slot); null when the
+     * pass attaches one colour image, which is what {@link #passAttachedColorImage} alone describes. The
+     * sampling-side transition asks {@link #celtium$passAttachesColorImage} so a name standing for any slot of
+     * the tuple is kept out of the sampling layout exactly as slot 0's name is.
+     */
+    long[] passAttachedColorImages;
+
+    /** {@return whether the pass this window records attaches this image as one of its colour targets}. */
+    boolean celtium$passAttachesColorImage(long image) {
+        if (image == 0L) {
+            return false;
+        }
+        if (image == this.passAttachedColorImage) {
+            return true;
+        }
+        long[] attached = this.passAttachedColorImages;
+        if (attached != null) {
+            for (long candidate : attached) {
+                if (candidate == image) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     /**
      * The serial of the frame a once-per-frame latch belongs to.
      * <p>
@@ -1816,6 +1893,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * statements later in the same method, so the window between the two is a handful of field reads.
      */
     private long pendingChainPairClear;
+
+    /** How many colour attachments the pass consuming {@link #pendingChainPairClear} attaches (1 = ordinary). */
+    private int pendingChainPairClearColors = 1;
 
     /** The model domain's fragments of the verification line (refactoring plan R2, stage 2). */
     final ModelStatistics modelStats = new ModelStatistics(this.modelGeometry);
@@ -6579,6 +6659,45 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // do), and the two that ignore the answer are the window head and the group open - so the lookup here was a
         // full registry resolution (memo miss included, 931 ns on the accept census) per published window, for an
         // answer nobody read. The window head is 2.8 us and this was a third of it.
+        return true;
+    }
+
+    /**
+     * Publishes one extra colour slot of a multi-target framebuffer: the slot's GL texture name over the chain
+     * pair's image at that slot, the same publication {@link #celtium$publishFramebufferColorTexture} makes for
+     * slot 0. The chain pair is the only route with slots, and the tuple was ensured by the window that draws
+     * into it, so a missing image here is a refusal - ensuring a guessed count at a sampling site would build
+     * images no window sized.
+     *
+     * @return whether the name resolves to an image now
+     */
+    boolean celtium$publishFramebufferColorTextureAt(int glTextureName, long identity, int slot,
+            int width, int height) {
+        GllessFrameTarget offTarget = offTargetTarget();
+        if (offTarget == null || slot <= 0) {
+            return false;
+        }
+        long image = offTarget.chainPairColorImageAt(identity, slot);
+        long view = offTarget.chainPairColorViewAt(identity, slot);
+        if (image == 0L || view == 0L) {
+            if (this.fboPublishRefusalLogs < 16) {
+                this.fboPublishRefusalLogs++;
+                System.out.println("[Celtium] CELTIUM_FBO_PUBLISH_REFUSED name=" + glTextureName
+                        + " reason=slot-image-zero identity=0x" + Long.toHexString(identity) + " slot=" + slot
+                        + " image=0x" + Long.toHexString(image) + " view=0x" + Long.toHexString(view));
+            }
+            return false;
+        }
+        int publishWidth = width > 0 ? width : this.targetWidth;
+        int publishHeight = height > 0 ? height : this.targetHeight;
+        this.postChainBridge.celtium$publishFrameTexture(glTextureName, image, view, publishWidth, publishHeight);
+        this.publishedTextures.noteColorTexturePublished();
+        if (this.framebufferColorTextureLogs < 8) {
+            this.framebufferColorTextureLogs++;
+            System.out.println("[Celtium] CELTIUM_FBO_TEXTURE_PUBLISHED name=" + glTextureName
+                    + " identity=0x" + Long.toHexString(identity) + " route=chain-pair slot=" + slot
+                    + " image=0x" + Long.toHexString(image) + " size=" + publishWidth + "x" + publishHeight);
+        }
         return true;
     }
 
@@ -12783,6 +12902,7 @@ this.frameBufferOpen = false;
         // The image this pass attaches, so the sampling-side transition below can leave it alone. Default is the frame
         // image, which is what both the plain path and the fallback path attach.
         this.passAttachedColorImage = this.frameTarget.colorImage();
+        this.passAttachedColorImages = null;
         if (WINDOW_SPLIT) {
             long now = System.nanoTime();
             this.wsRouteNanos += now - this.wsMark;
@@ -12798,11 +12918,25 @@ this.frameBufferOpen = false;
                     // The pair's extent is the framebuffer's own: a mod's 256x256 target keeps a 256x256 image, and
                     // the publish path's ensure agrees with this one so the two never fight over a size.
                     long[] fboExtent = framebufferColorTexture(chainIdentityValue);
-                    offTarget.ensureChainPair(chainIdentityValue,
-                            fboExtent != null && fboExtent.length >= 3 && fboExtent[1] > 0
-                                    ? (int) fboExtent[1] : this.targetWidth,
-                            fboExtent != null && fboExtent.length >= 3 && fboExtent[2] > 0
-                                    ? (int) fboExtent[2] : this.targetHeight);
+                    int pairWidth = fboExtent != null && fboExtent.length >= 3 && fboExtent[1] > 0
+                            ? (int) fboExtent[1] : this.targetWidth;
+                    int pairHeight = fboExtent != null && fboExtent.length >= 3 && fboExtent[2] > 0
+                            ? (int) fboExtent[2] : this.targetHeight;
+                    // How many colour targets this framebuffer attaches, from the publication record's leading
+                    // run of slots. More than one makes this a multi-target window: the pair needs a colour image
+                    // per slot, the pass needs that many attachments, and the publication below has a name per
+                    // slot to publish. One is the ordinary chain window and follows it exactly.
+                    int windowColorCount = Math.max(1,
+                            this.publishedTextures.colorAttachmentCount(chainIdentityValue));
+                    offTarget.ensureChainPairColors(chainIdentityValue, windowColorCount, pairWidth, pairHeight);
+                    long[] windowAttachedImages = null;
+                    if (windowColorCount > 1) {
+                        windowAttachedImages = new long[windowColorCount];
+                        for (int slot = 0; slot < windowColorCount; slot++) {
+                            windowAttachedImages[slot] =
+                                    offTarget.chainPairColorImageAt(chainIdentityValue, slot);
+                        }
+                    }
                     if (WINDOW_SPLIT) {
                         long now = System.nanoTime();
                         this.wsOffPairNanos += now - this.wsMark;
@@ -12829,8 +12963,15 @@ this.frameBufferOpen = false;
                     try {
                         // Narrowed to the image this pass is about to attach: the hand-back is that attach's own
                         // precondition, and a name published over another image is neither attached nor moved here.
-                        this.postChainBridge.celtium$transitionPublishedFrameTextures(true,
-                                offTarget.chainPairColorImage(chainIdentityValue));
+                        if (windowAttachedImages != null) {
+                            // Every slot's name is handed back, not only slot 0's: the pass attaches the whole
+                            // tuple, and each attached image carries the same initialLayout precondition.
+                            this.postChainBridge.celtium$transitionPublishedFrameTextures(true,
+                                    windowAttachedImages);
+                        } else {
+                            this.postChainBridge.celtium$transitionPublishedFrameTextures(true,
+                                    offTarget.chainPairColorImage(chainIdentityValue));
+                        }
                     } finally {
                         FramePassTimings.end("winTransition");
                     }
@@ -12875,6 +13016,7 @@ this.frameBufferOpen = false;
                             // exactly one consumer, and the fallback branch below records the ordinary clear if the
                             // routing fails before that pass is begun.
                             this.pendingChainPairClear = chainIdentityValue;
+                            this.pendingChainPairClearColors = windowColorCount;
                         } else {
                             offTarget.clearChainPair(chainIdentityValue, this.commandBuffer);
                         }
@@ -12902,11 +13044,24 @@ this.frameBufferOpen = false;
                     // pipelines (same attachment formats, samples and subpass references - load and store operations
                     // are not part of the compatibility rule), so the same immediate and mod-program pipelines draw
                     // here. The framebuffer cache is keyed by render pass, so this pass gets its own handle.
-                    if (CHAIN_PAIR_DISCARD_DEPTH) {
+                    if (windowColorCount > 1) {
+                        // The multi-target pass for this tuple: attachment count is part of render-pass
+                        // compatibility, so neither the frame pass nor the one-colour chain pass can stand in
+                        // for it, and the pipelines that draw here are the ones built against it (the
+                        // mod-program cache keys on the render pass). The tuple's acquire belongs before the
+                        // begin: the pass declares GENERAL for every colour attachment it attaches.
+                        passRenderPass = chainPairRenderPass(windowColorCount);
+                        offTarget.recordChainPairColorAcquire(chainIdentityValue, this.commandBuffer);
+                        framebuffer = framebufferCache().chainPairMulti(passRenderPass, offTarget,
+                                windowColorCount, this.targetWidth, this.targetHeight);
+                    } else if (CHAIN_PAIR_DISCARD_DEPTH) {
                         passRenderPass = chainPairRenderPass();
+                        framebuffer = ensureChainPairFramebuffer(passRenderPass);
+                    } else {
+                        framebuffer = ensureChainPairFramebuffer(passRenderPass);
                     }
-                    framebuffer = ensureChainPairFramebuffer(passRenderPass);
                     this.passAttachedColorImage = offTarget.chainPairColorImage(chainIdentityValue);
+                    this.passAttachedColorImages = windowAttachedImages;
                     // The pass's render area cannot exceed the framebuffer's - a chain pair at the game's
                     // framebuffer size (the fixture's 256x256) is smaller than the window's, and the render area
                     // must come from the pair, not from the frame.
@@ -12944,6 +13099,17 @@ this.frameBufferOpen = false;
                         long publishMark = WINDOW_SPLIT ? System.nanoTime() : 0L;
                         celtium$publishFramebufferColorTexture((int) reported[0],
                                 this.targetRegistry.currentIdentity(), reported);
+                        if (windowColorCount > 1) {
+                            // The tuple's other names: each slot's texture stands for that slot's image, so the
+                            // passes that sample colortex1/2 find the pixels this pass wrote into them.
+                            for (int slot = 1; slot < windowColorCount; slot++) {
+                                int slotName = this.publishedTextures.colorTextureAt(chainIdentityValue, slot);
+                                if (slotName != 0) {
+                                    celtium$publishFramebufferColorTextureAt(slotName, chainIdentityValue, slot,
+                                            (int) reported[1], (int) reported[2]);
+                                }
+                            }
+                        }
                         if (WINDOW_SPLIT) {
                             long now = System.nanoTime();
                             this.wsPublishNanos += now - publishMark;
@@ -12968,6 +13134,7 @@ this.frameBufferOpen = false;
                     }
                     framebuffer = ensureOffTargetFramebuffer(renderPass);
                     this.passAttachedColorImage = offTarget.offTargetColorImage();
+                    this.passAttachedColorImages = null;
                     if (WINDOW_SPLIT) {
                         long now = System.nanoTime();
                         this.wsMark = now;
@@ -12999,7 +13166,9 @@ this.frameBufferOpen = false;
                         deferredOwner.clearChainPair(this.pendingChainPairClear, this.commandBuffer);
                     }
                     this.pendingChainPairClear = 0L;
+                    this.pendingChainPairClearColors = 1;
                 }
+                this.passAttachedColorImages = null;
                 framebuffer = ensureFramebuffer(renderPass);
             }
             if (WINDOW_SPLIT) {
@@ -13162,10 +13331,12 @@ this.frameBufferOpen = false;
             // when it was recorded outside the pass.
             long deferredClearIdentity = this.pendingChainPairClear;
             this.pendingChainPairClear = 0L;
+            int deferredClearColors = this.pendingChainPairClearColors;
+            this.pendingChainPairClearColors = 1;
             GllessFrameTarget deferredOwner = offTargetTarget();
             if (deferredOwner != null) {
                 deferredOwner.recordChainPairDeferredClear(deferredClearIdentity, this.commandBuffer,
-                        passWidth, passHeight);
+                        passWidth, passHeight, deferredClearColors);
             }
         }
         this.activeImmediateTarget = this.targetRegistry.currentIdentity();
@@ -14653,6 +14824,13 @@ this.frameBufferOpen = false;
         if (this.chainPairRenderPass != 0) {
             org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(), this.chainPairRenderPass, null);
             this.chainPairRenderPass = 0;
+        }
+        for (int count = 2; count < this.chainPairRenderPassesByCount.length; count++) {
+            if (this.chainPairRenderPassesByCount[count] != 0) {
+                org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(),
+                        this.chainPairRenderPassesByCount[count], null);
+                this.chainPairRenderPassesByCount[count] = 0;
+            }
         }
         for (VulkanBuffer buffer : this.sharedIndexBuffers.values()) {
             buffer.delete();
@@ -17028,13 +17206,15 @@ this.frameBufferOpen = false;
             // the highest attachment index with a CLEAR load op (VUID-VkRenderPassBeginInfo-clearValueCount-00902,
             // which the first leg of this change reported 20 times before this line existed). The frame pass loads
             // both attachments, so it needs none - and passing none is what it has always done.
-            if (renderPass == this.chainPairRenderPass && this.chainPairRenderPass != 0L) {
+            int chainColors = chainPairRenderPassColorCount(renderPass);
+            if (chainColors > 0) {
                 if (this.cachedWindowClearValues == null) {
-                    this.cachedWindowClearValues = org.lwjgl.vulkan.VkClearValue.calloc(2);
+                    this.cachedWindowClearValues = org.lwjgl.vulkan.VkClearValue.calloc(9);
                 }
-                // Attachment 0 loads, so its value is ignored; attachment 1 is the depth, cleared to the far plane.
-                this.cachedWindowClearValues.get(1).depthStencil().depth(1.0f).stencil(0);
-                this.cachedWindowBegin.clearValueCount(2).pClearValues(this.cachedWindowClearValues);
+                // The colour attachments load, so their values are ignored; the depth - at the index the colour
+                // count puts it - is cleared to the far plane.
+                this.cachedWindowClearValues.get(chainColors).depthStencil().depth(1.0f).stencil(0);
+                this.cachedWindowBegin.clearValueCount(chainColors + 1).pClearValues(this.cachedWindowClearValues);
             } else {
                 this.cachedWindowBegin.clearValueCount(0).pClearValues(null);
             }

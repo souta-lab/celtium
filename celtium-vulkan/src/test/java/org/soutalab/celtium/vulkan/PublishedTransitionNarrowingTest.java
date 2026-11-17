@@ -61,4 +61,23 @@ class PublishedTransitionNarrowingTest {
         assertFalse(PostChainBridge.celtium$attachHandBackNeeded(true, PAIR, 0L),
                 "a name with no image is not the attached image");
     }
+
+    @Test
+    void aMultiTargetPassHandsBackEveryAttachedSlot() {
+        // A multi-target window attaches the pair's whole tuple: a name standing for any slot's image carries the
+        // same initialLayout precondition as slot 0's name, and a name over an image outside the tuple is skipped
+        // exactly as in the one-image rule.
+        long slot1 = 0x3000L;
+        long[] tuple = {PAIR, slot1};
+        assertTrue(PostChainBridge.celtium$attachHandBackNeeded(true, tuple, PAIR),
+                "slot 0's name is handed back");
+        assertTrue(PostChainBridge.celtium$attachHandBackNeeded(true, tuple, slot1),
+                "slot 1's name is handed back by the same pass");
+        assertFalse(PostChainBridge.celtium$attachHandBackNeeded(true, tuple, OTHER),
+                "a name over an image the tuple does not hold is not attached by this pass");
+        assertTrue(PostChainBridge.celtium$attachHandBackNeeded(false, tuple, OTHER),
+                "the sampling side still visits every name");
+        assertTrue(PostChainBridge.celtium$attachHandBackNeeded(true, (long[]) null, OTHER),
+                "a null tuple is the unnarrowed walk");
+    }
 }

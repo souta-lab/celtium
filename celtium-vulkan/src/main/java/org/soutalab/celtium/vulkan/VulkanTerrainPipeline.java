@@ -1205,20 +1205,44 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
         }
     }
 
+    /**
+     * The chain-pair pass for a multi-target framebuffer: {@code colorAttachments} colour attachments in the
+     * frame pass' format and layout, then the depth in its discard form.
+     * <p>
+     * Unlike the one-colour chain pass this one is <em>not</em> compatible with the frame pass' pipelines:
+     * render-pass compatibility compares the subpass' attachment count and references, so a pipeline drawn here
+     * must have been built against this pass. That is the mod programs' case - a program that writes several
+     * fragment outputs only ever draws into the framebuffer that attaches that many targets - and the mod-program
+     * pipeline cache keys on the render pass for exactly this reason.
+     */
+    static long createChainPairRenderPass(VulkanContext context, int colorAttachments) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            return buildFrameRenderPass(stack, context.device(), true, colorAttachments);
+        }
+    }
+
     private static long buildFrameRenderPass(MemoryStack stack, VkDevice device, boolean discardDepth) {
-        VkAttachmentDescription.Buffer attachments = VkAttachmentDescription.calloc(2, stack);
-        VkAttachmentDescription color = attachments.get(0);
-        color.format(COLOR_FORMAT)
-                .samples(VK_SAMPLE_COUNT_1_BIT)
-                // LOAD, not CLEAR: the frame target is shared with OpenGL, which has already cleared it and may
-                // already have drawn into it, so clearing here would erase that work.
-                .loadOp(VK_ATTACHMENT_LOAD_OP_LOAD)
-                .storeOp(VK_ATTACHMENT_STORE_OP_STORE)
-                .stencilLoadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE)
-                .stencilStoreOp(VK_ATTACHMENT_STORE_OP_DONT_CARE)
-                .initialLayout(COLOR_ATTACHMENT_LAYOUT)
-                .finalLayout(COLOR_ATTACHMENT_LAYOUT);
-        VkAttachmentDescription depth = attachments.get(1);
+        return buildFrameRenderPass(stack, device, discardDepth, 1);
+    }
+
+    private static long buildFrameRenderPass(MemoryStack stack, VkDevice device, boolean discardDepth,
+            int colorAttachments) {
+        int colors = Math.max(1, colorAttachments);
+        VkAttachmentDescription.Buffer attachments = VkAttachmentDescription.calloc(colors + 1, stack);
+        for (int index = 0; index < colors; index++) {
+            VkAttachmentDescription color = attachments.get(index);
+            color.format(COLOR_FORMAT)
+                    .samples(VK_SAMPLE_COUNT_1_BIT)
+                    // LOAD, not CLEAR: the frame target is shared with OpenGL, which has already cleared it and may
+                    // already have drawn into it, so clearing here would erase that work.
+                    .loadOp(VK_ATTACHMENT_LOAD_OP_LOAD)
+                    .storeOp(VK_ATTACHMENT_STORE_OP_STORE)
+                    .stencilLoadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE)
+                    .stencilStoreOp(VK_ATTACHMENT_STORE_OP_DONT_CARE)
+                    .initialLayout(COLOR_ATTACHMENT_LAYOUT)
+                    .finalLayout(COLOR_ATTACHMENT_LAYOUT);
+        }
+        VkAttachmentDescription depth = attachments.get(colors);
         // The attachment must be the format the frame target's depth image was created with, and that is now chosen
         // from the device's capabilities rather than fixed. A render pass declared with one depth format over an image
         // created with another is invalid, which is why the two sites share one decision.
@@ -1239,13 +1263,15 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
             depth.loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR).storeOp(VK_ATTACHMENT_STORE_OP_DONT_CARE);
         }
 
-        VkAttachmentReference.Buffer colorReferences = VkAttachmentReference.calloc(1, stack);
-        colorReferences.get(0).attachment(0).layout(COLOR_ATTACHMENT_LAYOUT);
+        VkAttachmentReference.Buffer colorReferences = VkAttachmentReference.calloc(colors, stack);
+        for (int index = 0; index < colors; index++) {
+            colorReferences.get(index).attachment(index).layout(COLOR_ATTACHMENT_LAYOUT);
+        }
         VkAttachmentReference depthReference = VkAttachmentReference.calloc(stack)
-                .attachment(1).layout(DEPTH_ATTACHMENT_LAYOUT);
+                .attachment(colors).layout(DEPTH_ATTACHMENT_LAYOUT);
         VkSubpassDescription.Buffer subpasses = VkSubpassDescription.calloc(1, stack);
         subpasses.get(0).pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS)
-                .colorAttachmentCount(1)
+                .colorAttachmentCount(colors)
                 .pColorAttachments(colorReferences)
                 .pDepthStencilAttachment(depthReference);
 

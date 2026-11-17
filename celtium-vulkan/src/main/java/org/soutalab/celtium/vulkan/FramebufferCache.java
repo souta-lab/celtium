@@ -36,11 +36,14 @@ final class FramebufferCache {
     private final Long2LongOpenHashMap frameFramebuffers = new Long2LongOpenHashMap();
     /** Per identity, the chain-pair generation its cached framebuffers were built over. */
     private final Long2LongOpenHashMap chainPairGenerations = new Long2LongOpenHashMap();
+    /** Per identity, the colour-tuple generation its cached multi-target framebuffers were built over. */
+    private final Long2LongOpenHashMap chainPairTupleGenerations = new Long2LongOpenHashMap();
 
     FramebufferCache(VulkanContext context, RenderTargetRegistry registry) {
         this.context = context;
         this.registry = registry;
         this.chainPairGenerations.defaultReturnValue(-1L);
+        this.chainPairTupleGenerations.defaultReturnValue(-1L);
     }
 
     /**
@@ -104,6 +107,7 @@ final class FramebufferCache {
                 retire(stale);
                 this.registry.clearChainPairFramebuffer(identity);
                 this.chainPairGenerations.remove(identity);
+                this.chainPairTupleGenerations.remove(identity);
             }
         }
         long cached = this.registry.chainPairFramebuffer(identity, renderPass);
@@ -124,6 +128,51 @@ final class FramebufferCache {
         return handle;
     }
 
+    /**
+     * The framebuffer for a pass that draws into the current identity's chain pair through several colour
+     * targets at once: the pair's views at slots 0..colorCount-1, then its depth. Keyed like
+     * {@link #chainPair} - by the render pass, which already differs per colour count - plus the tuple
+     * generation: a tuple rebuilt at the same pair generation (a count change retires and recreates only the
+     * extra images) leaves every cached handle naming dead views, so the staleness rule watches both
+     * generations and retires the identity's whole slot when either moves.
+     */
+    long chainPairMulti(long renderPass, GllessFrameTarget glless, int colorCount, int windowWidth,
+            int windowHeight) {
+        long identity = this.registry.currentIdentity();
+        long generation = glless.chainPairGeneration(identity);
+        long tupleGeneration = glless.chainPairColorTupleGeneration(identity);
+        boolean stale = this.chainPairGenerations.get(identity) != generation
+                || (this.chainPairTupleGenerations.containsKey(identity)
+                        && this.chainPairTupleGenerations.get(identity) != tupleGeneration);
+        if (stale) {
+            Collection<Long> staleHandles = this.registry.chainPairFramebufferHandles(identity);
+            if (!staleHandles.isEmpty()) {
+                retire(staleHandles);
+                this.registry.clearChainPairFramebuffer(identity);
+                this.chainPairGenerations.remove(identity);
+                this.chainPairTupleGenerations.remove(identity);
+            }
+        }
+        long cached = this.registry.chainPairFramebuffer(identity, renderPass);
+        if (cached != 0L) {
+            return cached;
+        }
+        long[] pairExtent = glless.chainPairExtent(identity);
+        int pairWidth = pairExtent == null ? windowWidth : (int) pairExtent[0];
+        int pairHeight = pairExtent == null ? windowHeight : (int) pairExtent[1];
+        long[] colorViews = new long[colorCount];
+        for (int slot = 0; slot < colorCount; slot++) {
+            colorViews[slot] = glless.chainPairColorViewAt(identity, slot);
+        }
+        long handle = create(renderPass, colorViews, glless.chainPairDepthView(identity),
+                pairWidth, pairHeight, "chain-pair-mrt:" + Long.toHexString(identity));
+        this.registry.noteChainPairFramebuffer(identity, handle, renderPass);
+        this.chainPairGenerations.put(identity, generation);
+        this.chainPairTupleGenerations.put(identity, tupleGeneration);
+        // counted by noteChainPairFramebuffer
+        return handle;
+    }
+
     /** Whether any framebuffer of any kind is held, so teardown can skip its settle when there is nothing to free. */
     boolean isEmpty() {
         return this.frameFramebuffers.isEmpty()
@@ -137,6 +186,7 @@ final class FramebufferCache {
         if (!handles.isEmpty()) retire(handles);
         this.registry.clearChainPairFramebuffer(identity);
         this.chainPairGenerations.remove(identity);
+        this.chainPairTupleGenerations.remove(identity);
     }
 
     /**
@@ -155,6 +205,7 @@ final class FramebufferCache {
         }
         this.registry.clearAllChainPairFramebuffers();
         this.chainPairGenerations.clear();
+        this.chainPairTupleGenerations.clear();
         it.unimi.dsi.fastutil.longs.LongIterator it = this.frameFramebuffers.values().iterator();
         while (it.hasNext()) {
             vkDestroyFramebuffer(device, it.nextLong(), null);
@@ -173,18 +224,28 @@ final class FramebufferCache {
 
     /** Builds one framebuffer over two views; {@code what} names it in a failure, null for the frame target's. */
     private long create(long renderPass, long colorView, long depthView, int width, int height, String what) {
-        if (colorView == 0L || depthView == 0L) {
-            // The pair behind these views is not ensured (it was retired or never created for this identity). Building the
-            // framebuffer anyway passed VK_NULL_HANDLE attachments to vkCreateFramebuffer - a VUID the validation layer
-            // named, and a RADV segfault when it went unchecked. Refused by name so the caller can drop the pass.
-            throw new IllegalStateException(what + " framebuffer would bind a null attachment (colour=0x"
-                    + Long.toHexString(colorView) + " depth=0x" + Long.toHexString(depthView)
-                    + "); its pair is not ensured");
+        return create(renderPass, new long[] {colorView}, depthView, width, height, what);
+    }
+
+    /** Builds one framebuffer over {@code colorViews.length} colour views and the depth view. */
+    private long create(long renderPass, long[] colorViews, long depthView, int width, int height, String what) {
+        for (long colorView : colorViews) {
+            if (colorView == 0L || depthView == 0L) {
+                // The pair behind these views is not ensured (it was retired or never created for this identity).
+                // Building the framebuffer anyway passed VK_NULL_HANDLE attachments to vkCreateFramebuffer - a
+                // VUID the validation layer named, and a RADV segfault when it went unchecked. Refused by name so
+                // the caller can drop the pass.
+                throw new IllegalStateException(what + " framebuffer would bind a null attachment (colour=0x"
+                        + Long.toHexString(colorView) + " depth=0x" + Long.toHexString(depthView)
+                        + "); its pair is not ensured");
+            }
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            LongBuffer attachments = stack.mallocLong(2);
-            attachments.put(0, colorView);
-            attachments.put(1, depthView);
+            LongBuffer attachments = stack.mallocLong(colorViews.length + 1);
+            for (int slot = 0; slot < colorViews.length; slot++) {
+                attachments.put(slot, colorViews[slot]);
+            }
+            attachments.put(colorViews.length, depthView);
             VkFramebufferCreateInfo create = VkFramebufferCreateInfo.calloc(stack)
                     .sType$Default()
                     .renderPass(renderPass)

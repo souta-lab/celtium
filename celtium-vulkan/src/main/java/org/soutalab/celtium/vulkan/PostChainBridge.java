@@ -619,6 +619,23 @@ b.frameBufferOpen = false;
         return !general || attachImage == 0L || publishedImage == attachImage;
     }
 
+    /**
+     * The same rule for a pass that attaches several images (a multi-target window's whole tuple): the name is
+     * visited when any attached image is the one it stands for. A null array is the unnarrowed walk, as
+     * {@code attachImage == 0} is above.
+     */
+    static boolean celtium$attachHandBackNeeded(boolean general, long[] attachImages, long publishedImage) {
+        if (!general || attachImages == null) {
+            return true;
+        }
+        for (long attachImage : attachImages) {
+            if (celtium$attachHandBackNeeded(true, attachImage, publishedImage)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** {@return the stale-name scan's runs and memo hits, as {@code runs/skips}}. */
     String celtium$syncScanSummary() {
         return this.syncScanRuns + "/" + this.syncScanSkips;
@@ -656,6 +673,19 @@ b.frameBufferOpen = false;
     }
 
     /**
+     * Records a layout move in the pair that owns the image, at the slot the image fills: slot 0's record is
+     * the pair's own, a tuple slot's record is what that slot's acquire barrier reads as its source layout.
+     */
+    private void notePairColorLayout(GllessFrameTarget pairOwner, long identity, long image, int layout) {
+        int slot = pairOwner.chainPairColorSlotForImage(identity, image);
+        if (slot > 0) {
+            pairOwner.noteChainPairColorLayoutAt(identity, slot, layout);
+        } else if (slot == 0) {
+            pairOwner.noteChainPairColorLayout(identity, layout);
+        }
+    }
+
+    /**
      * The same walk, narrowed on the attach side to the names that stand for the image the pass is about to attach.
      * <p>
      * The hand-back exists for one reason: the pass declares {@code GENERAL} for attachment 0, so every published name
@@ -671,6 +701,17 @@ b.frameBufferOpen = false;
      * @param attachImage the image the pass is about to attach, or 0 to hand back every published name as before
      */
     void celtium$transitionPublishedFrameTextures(boolean general, long attachImage) {
+        celtium$transitionPublishedFrameTextures(general,
+                attachImage == 0L ? null : new long[] {attachImage});
+    }
+
+    /**
+     * The same walk for a pass that attaches several images at once (a multi-target window's tuple): the
+     * hand-back covers every attached slot's names, and the sampling side skips every attached slot's names.
+     *
+     * @param attachImages the images the pass is about to attach, or null to hand back every published name
+     */
+    void celtium$transitionPublishedFrameTextures(boolean general, long[] attachImages) {
         if (b.publishedTextures.isEmptyPublished() || b.commandBuffer == null) {
             return;
         }
@@ -695,7 +736,7 @@ b.frameBufferOpen = false;
             long publishedImageHandleValue = this.cachedImages[cachedIndex];
             long publishedImageIdentity = this.cachedPairIdentities[cachedIndex];
             boolean pairImageName = publishedImageIdentity != Long.MIN_VALUE;
-            if (!celtium$attachHandBackNeeded(general, attachImage, publishedImageHandleValue)) {
+            if (!celtium$attachHandBackNeeded(general, attachImages, publishedImageHandleValue)) {
                 // The hand-back is the attach's own precondition: only the names that stand for the image this pass
                 // attaches have to be in GENERAL for it. A name over another image is not attached here and is not
                 // moved here, so the transition would be one nothing asked for. Counted, so "the walk was narrowed"
@@ -709,7 +750,8 @@ b.frameBufferOpen = false;
             // moved it to GENERAL for this pass; leaving it there is the whole fix. A batch that samples this same
             // image inside the pass would be a feedback loop and is not a case this rule has to serve.
             if (!general && b.passAttachedColorImage != 0L) {
-                if (publishedImageHandleValue != 0L && publishedImageHandleValue == b.passAttachedColorImage) {
+                if (publishedImageHandleValue != 0L
+                        && b.celtium$passAttachesColorImage(publishedImageHandleValue)) {
                     b.publishedTextures.noteSkippedForAttach();
                     if (b.publishedTextures.skippedForAttach() == 1) {
                         b.record("published name " + entryKey + " stands for the image this pass attaches (0x"
@@ -740,7 +782,7 @@ b.frameBufferOpen = false;
                 // because the image is still in GENERAL and a record left at SHADER_READ_ONLY would be stale.
                 b.publishedTextures.noteSkippedForAttach();
                 if (pairOwner != null && publishedImageIdentity != Long.MIN_VALUE) {
-                    pairOwner.noteChainPairColorLayout(publishedImageIdentity,
+                    notePairColorLayout(pairOwner, publishedImageIdentity, publishedImageHandleValue,
                             org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
                 }
             } else {
@@ -751,7 +793,7 @@ b.frameBufferOpen = false;
             // makes the pair's actual layout readable next to the GENERAL its pass declares and the layout the
             // descriptor was written with - the three values VUID-vkCmdDraw-None-09600 compares.
             if (pairOwner != null && publishedImageIdentity != Long.MIN_VALUE) {
-                pairOwner.noteChainPairColorLayout(publishedImageIdentity, general
+                notePairColorLayout(pairOwner, publishedImageIdentity, publishedImageHandleValue, general
                         ? org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL
                         : org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
                 celtium$reportPairLayout(general ? "hand-back" : "sampling");
