@@ -304,6 +304,16 @@ public final class TerrainRenderer {
         this.diagnostics = diagnostics;
     }
 
+    /** The stage gate consulted before any pipeline creation (item 327); the system gate by default. */
+    private StageGate stageGate = StageGate.system();
+    /** Whether the stage-off refusal has been recorded for this renderer; it is recorded once, not per frame. */
+    private boolean stageOffRecorded;
+
+    /** Gives the class the stage gate to consult; for tests. */
+    void setStageGate(StageGate stageGate) {
+        this.stageGate = stageGate;
+    }
+
     /** Records one diagnostic through the backend's sink. */
     void record(String message) {
         this.diagnostics.accept(message);
@@ -359,6 +369,19 @@ public final class TerrainRenderer {
             // pipeline already, so saying "no pipeline for no pass" is the whole fix.
             return null;
         }
+        // The stage gate (item 327, Vulcanizator V-01): a switched-off stage never attempts creation - on a
+        // hostile driver the creation call itself is the crash, so the refusal happens before any native work.
+        // It is recorded once and is NOT remembered as a failure below: the stage was off, not broken.
+        if (!this.stageGate.enabled(StageGate.Stage.TERRAIN_PIPELINES)) {
+            if (!this.stageOffRecorded) {
+                this.stageOffRecorded = true;
+                this.record("terrain pipeline stage off (" + (this.stageGate.switchedOff(
+                        StageGate.Stage.TERRAIN_PIPELINES)
+                        ? "kill switch " + StageGate.Stage.TERRAIN_PIPELINES.switchProperty() + "=off"
+                        : "quarantined") + "); passes answer null");
+            }
+            return null;
+        }
         VulkanTerrainPipeline pipeline = this.pipelines.get(pass);
         if (pipeline != null) {
             return pipeline;
@@ -381,6 +404,7 @@ public final class TerrainRenderer {
             }
             return pipeline;
         } catch (RuntimeException | LinkageError error) {
+            this.stageGate.noteFailure(StageGate.Stage.TERRAIN_PIPELINES, error);
             record("pipeline for " + pass.name() + " failed: " + describe(error));
             // The trace goes to stdout as well as the record: in the leg-11 run the record line reached
             // neither the console log nor the game log, so the creation failure this handler exists to

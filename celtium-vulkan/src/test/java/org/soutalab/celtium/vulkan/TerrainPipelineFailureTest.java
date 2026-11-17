@@ -6,6 +6,7 @@ import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkMeshFormats;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -83,6 +84,29 @@ class TerrainPipelineFailureTest {
 
         assertEquals(2, records.size(),
                 "after release the failure is forgotten, so the next ask retries the creation and records anew");
+    }
+
+    @Test
+    void aSwitchedOffStageNeverAttemptsCreationAndIsNotRememberedAsFailed() {
+        TerrainRenderer renderer = new TerrainRenderer();
+        List<String> records = new ArrayList<>();
+        renderer.setDiagnostics(records::add);
+        renderer.setStageGate(StageGate.withSwitchedOff(EnumSet.of(StageGate.Stage.TERRAIN_PIPELINES)));
+        TerrainRenderPass pass = testPass("solid");
+
+        assertNull(renderer.pipelineFor(pass));
+        assertNull(renderer.pipelineFor(pass));
+        assertEquals(1, records.size(), "the stage-off refusal is recorded once, not per call: " + records);
+        assertTrue(records.get(0).contains("terrain pipeline stage off"),
+                "the record names the refusal as a stage switch, not a failure: " + records.get(0));
+
+        // Re-enable the stage: the pass must now attempt creation and fail for the real reason - proof the
+        // refusal above was never remembered as a failure (a remembered failure answers null silently).
+        renderer.setStageGate(StageGate.withSwitchedOff(EnumSet.noneOf(StageGate.Stage.class)));
+        assertNull(renderer.pipelineFor(pass));
+        assertEquals(2, records.size(), "creation was attempted once the stage came back: " + records);
+        assertTrue(records.get(1).contains("pipeline for solid failed"),
+                "the second record is the genuine creation failure: " + records.get(1));
     }
 
     @Test
