@@ -404,20 +404,24 @@ final class PublishedFrameTextures {
      * framebuffer's depth it is, and a depth copy asks the same for its read framebuffer). A zero name
      * clears the identity's entry.
      */
-    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap depthTextureByIdentity =
-            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+    // Plain maps, not fastutil: this class is one of the sources the CI probe job compiles standalone
+    // (javac --release 21, no dependency jars) for the GPU-independent contract checks, so it must not
+    // import anything outside the JDK and its named companions. The record holds a handful of
+    // framebuffers, so boxing costs nothing measurable.
+    private final java.util.HashMap<Long, Integer> depthTextureByIdentity = new java.util.HashMap<>();
 
     /** Reverse of {@link #depthTextureByIdentity}; absent reads as {@link Long#MIN_VALUE}. */
-    private final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap identityByDepthTexture =
-            new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
+    private final java.util.HashMap<Integer, Long> identityByDepthTexture = new java.util.HashMap<>();
 
     /** Records a framebuffer's depth attachment. A zero name clears the entry. */
     synchronized void bindDepthTexture(long framebufferIdentity, int depthTexture) {
-        int previous = this.depthTextureByIdentity.get(framebufferIdentity);
+        Integer previousBoxed = this.depthTextureByIdentity.get(framebufferIdentity);
+        int previous = previousBoxed == null ? 0 : previousBoxed;
         if (previous == depthTexture) {
             return;
         }
-        if (previous != 0 && this.identityByDepthTexture.get(previous) == framebufferIdentity) {
+        Long reverse = previous == 0 ? null : this.identityByDepthTexture.get(previous);
+        if (reverse != null && reverse == framebufferIdentity) {
             this.identityByDepthTexture.remove(previous);
         }
         if (depthTexture == 0) {
@@ -430,7 +434,8 @@ final class PublishedFrameTextures {
 
     /** {@return the depth texture name recorded for an identity, or 0 when there is none}. */
     synchronized int depthTexture(long identity) {
-        return this.depthTextureByIdentity.get(identity);
+        Integer recorded = this.depthTextureByIdentity.get(identity);
+        return recorded == null ? 0 : recorded;
     }
 
     /** {@return the framebuffer identity whose depth attachment carries this GL texture name}, or {@code MIN_VALUE}. */
@@ -438,8 +443,8 @@ final class PublishedFrameTextures {
         if (glTextureName <= 0) {
             return Long.MIN_VALUE;
         }
-        long identity = this.identityByDepthTexture.get(glTextureName);
-        return identity == 0L ? Long.MIN_VALUE : identity;
+        Long identity = this.identityByDepthTexture.get(glTextureName);
+        return identity == null || identity == 0L ? Long.MIN_VALUE : identity;
     }
 
     /** Drops every depth record naming this GL texture (it was deleted or its name reused). */
