@@ -6950,7 +6950,12 @@ public final class CeltiumGlStub implements FunctionProvider {
                 //     with it the outline/spectator and post-process paths (EntityRenderer:195/219/290,
                 //     RenderGlobal:216/565). Advertising more than 3.0 claims entry points this stub answers with
                 //     recorded no-ops, which is the lie BH-35 names.
-                value = "3.0.0 Celtium";
+                // The string comes from GlContextTerms, the one set of terms for the created context: the
+                // floor above is its default (the compatibility promise), and the only other terms it can
+                // hold are the core terms a core-profile creation request at 3.3 or above earns - a core
+                // context promises only the programmable surface, which is the surface this renderer
+                // executes natively. See GlContextTerms and GLVERSION-DESIGN-2026-11-17.md.
+                value = GlContextTerms.versionString();
                 break;
             case 0x1F03: // GL_EXTENSIONS
                 // Empty on purpose, and indexed extensions answer NULL: this renderer interprets no extension, so it
@@ -7259,10 +7264,19 @@ public final class CeltiumGlStub implements FunctionProvider {
                 // 2026-10-15 (leg gv-cohort-fix151): the client stalls inside that construction, in
                 // RenderRegionManager's createStagingBuffer, with the world loaded and no player ever created.
                 // A capability claim has to be one story: with 3.0 the support test is false and the fallback
-                // staging buffer is used instead, which creates a plain mutable buffer.
-                return 3;
+                // staging buffer is used instead, which creates a plain mutable buffer. The numbers now
+                // come from the same GlContextTerms as the string; under both term sets the (4, 4) test
+                // above stays false, because the core cap is 3.3, not a 4.x claim.
+                return GlContextTerms.current().major();
             case 0x821C: // GL_MINOR_VERSION
-                return 0;
+                return GlContextTerms.current().minor();
+            case 0x9126: { // GL_CONTEXT_PROFILE_MASK
+                // Answered only when the latched terms make a profile claim - a core-profile creation
+                // request (GlContextTerms). The default terms predate the profile concept, so the query
+                // keeps falling through to the MIN_VALUE answer it has always had.
+                int mask = GlContextTerms.current().profileMask();
+                return mask >= 0 ? mask : Integer.MIN_VALUE;
+            }
             case 0x821D: // GL_NUM_EXTENSIONS
                 return 0;
             case 0x84FF: // GL_MAX_TEXTURE_MAX_ANISOTROPY - the sampler path does not filter anisotropically

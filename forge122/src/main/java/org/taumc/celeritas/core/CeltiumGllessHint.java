@@ -107,7 +107,9 @@ public final class CeltiumGllessHint {
      * and cannot parse a renderer name.
      * <p>
      * So the answers are per name and deliberately the same strings {@code CeltiumGlStub} gives the LWJGL2 surface -
-     * {@code "3.0.0 Celtium"} for GL_VERSION (the version whose gates are all backed, per the stub's own note),
+     * the {@code GlContextTerms} version string for GL_VERSION ({@code "3.0.0 Celtium"} by default, the version
+     * whose gates are all backed, per the stub's own note; the core terms when a core-profile context was
+     * requested at creation, per {@code GlContextTerms}),
      * {@code ""} for GL_EXTENSIONS (this renderer interprets no extension), {@code "1.20"} for the shading language -
      * because the two GL surfaces have to agree: one of them being parseable and the other not is a crash, not a
      * difference of opinion.
@@ -126,7 +128,7 @@ public final class CeltiumGllessHint {
                 value = IDENTITY;
                 break;
             case 0x1F02: // GL_VERSION - must stay parseable: Cleanroom's Kirino patch reads it
-                value = "3.0.0 Celtium";
+                value = org.soutalab.celtium.vulkan.gl.GlContextTerms.versionString();
                 break;
             case 0x1F03: // GL_EXTENSIONS
                 value = "";
@@ -2539,6 +2541,38 @@ public final class CeltiumGllessHint {
                 return 8;
             default:
                 return 0;
+        }
+    }
+
+    /**
+     * Latches the GL context terms from the creation request in force, called from the transformer
+     * immediately before {@code SDL.createWindow()} runs inside {@code Minecraft.init}.
+     * <p>
+     * This is the only moment the request can be read: it lives in {@code ForgeEarlyConfig}'s fields,
+     * and a requester that rewrites them for its own context (Demonica's startup mixin is the measured
+     * case) restores the user's values at {@code createDisplay} HEAD - after the window exists, the
+     * fields no longer say what was asked for. Reading here, before creation, is what makes the
+     * reported version a property of the created context rather than of whoever asks for it later
+     * (see {@code GlContextTerms} for the terms themselves).
+     * <p>
+     * Never throws into the window creation path: a failed read leaves the terms unlatched, which is
+     * the default floor - the run this renderer has always made.
+     */
+    public static void noteContextRequest() {
+        try {
+            org.soutalab.celtium.vulkan.gl.GlContextTerms.noteContextRequest(
+                    net.minecraftforge.common.ForgeEarlyConfig.OPENGL_VERSION_MAJOR,
+                    net.minecraftforge.common.ForgeEarlyConfig.OPENGL_VERSION_MINOR,
+                    net.minecraftforge.common.ForgeEarlyConfig.OPENGL_COMPAT_PROFILE);
+            org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.info(
+                    "CELTIUM_GL_CONTEXT_TERMS latched: requested={}.{} compat={} -> version={}",
+                    Integer.valueOf(net.minecraftforge.common.ForgeEarlyConfig.OPENGL_VERSION_MAJOR),
+                    Integer.valueOf(net.minecraftforge.common.ForgeEarlyConfig.OPENGL_VERSION_MINOR),
+                    Boolean.valueOf(net.minecraftforge.common.ForgeEarlyConfig.OPENGL_COMPAT_PROFILE),
+                    org.soutalab.celtium.vulkan.gl.GlContextTerms.versionString());
+        } catch (Throwable error) {
+            org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.warn(
+                    "CELTIUM_GL_CONTEXT_TERMS latch failed, default terms stand: {}", error.toString());
         }
     }
 
