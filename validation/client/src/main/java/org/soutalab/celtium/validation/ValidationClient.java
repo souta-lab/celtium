@@ -3799,7 +3799,7 @@ public final class ValidationClient {
                 report.addProperty("entitySpawnOnGround", Boolean.valueOf(
                         Math.abs(spawnSurface - mc.player.posY) <= 1.0D));
             }
-            if (worldTicks >= 60 && !celtium$dynamicLightSpawned
+            if (worldTicks >= 150 && !celtium$dynamicLightSpawned
                     && Boolean.getBoolean("celtium.validation.dynamicLightItem")) {
                 celtium$dynamicLightSpawned = true;
                 // The item-326 proof scene: one dropped torch on a dark stone stage. A torch block's
@@ -3818,7 +3818,11 @@ public final class ValidationClient {
                 // height snap lands it on the stage because the stage is placed first. The
                 // terrain-only cleanup below exempts this flag so the item survives to the capture;
                 // the A/B is the feature's own kill switch (-Dceltium.dynamicLights=false), not a
-                // different scene.
+                // different scene. Placed at tick 150 rather than the cohort's 60: in the terrain
+                // scene a chunk re-send after the scene teleport replaced the client chunk and
+                // wiped a tick-60 stage before the capture (measured in the item-326 legs: the
+                // stage property was in the report but no stone pixel was in the frame), while 50
+                // ticks remain for the sections to remesh before the tick-200 capture.
                 int px = (int) Math.floor(mc.player.posX), pz = (int) Math.floor(mc.player.posZ);
                 int stageY = (int) Math.floor(mc.player.posY) - 3;
                 for (int sx = px - 5; sx <= px + 5; sx++) {
