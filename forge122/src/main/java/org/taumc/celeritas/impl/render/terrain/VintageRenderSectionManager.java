@@ -224,6 +224,11 @@ public class VintageRenderSectionManager extends RenderSectionManager {
         }
 
         @Override
+        public org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService getDynamicLightService() {
+            return org.taumc.celeritas.impl.render.terrain.light.MinecraftDynamicLightService.INSTANCE;
+        }
+
+        @Override
         public boolean useBlockFaceCulling(){
             return CeleritasVintage.options().performance.useBlockFaceCulling;
         }
