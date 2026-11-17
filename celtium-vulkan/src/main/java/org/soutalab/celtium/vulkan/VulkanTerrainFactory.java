@@ -5,6 +5,7 @@ import org.embeddedt.embeddium.impl.render.chunk.RenderPassConfiguration;
 import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
 import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends;
 import org.embeddedt.embeddium.impl.render.chunk.fog.FogService;
+import org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService;
 import org.embeddedt.embeddium.impl.render.chunk.region.RenderRegionManager;
 import org.embeddedt.embeddium.impl.render.chunk.ShaderChunkRenderer;
 
@@ -70,12 +71,21 @@ public final class VulkanTerrainFactory {
             return null;
         }
 
+        // Dynamic light (item 326) is an enhancement, not part of the OpenGL look: a renderer that does
+        // not expose a service gets the empty one and the terrain shades exactly as vanilla does,
+        // where the fog service's absence above refuses the backend instead.
+        DynamicLightService dynamicLightService = renderer instanceof ShaderChunkRenderer
+                ? ((ShaderChunkRenderer) renderer).getDynamicLightService() : null;
+        if (dynamicLightService == null) {
+            dynamicLightService = DynamicLightService.EMPTY;
+        }
+
         // The window-time instance, if the window created one: it is the same device and the same renderer, so the
         // world renderer's objects are handed to it rather than a second backend being built beside it. One owner for
         // the swapchain and the frame target, and the first world frame finds them warm.
         TerrainGpuBackend current = TerrainGpuBackends.current();
         if (current instanceof VulkanRenderer existing && existing.celtium$isWindowBackend()) {
-            existing.celtium$adoptTerrainState(configuration, regions, fogService);
+            existing.celtium$adoptTerrainState(configuration, regions, fogService, dynamicLightService);
             reasons.add("the world renderer adopted the window-time backend instead of creating a second one");
             return existing;
         }
@@ -99,7 +109,7 @@ public final class VulkanTerrainFactory {
         VulkanContext context = null;
         try {
             context = VulkanContext.create("Celtium terrain backend");
-            VulkanTerrainGpuBackend backend = new VulkanTerrainGpuBackend(context, configuration, regions, fogService);
+            VulkanTerrainGpuBackend backend = new VulkanTerrainGpuBackend(context, configuration, regions, fogService, dynamicLightService);
             backend.install();
             return backend;
         } catch (RuntimeException | LinkageError error) {

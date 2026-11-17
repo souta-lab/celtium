@@ -16,6 +16,7 @@ import org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveT
 import org.embeddedt.embeddium.impl.render.chunk.data.BuiltSectionMeshParts;
 import org.embeddedt.embeddium.impl.render.chunk.data.SectionRenderDataStorage;
 import org.embeddedt.embeddium.impl.render.chunk.fog.FogService;
+import org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService;
 import org.embeddedt.embeddium.impl.render.chunk.lists.ChunkRenderList;
 import org.embeddedt.embeddium.impl.render.chunk.lists.ChunkRenderListIterable;
 import org.embeddedt.embeddium.impl.render.chunk.multidraw.BatchAssembler;
@@ -77,6 +78,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private RenderPassConfiguration<?> configuration;
     private RenderRegionManager regionManager;
     private FogService fogService;
+    private DynamicLightService dynamicLightService;
     private int commonVertexStride;
     private final int uniformAlignment;
 
@@ -699,7 +701,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     public VulkanTerrainGpuBackend(VulkanContext context,
                                    RenderPassConfiguration<?> configuration,
                                    RenderRegionManager regionManager,
-                                   FogService fogService) {
+                                   FogService fogService,
+                                   DynamicLightService dynamicLightService) {
         this.context = context;
         // OPT-07 lifetime rule: a deleter asks whether an open recording could still name its resource. The backend is
         // the only place that knows - the unified frame buffer, an open window recording, or a recording in progress -
@@ -727,6 +730,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.configuration = configuration;
         this.regionManager = regionManager;
         this.fogService = fogService;
+        this.dynamicLightService = dynamicLightService;
         // Null means the window-time instance, which is created before any world renderer exists (task-15). Nothing in
         // this constructor needs the render pass configuration: the pipelines that do are created per terrain pass, on
         // first use, from this.configuration, which the world renderer hands over through celtium$adoptTerrainState when
@@ -745,6 +749,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.terrain.setContext(this.context);
         this.terrain.setDiagnostics(this::record);
         this.terrain.setFogService(this.fogService);
+        this.terrain.setDynamicLightService(this.dynamicLightService);
         this.terrain.setConfiguration(this.configuration);
         this.terrain.setVertexStride(this.commonVertexStride);
         this.nativePassExecutor = new PassExecutor(this.context, this.targetRegistry,
@@ -763,7 +768,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * ({@link #celtium$adoptTerrainState}), so one renderer serves the whole process instead of one per configuration.
      */
     public static VulkanTerrainGpuBackend createForWindow(VulkanContext context) {
-        VulkanTerrainGpuBackend backend = new VulkanTerrainGpuBackend(context, null, null, null);
+        VulkanTerrainGpuBackend backend = new VulkanTerrainGpuBackend(context, null, null, null, null);
         backend.windowBackend = true;
         backend.windowOwned = true;
         return backend;
@@ -870,10 +875,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     public void celtium$adoptTerrainState(RenderPassConfiguration<?> configuration,
                                           RenderRegionManager regionManager,
-                                          FogService fogService) {
+                                          FogService fogService,
+                                          DynamicLightService dynamicLightService) {
         this.configuration = configuration;
         this.regionManager = regionManager;
         this.fogService = fogService;
+        this.dynamicLightService = dynamicLightService;
         if (configuration != null) {
             this.commonVertexStride = configuration.getAllKnownRenderPasses()
                     .mapToInt(pass -> pass.vertexType().getVertexFormat().getStride())
@@ -902,6 +909,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // was updated in one place and read from another.
         this.terrain.setConfiguration(this.configuration);
         this.terrain.setFogService(this.fogService);
+        this.terrain.setDynamicLightService(this.dynamicLightService);
         this.terrain.setVertexStride(this.commonVertexStride);
         install();
         record("the world renderer adopted the window-time backend: configuration=" + (configuration != null)
@@ -15039,7 +15047,7 @@ this.frameBufferOpen = false;
         // pipelineFor(lastUiPass) can return a different instance (the vanilla-format variant has a 208-byte push range
         // where this one has 128), and a set bound under one layout is not compatible with the other - measured in leg
         // shadowTerrain4 as VUID-vkCmdDrawIndexedIndirect-None-08600.
-        pipeline.bindTextures(this.atlasTexture, this.lightmapTexture, this.terrain.uniforms().buffer(), this.terrain.uniforms().size(), this.frameSlot);
+        pipeline.bindTextures(this.atlasTexture, this.lightmapTexture, this.terrain.uniforms().buffer(), this.terrain.uniforms().size(), this.terrain.dynamicLightBufferHandle(this.frameSlot), this.frameSlot);
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("prepDescriptors");
         }
@@ -19500,7 +19508,7 @@ this.frameBufferOpen = false;
         // stays -1 and every terrain batch falls back with "no_indirect_recording_slot_owns_the_packets" - measured
         // as offers=7011/fallbacks=7011/draws=0 on leg swap6-amd, the whole indirect path dead letter.
         this.terrain.beginIndirectRecording(this.frameSlot);
-        this.terrain.resetUniformWriteCursor();
+        this.terrain.resetUniformWriteCursor(this.frameSlot);
         // The reset above leaves every piece of dynamic state undefined, so the dedup trackers go to their never-
         // matching sentinels: the first group in this buffer emits whatever it needs, whatever it is.
         this.passVpX = this.passVpY = this.passVpW = this.passVpH = -1;

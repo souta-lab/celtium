@@ -14,6 +14,7 @@ import org.embeddedt.embeddium.impl.render.chunk.data.SectionRenderDataStorage;
 import org.embeddedt.embeddium.impl.render.chunk.compile.ChunkTaskOutput;
 import org.embeddedt.embeddium.impl.render.chunk.compile.ChunkBuildOutput;
 import org.embeddedt.embeddium.impl.render.chunk.fog.FogService;
+import org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService;
 import org.embeddedt.embeddium.impl.render.viewport.CameraTransform;
 import java.nio.ByteBuffer;
 import org.lwjgl.system.MemoryUtil;
@@ -743,6 +744,76 @@ public final class TerrainRenderer {
         this.fogService = fogService;
     }
 
+    /** The dynamic light service the frame's shading-time sources are gathered from (item 326). */
+    private DynamicLightService dynamicLightService;
+
+    /** Gives the class the dynamic light service the game installed. */
+    void setDynamicLightService(DynamicLightService dynamicLightService) {
+        this.dynamicLightService = dynamicLightService;
+    }
+
+    /**
+     * One dynamic light buffer per descriptor slot, created beside the uniform ring. The contents are
+     * rewritten once per frame (the slot's previous frame is complete by the slot discipline, the same
+     * one the descriptor sets rely on); the handles are stable, so the pipeline's descriptor writes
+     * only change when a buffer is first created.
+     */
+    private VulkanUniformBuffer[] dynamicLightBuffers;
+
+    /** The scratch the gather writes through, sized by the service contract. */
+    private final float[] dynamicLightScratch = new float[DynamicLightService.MAX_LIGHTS * 4];
+
+    /** The descriptor slot the current frame's gather belongs to. */
+    private int dynamicLightSlot;
+
+    /** Whether the current frame's sources have been gathered into {@link #dynamicLightBuffers}. */
+    private boolean dynamicLightsGathered = true;
+
+    /** {@return the native handle of the dynamic light buffer of a descriptor slot, or 0 before creation}. */
+    long dynamicLightBufferHandle(int slot) {
+        VulkanUniformBuffer[] buffers = this.dynamicLightBuffers;
+        if (buffers == null) {
+            return 0L;
+        }
+        VulkanUniformBuffer buffer = buffers[slot & (VulkanTerrainPipeline.DESCRIPTOR_SLOTS - 1)];
+        return buffer == null ? 0L : buffer.buffer();
+    }
+
+    /**
+     * Gathers this frame's dynamic light sources into the current slot's buffer. Runs on the first
+     * uniform write of the frame, which is the first call that knows the frame's camera; the positions
+     * the service returns are camera-relative, the space the terrain shader's worldPosition lives in.
+     */
+    private void gatherDynamicLights(CameraTransform camera) {
+        VulkanUniformBuffer[] buffers = this.dynamicLightBuffers;
+        if (buffers == null) {
+            return;
+        }
+        VulkanUniformBuffer buffer = buffers[this.dynamicLightSlot];
+        if (buffer == null) {
+            return;
+        }
+        int count = 0;
+        if (this.dynamicLightService != null) {
+            double cameraX = (double) camera.intX + camera.fracX;
+            double cameraY = (double) camera.intY + camera.fracY;
+            double cameraZ = (double) camera.intZ + camera.fracZ;
+            count = this.dynamicLightService.gatherLights(this.dynamicLightScratch, cameraX, cameraY, cameraZ);
+        }
+        ByteBuffer block = buffer.mapped();
+        block.putFloat(0, (float) count);
+        block.putFloat(4, 0.0f);
+        block.putFloat(8, 0.0f);
+        block.putFloat(12, 0.0f);
+        for (int i = 0; i < count; i++) {
+            int base = 16 + i * 16;
+            block.putFloat(base, this.dynamicLightScratch[i * 4]);
+            block.putFloat(base + 4, this.dynamicLightScratch[i * 4 + 1]);
+            block.putFloat(base + 8, this.dynamicLightScratch[i * 4 + 2]);
+            block.putFloat(base + 12, this.dynamicLightScratch[i * 4 + 3]);
+        }
+    }
+
     /** {@return the uniform ring, which the pass reserves against before recording}. */
     VulkanUniformBuffer uniforms() {
         return this.uniforms;
@@ -793,6 +864,10 @@ public final class TerrainRenderer {
     }
 
     long writeUniforms(RenderRegion region, TerrainRenderPass pass, CameraTransform camera) {
+        if (!this.dynamicLightsGathered) {
+            this.dynamicLightsGathered = true;
+            gatherDynamicLights(camera);
+        }
         long offset = this.uniformWriteCursor;
         this.uniformWriteCursor += this.uniformStride;
         if (this.uniformWriteCursor > this.uniforms.size()) {
@@ -866,9 +941,16 @@ public final class TerrainRenderer {
         this.uniformStride = stride;
     }
 
-    /** Resets the write cursor, which the pass does before it records. */
-    void resetUniformWriteCursor() {
+    /**
+     * Resets the write cursor, which the pass does before it records. The frame slot comes with the
+     * reset because the frame's dynamic light gather (item 326) belongs to the slot's buffer: arming
+     * it here and performing it on the first uniform write keeps it once per frame without a second
+     * frame-begin call.
+     */
+    void resetUniformWriteCursor(int frameSlot) {
         this.uniformWriteCursor = 0;
+        this.dynamicLightSlot = frameSlot & (VulkanTerrainPipeline.DESCRIPTOR_SLOTS - 1);
+        this.dynamicLightsGathered = false;
     }
 
     /** Releases the uniform ring, if it exists. */
@@ -876,6 +958,14 @@ public final class TerrainRenderer {
         if (this.uniforms != null) {
             this.uniforms.delete();
             this.uniforms = null;
+        }
+        if (this.dynamicLightBuffers != null) {
+            for (VulkanUniformBuffer buffer : this.dynamicLightBuffers) {
+                if (buffer != null) {
+                    buffer.delete();
+                }
+            }
+            this.dynamicLightBuffers = null;
         }
     }
 
@@ -887,6 +977,13 @@ public final class TerrainRenderer {
             this.uniforms.ensureCapacity(required);
         }
         this.uniformBlocks = (int) (this.uniforms.size() / this.uniformStride);
+        if (this.dynamicLightBuffers == null) {
+            this.dynamicLightBuffers = new VulkanUniformBuffer[VulkanTerrainPipeline.DESCRIPTOR_SLOTS];
+            for (int slot = 0; slot < this.dynamicLightBuffers.length; slot++) {
+                this.dynamicLightBuffers[slot] =
+                        new VulkanUniformBuffer(context, VulkanTerrainPipeline.DYNAMIC_LIGHT_BLOCK_SIZE);
+            }
+        }
     }
 
 

@@ -33,6 +33,10 @@
 //                   offset 64 : vec4  u_ChunkFadeParams         x = fade duration ms, y = chunk age ms
 //     binding 1 : sampler2D u_LightTex   (light map, VERTEX stage only)
 //     binding 2 : sampler2D u_BlockTex   (block atlas, FRAGMENT stage only - not declared here)
+//     binding 3 : uniform block "CeltiumDynamicLights" (std140, 528 bytes) - item 326
+//                   offset  0 : vec4  u_DynamicLightInfo    x = live source count (0..32)
+//                   offset 16 : vec4  u_DynamicLights[32]   xyz = camera-relative position,
+//                                                         w = light level 0..15
 //
 //   The pipeline layout push constant range is therefore:
 //       stageFlags = VK_SHADER_STAGE_VERTEX_BIT, offset = 0, size = 128.
@@ -91,6 +95,17 @@ layout(std140, set = 0, binding = 0) uniform CeltiumSolidUniforms {
 } celtium;
 
 layout(set = 0, binding = 1) uniform sampler2D u_LightTex; // The light map texture sampler
+
+// --------------------------------------------------------------------------------------------
+// Dynamic lights (item 326): the frame's shading-time sources, gathered on the CPU from the
+// entities that carry or emit light (a held torch, a dropped glowing item, a burning mob). The
+// block is written once per frame per descriptor slot by the terrain renderer; with a count of
+// zero the raise in main() adds nothing and the lightmap sample is the baked one, unchanged.
+// --------------------------------------------------------------------------------------------
+layout(std140, set = 0, binding = 3) uniform CeltiumDynamicLights {
+    vec4 u_DynamicLightInfo;  // offset  0: x = live source count (0..32)
+    vec4 u_DynamicLights[32]; // offset 16: xyz = camera-relative position, w = light level 0..15
+} dynLights;
 
 
 // --------------------------------------------------------------------------------------------
@@ -182,7 +197,7 @@ float getFragDistance(int fogShape, vec3 position) {
 // Light map sampling (verbatim from block_layer_opaque.vsh / the CELERITAS_NO_LIGHTMAP branch
 // is deliberately not ported: the SOLID pass always has a light map).
 // --------------------------------------------------------------------------------------------
-vec4 _sample_lightmap(sampler2D lightMap, ivec2 uv) {
+vec4 _sample_lightmap(sampler2D lightMap, vec2 uv) {
     // Divided by 16, because Minecraft 1.12.2's light map is a 16x16 texture - the same number the clamp around it is
     // written in (half a texel in, half a texel out). Sodium's modern light map is 256x256 with many maps packed into it,
     // and this port kept the 256 divisor while taking the clamp from the 16-texel layout, so the two disagreed by a factor
@@ -198,6 +213,26 @@ vec4 _sample_lightmap(sampler2D lightMap, ivec2 uv) {
     // the boundary between two rows and the linear filter averages them: measured against the light map's own pixels
     // (row 13 = 160, row 14 = 197, row 15 = 250), sky 15 returned 223 and sky 14 returned 178 instead of 250 and 197.
     return texture(lightMap, clamp((vec2(uv) + 8.0) / 256.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
+}
+
+// --------------------------------------------------------------------------------------------
+// The dynamic raise: per source, vanilla's own falloff (one light level per block of distance),
+// the maximum over sources. The result is a light LEVEL; main() turns it into a lightmap
+// coordinate so the raised light takes the game's own lightmap colour, exactly as a baked torch
+// does. The gather's contract (DynamicLightService in the common module): positions are
+// camera-relative, the same space as worldPosition.
+// --------------------------------------------------------------------------------------------
+float _dynamic_block_light(vec3 position) {
+    float level = 0.0;
+    int count = int(dynLights.u_DynamicLightInfo.x + 0.5);
+    for (int i = 0; i < 32; i++) {
+        if (i >= count) {
+            break;
+        }
+        vec4 source = dynLights.u_DynamicLights[i];
+        level = max(level, source.w - distance(position, source.xyz));
+    }
+    return level;
 }
 
 void main() {
@@ -230,7 +265,16 @@ void main() {
 
     // Add the light color to the vertex color, and pass the texture coordinates to the fragment shader
     v_RdhFactor = _vert_rdh_factor * 2.0;
-    vec4 lightColor = _sample_lightmap(u_LightTex, _vert_tex_light_coord);
+    // The baked coordinate, raised by this frame's dynamic sources (item 326). The raise is a
+    // float coordinate on purpose: the lightmap's linear filter then interpolates the falloff
+    // between texels instead of quantising it to whole levels. With no sources the coordinate is
+    // the exact baked integer and the sample is bit-identical to the unraised one.
+    vec2 lightCoord = vec2(_vert_tex_light_coord);
+    float dynamicLevel = _dynamic_block_light(worldPosition);
+    if (dynamicLevel > 0.0) {
+        lightCoord.x = max(lightCoord.x, min(dynamicLevel, 15.0) * 16.0);
+    }
+    vec4 lightColor = _sample_lightmap(u_LightTex, lightCoord);
     v_Color = _vert_color * lightColor;
     v_RdhFactor.rgb *= lightColor.rgb;
 

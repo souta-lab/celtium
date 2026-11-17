@@ -3,6 +3,7 @@ package org.soutalab.celtium.vulkan;
 import org.embeddedt.embeddium.impl.render.chunk.RenderPassConfiguration;
 import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
 import org.embeddedt.embeddium.impl.render.chunk.fog.FogService;
+import org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService;
 import org.embeddedt.embeddium.impl.render.chunk.region.RenderRegionManager;
 
 /**
@@ -35,7 +36,7 @@ public interface VulkanRenderer extends TerrainGpuBackend {
      * the swapchain and the frame target warm instead of a second backend being built beside them.
      */
     void celtium$adoptTerrainState(RenderPassConfiguration<?> configuration, RenderRegionManager regionManager,
-            FogService fogService);
+            FogService fogService, DynamicLightService dynamicLightService);
 
     /**
      * The world-lifetime counterpart of the adoption: frees what a loaded world built - the region arenas, the model
