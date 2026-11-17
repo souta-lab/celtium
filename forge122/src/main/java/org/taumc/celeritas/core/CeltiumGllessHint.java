@@ -18,12 +18,11 @@ package org.taumc.celeritas.core;
 public final class CeltiumGllessHint {
     private static boolean applied;
 
+    /** Instrument lines already printed, by their own key: the once-only state lives here, not in system properties. */
+    private static final java.util.Set<String> NOTED_ONCE = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     private static void noteHintOnce(String key, String line) {
-        String property = "celtium.instrument." + key;
-        synchronized (System.getProperties()) {
-            if (System.getProperty(property) != null) return;
-            System.setProperty(property, "1");
-        }
+        if (!NOTED_ONCE.add(key)) return;
         System.out.println(line);
     }
 
@@ -55,11 +54,7 @@ public final class CeltiumGllessHint {
         if (caps == null) {
             return false;
         }
-        String key = "celtium.instrument.CELTIUM_CAPS_PROBE." + surface;
-        synchronized (System.getProperties()) {
-            if (System.getProperty(key) != null) return true;
-            System.setProperty(key, "1");
-        }
+        if (!NOTED_ONCE.add("CELTIUM_CAPS_PROBE." + surface)) return true;
         StringBuilder line = new StringBuilder("[Celtium] CELTIUM_CAPS_PROBE surface=").append(surface)
                 .append(" caps=").append(caps.getClass().getName());
         for (String flag : new String[] {"OpenGL33", "OpenGL42", "GL_ARB_shader_image_load_store",
