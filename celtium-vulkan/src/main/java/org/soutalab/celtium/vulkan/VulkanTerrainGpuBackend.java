@@ -6182,7 +6182,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
         }
         long identity = RenderTargetRegistry.rawTargetIdentity(framebuffer, color);
-        if (selectTarget) bindFramebuffer(identity, false);
+        if (selectTarget) {
+            bindFramebuffer(identity, false);
+            // The latch has its own bounded line, separate from the tuple-gated depth-register print: leg 16
+            // (item 333) carried the shadow copy on attach registration alone while its bind census showed no
+            // raw identity ever becoming current, and whether a bind-side registration latched at all could not
+            // be separated from the print bounds. This line answers that question directly.
+            if (this.rawBindRegisterLogs < 4) {
+                this.rawBindRegisterLogs++;
+                System.out.println("[Celtium] CELTIUM_RAW_BIND_REGISTER framebuffer=" + framebuffer
+                        + " identity=0x" + Long.toHexString(identity) + " via=bind (identity latched current)");
+            }
+        }
         int depth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferDepthTexture(framebuffer);
         int[] colorExtent = color != 0 ? textureSize(color) : null;
         int[] depthExtent = depth != 0 ? textureSize(depth) : null;
@@ -6241,6 +6252,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int rawDepthRegisterLogs;
     /** Bounded CELTIUM_RAW_BIND_GAME_FRAMEBUFFER lines (relocated from the hint's report). */
     private int rawBindGameLogs;
+    /** Bounded CELTIUM_RAW_BIND_REGISTER lines: proof a raw bind latched its identity as the current target. */
+    private int rawBindRegisterLogs;
 
     public void celtium$rawFramebufferDeleted(int framebuffer, int colorTexture) {
         if (framebuffer == 0 || this.gpuStalled || this.context.celtium$isDeviceLost()) return;
