@@ -2050,10 +2050,14 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** {@code glNamedFramebufferTexture} from the transformer's route: the attachment record for a named framebuffer. */
     public static void celtium$namedFramebufferTexture(int framebuffer, int attachment, int texture, int level) {
         CeltiumGlStub stub = installed;
-        if (stub == null || framebuffer == 0 || level != 0 || (attachment & 0xFFFF) != 0x8CE0) {
+        int slot = colorAttachmentSlot(attachment);
+        if (stub == null || framebuffer == 0 || level != 0 || slot < 0) {
             return;
         }
-        updateColorAttachment(stub.framebufferColorTextures, stub.colorTextureFramebuffers, framebuffer, texture);
+        updateColorAttachmentSlot(stub.framebufferColorAttachments, framebuffer, slot, texture);
+        if (slot == 0) {
+            updateColorAttachment(stub.framebufferColorTextures, stub.colorTextureFramebuffers, framebuffer, texture);
+        }
         Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
             vulkan.celtium$rawAttachmentChanged(framebuffer);
@@ -7881,7 +7885,55 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap colorTextureFramebuffers =
             new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
 
+    /** Colour attachment slots a framebuffer record carries: the MRT ledger size (GL_MAX_COLOR_ATTACHMENTS). */
+    static final int COLOR_ATTACHMENT_SLOTS = 8;
+
+    /** GL_COLOR_ATTACHMENT0; slot i of a framebuffer record is the texture attached at GL_COLOR_ATTACHMENT0+i. */
+    private static final int COLOR_ATTACHMENT0 = 0x8CE0;
+
+    /**
+     * Every colour attachment of a raw framebuffer, by slot, mirroring slot 0 of {@link #framebufferColorTextures}.
+     * A mod's render target can attach up to {@link #COLOR_ATTACHMENT_SLOTS} colour textures and write several in
+     * one pass (Iris's gbuffer targets attach colortex0/1/2 at once); the single-texture record above cannot say
+     * that, so the tuple lives here and the backend's publication record is filled from it.
+     */
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]> framebufferColorAttachments =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
+
     /** OpenGL texture 0 detaches GL_COLOR_ATTACHMENT0, never leaves its previous image alive. */
+    /** {@return the slot a GL attachment enum names} (0 for GL_COLOR_ATTACHMENT0), or -1 when it names no colour slot. */
+    static int colorAttachmentSlot(int attachment) {
+        int slot = (attachment & 0xFFFF) - COLOR_ATTACHMENT0;
+        return slot >= 0 && slot < COLOR_ATTACHMENT_SLOTS ? slot : -1;
+    }
+
+    /**
+     * Records one colour attachment slot of a framebuffer; texture 0 detaches the slot, and a framebuffer whose
+     * slots are all detached drops out of the map. Kept as a static helper over the map, like
+     * {@link #updateColorAttachment}, so the rule is unit-testable without a stub instance.
+     */
+    static void updateColorAttachmentSlot(it.unimi.dsi.fastutil.ints.Int2ObjectMap<int[]> slots,
+            int framebuffer, int slot, int texture) {
+        if (framebuffer == 0 || slot < 0 || slot >= COLOR_ATTACHMENT_SLOTS) {
+            return;
+        }
+        int[] recorded = slots.get(framebuffer);
+        if (recorded == null) {
+            if (texture == 0) {
+                return;
+            }
+            recorded = new int[COLOR_ATTACHMENT_SLOTS];
+            slots.put(framebuffer, recorded);
+        }
+        recorded[slot] = texture;
+        for (int value : recorded) {
+            if (value != 0) {
+                return;
+            }
+        }
+        slots.remove(framebuffer);
+    }
+
     static void updateColorAttachment(it.unimi.dsi.fastutil.ints.Int2IntMap forward,
             it.unimi.dsi.fastutil.ints.Int2IntMap reverse, int framebuffer, int texture) {
         if (framebuffer == 0) return;
@@ -7904,6 +7956,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             vulkan.celtium$rawFramebufferDeleted(name, color);
         }
         updateColorAttachment(this.framebufferColorTextures, this.colorTextureFramebuffers, name, 0);
+        this.framebufferColorAttachments.remove(name);
         if (this.drawFbo == name) {
             this.drawFbo = 0;
             this.framebufferBindSerial++;
@@ -7917,20 +7970,27 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (framebuffer == 0 || level != 0) {
             return;
         }
-        // Only the colour attachment: depth and stencil attachments are not sampled as colour, and GL_COLOR_ATTACHMENT0
-        // is 0x8CE0 - the attachment a render target's pixels come from.
-        if ((attachment & 0xFFFF) != 0x8CE0) {
+        // Colour attachments only: depth and stencil attachments are not sampled as colour. Every colour slot is
+        // recorded (GL_COLOR_ATTACHMENT0+i, i < COLOR_ATTACHMENT_SLOTS), because a mod's render target can attach
+        // several colour textures and write more than one in a pass; slot 0 additionally feeds the single-texture
+        // record above, which is the one the sampling resolution has always read.
+        int slot = colorAttachmentSlot(attachment);
+        if (slot < 0) {
             return;
         }
         Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
             vulkan.celtium$rawAttachmentChanged(framebuffer);
         }
-        updateColorAttachment(this.framebufferColorTextures, this.colorTextureFramebuffers, framebuffer, texture);
+        updateColorAttachmentSlot(this.framebufferColorAttachments, framebuffer, slot, texture);
+        if (slot == 0) {
+            updateColorAttachment(this.framebufferColorTextures, this.colorTextureFramebuffers, framebuffer, texture);
+        }
         if (texture == 0) return;
         if (framebufferAttachmentLogs < 8) {
             framebufferAttachmentLogs++;
-            System.out.println("[Celtium] CELTIUM_RAW_FBO framebuffer=" + framebuffer + " colorTexture=" + texture
+            System.out.println("[Celtium] CELTIUM_RAW_FBO framebuffer=" + framebuffer + " slot=" + slot
+                    + " colorTexture=" + texture
                     + " textarget=0x" + Integer.toHexString(textarget) + " level=" + level
                     + " colorAttachments=" + this.framebufferColorTextures.size());
         }
@@ -7985,6 +8045,26 @@ public final class CeltiumGlStub implements FunctionProvider {
             return 0;
         }
         return stub.framebufferColorTextures.get(glFramebufferName);
+    }
+
+    /**
+     * {@return a copy of a raw framebuffer's colour attachments by slot} (index 0 is GL_COLOR_ATTACHMENT0, 0 marks
+     * a detached slot), always {@link #COLOR_ATTACHMENT_SLOTS} long. The copy is what the hint reports to the
+     * backend on a raw bind; the record itself stays private to the stub.
+     */
+    public static int[] celtium$framebufferColorAttachments(int glFramebufferName) {
+        int[] out = new int[COLOR_ATTACHMENT_SLOTS];
+        CeltiumGlStub stub = installed;
+        if (stub == null || glFramebufferName == 0) {
+            return out;
+        }
+        int[] recorded = stub.framebufferColorAttachments.get(glFramebufferName);
+        if (recorded != null) {
+            System.arraycopy(recorded, 0, out, 0, COLOR_ATTACHMENT_SLOTS);
+        } else {
+            out[0] = stub.framebufferColorTextures.get(glFramebufferName);
+        }
+        return out;
     }
 
     /** {@return the framebuffer a colour texture belongs to, or 0 when the texture is not a raw attachment}. */
@@ -11254,8 +11334,14 @@ public final class CeltiumGlStub implements FunctionProvider {
             int framebuffer = named ? (int) c[0] : ((int) c[0] == 0x8CA8 ? this.readFbo : this.drawFbo);
             int attachment = (int) c[1];
             int paramPname = (int) c[2];
-            int colorTexture = framebuffer == 0 ? 0 : this.framebufferColorTextures.get(framebuffer);
-            boolean colorAttached = (attachment & 0xFFFF) == 0x8CE0 && colorTexture != 0;
+            int slot = colorAttachmentSlot(attachment);
+            int colorTexture = 0;
+            if (framebuffer != 0 && slot >= 0) {
+                int[] recorded = this.framebufferColorAttachments.get(framebuffer);
+                colorTexture = recorded != null ? recorded[slot]
+                        : slot == 0 ? this.framebufferColorTextures.get(framebuffer) : 0;
+            }
+            boolean colorAttached = colorTexture != 0;
             int value;
             if (paramPname == 0x8CD0) { // GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE
                 value = colorAttached ? 0x1702 : 0; // GL_TEXTURE / GL_NONE

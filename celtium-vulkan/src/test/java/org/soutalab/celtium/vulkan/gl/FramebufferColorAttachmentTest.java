@@ -132,6 +132,77 @@ class FramebufferColorAttachmentTest {
   }
 
   /**
+   * The MRT slot record: a framebuffer can attach several colour textures at once (GL_COLOR_ATTACHMENT0+i), and
+   * the record the backend's publication is filled from must carry every slot, keep slot 0's single-texture view
+   * unchanged, and forget the whole tuple when the framebuffer is deleted.
+   */
+  @Test void colourAttachmentSlotsAreRecordedPerSlot() throws Exception {
+    var ctor = CeltiumGlStub.class.getDeclaredConstructor();
+    ctor.setAccessible(true);
+    var installed = CeltiumGlStub.class.getDeclaredField("installed");
+    installed.setAccessible(true);
+    var forget = CeltiumGlStub.class.getDeclaredMethod("forgetFramebuffer", int.class);
+    forget.setAccessible(true);
+    Object previous = installed.get(null);
+    Object stub = ctor.newInstance();
+    installed.set(null, stub);
+    try {
+      CeltiumGlStub.celtium$bindFramebuffer(0x8CA9, 10); // GL_DRAW_FRAMEBUFFER
+      CeltiumGlStub.celtium$framebufferTexture2D(0x8CA9, 0x8CE0, 0x0DE1, 100, 0);
+      CeltiumGlStub.celtium$framebufferTexture2D(0x8CA9, 0x8CE1, 0x0DE1, 101, 0);
+      CeltiumGlStub.celtium$framebufferTexture2D(0x8CA9, 0x8CE2, 0x0DE1, 102, 0);
+      int[] slots = CeltiumGlStub.celtium$framebufferColorAttachments(10);
+      assertEquals(8, slots.length);
+      assertEquals(100, slots[0]);
+      assertEquals(101, slots[1]);
+      assertEquals(102, slots[2]);
+      assertEquals(0, slots[3]);
+      assertEquals(100, CeltiumGlStub.celtium$framebufferColorTexture(10),
+              "slot 0 keeps feeding the single-texture record");
+
+      // Detaching one slot leaves the others alone.
+      CeltiumGlStub.celtium$framebufferTexture2D(0x8CA9, 0x8CE1, 0x0DE1, 0, 0);
+      slots = CeltiumGlStub.celtium$framebufferColorAttachments(10);
+      assertEquals(100, slots[0]);
+      assertEquals(0, slots[1]);
+      assertEquals(102, slots[2]);
+
+      // The named route records the same tuple.
+      CeltiumGlStub.celtium$namedFramebufferTexture(10, 0x8CE3, 103, 0);
+      assertEquals(103, CeltiumGlStub.celtium$framebufferColorAttachments(10)[3]);
+
+      // A depth attachment is not a colour slot and records nothing.
+      CeltiumGlStub.celtium$framebufferTexture2D(0x8CA9, 0x8D00, 0x0DE1, 200, 0);
+      assertEquals(0, CeltiumGlStub.celtium$framebufferColorAttachments(10)[4]);
+
+      forget.invoke(stub, 10);
+      assertEquals(0, CeltiumGlStub.celtium$framebufferColorAttachments(10)[0]);
+      assertEquals(0, CeltiumGlStub.celtium$framebufferColorAttachments(10)[2]);
+    } finally {
+      installed.set(null, previous);
+    }
+  }
+
+  /** The slot helper's truth table, in the same pure-map form as {@code detachesAndReattaches}. */
+  @Test void slotUpdatesDetachAndDropEmptyTuples() {
+    it.unimi.dsi.fastutil.ints.Int2ObjectMap<int[]> slots =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
+    CeltiumGlStub.updateColorAttachmentSlot(slots, 10, 1, 101);
+    assertEquals(101, slots.get(10)[1]);
+    assertEquals(0, slots.get(10)[0]);
+    CeltiumGlStub.updateColorAttachmentSlot(slots, 10, 1, 0);
+    assertFalse(slots.containsKey(10), "an all-detached tuple drops out of the map");
+    CeltiumGlStub.updateColorAttachmentSlot(slots, 0, 1, 101);
+    assertTrue(slots.isEmpty(), "framebuffer 0 is never recorded");
+    CeltiumGlStub.updateColorAttachmentSlot(slots, 10, 8, 101);
+    assertTrue(slots.isEmpty(), "a slot past the ledger is refused");
+    assertEquals(0, CeltiumGlStub.colorAttachmentSlot(0x8CE0));
+    assertEquals(7, CeltiumGlStub.colorAttachmentSlot(0x8CE7));
+    assertEquals(-1, CeltiumGlStub.colorAttachmentSlot(0x8CE8));
+    assertEquals(-1, CeltiumGlStub.colorAttachmentSlot(0x8D00));
+  }
+
+  /**
    * The one-pass decision answers exactly what the two predicates it replaced answered, in the same order.
    * <p>
    * The lazy supply used to ask {@code celtium$mirrorWaitsForFramebuffer} and then {@code celtium$levelHasNothingToRead},
