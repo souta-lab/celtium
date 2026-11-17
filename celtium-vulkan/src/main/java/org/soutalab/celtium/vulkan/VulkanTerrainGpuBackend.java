@@ -1907,6 +1907,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     final java.util.Set<Integer> mainFramebufferColorNames = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<Integer, Boolean>());
     private int framebufferCensusLogs;
+    /** Bounded CELTIUM_FBO_PUBLISH_REFUSED lines: which exit a framebuffer colour-texture publication took, and why. */
+    private int fboPublishRefusalLogs;
     /**
      * The identity of {@code Minecraft.framebuffer}, as the game's own field reports it on every bind.
      * <p>
@@ -6443,6 +6445,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     boolean celtium$publishFramebufferColorTexture(int glTextureName, long knownIdentity, long[] knownReported) {
         long identity = celtium$validateColorTextureIdentity(glTextureName, knownIdentity);
         if (identity == Long.MIN_VALUE) {
+            if (this.fboPublishRefusalLogs < 16) {
+                this.fboPublishRefusalLogs++;
+                long[] recorded = framebufferColorTexture(knownIdentity);
+                System.out.println("[Celtium] CELTIUM_FBO_PUBLISH_REFUSED name=" + glTextureName
+                        + " reason=validate knownIdentity=0x" + Long.toHexString(knownIdentity)
+                        + " recorded=" + (recorded == null ? "none" : recorded[0] + "," + recorded[1] + "x" + recorded[2])
+                        + " level0=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(
+                                glTextureName, 0, 0x1000)
+                        + "x" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(
+                                glTextureName, 0, 0x1001));
+            }
             return false;
         }
         long[] reported = knownReported != null ? knownReported : framebufferColorTexture(identity);
@@ -6466,6 +6479,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         long view;
         if ("frame-image".equals(route)) {
             if (this.frameTarget == null) {
+                if (this.fboPublishRefusalLogs < 16) {
+                    this.fboPublishRefusalLogs++;
+                    System.out.println("[Celtium] CELTIUM_FBO_PUBLISH_REFUSED name=" + glTextureName
+                            + " reason=frame-target-null identity=0x" + Long.toHexString(identity));
+                }
                 return false;
             }
             image = this.frameTarget.colorImage();
@@ -6473,6 +6491,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         } else {
             GllessFrameTarget offTarget = offTargetTarget();
             if (offTarget == null) {
+                if (this.fboPublishRefusalLogs < 16) {
+                    this.fboPublishRefusalLogs++;
+                    System.out.println("[Celtium] CELTIUM_FBO_PUBLISH_REFUSED name=" + glTextureName
+                            + " reason=offtarget-null identity=0x" + Long.toHexString(identity)
+                            + " frameTarget=" + (this.frameTarget == null ? "null"
+                                    : this.frameTarget.getClass().getSimpleName()));
+                }
                 return false;
             }
             // The pairs exist only once something has drawn into one of them; the composite is the caller that needs
@@ -6491,6 +6516,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
         }
         if (image == 0L || view == 0L) {
+            if (this.fboPublishRefusalLogs < 16) {
+                this.fboPublishRefusalLogs++;
+                System.out.println("[Celtium] CELTIUM_FBO_PUBLISH_REFUSED name=" + glTextureName
+                        + " reason=image-zero identity=0x" + Long.toHexString(identity) + " route=" + route
+                        + " image=0x" + Long.toHexString(image) + " view=0x" + Long.toHexString(view)
+                        + " size=" + width + "x" + height);
+            }
             return false;
         }
         this.postChainBridge.celtium$publishFrameTexture(glTextureName, image, view, width, height);

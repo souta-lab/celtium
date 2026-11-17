@@ -84,7 +84,12 @@ final class NativeFramebufferCompositor {
         }
         long key = b.celtium$stateKey(VulkanImmediateFormats.POSITION_TEX_COLOR, state);
         PreparedImmediate material = b.prepareImmediate(VulkanImmediateFormats.POSITION_TEX_COLOR, texture, key, state);
-        if (material == null) throw new IllegalStateException("framebuffer has no initialized native material: " + texture);
+        if (material == null) {
+            System.out.println("[Celtium] CELTIUM_COMPOSITE_REFUSED texture=" + texture
+                    + " sourceIdentity=0x" + Long.toHexString(sourceIdentity) + " sourceIsMain=" + sourceIsMain
+                    + " prepareFailure=[" + b.lastPrepareFailure + "]");
+            throw new IllegalStateException("framebuffer has no initialized native material: " + texture);
+        }
         ImmediateGroup group = ImmediateGroup.obtain(null, IDENTITY, IDENTITY,
                 VulkanImmediateFormats.POSITION_TEX_COLOR, texture, key, state, b.targetRegistry.currentIdentity());
         LeasedResource.Lease<VulkanDynamicMesh> lease = this.quad.acquire();
