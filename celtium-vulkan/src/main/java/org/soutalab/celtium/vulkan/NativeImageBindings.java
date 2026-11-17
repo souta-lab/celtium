@@ -5,18 +5,20 @@ package org.soutalab.celtium.vulkan;
  * it writes an image-unit integer to the program and calls {@code glBindImageTexture} immediately before the pass, so
  * resolving a program uniform against a process-wide "current texture" would lose which unit Iris selected.
  * <p>
- * The sixteen slots are the same limit reported as {@code GL_MAX_IMAGE_UNITS}; the number therefore describes storage
- * that exists here (the full bind tuple) and in the native descriptor layout, rather than a driver-shaped promise
- * with no backing ledger. Sixteen is the measured demand plus headroom: leg 7 (2026-11-17) showed Complementary's
- * composite programs activating colorimg8 - a ninth image - against the previous eight, while the Vulkan
- * storage-image backing on the target devices sits far above both values. Bind and deletion changes flush the prior immediate boundary first, matching
+ * The thirty-two slots are the same limit reported as {@code GL_MAX_IMAGE_UNITS}; the number therefore describes
+ * storage that exists here (the full bind tuple) and in the native descriptor layout, rather than a driver-shaped
+ * promise with no backing ledger. The size is measured demand: leg 7 (2026-11-17) showed Complementary's composite
+ * programs activating colorimg8 - a ninth image - against the previous eight, and leg 8 showed the allocator pool
+ * is pipeline-wide, with the composite programs consuming all sixteen before the shadow color images
+ * (shadowcolorimg0) allocate after them. The Vulkan storage-image backing on the target devices sits far above
+ * thirty-two. Bind and deletion changes flush the prior immediate boundary first, matching
  * {@link NativeTextureBindings}: a group accepted before the next GL state change must be prepared against the old
  * tuple. This class has no GL dispatch dependency so both the stub provider and the transformed hint path can share
  * one ledger.
  */
 public final class NativeImageBindings {
     private static final NativeImageBindings CURRENT = new NativeImageBindings(NativeRasterState.current());
-    public static final int IMAGE_UNITS_PER_PROGRAM = 16;
+    public static final int IMAGE_UNITS_PER_PROGRAM = 32;
     private final int[] texture = new int[IMAGE_UNITS_PER_PROGRAM];
     private final int[] level = new int[IMAGE_UNITS_PER_PROGRAM];
     private final boolean[] layered = new boolean[IMAGE_UNITS_PER_PROGRAM];
