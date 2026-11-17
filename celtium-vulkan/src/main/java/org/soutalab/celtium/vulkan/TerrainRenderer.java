@@ -258,10 +258,29 @@ public final class TerrainRenderer {
     private long indirectPacketNanos;
     /** The whole indirect-batch call, section walk included; compare against the pass bracket. */
     private long indirectBatchNanos;
+    /**
+     * The setup half of the indirect-batch call (item 350's split of the batch timer): the device checks,
+     * the unsorted offset walk and the packet reserve, up to the index bind. Offers that leave through an
+     * early return are not accumulated here - on a device where the indirect path is usable at all they are
+     * the empty and the mixed-source batches, not the steady state this split exists to attribute.
+     */
+    private long indirectSetupNanos;
+    /** Time inside the indirect path's own {@code vkCmdBindIndexBuffer} call; split out for item 350. */
+    private long indirectBindNanos;
 
     /** {@return nanoseconds inside the indirect-batch calls}. */
     long indirectBatchNanos() {
         return this.indirectBatchNanos;
+    }
+
+    /** {@return nanoseconds in the indirect-batch setup half (checks, offset walk, packet reserve)}. */
+    long indirectSetupNanos() {
+        return this.indirectSetupNanos;
+    }
+
+    /** {@return nanoseconds inside the indirect path's index-buffer binds}. */
+    long indirectBindNanos() {
+        return this.indirectBindNanos;
     }
 
     /** {@return nanoseconds spent writing the indirect packets}. */
@@ -556,6 +575,7 @@ public final class TerrainRenderer {
             RegionResources resources,
             VulkanMultiDrawBatch batch, boolean sortedPass,
             ChunkPrimitiveType primitiveType) {
+        long setupStarted = System.nanoTime();
         this.terrainIndirectOffers++;
         if (!context.multiDrawIndirectEnabled()) {
             this.terrainIndirectFallbacks++;
@@ -602,8 +622,11 @@ public final class TerrainRenderer {
             this.terrainIndirectFallbacks++;
             return false;
         }
+        this.indirectSetupNanos += System.nanoTime() - setupStarted;
+        long bindStarted = System.nanoTime();
         this.bindIndexBuffer(commandBuffer, regionIndex ? resources.indexArena.buffer()
                 : sharedIndexBuffers.get(primitiveType));
+        this.indirectBindNanos += System.nanoTime() - bindStarted;
         // Write the packets directly into the mapped page at the draw's offset: the HOST_COHERENT memory needs no
         // flush, and vkQueueSubmit's host-side ordering guarantee publishes these record-time writes to the
         // submission that carries the draw. The per-batch staging snapshot + vkCmdCopyBuffer + deferred upload this
