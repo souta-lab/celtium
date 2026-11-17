@@ -3799,39 +3799,26 @@ public final class ValidationClient {
                 report.addProperty("entitySpawnOnGround", Boolean.valueOf(
                         Math.abs(spawnSurface - mc.player.posY) <= 1.0D));
             }
-            if (worldTicks >= 150 && !celtium$dynamicLightSpawned
+            if (worldTicks >= 60 && !celtium$dynamicLightSpawned
                     && Boolean.getBoolean("celtium.validation.dynamicLightItem")) {
                 celtium$dynamicLightSpawned = true;
-                // The item-326 proof scene: one dropped torch on a dark stone stage. A torch block's
-                // item is a shading-time dynamic light source (its stack light is the block's own
-                // light value, 14) that vanilla's baked lightmap cannot know about, so at night the
-                // pool around it exists only if the dynamic light path works. The stage is needed
-                // because the fixture's own plane cannot show the effect: it is an emitter
-                // checkerboard baked to near-maximum block light (measured in the item-326 legs:
-                // forcing every vertex's block coordinate to level 8 DARKENED the plane), and a
-                // max() raise is a no-op on a floor that is already lit - the same reason a torch
-                // adds nothing on a glowstone floor in vanilla. The stage hangs three blocks below
-                // the pose, inside the view cone, far enough above the emitter plane that its top
-                // face's baked block light is only the plane's light decayed by the climb. The item
-                // is placed at the entity cohort's documented visible offset (two blocks right of
-                // centre, five ahead), frozen like the cohort's dropped apple; the spawn helper's
-                // height snap lands it on the stage because the stage is placed first. The
-                // terrain-only cleanup below exempts this flag so the item survives to the capture;
-                // the A/B is the feature's own kill switch (-Dceltium.dynamicLights=false), not a
-                // different scene. Placed at tick 150 rather than the cohort's 60: in the terrain
-                // scene a chunk re-send after the scene teleport replaced the client chunk and
-                // wiped a tick-60 stage before the capture (measured in the item-326 legs: the
-                // stage property was in the report but no stone pixel was in the frame), while 50
-                // ticks remain for the sections to remesh before the tick-200 capture.
+                // The item-326 proof source: one dropped torch, nothing else. A torch block's item
+                // is a shading-time dynamic light source (its stack light is the block's own light
+                // value, 14) that vanilla's baked lightmap cannot know about, so the pool around it
+                // exists only if the dynamic light path works. Placed at the entity cohort's
+                // documented visible offset (two blocks right of centre, five ahead, on the
+                // ground), frozen like the cohort's dropped apple. The terrain-only cleanup below
+                // exempts this flag so the item survives to the capture; the A/B is the feature's
+                // own kill switch (-Dceltium.dynamicLights=false), not a different scene.
+                // The proof leg pairs this flag with -Dceltium.validation.worldTime=18000 (midnight)
+                // and a run-directory save whose chunk in front of the pose was darkened offline
+                // (its emitter blocks replaced by stone and its block-light array zeroed): the
+                // fixture's own plane is a sea-lantern checkerboard baked to block light 14-15,
+                // where a max() raise is a no-op for the same reason a torch adds nothing on a
+                // glowstone floor, and blocks placed at runtime do not reach the presented mesh
+                // in this harness. Both measured in the item-326 legs and recorded in
+                // ITEM326-RUN-2026-11-17.md.
                 int px = (int) Math.floor(mc.player.posX), pz = (int) Math.floor(mc.player.posZ);
-                int stageY = (int) Math.floor(mc.player.posY) - 3;
-                for (int sx = px - 5; sx <= px + 5; sx++) {
-                    for (int sz = pz - 12; sz <= pz - 2; sz++) {
-                        mc.world.setBlockState(new net.minecraft.util.math.BlockPos(sx, stageY, sz),
-                                net.minecraft.init.Blocks.STONE.getDefaultState(), 3);
-                    }
-                }
-                report.addProperty("dynamicLightStageY", Integer.valueOf(stageY));
                 int gy = mc.world.getHeight(px, pz - 6);
                 net.minecraft.item.ItemStack torchStack = new net.minecraft.item.ItemStack(
                         net.minecraft.item.Item.getItemFromBlock(net.minecraft.init.Blocks.TORCH));
