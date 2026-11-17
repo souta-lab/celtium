@@ -2050,8 +2050,16 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** {@code glNamedFramebufferTexture} from the transformer's route: the attachment record for a named framebuffer. */
     public static void celtium$namedFramebufferTexture(int framebuffer, int attachment, int texture, int level) {
         CeltiumGlStub stub = installed;
+        if (stub == null || framebuffer == 0 || level != 0) {
+            return;
+        }
+        if (isDepthAttachment(attachment)) {
+            updateDepthAttachment(stub.framebufferDepthTextures, stub.depthTextureFramebuffers,
+                    framebuffer, attachment, texture);
+            return;
+        }
         int slot = colorAttachmentSlot(attachment);
-        if (stub == null || framebuffer == 0 || level != 0 || slot < 0) {
+        if (slot < 0) {
             return;
         }
         updateColorAttachmentSlot(stub.framebufferColorAttachments, framebuffer, slot, texture);
@@ -7912,6 +7920,47 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]> framebufferColorAttachments =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
 
+    /**
+     * Depth attachments of raw framebuffers, mirroring {@link #framebufferColorTextures} for the depth slot.
+     * <p>
+     * The colour record above is what lets a sampled colour texture resolve to the image its framebuffer's draws
+     * went into; depth attachments had no record at all, so a depth texture's name resolved to nothing the
+     * renderer owns and every depth copy out of a mod framebuffer was refused ("framebuffer N is not an image
+     * this renderer owns" — the Iris shadow pre-translucent depth copy is the measured case, legs 11-13). GL
+     * keys depth storage by the texture, not by the framebuffer — several framebuffers share one depth texture
+     * (every Iris shadow framebuffer attaches the same mainDepth) — so this record is the fact the backend's
+     * shared depth store is keyed from.
+     */
+    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap framebufferDepthTextures =
+            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+
+    /** Reverse lookup for the depth record, mirroring {@link #colorTextureFramebuffers}. */
+    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap depthTextureFramebuffers =
+            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+
+    /** GL_DEPTH_ATTACHMENT. */
+    private static final int DEPTH_ATTACHMENT = 0x8D00;
+
+    /** GL_DEPTH_STENCIL_ATTACHMENT: its depth half is the same storage this record tracks. */
+    private static final int DEPTH_STENCIL_ATTACHMENT = 0x821A;
+
+    /** {@return whether an attachment enum names a framebuffer's depth storage}. */
+    static boolean isDepthAttachment(int attachment) {
+        return attachment == DEPTH_ATTACHMENT || attachment == DEPTH_STENCIL_ATTACHMENT;
+    }
+
+    /**
+     * Records one depth attachment; texture 0 detaches, exactly as {@link #updateColorAttachment} does for
+     * colour. Kept static over the maps so the rule is unit-testable without a stub instance.
+     */
+    static void updateDepthAttachment(it.unimi.dsi.fastutil.ints.Int2IntMap forward,
+            it.unimi.dsi.fastutil.ints.Int2IntMap reverse, int framebuffer, int attachment, int texture) {
+        if (framebuffer == 0 || !isDepthAttachment(attachment)) {
+            return;
+        }
+        updateColorAttachment(forward, reverse, framebuffer, texture);
+    }
+
     /** OpenGL texture 0 detaches GL_COLOR_ATTACHMENT0, never leaves its previous image alive. */
     /** {@return the slot a GL attachment enum names} (0 for GL_COLOR_ATTACHMENT0), or -1 when it names no colour slot. */
     static int colorAttachmentSlot(int attachment) {
@@ -7968,6 +8017,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             vulkan.celtium$rawFramebufferDeleted(name, color);
         }
         updateColorAttachment(this.framebufferColorTextures, this.colorTextureFramebuffers, name, 0);
+        updateColorAttachment(this.framebufferDepthTextures, this.depthTextureFramebuffers, name, 0);
         this.framebufferColorAttachments.remove(name);
         if (this.drawFbo == name) {
             this.drawFbo = 0;
@@ -7982,10 +8032,23 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (framebuffer == 0 || level != 0) {
             return;
         }
-        // Colour attachments only: depth and stencil attachments are not sampled as colour. Every colour slot is
-        // recorded (GL_COLOR_ATTACHMENT0+i, i < COLOR_ATTACHMENT_SLOTS), because a mod's render target can attach
-        // several colour textures and write more than one in a pass; slot 0 additionally feeds the single-texture
-        // record above, which is the one the sampling resolution has always read.
+        // Depth attachments have their own record (see framebufferDepthTextures): they are not sampled as
+        // colour, but the backend keys its shared depth storage from the texture named here.
+        if (isDepthAttachment(attachment)) {
+            updateDepthAttachment(this.framebufferDepthTextures, this.depthTextureFramebuffers,
+                    framebuffer, attachment, texture);
+            if (texture != 0 && framebufferDepthAttachmentLogs < 8) {
+                framebufferDepthAttachmentLogs++;
+                System.out.println("[Celtium] CELTIUM_RAW_FBO_DEPTH framebuffer=" + framebuffer
+                        + " depthTexture=" + texture
+                        + " depthAttachments=" + this.framebufferDepthTextures.size());
+            }
+            return;
+        }
+        // Colour attachments: every colour slot is recorded (GL_COLOR_ATTACHMENT0+i,
+        // i < COLOR_ATTACHMENT_SLOTS), because a mod's render target can attach several colour textures and
+        // write more than one in a pass; slot 0 additionally feeds the single-texture record above, which is
+        // the one the sampling resolution has always read.
         int slot = colorAttachmentSlot(attachment);
         if (slot < 0) {
             return;
@@ -8010,6 +8073,9 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Bounded, so a mod that rebuilds its framebuffer every frame cannot flood the log. */
     private static int framebufferAttachmentLogs;
+
+    /** Bounded companion to {@link #framebufferAttachmentLogs} for the depth record. */
+    private static int framebufferDepthAttachmentLogs;
 
     /**
      * One shared pair for every extent answer. The only caller reads width and height immediately and keeps neither;
@@ -8057,6 +8123,36 @@ public final class CeltiumGlStub implements FunctionProvider {
             return 0;
         }
         return stub.framebufferColorTextures.get(glFramebufferName);
+    }
+
+    /** {@return the depth texture of a raw framebuffer, or 0 when none was recorded}. */
+    public static int celtium$framebufferDepthTexture(int glFramebufferName) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || glFramebufferName == 0) {
+            return 0;
+        }
+        return stub.framebufferDepthTextures.get(glFramebufferName);
+    }
+
+    /** {@return the framebuffer a depth texture is attached to, or 0 when the texture is not a raw depth attachment}. */
+    public static int celtium$framebufferForDepthTexture(int glTextureName) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || glTextureName == 0) {
+            return 0;
+        }
+        int cached = stub.depthTextureFramebuffers.get(glTextureName);
+        if (cached != 0 && stub.framebufferDepthTextures.get(cached) == glTextureName) {
+            return cached;
+        }
+        stub.depthTextureFramebuffers.remove(glTextureName);
+        for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry entry
+                : stub.framebufferDepthTextures.int2IntEntrySet()) {
+            if (entry.getIntValue() == glTextureName) {
+                stub.depthTextureFramebuffers.put(glTextureName, entry.getIntKey());
+                return entry.getIntKey();
+            }
+        }
+        return 0;
     }
 
     /**

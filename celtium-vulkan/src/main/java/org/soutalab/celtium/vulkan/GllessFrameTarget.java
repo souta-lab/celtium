@@ -1400,6 +1400,175 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return pair == null ? 0L : pair.depthView;
     }
 
+    /**
+     * One depth image shared by every chain pair whose framebuffer attaches the same depth texture.
+     * <p>
+     * GL keys depth storage by the texture: Iris builds its whole shadow framebuffer family over one
+     * mainDepth texture, and the pre-translucent depth copy moves that storage into a second depth texture.
+     * A pair's depth is private to its framebuffer identity, so the shadow depth used to fragment across the
+     * family's pairs and no single image was "the shadow depth" — the copy out of it was refused as not owned
+     * and the depth samplers resolved to empty mirrors. The store is the texture-keyed storage GL describes:
+     * one image per depth-texture identity ({@code RenderTargetRegistry.rawColorTextureIdentity}), allocated
+     * with the pair depth's own allocation (device-chosen format, attachment | transfer | sampled usage), its
+     * layout recorded here because every pair that borrows it must agree on where it is.
+     */
+    static final class SharedDepth {
+        private long image;
+        private long memory;
+        private long view;
+        private int width;
+        private int height;
+        private int layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    }
+
+    /** Shared depth images by depth-texture identity; see {@link SharedDepth}. */
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<SharedDepth> sharedDepths =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+
+    /**
+     * Makes the shared depth image for {@code depthKey} exist at the requested extent and returns its
+     * {@code {image, memory, view}} triple. A live entry at the same extent is returned as it stands; a
+     * different extent retires the old image (through the retire queue — a pair may still be recorded against
+     * it) and retires every pair that borrowed it, so no framebuffer keeps a view of the replaced image.
+     */
+    private long[] ensureSharedDepth(long depthKey, int width, int height) {
+        checkAlive();
+        SharedDepth existing = this.sharedDepths.get(depthKey);
+        if (existing != null && existing.width == width && existing.height == height) {
+            return new long[] {existing.image, existing.memory, existing.view};
+        }
+        if (existing != null) {
+            retireSharedDepthHandles(existing);
+            this.sharedDepths.remove(depthKey);
+            retirePairsBorrowing(depthKey);
+        }
+        long[] allocated = allocateImage(false, width, height);
+        SharedDepth created = new SharedDepth();
+        created.image = allocated[0];
+        created.memory = allocated[1];
+        created.view = allocated[2];
+        created.width = width;
+        created.height = height;
+        this.sharedDepths.put(depthKey, created);
+        return allocated;
+    }
+
+    /** Hands a shared depth entry's handles to the retire queue and forgets them in the entry. */
+    private void retireSharedDepthHandles(SharedDepth entry) {
+        VkDevice device = this.context.device();
+        final long view = entry.view;
+        final long image = entry.image;
+        final long memory = entry.memory;
+        entry.view = VK_NULL_HANDLE;
+        entry.image = VK_NULL_HANDLE;
+        entry.memory = VK_NULL_HANDLE;
+        entry.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        if (view != VK_NULL_HANDLE) {
+            VulkanRetireQueue.retire(() -> vkDestroyImageView(device, view, null));
+        }
+        if (image != VK_NULL_HANDLE) {
+            VulkanRetireQueue.retire(() -> vkDestroyImage(device, image, null));
+        }
+        if (memory != VK_NULL_HANDLE) {
+            VulkanRetireQueue.retire(() -> VulkanContext.freeMemory(device, memory));
+        }
+    }
+
+    /** Retires every chain pair that borrowed the depth under {@code depthKey}; they re-ensure on next use. */
+    private void retirePairsBorrowing(long depthKey) {
+        java.util.List<Long> borrowing = new java.util.ArrayList<>();
+        for (java.util.Map.Entry<Long, Pair> entry : this.chainPairs.entrySet()) {
+            if (entry.getValue().sharedDepthKey == depthKey) {
+                borrowing.add(entry.getKey());
+            }
+        }
+        for (long identity : borrowing) {
+            retireChainPair(identity);
+        }
+    }
+
+    /**
+     * Forgets the shared depth image for {@code depthKey} (its GL texture was deleted): the entry's handles
+     * retire and every pair that borrowed it retires with it.
+     */
+    public void forgetSharedDepth(long depthKey) {
+        SharedDepth existing = this.sharedDepths.remove(depthKey);
+        if (existing != null) {
+            retireSharedDepthHandles(existing);
+        }
+        retirePairsBorrowing(depthKey);
+    }
+
+    /** The shared depth image for {@code depthKey}, or 0 when none exists. */
+    public long sharedDepthImage(long depthKey) {
+        SharedDepth entry = this.sharedDepths.get(depthKey);
+        return entry == null ? 0L : entry.image;
+    }
+
+    /** The shared depth image view for {@code depthKey}, or 0 when none exists. */
+    public long sharedDepthView(long depthKey) {
+        SharedDepth entry = this.sharedDepths.get(depthKey);
+        return entry == null ? 0L : entry.view;
+    }
+
+    /** {@return the shared depth image's extent as {width, height}}, or null when none exists. */
+    public int[] sharedDepthExtent(long depthKey) {
+        SharedDepth entry = this.sharedDepths.get(depthKey);
+        return entry == null ? null : new int[] {entry.width, entry.height};
+    }
+
+    /** {@return where the shared depth image for {@code depthKey} is}, UNDEFINED when none exists. */
+    public int sharedDepthLayout(long depthKey) {
+        SharedDepth entry = this.sharedDepths.get(depthKey);
+        return entry == null ? VK_IMAGE_LAYOUT_UNDEFINED : entry.layout;
+    }
+
+    /** Records where the shared depth image for {@code depthKey} has been moved to, by whoever moved it. */
+    public void noteSharedDepthLayout(long depthKey, int layout) {
+        SharedDepth entry = this.sharedDepths.get(depthKey);
+        if (entry != null) {
+            entry.layout = layout;
+        }
+    }
+
+    /** {@return how many shared depth images the store holds}. */
+    public int sharedDepthCount() {
+        return this.sharedDepths.size();
+    }
+
+    /**
+     * Points the identity's chain pair at the shared depth image for {@code depthKey}, creating the image at
+     * the depth texture's own extent. Sharing engages only when the depth extent equals the pair's extent:
+     * a Vulkan framebuffer's attachments share one extent, and a depth texture larger or smaller than the
+     * colour target it is attached beside has no honest framebuffer here — the pair then keeps its private
+     * depth and the caller counts the skip.
+     *
+     * @return whether the pair now renders into the shared depth image
+     */
+    public boolean ensureChainPairSharedDepth(long identity, long depthKey, int depthWidth, int depthHeight) {
+        checkAlive();
+        Pair pair = existingChainPair(identity);
+        if (pair == null || !pair.exists() || depthWidth <= 0 || depthHeight <= 0) {
+            return false;
+        }
+        if (pair.width != depthWidth || pair.height != depthHeight) {
+            return false;
+        }
+        long[] shared = ensureSharedDepth(depthKey, depthWidth, depthHeight);
+        if (pair.sharedDepthKey == depthKey && pair.depthImage == shared[0]) {
+            return true;
+        }
+        pair.ensure(pair.width, pair.height, depthKey, shared);
+        return true;
+    }
+
+    /** {@return whether the identity's chain pair renders into the shared depth image for {@code depthKey}}. */
+    public boolean chainPairUsesSharedDepth(long identity, long depthKey) {
+        Pair pair = existingChainPair(identity);
+        return pair != null && pair.sharedDepthKey == depthKey && pair.depthImage != 0L
+                && pair.depthImage == sharedDepthImage(depthKey);
+    }
+
     /** Makes the identity's chain pair exist at the requested size. See {@link Pair#ensure(int, int)}. */
     public void ensureChainPair(long identity, int width, int height) {
         Pair pair = chainPairFor(identity);
@@ -2134,12 +2303,24 @@ public final class GllessFrameTarget implements FrameImageTarget {
          * any render pass binds these views.
          */
         private void ensure(int requestedWidth, int requestedHeight) {
+            ensure(requestedWidth, requestedHeight, 0L, null);
+        }
+
+        /**
+         * {@link #ensure(int, int)} with a borrowed depth: when {@code sharedDepth} is non-null it is the
+         * shared store's {@code {image, memory, view}} triple for {@code sharedKey}, and the pair renders
+         * into that depth instead of allocating its own. The store keeps ownership (see {@link #sharedDepthKey});
+         * the pair's colour is rebuilt exactly as a resize rebuilds it, so engaging sharing costs one pair
+         * recreation, on the first window that asks for it.
+         */
+        private void ensure(int requestedWidth, int requestedHeight, long sharedKey, long[] sharedDepth) {
             checkAlive();
             if (requestedWidth <= 0 || requestedHeight <= 0) {
                 throw new IllegalArgumentException(this.label + " pair size must be positive, got "
                         + requestedWidth + "x" + requestedHeight);
             }
-            if (matches(requestedWidth, requestedHeight)) {
+            if (matches(requestedWidth, requestedHeight) && this.sharedDepthKey == sharedKey
+                    && (sharedDepth == null || this.depthImage == sharedDepth[0])) {
                 return;
             }
             retire();
@@ -2148,10 +2329,16 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 this.colorImage = color[0];
                 this.colorMemory = color[1];
                 this.colorView = color[2];
-                long[] depth = allocateImage(false, requestedWidth, requestedHeight);
-                this.depthImage = depth[0];
-                this.depthMemory = depth[1];
-                this.depthView = depth[2];
+                if (sharedDepth != null) {
+                    this.depthImage = sharedDepth[0];
+                    this.depthMemory = VK_NULL_HANDLE;
+                    this.depthView = sharedDepth[2];
+                } else {
+                    long[] depth = allocateImage(false, requestedWidth, requestedHeight);
+                    this.depthImage = depth[0];
+                    this.depthMemory = depth[1];
+                    this.depthView = depth[2];
+                }
                 this.width = requestedWidth;
                 this.height = requestedHeight;
                 this.acquired = false;
@@ -2159,6 +2346,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 this.colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
                 this.creations++;
                 this.generation = ++GllessFrameTarget.this.chainPairGenerations;
+                // Set last: until here the pair must still read as owning whatever depth release() would free.
+                this.sharedDepthKey = sharedDepth != null ? sharedKey : 0L;
             } catch (RuntimeException | LinkageError error) {
                 // No half pair is left behind: a retry starts from nothing and delete() still frees whatever exists.
                 release();
@@ -2313,7 +2502,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 recordAcquire(command);
                 this.acquired = true;
             }
-            if (celtium$deferredClearNeedsDepthBarrier(this.depthLayout)) {
+            if (celtium$deferredClearNeedsDepthBarrier(depthLayout())) {
                 recordDepthToRender(command);
             }
             org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(this.deferredClearColour);
@@ -2366,7 +2555,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             try (MemoryStack stack = stackPush()) {
                 VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
                 barrier.get(0).sType$Default().image(this.depthImage)
-                        .oldLayout(this.depthLayout).newLayout(DEPTH_RENDER_LAYOUT)
+                        .oldLayout(depthLayout()).newLayout(DEPTH_RENDER_LAYOUT)
                         .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
                         .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
                         .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
@@ -2375,7 +2564,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barrier);
-                this.depthLayout = DEPTH_RENDER_LAYOUT;
+                depthLayout(DEPTH_RENDER_LAYOUT);
             }
         }
 
@@ -2604,8 +2793,42 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     + " readback=none";
         }
 
-        /** Where the pair's depth image is: UNDEFINED, the clear's transfer layout, or the attachment layout. */
+        /** Where this pair's private depth image is: UNDEFINED, the clear's transfer layout, or the attachment layout. */
         private int depthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        /**
+         * The shared depth store key this pair's depth image is borrowed from, or 0 when the depth is the
+         * pair's own. GL keys depth storage by the texture — every Iris shadow framebuffer attaches the same
+         * mainDepth texture — while a pair's depth is its own, so without this the shadow depth fragments
+         * across the pairs of whichever family members were bound and there is no single image to copy from
+         * or sample. A borrowed image is owned by the store: {@link #retire()} and {@link #release()} hand
+         * back the reference, never the handles, and the layout record lives in the store entry, because two
+         * pairs sharing one image cannot each keep a private belief about where it is.
+         */
+        private long sharedDepthKey;
+
+        /** {@return where this pair's depth image actually is}, the store's record for a borrowed image. */
+        private int depthLayout() {
+            if (this.sharedDepthKey != 0L) {
+                SharedDepth shared = sharedDepths.get(this.sharedDepthKey);
+                if (shared != null) {
+                    return shared.layout;
+                }
+            }
+            return this.depthLayout;
+        }
+
+        /** Records where this pair's depth image has been moved to, in the store for a borrowed image. */
+        private void depthLayout(int layout) {
+            if (this.sharedDepthKey != 0L) {
+                SharedDepth shared = sharedDepths.get(this.sharedDepthKey);
+                if (shared != null) {
+                    shared.layout = layout;
+                    return;
+                }
+            }
+            this.depthLayout = layout;
+        }
 
         /** Whether the pair's colour sits in the clear's transfer layout (only with COLOR_CLEAR_TRANSFER). */
         private boolean colorInTransfer;
@@ -2629,7 +2852,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
          */
         private void toTransfer(VkCommandBuffer command, boolean wantColor, boolean wantDepth) {
             int images = GllessFrameTarget.celtium$transferImages(wantColor, wantDepth, COLOR_CLEAR_TRANSFER,
-                    this.colorInTransfer, this.depthLayout == DEPTH_TRANSFER_LAYOUT);
+                    this.colorInTransfer, depthLayout() == DEPTH_TRANSFER_LAYOUT);
             if (images == 0) {
                 return;
             }
@@ -2650,7 +2873,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     this.colorInTransfer = true;
                 }
                 if (depth) {
-                    int from = this.depthLayout;
+                    int from = depthLayout();
                     VkImageMemoryBarrier barrier = barriers.get(index);
                     barrier.sType$Default().image(this.depthImage)
                             .oldLayout(from).newLayout(DEPTH_TRANSFER_LAYOUT)
@@ -2660,7 +2883,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                                     : VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
                             .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
                     barrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
-                    this.depthLayout = DEPTH_TRANSFER_LAYOUT;
+                    depthLayout(DEPTH_TRANSFER_LAYOUT);
                 }
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                         0, null, null, barriers);
@@ -2695,18 +2918,26 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 colorBarrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
 
                 VkImageMemoryBarrier depthBarrier = barriers.get(1);
+                // A private depth is UNDEFINED here, as the colour is. A borrowed (shared) depth may already
+                // hold another pair's pass: the barrier then starts from the store's recorded layout and waits
+                // for those writes instead of discarding them - a layout transition preserves content unless
+                // the old layout is UNDEFINED, which for a shared image it is only on its first pair's acquire.
+                int depthFrom = depthLayout();
                 depthBarrier.sType$Default()
                         .image(this.depthImage)
-                        .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED).newLayout(DEPTH_TRANSFER_LAYOUT)
+                        .oldLayout(depthFrom).newLayout(DEPTH_TRANSFER_LAYOUT)
                         .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
-                        .srcAccessMask(0).dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+                        .srcAccessMask(depthFrom == VK_IMAGE_LAYOUT_UNDEFINED ? 0
+                                : VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT
+                                        | VK_ACCESS_SHADER_READ_BIT)
+                        .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
                 depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
 
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                         0, null, null, barriers);
                 // The barrier above is the move, so this is where the pair's own record of it belongs.
                 this.colorImageLayout = VK_IMAGE_LAYOUT_GENERAL;
-                this.depthLayout = DEPTH_TRANSFER_LAYOUT;
+                depthLayout(DEPTH_TRANSFER_LAYOUT);
             }
         }
 
@@ -2739,14 +2970,14 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         .image(this.depthImage)
                         // From wherever the depth is - the transfer layout after a depth clear, the attachment layout
                         // when this clear named colour only - to the attachment layout the pass declares.
-                        .oldLayout(this.depthLayout).newLayout(DEPTH_RENDER_LAYOUT)
+                        .oldLayout(depthLayout()).newLayout(DEPTH_RENDER_LAYOUT)
                         .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
                         .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT).dstAccessMask(depthAccess);
                 depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
 
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                         0, null, null, barriers);
-                this.depthLayout = DEPTH_RENDER_LAYOUT;
+                depthLayout(DEPTH_RENDER_LAYOUT);
             }
         }
 
@@ -2762,9 +2993,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
             final long view = this.colorView;
             final long image = this.colorImage;
             final long memory = this.colorMemory;
-            final long depthView = this.depthView;
-            final long depthImage = this.depthImage;
-            final long depthMemory = this.depthMemory;
+            // A borrowed depth is the store's, not this pair's: retiring the pair hands back the reference
+            // and leaves the handles (and the layout record) with the store.
+            final boolean borrowedDepth = this.sharedDepthKey != 0L;
+            final long depthView = borrowedDepth ? VK_NULL_HANDLE : this.depthView;
+            final long depthImage = borrowedDepth ? VK_NULL_HANDLE : this.depthImage;
+            final long depthMemory = borrowedDepth ? VK_NULL_HANDLE : this.depthMemory;
             this.colorView = VK_NULL_HANDLE;
             this.colorImage = VK_NULL_HANDLE;
             this.colorMemory = VK_NULL_HANDLE;
@@ -2804,7 +3038,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
             VkDevice device = context.device();
             releaseExtras();
             this.colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            this.depthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            // A borrowed depth's layout record belongs to the store and survives the pair; only the pair's
+            // own depth forgets where it was.
+            if (this.sharedDepthKey == 0L) {
+                this.depthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            }
             if (this.colorView != VK_NULL_HANDLE) {
                 vkDestroyImageView(device, this.colorView, null);
                 this.colorView = VK_NULL_HANDLE;
@@ -2817,18 +3055,25 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 VulkanContext.freeMemory(device, this.colorMemory);
                 this.colorMemory = VK_NULL_HANDLE;
             }
-            if (this.depthView != VK_NULL_HANDLE) {
-                vkDestroyImageView(device, this.depthView, null);
+            if (this.sharedDepthKey == 0L) {
+                if (this.depthView != VK_NULL_HANDLE) {
+                    vkDestroyImageView(device, this.depthView, null);
+                    this.depthView = VK_NULL_HANDLE;
+                }
+                if (this.depthImage != VK_NULL_HANDLE) {
+                    vkDestroyImage(device, this.depthImage, null);
+                    this.depthImage = VK_NULL_HANDLE;
+                }
+                if (this.depthMemory != VK_NULL_HANDLE) {
+                    VulkanContext.freeMemory(device, this.depthMemory);
+                    this.depthMemory = VK_NULL_HANDLE;
+                }
+            } else {
                 this.depthView = VK_NULL_HANDLE;
-            }
-            if (this.depthImage != VK_NULL_HANDLE) {
-                vkDestroyImage(device, this.depthImage, null);
                 this.depthImage = VK_NULL_HANDLE;
-            }
-            if (this.depthMemory != VK_NULL_HANDLE) {
-                VulkanContext.freeMemory(device, this.depthMemory);
                 this.depthMemory = VK_NULL_HANDLE;
             }
+            this.sharedDepthKey = 0L;
             this.width = 0;
             this.height = 0;
             this.acquired = false;
@@ -2895,6 +3140,20 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
         this.chainPairs.clear();
         this.chainPairOwners.clear();
+        // The shared depth images are the store's own: pairs only borrowed them, so they are destroyed here,
+        // after the pairs have handed their references back. delete() runs with the GPU settled, in place.
+        for (SharedDepth entry : this.sharedDepths.values()) {
+            if (entry.view != VK_NULL_HANDLE) {
+                vkDestroyImageView(device, entry.view, null);
+            }
+            if (entry.image != VK_NULL_HANDLE) {
+                vkDestroyImage(device, entry.image, null);
+            }
+            if (entry.memory != VK_NULL_HANDLE) {
+                VulkanContext.freeMemory(device, entry.memory);
+            }
+        }
+        this.sharedDepths.clear();
         if (this.waitSemaphore != VK_NULL_HANDLE) {
             vkDestroySemaphore(device, this.waitSemaphore, null);
             this.waitSemaphore = VK_NULL_HANDLE;
