@@ -2059,6 +2059,11 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (isDepthAttachment(attachment)) {
             updateDepthAttachment(stub.framebufferDepthTextures, stub.depthTextureFramebuffers,
                     framebuffer, attachment, texture);
+            // Registration point, as in the bound-form attach: the record is complete enough to register from.
+            Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                vulkan.celtium$rawAttachmentChanged(framebuffer);
+            }
             return;
         }
         int slot = colorAttachmentSlot(attachment);
@@ -7878,6 +7883,43 @@ public final class CeltiumGlStub implements FunctionProvider {
             this.readFbo = name;
         }
         this.framebufferBindSerial++;
+        // The registration the renderer makes from a raw bind (identity, records, pair, shared-depth borrow)
+        // is triggered here rather than in the hint's report: every raw bind lands in this record, including
+        // the ones GLSM's state cache and the vanilla-bracket suppression kept the hint's report from ever
+        // seeing for the shadow framebuffers (legs 14/15: served native-depth copies = 0). The hint suppresses
+        // the trigger while a vanilla Framebuffer method runs, because those binds are the object's own and the
+        // mixin reports them by object identity.
+        if (target != 0x8CA8 && bindReportSuppression == 0) {
+            Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                vulkan.celtium$registerRawFramebuffer(name, true);
+            }
+        }
+    }
+
+    /**
+     * Vanilla-bracket suppression of the bind registration above, driven by {@code CeltiumGllessHint} from the
+     * same counter {@code FramebufferMixin} brackets: while a vanilla framebuffer method runs, its internal raw
+     * binds belong to the object the mixin reports, not to a raw identity.
+     */
+    private static int bindReportSuppression;
+
+    /** Suppresses the bind registration for the duration of one vanilla-bracketed bind. */
+    public static void celtium$pushBindReportSuppression() {
+        bindReportSuppression++;
+    }
+
+    /** Ends one {@link #celtium$pushBindReportSuppression}. */
+    public static void celtium$popBindReportSuppression() {
+        if (bindReportSuppression > 0) bindReportSuppression--;
+    }
+
+    /** Registers a raw framebuffer with the renderer without a bind (the hint's unbind-on-delete path). */
+    public static void celtium$registerRawFramebuffer(int framebuffer) {
+        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            vulkan.celtium$registerRawFramebuffer(framebuffer, true);
+        }
     }
 
     /** Bumped by every framebuffer bind, which is the only thing that can change a draw-framebuffer query. */
@@ -8050,6 +8092,13 @@ public final class CeltiumGlStub implements FunctionProvider {
                         + " depthTexture=" + texture
                         + " depthAttachments=" + this.framebufferDepthTextures.size());
             }
+            // The depth attach completes most framebuffers' records (colour went on first), so it is a
+            // registration point too: a framebuffer whose binds never reach the renderer's bind report still
+            // gets its identity, pair and shared-depth borrow from here.
+            Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+            if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+                vulkan.celtium$rawAttachmentChanged(framebuffer);
+            }
             return;
         }
         // Colour attachments: every colour slot is recorded (GL_COLOR_ATTACHMENT0+i,
@@ -8060,13 +8109,15 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (slot < 0) {
             return;
         }
-        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-        if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
-            vulkan.celtium$rawAttachmentChanged(framebuffer);
-        }
         updateColorAttachmentSlot(this.framebufferColorAttachments, framebuffer, slot, texture);
         if (slot == 0) {
             updateColorAttachment(this.framebufferColorTextures, this.colorTextureFramebuffers, framebuffer, texture);
+        }
+        // After the record update, not before: the backend's registration reads the record this call just wrote
+        // (it used to be notified first and so registered the previous attachment, or none).
+        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
+            vulkan.celtium$rawAttachmentChanged(framebuffer);
         }
         if (texture == 0) return;
         if (framebufferAttachmentLogs < 8) {
