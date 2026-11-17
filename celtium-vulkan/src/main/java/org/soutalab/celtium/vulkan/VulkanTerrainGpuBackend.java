@@ -6087,6 +6087,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (target == null) return;
         this.postChainBridge.celtium$forgetPublishedTarget(identity);
         this.publishedTextures.bindColorTexture(identity, 0, 0, 0);
+        this.publishedTextures.bindDepthTexture(identity, 0);
         if (this.framebufferCache != null) this.framebufferCache.retireChainPair(identity);
         target.retireChainPair(identity);
         this.targetRegistry.forgetChainPair(identity);
@@ -6192,6 +6193,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     public void bindFramebufferColorAttachments(long framebufferIdentity, int[] colorTextures) {
         this.publishedTextures.bindColorAttachments(framebufferIdentity, colorTextures);
+    }
+
+    /**
+     * The depth texture behind a bound raw framebuffer, as the GL stub recorded it. The window head reads the
+     * record back ({@code publishedTextures.depthTexture}) to point the identity's chain pair at the shared
+     * depth image for that texture — GL keys depth storage by the texture, and a framebuffer family sharing
+     * one depth texture (Iris's shadow targets) must share one image here too. A zero name clears the record.
+     */
+    public void bindFramebufferDepthTexture(long framebufferIdentity, int depthTexture) {
+        this.publishedTextures.bindDepthTexture(framebufferIdentity, depthTexture);
     }
 
     /**
@@ -6445,6 +6456,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** Bounded count for {@link #celtium$adoptRawFramebufferColorTexture}. */
     private int rawFramebufferAdoptions;
+    /** Bounded CELTIUM_SHARED_DEPTH window lines. */
+    private int sharedDepthWindowLogs;
     /** {@return the framebuffer identity whose colour attachment carries this GL texture name}, or {@code MIN_VALUE}. */
     long celtium$framebufferIdentityForColorTexture(int glTextureName) {
         if (glTextureName == 0) {
@@ -12929,6 +12942,29 @@ this.frameBufferOpen = false;
                     int windowColorCount = Math.max(1,
                             this.publishedTextures.colorAttachmentCount(chainIdentityValue));
                     offTarget.ensureChainPairColors(chainIdentityValue, windowColorCount, pairWidth, pairHeight);
+                    // The depth half of the same window: when the bound framebuffer's record names a depth
+                    // texture, the pair borrows the shared depth image for that texture, so every framebuffer
+                    // attaching the same depth texture (Iris's shadow family over one mainDepth) renders into
+                    // one depth storage, as GL says. The depth texture's own extent decides; a mismatch with
+                    // the pair's extent leaves the pair's private depth standing and is counted, not hidden.
+                    int windowDepthTexture = this.publishedTextures.depthTexture(chainIdentityValue);
+                    if (windowDepthTexture != 0) {
+                        int[] depthSize = textureSize(windowDepthTexture);
+                        if (depthSize != null && depthSize.length >= 2 && depthSize[0] > 0 && depthSize[1] > 0) {
+                            boolean sharedDepth = offTarget.ensureChainPairSharedDepth(chainIdentityValue,
+                                    RenderTargetRegistry.rawColorTextureIdentity(windowDepthTexture),
+                                    depthSize[0], depthSize[1]);
+                            if (this.sharedDepthWindowLogs < 8) {
+                                this.sharedDepthWindowLogs++;
+                                System.out.println("[Celtium] CELTIUM_SHARED_DEPTH identity=0x"
+                                        + Long.toHexString(chainIdentityValue) + " depthTexture="
+                                        + windowDepthTexture + " size=" + depthSize[0] + "x" + depthSize[1]
+                                        + " pairSize=" + pairWidth + "x" + pairHeight
+                                        + " shared=" + sharedDepth
+                                        + " sharedDepths=" + offTarget.sharedDepthCount());
+                            }
+                        }
+                    }
                     long[] windowAttachedImages = null;
                     if (windowColorCount > 1) {
                         windowAttachedImages = new long[windowColorCount];

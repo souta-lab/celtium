@@ -1452,6 +1452,11 @@ public final class CeltiumGllessHint {
         // extra attachments also clears the tuple it no longer has.
         backend.bindFramebufferColorAttachments(identity,
                 org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferColorAttachments(framebuffer));
+        // The depth attachment, reported the same way: the window that draws into this framebuffer points its
+        // pair at the shared depth image for the texture named here, because GL keys depth storage by the
+        // texture - a family of framebuffers over one depth texture (Iris's shadow targets) shares one image.
+        backend.bindFramebufferDepthTexture(identity,
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferDepthTexture(framebuffer));
     }
 
     /** Which framebuffer is bound; the attachment record above is filed under it. */

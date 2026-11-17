@@ -395,6 +395,61 @@ final class PublishedFrameTextures {
         return reported == null ? 0 : (int) reported[0];
     }
 
+    /**
+     * Depth attachments by framebuffer identity, the depth half of the record {@link #bindColorTexture}
+     * keeps for colour. The colour record is what lets a sampled colour name resolve to the image its
+     * framebuffer's draws went into; depth names need the same two directions — identity → texture (the
+     * window head asks which depth texture the bound framebuffer attaches, so its pair can borrow the
+     * shared depth image for that texture) and texture → identity (a sampled depth name asks which
+     * framebuffer's depth it is, and a depth copy asks the same for its read framebuffer). A zero name
+     * clears the identity's entry.
+     */
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap depthTextureByIdentity =
+            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+
+    /** Reverse of {@link #depthTextureByIdentity}; absent reads as {@link Long#MIN_VALUE}. */
+    private final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap identityByDepthTexture =
+            new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
+
+    /** Records a framebuffer's depth attachment. A zero name clears the entry. */
+    synchronized void bindDepthTexture(long framebufferIdentity, int depthTexture) {
+        int previous = this.depthTextureByIdentity.get(framebufferIdentity);
+        if (previous == depthTexture) {
+            return;
+        }
+        if (previous != 0 && this.identityByDepthTexture.get(previous) == framebufferIdentity) {
+            this.identityByDepthTexture.remove(previous);
+        }
+        if (depthTexture == 0) {
+            this.depthTextureByIdentity.remove(framebufferIdentity);
+            return;
+        }
+        this.depthTextureByIdentity.put(framebufferIdentity, depthTexture);
+        this.identityByDepthTexture.put(depthTexture, framebufferIdentity);
+    }
+
+    /** {@return the depth texture name recorded for an identity, or 0 when there is none}. */
+    synchronized int depthTexture(long identity) {
+        return this.depthTextureByIdentity.get(identity);
+    }
+
+    /** {@return the framebuffer identity whose depth attachment carries this GL texture name}, or {@code MIN_VALUE}. */
+    synchronized long identityForDepthTexture(int glTextureName) {
+        if (glTextureName <= 0) {
+            return Long.MIN_VALUE;
+        }
+        long identity = this.identityByDepthTexture.get(glTextureName);
+        return identity == 0L ? Long.MIN_VALUE : identity;
+    }
+
+    /** Drops every depth record naming this GL texture (it was deleted or its name reused). */
+    synchronized void forgetDepthTexture(int glTextureName) {
+        long identity = identityForDepthTexture(glTextureName);
+        if (identity != Long.MIN_VALUE) {
+            bindDepthTexture(identity, 0);
+        }
+    }
+
     /** {@return the publication version}, incremented whenever the published set changes. */
     long publishedVersion() {
         return this.publishedVersion;
