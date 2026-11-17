@@ -670,6 +670,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.terrain.setFogService(this.fogService);
         this.terrain.setConfiguration(this.configuration);
         this.terrain.setVertexStride(this.commonVertexStride);
+        this.nativePassExecutor = new PassExecutor(this.context, this.targetRegistry,
+                this.publishedTextures, this.nativePassRegistry);
         celtium$installWindowSplitExitHook();
 }
 
@@ -1178,6 +1180,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // geometry never returned the images to GL at all, so the entities, hand and GUI that GL draws afterwards
         // were composed over a stale terrain. The aggregation is gone until a boundary signal exists that the
         // renderer itself provides.
+        if (pass != null && pass.isSorted() && this.nativeSolidStageFrame != this.frameId) {
+            this.nativeSolidStageFrame = this.frameId;
+            celtium$executeNativePasses(NativePassRegistry.PassStage.AFTER_TERRAIN_SOLID);
+        }
         try {
             long handoffStart = System.nanoTime();
             this.frameSubmitReachedQueue = false;
@@ -1287,6 +1293,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         } catch (RuntimeException | LinkageError error) {
             this.terrainStatistics.notePassErrors();
             record("frame end failed: " + describe(error));
+        }
+        if (pass != null && pass.isSorted() && this.nativeTranslucentStageFrame != this.frameId) {
+            this.nativeTranslucentStageFrame = this.frameId;
+            celtium$executeNativePasses(NativePassRegistry.PassStage.AFTER_TERRAIN_TRANSLUCENT);
         }
     }
 
@@ -2943,6 +2953,46 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private boolean currentGroupIsModProgram;
     /** A mod's own shader programs drawn natively (opt-in); split out of this class (2026-11-06), see ModPrograms. */
     final ModPrograms modPrograms = new ModPrograms(this);
+    /** Core-owned native fullscreen pass registry and frame executor (Phase 0); no-op when no passes are registered. */
+    final NativePassRegistry nativePassRegistry = new NativePassRegistry(this.targetRegistry);
+    final PassExecutor nativePassExecutor;
+    private long nativeSolidStageFrame = -1L;
+    private long nativeTranslucentStageFrame = -1L;
+
+    public NativePassRegistry nativePassRegistry() {
+        return this.nativePassRegistry;
+    }
+
+    public RenderTargetRegistry targetRegistry() {
+        return this.targetRegistry;
+    }
+
+    void celtium$executeNativePasses(NativePassRegistry.PassStage stage) {
+        if (!this.nativePassRegistry.hasPassesFor(stage) || this.gpuStalled
+                || this.targetWidth <= 0 || this.targetHeight <= 0) {
+            return;
+        }
+        long[] bindCache = new long[6];
+        try {
+            if (this.frameBufferOpen && this.commandState.recording()) {
+                this.nativePassExecutor.executeStage(stage, this.commandBuffer, this.targetWidth, this.targetHeight,
+                        celtium$frameSerial(), bindCache);
+            } else if (ensureFrameTarget()) {
+                this.frameTarget.beginFrame();
+                beginCommands();
+                this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+                this.nativePassExecutor.executeStage(stage, this.commandBuffer, this.targetWidth, this.targetHeight,
+                        celtium$frameSerial(), bindCache);
+                this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+                FrameCoordinator.Submission progress = this.frameCoordinator.submitCommands();
+                if (progress.canCloseTarget(this.frameTarget.needsFrameSemaphores())) {
+                    this.frameTarget.endFrame();
+                }
+            }
+        } catch (RuntimeException | LinkageError error) {
+            record("native pass stage " + stage + " failed: " + describe(error));
+        }
+    }
 
     /** The key of the group before the current one, kept only for the merge census's A-B-A count. */
     private int censusPrevGroupFormatId = -1;
@@ -6658,6 +6708,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // the picture at the isolation leg's coordinates.
                 this.terrainStatistics.noteWorldPassBoundaryFlushes();
             }
+        }
+        if (this.nativeSolidStageFrame != this.frameId) {
+            this.nativeSolidStageFrame = this.frameId;
+            celtium$executeNativePasses(NativePassRegistry.PassStage.AFTER_TERRAIN_SOLID);
+        }
+        if (this.nativeTranslucentStageFrame != this.frameId) {
+            this.nativeTranslucentStageFrame = this.frameId;
+            celtium$executeNativePasses(NativePassRegistry.PassStage.AFTER_TERRAIN_TRANSLUCENT);
         }
     }
 
@@ -10679,6 +10737,7 @@ this.frameBufferOpen = false;
                 this.previousFrameBatchSignature = this.frameBatchSignature;
                 this.frameBatchSignature = 0L;
             }
+            celtium$executeNativePasses(NativePassRegistry.PassStage.BEFORE_PRESENT);
             long finishStart = System.nanoTime();
             celtium$finishFrameBuffer();
             long finishNanos = System.nanoTime() - finishStart;
@@ -14323,6 +14382,7 @@ this.frameBufferOpen = false;
                 + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.noopCensusSummary());
         System.out.println("[Celtium] CELTIUM_NOOP_DRAWING via=" + trigger + " "
                 + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.noopDrawingCensusSummary());
+        System.out.println(this.nativePassRegistry.censusLine(trigger));
     }
 
     /**
@@ -14470,6 +14530,7 @@ this.frameBufferOpen = false;
             this.modelInstances = null;
         }
         this.openModelRunGroup = null;
+        this.nativePassExecutor.delete();
         if (this.textureArray != null) {
             this.textureArray.destroy();
             this.textureArray = null;
