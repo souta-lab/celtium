@@ -2908,8 +2908,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
         private void recordAcquire(VkCommandBuffer command) {
             int queueFamily = context.queueFamilyIndex();
             try (MemoryStack stack = stackPush()) {
-                VkImageMemoryBarrier.Buffer barriers = VkImageMemoryBarrier.calloc(2, stack);
-                VkImageMemoryBarrier colorBarrier = barriers.get(0);
+                VkImageMemoryBarrier.Buffer colorBarriers = VkImageMemoryBarrier.calloc(1, stack);
+                VkImageMemoryBarrier colorBarrier = colorBarriers.get(0);
                 colorBarrier.sType$Default()
                         .image(this.colorImage)
                         .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED).newLayout(VK_IMAGE_LAYOUT_GENERAL)
@@ -2917,7 +2917,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         .srcAccessMask(0).dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
                 colorBarrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
 
-                VkImageMemoryBarrier depthBarrier = barriers.get(1);
+                VkImageMemoryBarrier.Buffer depthBarriers = VkImageMemoryBarrier.calloc(1, stack);
+                VkImageMemoryBarrier depthBarrier = depthBarriers.get(0);
                 // A private depth is UNDEFINED here, as the colour is. A borrowed (shared) depth may already
                 // hold another pair's pass: the barrier then starts from the store's recorded layout and waits
                 // for those writes instead of discarding them - a layout transition preserves content unless
@@ -2934,7 +2935,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
 
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                        0, null, null, barriers);
+                        0, null, null, colorBarriers);
+                // The depth barrier rides in its own call when the depth already holds content: TOP_OF_PIPE
+                // supports no access flags at all, so a barrier that names the previous writes (the shared
+                // case above) under it is exactly VUID-vkCmdPipelineBarrier-pImageMemoryBarriers-02819 -
+                // measured on the first leg whose pairs borrowed a written shared depth (leg 16, item 333).
+                // ALL_COMMANDS as the source stage covers every stage those writes could have come from.
+                vkCmdPipelineBarrier(command, depthFrom == VK_IMAGE_LAYOUT_UNDEFINED
+                                ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, depthBarriers);
                 // The barrier above is the move, so this is where the pair's own record of it belongs.
                 this.colorImageLayout = VK_IMAGE_LAYOUT_GENERAL;
                 depthLayout(DEPTH_TRANSFER_LAYOUT);
