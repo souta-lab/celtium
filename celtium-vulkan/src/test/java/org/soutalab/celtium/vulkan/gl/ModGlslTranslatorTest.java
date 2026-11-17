@@ -68,6 +68,69 @@ class ModGlslTranslatorTest {
         assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
     }
 
+    /**
+     * Three {@code mat4} and nothing else: 192 bytes of std140 block. This is the shape GLSM's fixed-function vertex
+     * generator emits before any optional uniform ({@code u_ModelViewMatrix}, {@code u_ProjectionMatrix},
+     * {@code u_MVPMatrix}), and the block every Demonica leg had refused under the old 128-byte ceiling.
+     */
+    private static final String THREE_MATRIX_FRAGMENT = """
+            #version 120
+            uniform mat4 modelView;
+            uniform mat4 projection;
+            uniform mat4 mvp;
+            void main() { gl_FragColor = vec4(1.0); }
+            """;
+
+    @Test
+    void acceptsABlockUpToTheSelectedDevicesPushConstantLimit() {
+        ModPushConstantLimit.noteDevice(256);
+        try {
+            assertEquals(256, ModPushConstantLimit.limit());
+            ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, THREE_MATRIX_FRAGMENT);
+            assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+            assertEquals(192, result.uniformBlockSize());
+            assertTrue(result.fragment().contains("layout(push_constant, std140) uniform CeltiumModUniforms"));
+            // Accepted is not the same as compilable: the point of raising the ceiling is that shaderc now gets to see
+            // the block, so the stage is compiled here rather than only counted.
+            assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+        } finally {
+            ModPushConstantLimit.forgetDeviceForTest();
+        }
+    }
+
+    @Test
+    void refusesABlockAboveTheSelectedDevicesLimitNamingBothNumbers() {
+        ModPushConstantLimit.noteDevice(256);
+        try {
+            // Five mat4: 320 bytes, above this device's 256 and above the 128-byte minimum too, so the refusal is the
+            // device's own limit and not the fallback - and it must name both numbers.
+            String vertex = """
+                    #version 120
+                    uniform mat4 a, b, c, d, e;
+                    void main() { gl_Position = vec4(0.0); }
+                    """;
+            ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex,
+                    "void main() { gl_FragColor = vec4(1.0); }");
+            assertFalse(result.ok());
+            assertTrue(result.failure().contains("320"), result.failure());
+            assertTrue(result.failure().contains("256"), result.failure());
+            assertTrue(result.failure().contains("maxPushConstantsSize"), result.failure());
+        } finally {
+            ModPushConstantLimit.forgetDeviceForTest();
+        }
+    }
+
+    @Test
+    void keepsTheGuaranteedMinimumWhileNoDeviceIsSelected() {
+        ModPushConstantLimit.forgetDeviceForTest();
+        assertEquals(128, ModPushConstantLimit.limit());
+        assertTrue(ModPushConstantLimit.source().contains("no device selected"), ModPushConstantLimit.source());
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, THREE_MATRIX_FRAGMENT);
+        assertFalse(result.ok(), "a 192-byte block must still be refused before a device is selected");
+        assertTrue(result.failure().contains("192"), result.failure());
+        assertTrue(result.failure().contains("128"), result.failure());
+    }
+
     @Test
     void lowersTheFixedFunctionInputsAModStillReads() {
         String vertex = """

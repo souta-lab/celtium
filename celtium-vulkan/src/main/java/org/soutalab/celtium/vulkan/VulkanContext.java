@@ -2564,6 +2564,11 @@ public final class VulkanContext {
                 // the render-pass builder are static callers that need a depth format whether or not a frame target
                 // exists, and only the GL-less frame target used to choose one.
                 org.soutalab.celtium.vulkan.VulkanDepthFormat.noteDevice(candidate);
+                // The same number, for the mod-program lowering: glLinkProgram reaches the translator through a static
+                // registry with no context in scope, and the translator used to refuse every block above the 128-byte
+                // Vulkan minimum - including the 192-byte fixed-function emulation program GLSM generates. The device
+                // that got this far carries at least PUSH_CONSTANT_BYTES_USED, so its own limit is the honest ceiling.
+                org.soutalab.celtium.vulkan.gl.ModPushConstantLimit.noteDevice(candidatePushLimit);
                 this.deviceName = properties.properties().deviceNameString();
                 this.deviceUuid = uuid;
                 this.deviceApiVersion = apiVersion;

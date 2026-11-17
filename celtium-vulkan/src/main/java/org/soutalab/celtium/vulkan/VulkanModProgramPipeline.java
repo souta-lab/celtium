@@ -21,7 +21,9 @@ import static org.lwjgl.vulkan.VK10.*;
  * reproduce it (GTCEu's bloom passes are the measured case). This pipeline draws the same batch, in the same group
  * machinery, with the program's SPIR-V: the render state (render pass, blend, depth, cull) is copied from the variant
  * the path would have used for the batch, so the only difference is the shaders, their push-constant block (the
- * program's std140 uniforms, at most {@link ModGlslTranslator#MAX_PUSH_BYTES}) and their sampler set.
+ * program's std140 uniforms, at most the device's {@code maxPushConstantsSize}, which
+ * {@link org.soutalab.celtium.vulkan.gl.ModPushConstantLimit} records at selection and the lowering checks) and their
+ * sampler set.
  * <p>
  * Vertex inputs follow GL's aliasing of generic attribute 0 with the conventional vertex position: the program's
  * first attribute takes the position, a lowered {@code celtium_MultiTexCoord0} the texture coordinate and a lowered

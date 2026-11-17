@@ -22,9 +22,9 @@ import java.util.regex.Pattern;
  * <ul>
  * <li>{@code attribute} -> {@code layout(location=N) in}, N in declaration order; {@code varying} -> matched
  * {@code out}/{@code in} locations by name across the two stages.</li>
- * <li>Every non-sampler {@code uniform} -> one std140 push-constant block (at most {@link #MAX_PUSH_BYTES}), with the
- * byte offset of each member, so the values {@code glUniform*} recorded can be packed. Samplers -> combined image
- * samplers at set 0, bindings 0..n-1.</li>
+ * <li>Every non-sampler {@code uniform} -> one std140 push-constant block, at most the selected device's
+ * {@code maxPushConstantsSize} ({@link ModPushConstantLimit}), with the byte offset of each member, so the values
+ * {@code glUniform*} recorded can be packed. Samplers -> combined image samplers at set 0, bindings 0..n-1.</li>
  * <li>{@code gl_FragColor}/{@code gl_FragData[0]} -> an output at location 0; {@code gl_FragData[n]} -> an output
  * at location n, up to {@link #MAX_FRAG_OUTPUTS} draw buffers; {@code texture2D}, {@code texture2DLod}
  * -> {@code texture}, {@code textureLod}.</li>
@@ -193,9 +193,10 @@ public final class ModGlslTranslator {
             offset += layout[1];
         }
         int blockSize = align(offset, 16);
-        if (blockSize > MAX_PUSH_BYTES) {
-            throw new IllegalArgumentException("uniform block of " + blockSize + " bytes exceeds the " + MAX_PUSH_BYTES
-                    + "-byte push-constant floor");
+        int pushLimit = ModPushConstantLimit.limit();
+        if (blockSize > pushLimit) {
+            throw new IllegalArgumentException("uniform block of " + blockSize + " bytes exceeds the " + pushLimit
+                    + "-byte push-constant limit (" + ModPushConstantLimit.source() + ")");
         }
         List<ImageBinding> images = new ArrayList<>();
         for (Declaration d : uniforms.values()) {
@@ -345,13 +346,6 @@ public final class ModGlslTranslator {
     private static String glslName(String glName) {
         return RESERVED_IN_450.contains(glName) ? RENAMED + glName : glName;
     }
-
-    /**
-     * The uniform block travels as push constants with std140 offsets: 128 bytes is the size every Vulkan device
-     * guarantees, and it holds every GTCEu program (the largest, battery.frag, is exactly 128). A bigger block is
-     * refused with its size rather than given a buffer whose lifetime nothing here manages.
-     */
-    public static final int MAX_PUSH_BYTES = 128;
 
     private static String strip(String source) {
         if (source == null) {

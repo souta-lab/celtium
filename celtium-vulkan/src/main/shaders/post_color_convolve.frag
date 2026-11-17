@@ -1,6 +1,7 @@
 #version 450
 // color_convolve.fsh: colour matrix + offset/scale + saturation (creeper/desaturate chains).
-// 180 bytes of push - the executor only uses this program when maxPushConstantsSize allows.
+// 192 bytes of push (the executor reads the size out of this module's SPIR-V, not from this comment) - the
+// executor pushes it only when maxPushConstantsSize allows, and writes it to the set-0 binding 2 buffer when not.
 layout(location = 0) in vec2 texCoord;
 layout(location = 1) in vec2 oneTexel;
 layout(location = 0) out vec4 o_Color;
@@ -18,7 +19,7 @@ layout(push_constant) uniform Push {
     vec3 BlueMatrix; // @144
     vec3 Offset;     // @160
     vec3 ColorScale; // @176
-    float Saturation;// @192
+    float Saturation;// @188
 } celtium;
 
 void main() {
