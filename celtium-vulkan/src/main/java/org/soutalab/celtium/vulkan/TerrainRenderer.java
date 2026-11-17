@@ -325,7 +325,7 @@ public final class TerrainRenderer {
         return this.pipelines;
     }
 
-    /** Releases every terrain pipeline and forgets them. */
+    /** Releases every terrain pipeline and forgets them, the remembered creation failures included. */
     void releasePipelines() {
         for (VulkanTerrainPipeline pipeline : this.pipelines.values()) {
             if (pipeline != null) {
@@ -333,6 +333,7 @@ public final class TerrainRenderer {
             }
         }
         this.pipelines.clear();
+        this.failedPipelines.clear();
     }
 
     // ---------------------------------------------------------------- terrain pipelines (R4, second half)
@@ -340,6 +341,16 @@ public final class TerrainRenderer {
     /** The pipelines built per terrain render pass: keyed by the pass, created on first use. */
     private final java.util.Map<TerrainRenderPass, VulkanTerrainPipeline> pipelines =
             new java.util.concurrent.ConcurrentHashMap<TerrainRenderPass, VulkanTerrainPipeline>();
+
+    /**
+     * The passes whose pipeline creation has already failed, remembered beside the map rather than in it:
+     * the map is a ConcurrentHashMap and rejects the null value the failure used to be cached as - the
+     * handler's own NullPointerException is what killed the leg-11 run and buried the creation failure it
+     * was recording. A remembered failure answers null without retrying the creation or repeating the
+     * record, which is the behaviour the null entry was reaching for.
+     */
+    private final java.util.Set<TerrainRenderPass> failedPipelines =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     VulkanTerrainPipeline pipelineFor(TerrainRenderPass pass) {
         if (pass == null) {
@@ -351,6 +362,9 @@ public final class TerrainRenderer {
         VulkanTerrainPipeline pipeline = this.pipelines.get(pass);
         if (pipeline != null) {
             return pipeline;
+        }
+        if (this.failedPipelines.contains(pass)) {
+            return null;
         }
         try {
             // Back faces are culled on every terrain pass, the sorted (translucent) one included: vanilla draws the
@@ -368,7 +382,13 @@ public final class TerrainRenderer {
             return pipeline;
         } catch (RuntimeException | LinkageError error) {
             record("pipeline for " + pass.name() + " failed: " + describe(error));
-            this.pipelines.put(pass, null);
+            // The trace goes to stdout as well as the record: in the leg-11 run the record line reached
+            // neither the console log nor the game log, so the creation failure this handler exists to
+            // surface stayed unobserved while the handler's own crash (the null put this block used to end
+            // with) took the game down. Once per pass - the failure is remembered below, so a pass that
+            // keeps failing cannot repeat either line per frame.
+            error.printStackTrace(System.out);
+            this.failedPipelines.add(pass);
             return null;
         }
     }
