@@ -1909,6 +1909,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int framebufferCensusLogs;
     /** Bounded CELTIUM_FBO_PUBLISH_REFUSED lines: which exit a framebuffer colour-texture publication took, and why. */
     private int fboPublishRefusalLogs;
+    private int fboTargetEnsureLogs;
     /**
      * The identity of {@code Minecraft.framebuffer}, as the game's own field reports it on every bind.
      * <p>
@@ -6474,6 +6475,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     + " gameField=0x" + Long.toHexString(this.gameFramebufferIdentity)
                     + " adoptedMainName=" + framebufferColorTextureName(this.targetRegistry.mainIdentity())
                     + " mainNames=" + this.mainFramebufferColorNames);
+        }
+        if (this.frameTarget == null) {
+            // A framebuffer can be composited or sampled before the first frame entry has created the frame target -
+            // the startup splash is exactly that, and a GL state manager interposing on the draws removes the flush
+            // that used to create the target as a side effect of drawing (with GLSM recording the splash's draws for
+            // later replay, nothing is offered, nothing flushes, and this publish had no pairs to publish from). The
+            // pairs this method publishes live on the frame target, so publication ensures the target the same way
+            // the pairs themselves are ensured below: lazily, at the caller that needs them, and only when absent -
+            // recreation on a size change stays with the frame entries. The size rule is the present path's own
+            // (window drawable, then the main framebuffer's reported size); with neither known the publish still
+            // refuses rather than sizing the target from the viewport, which mid-draw names the framebuffer being
+            // drawn into - the wrong-size creation that once cost the splash its pixels.
+            int[] window = cachedWindowFramebufferSize();
+            if ((window[0] > 0 && window[1] > 0)
+                    || (this.mainFramebufferWidth > 0 && this.mainFramebufferHeight > 0)) {
+                ensureFrameTarget();
+                if (this.frameTarget != null && this.fboTargetEnsureLogs < 8) {
+                    this.fboTargetEnsureLogs++;
+                    System.out.println("[Celtium] CELTIUM_FBO_TARGET_ENSURED name=" + glTextureName
+                            + " identity=0x" + Long.toHexString(identity)
+                            + " size=" + this.targetWidth + "x" + this.targetHeight
+                            + " (publication arrived before the first frame entry created the frame target)");
+                }
+            }
         }
         long image;
         long view;
