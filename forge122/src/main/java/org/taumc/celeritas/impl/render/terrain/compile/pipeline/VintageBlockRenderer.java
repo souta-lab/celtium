@@ -4,6 +4,7 @@ import net.minecraft.block.Block;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.block.model.BakedQuad;
+import net.minecraft.client.renderer.block.model.IBakedModel;
 import net.minecraft.client.renderer.color.IBlockColor;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.renderer.vertex.DefaultVertexFormats;
@@ -100,12 +101,6 @@ public class VintageBlockRenderer {
     }
 
     public void renderBlock(IBlockState state, BlockPos pos, CeleritasBlockAccess blockAccess, BlockRenderLayer layer) {
-        int defaultFlags = BakedQuadGroupAnalyzer.USE_ALL_THINGS;
-        if (!useRenderPassOptimization) {
-            defaultFlags &= ~BakedQuadGroupAnalyzer.USE_RENDER_PASS_OPTIMIZATION;
-        }
-        this.analyzer.setDefaultRenderingFlags(defaultFlags);
-
         if (blockAccess.getWorldType() != WorldType.DEBUG_ALL_BLOCK_STATES) {
             // B23: vanilla tolerates a throwing getActualState (BlockRendererDispatcher.java:65-72 -
             // catches Exception and keeps the un-extended state). The fast path must be able to run
@@ -120,6 +115,29 @@ public class VintageBlockRenderer {
         // call site mods intercept (BlockRendererDispatcher.getModelForState), and going straight to
         // blockModelShapes skipped every hook installed there for an identical vanilla result.
         var model = Minecraft.getMinecraft().getBlockRendererDispatcher().getModelForState(state);
+        renderModel(model, state, pos, blockAccess, layer);
+    }
+
+    /**
+     * Renders one block from a model the caller already holds: the drawing half of
+     * {@link #renderBlock}, split out so a caller that arrives with a model (rather than
+     * with just a state) enters at the same drawing code.
+     *
+     * <p>Part of celtium's Demonica compatibility surface (design: COMPAT-SURFACE-DESIGN-2026-11-17.md,
+     * Tier B). Demonica's patch S13 calls this entry when it routes a block from vanilla's
+     * dispatcher to the fast renderer, and its MESHING patches S10/S11 inject into it; with
+     * no such entry the injections silently never applied. The state passed in is extended
+     * here, as {@code renderBlock} always did before drawing.
+     *
+     * @return true when at least one quad list was rendered
+     */
+    public boolean renderModel(IBakedModel model, IBlockState state, BlockPos pos, CeleritasBlockAccess blockAccess, BlockRenderLayer layer) {
+        int defaultFlags = BakedQuadGroupAnalyzer.USE_ALL_THINGS;
+        if (!useRenderPassOptimization) {
+            defaultFlags &= ~BakedQuadGroupAnalyzer.USE_RENDER_PASS_OPTIMIZATION;
+        }
+        this.analyzer.setDefaultRenderingFlags(defaultFlags);
+
         state = state.getBlock().getExtendedState(state, blockAccess, pos);
         this.currentState = state;
         this.currentBlockAccess = blockAccess;
@@ -138,6 +156,8 @@ public class VintageBlockRenderer {
 
         var lighter = this.lighters.getLighter(aoEnabled ? LightMode.SMOOTH : LightMode.FLAT);
 
+        boolean rendered = false;
+
         for (var dir : EnumFacing.VALUES) {
             var quads = model.getQuads(state, dir, rand);
 
@@ -147,6 +167,7 @@ public class VintageBlockRenderer {
 
             this.currentQuadRenderingFlags = this.analyzer.getFlagsForRendering(VintageDiffuseProvider.fromEnumFacing(dir), BakedQuadView.ofList(quads));
             renderQuadList(buffer, buffers, material, pos, dir, lighter, colorProvider, offset, quads);
+            rendered = true;
         }
 
         var quads = model.getQuads(state, null, rand);
@@ -154,9 +175,11 @@ public class VintageBlockRenderer {
         if (!quads.isEmpty()) {
             this.currentQuadRenderingFlags = this.analyzer.getFlagsForRendering(ModelQuadFacing.UNASSIGNED, BakedQuadView.ofList(quads));
             renderQuadList(buffer, buffers, material, pos, null, lighter, colorProvider, offset, quads);
+            rendered = true;
         }
 
         this.currentBlockAccess = null;
+        return rendered;
     }
 
     private QuadLightData getVertexLight(LightPipeline lighter, BlockPos pos, EnumFacing cullFace, BakedQuadView quad) {

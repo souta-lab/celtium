@@ -1,0 +1,370 @@
+# Demonica compatibility surface: the upstream-Celeritas linkage celtium must provide.
+# Design: COMPAT-SURFACE-DESIGN-2026-11-17.md (Tier A). Checked by
+# scripts/cpu-contract/demonica_compat_surface_check.py against the packaged jar.
+# Extracted from Demonica-0.9.1.jar (sha256 3855237cf837ae395a43a546bd24d1e6d7d4328666ab4b73cf7347530e93bd26), 1306 classes scanned.
+# Regenerate with: python3 scripts/cpu-contract/extract_demonica_compat_manifest.py <demonica jar>
+# Entries are linkage facts (names and descriptors) only; no Demonica code is recorded here.
+CLASS org/embeddedt/embeddium/api/util/NormI8
+CLASS org/embeddedt/embeddium/impl/gl/GlObject
+CLASS org/embeddedt/embeddium/impl/gl/attribute/GlVertexAttribute
+CLASS org/embeddedt/embeddium/impl/gl/attribute/GlVertexAttributeFormat
+CLASS org/embeddedt/embeddium/impl/gl/attribute/GlVertexFormat
+CLASS org/embeddedt/embeddium/impl/gl/attribute/GlVertexFormat$Builder
+CLASS org/embeddedt/embeddium/impl/gl/debug/GLDebug
+CLASS org/embeddedt/embeddium/impl/gl/device/CommandList
+CLASS org/embeddedt/embeddium/impl/gl/device/MultiDrawBatch
+CLASS org/embeddedt/embeddium/impl/gl/device/RenderDevice
+CLASS org/embeddedt/embeddium/impl/gl/shader/GlProgram
+CLASS org/embeddedt/embeddium/impl/gl/shader/GlProgram$Builder
+CLASS org/embeddedt/embeddium/impl/gl/shader/GlShader
+CLASS org/embeddedt/embeddium/impl/gl/shader/ShaderBindingContext
+CLASS org/embeddedt/embeddium/impl/gl/shader/ShaderConstants
+CLASS org/embeddedt/embeddium/impl/gl/shader/ShaderConstants$Builder
+CLASS org/embeddedt/embeddium/impl/gl/shader/ShaderParser
+CLASS org/embeddedt/embeddium/impl/gl/shader/ShaderType
+CLASS org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniform
+CLASS org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniformFloat3v
+CLASS org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniformFloat4v
+CLASS org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniformInt
+CLASS org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniformMatrix4f
+CLASS org/embeddedt/embeddium/impl/gl/tessellation/GlPrimitiveType
+CLASS org/embeddedt/embeddium/impl/gl/tessellation/GlTessellation
+CLASS org/embeddedt/embeddium/impl/gui/SodiumGameOptions
+CLASS org/embeddedt/embeddium/impl/gui/SodiumGameOptions$PerformanceSettings
+CLASS org/embeddedt/embeddium/impl/gui/SodiumGameOptions$QualitySettings
+CLASS org/embeddedt/embeddium/impl/gui/framework/TextComponent
+CLASS org/embeddedt/embeddium/impl/model/light/LightPipeline
+CLASS org/embeddedt/embeddium/impl/model/light/data/QuadLightData
+CLASS org/embeddedt/embeddium/impl/model/quad/BakedQuadView
+CLASS org/embeddedt/embeddium/impl/model/quad/ModelQuadView
+CLASS org/embeddedt/embeddium/impl/model/quad/properties/ModelQuadFacing
+CLASS org/embeddedt/embeddium/impl/model/quad/properties/ModelQuadOrientation
+CLASS org/embeddedt/embeddium/impl/render/chunk/ChunkColorWriter
+CLASS org/embeddedt/embeddium/impl/render/chunk/ChunkRenderMatrices
+CLASS org/embeddedt/embeddium/impl/render/chunk/DefaultChunkRenderer
+CLASS org/embeddedt/embeddium/impl/render/chunk/RenderPassConfiguration
+CLASS org/embeddedt/embeddium/impl/render/chunk/RenderSection
+CLASS org/embeddedt/embeddium/impl/render/chunk/RenderSectionFlags
+CLASS org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager
+CLASS org/embeddedt/embeddium/impl/render/chunk/ShaderChunkRenderer
+CLASS org/embeddedt/embeddium/impl/render/chunk/SharedQuadIndexBuffer
+CLASS org/embeddedt/embeddium/impl/render/chunk/compile/ChunkBuildBuffers
+CLASS org/embeddedt/embeddium/impl/render/chunk/compile/ChunkBuildContext
+CLASS org/embeddedt/embeddium/impl/render/chunk/compile/ChunkBuildOutput
+CLASS org/embeddedt/embeddium/impl/render/chunk/compile/buffers/ChunkModelBuilder
+CLASS org/embeddedt/embeddium/impl/render/chunk/compile/pipeline/BakedQuadGroupAnalyzer
+CLASS org/embeddedt/embeddium/impl/render/chunk/compile/sorting/ChunkPrimitiveType
+CLASS org/embeddedt/embeddium/impl/render/chunk/compile/sorting/QuadPrimitiveType
+CLASS org/embeddedt/embeddium/impl/render/chunk/data/SectionRenderDataStorage
+CLASS org/embeddedt/embeddium/impl/render/chunk/fog/FogService
+CLASS org/embeddedt/embeddium/impl/render/chunk/lists/ChunkRenderList
+CLASS org/embeddedt/embeddium/impl/render/chunk/lists/ChunkRenderListIterable
+CLASS org/embeddedt/embeddium/impl/render/chunk/map/ChunkTracker
+CLASS org/embeddedt/embeddium/impl/render/chunk/map/ChunkTrackerHolder
+CLASS org/embeddedt/embeddium/impl/render/chunk/multidraw/BatchAssembler
+CLASS org/embeddedt/embeddium/impl/render/chunk/multidraw/BatchAssembler$TessellationProvider
+CLASS org/embeddedt/embeddium/impl/render/chunk/multidraw/CachedBatch
+CLASS org/embeddedt/embeddium/impl/render/chunk/occlusion/AsyncOcclusionMode
+CLASS org/embeddedt/embeddium/impl/render/chunk/region/RenderRegion
+CLASS org/embeddedt/embeddium/impl/render/chunk/shader/ChunkFogMode
+CLASS org/embeddedt/embeddium/impl/render/chunk/shader/ChunkShaderComponent
+CLASS org/embeddedt/embeddium/impl/render/chunk/shader/ChunkShaderComponent$Factory
+CLASS org/embeddedt/embeddium/impl/render/chunk/shader/ChunkShaderInterface
+CLASS org/embeddedt/embeddium/impl/render/chunk/shader/ChunkShaderTextureSlot
+CLASS org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass
+CLASS org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$PipelineState
+CLASS org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder
+CLASS org/embeddedt/embeddium/impl/render/chunk/terrain/material/Material
+CLASS org/embeddedt/embeddium/impl/render/chunk/terrain/material/parameters/AlphaCutoffParameter
+CLASS org/embeddedt/embeddium/impl/render/chunk/vertex/builder/ChunkMeshBufferBuilder
+CLASS org/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkMeshFormats
+CLASS org/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexEncoder
+CLASS org/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexEncoder$Vertex
+CLASS org/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexType
+CLASS org/embeddedt/embeddium/impl/render/shader/ShaderLoader
+CLASS org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer
+CLASS org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer$CameraState
+CLASS org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer$Provider
+CLASS org/embeddedt/embeddium/impl/render/viewport/CameraTransform
+CLASS org/embeddedt/embeddium/impl/render/viewport/Viewport
+CLASS org/embeddedt/embeddium/impl/render/viewport/ViewportProvider
+CLASS org/embeddedt/embeddium/impl/render/viewport/frustum/Frustum
+CLASS org/embeddedt/embeddium/impl/render/viewport/frustum/ShadowSearchFrustum
+CLASS org/embeddedt/embeddium/impl/util/task/CancellationToken
+CLASS org/taumc/celeritas/CeleritasVintage
+CLASS org/taumc/celeritas/api/OptionGUIConstructionEvent
+CLASS org/taumc/celeritas/api/OptionGroupConstructionEvent
+CLASS org/taumc/celeritas/api/OptionPageConstructionEvent
+CLASS org/taumc/celeritas/api/eventbus/EmbeddiumEvent
+CLASS org/taumc/celeritas/api/eventbus/EventHandlerRegistrar
+CLASS org/taumc/celeritas/api/eventbus/EventHandlerRegistrar$Handler
+CLASS org/taumc/celeritas/api/options/OptionIdentifier
+CLASS org/taumc/celeritas/api/options/control/Control
+CLASS org/taumc/celeritas/api/options/control/ControlValueFormatter
+CLASS org/taumc/celeritas/api/options/control/CyclingControl
+CLASS org/taumc/celeritas/api/options/control/SliderControl
+CLASS org/taumc/celeritas/api/options/control/TickBoxControl
+CLASS org/taumc/celeritas/api/options/structure/Option
+CLASS org/taumc/celeritas/api/options/structure/OptionFlag
+CLASS org/taumc/celeritas/api/options/structure/OptionGroup
+CLASS org/taumc/celeritas/api/options/structure/OptionGroup$Builder
+CLASS org/taumc/celeritas/api/options/structure/OptionImpact
+CLASS org/taumc/celeritas/api/options/structure/OptionImpl
+CLASS org/taumc/celeritas/api/options/structure/OptionImpl$Builder
+CLASS org/taumc/celeritas/api/options/structure/OptionPage
+CLASS org/taumc/celeritas/api/options/structure/OptionStorage
+CLASS org/taumc/celeritas/api/options/structure/StandardOptions
+CLASS org/taumc/celeritas/api/options/structure/StandardOptions$Group
+CLASS org/taumc/celeritas/api/options/structure/StandardOptions$Pages
+CLASS org/taumc/celeritas/core/CeleritasLoadingPlugin
+CLASS org/taumc/celeritas/impl/gui/CeleritasVideoOptionsScreen
+CLASS org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer
+CLASS org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer$TileEntityRenderContext
+CLASS org/taumc/celeritas/impl/render/terrain/VintageRenderPassConfigurationBuilder
+CLASS org/taumc/celeritas/impl/render/terrain/VintageRenderSectionManager
+CLASS org/taumc/celeritas/impl/render/terrain/compile/ChunkBufferBuilder
+CLASS org/taumc/celeritas/impl/render/terrain/compile/VintageChunkBuildContext
+CLASS org/taumc/celeritas/impl/render/terrain/compile/pipeline/VintageBlockRenderer
+CLASS org/taumc/celeritas/impl/render/terrain/compile/task/ChunkBuilderMeshingTask
+CLASS org/taumc/celeritas/impl/render/terrain/fog/GLStateManagerFogService
+CLASS org/taumc/celeritas/impl/world/WorldSlice
+CLASS org/taumc/celeritas/impl/world/cloned/CeleritasBlockAccess
+FIELD org/embeddedt/embeddium/impl/gl/attribute/GlVertexAttributeFormat BYTE Lorg/embeddedt/embeddium/impl/gl/attribute/GlVertexAttributeFormat;
+FIELD org/embeddedt/embeddium/impl/gl/attribute/GlVertexAttributeFormat UNSIGNED_INT Lorg/embeddedt/embeddium/impl/gl/attribute/GlVertexAttributeFormat;
+FIELD org/embeddedt/embeddium/impl/gl/attribute/GlVertexAttributeFormat UNSIGNED_SHORT Lorg/embeddedt/embeddium/impl/gl/attribute/GlVertexAttributeFormat;
+FIELD org/embeddedt/embeddium/impl/gl/shader/ShaderConstants EMPTY Lorg/embeddedt/embeddium/impl/gl/shader/ShaderConstants;
+FIELD org/embeddedt/embeddium/impl/gl/shader/ShaderType FRAGMENT Lorg/embeddedt/embeddium/impl/gl/shader/ShaderType;
+FIELD org/embeddedt/embeddium/impl/gl/shader/ShaderType GEOM Lorg/embeddedt/embeddium/impl/gl/shader/ShaderType;
+FIELD org/embeddedt/embeddium/impl/gl/shader/ShaderType VERTEX Lorg/embeddedt/embeddium/impl/gl/shader/ShaderType;
+FIELD org/embeddedt/embeddium/impl/gl/tessellation/GlPrimitiveType TRIANGLES Lorg/embeddedt/embeddium/impl/gl/tessellation/GlPrimitiveType;
+FIELD org/embeddedt/embeddium/impl/gui/SodiumGameOptions performance Lorg/embeddedt/embeddium/impl/gui/SodiumGameOptions$PerformanceSettings;
+FIELD org/embeddedt/embeddium/impl/gui/SodiumGameOptions quality Lorg/embeddedt/embeddium/impl/gui/SodiumGameOptions$QualitySettings;
+FIELD org/embeddedt/embeddium/impl/gui/SodiumGameOptions$PerformanceSettings useRenderPassConsolidation Z
+FIELD org/embeddedt/embeddium/impl/gui/SodiumGameOptions$PerformanceSettings useTranslucentFaceSorting Z
+FIELD org/embeddedt/embeddium/impl/gui/SodiumGameOptions$QualitySettings chunkFadeInDuration I
+FIELD org/embeddedt/embeddium/impl/render/chunk/ChunkColorWriter EMBEDDIUM Lorg/embeddedt/embeddium/impl/render/chunk/ChunkColorWriter;
+FIELD org/embeddedt/embeddium/impl/render/chunk/ChunkColorWriter SEPARATE_AO Lorg/embeddedt/embeddium/impl/render/chunk/ChunkColorWriter;
+FIELD org/embeddedt/embeddium/impl/render/chunk/RenderSectionFlags HAS_BLOCK_GEOMETRY I
+FIELD org/embeddedt/embeddium/impl/render/chunk/compile/ChunkBuildContext buffers Lorg/embeddedt/embeddium/impl/render/chunk/compile/ChunkBuildBuffers;
+FIELD org/embeddedt/embeddium/impl/render/chunk/compile/sorting/QuadPrimitiveType TRIANGULATED Lorg/embeddedt/embeddium/impl/render/chunk/compile/sorting/QuadPrimitiveType;
+FIELD org/embeddedt/embeddium/impl/render/chunk/occlusion/AsyncOcclusionMode EVERYTHING Lorg/embeddedt/embeddium/impl/render/chunk/occlusion/AsyncOcclusionMode;
+FIELD org/embeddedt/embeddium/impl/render/chunk/occlusion/AsyncOcclusionMode ONLY_SHADOW Lorg/embeddedt/embeddium/impl/render/chunk/occlusion/AsyncOcclusionMode;
+FIELD org/embeddedt/embeddium/impl/render/chunk/shader/ChunkFogMode NONE Lorg/embeddedt/embeddium/impl/render/chunk/shader/ChunkFogMode;
+FIELD org/embeddedt/embeddium/impl/render/chunk/terrain/material/Material pass Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass;
+FIELD org/embeddedt/embeddium/impl/render/chunk/terrain/material/parameters/AlphaCutoffParameter ONE_TENTH Lorg/embeddedt/embeddium/impl/render/chunk/terrain/material/parameters/AlphaCutoffParameter;
+FIELD org/embeddedt/embeddium/impl/render/chunk/terrain/material/parameters/AlphaCutoffParameter ZERO Lorg/embeddedt/embeddium/impl/render/chunk/terrain/material/parameters/AlphaCutoffParameter;
+FIELD org/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkMeshFormats VANILLA_LIKE Lorg/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexType;
+FIELD org/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexEncoder$Vertex color I
+FIELD org/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexEncoder$Vertex light I
+FIELD org/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexEncoder$Vertex rdhFactor I
+FIELD org/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexEncoder$Vertex u F
+FIELD org/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexEncoder$Vertex v F
+FIELD org/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexEncoder$Vertex x F
+FIELD org/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexEncoder$Vertex y F
+FIELD org/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexEncoder$Vertex z F
+FIELD org/embeddedt/embeddium/impl/render/viewport/CameraTransform fracX F
+FIELD org/embeddedt/embeddium/impl/render/viewport/CameraTransform fracY F
+FIELD org/embeddedt/embeddium/impl/render/viewport/CameraTransform fracZ F
+FIELD org/embeddedt/embeddium/impl/render/viewport/CameraTransform intX I
+FIELD org/embeddedt/embeddium/impl/render/viewport/CameraTransform intY I
+FIELD org/embeddedt/embeddium/impl/render/viewport/CameraTransform intZ I
+FIELD org/taumc/celeritas/api/OptionGUIConstructionEvent BUS Lorg/taumc/celeritas/api/eventbus/EventHandlerRegistrar;
+FIELD org/taumc/celeritas/api/OptionGroupConstructionEvent BUS Lorg/taumc/celeritas/api/eventbus/EventHandlerRegistrar;
+FIELD org/taumc/celeritas/api/OptionPageConstructionEvent BUS Lorg/taumc/celeritas/api/eventbus/EventHandlerRegistrar;
+FIELD org/taumc/celeritas/api/options/structure/OptionFlag REQUIRES_GAME_RESTART Lorg/taumc/celeritas/api/options/structure/OptionFlag;
+FIELD org/taumc/celeritas/api/options/structure/OptionFlag REQUIRES_RENDERER_RELOAD Lorg/taumc/celeritas/api/options/structure/OptionFlag;
+FIELD org/taumc/celeritas/api/options/structure/OptionImpact HIGH Lorg/taumc/celeritas/api/options/structure/OptionImpact;
+FIELD org/taumc/celeritas/api/options/structure/OptionImpact LOW Lorg/taumc/celeritas/api/options/structure/OptionImpact;
+FIELD org/taumc/celeritas/api/options/structure/OptionImpact MEDIUM Lorg/taumc/celeritas/api/options/structure/OptionImpact;
+FIELD org/taumc/celeritas/api/options/structure/StandardOptions$Group CPU_SAVING Lorg/taumc/celeritas/api/options/OptionIdentifier;
+FIELD org/taumc/celeritas/api/options/structure/StandardOptions$Group SORTING Lorg/taumc/celeritas/api/options/OptionIdentifier;
+FIELD org/taumc/celeritas/api/options/structure/StandardOptions$Pages ADVANCED Lorg/taumc/celeritas/api/options/OptionIdentifier;
+FIELD org/taumc/celeritas/impl/render/terrain/compile/VintageChunkBuildContext LAYERS [Lnet/minecraft/util/BlockRenderLayer;
+FIELD org/taumc/celeritas/impl/render/terrain/compile/VintageChunkBuildContext buffers Lorg/embeddedt/embeddium/impl/render/chunk/compile/ChunkBuildBuffers;
+FIELD org/taumc/celeritas/impl/render/terrain/compile/task/ChunkBuilderMeshingTask USE_NEW_BLOCK_RENDERER Z
+METHOD org/embeddedt/embeddium/api/util/NormI8 pack (FFF)I
+METHOD org/embeddedt/embeddium/impl/gl/GlObject <init> ()V
+METHOD org/embeddedt/embeddium/impl/gl/GlObject destroy ()V
+METHOD org/embeddedt/embeddium/impl/gl/GlObject handle ()I
+METHOD org/embeddedt/embeddium/impl/gl/attribute/GlVertexAttribute getName ()Ljava/lang/String;
+METHOD org/embeddedt/embeddium/impl/gl/attribute/GlVertexAttribute getPointer ()I
+METHOD org/embeddedt/embeddium/impl/gl/attribute/GlVertexAttribute getSize ()I
+METHOD org/embeddedt/embeddium/impl/gl/attribute/GlVertexFormat builder (I)Lorg/embeddedt/embeddium/impl/gl/attribute/GlVertexFormat$Builder;
+METHOD org/embeddedt/embeddium/impl/gl/attribute/GlVertexFormat getAttribute (Ljava/lang/String;)Lorg/embeddedt/embeddium/impl/gl/attribute/GlVertexAttribute;
+METHOD org/embeddedt/embeddium/impl/gl/attribute/GlVertexFormat getAttributes ()Ljava/util/Collection;
+METHOD org/embeddedt/embeddium/impl/gl/attribute/GlVertexFormat getStride ()I
+METHOD org/embeddedt/embeddium/impl/gl/attribute/GlVertexFormat$Builder addElement (Ljava/lang/String;ILorg/embeddedt/embeddium/impl/gl/attribute/GlVertexAttributeFormat;IZZ)Lorg/embeddedt/embeddium/impl/gl/attribute/GlVertexFormat$Builder;
+METHOD org/embeddedt/embeddium/impl/gl/attribute/GlVertexFormat$Builder addElements (Ljava/util/Collection;)Lorg/embeddedt/embeddium/impl/gl/attribute/GlVertexFormat$Builder;
+METHOD org/embeddedt/embeddium/impl/gl/attribute/GlVertexFormat$Builder build ()Lorg/embeddedt/embeddium/impl/gl/attribute/GlVertexFormat;
+METHOD org/embeddedt/embeddium/impl/gl/debug/GLDebug nameObject (IILjava/lang/String;)V
+METHOD org/embeddedt/embeddium/impl/gl/device/MultiDrawBatch delete ()V
+METHOD org/embeddedt/embeddium/impl/gl/device/MultiDrawBatch execute (Lorg/embeddedt/embeddium/impl/gl/device/CommandList;Lorg/embeddedt/embeddium/impl/gl/tessellation/GlTessellation;Lorg/embeddedt/embeddium/impl/gl/tessellation/GlPrimitiveType;)V
+METHOD org/embeddedt/embeddium/impl/gl/device/MultiDrawBatch getIndexBufferSize ()I
+METHOD org/embeddedt/embeddium/impl/gl/device/MultiDrawBatch isEmpty ()Z
+METHOD org/embeddedt/embeddium/impl/gl/device/MultiDrawBatch upload (Lorg/embeddedt/embeddium/impl/gl/device/CommandList;)V
+METHOD org/embeddedt/embeddium/impl/gl/device/RenderDevice enterManagedCode ()V
+METHOD org/embeddedt/embeddium/impl/gl/device/RenderDevice exitManagedCode ()V
+METHOD org/embeddedt/embeddium/impl/gl/shader/GlProgram bind ()V
+METHOD org/embeddedt/embeddium/impl/gl/shader/GlProgram builder (Ljava/lang/String;)Lorg/embeddedt/embeddium/impl/gl/shader/GlProgram$Builder;
+METHOD org/embeddedt/embeddium/impl/gl/shader/GlProgram delete ()V
+METHOD org/embeddedt/embeddium/impl/gl/shader/GlProgram getInterface ()Ljava/lang/Object;
+METHOD org/embeddedt/embeddium/impl/gl/shader/GlProgram unbind ()V
+METHOD org/embeddedt/embeddium/impl/gl/shader/GlProgram$Builder attachShader (Lorg/embeddedt/embeddium/impl/gl/shader/GlShader;)Lorg/embeddedt/embeddium/impl/gl/shader/GlProgram$Builder;
+METHOD org/embeddedt/embeddium/impl/gl/shader/GlProgram$Builder bindAttribute (Ljava/lang/String;I)Lorg/embeddedt/embeddium/impl/gl/shader/GlProgram$Builder;
+METHOD org/embeddedt/embeddium/impl/gl/shader/GlProgram$Builder link (Ljava/util/function/Function;)Lorg/embeddedt/embeddium/impl/gl/shader/GlProgram;
+METHOD org/embeddedt/embeddium/impl/gl/shader/GlShader <init> (Lorg/embeddedt/embeddium/impl/gl/shader/ShaderType;Ljava/lang/String;Ljava/lang/String;)V
+METHOD org/embeddedt/embeddium/impl/gl/shader/GlShader delete ()V
+METHOD org/embeddedt/embeddium/impl/gl/shader/ShaderBindingContext bindUniform (Ljava/lang/String;Ljava/util/function/IntFunction;)Lorg/embeddedt/embeddium/impl/gl/shader/uniform/GlUniform;
+METHOD org/embeddedt/embeddium/impl/gl/shader/ShaderBindingContext bindUniformIfPresent (Ljava/lang/String;Ljava/util/function/IntFunction;)Lorg/embeddedt/embeddium/impl/gl/shader/uniform/GlUniform;
+METHOD org/embeddedt/embeddium/impl/gl/shader/ShaderConstants builder ()Lorg/embeddedt/embeddium/impl/gl/shader/ShaderConstants$Builder;
+METHOD org/embeddedt/embeddium/impl/gl/shader/ShaderConstants$Builder add (Ljava/lang/String;Ljava/lang/String;)Lorg/embeddedt/embeddium/impl/gl/shader/ShaderConstants$Builder;
+METHOD org/embeddedt/embeddium/impl/gl/shader/ShaderConstants$Builder build ()Lorg/embeddedt/embeddium/impl/gl/shader/ShaderConstants;
+METHOD org/embeddedt/embeddium/impl/gl/shader/ShaderParser parseShader (Ljava/lang/String;Ljava/util/function/Function;Lorg/embeddedt/embeddium/impl/gl/shader/ShaderConstants;)Ljava/lang/String;
+METHOD org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniform <init> (I)V
+METHOD org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniformFloat3v <init> (I)V
+METHOD org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniformFloat3v set (FFF)V
+METHOD org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniformFloat4v <init> (I)V
+METHOD org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniformFloat4v set ([F)V
+METHOD org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniformInt <init> (I)V
+METHOD org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniformInt setInt (I)V
+METHOD org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniformMatrix4f <init> (I)V
+METHOD org/embeddedt/embeddium/impl/gui/framework/TextComponent translatable (Ljava/lang/String;[Ljava/lang/Object;)Lorg/embeddedt/embeddium/impl/gui/framework/TextComponent;
+METHOD org/embeddedt/embeddium/impl/model/light/LightPipeline calculate (Lorg/embeddedt/embeddium/impl/model/quad/ModelQuadView;IIILorg/embeddedt/embeddium/impl/model/light/data/QuadLightData;Lorg/embeddedt/embeddium/impl/model/quad/properties/ModelQuadFacing;Lorg/embeddedt/embeddium/impl/model/quad/properties/ModelQuadFacing;ZZ)V
+METHOD org/embeddedt/embeddium/impl/render/chunk/ChunkRenderMatrices <init> (Ljava/nio/FloatBuffer;Ljava/nio/FloatBuffer;)V
+METHOD org/embeddedt/embeddium/impl/render/chunk/DefaultChunkRenderer getRenderPassConfiguration ()Lorg/embeddedt/embeddium/impl/render/chunk/RenderPassConfiguration;
+METHOD org/embeddedt/embeddium/impl/render/chunk/DefaultChunkRenderer useBlockFaceCulling ()Z
+METHOD org/embeddedt/embeddium/impl/render/chunk/RenderPassConfiguration <init> (Ljava/util/Map;Ljava/util/Map;Lorg/embeddedt/embeddium/impl/render/chunk/terrain/material/Material;Lorg/embeddedt/embeddium/impl/render/chunk/terrain/material/Material;Lorg/embeddedt/embeddium/impl/render/chunk/terrain/material/Material;)V
+METHOD org/embeddedt/embeddium/impl/render/chunk/RenderPassConfiguration defaultCutoutMippedMaterial ()Lorg/embeddedt/embeddium/impl/render/chunk/terrain/material/Material;
+METHOD org/embeddedt/embeddium/impl/render/chunk/RenderPassConfiguration defaultSolidMaterial ()Lorg/embeddedt/embeddium/impl/render/chunk/terrain/material/Material;
+METHOD org/embeddedt/embeddium/impl/render/chunk/RenderPassConfiguration defaultTranslucentMaterial ()Lorg/embeddedt/embeddium/impl/render/chunk/terrain/material/Material;
+METHOD org/embeddedt/embeddium/impl/render/chunk/RenderPassConfiguration getMaterialForRenderType (Ljava/lang/Object;)Lorg/embeddedt/embeddium/impl/render/chunk/terrain/material/Material;
+METHOD org/embeddedt/embeddium/impl/render/chunk/RenderPassConfiguration getPrimitiveTypeForPass (Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass;)Lorg/embeddedt/embeddium/impl/render/chunk/compile/sorting/ChunkPrimitiveType;
+METHOD org/embeddedt/embeddium/impl/render/chunk/RenderPassConfiguration vanillaRenderStages ()Ljava/util/Map;
+METHOD org/embeddedt/embeddium/impl/render/chunk/RenderSection getOriginX ()I
+METHOD org/embeddedt/embeddium/impl/render/chunk/RenderSection getOriginY ()I
+METHOD org/embeddedt/embeddium/impl/render/chunk/RenderSection getOriginZ ()I
+METHOD org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager <init> (Lorg/embeddedt/embeddium/impl/render/chunk/RenderPassConfiguration;Ljava/util/function/Supplier;Ljava/util/function/BiFunction;ILorg/embeddedt/embeddium/impl/gl/device/CommandList;IIIZ)V
+METHOD org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager getRenderPassConfiguration ()Lorg/embeddedt/embeddium/impl/render/chunk/RenderPassConfiguration;
+METHOD org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager hasShadowPass ()Z
+METHOD org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager renderLayer (Lorg/embeddedt/embeddium/impl/render/chunk/ChunkRenderMatrices;Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass;Lorg/embeddedt/embeddium/impl/render/viewport/CameraTransform;Lorg/embeddedt/embeddium/impl/render/viewport/CameraTransform;)V
+METHOD org/embeddedt/embeddium/impl/render/chunk/SharedQuadIndexBuffer ensureCapacity (Lorg/embeddedt/embeddium/impl/gl/device/CommandList;I)V
+METHOD org/embeddedt/embeddium/impl/render/chunk/compile/ChunkBuildBuffers get (Lorg/embeddedt/embeddium/impl/render/chunk/terrain/material/Material;)Lorg/embeddedt/embeddium/impl/render/chunk/compile/buffers/ChunkModelBuilder;
+METHOD org/embeddedt/embeddium/impl/render/chunk/compile/ChunkBuildBuffers getRenderPassConfiguration ()Lorg/embeddedt/embeddium/impl/render/chunk/RenderPassConfiguration;
+METHOD org/embeddedt/embeddium/impl/render/chunk/compile/buffers/ChunkModelBuilder getEncoder ()Lorg/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexEncoder;
+METHOD org/embeddedt/embeddium/impl/render/chunk/compile/pipeline/BakedQuadGroupAnalyzer chooseOptimalMaterial (ILorg/embeddedt/embeddium/impl/render/chunk/terrain/material/Material;Lorg/embeddedt/embeddium/impl/render/chunk/RenderPassConfiguration;Lorg/embeddedt/embeddium/impl/model/quad/BakedQuadView;)Lorg/embeddedt/embeddium/impl/render/chunk/terrain/material/Material;
+METHOD org/embeddedt/embeddium/impl/render/chunk/compile/pipeline/BakedQuadGroupAnalyzer setDefaultRenderingFlags (I)V
+METHOD org/embeddedt/embeddium/impl/render/chunk/fog/FogService getFogMode ()Lorg/embeddedt/embeddium/impl/render/chunk/shader/ChunkShaderComponent$Factory;
+METHOD org/embeddedt/embeddium/impl/render/chunk/lists/ChunkRenderList <init> (Lorg/embeddedt/embeddium/impl/render/chunk/region/RenderRegion;)V
+METHOD org/embeddedt/embeddium/impl/render/chunk/lists/ChunkRenderList add (II)V
+METHOD org/embeddedt/embeddium/impl/render/chunk/lists/ChunkRenderList getSectionsWithGeometry ()[B
+METHOD org/embeddedt/embeddium/impl/render/chunk/lists/ChunkRenderList getSectionsWithGeometryCount ()I
+METHOD org/embeddedt/embeddium/impl/render/chunk/map/ChunkTrackerHolder get (Ljava/lang/Object;)Lorg/embeddedt/embeddium/impl/render/chunk/map/ChunkTracker;
+METHOD org/embeddedt/embeddium/impl/render/chunk/multidraw/BatchAssembler createCachedBatch (Lorg/embeddedt/embeddium/impl/render/chunk/region/RenderRegion;Lorg/embeddedt/embeddium/impl/render/chunk/data/SectionRenderDataStorage;Lorg/embeddedt/embeddium/impl/render/chunk/lists/ChunkRenderList;Lorg/embeddedt/embeddium/impl/render/viewport/CameraTransform;Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass;ZLorg/embeddedt/embeddium/impl/gl/device/CommandList;Lorg/embeddedt/embeddium/impl/render/chunk/multidraw/BatchAssembler$TessellationProvider;)Lorg/embeddedt/embeddium/impl/render/chunk/multidraw/CachedBatch;
+METHOD org/embeddedt/embeddium/impl/render/chunk/multidraw/BatchAssembler fillRegion (Lorg/embeddedt/embeddium/impl/render/chunk/region/RenderRegion;Lorg/embeddedt/embeddium/impl/render/chunk/data/SectionRenderDataStorage;Lorg/embeddedt/embeddium/impl/render/chunk/lists/ChunkRenderList;Lorg/embeddedt/embeddium/impl/render/viewport/CameraTransform;Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass;Z)Lorg/embeddedt/embeddium/impl/gl/device/MultiDrawBatch;
+METHOD org/embeddedt/embeddium/impl/render/chunk/multidraw/BatchAssembler$TessellationProvider getTessellation (Lorg/embeddedt/embeddium/impl/gl/device/CommandList;Lorg/embeddedt/embeddium/impl/render/chunk/region/RenderRegion;Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass;)Lorg/embeddedt/embeddium/impl/gl/tessellation/GlTessellation;
+METHOD org/embeddedt/embeddium/impl/render/chunk/multidraw/CachedBatch getTessellation ()Lorg/embeddedt/embeddium/impl/gl/tessellation/GlTessellation;
+METHOD org/embeddedt/embeddium/impl/render/chunk/region/RenderRegion getOriginX ()I
+METHOD org/embeddedt/embeddium/impl/render/chunk/region/RenderRegion getOriginY ()I
+METHOD org/embeddedt/embeddium/impl/render/chunk/region/RenderRegion getOriginZ ()I
+METHOD org/embeddedt/embeddium/impl/render/chunk/region/RenderRegion getSection (I)Lorg/embeddedt/embeddium/impl/render/chunk/RenderSection;
+METHOD org/embeddedt/embeddium/impl/render/chunk/region/RenderRegion getSectionLoadTimes ()[J
+METHOD org/embeddedt/embeddium/impl/render/chunk/shader/ChunkFogMode fromGLMode (I)Lorg/embeddedt/embeddium/impl/render/chunk/shader/ChunkFogMode;
+METHOD org/embeddedt/embeddium/impl/render/chunk/shader/ChunkShaderInterface restoreState ()V
+METHOD org/embeddedt/embeddium/impl/render/chunk/shader/ChunkShaderInterface setRegionOffset (FFF)V
+METHOD org/embeddedt/embeddium/impl/render/chunk/shader/ChunkShaderInterface setSectionAges (J[J)V
+METHOD org/embeddedt/embeddium/impl/render/chunk/shader/ChunkShaderInterface setupState (Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass;)V
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass builder ()Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder;
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass endDrawing ()V
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass extraDefines ()Ljava/util/Map;
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass isReverseOrder ()Z
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass isSorted ()Z
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass name ()Ljava/lang/String;
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass startDrawing ()V
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass supportsFragmentDiscard ()Z
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass vertexType ()Lorg/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexType;
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder build ()Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass;
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder extraDefines (Ljava/util/Map;)Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder;
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder fragmentDiscard (Z)Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder;
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder name (Ljava/lang/String;)Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder;
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder pipelineState (Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$PipelineState;)Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder;
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder primitiveType (Lorg/embeddedt/embeddium/impl/render/chunk/compile/sorting/ChunkPrimitiveType;)Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder;
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder useReverseOrder (Z)Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder;
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder useTranslucencySorting (Z)Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder;
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder vertexType (Lorg/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexType;)Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass$TerrainRenderPassBuilder;
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/material/Material <init> (Lorg/embeddedt/embeddium/impl/render/chunk/terrain/TerrainRenderPass;Lorg/embeddedt/embeddium/impl/render/chunk/terrain/material/parameters/AlphaCutoffParameter;Z)V
+METHOD org/embeddedt/embeddium/impl/render/chunk/terrain/material/Material bits ()I
+METHOD org/embeddedt/embeddium/impl/render/chunk/vertex/builder/ChunkMeshBufferBuilder push ([Lorg/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexEncoder$Vertex;Lorg/embeddedt/embeddium/impl/render/chunk/terrain/material/Material;)V
+METHOD org/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexType getPositionOffset ()F
+METHOD org/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexType getPositionScale ()F
+METHOD org/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexType getTextureScale ()F
+METHOD org/embeddedt/embeddium/impl/render/chunk/vertex/format/ChunkVertexType getVertexFormat ()Lorg/embeddedt/embeddium/impl/gl/attribute/GlVertexFormat;
+METHOD org/embeddedt/embeddium/impl/render/shader/ShaderLoader getShaderSource (Ljava/lang/String;)Ljava/lang/String;
+METHOD org/embeddedt/embeddium/impl/render/shader/ShaderLoader loadShader (Lorg/embeddedt/embeddium/impl/gl/shader/ShaderType;Ljava/lang/String;Lorg/embeddedt/embeddium/impl/gl/shader/ShaderConstants;)Lorg/embeddedt/embeddium/impl/gl/shader/GlShader;
+METHOD org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer reload ()V
+METHOD org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer$CameraState <init> (DDDDDF)V
+METHOD org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer$Provider getWorldRendererNullable (Ljava/lang/Object;)Lorg/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer;
+METHOD org/embeddedt/embeddium/impl/render/viewport/CameraTransform <init> (DDD)V
+METHOD org/embeddedt/embeddium/impl/render/viewport/Viewport getTransform ()Lorg/embeddedt/embeddium/impl/render/viewport/CameraTransform;
+METHOD org/embeddedt/embeddium/impl/render/viewport/Viewport isBoxVisible (DDDDDD)Z
+METHOD org/embeddedt/embeddium/impl/render/viewport/ViewportProvider sodium$createViewport ()Lorg/embeddedt/embeddium/impl/render/viewport/Viewport;
+METHOD org/taumc/celeritas/CeleritasVintage options ()Lorg/embeddedt/embeddium/impl/gui/SodiumGameOptions;
+METHOD org/taumc/celeritas/api/OptionGUIConstructionEvent getPages ()Ljava/util/List;
+METHOD org/taumc/celeritas/api/OptionGroupConstructionEvent getId ()Lorg/taumc/celeritas/api/options/OptionIdentifier;
+METHOD org/taumc/celeritas/api/OptionGroupConstructionEvent getOptions ()Ljava/util/List;
+METHOD org/taumc/celeritas/api/OptionPageConstructionEvent addGroup (Lorg/taumc/celeritas/api/options/structure/OptionGroup;)V
+METHOD org/taumc/celeritas/api/OptionPageConstructionEvent getId ()Lorg/taumc/celeritas/api/options/OptionIdentifier;
+METHOD org/taumc/celeritas/api/eventbus/EventHandlerRegistrar addListener (Lorg/taumc/celeritas/api/eventbus/EventHandlerRegistrar$Handler;)V
+METHOD org/taumc/celeritas/api/options/OptionIdentifier create (Ljava/lang/String;Ljava/lang/String;)Lorg/taumc/celeritas/api/options/OptionIdentifier;
+METHOD org/taumc/celeritas/api/options/OptionIdentifier create (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Class;)Lorg/taumc/celeritas/api/options/OptionIdentifier;
+METHOD org/taumc/celeritas/api/options/OptionIdentifier equals (Ljava/lang/Object;)Z
+METHOD org/taumc/celeritas/api/options/control/ControlValueFormatter number ()Lorg/taumc/celeritas/api/options/control/ControlValueFormatter;
+METHOD org/taumc/celeritas/api/options/control/CyclingControl <init> (Lorg/taumc/celeritas/api/options/structure/Option;Ljava/lang/Class;[Lorg/embeddedt/embeddium/impl/gui/framework/TextComponent;)V
+METHOD org/taumc/celeritas/api/options/control/SliderControl <init> (Lorg/taumc/celeritas/api/options/structure/Option;IIILorg/taumc/celeritas/api/options/control/ControlValueFormatter;)V
+METHOD org/taumc/celeritas/api/options/control/TickBoxControl <init> (Lorg/taumc/celeritas/api/options/structure/Option;)V
+METHOD org/taumc/celeritas/api/options/structure/Option getId ()Lorg/taumc/celeritas/api/options/OptionIdentifier;
+METHOD org/taumc/celeritas/api/options/structure/OptionGroup createBuilder ()Lorg/taumc/celeritas/api/options/structure/OptionGroup$Builder;
+METHOD org/taumc/celeritas/api/options/structure/OptionGroup$Builder add (Lorg/taumc/celeritas/api/options/structure/Option;)Lorg/taumc/celeritas/api/options/structure/OptionGroup$Builder;
+METHOD org/taumc/celeritas/api/options/structure/OptionGroup$Builder build ()Lorg/taumc/celeritas/api/options/structure/OptionGroup;
+METHOD org/taumc/celeritas/api/options/structure/OptionGroup$Builder setId (Lorg/taumc/celeritas/api/options/OptionIdentifier;)Lorg/taumc/celeritas/api/options/structure/OptionGroup$Builder;
+METHOD org/taumc/celeritas/api/options/structure/OptionImpl createBuilder (Ljava/lang/Class;Lorg/taumc/celeritas/api/options/structure/OptionStorage;)Lorg/taumc/celeritas/api/options/structure/OptionImpl$Builder;
+METHOD org/taumc/celeritas/api/options/structure/OptionImpl$Builder build ()Lorg/taumc/celeritas/api/options/structure/OptionImpl;
+METHOD org/taumc/celeritas/api/options/structure/OptionImpl$Builder setBinding (Ljava/util/function/BiConsumer;Ljava/util/function/Function;)Lorg/taumc/celeritas/api/options/structure/OptionImpl$Builder;
+METHOD org/taumc/celeritas/api/options/structure/OptionImpl$Builder setControl (Ljava/util/function/Function;)Lorg/taumc/celeritas/api/options/structure/OptionImpl$Builder;
+METHOD org/taumc/celeritas/api/options/structure/OptionImpl$Builder setEnabledPredicate (Ljava/util/function/BooleanSupplier;)Lorg/taumc/celeritas/api/options/structure/OptionImpl$Builder;
+METHOD org/taumc/celeritas/api/options/structure/OptionImpl$Builder setFlags ([Lorg/taumc/celeritas/api/options/structure/OptionFlag;)Lorg/taumc/celeritas/api/options/structure/OptionImpl$Builder;
+METHOD org/taumc/celeritas/api/options/structure/OptionImpl$Builder setId (Lorg/taumc/celeritas/api/options/OptionIdentifier;)Lorg/taumc/celeritas/api/options/structure/OptionImpl$Builder;
+METHOD org/taumc/celeritas/api/options/structure/OptionImpl$Builder setImpact (Lorg/taumc/celeritas/api/options/structure/OptionImpact;)Lorg/taumc/celeritas/api/options/structure/OptionImpl$Builder;
+METHOD org/taumc/celeritas/api/options/structure/OptionImpl$Builder setName (Lorg/embeddedt/embeddium/impl/gui/framework/TextComponent;)Lorg/taumc/celeritas/api/options/structure/OptionImpl$Builder;
+METHOD org/taumc/celeritas/api/options/structure/OptionImpl$Builder setTooltip (Lorg/embeddedt/embeddium/impl/gui/framework/TextComponent;)Lorg/taumc/celeritas/api/options/structure/OptionImpl$Builder;
+METHOD org/taumc/celeritas/api/options/structure/OptionPage <init> (Lorg/taumc/celeritas/api/options/OptionIdentifier;Lorg/embeddedt/embeddium/impl/gui/framework/TextComponent;Ljava/util/List;)V
+METHOD org/taumc/celeritas/api/options/structure/OptionPage getId ()Lorg/taumc/celeritas/api/options/OptionIdentifier;
+METHOD org/taumc/celeritas/impl/gui/CeleritasVideoOptionsScreen <init> (Lnet/minecraft/client/gui/GuiScreen;)V
+METHOD org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer drawChunkLayer (Lnet/minecraft/util/BlockRenderLayer;DDD)V
+METHOD org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer forEachVisibleBlockEntity (Ljava/util/function/Consumer;)V
+METHOD org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer getChunksDebugString ()Ljava/lang/String;
+METHOD org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer getLastViewport ()Lorg/embeddedt/embeddium/impl/render/viewport/Viewport;
+METHOD org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer getRenderPassConfiguration ()Lorg/embeddedt/embeddium/impl/render/chunk/RenderPassConfiguration;
+METHOD org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer getRenderSectionManager ()Lorg/embeddedt/embeddium/impl/render/chunk/RenderSectionManager;
+METHOD org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer getVisibleChunkCount ()I
+METHOD org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer instance ()Lorg/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer;
+METHOD org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer instanceNullable ()Lorg/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer;
+METHOD org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer scheduleRebuildForChunk (IIIZ)V
+METHOD org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer scheduleTerrainUpdate ()V
+METHOD org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer setupShadowTerrain (Lorg/embeddedt/embeddium/impl/render/viewport/Viewport;Lorg/embeddedt/embeddium/impl/render/viewport/Viewport;Lorg/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer$CameraState;IZ)V
+METHOD org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer setupTerrain (Lorg/embeddedt/embeddium/impl/render/viewport/Viewport;Lorg/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer$CameraState;IZZ)V
+METHOD org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer$TileEntityRenderContext partialTicks ()F
+METHOD org/taumc/celeritas/impl/render/terrain/VintageRenderSectionManager hasShadowPass ()Z
+METHOD org/taumc/celeritas/impl/render/terrain/compile/ChunkBufferBuilder getContext ()Lorg/taumc/celeritas/impl/render/terrain/compile/VintageChunkBuildContext;
+METHOD org/taumc/celeritas/impl/render/terrain/compile/ChunkBufferBuilder getLayer ()Lnet/minecraft/util/BlockRenderLayer;
+METHOD org/taumc/celeritas/impl/render/terrain/compile/VintageChunkBuildContext convertVanillaDataToCeleritasData (Lorg/embeddedt/embeddium/impl/render/chunk/compile/ChunkBuildBuffers;)V
+METHOD org/taumc/celeritas/impl/render/terrain/compile/VintageChunkBuildContext copyBlockData (Ljava/nio/ByteBuffer;Lorg/embeddedt/embeddium/impl/render/chunk/compile/ChunkBuildBuffers;Lorg/embeddedt/embeddium/impl/render/chunk/terrain/material/Material;)V
+METHOD org/taumc/celeritas/impl/render/terrain/compile/VintageChunkBuildContext getBlockRenderer ()Lorg/taumc/celeritas/impl/render/terrain/compile/pipeline/VintageBlockRenderer;
+METHOD org/taumc/celeritas/impl/render/terrain/compile/VintageChunkBuildContext getBufferForLayer (Lnet/minecraft/util/BlockRenderLayer;)Lnet/minecraft/client/renderer/BufferBuilder;
+METHOD org/taumc/celeritas/impl/render/terrain/compile/VintageChunkBuildContext getOffX ()I
+METHOD org/taumc/celeritas/impl/render/terrain/compile/VintageChunkBuildContext getOffY ()I
+METHOD org/taumc/celeritas/impl/render/terrain/compile/VintageChunkBuildContext getOffZ ()I
+METHOD org/taumc/celeritas/impl/render/terrain/compile/VintageChunkBuildContext getWorldSlice ()Lorg/taumc/celeritas/impl/world/WorldSlice;
+METHOD org/taumc/celeritas/impl/render/terrain/compile/VintageChunkBuildContext selectMaterial (Lorg/embeddedt/embeddium/impl/render/chunk/terrain/material/Material;Lnet/minecraft/client/renderer/texture/TextureAtlasSprite;)Lorg/embeddedt/embeddium/impl/render/chunk/terrain/material/Material;
+METHOD org/taumc/celeritas/impl/render/terrain/compile/pipeline/VintageBlockRenderer renderModel (Lnet/minecraft/client/renderer/block/model/IBakedModel;Lnet/minecraft/block/state/IBlockState;Lnet/minecraft/util/math/BlockPos;Lorg/taumc/celeritas/impl/world/cloned/CeleritasBlockAccess;Lnet/minecraft/util/BlockRenderLayer;)Z
+METHOD org/taumc/celeritas/impl/render/terrain/compile/pipeline/VintageBlockRenderer writeGeometry (IIILorg/embeddedt/embeddium/impl/render/chunk/compile/buffers/ChunkModelBuilder;Lnet/minecraft/util/math/Vec3d;Lorg/embeddedt/embeddium/impl/render/chunk/terrain/material/Material;Lorg/embeddedt/embeddium/impl/model/quad/BakedQuadView;[ILorg/embeddedt/embeddium/impl/model/light/data/QuadLightData;Lorg/embeddedt/embeddium/impl/model/quad/properties/ModelQuadOrientation;)V
+METHOD org/taumc/celeritas/impl/world/WorldSlice getBlockEntity (III)Lnet/minecraft/tileentity/TileEntity;

@@ -107,6 +107,13 @@ jobs:
           python3 scripts/cpu-contract/frustum_camera_offset_check.py
       - name: Verify packaged mod contents
         run: python3 scripts/verify_forge_jar.py build-1122/build/libs/*/*.jar
+      # The Demonica compatibility surface (Tier A of the compat-surface design): every class
+      # and member descriptor Demonica's bytecode links against must still be in the packaged
+      # jar, at descriptor level, or the combination breaks silently at run time - the build
+      # stays green and only a player running both mods finds out. The manifest is extracted
+      # from Demonica's shipped jar; the check reads the jar built above.
+      - name: Verify the Demonica compatibility surface
+        run: python3 scripts/cpu-contract/demonica_compat_surface_check.py build-1122/build/libs/*/*.jar
       # The artifact's name, its mcmod.info version, the build's default and the plan's header table are four places the
       # same version is written; nothing compared them, and a leg was once run against a jar left over from the previous
       # naming family because a recipe still pointed at the old path (docs/plan.md row 47). This reads all four and

@@ -33,7 +33,7 @@ import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
 public class VintageChunkBuildContext extends ChunkBuildContext {
     public static final BlockRenderLayer[] LAYERS = BlockRenderLayer.values();
     private final TextureMapExtension textureAtlas;
-    private final net.minecraft.client.renderer.BufferBuilder[] worldRenderers = new net.minecraft.client.renderer.BufferBuilder[LAYERS.length];
+    private final ChunkBufferBuilder[] worldRenderers = new ChunkBufferBuilder[LAYERS.length];
     private final boolean[] usedWorldRenderers = new boolean[LAYERS.length];
     @Getter
     private int offX, offY, offZ;
@@ -66,7 +66,10 @@ public class VintageChunkBuildContext extends ChunkBuildContext {
     public net.minecraft.client.renderer.BufferBuilder getBufferForLayer(BlockRenderLayer layer) {
         var builder = this.worldRenderers[layer.ordinal()];
         if (builder == null) {
-            builder = new net.minecraft.client.renderer.BufferBuilder(131072);
+            // The one construction site for the build buffers (Tier B of the Demonica
+            // compatibility surface): the buffer carries this context and its layer so
+            // that wrappers around vanilla's dispatcher can route it to the fast renderer.
+            builder = new ChunkBufferBuilder(131072, this, layer);
             this.worldRenderers[layer.ordinal()] = builder;
         }
         if (!this.usedWorldRenderers[layer.ordinal()]) {

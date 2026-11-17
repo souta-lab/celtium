@@ -1,0 +1,45 @@
+# Known-incompatible Demonica linkage (Tier C of COMPAT-SURFACE-DESIGN-2026-11-17.md):
+# the shadow-joml type cluster. celtium uses real org.joml where upstream shades JOML,
+# so these descriptors cannot wire by adding classes; shadows are celtium-native.
+# Recorded so the boundary is a decision on file, not a crash to rediscover. The surface
+# check reports these for the record and does not require them.
+# Extracted from Demonica-0.9.1.jar (sha256 3855237cf837ae395a43a546bd24d1e6d7d4328666ab4b73cf7347530e93bd26), 1306 classes scanned.
+# Regenerate with: python3 scripts/cpu-contract/extract_demonica_compat_manifest.py <demonica jar>
+# Entries are linkage facts (names and descriptors) only; no Demonica code is recorded here.
+CLASS org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniformMatrix3f
+CLASS org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniformMatrix4f
+CLASS org/embeddedt/embeddium/impl/render/viewport/Viewport
+CLASS org/embeddedt/embeddium/impl/render/viewport/frustum/Frustum
+CLASS org/embeddedt/embeddium/impl/shadow/joml/Matrix3f
+CLASS org/embeddedt/embeddium/impl/shadow/joml/Matrix4f
+CLASS org/embeddedt/embeddium/impl/shadow/joml/Matrix4fc
+CLASS org/embeddedt/embeddium/impl/shadow/joml/Vector3d
+METHOD org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniformMatrix3f <init> (I)V
+METHOD org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniformMatrix3f set (Lorg/embeddedt/embeddium/impl/shadow/joml/Matrix3f;)V
+METHOD org/embeddedt/embeddium/impl/gl/shader/uniform/GlUniformMatrix4f set (Lorg/embeddedt/embeddium/impl/shadow/joml/Matrix4fc;)V
+METHOD org/embeddedt/embeddium/impl/render/viewport/Viewport <init> (Lorg/embeddedt/embeddium/impl/render/viewport/frustum/Frustum;Lorg/embeddedt/embeddium/impl/shadow/joml/Vector3d;)V
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix3f <init> ()V
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix3f invert ()Lorg/embeddedt/embeddium/impl/shadow/joml/Matrix3f;
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix3f set (Lorg/embeddedt/embeddium/impl/shadow/joml/Matrix4fc;)Lorg/embeddedt/embeddium/impl/shadow/joml/Matrix3f;
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix3f transpose ()Lorg/embeddedt/embeddium/impl/shadow/joml/Matrix3f;
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4f <init> ()V
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4f <init> (FFFFFFFFFFFFFFFF)V
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4f invert ()Lorg/embeddedt/embeddium/impl/shadow/joml/Matrix4f;
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4f set (Lorg/embeddedt/embeddium/impl/shadow/joml/Matrix4fc;)Lorg/embeddedt/embeddium/impl/shadow/joml/Matrix4f;
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4fc m00 ()F
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4fc m01 ()F
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4fc m02 ()F
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4fc m03 ()F
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4fc m10 ()F
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4fc m11 ()F
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4fc m12 ()F
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4fc m13 ()F
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4fc m20 ()F
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4fc m21 ()F
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4fc m22 ()F
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4fc m23 ()F
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4fc m30 ()F
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4fc m31 ()F
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4fc m32 ()F
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Matrix4fc m33 ()F
+METHOD org/embeddedt/embeddium/impl/shadow/joml/Vector3d <init> (DDD)V
