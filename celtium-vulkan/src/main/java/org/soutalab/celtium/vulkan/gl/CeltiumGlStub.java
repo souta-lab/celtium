@@ -6994,6 +6994,29 @@ public final class CeltiumGlStub implements FunctionProvider {
         return this.getStringAddress;
     }
 
+    /** Pnames whose answers {@link #noteTextureUnitAnswer} reports once: the texture-unit limit family. */
+    private static final java.util.Set<Integer> TEXUNIT_ANSWER_LOGGED =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Reports the first answer this JVM gives for each texture-unit limit pname. The answers are load-bearing
+     * and were invisible: Iris sizes its sampler budget and GLSM sizes its texture-unit arrays from
+     * {@code GL_MAX_TEXTURE_IMAGE_UNITS}, and GLSM's RenderSystem sizes its sampler-object cache from
+     * {@code GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS} - a pname this stub answered nowhere, so the value that
+     * arrived was the getInts default of 0 and the cache was allocated empty (measured as a latent failure
+     * during the leg-5 Demonica diagnosis, 2026-11-17; see TEXUNIT-DESIGN-2026-11-17). One line per pname
+     * per JVM, so the census stays bounded; the family check is four int compares on a hot path.
+     */
+    static void noteTextureUnitAnswer(int pname, int value) {
+        if (pname != 0x8872 && pname != 0x8B4C && pname != 0x8B4D && pname != 0x8F39) {
+            return;
+        }
+        if (TEXUNIT_ANSWER_LOGGED.add(Integer.valueOf(pname))) {
+            System.out.println("[Celtium] CELTIUM_TEXUNIT_ANSWER pname=0x" + Integer.toHexString(pname)
+                    + " value=" + value);
+        }
+    }
+
     /**
      * {@return the stub's answer to {@code glGetInteger(pname)} for the tracked scalar parameters}, or
      * {@link Integer#MIN_VALUE} when the pname is array-valued or untracked - the same values {@link #getInts} writes,
@@ -7006,7 +7029,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return Integer.MIN_VALUE;
         }
-        return stub.getIntegerValue(pname);
+        int value = stub.getIntegerValue(pname);
+        noteTextureUnitAnswer(pname, value);
+        return value;
     }
 
     /**
@@ -7358,6 +7383,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     value = 0;
                 }
         }
+        noteTextureUnitAnswer(pname, value);
         memPutInt(out, value);
     }
 
