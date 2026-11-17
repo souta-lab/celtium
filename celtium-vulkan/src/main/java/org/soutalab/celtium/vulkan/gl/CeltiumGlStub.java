@@ -6994,6 +6994,20 @@ public final class CeltiumGlStub implements FunctionProvider {
         return this.getStringAddress;
     }
 
+    /**
+     * The texture-unit limits this renderer advertises, as one story across every query surface
+     * (TEXUNIT-DESIGN-2026-11-17). Per stage, the count is the size of the binding ledger itself
+     * ({@code NativeTextureBindings} holds 32 units) and the same number the leg GPU's own GL driver
+     * reports per stage (radeonsi on the RX 6400, measured 2026-11-17); the mod-program pipeline
+     * allocates one descriptor per declared sampler, so no smaller native cap exists. Combined is the
+     * per-stage count times the two stages whose sampler descriptors the pipeline binds (vertex and
+     * fragment) - not the driver's 160, which prices per-stage binding points that this renderer's
+     * single shared unit table does not have. The bootstrap hint carries the same numbers as literals
+     * for the window before this provider is installed.
+     */
+    static final int TEXTURE_UNITS_PER_STAGE = 32;
+    static final int TEXTURE_UNITS_COMBINED = 64;
+
     /** Pnames whose answers {@link #noteTextureUnitAnswer} reports once: the texture-unit limit family. */
     private static final java.util.Set<Integer> TEXUNIT_ANSWER_LOGGED =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -7007,7 +7021,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * during the leg-5 Demonica diagnosis, 2026-11-17; see TEXUNIT-DESIGN-2026-11-17). One line per pname
      * per JVM, so the census stays bounded; the family check is four int compares on a hot path.
      */
-    static void noteTextureUnitAnswer(int pname, int value) {
+    public static void noteTextureUnitAnswer(int pname, int value) {
         if (pname != 0x8872 && pname != 0x8B4C && pname != 0x8B4D && pname != 0x8F39) {
             return;
         }
@@ -7306,7 +7320,13 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return 0;
             case 0x84FF: // GL_MAX_TEXTURE_MAX_ANISOTROPY - the sampler path does not filter anisotropically
                 return 1;
-            case 0x8B4D: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS (>= the per-stage count above)
+            case 0x8872: // GL_MAX_TEXTURE_IMAGE_UNITS - the per-stage count the binding ledger backs
+                return TEXTURE_UNITS_PER_STAGE;
+            case 0x8B4C: // GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS - the pipeline binds vertex-stage samplers too
+                return TEXTURE_UNITS_PER_STAGE;
+            case 0x8F39: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS - per-stage x the two stages served
+                return TEXTURE_UNITS_COMBINED;
+            case 0x8B4D: // GL_MAX_GEOMETRY_TEXTURE_IMAGE_UNITS - geometry is not a lowered stage; unchanged
                 return 16;
             default:
                 return Integer.MIN_VALUE;
@@ -7364,8 +7384,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                 memPutInt(out + 8, this.raster.scissorWidth());
                 memPutInt(out + 12, this.raster.scissorHeight());
                 return;
-            case 0x8872: // GL_MAX_TEXTURE_IMAGE_UNITS - at most as many as the combined count below
-                value = 16;
+            case 0x8872: // GL_MAX_TEXTURE_IMAGE_UNITS - the per-stage count the binding ledger backs
+                value = TEXTURE_UNITS_PER_STAGE;
                 break;
             case 0x0B33: // GL_LIST_INDEX - the list glNewList opened, 0 when none is open
                 // This is the answer the model capture reads to decide whether a quad belongs to a list. It asked the

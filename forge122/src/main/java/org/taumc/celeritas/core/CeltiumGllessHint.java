@@ -770,8 +770,17 @@ public final class CeltiumGllessHint {
             case 0x0D33: // GL_MAX_TEXTURE_SIZE - the device limit, from the scalar the stub answers
                 value = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(pname);
                 break;
-            case 0x8872: // GL_MAX_TEXTURE_IMAGE_UNITS
-                value = 16;
+            case 0x8872: // GL_MAX_TEXTURE_IMAGE_UNITS - the stub's TEXTURE_UNITS_PER_STAGE, for the
+                // window before the stub provider is installed (TEXUNIT-DESIGN-2026-11-17)
+                value = 32;
+                break;
+            case 0x8B4C: // GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS - same per-stage count
+                value = 32;
+                break;
+            case 0x8F39: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS - the stub's TEXTURE_UNITS_COMBINED;
+                // unanswered before this case existed, so the default 0 below sized GLSM's
+                // sampler-object cache to an empty array
+                value = 64;
                 break;
             case 0x84FF: // GL_MAX_TEXTURE_MAX_ANISOTROPY - no anisotropic filtering
                 value = 1;
@@ -782,7 +791,8 @@ public final class CeltiumGllessHint {
             case 0x8824: // GL_MAX_DRAW_BUFFERS
                 value = 1;
                 break;
-            case 0x8B4D: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS - at least the per-stage count, and the stub's own answer
+            case 0x8B4D: // GL_MAX_GEOMETRY_TEXTURE_IMAGE_UNITS - geometry is not a lowered stage;
+                // the value is the stub's own answer, unchanged (the combined limit is 0x8F39, above)
                 value = 16;
                 break;
             case 0x8869: // GL_MAX_VERTEX_ATTRIBS
@@ -826,6 +836,7 @@ public final class CeltiumGllessHint {
                 value = 0;
                 break;
         }
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.noteTextureUnitAnswer(pname, value);
         org.lwjgl.system.MemoryUtil.memPutInt(params, value);
     }
 
