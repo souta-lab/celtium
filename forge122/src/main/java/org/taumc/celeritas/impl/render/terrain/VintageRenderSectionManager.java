@@ -18,6 +18,7 @@ import org.embeddedt.embeddium.impl.render.chunk.lists.SectionTicker;
 import org.embeddedt.embeddium.impl.render.chunk.occlusion.AsyncOcclusionMode;
 import org.embeddedt.embeddium.impl.render.chunk.shader.ChunkShaderInterface;
 import org.embeddedt.embeddium.impl.render.chunk.shader.ChunkShaderTextureSlot;
+import org.embeddedt.embeddium.impl.render.chunk.shader.TerrainPipelineConfig;
 import org.embeddedt.embeddium.impl.render.chunk.sprite.GenericSectionSpriteTicker;
 import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkVertexType;
 import org.embeddedt.embeddium.impl.render.viewport.Viewport;
@@ -40,13 +41,26 @@ public class VintageRenderSectionManager extends RenderSectionManager {
     private final ClonedChunkSectionCache sectionCache;
 
     public VintageRenderSectionManager(RenderPassConfiguration<?> configuration, WorldClient world, int renderDistance, CommandList commandList, int minSection, int maxSection) {
-        super(configuration, () -> new VintageChunkBuildContext(world, configuration), ChunkRenderer::new, renderDistance, commandList, minSection, maxSection, CeleritasVintage.options().performance.chunkBuilderThreads);
+        this(configuration, world, renderDistance, commandList, minSection, maxSection, resolveShadowPassEnabled());
+    }
+
+    public VintageRenderSectionManager(RenderPassConfiguration<?> configuration, WorldClient world, int renderDistance, CommandList commandList, int minSection, int maxSection, boolean hasShadowPass) {
+        super(configuration, () -> new VintageChunkBuildContext(world, configuration), ChunkRenderer::new, renderDistance, commandList, minSection, maxSection, CeleritasVintage.options().performance.chunkBuilderThreads, hasShadowPass);
         this.world = world;
         this.sectionCache = new ClonedChunkSectionCache(world);
     }
 
+    /** {@return whether shadow terrain pass support is requested from the core pipeline config (default false)}. */
+    public static boolean resolveShadowPassEnabled() {
+        return TerrainPipelineConfig.isShadowPassRequested();
+    }
+
     public static VintageRenderSectionManager create(ChunkVertexType vertexType, WorldClient world, int renderDistance, CommandList commandList) {
-        return new VintageRenderSectionManager(VintageRenderPassConfigurationBuilder.build(vertexType), world, renderDistance, commandList, 0, 16);
+        return create(vertexType, world, renderDistance, commandList, resolveShadowPassEnabled());
+    }
+
+    public static VintageRenderSectionManager create(ChunkVertexType vertexType, WorldClient world, int renderDistance, CommandList commandList, boolean hasShadowPass) {
+        return new VintageRenderSectionManager(VintageRenderPassConfigurationBuilder.build(vertexType), world, renderDistance, commandList, 0, 16, hasShadowPass);
     }
 
     /** Read once: the section manager is asked for this mode on start-up paths, never with a changing property. */

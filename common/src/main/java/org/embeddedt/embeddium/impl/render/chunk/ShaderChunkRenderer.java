@@ -34,11 +34,33 @@ public abstract class ShaderChunkRenderer implements ChunkRenderer {
 
     protected final ChunkShaderEnvironment environment;
 
+    private @Nullable TerrainProgramProvider programProvider;
+
     public ShaderChunkRenderer(RenderDevice device, RenderPassConfiguration<?> renderPassConfiguration, FogService fogService) {
+        this(device, renderPassConfiguration, fogService, ShaderLoader.useLegacyGlsl());
+    }
+
+    ShaderChunkRenderer(RenderDevice device, RenderPassConfiguration<?> renderPassConfiguration, FogService fogService,
+                        boolean enableLegacyGLPatches) {
         this.device = device;
         this.environment = new ChunkShaderEnvironment(fogService);
         this.renderPassConfiguration = renderPassConfiguration;
-        this.enableLegacyGLPatches = ShaderLoader.useLegacyGlsl();
+        this.enableLegacyGLPatches = enableLegacyGLPatches;
+    }
+
+    /** Installs or clears the optional terrain program override provider (null restores default behavior). */
+    public void setProgramProvider(@Nullable TerrainProgramProvider programProvider) {
+        this.programProvider = programProvider;
+    }
+
+    /** {@return the installed terrain program override provider}, or {@code null} when none is attached. */
+    public @Nullable TerrainProgramProvider getProgramProvider() {
+        return this.programProvider;
+    }
+
+    /** Queries the attached provider for {@code pass}, returning {@code null} when no provider is installed. */
+    protected @Nullable TerrainProgramProvider.PassOverride resolvePassOverride(TerrainRenderPass pass) {
+        return this.programProvider != null ? this.programProvider.resolvePass(pass) : null;
     }
 
     protected @Nullable GlProgram<ChunkShaderInterface> compileProgram(ChunkShaderOptions options) {
@@ -99,6 +121,9 @@ public abstract class ShaderChunkRenderer implements ChunkRenderer {
 
     protected void begin(TerrainRenderPass pass) {
         pass.startDrawing();
+
+        // Phase 0 seam: query the provider when attached; actual program/vertex/cull replacement lands in Phase 1.
+        resolvePassOverride(pass);
 
         ChunkShaderOptions options = new ChunkShaderOptions(getShaderComponents(), pass);
 
