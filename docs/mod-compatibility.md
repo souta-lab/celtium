@@ -284,9 +284,32 @@ draws, and the outcome is recorded per mod rather than promised in advance.
 | Custom Loading Screen (customloadingscreen) | Refused at startup (`CeltiumCompetitors`): replaces the Forge loading screen, which Celtium draws natively |
 | SmoothFont (smoothfont) | Refused at startup (`CeltiumCompetitors`): replaces the font renderer's glyph drawing, which Celtium batches natively (a VerifyError against Celtium's text path was observed on leg e2ee-amd3) |
 | Nothirium (nothirium), Naughthirium (naughthirium) | Refused at startup (`CeltiumCompetitors`): replaces the terrain renderer |
+| OptiFine (optifine) | Refused at startup (`CeltiumCompetitors`): a competing whole-renderer overhaul — it replaces the terrain renderer, the GL/shader pipeline and the font renderer, all paths Celtium owns |
+| Vintagium (vintagium) | Refused at startup (`CeltiumCompetitors`): Sodium's chunk engine ported to 1.12.2 — a second terrain renderer, which cannot coexist with Celtium's |
+| Relictium (relictium) | Refused at startup (`CeltiumCompetitors`): a fork of Vintagium; the same terrain-renderer replacement |
 
 The startup refusal keys on a marker class only the mod's own jar carries. `-Dceltium.allowCompetitors=true` lifts the
 refusal at the user's own risk; the measured failures in the rows above are what it re-admits.
+
+## Not verified together
+
+These mods overlap a path Celtium owns or feeds, but the conflict is partial, feature-specific or unmeasured, so
+they are **not** refused at startup. They have not been run with Celtium; the notes say what the overlap is, read
+from each mod's own source or documentation during the 2026-11-17 rendering-mod survey. A measured failure is
+what would move a row from here into the refusal table above.
+
+| Mod | Overlap |
+|---|---|
+| VanillaFix | Its visible-texture feature hooks `RenderChunk`/`CompiledChunk`, which Celtium replaces, so that feature cannot work as written; its crash-report and profiler parts do not touch the renderer |
+| BetterFps | Replaces fog setup and the beacon-beam renderer and rewrites `MathHelper` globally — all places Celtium's own code also passes through; its logic-only parts are unaffected |
+| Alfheim Lighting Engine | Replaces Minecraft's lighting engine wholesale, which changes the light values Celtium bakes at meshing time. It replaces the data producer, not a drawing path Celtium owns, and no failure has been measured, so it is documented here rather than refused (decision recorded 2026-11-17, item 311) |
+| Phosphor, Hesperus | Rewrite light propagation internals behind unchanged interfaces; the same data-path family as Alfheim, one step further from the renderer |
+| FoamFix | Model/texture memory surgery; its texture-animation path and dynamic item models intersect Celtium's texture layer and would need per-feature checks |
+| VintageFix | Dynamic resources change *when* models bake, which intersects Celtium's model-to-mesh timing; no path is replaced |
+| TexFix | Frees CPU-side sprite data after upload; only a conflict if Celtium ever re-reads sprite data after upload |
+| LoliASM / CensoredASM | Its on-demand animated textures and baked-quad rewrites sit in Celtium's model/texture layer; no renderer replacement |
+| Particle Culling | Filters which particles are submitted rather than replacing a renderer; under Celtium the submission path it hooks is itself replaced, so the mechanism belongs inside Celtium |
+| FPS Reducer | No renderer conflict: it throttles the frame rate from outside the paths Celtium owns |
 
 ## What is measured, and how
 
