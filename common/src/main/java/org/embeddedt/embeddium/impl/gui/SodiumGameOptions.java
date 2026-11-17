@@ -19,6 +19,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.List;
 
 public class SodiumGameOptions implements OptionStorage<SodiumGameOptions> {
@@ -148,6 +149,30 @@ public class SodiumGameOptions implements OptionStorage<SodiumGameOptions> {
             .excludeFieldsWithModifiers(Modifier.PRIVATE)
             .create();
 
+    /**
+     * Moves values a stale config file can carry into states this build mishandles back to their safe values -
+     * the safe-config migration inherited from Vulcanizator's survival layer (survey V-02: its loader migrates
+     * stale configs to safe values at load, logged, instead of trusting whatever an older build or another
+     * renderer wrote). Called from {@link #load(String)} after parsing; {@code load} re-saves the file, so a
+     * migrated value persists. Pure and static so the rules are unit-testable without a config file. A rule is
+     * added only for a value this tree's own record shows is mishandled - never on suspicion.
+     *
+     * @return one description per migration applied, in rule order; empty when nothing had to move
+     */
+    public static List<String> migrateUnsafeValues(SodiumGameOptions config) {
+        List<String> applied = new ArrayList<>();
+        // BH-33 (see the field's javadoc): under the Vulkan renderer a non-zero fade duration would be
+        // reported as active while the backend has no per-section age to supply, so every section would fade
+        // by the same amount. The options page already pins the value to 0 in both directions; a file written
+        // by another renderer or an older version is the one carrier that can still bring a non-zero value in.
+        if (config.quality.chunkFadeInDuration != 0) {
+            applied.add("quality.chunk_fade_in_duration " + config.quality.chunkFadeInDuration + " -> 0"
+                    + " (BH-33: no per-section age source under the Vulkan renderer)");
+            config.quality.chunkFadeInDuration = 0;
+        }
+        return applied;
+    }
+
     public static SodiumGameOptions load() {
         return load(DEFAULT_FILE_NAME);
     }
@@ -175,6 +200,10 @@ public class SodiumGameOptions implements OptionStorage<SodiumGameOptions> {
 
         // TODO Embeddium: Remove the field completely in 0.4
         config.notifications.forceDisableDonationPrompts = false;
+
+        for (String migration : migrateUnsafeValues(config)) {
+            LOGGER.warn("Migrated a stale config value to its safe value: {}", migration);
+        }
 
         try {
             if(resaveConfig)
