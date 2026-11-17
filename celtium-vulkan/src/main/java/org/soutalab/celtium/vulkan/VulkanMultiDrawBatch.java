@@ -18,9 +18,28 @@ import org.embeddedt.embeddium.impl.gl.tessellation.GlTessellation;
  * unsorted passes are drawn. Sorted passes supply a byte offset into the region's own index buffer.
  */
 public final class VulkanMultiDrawBatch extends MultiDrawBatch {
+    /** Bytes in one {@code VkDrawIndexedIndirectCommand}; the renderer's packet stride. */
+    static final int INDIRECT_COMMAND_BYTES = 20;
+
     private final int[] baseVertices;
     private final int[] elementCounts;
     private final long[] elementPointers;
+
+    /**
+     * The retained indirect packets (item 350, VulkanMod-Next D25's draw-list retention in celtium's
+     * shape): a batch is immutable once the assembler has filled it - a rebuild is a new object - so its
+     * packet block is a pure function of its commands and is encoded once, then copied into each frame's
+     * recording page instead of being re-encoded per offer. Two variants exist because the packet's
+     * firstIndex field depends on which index buffer the pass reads: the shared quad buffer (firstIndex
+     * always 0) or the region's own arena (firstIndex = elementPointer / 4). Native buffers, freed by
+     * {@link #delete()} - the storage deletes a cached batch when it replaces it, so the retention's
+     * lifetime is the batch's own.
+     */
+    private java.nio.ByteBuffer sharedPackets;
+    private java.nio.ByteBuffer regionPackets;
+    private boolean packetsEncoded;
+    /** Whether every command reads the shared quad buffer at offset 0; computed with the packets. */
+    private boolean unsortedOffsetsClean;
 
     public VulkanMultiDrawBatch(int capacity) {
         super(capacity);
@@ -65,7 +84,72 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
 
     @Override
     public void delete() {
-        // The arrays are owned by the Java heap and released with this object.
+        // The arrays are owned by the Java heap and released with this object; the retained packets are
+        // native memory and are freed here.
+        if (this.sharedPackets != null) {
+            org.lwjgl.system.MemoryUtil.memFree(this.sharedPackets);
+            this.sharedPackets = null;
+        }
+        if (this.regionPackets != null) {
+            org.lwjgl.system.MemoryUtil.memFree(this.regionPackets);
+            this.regionPackets = null;
+        }
+        this.packetsEncoded = false;
+    }
+
+    /** Encodes both packet variants and the offset verdict, once. The encoding is byte-identical to the
+     * renderer's per-offer loop: same fields, same order, same native byte order (memPutInt). */
+    private void encodePackets() {
+        int size = this.size();
+        boolean clean = true;
+        if (size > 0) {
+            this.sharedPackets = org.lwjgl.system.MemoryUtil.memAlloc(size * INDIRECT_COMMAND_BYTES);
+            this.regionPackets = org.lwjgl.system.MemoryUtil.memAlloc(size * INDIRECT_COMMAND_BYTES);
+            long shared = org.lwjgl.system.MemoryUtil.memAddress(this.sharedPackets);
+            long region = org.lwjgl.system.MemoryUtil.memAddress(this.regionPackets);
+            for (int i = 0; i < size; i++) {
+                long byteOffset = this.elementPointers[i];
+                if (byteOffset != 0) {
+                    clean = false;
+                }
+                long s = shared + (long) i * INDIRECT_COMMAND_BYTES;
+                org.lwjgl.system.MemoryUtil.memPutInt(s, this.elementCounts[i]);
+                org.lwjgl.system.MemoryUtil.memPutInt(s + 4, 1);
+                org.lwjgl.system.MemoryUtil.memPutInt(s + 8, 0);
+                org.lwjgl.system.MemoryUtil.memPutInt(s + 12, this.baseVertices[i]);
+                org.lwjgl.system.MemoryUtil.memPutInt(s + 16, 0);
+                long r = region + (long) i * INDIRECT_COMMAND_BYTES;
+                org.lwjgl.system.MemoryUtil.memPutInt(r, this.elementCounts[i]);
+                org.lwjgl.system.MemoryUtil.memPutInt(r + 4, 1);
+                org.lwjgl.system.MemoryUtil.memPutInt(r + 8, (int) (byteOffset / 4));
+                org.lwjgl.system.MemoryUtil.memPutInt(r + 12, this.baseVertices[i]);
+                org.lwjgl.system.MemoryUtil.memPutInt(r + 16, 0);
+            }
+        }
+        this.unsortedOffsetsClean = clean;
+        this.packetsEncoded = true;
+    }
+
+    /**
+     * {@return the native address of this batch's retained packet block for the given index source,
+     * encoding it on first use}. Only meaningful for a non-empty batch; the renderer's offer path
+     * returns before this point for an empty one.
+     */
+    long retainedPacketsAddress(boolean regionIndex) {
+        if (!this.packetsEncoded) {
+            encodePackets();
+        }
+        java.nio.ByteBuffer packets = regionIndex ? this.regionPackets : this.sharedPackets;
+        return packets == null ? 0L : org.lwjgl.system.MemoryUtil.memAddress(packets);
+    }
+
+    /** {@return whether every command's element pointer is 0 (the unsorted indirect path's condition),
+     * computed once with the retained packets instead of by a per-offer walk}. */
+    boolean unsortedOffsetsClean() {
+        if (!this.packetsEncoded) {
+            encodePackets();
+        }
+        return this.unsortedOffsetsClean;
     }
 
     public int baseVertex(int command) {

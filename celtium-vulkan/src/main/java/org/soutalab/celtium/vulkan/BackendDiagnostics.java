@@ -155,6 +155,8 @@ final class BackendDiagnostics {
                 + " terrainBatchMillis=" + (b.terrain.indirectBatchNanos() / 1_000_000L)
                 + " terrainIndirectSetupMillis=" + (b.terrain.indirectSetupNanos() / 1_000_000L)
                 + " terrainIndirectBindMillis=" + (b.terrain.indirectBindNanos() / 1_000_000L)
+                + " terrainPacketCacheHits=" + b.terrain.terrainIndirectPacketCacheHits()
+                + " terrainBindSkips=" + b.terrain.terrainIndirectBindSkips()
                 + " terrainPassBeginMillis=" + (b.terrainPassBeginNanos / 1_000_000L)
                 + " terrainUniformMillis=" + (b.terrainUniformNanos / 1_000_000L)
                 + " polygonOffsetFillEnabled=" + b.rasterState.polygonOffsetFillEnabled()

@@ -1110,6 +1110,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // the frame is OpenGL's.
             return;
         }
+        // Item 350: a new pass recording starts with an unknown index binding - whatever earlier work
+        // in this command buffer bound is not the terrain path's to assume. The renderer's bind belief
+        // is consulted only inside this pass's region loop, and every terrain bind inside it goes
+        // through the renderer, so forgetting here keeps the belief exact.
+        this.terrain.invalidateIndexBufferBelief();
         // Everything the game drew before this pass - the sky, the void plane under the horizon, the sun and moon -
         // was recorded as immediate work and is still queued. GL's order is call order, so those draws belong to the
         // frame BEFORE the terrain: leaving them queued submits them after this pass, and the void plane then paints

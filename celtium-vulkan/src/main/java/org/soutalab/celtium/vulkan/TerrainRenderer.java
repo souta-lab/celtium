@@ -302,10 +302,30 @@ public final class TerrainRenderer {
 
 
 
+    /**
+     * The index buffer this renderer believes is bound on the command buffer being recorded, or null
+     * when that is unknown (item 350). Every terrain-path bind goes through {@link #bindIndexBuffer},
+     * which maintains the belief, so within one terrain pass the belief is exact: the pass head forgets
+     * it ({@link #invalidateIndexBufferBelief}, called by the backend at the head of its pass recording
+     * and by {@link #beginIndirectRecording}), and the only other index binders (UI, dynamic meshes,
+     * model instances) record outside the region loop - before the first terrain bind of a pass, when
+     * the belief is still null, or after the last one, when it is never consulted again. The indirect
+     * path consults the belief to skip a bind that would rebind the buffer already bound: on the 325
+     * fixture protocol that bind was 89 of the batch timer's 172 ms, more than the draw calls
+     * themselves, because most offers in a pass read the one shared index buffer.
+     */
+    private VulkanBuffer indexBufferBelief;
+
+    /** Forgets which index buffer is bound; called at terrain pass heads and at recording begins. */
+    void invalidateIndexBufferBelief() {
+        this.indexBufferBelief = null;
+    }
+
     /** Binds a 32-bit index buffer, for the same reason the vertex binding takes the command buffer. */
     void bindIndexBuffer(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, VulkanBuffer buffer) {
         org.lwjgl.vulkan.VK10.vkCmdBindIndexBuffer(commandBuffer, buffer.buffer(), 0L,
                 org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
+        this.indexBufferBelief = buffer;
     }
 
 
@@ -445,6 +465,14 @@ public final class TerrainRenderer {
     private static final boolean SOLID_TERRAIN = Boolean.getBoolean("celtium.vulkan.solidTerrain");
     private static final boolean TERRAIN_INDIRECT_COMPARE =
             Boolean.getBoolean("celtium.vulkan.indirectCompare");
+    /** Item 350's packet retention, on unless asked off: the batch's retained packets are copied into
+     * the recording page instead of being re-encoded per offer. */
+    private static final boolean INDIRECT_PACKET_RETENTION =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.indirectPacketRetention", "true"));
+    /** Item 350's index-bind skip, on unless asked off: an offer whose index buffer is already bound
+     * (see {@link #indexBufferBelief}) does not rebind it. */
+    private static final boolean INDIRECT_BIND_SKIP =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.indirectBindSkip", "true"));
 
     /** The indirect command buffer and how often it had to grow. */
     /** The pass counters, so a fallback records its draw count where the pass does. */
@@ -470,6 +498,21 @@ public final class TerrainRenderer {
     private VulkanHostBuffer indirectBuffer;
     private long indirectGrowths;
     private String lastTerrainIndirectFallback = "none";
+
+    /** Offers whose packets came from the batch's retained encoding, and offers that skipped their
+     * index bind because the buffer was already bound (item 350). */
+    private long terrainIndirectPacketCacheHits;
+    private long terrainIndirectBindSkips;
+
+    /** {@return terrainIndirectPacketCacheHits}. */
+    long terrainIndirectPacketCacheHits() {
+        return this.terrainIndirectPacketCacheHits;
+    }
+
+    /** {@return terrainIndirectBindSkips}. */
+    long terrainIndirectBindSkips() {
+        return this.terrainIndirectBindSkips;
+    }
 
     /** Batches offered to the indirect path, calls recorded, draws carried by them, and clamp events. */
     private long terrainIndirectOffers;
@@ -599,12 +642,15 @@ public final class TerrainRenderer {
         // commands do not all read the same one is drawn directly.
         boolean regionIndex = sortedPass;
         if (!regionIndex) {
-            for (int i = 0; i < size; i++) {
-                if (batch.indexByteOffset(i) != 0) {
-                    this.terrainIndirectFallbacks++;
-                    this.lastTerrainIndirectFallback = "unsorted batch with a non-zero index offset (mixed sources)";
-                    return false;
-                }
+            // The batch is immutable, so the walk's verdict is computed once with its retained packets
+            // (item 350) instead of per offer; the fallback accounting is unchanged.
+            boolean offsetsClean = INDIRECT_PACKET_RETENTION
+                    ? batch.unsortedOffsetsClean()
+                    : walkOffsetsClean(batch, size);
+            if (!offsetsClean) {
+                this.terrainIndirectFallbacks++;
+                this.lastTerrainIndirectFallback = "unsorted batch with a non-zero index offset (mixed sources)";
+                return false;
             }
         }
         if (regionIndex && resources.indexArena == null) {
@@ -623,9 +669,14 @@ public final class TerrainRenderer {
             return false;
         }
         this.indirectSetupNanos += System.nanoTime() - setupStarted;
+        VulkanBuffer wantedIndexBuffer = regionIndex ? resources.indexArena.buffer()
+                : sharedIndexBuffers.get(primitiveType);
         long bindStarted = System.nanoTime();
-        this.bindIndexBuffer(commandBuffer, regionIndex ? resources.indexArena.buffer()
-                : sharedIndexBuffers.get(primitiveType));
+        if (!INDIRECT_BIND_SKIP || wantedIndexBuffer == null || wantedIndexBuffer != this.indexBufferBelief) {
+            this.bindIndexBuffer(commandBuffer, wantedIndexBuffer);
+        } else {
+            this.terrainIndirectBindSkips++;
+        }
         this.indirectBindNanos += System.nanoTime() - bindStarted;
         // Write the packets directly into the mapped page at the draw's offset: the HOST_COHERENT memory needs no
         // flush, and vkQueueSubmit's host-side ordering guarantee publishes these record-time writes to the
@@ -634,16 +685,24 @@ public final class TerrainRenderer {
         // itself is ~1 vkCmd).
         long packets = this.indirectBuffer.mappedAddress() + this.indirectBatchOffset;
         long packetStarted = System.nanoTime();
-        for (int i = 0; i < size; i++) {
-            long byteOffset = batch.indexByteOffset(i);
-            long packet = packets + (long) i * INDIRECT_COMMAND_BYTES;
-            MemoryUtil.memPutInt(packet, batch.elementCount(i));
-            MemoryUtil.memPutInt(packet + 4, 1);
-            MemoryUtil.memPutInt(packet + 8, regionIndex ? (int) (byteOffset / 4) : 0);
-            MemoryUtil.memPutInt(packet + 12, batch.baseVertex(i));
-            // firstInstance stays 0: drawIndirectFirstInstance is enabled only when the device reported it, and this
-            // path never needs anything but 0.
-            MemoryUtil.memPutInt(packet + 16, 0);
+        if (INDIRECT_PACKET_RETENTION) {
+            // The batch's retained encoding, copied in one native copy (item 350). The bytes are the
+            // loop below's output, produced once per batch instead of once per offer; the compare path
+            // further down reads them back from this page exactly as it did the loop's.
+            MemoryUtil.memCopy(batch.retainedPacketsAddress(regionIndex), packets, (long) needed);
+            this.terrainIndirectPacketCacheHits++;
+        } else {
+            for (int i = 0; i < size; i++) {
+                long byteOffset = batch.indexByteOffset(i);
+                long packet = packets + (long) i * INDIRECT_COMMAND_BYTES;
+                MemoryUtil.memPutInt(packet, batch.elementCount(i));
+                MemoryUtil.memPutInt(packet + 4, 1);
+                MemoryUtil.memPutInt(packet + 8, regionIndex ? (int) (byteOffset / 4) : 0);
+                MemoryUtil.memPutInt(packet + 12, batch.baseVertex(i));
+                // firstInstance stays 0: drawIndirectFirstInstance is enabled only when the device reported it, and this
+                // path never needs anything but 0.
+                MemoryUtil.memPutInt(packet + 16, 0);
+            }
         }
         this.indirectPacketNanos += System.nanoTime() - packetStarted;
         if (TERRAIN_INDIRECT_COMPARE) {
@@ -682,11 +741,24 @@ public final class TerrainRenderer {
         return true;
     }
 
+    /** The per-offer offset walk the retained verdict replaces (item 350): every command must read the
+     * shared index buffer at offset 0 for the batch to be drawable with one indirect call. */
+    private static boolean walkOffsetsClean(VulkanMultiDrawBatch batch, int size) {
+        for (int i = 0; i < size; i++) {
+            if (batch.indexByteOffset(i) != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /** Called after this command slot's prior fence completed and its command buffer was reset successfully. */
     void beginIndirectRecording(int slot) {
         if (slot < 0 || slot >= FrameSubmissionScheduler.FRAME_SLOTS) {
             throw new IllegalArgumentException("invalid indirect recording slot: " + slot);
         }
+        // A new recording starts from a reset command buffer: nothing is bound on it yet.
+        this.invalidateIndexBufferBelief();
         while (this.indirectSlotPages.size() <= slot) {
             this.indirectSlotPages.add(new ArrayList<>());
         }
