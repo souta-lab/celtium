@@ -82,6 +82,48 @@ public class VulkanGlTexture {
     public String currentLayoutName() { return "GENERAL"; }
 }
 '''
+    # The real RenderTargetRegistry is fastutil-backed bookkeeping; the harness never calls
+    # syncNamedTargets, so this stub carries only the API surface that method compiles against
+    # in PublishedFrameTextures, with the real signatures.
+    registry = '''package org.soutalab.celtium.vulkan;
+import java.util.Collection;
+import java.util.Collections;
+public class RenderTargetRegistry {
+    public enum TargetKind {
+        COLOR(false, false), DEPTH(true, false), SHADOW_DEPTH(true, true);
+        private final boolean depth;
+        private final boolean comparisonSampler;
+        TargetKind(boolean depth, boolean comparisonSampler) {
+            this.depth = depth;
+            this.comparisonSampler = comparisonSampler;
+        }
+        public boolean isDepth() { return this.depth; }
+        public boolean usesComparisonSampler() { return this.comparisonSampler; }
+    }
+    public enum TargetFormatClass {
+        RGBA8_UNORM(37, false), DEPTH32_FLOAT(126, true);
+        private final int vkFormat;
+        private final boolean depth;
+        TargetFormatClass(int vkFormat, boolean depth) { this.vkFormat = vkFormat; this.depth = depth; }
+        public int vkFormat() { return this.vkFormat; }
+        public boolean isDepth() { return this.depth; }
+    }
+    public record NamedTargetSpec(String name, TargetKind kind, TargetFormatClass formatClass) {
+    }
+    public static final class NamedTargetState {
+        public long image() { return 0L; }
+        public long view() { return 0L; }
+        public long sampler() { return 0L; }
+        public int width() { return 0; }
+        public int height() { return 0; }
+        public int layout() { return 0; }
+        public long generation() { return 0L; }
+    }
+    public Collection<NamedTargetSpec> namedTargets() { return Collections.emptyList(); }
+    public int namedTargetCount() { return 0; }
+    public NamedTargetState namedTargetState(String name) { return null; }
+}
+'''
     gl11 = '''package org.lwjgl.opengl;
 public class GL11 {
     public static int calls;
@@ -115,6 +157,7 @@ public class GL45C {
         (pkg / 'OffTargetRenderedNameContract.java').write_text(harness)
         (pkg / 'PublishedFrameTextures.java').write_text(census)
         (pkg / 'VulkanGlTexture.java').write_text(gltexture)
+        (pkg / 'RenderTargetRegistry.java').write_text(registry)
         (pkg / 'gl').mkdir()
         (pkg / 'gl' / 'CeltiumGlStub.java').write_text(stub)
         lwjgl = root / 'org/lwjgl/opengl'
