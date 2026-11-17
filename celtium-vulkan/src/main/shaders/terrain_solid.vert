@@ -220,7 +220,8 @@ vec4 _sample_lightmap(sampler2D lightMap, vec2 uv) {
 // the maximum over sources. The result is a light LEVEL; main() turns it into a lightmap
 // coordinate so the raised light takes the game's own lightmap colour, exactly as a baked torch
 // does. The gather's contract (DynamicLightService in the common module): positions are
-// camera-relative, the same space as worldPosition.
+// camera-relative; the header's yzw carries the camera position so the absolute world position
+// can be rebased into that frame.
 // --------------------------------------------------------------------------------------------
 float _dynamic_block_light(vec3 position) {
     float level = 0.0;
@@ -279,8 +280,6 @@ void main() {
     }
     vec4 lightColor = _sample_lightmap(u_LightTex, lightCoord);
     v_Color = _vert_color * lightColor;
-    // TEMP item-326 dual probe: red = baked block-light coord, green = dynamic level.
-    v_Color = vec4(clamp(lightCoord.x / 240.0, 0.0, 1.0), clamp(dynamicLevel / 15.0, 0.0, 1.0), 0.0, 1.0);
     v_RdhFactor.rgb *= lightColor.rgb;
 
     int corner = gl_VertexIndex & 3;

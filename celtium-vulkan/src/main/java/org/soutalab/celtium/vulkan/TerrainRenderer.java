@@ -864,8 +864,6 @@ public final class TerrainRenderer {
     /** Whether the current frame's sources have been gathered into {@link #dynamicLightBuffers}. */
     private boolean dynamicLightsGathered = true;
 
-    /** TEMP item-326 diagnostic: whether the first non-empty gather has been printed yet. */
-    private boolean dynamicLightDiagPrinted;
 
     /** {@return the native handle of the dynamic light buffer of a descriptor slot, or 0 before creation}. */
     long dynamicLightBufferHandle(int slot) {
@@ -899,13 +897,6 @@ public final class TerrainRenderer {
         double cameraZ = (double) camera.intZ + camera.fracZ;
         if (this.dynamicLightService != null) {
             count = this.dynamicLightService.gatherLights(this.dynamicLightScratch, cameraX, cameraY, cameraZ);
-        }
-        if (count > 0 && !this.dynamicLightDiagPrinted) {
-            this.dynamicLightDiagPrinted = true;
-            System.out.println("CELTIUM_DYNAMIC_LIGHT_DIAG count=" + count
-                    + " first=(" + this.dynamicLightScratch[0] + "," + this.dynamicLightScratch[1] + ","
-                    + this.dynamicLightScratch[2] + "," + this.dynamicLightScratch[3] + ")"
-                    + " camera=(" + cameraX + "," + cameraY + "," + cameraZ + ")");
         }
         ByteBuffer block = buffer.mapped();
         block.putFloat(0, (float) count);
