@@ -1307,6 +1307,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
         Pair pair = this.chainPairs.remove(identity);
         if (pair != null) {
             if (pair.colorImage != 0L) this.chainPairOwners.remove(pair.colorImage);
+            long[] extras = pair.extraColorImageSnapshot();
+            if (extras != null) {
+                for (long extra : extras) {
+                    this.chainPairOwners.remove(extra);
+                }
+            }
             pair.retire();
         }
     }
@@ -1408,6 +1414,88 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
+     * Makes the identity's chain pair exist at the requested size, holding colour images for {@code attachments}
+     * colour targets: the pair itself first (its ensure retires any extras at the old size), then the tuple.
+     * The owners map learns the extra images here, so the sampling side's membership questions
+     * ({@link #isChainPairColorImage}, {@link #chainPairIdentityForImage}) cover every slot, not only slot 0.
+     */
+    public void ensureChainPairColors(long identity, int attachments, int width, int height) {
+        Pair pair = chainPairFor(identity);
+        long[] before = pair.extraColorImageSnapshot();
+        ensureChainPair(identity, width, height);
+        pair.ensureExtras(attachments);
+        long[] after = pair.extraColorImageSnapshot();
+        if (before != null) {
+            for (long extra : before) {
+                boolean kept = false;
+                if (after != null) {
+                    for (long live : after) {
+                        if (live == extra) {
+                            kept = true;
+                            break;
+                        }
+                    }
+                }
+                if (!kept) {
+                    this.chainPairOwners.remove(extra);
+                }
+            }
+        }
+        if (after != null) {
+            for (long extra : after) {
+                this.chainPairOwners.put(extra, identity);
+            }
+        }
+    }
+
+    /** {@return how many colour targets the identity's chain pair holds images for}, 0 before the pair exists. */
+    public int chainPairColorCount(long identity) {
+        Pair pair = existingChainPair(identity);
+        return pair == null ? 0 : pair.colorCount();
+    }
+
+    /** The colour image at a slot of the identity's chain pair (0 = the pair's own), or 0 when it holds none. */
+    public long chainPairColorImageAt(long identity, int slot) {
+        checkAlive();
+        Pair pair = existingChainPair(identity);
+        return pair == null ? 0L : pair.colorImageAt(slot);
+    }
+
+    /** The colour view at a slot of the identity's chain pair (0 = the pair's own), or 0 when it holds none. */
+    public long chainPairColorViewAt(long identity, int slot) {
+        checkAlive();
+        Pair pair = existingChainPair(identity);
+        return pair == null ? 0L : pair.colorViewAt(slot);
+    }
+
+    /**
+     * {@return which tuple images the identity's chain pair holds now}, 0 before any are built. Changes whenever
+     * the extras are built or dropped, at any count: a framebuffer over the previous views names dead images.
+     */
+    public long chainPairColorTupleGeneration(long identity) {
+        Pair pair = existingChainPair(identity);
+        return pair == null ? 0L : pair.extraGeneration;
+    }
+
+    /** Records the acquire barriers the identity's tuple images need before a pass attaches them. */
+    public void recordChainPairColorAcquire(long identity, VkCommandBuffer command) {
+        checkAlive();
+        Pair pair = existingChainPair(identity);
+        if (pair != null) {
+            pair.recordExtrasAcquire(command);
+        }
+    }
+
+    /** Records a layout an extra colour image of the identity's pair has been moved to by the sampling side. */
+    public void noteChainPairColorLayoutAt(long identity, int slot, int layout) {
+        checkAlive();
+        Pair pair = existingChainPair(identity);
+        if (pair != null) {
+            pair.noteExtraColorLayout(slot, layout);
+        }
+    }
+
+    /**
      * A framebuffer can be sampled before its first draw (vanilla's empty outline target does this every frame).
      * Initialize the owned attachment, rather than manufacturing an unwritten texture mirror under its name.
      * This one-time bootstrap completes before publication; subsequent sampling adds no submission or wait.
@@ -1464,6 +1552,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
+     * {@return whether a pair's colour tuple must be rebuilt for a draw into {@code attachments} targets};
+     * package-private and static so the rule is pinned without a device; see
+     * {@link Pair#celtium$extrasNeedRebuild(int, int)}.
+     */
+    static boolean celtium$extrasNeedRebuild(int liveExtraCount, int attachments) {
+        return Pair.celtium$extrasNeedRebuild(liveExtraCount, attachments);
+    }
+
+    /**
      * Defers the identity's chain-pair clear to the pass that follows it; see {@link Pair#PAIR_CLEAR_IN_PASS}.
      *
      * @return whether a pair existed and the clear was deferred
@@ -1491,6 +1588,18 @@ public final class GllessFrameTarget implements FrameImageTarget {
     public boolean recordChainPairDeferredClear(long identity, VkCommandBuffer command, int width, int height) {
         Pair pair = existingChainPair(identity);
         return pair != null && pair.recordDeferredClearAttachments(command, width, height);
+    }
+
+    /**
+     * The deferred clear for a pass that attaches {@code colorAttachments} colour targets; see
+     * {@link Pair#recordDeferredClearAttachments(VkCommandBuffer, int, int, int)}.
+     *
+     * @return whether a clear was waiting
+     */
+    public boolean recordChainPairDeferredClear(long identity, VkCommandBuffer command, int width, int height,
+            int colorAttachments) {
+        Pair pair = existingChainPair(identity);
+        return pair != null && pair.recordDeferredClearAttachments(command, width, height, colorAttachments);
     }
 
     /**
@@ -1689,6 +1798,20 @@ public final class GllessFrameTarget implements FrameImageTarget {
         private long depthView;
         private int width;
         private int height;
+        /**
+         * Extra colour images for attachment slots 1.. of a multi-target framebuffer (index = slot - 1), with
+         * their memories, views and recorded layouts. Null until the pair is asked to hold more than one colour
+         * target; the pair's own colour image above is always slot 0. The extras live and die with the pair's
+         * current size: {@link #ensure} retires them with the rest, and the caller re-asks for the count it needs
+         * after every ensure, which is what keeps a resized pair from holding images at the old extent.
+         */
+        private long[] extraColorImages;
+        private long[] extraColorMemories;
+        private long[] extraColorViews;
+        private int[] extraColorLayouts;
+        private int extraColorCount;
+        /** Bumps whenever the extras are built or dropped, so a framebuffer cache over their views can key on it. */
+        private long extraGeneration;
         /** False until the first clear has moved the pair out of the layout it was created in (UNDEFINED). */
         private boolean acquired;
         /**
@@ -1735,6 +1858,247 @@ public final class GllessFrameTarget implements FrameImageTarget {
         /** {@return whether the images this pair holds now have not had their one legal-use self-test yet}. */
         private boolean needsSelfTest() {
             return exists() && this.selfTests < this.creations;
+        }
+
+        /**
+         * {@return whether the live extras are not the ones a draw into {@code attachments} colour targets needs}.
+         * Pure and static so the rule is pinned without a device: the extras are exactly slots 1..attachments-1,
+         * and their extent is the pair's own (a resize retires them, so a live set is never at a stale size).
+         */
+        static boolean celtium$extrasNeedRebuild(int liveExtraCount, int attachments) {
+            return liveExtraCount != Math.max(0, attachments - 1);
+        }
+
+        /** {@return how many colour targets this pair currently holds images for} (1 = the pair's own only). */
+        private int colorCount() {
+            return exists() ? 1 + this.extraColorCount : 0;
+        }
+
+        /** The colour image at a slot of this pair (0 = its own), or 0 when that slot holds none. */
+        private long colorImageAt(int slot) {
+            if (slot == 0) {
+                return this.colorImage;
+            }
+            return slot > 0 && slot - 1 < this.extraColorCount ? this.extraColorImages[slot - 1] : 0L;
+        }
+
+        /** The colour view at a slot of this pair (0 = its own), or 0 when that slot holds none. */
+        private long colorViewAt(int slot) {
+            if (slot == 0) {
+                return this.colorView;
+            }
+            return slot > 0 && slot - 1 < this.extraColorCount ? this.extraColorViews[slot - 1] : 0L;
+        }
+
+        /** {@return a copy of the live extra colour images} (slots 1..), or null when there are none. */
+        private long[] extraColorImageSnapshot() {
+            if (this.extraColorCount == 0) {
+                return null;
+            }
+            long[] snapshot = new long[this.extraColorCount];
+            System.arraycopy(this.extraColorImages, 0, snapshot, 0, this.extraColorCount);
+            return snapshot;
+        }
+
+        /**
+         * Makes this pair hold colour images for {@code attachments} colour targets at its current size, building
+         * the extras on first ask and rebuilding them when the count changes. Asking for 1 drops the extras.
+         * A pair that does not exist yet is left alone - the extras belong to a pair, and {@link #ensure} is what
+         * creates one; the window ensures the pair first and the colours second.
+         */
+        private void ensureExtras(int attachments) {
+            checkAlive();
+            if (!exists()) {
+                return;
+            }
+            if (!celtium$extrasNeedRebuild(this.extraColorCount, attachments)) {
+                return;
+            }
+            retireExtras();
+            if (attachments <= 1) {
+                return;
+            }
+            try {
+                int extras = attachments - 1;
+                long[] images = new long[extras];
+                long[] memories = new long[extras];
+                long[] views = new long[extras];
+                int[] layouts = new int[extras];
+                for (int i = 0; i < extras; i++) {
+                    long[] allocated = allocateImage(true, this.width, this.height);
+                    images[i] = allocated[0];
+                    memories[i] = allocated[1];
+                    views[i] = allocated[2];
+                    layouts[i] = VK_IMAGE_LAYOUT_UNDEFINED;
+                }
+                this.extraColorImages = images;
+                this.extraColorMemories = memories;
+                this.extraColorViews = views;
+                this.extraColorLayouts = layouts;
+                this.extraColorCount = extras;
+                this.extraGeneration++;
+            } catch (RuntimeException | LinkageError error) {
+                // No half tuple is left behind, as in ensure(): whatever was adopted is released in place because
+                // nothing has recorded against it yet.
+                releaseExtras();
+                throw error;
+            }
+        }
+
+        /**
+         * Hands the extras to {@link VulkanRetireQueue}, like {@link #retire()} does for the pair's own images:
+         * a rebuild runs mid-session, while a command buffer that recorded against these views may still be open.
+         */
+        private void retireExtras() {
+            if (this.extraColorCount == 0) {
+                return;
+            }
+            VkDevice device = context.device();
+            final long[] images = this.extraColorImages;
+            final long[] memories = this.extraColorMemories;
+            final long[] views = this.extraColorViews;
+            final int count = this.extraColorCount;
+            this.extraColorImages = null;
+            this.extraColorMemories = null;
+            this.extraColorViews = null;
+            this.extraColorLayouts = null;
+            this.extraColorCount = 0;
+            this.extraGeneration++;
+            for (int i = 0; i < count; i++) {
+                final long view = views[i];
+                final long image = images[i];
+                final long memory = memories[i];
+                if (view != VK_NULL_HANDLE) {
+                    VulkanRetireQueue.retire(() -> vkDestroyImageView(device, view, null));
+                }
+                if (image != VK_NULL_HANDLE) {
+                    VulkanRetireQueue.retire(() -> vkDestroyImage(device, image, null));
+                }
+                if (memory != VK_NULL_HANDLE) {
+                    VulkanRetireQueue.retire(() -> VulkanContext.freeMemory(device, memory));
+                }
+            }
+        }
+
+        /** Destroys the extras in place; only for images no command buffer can still name (see {@link #release()}). */
+        private void releaseExtras() {
+            if (this.extraColorImages == null) {
+                this.extraColorCount = 0;
+                return;
+            }
+            VkDevice device = context.device();
+            for (int i = 0; i < this.extraColorCount; i++) {
+                if (this.extraColorViews[i] != VK_NULL_HANDLE) {
+                    vkDestroyImageView(device, this.extraColorViews[i], null);
+                }
+                if (this.extraColorImages[i] != VK_NULL_HANDLE) {
+                    vkDestroyImage(device, this.extraColorImages[i], null);
+                }
+                if (this.extraColorMemories[i] != VK_NULL_HANDLE) {
+                    VulkanContext.freeMemory(device, this.extraColorMemories[i]);
+                }
+            }
+            this.extraColorImages = null;
+            this.extraColorMemories = null;
+            this.extraColorViews = null;
+            this.extraColorLayouts = null;
+            this.extraColorCount = 0;
+        }
+
+        /** Records a layout an extra colour image has been moved to, by whoever moved it (the sampling side). */
+        private void noteExtraColorLayout(int slot, int layout) {
+            if (slot > 0 && slot - 1 < this.extraColorCount) {
+                this.extraColorLayouts[slot - 1] = layout;
+            }
+        }
+
+        /**
+         * Moves every extra colour image that is not in {@code GENERAL} there, in one barrier call: the move a
+         * pass that attaches them requires first, because the pass declares {@code GENERAL} as their initial
+         * layout. An extra the sampling side left read-only comes back the same way - its recorded layout is the
+         * barrier's source, which is why the sampling side reports its moves through
+         * {@link #noteExtraColorLayout}.
+         */
+        private void recordExtrasAcquire(VkCommandBuffer command) {
+            if (this.extraColorCount == 0) {
+                return;
+            }
+            int pending = 0;
+            for (int i = 0; i < this.extraColorCount; i++) {
+                if (this.extraColorLayouts[i] != VK_IMAGE_LAYOUT_GENERAL) {
+                    pending++;
+                }
+            }
+            if (pending == 0) {
+                return;
+            }
+            int queueFamily = context.queueFamilyIndex();
+            try (MemoryStack stack = stackPush()) {
+                VkImageMemoryBarrier.Buffer barriers = VkImageMemoryBarrier.calloc(pending, stack);
+                int index = 0;
+                for (int i = 0; i < this.extraColorCount; i++) {
+                    int from = this.extraColorLayouts[i];
+                    if (from == VK_IMAGE_LAYOUT_GENERAL) {
+                        continue;
+                    }
+                    VkImageMemoryBarrier barrier = barriers.get(index++);
+                    barrier.sType$Default()
+                            .image(this.extraColorImages[i])
+                            .oldLayout(from).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                            .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                            .srcAccessMask(from == VK_IMAGE_LAYOUT_UNDEFINED ? 0
+                                    : VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
+                            .dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT
+                                    | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+                    barrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+                    this.extraColorLayouts[i] = VK_IMAGE_LAYOUT_GENERAL;
+                }
+                vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barriers);
+            }
+        }
+
+        /**
+         * Makes the extras' out-of-pass clears visible to the pass that follows, layouts unchanged: the extras are
+         * cleared in {@code GENERAL} (not the transfer layout the pair's own colour may use), so this is the
+         * transfer-write to attachment dependency {@link #recordClearToAttachment} records for the pair's images,
+         * for the extras alone.
+         */
+        private void recordExtrasClearToAttachment(VkCommandBuffer command) {
+            if (this.extraColorCount == 0) {
+                return;
+            }
+            int queueFamily = context.queueFamilyIndex();
+            try (MemoryStack stack = stackPush()) {
+                VkImageMemoryBarrier.Buffer barriers = VkImageMemoryBarrier.calloc(this.extraColorCount, stack);
+                for (int i = 0; i < this.extraColorCount; i++) {
+                    VkImageMemoryBarrier barrier = barriers.get(i);
+                    barrier.sType$Default()
+                            .image(this.extraColorImages[i])
+                            .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                            .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                            .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                            .dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT
+                                    | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+                    barrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+                }
+                vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barriers);
+            }
+        }
+
+        /** Clears every extra colour image with the pair's current clear colour, in {@code GENERAL}. */
+        private void clearExtras(VkCommandBuffer command, VkClearColorValue color,
+                VkImageSubresourceRange range) {
+            if (this.extraColorCount == 0) {
+                return;
+            }
+            recordExtrasAcquire(command);
+            range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
+            for (int i = 0; i < this.extraColorCount; i++) {
+                vkCmdClearColorImage(command, this.extraColorImages[i], VK_IMAGE_LAYOUT_GENERAL, color, range);
+            }
+            recordExtrasClearToAttachment(command);
         }
 
         /**
@@ -1859,6 +2223,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 depth.depth((float) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth()).stencil(0);
                 range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
                 vkCmdClearDepthStencilImage(command, this.depthImage, DEPTH_TRANSFER_LAYOUT, depth, range);
+
+                // The extra targets of a multi-target framebuffer clear with the same colour: glClear clears
+                // every draw buffer, and a tuple whose later slots kept undefined content would hand the
+                // composite exactly the garbage GL says cannot be there.
+                clearExtras(command, color, range);
 
                 recordClearToAttachment(command);
                 this.clears++;
@@ -2001,6 +2370,18 @@ public final class GllessFrameTarget implements FrameImageTarget {
          * over the pixels that exist, so it cannot change the picture.
          */
         boolean recordDeferredClearAttachments(VkCommandBuffer command, int width, int height) {
+            return recordDeferredClearAttachments(command, width, height, 1);
+        }
+
+        /**
+         * The deferred clear for a pass with {@code colorAttachments} colour attachments: glClear clears every
+         * draw buffer with the one latched colour, so a multi-target pass gets one clear attachment per colour
+         * slot it attaches, then the depth. The count is clamped to the tuple this pair actually holds - a clear
+         * attachment naming a slot the pass does not attach is a validation error, and the caller passes the
+         * count of the pass it began, which the window sized from this same tuple.
+         */
+        boolean recordDeferredClearAttachments(VkCommandBuffer command, int width, int height,
+                int colorAttachments) {
             if (!this.deferredClearPending) {
                 return false;
             }
@@ -2013,18 +2394,21 @@ public final class GllessFrameTarget implements FrameImageTarget {
             if (clearWidth <= 0 || clearHeight <= 0) {
                 return false;
             }
+            int colours = Math.max(1, Math.min(colorAttachments, 1 + this.extraColorCount));
             try (MemoryStack stack = stackPush()) {
                 org.lwjgl.vulkan.VkClearAttachment.Buffer attachments =
-                        org.lwjgl.vulkan.VkClearAttachment.calloc(2, stack);
-                org.lwjgl.vulkan.VkClearAttachment colour = attachments.get(0);
-                colour.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
-                colour.colorAttachment(0);
-                colour.clearValue().color()
-                        .float32(0, this.deferredClearColour[0])
-                        .float32(1, this.deferredClearColour[1])
-                        .float32(2, this.deferredClearColour[2])
-                        .float32(3, this.deferredClearColour[3]);
-                org.lwjgl.vulkan.VkClearAttachment depth = attachments.get(1);
+                        org.lwjgl.vulkan.VkClearAttachment.calloc(colours + 1, stack);
+                for (int slot = 0; slot < colours; slot++) {
+                    org.lwjgl.vulkan.VkClearAttachment colour = attachments.get(slot);
+                    colour.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
+                    colour.colorAttachment(slot);
+                    colour.clearValue().color()
+                            .float32(0, this.deferredClearColour[0])
+                            .float32(1, this.deferredClearColour[1])
+                            .float32(2, this.deferredClearColour[2])
+                            .float32(3, this.deferredClearColour[3]);
+                }
+                org.lwjgl.vulkan.VkClearAttachment depth = attachments.get(colours);
                 depth.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
                 depth.colorAttachment(0);
                 depth.clearValue().depthStencil().depth(this.deferredClearDepth).stencil(0);
@@ -2075,6 +2459,14 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     depth.depth((float) depthValue).stencil(0);
                     range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
                     vkCmdClearDepthStencilImage(command, this.depthImage, DEPTH_TRANSFER_LAYOUT, depth, range);
+                }
+                if ((mask & 0x4000) != 0 && this.extraColorCount > 0) {
+                    VkClearColorValue extraColor = VkClearColorValue.calloc(stack);
+                    extraColor.float32(0, rgba[0]);
+                    extraColor.float32(1, rgba[1]);
+                    extraColor.float32(2, rgba[2]);
+                    extraColor.float32(3, rgba[3]);
+                    clearExtras(command, extraColor, range);
                 }
                 recordClearToAttachment(command);
                 this.clears++;
@@ -2375,6 +2767,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             if (depthMemory != VK_NULL_HANDLE) {
                 VulkanRetireQueue.retire(() -> VulkanContext.freeMemory(device, depthMemory));
             }
+            retireExtras();
             // The handles are gone from this pair; release() now only forgets the size and layouts.
             release();
         }
@@ -2387,6 +2780,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
          */
         private void release() {
             VkDevice device = context.device();
+            releaseExtras();
             this.colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             this.depthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             if (this.colorView != VK_NULL_HANDLE) {
@@ -2422,7 +2816,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
         private String summary() {
             return this.label + "(size=" + (exists() ? this.width + "x" + this.height : "none")
                     + " creations=" + this.creations + " clears=" + this.clears
-                    + " selfTests=" + this.selfTests + " acquired=" + this.acquired + ")";
+                    + " selfTests=" + this.selfTests + " acquired=" + this.acquired
+                    + " colors=" + colorCount() + ")";
         }
     }
 
