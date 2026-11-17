@@ -34,7 +34,7 @@
 //     binding 1 : sampler2D u_LightTex   (light map, VERTEX stage only)
 //     binding 2 : sampler2D u_BlockTex   (block atlas, FRAGMENT stage only - not declared here)
 //     binding 3 : uniform block "CeltiumDynamicLights" (std140, 528 bytes) - item 326
-//                   offset  0 : vec4  u_DynamicLightInfo    x = live source count (0..32)
+//                   offset  0 : vec4  u_DynamicLightInfo    x = live source count (0..32), yzw = camera position (world)
 //                   offset 16 : vec4  u_DynamicLights[32]   xyz = camera-relative position,
 //                                                         w = light level 0..15
 //
@@ -103,7 +103,7 @@ layout(set = 0, binding = 1) uniform sampler2D u_LightTex;
 // zero the raise in main() adds nothing and the lightmap sample is the baked one, unchanged.
 // --------------------------------------------------------------------------------------------
 layout(std140, set = 0, binding = 3) uniform CeltiumDynamicLights {
-    vec4 u_DynamicLightInfo;  // offset  0: x = live source count (0..32)
+    vec4 u_DynamicLightInfo;  // offset  0: x = live source count (0..32), yzw = camera position (world), yzw = camera position (world)
     vec4 u_DynamicLights[32]; // offset 16: xyz = camera-relative position, w = light level 0..15
 } dynLights;
 
@@ -218,12 +218,15 @@ vec4 _sample_lightmap(sampler2D lightMap, vec2 uv) {
 float _dynamic_block_light(vec3 position) {
     float level = 0.0;
     int count = int(dynLights.u_DynamicLightInfo.x + 0.5);
+    // The sources are camera-relative; the header's yzw carries the camera position so this
+    // vertex's absolute world position can be measured in the same frame.
+    vec3 relativePosition = position - dynLights.u_DynamicLightInfo.yzw;
     for (int i = 0; i < 32; i++) {
         if (i >= count) {
             break;
         }
         vec4 source = dynLights.u_DynamicLights[i];
-        level = max(level, source.w - distance(position, source.xyz));
+        level = max(level, source.w - distance(relativePosition, source.xyz));
     }
     return level;
 }

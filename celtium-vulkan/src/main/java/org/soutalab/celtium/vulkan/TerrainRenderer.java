@@ -792,6 +792,9 @@ public final class TerrainRenderer {
     /** Whether the current frame's sources have been gathered into {@link #dynamicLightBuffers}. */
     private boolean dynamicLightsGathered = true;
 
+    /** TEMP item-326 diagnostic: whether the first non-empty gather has been printed yet. */
+    private boolean dynamicLightDiagPrinted;
+
     /** {@return the native handle of the dynamic light buffer of a descriptor slot, or 0 before creation}. */
     long dynamicLightBufferHandle(int slot) {
         VulkanUniformBuffer[] buffers = this.dynamicLightBuffers;
@@ -804,8 +807,10 @@ public final class TerrainRenderer {
 
     /**
      * Gathers this frame's dynamic light sources into the current slot's buffer. Runs on the first
-     * uniform write of the frame, which is the first call that knows the frame's camera; the positions
-     * the service returns are camera-relative, the space the terrain shader's worldPosition lives in.
+     * uniform write of the frame, which is the first call that knows the frame's camera. The positions
+     * the service returns are camera-relative while the terrain shader's worldPosition is absolute
+     * world space, so the header carries the camera position next to the count and the shader
+     * rebases the vertex position into the sources' frame before measuring distance.
      */
     private void gatherDynamicLights(CameraTransform camera) {
         VulkanUniformBuffer[] buffers = this.dynamicLightBuffers;
@@ -817,17 +822,24 @@ public final class TerrainRenderer {
             return;
         }
         int count = 0;
+        double cameraX = (double) camera.intX + camera.fracX;
+        double cameraY = (double) camera.intY + camera.fracY;
+        double cameraZ = (double) camera.intZ + camera.fracZ;
         if (this.dynamicLightService != null) {
-            double cameraX = (double) camera.intX + camera.fracX;
-            double cameraY = (double) camera.intY + camera.fracY;
-            double cameraZ = (double) camera.intZ + camera.fracZ;
             count = this.dynamicLightService.gatherLights(this.dynamicLightScratch, cameraX, cameraY, cameraZ);
+        }
+        if (count > 0 && !this.dynamicLightDiagPrinted) {
+            this.dynamicLightDiagPrinted = true;
+            System.out.println("CELTIUM_DYNAMIC_LIGHT_DIAG count=" + count
+                    + " first=(" + this.dynamicLightScratch[0] + "," + this.dynamicLightScratch[1] + ","
+                    + this.dynamicLightScratch[2] + "," + this.dynamicLightScratch[3] + ")"
+                    + " camera=(" + cameraX + "," + cameraY + "," + cameraZ + ")");
         }
         ByteBuffer block = buffer.mapped();
         block.putFloat(0, (float) count);
-        block.putFloat(4, 0.0f);
-        block.putFloat(8, 0.0f);
-        block.putFloat(12, 0.0f);
+        block.putFloat(4, (float) cameraX);
+        block.putFloat(8, (float) cameraY);
+        block.putFloat(12, (float) cameraZ);
         for (int i = 0; i < count; i++) {
             int base = 16 + i * 16;
             block.putFloat(base, this.dynamicLightScratch[i * 4]);
