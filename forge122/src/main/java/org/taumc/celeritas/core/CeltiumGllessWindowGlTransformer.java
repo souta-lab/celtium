@@ -16,8 +16,10 @@ import org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin;
  * other LWJGL classes and kept their real behaviour: {@code GLFW.glfwSwapBuffers} /
  * {@code GLFW.glfwMakeContextCurrent} and {@code SDLVideo.SDL_GL_SwapWindow} / {@code SDLVideo.SDL_GL_MakeCurrent}.
  * In GL-less mode none of them has a legitimate role - the window was created {@code GLFW_NO_API} for a Vulkan
- * surface and the Vulkan swapchain is the only presenter - so a call here is either a leftover of a code path
- * that assumed a GL renderer, or a mod probing a surface celtium deliberately does not provide. Item 349's
+ * surface and the Vulkan swapchain is the only presenter - so a call here is the window layer's own context
+ * bookkeeping (measured: Cleanroom's window builder calls {@code SDL_GL_MakeCurrent} during creation), a
+ * leftover of a code path that assumed a GL renderer, or a mod probing a surface celtium deliberately does
+ * not provide. Item 349's
  * diagnosis (issue #423) names this the largest identified hole in the interposition: the reporter's JVM died
  * inside {@code nvoglv64.dll} in the first frame of a world join, and world transitions are exactly when
  * swap/context-current calls cluster. Which call faulted is still unknown (the native stack sits in the

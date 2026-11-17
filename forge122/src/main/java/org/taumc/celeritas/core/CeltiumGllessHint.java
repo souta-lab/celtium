@@ -1103,10 +1103,13 @@ public final class CeltiumGllessHint {
      * <p>The guard ({@code CeltiumGllessWindowGlTransformer}) replaces GLFW's swap/context-current and SDL's GL
      * swap/make-current with a call here, because in GL-less mode those calls have no presenter role and would
      * otherwise execute in the real GL driver against a {@code GLFW_NO_API} window - the hole item 349's
-     * diagnosis named in the NVIDIA world-join crash (issue #423). A healthy GL-less run is expected to record
-     * zero of these; the first hit of each name prints its caller stack, so the log names whoever still attempts
-     * one instead of the next crash doing it. One line per name per process is the limiter: the counts carry the
-     * rest, and {@link #windowGlCensus()} prints them on the shared exit line.
+     * diagnosis named in the NVIDIA world-join crash (issue #423). The first hit of each name prints its caller
+     * stack, so the log names whoever attempts one instead of the next crash doing it. One line per name per
+     * process is the limiter: the counts carry the rest, and {@link #windowGlCensus()} prints them on the shared
+     * exit line. Measured on the item-352 fixture leg: the one caller in the shipped path is Cleanroom's own
+     * window builder, which calls {@code SDL_GL_MakeCurrent} three times during window creation - the window
+     * layer's own context bookkeeping, answered here so it never crosses into the driver; the swaps recorded
+     * zero in that leg.
      */
     private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> WINDOW_GL_CALLS =
             new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
