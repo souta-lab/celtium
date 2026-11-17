@@ -192,6 +192,13 @@ public abstract class RenderSectionManager {
         TerrainGpuBackend nativeBackend = TerrainBackendLoader.createVulkan(configuration, this.chunkRenderer,
                 this.regions, backendReasons);
         System.out.println("[Celtium] CELTIUM_WORLD_LOAD step: Vulkan terrain backend done");
+        // One line naming the native-GL-adjacent libraries already loaded in this process (item 352, from the
+        // item 349 diagnosis): celtium's own surface cannot reach the real GL driver, so when a report's JVM dies
+        // inside the driver, this line is what says whether a library that binds GL itself was even present.
+        String nativeSurface = NativeGlSurfaceCensus.line();
+        if (nativeSurface != null) {
+            System.out.println("[Celtium] CELTIUM_NATIVE_GL_SURFACE worldLoad " + nativeSurface);
+        }
         this.terrainBackendSelection = TerrainBackendSelection.select(nativeBackend, backendReasons);
         this.terrainBackend = nativeBackend;
 

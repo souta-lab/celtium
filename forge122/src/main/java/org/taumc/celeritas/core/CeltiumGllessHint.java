@@ -1097,6 +1097,70 @@ public final class CeltiumGllessHint {
         return "names=" + entries.size() + " [" + line + "]";
     }
 
+    /**
+     * Calls of each window-layer GL entry point the window guard answered, by entry name.
+     *
+     * <p>The guard ({@code CeltiumGllessWindowGlTransformer}) replaces GLFW's swap/context-current and SDL's GL
+     * swap/make-current with a call here, because in GL-less mode those calls have no presenter role and would
+     * otherwise execute in the real GL driver against a {@code GLFW_NO_API} window - the hole item 349's
+     * diagnosis named in the NVIDIA world-join crash (issue #423). A healthy GL-less run is expected to record
+     * zero of these; the first hit of each name prints its caller stack, so the log names whoever still attempts
+     * one instead of the next crash doing it. One line per name per process is the limiter: the counts carry the
+     * rest, and {@link #windowGlCensus()} prints them on the shared exit line.
+     */
+    private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> WINDOW_GL_CALLS =
+            new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
+
+    /** Entry names whose first hit already printed its caller stack. */
+    private static final java.util.Set<String> WINDOW_GL_FIRST_HITS =
+            java.util.Collections.synchronizedSet(new java.util.HashSet<String>());
+
+    /** Records one guarded window-layer GL call. Emitted by the window guard's replacement bodies only. */
+    public static void noteWindowGlCall(String entry) {
+        java.util.concurrent.atomic.AtomicLong count = WINDOW_GL_CALLS.get(entry);
+        if (count == null) {
+            count = WINDOW_GL_CALLS.computeIfAbsent(entry, key -> new java.util.concurrent.atomic.AtomicLong());
+        }
+        count.incrementAndGet();
+        if (WINDOW_GL_FIRST_HITS.add(entry)) {
+            // Registers the shared exit-line hook, so the counts print at shutdown even in a run whose
+            // display-list and rewritten-native censuses never fire.
+            noteDisplayListCall();
+            StackTraceElement[] trace = new Throwable().getStackTrace();
+            StringBuilder callers = new StringBuilder();
+            int taken = 0;
+            for (int i = 1; i < trace.length && taken < 8; i++) {
+                String caller = trace[i].getClassName();
+                if (caller.equals(CeltiumGllessHint.class.getName()) || caller.startsWith("org.lwjgl.glfw.")
+                        || caller.startsWith("org.lwjgl.sdl.")) {
+                    continue;
+                }
+                if (taken > 0) {
+                    callers.append(" <- ");
+                }
+                callers.append(caller).append('.').append(trace[i].getMethodName());
+                taken++;
+            }
+            System.out.println("[Celtium] CELTIUM_WINDOW_GL entry=" + entry + " firstHit callers=[" + callers + "]");
+        }
+    }
+
+    /** {@return the window-layer GL census, largest first, for the exit line}. */
+    public static String windowGlCensus() {
+        java.util.List<java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong>> entries =
+                new java.util.ArrayList<java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong>>(
+                        WINDOW_GL_CALLS.entrySet());
+        entries.sort((a, b) -> Long.compare(b.getValue().get(), a.getValue().get()));
+        StringBuilder line = new StringBuilder();
+        for (int i = 0; i < entries.size(); i++) {
+            if (i > 0) {
+                line.append(' ');
+            }
+            line.append(entries.get(i).getKey()).append('=').append(entries.get(i).getValue().get());
+        }
+        return "names=" + entries.size() + " [" + line + "]";
+    }
+
     /** Counts per unrouted native id; sized to the transformer's tracking bound. */
     private static final int[] UNROUTED_COUNTS = new int[4096];
     private static final java.util.concurrent.atomic.AtomicInteger UNROUTED_TOTAL =
@@ -1147,6 +1211,9 @@ public final class CeltiumGllessHint {
                     out.println("CELTIUM_HINT_DISPLAY_LISTS " + displayListCensus());
                     if (!REWRITTEN_CALLS.isEmpty()) {
                         out.println("CELTIUM_TRANSFORM_CENSUS " + rewriteCensus());
+                    }
+                    if (!WINDOW_GL_CALLS.isEmpty()) {
+                        out.println("CELTIUM_WINDOW_GL " + windowGlCensus());
                     }
                 } catch (Throwable ignored) {
                     // A census that cannot be printed must not take the process down on its way out.
