@@ -57,7 +57,8 @@ public final class VulkanModProgramPipeline {
     }
 
     private final VulkanContext context;
-    private final ModGlslTranslator.Result lowered;
+    private final List<ModGlslTranslator.Attribute> attributes;
+    private final List<ModGlslTranslator.SamplerBinding> samplers;
     private final int samplerCount;
     private final int pushBytes;
     /** Whether the pass blends (its render state as built); the readback instrument looks for the blend-off copy. */
@@ -70,11 +71,13 @@ public final class VulkanModProgramPipeline {
     /** Sets one pipeline may hold; a program samples a handful of framebuffer textures that rarely change. */
     private static final int MAX_SETS = 64;
 
-    private VulkanModProgramPipeline(VulkanContext context, ModGlslTranslator.Result lowered) {
+    private VulkanModProgramPipeline(VulkanContext context, List<ModGlslTranslator.Attribute> attributes,
+                                     List<ModGlslTranslator.SamplerBinding> samplers, int pushBytes) {
         this.context = context;
-        this.lowered = lowered;
-        this.samplerCount = lowered.samplers().size();
-        this.pushBytes = lowered.uniformBlockSize();
+        this.attributes = attributes;
+        this.samplers = samplers;
+        this.samplerCount = samplers.size();
+        this.pushBytes = pushBytes;
     }
 
     /**
@@ -107,15 +110,63 @@ public final class VulkanModProgramPipeline {
     /** Builds the pipeline with the render state of {@code like}; throws on a Vulkan failure. */
     public static VulkanModProgramPipeline create(VulkanContext context, ModProgramRegistry.Program program,
                                                   int formatId, VulkanImmediateTexturePipeline like) {
-        VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, program.lowered());
+        ModGlslTranslator.Result lowered = program.lowered();
+        VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, lowered.attributes(), lowered.samplers(),
+                lowered.uniformBlockSize());
         try {
             built.createLayouts();
-            built.createPipeline(program.vertexSpirv(), program.fragmentSpirv(), formatId, like);
+            built.createPipeline(program.vertexSpirv(), program.fragmentSpirv(), formatId,
+                    like.celtium$renderPassHandle(), like.celtium$cull(), like.celtium$depthTest(),
+                    like.celtium$depthWrite(), like.celtium$depthCompareOp(), like.celtium$colorBlend(), true);
         } catch (RuntimeException | LinkageError failure) {
             built.delete();
             throw failure;
         }
         return built;
+    }
+
+    /**
+     * Builds a pipeline for a native fullscreen pass from pre-compiled SPIR-V and explicit pipeline state.
+     * Reuses the same layout, descriptor pool, shader module and prepared-draw path as mod programs.
+     */
+    public static VulkanModProgramPipeline createForNativePass(VulkanContext context,
+                                                               byte[] vertexSpirv,
+                                                               byte[] fragmentSpirv,
+                                                               int samplerCount,
+                                                               int pushBytes,
+                                                               VulkanColorBlendState colorBlend,
+                                                               boolean depthTest,
+                                                               boolean depthWrite,
+                                                               int depthCompareOp,
+                                                               int cull,
+                                                               long renderPass) {
+        if (vertexSpirv == null || fragmentSpirv == null) {
+            throw new IllegalArgumentException("vertex and fragment SPIR-V must be non-null");
+        }
+        List<ModGlslTranslator.Attribute> attrs = List.of(
+                new ModGlslTranslator.Attribute("position", "vec3", 0),
+                new ModGlslTranslator.Attribute("celtium_MultiTexCoord0", "vec2", 1));
+        java.util.ArrayList<ModGlslTranslator.SamplerBinding> bindings = new java.util.ArrayList<>(samplerCount);
+        for (int i = 0; i < samplerCount; i++) {
+            bindings.add(new ModGlslTranslator.SamplerBinding("input" + i, "sampler2D", i));
+        }
+        VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, attrs,
+                java.util.Collections.unmodifiableList(bindings), Math.max(0, pushBytes));
+        try {
+            built.createLayouts();
+            built.createPipeline(vertexSpirv, fragmentSpirv, VulkanImmediateFormats.POSITION_TEX, renderPass, cull,
+                    depthTest, depthWrite, depthCompareOp,
+                    colorBlend != null ? colorBlend : VulkanColorBlendState.legacy(), false);
+        } catch (RuntimeException | LinkageError failure) {
+            built.delete();
+            throw failure;
+        }
+        return built;
+    }
+
+    /** Creates a prepared draw bound to this pipeline. */
+    public Draw createDraw(ByteBuffer uniforms, long samplerSet, String label, VulkanGlTexture[] inputs) {
+        return new Draw(this, uniforms, samplerSet, label, inputs);
     }
 
     private void createLayouts() {
@@ -156,8 +207,9 @@ public final class VulkanModProgramPipeline {
         }
     }
 
-    private void createPipeline(byte[] vertexSpirv, byte[] fragmentSpirv, int formatId,
-                                VulkanImmediateTexturePipeline like) {
+    private void createPipeline(byte[] vertexSpirv, byte[] fragmentSpirv, int formatId, long renderPass, int cull,
+                                boolean depthTest, boolean depthWrite, int depthCompareOp,
+                                VulkanColorBlendState colorBlend, boolean honourModProgramFlags) {
         ByteBuffer vertexCode = MemoryUtil.memAlloc(vertexSpirv.length).put(vertexSpirv).flip();
         ByteBuffer fragmentCode = MemoryUtil.memAlloc(fragmentSpirv.length).put(fragmentSpirv).flip();
         long vertexModule = VK_NULL_HANDLE;
@@ -182,7 +234,7 @@ public final class VulkanModProgramPipeline {
                     : VulkanImmediateTexturePipeline.POSITION_TEX_BYTES;
             VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
             binding.get(0).binding(0).stride(stride).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
-            List<ModGlslTranslator.Attribute> declared = this.lowered.attributes();
+            List<ModGlslTranslator.Attribute> declared = this.attributes;
             VkVertexInputAttributeDescription.Buffer attributes =
                     VkVertexInputAttributeDescription.calloc(declared.size(), stack);
             for (int i = 0; i < declared.size(); i++) {
@@ -203,7 +255,6 @@ public final class VulkanModProgramPipeline {
                     .sType$Default().topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
             VkPipelineViewportStateCreateInfo viewport = VkPipelineViewportStateCreateInfo.calloc(stack).sType$Default()
                     .viewportCount(1).scissorCount(1);
-            int cull = like.celtium$cull();
             VkPipelineRasterizationStateCreateInfo raster = VkPipelineRasterizationStateCreateInfo.calloc(stack)
                     .sType$Default().polygonMode(VK_POLYGON_MODE_FILL).depthBiasEnable(true)
                     .cullMode(VulkanCullState.vkCullMode(cull)).frontFace(VulkanCullState.vkFrontFace(cull))
@@ -212,24 +263,25 @@ public final class VulkanModProgramPipeline {
                     .sType$Default().rasterizationSamples(VK_SAMPLE_COUNT_1_BIT);
             // Lab switch -Dceltium.vulkan.modProgramDepth=false: no depth test or write for mod passes, to separate a
             // full-screen quad's depth from its colour when a pass misbehaves (round 8 of the GTCEu bloom evidence).
-            boolean depthOn = !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramDepth", "true"));
+            boolean depthOn = !honourModProgramFlags
+                    || !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modProgramDepth", "true"));
             VkPipelineDepthStencilStateCreateInfo depth = VkPipelineDepthStencilStateCreateInfo.calloc(stack)
-                    .sType$Default().depthTestEnable(depthOn && like.celtium$depthTest())
-                    .depthWriteEnable(depthOn && like.celtium$depthWrite()).depthCompareOp(like.celtium$depthCompareOp());
-            VulkanColorBlendState colorBlend = like.celtium$colorBlend();
-            if (FORCE_ADDITIVE_OPAQUE && !colorBlend.blend()) {
+                    .sType$Default().depthTestEnable(depthOn && depthTest)
+                    .depthWriteEnable(depthOn && depthWrite).depthCompareOp(depthCompareOp);
+            VulkanColorBlendState effectiveBlend = colorBlend;
+            if (honourModProgramFlags && FORCE_ADDITIVE_OPAQUE && !effectiveBlend.blend()) {
                 // Lab: a blend-off pass drawn additively instead, so a black result says "it read black" and a
                 // saturated one says "it read the picture and the output was lost" (round 8f of the bloom evidence).
-                colorBlend = VulkanColorBlendState.of(true, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE,
+                effectiveBlend = VulkanColorBlendState.of(true, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE,
                         VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE, VK_BLEND_OP_ADD, VK_BLEND_OP_ADD, 0xF);
             }
-            this.blends = colorBlend.blend();
+            this.blends = effectiveBlend.blend();
             VkPipelineColorBlendAttachmentState.Buffer blendAttachment = VkPipelineColorBlendAttachmentState.calloc(1, stack);
-            blendAttachment.get(0).blendEnable(colorBlend.blend())
-                    .srcColorBlendFactor(colorBlend.srcColor()).dstColorBlendFactor(colorBlend.dstColor())
-                    .colorBlendOp(colorBlend.colorOp())
-                    .srcAlphaBlendFactor(colorBlend.srcAlpha()).dstAlphaBlendFactor(colorBlend.dstAlpha())
-                    .alphaBlendOp(colorBlend.alphaOp()).colorWriteMask(colorBlend.writeMask());
+            blendAttachment.get(0).blendEnable(effectiveBlend.blend())
+                    .srcColorBlendFactor(effectiveBlend.srcColor()).dstColorBlendFactor(effectiveBlend.dstColor())
+                    .colorBlendOp(effectiveBlend.colorOp())
+                    .srcAlphaBlendFactor(effectiveBlend.srcAlpha()).dstAlphaBlendFactor(effectiveBlend.dstAlpha())
+                    .alphaBlendOp(effectiveBlend.alphaOp()).colorWriteMask(effectiveBlend.writeMask());
             VkPipelineColorBlendStateCreateInfo blend = VkPipelineColorBlendStateCreateInfo.calloc(stack).sType$Default()
                     .logicOpEnable(false).pAttachments(blendAttachment);
             // The same dynamic states as the immediate variants, so the group loop's per-group commands stay valid.
@@ -240,7 +292,7 @@ public final class VulkanModProgramPipeline {
             create.get(0).sType$Default().pStages(stages).pVertexInputState(vertexInput)
                     .pInputAssemblyState(assembly).pViewportState(viewport).pRasterizationState(raster)
                     .pMultisampleState(multisample).pDepthStencilState(depth).pColorBlendState(blend)
-                    .pDynamicState(dynamic).layout(this.pipelineLayout).renderPass(like.celtium$renderPassHandle())
+                    .pDynamicState(dynamic).layout(this.pipelineLayout).renderPass(renderPass)
                     .subpass(0);
             check(VulkanContext.createGraphicsPipelines(this.context.device(), create, handle),
                     "vkCreateGraphicsPipelines(mod program)");
@@ -266,10 +318,33 @@ public final class VulkanModProgramPipeline {
             return 0L;
         }
         StringBuilder key = new StringBuilder();
-        for (VulkanGlTexture texture : textures) {
-            key.append(texture.key()).append(',');
+        long[] views = new long[this.samplerCount];
+        long[] samplers = new long[this.samplerCount];
+        int[] layouts = new int[this.samplerCount];
+        for (int i = 0; i < this.samplerCount; i++) {
+            key.append(textures[i].key()).append(',');
+            views[i] = textures[i].view();
+            samplers[i] = textures[i].sampler();
+            layouts[i] = textures[i].samplingLayout();
         }
-        Long cached = this.setsByTextures.get(key.toString());
+        return allocateOrReuseSamplerSet(key.toString(), views, samplers, layouts);
+    }
+
+    /** Allocates or reuses a descriptor set binding explicit image views, samplers and layouts. */
+    public long samplerSetForHandles(long[] views, long[] samplers, int[] layouts, long[] generations) {
+        if (this.samplerCount == 0) {
+            return 0L;
+        }
+        StringBuilder key = new StringBuilder();
+        for (int i = 0; i < this.samplerCount; i++) {
+            key.append(views[i]).append(':').append(samplers[i]).append(':').append(layouts[i])
+                    .append(':').append(generations[i]).append(',');
+        }
+        return allocateOrReuseSamplerSet(key.toString(), views, samplers, layouts);
+    }
+
+    private long allocateOrReuseSamplerSet(String key, long[] views, long[] samplers, int[] layouts) {
+        Long cached = this.setsByTextures.get(key);
         if (cached != null) {
             return cached.longValue();
         }
@@ -287,14 +362,13 @@ public final class VulkanModProgramPipeline {
             VkDescriptorImageInfo.Buffer images = VkDescriptorImageInfo.calloc(this.samplerCount, stack);
             VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(this.samplerCount, stack);
             for (int i = 0; i < this.samplerCount; i++) {
-                images.get(i).imageLayout(textures[i].samplingLayout()).imageView(textures[i].view())
-                        .sampler(textures[i].sampler());
+                images.get(i).imageLayout(layouts[i]).imageView(views[i]).sampler(samplers[i]);
                 writes.get(i).sType$Default().dstSet(set).dstBinding(i)
                         .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(1)
                         .pImageInfo(VkDescriptorImageInfo.create(images.address(i), 1));
             }
             vkUpdateDescriptorSets(this.context.device(), writes, null);
-            this.setsByTextures.put(key.toString(), Long.valueOf(set));
+            this.setsByTextures.put(key, Long.valueOf(set));
             return set;
         }
     }
@@ -399,7 +473,7 @@ public final class VulkanModProgramPipeline {
     }
 
     public List<ModGlslTranslator.SamplerBinding> samplers() {
-        return this.lowered.samplers();
+        return this.samplers;
     }
 
     /** Destroys the Vulkan objects; the caller retires it after the frames that used it completed. */
