@@ -98,6 +98,110 @@ class ModGlslTranslatorTest {
         }
     }
 
+    /**
+     * The shape GLSM's fixed-function generator emits (written for the test in that shape, not copied from the
+     * mod): GLSL 330 core - attributes carrying their own {@code layout(location = N)}, plain {@code in}/{@code out}
+     * varyings, the fragment stage's own {@code out vec4}, a {@code texture()} call, and the three matrices of the
+     * FFP vertex stage (192 bytes of push block). The old declaration recognition saw none of the {@code in}/{@code out}
+     * globals, so they reached shaderc with no location and SPIR-V refused the program (leg 16, program=16).
+     */
+    private static final String FFP_VERTEX = """
+            #version 330 core
+            layout(location = 0) in vec3 a_Position;
+            layout(location = 1) in vec4 a_Color;
+            layout(location = 2) in vec4 a_TexCoord0;
+            uniform mat4 u_ModelViewMatrix;
+            uniform mat4 u_ProjectionMatrix;
+            uniform mat4 u_MVPMatrix;
+            out vec4 v_Color;
+            out vec4 v_TexCoord0;
+            void main() {
+                gl_Position = u_MVPMatrix * vec4(a_Position, 1.0);
+                v_Color = a_Color;
+                v_TexCoord0 = a_TexCoord0;
+            }
+            """;
+
+    private static final String FFP_FRAGMENT = """
+            #version 330 core
+            in vec4 v_Color;
+            in vec4 v_TexCoord0;
+            uniform sampler2D u_Sampler0;
+            out vec4 fragColor;
+            void main() {
+                fragColor = texture(u_Sampler0, v_TexCoord0.st) * v_Color;
+            }
+            """;
+
+    @Test
+    void lowersModernInOutGlobalsAndShadercCompilesBothStages() {
+        ModPushConstantLimit.noteDevice(256);
+        try {
+            ModGlslTranslator.Result result = ModGlslTranslator.translate(FFP_VERTEX, FFP_FRAGMENT);
+            assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+            // The attributes keep the locations the source declared: the mod's own vertex setup binds by them.
+            assertEquals(List.of(new ModGlslTranslator.Attribute("a_Position", "vec3", 0),
+                    new ModGlslTranslator.Attribute("a_Color", "vec4", 1),
+                    new ModGlslTranslator.Attribute("a_TexCoord0", "vec4", 2)), result.attributes());
+            assertEquals(List.of("v_Color", "v_TexCoord0"), result.varyings());
+            assertEquals(192, result.uniformBlockSize());
+            assertEquals(1, result.fragOutputCount());
+            assertTrue(result.vertex().contains("layout(location = 0) out vec4 v_Color;"), result.vertex());
+            assertTrue(result.vertex().contains("layout(location = 1) out vec4 v_TexCoord0;"), result.vertex());
+            assertTrue(result.fragment().contains("layout(location = 0) in vec4 v_Color;"), result.fragment());
+            assertTrue(result.fragment().contains("layout(location = 0) out vec4 fragColor;"), result.fragment());
+            // The stage declared its own output, so the lowered gl_FragColor output is not emitted beside it.
+            assertFalse(result.fragment().contains("celtium_FragColor"), result.fragment());
+            assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+            assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+        } finally {
+            ModPushConstantLimit.forgetDeviceForTest();
+        }
+    }
+
+    @Test
+    void honoursAnExplicitVaryingLocationFromEitherStageAndKeepsInterpolation() {
+        String vertex = """
+                #version 330 core
+                layout(location = 0) in vec3 a_Position;
+                flat out vec2 v_LineStart;
+                out vec4 v_Color;
+                void main() {
+                    gl_Position = vec4(a_Position, 1.0);
+                    v_LineStart = vec2(0.0);
+                    v_Color = vec4(1.0);
+                }
+                """;
+        String fragment = """
+                #version 330 core
+                layout(location = 3) flat in vec2 v_LineStart;
+                in vec4 v_Color;
+                out vec4 fragColor;
+                void main() { fragColor = v_Color + vec4(v_LineStart, 0.0, 1.0); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        // The fragment stage's number binds the pair; the unnumbered varying takes the first free location.
+        assertTrue(result.vertex().contains("layout(location = 3) flat out vec2 v_LineStart;"), result.vertex());
+        assertTrue(result.fragment().contains("layout(location = 3) flat in vec2 v_LineStart;"), result.fragment());
+        assertTrue(result.vertex().contains("layout(location = 0) out vec4 v_Color;"), result.vertex());
+        assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void refusesConflictingVaryingLocationsAcrossStages() {
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(
+                "#version 330 core\nlayout(location = 1) out vec4 v_Data;\n"
+                        + "void main() { gl_Position = vec4(0.0); v_Data = vec4(1.0); }",
+                "#version 330 core\nlayout(location = 2) in vec4 v_Data;\nout vec4 fragColor;\n"
+                        + "void main() { fragColor = v_Data; }");
+        assertFalse(result.ok());
+        assertTrue(result.failure().contains("v_Data"), result.failure());
+        assertTrue(result.failure().contains("location 1"), result.failure());
+        assertTrue(result.failure().contains("2 in the fragment stage"), result.failure());
+    }
+
     @Test
     void refusesABlockAboveTheSelectedDevicesLimitNamingBothNumbers() {
         ModPushConstantLimit.noteDevice(256);

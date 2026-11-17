@@ -22,6 +22,12 @@ import java.util.regex.Pattern;
  * <ul>
  * <li>{@code attribute} -> {@code layout(location=N) in}, N in declaration order; {@code varying} -> matched
  * {@code out}/{@code in} locations by name across the two stages.</li>
+ * <li>The modern spelling of the same interface (GLSL 330 / ES 3.00 sources, measured: GLSM's fixed-function
+ * generator): a vertex {@code in} is an attribute, a vertex {@code out} / fragment {@code in} pair is a varying
+ * matched by name, and a fragment {@code out} is a draw-buffer output. A {@code layout(location = N)} the source
+ * already carries is kept - the mod's own vertex setup binds by it - and one stage's number binds the other; a
+ * declaration with no number is given the next free location, so no user input/output reaches shaderc without
+ * one (SPIR-V refuses it otherwise). Interpolation qualifiers ({@code flat} and peers) are carried through.</li>
  * <li>Every non-sampler {@code uniform} -> one std140 push-constant block, at most the selected device's
  * {@code maxPushConstantsSize} ({@link ModPushConstantLimit}), with the byte offset of each member, so the values
  * {@code glUniform*} recorded can be packed. Samplers -> combined image samplers at set 0, bindings 0..n-1.</li>
@@ -67,12 +73,27 @@ public final class ModGlslTranslator {
     private static final Pattern DECLARATION = Pattern.compile(
             "(?<![\\w.])(attribute|varying|uniform)\\s+(?:(?:lowp|mediump|highp)\\s+)?(\\w+)\\s+([^;{}()]+);");
     private static final Pattern DECLARATOR = Pattern.compile("^\\s*(\\w+)\\s*(?:\\[\\s*(\\d+)\\s*\\])?\\s*(?:=.*)?$");
+    /**
+     * A modern global input/output declaration: an optional {@code layout(... location = N ...)}, an optional
+     * interpolation qualifier, {@code in}/{@code out}, optional precision, type, declarators. The declarator part
+     * excludes parentheses, so a function parameter list ({@code const in float f}) can never match.
+     */
+    private static final Pattern IO_DECLARATION = Pattern.compile(
+            "(?<![\\w.])(?:layout\\s*\\([^)]*?location\\s*=\\s*(\\d+)[^)]*?\\)\\s*)?"
+                    + "(?:(flat|smooth|noperspective|centroid)\\s+)?(in|out)\\s+"
+                    + "(?:(?:lowp|mediump|highp)\\s+)?(\\w+)\\s+([^;{}()]+);");
     private static final Pattern MAIN = Pattern.compile("\\bvoid\\s+main\\s*\\(\\s*(?:void)?\\s*\\)");
     private static final Pattern LAID_OUT_IMAGE = Pattern.compile(
             "layout\\s*\\(([^)]*)\\)\\s*uniform\\s+(?:[iu]?image\\w+)\\s+(\\w+)");
     private static final Pattern RESERVED_WORDS_PATTERN = Pattern.compile(
             "\\b(?:texture|sample|buffer|shared|input|output|filter|image|active|common|partition|patch|"
                     + "resource|subroutine|precise|coherent|restrict|readonly|writeonly|superp)\\b");
+    /** The same list for a source of the modern dialect ({@code #version} 300+): there {@code texture} is the
+     * built-in function the source is calling, not a name it chose, so it is not renamed. */
+    private static final Pattern RESERVED_WORDS_MODERN_PATTERN = Pattern.compile(
+            "\\b(?:sample|buffer|shared|input|output|filter|image|active|common|partition|patch|"
+                    + "resource|subroutine|precise|coherent|restrict|readonly|writeonly|superp)\\b");
+    private static final Pattern VERSION_NUMBER = Pattern.compile("^\\s*#\\s*version\\s+(\\d+)", Pattern.MULTILINE);
     private static final Pattern FRAG_COLOR_PATTERN = Pattern.compile("\\bgl_FragColor\\b");
     private static final Pattern FRAG_DATA0_PATTERN = Pattern.compile("\\bgl_FragData\\s*\\[\\s*0\\s*\\]");
     private static final Pattern FRAG_DATA_PATTERN = Pattern.compile("\\bgl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
@@ -98,7 +119,19 @@ public final class ModGlslTranslator {
     private ModGlslTranslator() {
     }
 
-    private record Declaration(String qualifier, String type, String name, int arrayLength) { }
+    /**
+     * One parsed global declaration. {@code explicitLocation} is the source's own {@code layout(location = N)},
+     * or -1 when it declared none; {@code interpolation} is its interpolation qualifier, or "".
+     * The qualifier vocabulary is the legacy one plus {@code fragout} for a fragment stage's own {@code out}:
+     * modern spellings are mapped onto it at parse time (vertex {@code in} -> {@code attribute}, vertex
+     * {@code out} / fragment {@code in} -> {@code varying}, fragment {@code out} -> {@code fragout}).
+     */
+    private record Declaration(String qualifier, String type, String name, int arrayLength, int explicitLocation,
+                               String interpolation) {
+        Declaration(String qualifier, String type, String name, int arrayLength) {
+            this(qualifier, type, name, arrayLength, -1, "");
+        }
+    }
 
     /**
      * Lowers one program; a null vertex source means the program has no vertex shader and gets the fixed-function
@@ -137,12 +170,12 @@ public final class ModGlslTranslator {
                     : "has a layout qualifier, which the storage-image descriptor path does not preserve";
             throw new IllegalArgumentException("image uniform " + laidOutImage.group(2) + " " + reason);
         }
-        String vertex = renameReserved(strip(vertexSource));
-        String fragment = renameReserved(strip(fragmentSource));
+        String vertex = renameReserved(strip(vertexSource), modernDialect(vertexSource));
+        String fragment = renameReserved(strip(fragmentSource), modernDialect(fragmentSource));
         List<Declaration> vertexDecls = new ArrayList<>();
         List<Declaration> fragmentDecls = new ArrayList<>();
-        vertex = removeDeclarations(vertex, vertexDecls);
-        fragment = removeDeclarations(fragment, fragmentDecls);
+        vertex = removeDeclarations(vertex, vertexDecls, true);
+        fragment = removeDeclarations(fragment, fragmentDecls, false);
 
         // Fixed-function inputs become ordinary declarations, so everything below treats them like the mod's own.
         vertex = lowerBuiltins(vertex, vertexDecls, true);
@@ -206,9 +239,12 @@ public final class ModGlslTranslator {
         }
 
         List<Attribute> attributes = new ArrayList<>();
+        java.util.BitSet attributeLocations = new java.util.BitSet();
         for (Declaration d : vertexDecls) {
             if ("attribute".equals(d.qualifier)) {
-                attributes.add(new Attribute(d.name, d.type, attributes.size()));
+                int width = locationsFor(d.type) * Math.max(1, d.arrayLength);
+                attributes.add(new Attribute(d.name, d.type,
+                        claimLocation(attributeLocations, d.explicitLocation, width, "attribute " + d.name)));
             }
         }
         List<String> varyings = new ArrayList<>();
@@ -219,9 +255,13 @@ public final class ModGlslTranslator {
                 varyings.add(d.name);
             }
         }
+        Map<String, Declaration> fragmentVaryings = new LinkedHashMap<>();
         for (Declaration d : fragmentDecls) {
-            if ("varying".equals(d.qualifier) && !vertexVaryings.containsKey(d.name)) {
-                throw new IllegalArgumentException("fragment varying " + d.name + " has no vertex output");
+            if ("varying".equals(d.qualifier)) {
+                if (!vertexVaryings.containsKey(d.name)) {
+                    throw new IllegalArgumentException("fragment varying " + d.name + " has no vertex output");
+                }
+                fragmentVaryings.put(d.name, d);
             }
         }
 
@@ -249,20 +289,27 @@ public final class ModGlslTranslator {
                     .append(a.name).append(";\n");
         }
         StringBuilder fs = new StringBuilder("#version 450\n").append(common);
-        int location = 0;
+        java.util.BitSet varyingLocations = new java.util.BitSet();
         for (Declaration d : vertexVaryings.values()) {
+            Declaration f = fragmentVaryings.get(d.name);
+            int explicit = d.explicitLocation;
+            if (f != null && f.explicitLocation >= 0) {
+                if (explicit >= 0 && explicit != f.explicitLocation) {
+                    throw new IllegalArgumentException("varying " + d.name + " declares location " + explicit
+                            + " in the vertex stage and " + f.explicitLocation + " in the fragment stage");
+                }
+                explicit = f.explicitLocation;
+            }
+            int width = locationsFor(d.type) * Math.max(1, d.arrayLength);
+            int location = claimLocation(varyingLocations, explicit, width, "varying " + d.name);
             String array = d.arrayLength > 0 ? "[" + d.arrayLength + "]" : "";
-            vs.append("layout(location = ").append(location).append(") out ").append(d.type).append(' ')
-                    .append(d.name).append(array).append(";\n");
-            boolean read = false;
-            for (Declaration f : fragmentDecls) {
-                read |= "varying".equals(f.qualifier) && f.name.equals(d.name);
+            vs.append("layout(location = ").append(location).append(") ").append(interpolationPrefix(d))
+                    .append("out ").append(d.type).append(' ').append(d.name).append(array).append(";\n");
+            if (f != null) {
+                String fragmentArray = f.arrayLength > 0 ? "[" + f.arrayLength + "]" : "";
+                fs.append("layout(location = ").append(location).append(") ").append(interpolationPrefix(f))
+                        .append("in ").append(f.type).append(' ').append(f.name).append(fragmentArray).append(";\n");
             }
-            if (read) {
-                fs.append("layout(location = ").append(location).append(") in ").append(d.type).append(' ')
-                        .append(d.name).append(array).append(";\n");
-            }
-            location += locationsFor(d.type) * Math.max(1, d.arrayLength);
         }
         // Draw buffers beyond the first lower to their own outputs (MRT): gl_FragData[n] becomes the output at
         // location n. The scan runs on the unlowered fragment so the indices are the source's own.
@@ -276,12 +323,47 @@ public final class ModGlslTranslator {
             }
             fragDataIndices.add(index);
         }
-        int fragOutputCount = Math.max(1, fragDataIndices.isEmpty() ? 1 : fragDataIndices.last() + 1);
-        fs.append("layout(location = 0) out vec4 celtium_FragColor;\n");
-        for (int index : fragDataIndices) {
-            if (index > 0) {
-                fs.append("layout(location = ").append(index).append(") out vec4 celtium_FragData")
-                        .append(index).append(";\n");
+        int legacyOutputCount = Math.max(1, fragDataIndices.isEmpty() ? 1 : fragDataIndices.last() + 1);
+        int fragOutputCount = legacyOutputCount;
+        List<Declaration> fragOutputs = new ArrayList<>();
+        for (Declaration d : fragmentDecls) {
+            if ("fragout".equals(d.qualifier)) {
+                fragOutputs.add(d);
+            }
+        }
+        if (fragOutputs.isEmpty()) {
+            fs.append("layout(location = 0) out vec4 celtium_FragColor;\n");
+            for (int index : fragDataIndices) {
+                if (index > 0) {
+                    fs.append("layout(location = ").append(index).append(") out vec4 celtium_FragData")
+                            .append(index).append(";\n");
+                }
+            }
+        } else {
+            // The stage declares its own outputs (the GLSL 330 spelling). The lowered gl_FragColor output is
+            // emitted only when the body still writes it, and the declared outputs take the locations after it.
+            java.util.BitSet outputLocations = new java.util.BitSet();
+            boolean legacyUsed = FRAG_COLOR_PATTERN.matcher(fragment).find() || !fragDataIndices.isEmpty();
+            if (legacyUsed) {
+                outputLocations.set(0, legacyOutputCount);
+                fs.append("layout(location = 0) out vec4 celtium_FragColor;\n");
+                for (int index : fragDataIndices) {
+                    if (index > 0) {
+                        fs.append("layout(location = ").append(index).append(") out vec4 celtium_FragData")
+                                .append(index).append(";\n");
+                    }
+                }
+            } else {
+                fragOutputCount = 0;
+            }
+            for (Declaration d : fragOutputs) {
+                int width = Math.max(1, d.arrayLength);
+                int location = claimLocation(outputLocations, d.explicitLocation, width,
+                        "fragment output " + d.name);
+                String array = d.arrayLength > 0 ? "[" + d.arrayLength + "]" : "";
+                fs.append("layout(location = ").append(location).append(") ").append(interpolationPrefix(d))
+                        .append("out ").append(d.type).append(' ').append(d.name).append(array).append(";\n");
+                fragOutputCount = Math.max(fragOutputCount, location + width);
             }
         }
 
@@ -326,8 +408,17 @@ public final class ModGlslTranslator {
             "centroid", "flat", "layout", "superp", "in", "out");
     private static final String RENAMED = "celtium_r_";
 
-    private static String renameReserved(String source) {
-        Matcher m = RESERVED_WORDS_PATTERN.matcher(source);
+    /** {@return whether the source declares a {@code #version} of the modern dialect (300 or above)}. */
+    private static boolean modernDialect(String source) {
+        if (source == null) {
+            return false;
+        }
+        Matcher m = VERSION_NUMBER.matcher(source);
+        return m.find() && Integer.parseInt(m.group(1)) >= 300;
+    }
+
+    private static String renameReserved(String source, boolean modernDialect) {
+        Matcher m = (modernDialect ? RESERVED_WORDS_MODERN_PATTERN : RESERVED_WORDS_PATTERN).matcher(source);
         if (!m.find()) {
             return source;
         }
@@ -357,7 +448,7 @@ public final class ModGlslTranslator {
         return EXTENSION.matcher(s).replaceAll("");
     }
 
-    private static String removeDeclarations(String source, List<Declaration> out) {
+    private static String removeDeclarations(String source, List<Declaration> out, boolean vertexStage) {
         Matcher m = DECLARATION.matcher(source);
         StringBuilder rest = new StringBuilder();
         while (m.find()) {
@@ -374,7 +465,37 @@ public final class ModGlslTranslator {
             m.appendReplacement(rest, "");
         }
         m.appendTail(rest);
-        return rest.toString();
+        // The modern spelling of the same declarations. A built-in name (a gl_FragCoord redeclaration is the
+        // sane case) is not user input/output: its text stays, and the leftover check below judges it as before.
+        Matcher io = IO_DECLARATION.matcher(rest.toString());
+        StringBuilder modern = new StringBuilder();
+        while (io.find()) {
+            String type = io.group(4);
+            List<Declaration> parsed = new ArrayList<>();
+            boolean builtin = false;
+            for (String declarator : io.group(5).split(",")) {
+                Matcher d = DECLARATOR.matcher(declarator);
+                if (!d.matches()) {
+                    throw new IllegalArgumentException("unparsed declaration: " + io.group(0).strip());
+                }
+                builtin |= d.group(1).startsWith("gl_");
+                int length = d.group(2) == null ? 0 : Integer.parseInt(d.group(2));
+                String qualifier = vertexStage
+                        ? ("in".equals(io.group(3)) ? "attribute" : "varying")
+                        : ("in".equals(io.group(3)) ? "varying" : "fragout");
+                int explicit = io.group(1) == null ? -1 : Integer.parseInt(io.group(1));
+                String interpolation = io.group(2) == null ? "" : io.group(2);
+                parsed.add(new Declaration(qualifier, type, d.group(1), length, explicit, interpolation));
+            }
+            if (builtin) {
+                io.appendReplacement(modern, Matcher.quoteReplacement(io.group(0)));
+            } else {
+                out.addAll(parsed);
+                io.appendReplacement(modern, "");
+            }
+        }
+        io.appendTail(modern);
+        return modern.toString();
     }
 
     private static String lowerBuiltins(String source, List<Declaration> decls, boolean vertexStage) {
@@ -434,6 +555,31 @@ public final class ModGlslTranslator {
         s = TEX2D_PATTERN.matcher(s).replaceAll("texture(");
         s = TEX3D_PATTERN.matcher(s).replaceAll("texture(");
         return TEXCUBE_PATTERN.matcher(s).replaceAll("texture(");
+    }
+
+    private static String interpolationPrefix(Declaration d) {
+        return d.interpolation.isEmpty() ? "" : d.interpolation + " ";
+    }
+
+    /**
+     * Claims {@code width} consecutive locations in {@code used}: the source's own number when it declared one
+     * (a second claim on any of those slots is a refusal naming the declaration), otherwise the first free run.
+     */
+    private static int claimLocation(java.util.BitSet used, int explicit, int width, String what) {
+        if (explicit >= 0) {
+            if (!used.get(explicit, explicit + width).isEmpty()) {
+                throw new IllegalArgumentException(what + " declares location " + explicit
+                        + ", which another declaration already uses");
+            }
+            used.set(explicit, explicit + width);
+            return explicit;
+        }
+        int location = 0;
+        while (!used.get(location, location + width).isEmpty()) {
+            location++;
+        }
+        used.set(location, location + width);
+        return location;
     }
 
     private static int locationsFor(String type) {
