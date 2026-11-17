@@ -2343,6 +2343,7 @@ public final class ValidationClient {
      */
     private boolean celtium$flyingSet;
     private boolean celtium$entitiesSpawned;
+    private boolean celtium$dynamicLightSpawned;
     /** Whether the shadow stage has been built this run. */
     private boolean celtium$shadowStageBuilt;
     /**
@@ -3798,6 +3799,31 @@ public final class ValidationClient {
                 report.addProperty("entitySpawnOnGround", Boolean.valueOf(
                         Math.abs(spawnSurface - mc.player.posY) <= 1.0D));
             }
+            if (worldTicks >= 60 && !celtium$dynamicLightSpawned
+                    && Boolean.getBoolean("celtium.validation.dynamicLightItem")) {
+                celtium$dynamicLightSpawned = true;
+                // The item-326 proof scene: one dropped torch, nothing else. A torch block's item is a
+                // shading-time dynamic light source (its stack light is the block's own light value,
+                // 14) that vanilla's baked lightmap cannot know about, so at night the ground pool
+                // around it exists only if the dynamic light path works. Placed at the entity cohort's
+                // documented visible offset (two blocks right of centre, five ahead, on the ground),
+                // frozen like the cohort's dropped apple. The terrain-only cleanup below exempts this
+                // flag so the item survives to the capture; the A/B is the feature's own kill switch
+                // (-Dceltium.dynamicLights=false), not a different scene.
+                int px = (int) Math.floor(mc.player.posX), pz = (int) Math.floor(mc.player.posZ);
+                int gy = mc.world.getHeight(px, pz - 6);
+                net.minecraft.item.ItemStack torchStack = new net.minecraft.item.ItemStack(
+                        net.minecraft.item.Item.getItemFromBlock(net.minecraft.init.Blocks.TORCH));
+                net.minecraft.entity.item.EntityItem dropped = new net.minecraft.entity.item.EntityItem(mc.world,
+                        mc.player.posX + 2.5D, gy + 0.5D, mc.player.posZ - 5.0D,
+                        torchStack);
+                dropped.motionX = 0.0D; dropped.motionY = 0.0D; dropped.motionZ = 0.0D;
+                dropped.setNoDespawn();
+                celtium$spawnEntity(mc, dropped, 2.5D, -5.0D);
+                report.addProperty("dynamicLightItemSpawned", true);
+                System.out.println("[Celtium] CELTIUM_DYNAMIC_LIGHT_ITEM_SPAWNED tick=" + worldTicks
+                        + " pos=" + dropped.posX + "," + dropped.posY + "," + dropped.posZ);
+            }
             if (worldTicks >= 60 && (!celtium$hurtSpawned || celtium$hurtSlime != null && celtium$hurtSlime.isDead)
                     && Boolean.getBoolean("celtium.validation.hurtEntity")) {
                 boolean respawn = celtium$hurtSpawned;
@@ -3892,7 +3918,8 @@ public final class ValidationClient {
                 System.out.println("[Celtium] CELTIUM_ALL_BLOCKS placed=" + placed + " tried=" + index);
             }
             if (worldTicks >= 150 && !Boolean.getBoolean("celtium.validation.interop")
-                    && !Boolean.getBoolean("celtium.validation.keepEntities")) {
+                    && !Boolean.getBoolean("celtium.validation.keepEntities")
+                    && !Boolean.getBoolean("celtium.validation.dynamicLightItem")) {
                 // Terrain-only comparison: mob spawning is not seed-deterministic between runs, so remove every
                 // non-player entity and particle well before the capture. Entity and TESR behaviour stays on the
                 // existing GL path and is deliberately outside what this comparison measures - unless keepEntities asks
