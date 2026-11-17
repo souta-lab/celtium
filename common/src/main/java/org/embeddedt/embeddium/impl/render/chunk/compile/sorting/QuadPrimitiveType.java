@@ -44,27 +44,35 @@ public final class QuadPrimitiveType implements ChunkPrimitiveType {
         }
         long ptr = LWJGL.memAddress(indexBuffer);
 
-        for (int primitiveIndex = 0; primitiveIndex < numPrimitives; primitiveIndex++) {
-            this.writePrimitive(ptr, primitiveIndex, primitiveIndex);
+        if (this.triangulating) {
+            for (int primitiveIndex = 0; primitiveIndex < numPrimitives; primitiveIndex++) {
+                writeTriangulatedPrimitive(ptr, primitiveIndex, primitiveIndex);
+            }
+        } else {
+            for (int primitiveIndex = 0; primitiveIndex < numPrimitives; primitiveIndex++) {
+                writeDirectPrimitive(ptr, primitiveIndex, primitiveIndex);
+            }
         }
     }
 
-    /** writes the indices of the given quad as the primitive at the given position */
-    private void writePrimitive(long ptr, int primitiveIndex, int quad) {
-        int indexOffset = primitiveIndex * this.getIndexBufferElementsPerPrimitive();
+    private static void writeTriangulatedPrimitive(long ptr, int primitiveIndex, int quad) {
+        long offset = ptr + (long) primitiveIndex * 24L;
         int vertexOffset = quad * VERTICES_PER_PRIMITIVE;
+        LWJGL.memPutInt(offset, vertexOffset);
+        LWJGL.memPutInt(offset + 4, vertexOffset + 1);
+        LWJGL.memPutInt(offset + 8, vertexOffset + 2);
+        LWJGL.memPutInt(offset + 12, vertexOffset + 2);
+        LWJGL.memPutInt(offset + 16, vertexOffset + 3);
+        LWJGL.memPutInt(offset + 20, vertexOffset);
+    }
 
-        LWJGL.memPutInt(ptr + (indexOffset + 0) * 4, vertexOffset + 0);
-        LWJGL.memPutInt(ptr + (indexOffset + 1) * 4, vertexOffset + 1);
-        LWJGL.memPutInt(ptr + (indexOffset + 2) * 4, vertexOffset + 2);
-
-        if (this.triangulating) {
-            LWJGL.memPutInt(ptr + (indexOffset + 3) * 4, vertexOffset + 2);
-            LWJGL.memPutInt(ptr + (indexOffset + 4) * 4, vertexOffset + 3);
-            LWJGL.memPutInt(ptr + (indexOffset + 5) * 4, vertexOffset + 0);
-        } else {
-            LWJGL.memPutInt(ptr + (indexOffset + 3) * 4, vertexOffset + 3);
-        }
+    private static void writeDirectPrimitive(long ptr, int primitiveIndex, int quad) {
+        long offset = ptr + (long) primitiveIndex * 16L;
+        int vertexOffset = quad * VERTICES_PER_PRIMITIVE;
+        LWJGL.memPutInt(offset, vertexOffset);
+        LWJGL.memPutInt(offset + 4, vertexOffset + 1);
+        LWJGL.memPutInt(offset + 8, vertexOffset + 2);
+        LWJGL.memPutInt(offset + 12, vertexOffset + 3);
     }
 
     private void generateIndexBuffer(ByteBuffer indexBuffer, int[] primitiveMapping) {
@@ -74,8 +82,14 @@ public final class QuadPrimitiveType implements ChunkPrimitiveType {
         }
         long ptr = LWJGL.memAddress(indexBuffer);
 
-        for (int primitiveIndex = 0; primitiveIndex < primitiveMapping.length; primitiveIndex++) {
-            this.writePrimitive(ptr, primitiveIndex, primitiveMapping[primitiveIndex]);
+        if (this.triangulating) {
+            for (int primitiveIndex = 0; primitiveIndex < primitiveMapping.length; primitiveIndex++) {
+                writeTriangulatedPrimitive(ptr, primitiveIndex, primitiveMapping[primitiveIndex]);
+            }
+        } else {
+            for (int primitiveIndex = 0; primitiveIndex < primitiveMapping.length; primitiveIndex++) {
+                writeDirectPrimitive(ptr, primitiveIndex, primitiveMapping[primitiveIndex]);
+            }
         }
     }
 
@@ -90,9 +104,18 @@ public final class QuadPrimitiveType implements ChunkPrimitiveType {
 
         @Override
         public void accept(int[] quads) {
-            for (int quad : quads) {
-                writePrimitive(this.ptr, this.primitiveIndex++, quad);
+            int idx = this.primitiveIndex;
+            long base = this.ptr;
+            if (QuadPrimitiveType.this.triangulating) {
+                for (int quad : quads) {
+                    writeTriangulatedPrimitive(base, idx++, quad);
+                }
+            } else {
+                for (int quad : quads) {
+                    writeDirectPrimitive(base, idx++, quad);
+                }
             }
+            this.primitiveIndex = idx;
         }
     }
 

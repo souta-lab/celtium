@@ -537,15 +537,7 @@ public final class VulkanDynamicMesh {
             return false;
         }
         MemoryUtil.memCopy(sourceAddress, vertexTarget, addedVertices);
-        if (baseVertex == 0) {
-            // The common case for a mesh that starts empty: the indices need no rebasing, so they go out as one bulk
-            // write instead of an int-at-a-time loop.
-            org.lwjgl.system.MemoryUtil.memIntBuffer(indexTarget, indices.length).put(indices);
-        } else {
-            for (int i = 0; i < indices.length; i++) {
-                MemoryUtil.memPutInt(indexTarget + (long) i * 4, indices[i] + baseVertex);
-            }
-        }
+        writeIndices(indexTarget, indices, baseVertex);
         this.layout = Layout.positionOnly(stride);
         this.vertexBytes = requiredVertices;
         this.indexBytes = requiredIndices;
@@ -637,15 +629,7 @@ public final class VulkanDynamicMesh {
                 MemoryUtil.memPutFloat(target + 8, (m20 * x) + (m21 * y) + (m22 * z) + tz);
             }
         }
-        if (baseVertex == 0) {
-            // The common case for a mesh that starts empty: the indices need no rebasing, so they go out as one bulk
-            // write instead of an int-at-a-time loop.
-            org.lwjgl.system.MemoryUtil.memIntBuffer(indexTarget, indices.length).put(indices);
-        } else {
-            for (int i = 0; i < indices.length; i++) {
-                MemoryUtil.memPutInt(indexTarget + (long) i * 4, indices[i] + baseVertex);
-            }
-        }
+        writeIndices(indexTarget, indices, baseVertex);
         this.layout = Layout.positionOnly(stride);
         this.vertexBytes = requiredVertices;
         this.indexBytes = requiredIndices;
@@ -653,6 +637,19 @@ public final class VulkanDynamicMesh {
         this.indexCount += indices.length;
         sealFrameSlice();
         return true;
+    }
+
+    private static void writeIndices(long indexTarget, int[] indices, int baseVertex) {
+        int len = indices.length;
+        int pairs = len & ~1;
+        for (int i = 0; i < pairs; i += 2) {
+            long lo = (indices[i] + baseVertex) & 0xFFFFFFFFL;
+            long hi = (long) (indices[i + 1] + baseVertex) << 32;
+            MemoryUtil.memPutLong(indexTarget + (long) i * 4L, lo | hi);
+        }
+        if (pairs < len) {
+            MemoryUtil.memPutInt(indexTarget + (long) pairs * 4L, indices[pairs] + baseVertex);
+        }
     }
 
     /**

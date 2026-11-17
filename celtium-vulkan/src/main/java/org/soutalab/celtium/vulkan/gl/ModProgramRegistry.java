@@ -1,9 +1,12 @@
 package org.soutalab.celtium.vulkan.gl;
 
-import java.util.ArrayList;
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.lwjgl.system.MemoryUtil;
 
 /**
  * The mod-owned GL programs the stub has seen: their sources, their link result as Vulkan GLSL, and the uniform values
@@ -26,12 +29,15 @@ public final class ModProgramRegistry {
     /** A linked program: the lowering result and the values recorded for its uniforms, by GL name. */
     public static final class Program {
         final int id;
-        final List<Integer> shaders = new ArrayList<>();
+        final IntArrayList shaders = new IntArrayList();
         ModGlslTranslator.Result lowered;
-        final Map<Integer, String> nameByLocation = new HashMap<>();
+        final Int2ObjectOpenHashMap<String> nameByLocation = new Int2ObjectOpenHashMap<>();
         final Map<String, float[]> floatValues = new HashMap<>();
         final Map<String, int[]> intValues = new HashMap<>();
         int uniformWrites;
+        long uniformVersion = 1L;
+        ByteBuffer cachedPackedUniforms;
+        long cachedPackedVersion = -1L;
         /** The compiled stages, when shaderc was available at link; null otherwise. */
         byte[] vertexSpirv;
         byte[] fragmentSpirv;
@@ -59,6 +65,19 @@ public final class ModProgramRegistry {
             return this.uniformWrites;
         }
 
+        public long uniformVersion() {
+            return this.uniformVersion;
+        }
+
+        public ByteBuffer cachedPackedUniforms() {
+            return this.cachedPackedVersion == this.uniformVersion ? this.cachedPackedUniforms : null;
+        }
+
+        public void cachePackedUniforms(long version, ByteBuffer packed) {
+            this.cachedPackedUniforms = packed;
+            this.cachedPackedVersion = version;
+        }
+
         /** {@return whether both stages are compiled to SPIR-V} and the program could therefore run natively. */
         public boolean compiled() {
             return this.vertexSpirv != null && this.fragmentSpirv != null;
@@ -78,8 +97,8 @@ public final class ModProgramRegistry {
         }
     }
 
-    private static final Map<Integer, String> SHADER_SOURCES = new HashMap<>();
-    private static final Map<Integer, Program> PROGRAMS = new HashMap<>();
+    private static final Int2ObjectOpenHashMap<String> SHADER_SOURCES = new Int2ObjectOpenHashMap<>();
+    private static final Int2ObjectOpenHashMap<Program> PROGRAMS = new Int2ObjectOpenHashMap<>();
     /** Uniform writes to a location no linked program names: counted, so a lost value is visible. */
     private static int unmatchedUniformWrites;
     private static boolean reportedUnavailable;
@@ -87,30 +106,39 @@ public final class ModProgramRegistry {
     private ModProgramRegistry() {
     }
 
+    private static Program getOrCreateProgram(int program) {
+        Program p = PROGRAMS.get(program);
+        if (p == null) {
+            p = new Program(program);
+            PROGRAMS.put(program, p);
+        }
+        return p;
+    }
+
     /** {@code glShaderSource}: the stage's text, concatenated as GL concatenates the strings. */
     public static void shaderSource(int shader, String source) {
-        SHADER_SOURCES.put(Integer.valueOf(shader), source);
+        SHADER_SOURCES.put(shader, source);
     }
 
     /** {@code glAttachShader}. */
     public static void attach(int program, int shader) {
-        Program p = PROGRAMS.computeIfAbsent(Integer.valueOf(program), Program::new);
-        if (!p.shaders.contains(Integer.valueOf(shader))) {
-            p.shaders.add(Integer.valueOf(shader));
+        Program p = getOrCreateProgram(program);
+        if (!p.shaders.contains(shader)) {
+            p.shaders.add(shader);
         }
     }
 
     /** {@code glLinkProgram}: lowers the attached stages, and names the result once per program. */
     public static Program link(int program) {
-        Program p = PROGRAMS.computeIfAbsent(Integer.valueOf(program), Program::new);
+        Program p = getOrCreateProgram(program);
         String vertex = null;
         String fragment = null;
-        for (Integer shader : p.shaders) {
-            String source = SHADER_SOURCES.get(shader);
+        for (int i = 0, n = p.shaders.size(); i < n; i++) {
+            String source = SHADER_SOURCES.get(p.shaders.getInt(i));
             if (source == null) {
                 continue;
             }
-            if (source.matches("(?s).*\\bgl_Position\\b.*")) {
+            if (containsWord(source, "gl_Position")) {
                 vertex = source;
             } else {
                 fragment = source;
@@ -121,6 +149,9 @@ public final class ModProgramRegistry {
                         "no fragment stage attached (" + p.shaders.size() + " shaders)")
                 : ModGlslTranslator.translate(vertex, fragment);
         p.nameByLocation.clear();
+        p.cachedPackedUniforms = null;
+        p.cachedPackedVersion = -1L;
+        p.uniformVersion++;
         if (p.lowered.ok()) {
             for (ModGlslTranslator.UniformMember member : p.lowered.uniforms()) {
                 mapName(p, member.name());
@@ -168,13 +199,45 @@ public final class ModProgramRegistry {
         return p;
     }
 
+    private static boolean containsWord(String text, String word) {
+        int wordLen = word.length();
+        int from = 0;
+        while ((from = text.indexOf(word, from)) >= 0) {
+            boolean leftOk = from == 0 || !isWordChar(text.charAt(from - 1));
+            int after = from + wordLen;
+            boolean rightOk = after >= text.length() || !isWordChar(text.charAt(after));
+            if (leftOk && rightOk) {
+                return true;
+            }
+            from = after;
+        }
+        return false;
+    }
+
+    private static boolean isWordChar(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+    }
+
     private static void mapName(Program p, String name) {
-        p.nameByLocation.put(Integer.valueOf(location(name)), name);
-        p.nameByLocation.put(Integer.valueOf(location(name + "[0]")), name);
+        p.nameByLocation.put(location(name), name);
+        p.nameByLocation.put(location(name + "[0]"), name);
     }
 
     /** The stub's location for a uniform name; must stay equal to {@code CeltiumGllessHint.glUniformLocation}. */
     public static int location(String name) {
+        int hash = 0;
+        int len = name.length();
+        for (int i = 0; i < len; i++) {
+            char c = name.charAt(i);
+            if (c >= 0x80) {
+                return locationUtf8(name);
+            }
+            hash = 31 * hash + (byte) c;
+        }
+        return hash & 0x3FFFFFFF;
+    }
+
+    private static int locationUtf8(String name) {
         int hash = 0;
         byte[] bytes = name.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         for (byte b : bytes) {
@@ -183,38 +246,340 @@ public final class ModProgramRegistry {
         return hash & 0x3FFFFFFF;
     }
 
+    private static String resolveUniformName(Program p, int location) {
+        if (p == null) {
+            return null;
+        }
+        return p.nameByLocation.get(location);
+    }
+
     /** {@code glUniform*f*}/{@code glUniformMatrix*}: the components, for the program currently bound. */
     public static void uniformFloats(int program, int location, float[] values) {
-        Program p = PROGRAMS.get(Integer.valueOf(program));
-        String name = p == null ? null : p.nameByLocation.get(Integer.valueOf(location));
+        Program p = PROGRAMS.get(program);
+        String name = resolveUniformName(p, location);
         if (name == null) {
             unmatchedUniformWrites++;
             return;
         }
-        p.floatValues.put(name, values);
+        float[] existing = p.floatValues.get(name);
+        if (existing != null && existing.length == values.length) {
+            boolean changed = false;
+            for (int i = 0; i < values.length; i++) {
+                if (Float.floatToRawIntBits(existing[i]) != Float.floatToRawIntBits(values[i])) {
+                    existing[i] = values[i];
+                    changed = true;
+                }
+            }
+            if (changed) {
+                p.uniformVersion++;
+            }
+        } else {
+            p.floatValues.put(name, values);
+            p.uniformVersion++;
+        }
+        p.uniformWrites++;
+    }
+
+    /** Zero-allocation scalar {@code glUniform1f}. */
+    public static void uniformFloat1(int program, int location, float x) {
+        Program p = PROGRAMS.get(program);
+        String name = resolveUniformName(p, location);
+        if (name == null) {
+            unmatchedUniformWrites++;
+            return;
+        }
+        float[] existing = p.floatValues.get(name);
+        if (existing != null && existing.length == 1) {
+            if (Float.floatToRawIntBits(existing[0]) != Float.floatToRawIntBits(x)) {
+                existing[0] = x;
+                p.uniformVersion++;
+            }
+        } else {
+            p.floatValues.put(name, new float[] {x});
+            p.uniformVersion++;
+        }
+        p.uniformWrites++;
+    }
+
+    /** Zero-allocation {@code glUniform2f}. */
+    public static void uniformFloat2(int program, int location, float x, float y) {
+        Program p = PROGRAMS.get(program);
+        String name = resolveUniformName(p, location);
+        if (name == null) {
+            unmatchedUniformWrites++;
+            return;
+        }
+        float[] existing = p.floatValues.get(name);
+        if (existing != null && existing.length == 2) {
+            if (Float.floatToRawIntBits(existing[0]) != Float.floatToRawIntBits(x)
+                    || Float.floatToRawIntBits(existing[1]) != Float.floatToRawIntBits(y)) {
+                existing[0] = x;
+                existing[1] = y;
+                p.uniformVersion++;
+            }
+        } else {
+            p.floatValues.put(name, new float[] {x, y});
+            p.uniformVersion++;
+        }
+        p.uniformWrites++;
+    }
+
+    /** Zero-allocation {@code glUniform3f}. */
+    public static void uniformFloat3(int program, int location, float x, float y, float z) {
+        Program p = PROGRAMS.get(program);
+        String name = resolveUniformName(p, location);
+        if (name == null) {
+            unmatchedUniformWrites++;
+            return;
+        }
+        float[] existing = p.floatValues.get(name);
+        if (existing != null && existing.length == 3) {
+            if (Float.floatToRawIntBits(existing[0]) != Float.floatToRawIntBits(x)
+                    || Float.floatToRawIntBits(existing[1]) != Float.floatToRawIntBits(y)
+                    || Float.floatToRawIntBits(existing[2]) != Float.floatToRawIntBits(z)) {
+                existing[0] = x;
+                existing[1] = y;
+                existing[2] = z;
+                p.uniformVersion++;
+            }
+        } else {
+            p.floatValues.put(name, new float[] {x, y, z});
+            p.uniformVersion++;
+        }
+        p.uniformWrites++;
+    }
+
+    /** Zero-allocation {@code glUniform4f}. */
+    public static void uniformFloat4(int program, int location, float x, float y, float z, float w) {
+        Program p = PROGRAMS.get(program);
+        String name = resolveUniformName(p, location);
+        if (name == null) {
+            unmatchedUniformWrites++;
+            return;
+        }
+        float[] existing = p.floatValues.get(name);
+        if (existing != null && existing.length == 4) {
+            if (Float.floatToRawIntBits(existing[0]) != Float.floatToRawIntBits(x)
+                    || Float.floatToRawIntBits(existing[1]) != Float.floatToRawIntBits(y)
+                    || Float.floatToRawIntBits(existing[2]) != Float.floatToRawIntBits(z)
+                    || Float.floatToRawIntBits(existing[3]) != Float.floatToRawIntBits(w)) {
+                existing[0] = x;
+                existing[1] = y;
+                existing[2] = z;
+                existing[3] = w;
+                p.uniformVersion++;
+            }
+        } else {
+            p.floatValues.put(name, new float[] {x, y, z, w});
+            p.uniformVersion++;
+        }
+        p.uniformWrites++;
+    }
+
+    /** Zero-allocation pointer form for {@code nglUniform*fv} / {@code nglUniformMatrix*fv}. */
+    public static void uniformFloatPtr(int program, int location, int count, long valuesPtr, int components,
+                                       boolean transpose, int matrixSide) {
+        Program p = PROGRAMS.get(program);
+        String name = resolveUniformName(p, location);
+        if (name == null) {
+            unmatchedUniformWrites++;
+            return;
+        }
+        int total = count * components;
+        float[] dst = p.floatValues.get(name);
+        boolean fresh = dst == null || dst.length != total;
+        if (fresh) {
+            dst = new float[total];
+        }
+        boolean changed = fresh;
+        if (!transpose || matrixSide <= 0) {
+            for (int i = 0; i < total; i++) {
+                float v = MemoryUtil.memGetFloat(valuesPtr + 4L * i);
+                if (!changed && Float.floatToRawIntBits(dst[i]) != Float.floatToRawIntBits(v)) {
+                    changed = true;
+                }
+                dst[i] = v;
+            }
+        } else {
+            for (int m = 0; m < count; m++) {
+                int base = m * components;
+                for (int r = 0; r < matrixSide; r++) {
+                    for (int c = 0; c < matrixSide; c++) {
+                        float v = MemoryUtil.memGetFloat(valuesPtr + 4L * (base + r * matrixSide + c));
+                        int dstIdx = base + c * matrixSide + r;
+                        if (!changed && Float.floatToRawIntBits(dst[dstIdx]) != Float.floatToRawIntBits(v)) {
+                            changed = true;
+                        }
+                        dst[dstIdx] = v;
+                    }
+                }
+            }
+        }
+        if (fresh) {
+            p.floatValues.put(name, dst);
+        }
+        if (changed) {
+            p.uniformVersion++;
+        }
         p.uniformWrites++;
     }
 
     /** {@code glUniform*i*}: the components (a sampler's unit), for the program currently bound. */
     public static void uniformInts(int program, int location, int[] values) {
-        Program p = PROGRAMS.get(Integer.valueOf(program));
-        String name = p == null ? null : p.nameByLocation.get(Integer.valueOf(location));
+        Program p = PROGRAMS.get(program);
+        String name = resolveUniformName(p, location);
         if (name == null) {
             unmatchedUniformWrites++;
             return;
         }
-        p.intValues.put(name, values);
+        int[] existing = p.intValues.get(name);
+        if (existing != null && existing.length == values.length) {
+            boolean changed = false;
+            for (int i = 0; i < values.length; i++) {
+                if (existing[i] != values[i]) {
+                    existing[i] = values[i];
+                    changed = true;
+                }
+            }
+            if (changed) {
+                p.uniformVersion++;
+            }
+        } else {
+            p.intValues.put(name, values);
+            p.uniformVersion++;
+        }
+        p.uniformWrites++;
+    }
+
+    /** Zero-allocation {@code glUniform1i}. */
+    public static void uniformInt1(int program, int location, int x) {
+        Program p = PROGRAMS.get(program);
+        String name = resolveUniformName(p, location);
+        if (name == null) {
+            unmatchedUniformWrites++;
+            return;
+        }
+        int[] existing = p.intValues.get(name);
+        if (existing != null && existing.length == 1) {
+            if (existing[0] != x) {
+                existing[0] = x;
+                p.uniformVersion++;
+            }
+        } else {
+            p.intValues.put(name, new int[] {x});
+            p.uniformVersion++;
+        }
+        p.uniformWrites++;
+    }
+
+    /** Zero-allocation {@code glUniform2i}. */
+    public static void uniformInt2(int program, int location, int x, int y) {
+        Program p = PROGRAMS.get(program);
+        String name = resolveUniformName(p, location);
+        if (name == null) {
+            unmatchedUniformWrites++;
+            return;
+        }
+        int[] existing = p.intValues.get(name);
+        if (existing != null && existing.length == 2) {
+            if (existing[0] != x || existing[1] != y) {
+                existing[0] = x;
+                existing[1] = y;
+                p.uniformVersion++;
+            }
+        } else {
+            p.intValues.put(name, new int[] {x, y});
+            p.uniformVersion++;
+        }
+        p.uniformWrites++;
+    }
+
+    /** Zero-allocation {@code glUniform3i}. */
+    public static void uniformInt3(int program, int location, int x, int y, int z) {
+        Program p = PROGRAMS.get(program);
+        String name = resolveUniformName(p, location);
+        if (name == null) {
+            unmatchedUniformWrites++;
+            return;
+        }
+        int[] existing = p.intValues.get(name);
+        if (existing != null && existing.length == 3) {
+            if (existing[0] != x || existing[1] != y || existing[2] != z) {
+                existing[0] = x;
+                existing[1] = y;
+                existing[2] = z;
+                p.uniformVersion++;
+            }
+        } else {
+            p.intValues.put(name, new int[] {x, y, z});
+            p.uniformVersion++;
+        }
+        p.uniformWrites++;
+    }
+
+    /** Zero-allocation {@code glUniform4i}. */
+    public static void uniformInt4(int program, int location, int x, int y, int z, int w) {
+        Program p = PROGRAMS.get(program);
+        String name = resolveUniformName(p, location);
+        if (name == null) {
+            unmatchedUniformWrites++;
+            return;
+        }
+        int[] existing = p.intValues.get(name);
+        if (existing != null && existing.length == 4) {
+            if (existing[0] != x || existing[1] != y || existing[2] != z || existing[3] != w) {
+                existing[0] = x;
+                existing[1] = y;
+                existing[2] = z;
+                existing[3] = w;
+                p.uniformVersion++;
+            }
+        } else {
+            p.intValues.put(name, new int[] {x, y, z, w});
+            p.uniformVersion++;
+        }
+        p.uniformWrites++;
+    }
+
+    /** Zero-allocation pointer form for {@code nglUniform*iv}. */
+    public static void uniformIntPtr(int program, int location, int count, long valuesPtr, int components) {
+        Program p = PROGRAMS.get(program);
+        String name = resolveUniformName(p, location);
+        if (name == null) {
+            unmatchedUniformWrites++;
+            return;
+        }
+        int total = count * components;
+        int[] dst = p.intValues.get(name);
+        boolean fresh = dst == null || dst.length != total;
+        if (fresh) {
+            dst = new int[total];
+        }
+        boolean changed = fresh;
+        for (int i = 0; i < total; i++) {
+            int v = MemoryUtil.memGetInt(valuesPtr + 4L * i);
+            if (!changed && dst[i] != v) {
+                changed = true;
+            }
+            dst[i] = v;
+        }
+        if (fresh) {
+            p.intValues.put(name, dst);
+        }
+        if (changed) {
+            p.uniformVersion++;
+        }
         p.uniformWrites++;
     }
 
     /** {@return the program for a GL id}, or null if the stub never saw it linked. */
     public static Program program(int id) {
-        return PROGRAMS.get(Integer.valueOf(id));
+        return PROGRAMS.get(id);
     }
 
     /** {@code glDeleteProgram}. Shaders are kept: GL deletes them only when detached, and mods reuse them. */
     public static void deleteProgram(int id) {
-        PROGRAMS.remove(Integer.valueOf(id));
+        PROGRAMS.remove(id);
     }
 
     public static int unmatchedUniformWrites() {

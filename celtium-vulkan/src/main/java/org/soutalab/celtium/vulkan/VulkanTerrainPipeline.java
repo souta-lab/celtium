@@ -694,40 +694,41 @@ public final class VulkanTerrainPipeline {
         this.uniformsSize = uniformBufferSize;
         this.uniformsRange = (int) Math.min(uniformBufferSize, (long) UNIFORM_BLOCK_SIZE);
 
+        // Write only what changed. This ran on every bind - once per region per pass - and rewrote all five bindings of a set that a
+        // frame still in flight may name, which is VUID-vkUpdateDescriptorSets-None-03047 on Intel (ten messages in a world leg,
+        // none on AMD). In the steady state nothing here changes: the uniform buffer belongs to the frame slot, and the atlas,
+        // lightmap and shadow map keep their views for the session.
+        int writeSlot = slot & (DESCRIPTOR_SLOTS - 1);
+        long atlasView = atlas.view();
+        long lightmapView = lightmap.view();
+        boolean unchanged = this.descriptorsWritten[writeSlot]
+                && this.writtenUniformBuffer[writeSlot] == uniformBuffer
+                && this.writtenUniformRange[writeSlot] == this.uniformsRange
+                && this.writtenAtlasView[writeSlot] == atlasView
+                && this.writtenLightmapView[writeSlot] == lightmapView;
+        if (unchanged) {
+            auditAtlasWrite(atlas);
+            return;
+        }
+        this.writtenUniformBuffer[writeSlot] = uniformBuffer;
+        this.writtenUniformRange[writeSlot] = this.uniformsRange;
+        this.writtenAtlasView[writeSlot] = atlasView;
+        this.writtenLightmapView[writeSlot] = lightmapView;
+
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkDescriptorBufferInfo.Buffer bufferInfo = VkDescriptorBufferInfo.calloc(1, stack);
             bufferInfo.get(0).buffer(uniformBuffer).offset(0L).range(uniformsRange);
 
             VkDescriptorImageInfo.Buffer atlasInfo = VkDescriptorImageInfo.calloc(1, stack);
-            atlasInfo.get(0).sampler(atlasSamplerFor(atlas)).imageView(atlas.view())
+            atlasInfo.get(0).sampler(atlasSamplerFor(atlas)).imageView(atlasView)
                     .imageLayout(atlas.samplingLayout());
             VkDescriptorImageInfo.Buffer lightmapInfo = VkDescriptorImageInfo.calloc(1, stack);
-            lightmapInfo.get(0).sampler(lightmap.sampler()).imageView(lightmap.view())
+            lightmapInfo.get(0).sampler(lightmap.sampler()).imageView(lightmapView)
                     .imageLayout(lightmap.samplingLayout());
 
             // The binding of each write comes from the constant, so the array order carries no meaning: the atlas
             // goes to BLOCK_ATLAS_BINDING (2) and the lightmap to LIGHTMAP_BINDING (1), matching the shader source.
-            long set = this.descriptorSets[slot & (DESCRIPTOR_SLOTS - 1)];
-            // Write only what changed. This ran on every bind - once per region per pass - and rewrote all five bindings of a set that a
-            // frame still in flight may name, which is VUID-vkUpdateDescriptorSets-None-03047 on Intel (ten messages in a world leg,
-            // none on AMD). In the steady state nothing here changes: the uniform buffer belongs to the frame slot, and the atlas,
-            // lightmap and shadow map keep their views for the session.
-            int writeSlot = slot & (DESCRIPTOR_SLOTS - 1);
-            long atlasView = atlas.view();
-            long lightmapView = lightmap.view();
-            boolean unchanged = this.descriptorsWritten[writeSlot]
-                    && this.writtenUniformBuffer[writeSlot] == uniformBuffer
-                    && this.writtenUniformRange[writeSlot] == this.uniformsRange
-                    && this.writtenAtlasView[writeSlot] == atlasView
-                    && this.writtenLightmapView[writeSlot] == lightmapView;
-            if (unchanged) {
-                auditAtlasWrite(atlas);
-                return;
-            }
-            this.writtenUniformBuffer[writeSlot] = uniformBuffer;
-            this.writtenUniformRange[writeSlot] = this.uniformsRange;
-            this.writtenAtlasView[writeSlot] = atlasView;
-            this.writtenLightmapView[writeSlot] = lightmapView;
+            long set = this.descriptorSets[writeSlot];
             VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(3, stack);
             writes.get(0).sType$Default().dstSet(set).dstBinding(UNIFORM_BINDING).dstArrayElement(0)
                     .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)

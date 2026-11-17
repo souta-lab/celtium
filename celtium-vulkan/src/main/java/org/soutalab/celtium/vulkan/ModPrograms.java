@@ -69,7 +69,13 @@ final class ModPrograms {
                     + this.formatId) * 31 + System.identityHashCode(this.like);
         }
     }
-    final java.util.Set<Integer> modProgramReported = new java.util.HashSet<>();
+    private static final VulkanGlTexture[] EMPTY_TEXTURES = new VulkanGlTexture[0];
+    final it.unimi.dsi.fastutil.ints.IntOpenHashSet modProgramReported =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
+    private org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program lastModProgram;
+    private int lastModFormatId = -1;
+    private Object lastModLike;
+    private VulkanModProgramPipeline lastModPipeline;
     String lastModProgramFailure = "none";
 
     /** {@return the registry's program when this batch can be drawn with it}, or null to refuse as before. */
@@ -100,21 +106,33 @@ final class ModPrograms {
             return celtium$modFailure(programId, "the batch's own variant is "
                     + standard.pipeline.getClass().getSimpleName() + ", not a textured one");
         }
-        // Keyed by the objects themselves: identity hash codes are not unique, so a key built from them could hand
-        // one program's pipeline to another (and, after a world teardown, to a pipeline built like a released one).
-        ModProgramKey key = new ModProgramKey(program.vertexSpirv(), program.fragmentSpirv(), formatId, like);
-        VulkanModProgramPipeline pipeline = this.modProgramPipelines.get(key);
-        if (pipeline == null) {
-            try {
-                pipeline = VulkanModProgramPipeline.create(b.context, program, formatId, like);
-            } catch (RuntimeException | LinkageError failure) {
-                return celtium$modFailure(programId, "pipeline: " + failure.getMessage());
+        VulkanModProgramPipeline pipeline;
+        if (program == this.lastModProgram && formatId == this.lastModFormatId && like == this.lastModLike
+                && this.lastModPipeline != null) {
+            pipeline = this.lastModPipeline;
+        } else {
+            // Keyed by the objects themselves: identity hash codes are not unique, so a key built from them could hand
+            // one program's pipeline to another (and, after a world teardown, to a pipeline built like a released one).
+            ModProgramKey key = new ModProgramKey(program.vertexSpirv(), program.fragmentSpirv(), formatId, like);
+            pipeline = this.modProgramPipelines.get(key);
+            if (pipeline == null) {
+                try {
+                    pipeline = VulkanModProgramPipeline.create(b.context, program, formatId, like);
+                } catch (RuntimeException | LinkageError failure) {
+                    return celtium$modFailure(programId, "pipeline: " + failure.getMessage());
+                }
+                this.modProgramPipelines.put(key, pipeline);
             }
-            this.modProgramPipelines.put(key, pipeline);
+            this.lastModProgram = program;
+            this.lastModFormatId = formatId;
+            this.lastModLike = like;
+            this.lastModPipeline = pipeline;
         }
-        VulkanGlTexture[] textures = new VulkanGlTexture[pipeline.samplerCount()];
-        StringBuilder inputs = new StringBuilder();
-        for (int i = 0; i < textures.length; i++) {
+        int samplerCount = pipeline.samplerCount();
+        VulkanGlTexture[] textures = samplerCount == 0 ? EMPTY_TEXTURES : new VulkanGlTexture[samplerCount];
+        boolean buildDetail = this.modProgramReported.size() < 64 || MOD_TRACE_FRAMES > 0 || MOD_READBACK;
+        StringBuilder inputs = buildDetail ? new StringBuilder() : null;
+        for (int i = 0; i < samplerCount; i++) {
             org.soutalab.celtium.vulkan.gl.ModGlslTranslator.SamplerBinding sampler = pipeline.samplers().get(i);
             int[] unitValue = program.ints(sampler.name());
             int unit = unitValue == null || unitValue.length == 0 ? 0 : unitValue[0];
@@ -131,45 +149,52 @@ final class ModPrograms {
                 return celtium$modFailure(programId, "sampler " + sampler.name() + " (unit " + unit + ", texture "
                         + name + ") is the colour image of the framebuffer being drawn into");
             }
-            if (!MOD_PROGRAMS_SAMPLE_MAIN && b.mainFramebufferColorNames.contains(Integer.valueOf(name))) {
+            if (!MOD_PROGRAMS_SAMPLE_MAIN && b.mainFramebufferColorNames.contains(name)) {
                 return celtium$modFailure(programId, "sampler " + sampler.name() + " reads the game's colour and "
                         + "-Dceltium.vulkan.modProgramsSampleMain=false refuses that");
             }
             textures[i] = texture;
-            inputs.append(' ').append(sampler.name()).append("=unit").append(unit).append(":tex").append(name)
-                    .append(b.mainFramebufferColorNames.contains(Integer.valueOf(name)) ? "(main)" : "")
-                    .append(b.publishedFrameImages.get(name) != 0L ? "(fb)" : "")
-                    .append("{fbo=0x").append(Long.toHexString(b.celtium$framebufferIdentityForColorTexture(name)))
-                    .append(" img=0x").append(Long.toHexString(b.publishedFrameImages.get(name)))
-                    .append(" wimg=0x").append(Long.toHexString(texture.image()))
-                    .append(" own=").append(texture.celtium$ownsImage())
-                    .append(" layout=").append(texture.samplingLayout()).append('}');
+            if (inputs != null) {
+                inputs.append(' ').append(sampler.name()).append("=unit").append(unit).append(":tex").append(name)
+                        .append(b.mainFramebufferColorNames.contains(name) ? "(main)" : "")
+                        .append(b.publishedFrameImages.get(name) != 0L ? "(fb)" : "")
+                        .append("{fbo=0x").append(Long.toHexString(b.celtium$framebufferIdentityForColorTexture(name)))
+                        .append(" img=0x").append(Long.toHexString(b.publishedFrameImages.get(name)))
+                        .append(" wimg=0x").append(Long.toHexString(texture.image()))
+                        .append(" own=").append(texture.celtium$ownsImage())
+                        .append(" layout=").append(texture.samplingLayout()).append('}');
+            }
         }
-        org.soutalab.celtium.vulkan.gl.ModGlslTranslator.ImageBinding[] imageBindings =
-                program.lowered().images().toArray(new org.soutalab.celtium.vulkan.gl.ModGlslTranslator.ImageBinding[0]);
-        VulkanGlTexture[] imageTextures = new VulkanGlTexture[imageBindings.length];
-        org.soutalab.celtium.vulkan.NativeImageBindings imageLedger =
-                org.soutalab.celtium.vulkan.NativeImageBindings.current();
-        for (int i = 0; i < imageBindings.length; i++) {
-            var image = imageBindings[i];
-            int[] unitValue = program.ints(image.name());
-            int unit = unitValue == null || unitValue.length == 0 ? 0 : unitValue[0];
-            int name = imageLedger.texture(unit);
-            if (name <= 0) return celtium$modFailure(programId, "image " + image.name() + " (unit " + unit + ") is not bound");
-            VulkanGlTexture texture = celtium$modSamplerTexture(name);
-            if (texture == null || texture.view() == 0L)
-                return celtium$modFailure(programId, "image " + image.name() + " (unit " + unit + ", texture "
-                        + name + ") has no native image");
-            if (b.celtium$samplesCurrentTargetColor(name))
-                return celtium$modFailure(programId, "image " + image.name() + " (unit " + unit + ", texture "
-                        + name + ") is the colour image of the framebuffer being drawn into");
-            if (texture.celtium$ownsImage())
-                return celtium$modFailure(programId, "image " + image.name() + " (unit " + unit + ", texture "
-                        + name + ") is a mirrored texture whose layout the storage path cannot transition");
-            imageTextures[i] = texture;
-            inputs.append(" img ").append(image.name()).append('=').append(unit).append(":tex").append(name)
-                    .append("{wimg=0x").append(Long.toHexString(texture.image())).append(" layout=")
-                    .append(texture.foreignLayout()).append('}');
+        java.util.List<org.soutalab.celtium.vulkan.gl.ModGlslTranslator.ImageBinding> imageBindings =
+                program.lowered().images();
+        int imageCount = imageBindings.size();
+        VulkanGlTexture[] imageTextures = imageCount == 0 ? EMPTY_TEXTURES : new VulkanGlTexture[imageCount];
+        if (imageCount > 0) {
+            org.soutalab.celtium.vulkan.NativeImageBindings imageLedger =
+                    org.soutalab.celtium.vulkan.NativeImageBindings.current();
+            for (int i = 0; i < imageCount; i++) {
+                var image = imageBindings.get(i);
+                int[] unitValue = program.ints(image.name());
+                int unit = unitValue == null || unitValue.length == 0 ? 0 : unitValue[0];
+                int name = imageLedger.texture(unit);
+                if (name <= 0) return celtium$modFailure(programId, "image " + image.name() + " (unit " + unit + ") is not bound");
+                VulkanGlTexture texture = celtium$modSamplerTexture(name);
+                if (texture == null || texture.view() == 0L)
+                    return celtium$modFailure(programId, "image " + image.name() + " (unit " + unit + ", texture "
+                            + name + ") has no native image");
+                if (b.celtium$samplesCurrentTargetColor(name))
+                    return celtium$modFailure(programId, "image " + image.name() + " (unit " + unit + ", texture "
+                            + name + ") is the colour image of the framebuffer being drawn into");
+                if (texture.celtium$ownsImage())
+                    return celtium$modFailure(programId, "image " + image.name() + " (unit " + unit + ", texture "
+                            + name + ") is a mirrored texture whose layout the storage path cannot transition");
+                imageTextures[i] = texture;
+                if (inputs != null) {
+                    inputs.append(" img ").append(image.name()).append('=').append(unit).append(":tex").append(name)
+                            .append("{wimg=0x").append(Long.toHexString(texture.image())).append(" layout=")
+                            .append(texture.foreignLayout()).append('}');
+                }
+            }
         }
         if (MOD_PROGRAMS_REFUSE_OPAQUE_MAIN && !like.celtium$colorBlend().blend()
                 && b.currentFramebufferIdentity == b.targetRegistry.mainIdentity()) {
@@ -181,24 +206,30 @@ final class ModPrograms {
                     + "-Dceltium.vulkan.modProgramsToMain=false refuses that");
         }
         long set = pipeline.samplersAndImages(textures, imageTextures);
-        if (textures.length + imageTextures.length > 0 && set == 0L) {
+        if (samplerCount + imageCount > 0 && set == 0L) {
             return celtium$modFailure(programId, "no descriptor set could be allocated");
         }
-        long[] targetColour = b.framebufferColorTexture(b.currentFramebufferIdentity);
-        GllessFrameTarget pairOwner = b.offTargetTarget();
-        inputs.append(" pairGen=").append(pairOwner == null ? -1L : pairOwner.chainPairGenerationTotal());
-        celtium$reportModProgram(programId, true, "inputs=[" + inputs.toString().trim() + "] target=0x"
-                + Long.toHexString(b.currentFramebufferIdentity) + " targetColourTex="
-                + (targetColour == null ? -1 : targetColour[0]) + " targetIsMain="
-                + (b.currentFramebufferIdentity == b.targetRegistry.mainIdentity())
-                + " blend=" + like.celtium$colorBlend().blend() + "(" + like.celtium$colorBlend().srcColor() + ","
-                + like.celtium$colorBlend().dstColor() + "," + like.celtium$colorBlend().srcAlpha() + ","
-                + like.celtium$colorBlend().dstAlpha() + ") glBlend=" + b.immediateState.blendSrcRgb() + ","
-                + b.immediateState.blendDstRgb() + " depthTest=" + like.celtium$depthTest()
-                + " depthWrite=" + like.celtium$depthWrite());
-        String label = MOD_TRACE_FRAMES > 0 || MOD_READBACK ? "program=" + programId + " offeredFrame=" + b.frameId
-                + " target=0x" + Long.toHexString(b.currentFramebufferIdentity) + " inputs=[" + inputs.toString().trim()
-                + "]" : null;
+        String label = null;
+        if (inputs != null) {
+            long[] targetColour = b.framebufferColorTexture(b.currentFramebufferIdentity);
+            GllessFrameTarget pairOwner = b.offTargetTarget();
+            inputs.append(" pairGen=").append(pairOwner == null ? -1L : pairOwner.chainPairGenerationTotal());
+            String trimmedInputs = inputs.toString().trim();
+            celtium$reportModProgram(programId, true, "inputs=[" + trimmedInputs + "] target=0x"
+                    + Long.toHexString(b.currentFramebufferIdentity) + " targetColourTex="
+                    + (targetColour == null ? -1 : targetColour[0]) + " targetIsMain="
+                    + (b.currentFramebufferIdentity == b.targetRegistry.mainIdentity())
+                    + " blend=" + like.celtium$colorBlend().blend() + "(" + like.celtium$colorBlend().srcColor() + ","
+                    + like.celtium$colorBlend().dstColor() + "," + like.celtium$colorBlend().srcAlpha() + ","
+                    + like.celtium$colorBlend().dstAlpha() + ") glBlend=" + b.immediateState.blendSrcRgb() + ","
+                    + b.immediateState.blendDstRgb() + " depthTest=" + like.celtium$depthTest()
+                    + " depthWrite=" + like.celtium$depthWrite());
+            if (MOD_TRACE_FRAMES > 0 || MOD_READBACK) {
+                label = "program=" + programId + " offeredFrame=" + b.frameId
+                        + " target=0x" + Long.toHexString(b.currentFramebufferIdentity)
+                        + " inputs=[" + trimmedInputs + "]";
+            }
+        }
         return new PreparedImmediate(new VulkanModProgramPipeline.Draw(pipeline,
                 VulkanModProgramPipeline.packUniforms(program), set, label, textures, imageTextures), set, 0L);
     }
@@ -371,7 +402,7 @@ final class ModPrograms {
         // Keyed by the detail as well: one program is used for several passes (GTCEu's IMAGE_F copies three
         // different framebuffers), and which input each pass read is the question a wrong picture asks.
         if (this.modProgramReported.size() < 64
-                && this.modProgramReported.add(Integer.valueOf((drawn ? program : -program - 1) * 31 + detail.hashCode()))) {
+                && this.modProgramReported.add((drawn ? program : -program - 1) * 31 + detail.hashCode())) {
             System.out.println("[Celtium] CELTIUM_MOD_PROGRAM_" + (drawn ? "DRAWN" : "NOT_DRAWN") + " program=" + program
                     + " " + detail);
         }

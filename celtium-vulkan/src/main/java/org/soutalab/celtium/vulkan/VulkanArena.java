@@ -90,6 +90,9 @@ public final class VulkanArena {
     private final int usageFlags;
     private VulkanBuffer buffer;
     private Segment head;
+    private Segment tail;
+    private Segment freeHead;
+    private int liveSegmentCount;
 
     // Upload census: totals for the run, and the slice since the last report.
     private long uploads;
@@ -163,7 +166,34 @@ public final class VulkanArena {
         arenaCreateCalls++;
         arenaCreateNanos += System.nanoTime() - started;
         this.head = new Segment(this, 0, this.capacity);
-        this.head.free = true;
+        this.tail = this.head;
+        linkFree(this.head);
+    }
+
+    private void linkFree(Segment segment) {
+        segment.free = true;
+        segment.prevFree = null;
+        segment.nextFree = this.freeHead;
+        if (this.freeHead != null) {
+            this.freeHead.prevFree = segment;
+        }
+        this.freeHead = segment;
+    }
+
+    private void unlinkFree(Segment segment) {
+        segment.free = false;
+        Segment pf = segment.prevFree;
+        Segment nf = segment.nextFree;
+        if (pf != null) {
+            pf.nextFree = nf;
+        } else if (this.freeHead == segment) {
+            this.freeHead = nf;
+        }
+        if (nf != null) {
+            nf.prevFree = pf;
+        }
+        segment.prevFree = null;
+        segment.nextFree = null;
     }
 
     /** Arenas created, and the total time their buffers took to create - each is a buffer plus a device
@@ -205,7 +235,7 @@ public final class VulkanArena {
         // driver's alignment rather than of this arena's unit, so an unaligned start is reachable on a second grow; the
         // split branch below then trims the range down to an aligned element instead of trusting its offset.
         if (free.length == needed && free.offset % this.alignUnit == 0) {
-            free.free = false;
+            unlinkFree(free);
             result = free;
         } else {
             // Split from the end so the chosen range keeps its offset and the two ranges stay adjacent. BH-01: the
@@ -220,10 +250,13 @@ public final class VulkanArena {
             result.next = free.next;
             if (result.next != null) {
                 result.next.prev = result;
+            } else {
+                this.tail = result;
             }
             free.length = start - free.offset;
             free.next = result;
         }
+        this.liveSegmentCount++;
         this.used += result.length;
         if (VERIFY_ENABLED) {
             verifyAlignment(result);
@@ -497,15 +530,9 @@ public final class VulkanArena {
         }
     }
 
-    /** How many segments are handed out right now, walked from the free list so it cannot disagree with it. */
+    /** How many segments are handed out right now, tracked incrementally across allocate/release. */
     private int liveSegments() {
-        int live = 0;
-        for (Segment segment = this.head; segment != null; segment = segment.next) {
-            if (!segment.free) {
-                live++;
-            }
-        }
-        return live;
+        return this.liveSegmentCount;
     }
 
     private boolean isVertexArena() {
@@ -537,9 +564,14 @@ public final class VulkanArena {
             segment.length = 0;
             segment.prev = null;
             segment.next = null;
+            segment.prevFree = null;
+            segment.nextFree = null;
             segment = next;
         }
         this.head = null;
+        this.tail = null;
+        this.freeHead = null;
+        this.liveSegmentCount = 0;
         this.used = 0;
         this.capacity = 0;
         if (this.verifyBuffer != null) {
@@ -567,7 +599,7 @@ public final class VulkanArena {
         // the free list once the submission that could name it has completed (the retired-cleanup contract).
         segment.retiring = true;
         this.retiringSegments++;
-        this.context.celtium$retireCleanup("arena.free", () -> release(segment));
+        this.context.celtium$retireCleanup("arena.free", segment);
     }
 
     /** Segments freed but not yet reusable; see {@link #free}. */
@@ -580,8 +612,9 @@ public final class VulkanArena {
         if (this.deleted || segment.free) {
             return;
         }
-        segment.free = true;
+        this.liveSegmentCount--;
         this.used -= segment.length;
+        linkFree(segment);
         if (segment.next != null && segment.next.free) {
             segment.merge(segment.next);
         }
@@ -620,37 +653,37 @@ public final class VulkanArena {
         if (length <= 0) {
             return;
         }
-        Segment tail = new Segment(this, offset, length);
-        tail.free = true;
-        if (this.head == null) {
-            this.head = tail;
+        Segment last = this.tail;
+        if (last == null) {
+            Segment tailSeg = new Segment(this, offset, length);
+            this.head = tailSeg;
+            this.tail = tailSeg;
+            linkFree(tailSeg);
             return;
         }
-        Segment last = this.head;
-        while (last.next != null) {
-            last = last.next;
-        }
-        last.next = tail;
-        tail.prev = last;
         if (last.free) {
-            last.merge(tail);
+            last.length += length;
+            return;
         }
+        Segment tailSeg = new Segment(this, offset, length);
+        last.next = tailSeg;
+        tailSeg.prev = last;
+        this.tail = tailSeg;
+        linkFree(tailSeg);
     }
 
     /** Best-fit search with an exact-size short circuit; returns null when no free range is large enough. */
     private Segment findFree(int size) {
-        Segment entry = this.head;
+        Segment entry = this.freeHead;
         Segment best = null;
         while (entry != null) {
-            if (entry.free) {
-                if (entry.length == size) {
-                    return entry;
-                }
-                if (entry.length > size && (best == null || best.length > entry.length)) {
-                    best = entry;
-                }
+            if (entry.length == size) {
+                return entry;
             }
-            entry = entry.next;
+            if (entry.length > size && (best == null || best.length > entry.length)) {
+                best = entry;
+            }
+            entry = entry.nextFree;
         }
         return best;
     }
@@ -752,7 +785,7 @@ public final class VulkanArena {
      * mod's metadata converts them into vertex and index positions with the same arithmetic for both backends. The
      * byte range never changes while the segment is alive - the arena grows by copying data in place.
      */
-    public static final class Segment implements MeshBufferSegment {
+    public static final class Segment implements MeshBufferSegment, Runnable {
         private final VulkanArena arena;
         private int offset;
         private int length;
@@ -761,11 +794,18 @@ public final class VulkanArena {
         private boolean retiring;
         private Segment prev;
         private Segment next;
+        private Segment prevFree;
+        private Segment nextFree;
 
         private Segment(VulkanArena arena, int offset, int length) {
             this.arena = arena;
             this.offset = offset;
             this.length = length;
+        }
+
+        @Override
+        public void run() {
+            this.arena.release(this);
         }
 
         @Override
@@ -801,11 +841,16 @@ public final class VulkanArena {
 
         /** Absorbs the following range, which must be free, into this one. */
         private void merge(Segment other) {
+            this.arena.unlinkFree(other);
             this.length += other.length;
             this.next = other.next;
             if (this.next != null) {
                 this.next.prev = this;
+            } else {
+                this.arena.tail = this;
             }
+            other.prev = null;
+            other.next = null;
         }
 
         @Override

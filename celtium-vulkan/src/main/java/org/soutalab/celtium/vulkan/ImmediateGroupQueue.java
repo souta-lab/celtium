@@ -22,18 +22,22 @@ public final class ImmediateGroupQueue {
      * @return how many groups were left behind for other targets
      */
     public static int retireGroupsForTarget(List<ImmediateGroup> groups, long targetIdentity) {
-        int kept = 0;
-        Iterator<ImmediateGroup> iterator = groups.iterator();
-        while (iterator.hasNext()) {
-            ImmediateGroup group = iterator.next();
-            if (group != null && group.target == targetIdentity) {
-                iterator.remove();
-            } else {
+        int size = groups.size();
+        int write = 0;
+        for (int read = 0; read < size; read++) {
+            ImmediateGroup group = groups.get(read);
+            if (group == null || group.target != targetIdentity) {
                 // Anything the queue cannot attribute to a target is kept: a null group must never be the reason
                 // another pass's geometry disappears.
-                kept++;
+                if (write != read) {
+                    groups.set(write, group);
+                }
+                write++;
             }
         }
-        return kept;
+        if (write < size) {
+            groups.subList(write, size).clear();
+        }
+        return write;
     }
 }

@@ -29,26 +29,31 @@ public final class VulkanHostBuffer {
      * property of how many times this class allocated, not of a frame time. Counting it here - at the only place a
      * host buffer's memory is allocated - keeps the statement in the report instead of in a source reading.
      */
-    private static long allocations;
-    private static long deletions;
+    private static final java.util.concurrent.atomic.AtomicLong ALLOCATIONS =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong DELETIONS =
+            new java.util.concurrent.atomic.AtomicLong();
     /** Buffers created for the frame arena, counted apart so its bounded growth is not read as per-group allocation. */
-    private static long arenaAllocations;
+    private static final java.util.concurrent.atomic.AtomicLong ARENA_ALLOCATIONS =
+            new java.util.concurrent.atomic.AtomicLong();
 
     /** {@return the host-buffer allocation census, so a report can say whether allocation scales with groups}. */
-    public static synchronized String allocationSummary() {
-        return "hostBuffersCreated=" + allocations + " hostBuffersDestroyed=" + deletions
-                + " hostBuffersLive=" + (allocations - deletions) + " hostBuffersFromFrameArena=" + arenaAllocations;
+    public static String allocationSummary() {
+        long allocs = ALLOCATIONS.get();
+        long dels = DELETIONS.get();
+        return "hostBuffersCreated=" + allocs + " hostBuffersDestroyed=" + dels
+                + " hostBuffersLive=" + (allocs - dels) + " hostBuffersFromFrameArena=" + ARENA_ALLOCATIONS.get();
     }
 
-    private static synchronized void noteAllocated(boolean arena) {
-        allocations++;
+    private static void noteAllocated(boolean arena) {
+        ALLOCATIONS.incrementAndGet();
         if (arena) {
-            arenaAllocations++;
+            ARENA_ALLOCATIONS.incrementAndGet();
         }
     }
 
-    private static synchronized void noteDeleted() {
-        deletions++;
+    private static void noteDeleted() {
+        DELETIONS.incrementAndGet();
     }
 
     private final VulkanContext context;

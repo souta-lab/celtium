@@ -162,8 +162,8 @@ public final class VulkanImmediateParticlePipeline {
             vkCmdPushConstants(commandBuffer, this.pipelineLayout,
                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, clamped);
             this.pushCache.remember(commandBuffer.address(), this.pipelineLayout, clamped);
-        PacketCost.notePush(PacketCost.endPush(pushStart));
         }
+        PacketCost.notePush(PacketCost.endPush(pushStart));
         // The mesh binds its own streams at their own offsets and draws: an owning mesh binds at 0, a frame-arena
         // borrow at its slice offset. Keeping the three calls in one place is what stops a variant from binding a
         // slice at 0 and drawing another group's vertices (OPT-05).
@@ -203,9 +203,14 @@ public final class VulkanImmediateParticlePipeline {
         // view and generation change while the atlas's do not - keyed on the texture alone, a set built for an old
         // light map would be served for a new one.
         long descriptorKey = (texture.key() * 31L) + (lightmap != null ? lightmap.key() : 0L);
+        if (descriptorKey == this.lastDescriptorKey && this.lastDescriptorSet != 0L) {
+            return this.lastDescriptorSet;
+        }
         // 0 is "absent": a successfully allocated set is never 0.
         long existing = this.setsByTextureView.get(descriptorKey);
         if (existing != 0L) {
+            this.lastDescriptorKey = descriptorKey;
+            this.lastDescriptorSet = existing;
             return existing;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -244,12 +249,17 @@ public final class VulkanImmediateParticlePipeline {
             VulkanDescriptorWrites.note(write, "VulkanImmediateParticlePipeline");
             vkUpdateDescriptorSets(this.context.device(), write, null);
             this.setsByTextureView.put(descriptorKey, set);
+            this.lastDescriptorKey = descriptorKey;
+            this.lastDescriptorSet = set;
             this.setsCreated++;
             return set;
         } catch (RuntimeException | LinkageError error) {
             return fail(error.getClass().getSimpleName() + ": " + error.getMessage());
         }
     }
+
+    private long lastDescriptorKey = -1L;
+    private long lastDescriptorSet;
 
     /** The reason the last zero was returned, so one run can name it instead of guessing between four paths. */
     private String lastFailure;

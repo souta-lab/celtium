@@ -178,7 +178,10 @@ public final class VulkanImmediateTexturePipeline {
      * forever, so a long session with repeated texture reloads grew the cache without bound and exhausted the finite
      * pool - every later allocation then failed. The name index is what says which entry a new generation supersedes.
      */
-    private final java.util.List<Long> insertionOrder = new java.util.ArrayList<Long>();
+    private final long[] insertionOrderRing = new long[DESCRIPTOR_CACHE_LIMIT * 2];
+    private int insertionOrderHead;
+    private int insertionOrderTail;
+    private int insertionOrderCount;
     /** Sets retired because a newer generation of the same GL texture replaced them; counted, never silently dropped. */
     private int descriptorSetsRetired;
     /** The pool each retired set belongs to, so a completion-gated reset can reach it (OPT-04's release basis). */
@@ -794,7 +797,6 @@ public final class VulkanImmediateTexturePipeline {
             }
             return 0L;
         }
-        censusTexture(texture);
         long key = texture.key();
         // Single-slot cache in front of the map: consecutive immediate batches overwhelmingly sample the same texture (the
         // font atlas, the block atlas), and this is the hottest lookup in the renderer - one per batch, ~300 a frame.
@@ -810,15 +812,18 @@ public final class VulkanImmediateTexturePipeline {
             this.lastDescriptorSet = cachedSet;
             return cachedSet;
         }
+        censusTexture(texture);
         // A miss retires the eldest entries once the cache is at its limit. The key is view ^ generation, so a
         // generation bump (a mirror refresh, a sampler rebuild, a reallocation) always misses and, before this, always
         // added: nothing removed an entry, so a long session with repeated texture reloads grew the cache without
         // bound and exhausted the finite pool. The set itself is not freed here - the command buffers that recorded it
         // may still be in flight, and OPT-04 makes GPU completion the only basis for releasing a resource - so it goes
         // on the retired list, counted, for a completion-gated reset.
-        while (this.setsByTextureView.size() >= DESCRIPTOR_CACHE_LIMIT && !this.insertionOrder.isEmpty()) {
-            Long eldest = this.insertionOrder.remove(0);
-            long removed = this.setsByTextureView.remove(eldest.longValue());
+        while (this.setsByTextureView.size() >= DESCRIPTOR_CACHE_LIMIT && this.insertionOrderCount > 0) {
+            long eldest = this.insertionOrderRing[this.insertionOrderHead];
+            this.insertionOrderHead = (this.insertionOrderHead + 1) % this.insertionOrderRing.length;
+            this.insertionOrderCount--;
+            long removed = this.setsByTextureView.remove(eldest);
             if (removed != 0L) {
                 this.descriptorSetsRetired++;
                 this.retiredSets.add(Long.valueOf(removed));
@@ -847,8 +852,13 @@ public final class VulkanImmediateTexturePipeline {
                     .pImageInfo(image);
             celtium$noteDescWrite(write);
             vkUpdateDescriptorSets(this.context.device(), write, null);
-            this.setsByTextureView.put(texture.key(), set);
-            this.lastDescriptorKey = texture.key();
+            this.setsByTextureView.put(key, set);
+            if (this.insertionOrderCount < this.insertionOrderRing.length) {
+                this.insertionOrderRing[this.insertionOrderTail] = key;
+                this.insertionOrderTail = (this.insertionOrderTail + 1) % this.insertionOrderRing.length;
+                this.insertionOrderCount++;
+            }
+            this.lastDescriptorKey = key;
             this.lastDescriptorSet = set;
             DESCRIPTOR_KEYS_CACHED.incrementAndGet();
             return set;
@@ -1002,7 +1012,9 @@ public final class VulkanImmediateTexturePipeline {
         this.descriptorSet = VK_NULL_HANDLE;
         this.descriptorPools.clear();
         this.setsByTextureView.clear();
-        this.insertionOrder.clear();
+        this.insertionOrderHead = 0;
+        this.insertionOrderTail = 0;
+        this.insertionOrderCount = 0;
         this.lastDescriptorKey = -1L;
         this.lastDescriptorSet = 0L;
         this.retiredSets.clear();

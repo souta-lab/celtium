@@ -53,9 +53,11 @@ public final class VulkanImmediateDrawer {
      * @param vertexCount number of vertices in the batch
      * @return triangle-list indices, or {@code null} when this renderer has no equivalent for the mode
      */
+    private static final int[] EMPTY_INDICES = new int[0];
+
     public static int[] expandIndices(int glMode, int vertexCount) {
         if (vertexCount <= 0) {
-            return new int[0];
+            return EMPTY_INDICES;
         }
         // The cheap validity checks stay ahead of the map lookup so a refused batch costs no more than before.
         if (glMode == GL11.GL_QUADS && vertexCount % 4 != 0) {

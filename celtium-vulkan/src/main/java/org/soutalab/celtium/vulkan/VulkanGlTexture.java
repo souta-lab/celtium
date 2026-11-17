@@ -861,6 +861,13 @@ public final class VulkanGlTexture {
      * @param unboundOut receives whether the recording was unbound, for the caller's log line; may be {@code null}
      */
     static void noteForeignTransition(long commandBuffer, long image, int from, int to, boolean[] unboundOut) {
+        boolean unbound = noteForeignTransition(commandBuffer, image, from, to);
+        if (unboundOut != null) {
+            unboundOut[0] = unbound;
+        }
+    }
+
+    static boolean noteForeignTransition(long commandBuffer, long image, int from, int to) {
         synchronized (VulkanGlTexture.class) {
             long key = image;
             long address = commandBuffer;
@@ -877,19 +884,26 @@ public final class VulkanGlTexture {
                             + " commitLayoutRecording around the submission to bind it) count=" + foreignLayoutUnbound);
                 }
             }
-            int[] previous = recording.pending.put(key, new int[] {from, to});
-            ForeignLayoutState state = FOREIGN_STATES.get(key);
-            if (previous == null && state != null) {
-                // A second transition for the same image in one recording replaces the entry rather than adding one:
-                // the pair of barriers executes in order, so only the last one decides the layout the recording leaves.
-                state.openPending++;
+            int[] existing = recording.pending.get(key);
+            if (existing != null) {
+                existing[0] = from;
+                existing[1] = to;
+            } else {
+                recording.pending.put(key, new int[] {from, to});
+                ForeignLayoutState state = FOREIGN_STATES.get(key);
+                if (state != null) {
+                    // A second transition for the same image in one recording replaces the entry rather than adding one:
+                    // the pair of barriers executes in order, so only the last one decides the layout the recording leaves.
+                    state.openPending++;
+                }
             }
-            if (unboundOut != null) {
-                unboundOut[0] = recording.unbound;
+            if (recording.unbound) {
+                ForeignLayoutState state = FOREIGN_STATES.get(key);
+                if (state != null) {
+                    state.confirmed = to;
+                }
             }
-            if (recording.unbound && state != null) {
-                state.confirmed = to;
-            }
+            return recording.unbound;
         }
     }
 
@@ -1231,7 +1245,6 @@ public final class VulkanGlTexture {
             return;
         }
         final long address = commandBuffer.address();
-        boolean[] unbound = new boolean[1];
         final int oldLayout = foreignTransitionFrom(address, this.foreignState.image, newLayout);
         if (oldLayout < 0) {
             synchronized (VulkanGlTexture.class) {
@@ -1264,7 +1277,7 @@ public final class VulkanGlTexture {
         // buffer's submission is accepted, and it is dropped if the recording is abandoned. Nothing was written to the
         // ledger before the barrier existed, so a recording failure needs no rollback - the next call re-decides from
         // the same source layout.
-        noteForeignTransition(address, this.foreignState.image, oldLayout, newLayout, unbound);
+        boolean unbound = noteForeignTransition(address, this.foreignState.image, oldLayout, newLayout);
         synchronized (VulkanGlTexture.class) {
             foreignLayoutTransitions++;
             // The order of these lines against the owner's own recording is the measurement: a hand-back printed
@@ -1276,7 +1289,7 @@ public final class VulkanGlTexture {
                 System.out.println("[Celtium] CELTIUM_SHARED_LAYOUT image=0x" + Long.toHexString(this.image)
                         + " view=0x" + Long.toHexString(this.view) + " " + layoutName(oldLayout) + " -> "
                         + layoutName(newLayout) + " cmd=0x" + Long.toHexString(address)
-                        + " token=" + (unbound[0] ? "unbound" : "pending")
+                        + " token=" + (unbound ? "unbound" : "pending")
                         + " transition#" + foreignLayoutTransitions);
             }
         }

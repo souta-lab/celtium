@@ -69,6 +69,27 @@ public final class ModGlslTranslator {
     private static final Pattern MAIN = Pattern.compile("\\bvoid\\s+main\\s*\\(\\s*(?:void)?\\s*\\)");
     private static final Pattern LAID_OUT_IMAGE = Pattern.compile(
             "layout\\s*\\(([^)]*)\\)\\s*uniform\\s+(?:[iu]?image\\w+)\\s+(\\w+)");
+    private static final Pattern RESERVED_WORDS_PATTERN = Pattern.compile(
+            "\\b(?:texture|sample|buffer|shared|input|output|filter|image|active|common|partition|patch|"
+                    + "resource|subroutine|precise|coherent|restrict|readonly|writeonly|superp)\\b");
+    private static final Pattern FRAG_COLOR_PATTERN = Pattern.compile("\\bgl_FragColor\\b");
+    private static final Pattern FRAG_DATA0_PATTERN = Pattern.compile("\\bgl_FragData\\s*\\[\\s*0\\s*\\]");
+    private static final Pattern FTRANSFORM_PATTERN = Pattern.compile("\\bftransform\\s*\\(\\s*\\)");
+    private static final Pattern TEXCOORD_BAD_PATTERN = Pattern.compile("(?s).*\\bgl_TexCoord\\s*\\[\\s*[1-9].*");
+    private static final Pattern TEXCOORD0_PATTERN = Pattern.compile("\\bgl_TexCoord\\s*\\[\\s*0\\s*\\]");
+    private static final Pattern GL_LEFTOVER_PATTERN = Pattern.compile(
+            "\\bgl_(?!Position\\b|FragColor\\b|FragData\\b|FragCoord\\b|PointSize\\b)(\\w+)");
+    private static final Pattern GL_VERTEX_PATTERN = Pattern.compile("\\bgl_Vertex\\b");
+    private static final Pattern GL_COLOR_PATTERN = Pattern.compile("\\bgl_Color\\b");
+    private static final Pattern GL_MULTI_TEXCOORD0_PATTERN = Pattern.compile("\\bgl_MultiTexCoord0\\b");
+    private static final Pattern GL_FRONT_COLOR_PATTERN = Pattern.compile("\\bgl_FrontColor\\b");
+    private static final Pattern GL_MVP_PATTERN = Pattern.compile("\\bgl_ModelViewProjectionMatrix\\b");
+    private static final Pattern GL_MV_PATTERN = Pattern.compile("\\bgl_ModelViewMatrix\\b");
+    private static final Pattern GL_PROJ_PATTERN = Pattern.compile("\\bgl_ProjectionMatrix\\b");
+    private static final Pattern TEX2D_LOD_PATTERN = Pattern.compile("\\btexture2DLod\\s*\\(");
+    private static final Pattern TEX2D_PATTERN = Pattern.compile("\\btexture2D\\s*\\(");
+    private static final Pattern TEX3D_PATTERN = Pattern.compile("\\btexture3D\\s*\\(");
+    private static final Pattern TEXCUBE_PATTERN = Pattern.compile("\\btextureCube\\s*\\(");
 
     private ModGlslTranslator() {
     }
@@ -242,8 +263,9 @@ public final class ModGlslTranslator {
 
         vertex = renameMain(vertex, "vertex");
         fragment = renameMain(fragment, "fragment");
-        fragment = fragment.replaceAll("\\bgl_FragColor\\b", "celtium_FragColor")
-                .replaceAll("\\bgl_FragData\\s*\\[\\s*0\\s*\\]", "celtium_FragColor");
+        fragment = FRAG_DATA0_PATTERN.matcher(
+                FRAG_COLOR_PATTERN.matcher(fragment).replaceAll("celtium_FragColor"))
+                .replaceAll("celtium_FragColor");
         if (fragment.contains("gl_FragData")) {
             throw new IllegalArgumentException("only gl_FragData[0] is lowered");
         }
@@ -273,15 +295,16 @@ public final class ModGlslTranslator {
     private static final String RENAMED = "celtium_r_";
 
     private static String renameReserved(String source) {
-        String s = source;
-        for (String word : RESERVED_IN_450) {
-            if ("in".equals(word) || "out".equals(word) || "flat".equals(word) || "centroid".equals(word)
-                    || "smooth".equals(word) || "noperspective".equals(word) || "layout".equals(word)) {
-                continue; // reserved in 120 too: a 120 source cannot use them as names
-            }
-            s = s.replaceAll("\\b" + word + "\\b", RENAMED + word);
+        Matcher m = RESERVED_WORDS_PATTERN.matcher(source);
+        if (!m.find()) {
+            return source;
         }
-        return s;
+        StringBuilder sb = new StringBuilder(source.length() + 32);
+        do {
+            m.appendReplacement(sb, RENAMED + m.group());
+        } while (m.find());
+        m.appendTail(sb);
+        return sb.toString();
     }
 
     private static String glName(String glslName) {
@@ -332,40 +355,34 @@ public final class ModGlslTranslator {
     private static String lowerBuiltins(String source, List<Declaration> decls, boolean vertexStage) {
         String s = source;
         if (vertexStage) {
-            s = s.replaceAll("\\bftransform\\s*\\(\\s*\\)",
+            s = FTRANSFORM_PATTERN.matcher(s).replaceAll(
                     // Expanded to the built-ins, not to their lowered names, so the two lowerings below declare them.
                     "(gl_ModelViewProjectionMatrix * gl_Vertex)");
-            s = replaceBuiltin(s, "gl_Vertex", "celtium_Vertex", "attribute", "vec4", decls);
-            s = replaceBuiltin(s, "gl_Color", "celtium_Color", "attribute", "vec4", decls);
-            s = replaceBuiltin(s, "gl_MultiTexCoord0", "celtium_MultiTexCoord0", "attribute", "vec4", decls);
-            s = replaceBuiltin(s, "gl_FrontColor", "celtium_FrontColor", "varying", "vec4", decls);
+            s = replaceBuiltinPattern(s, GL_VERTEX_PATTERN, "celtium_Vertex", "attribute", "vec4", decls);
+            s = replaceBuiltinPattern(s, GL_COLOR_PATTERN, "celtium_Color", "attribute", "vec4", decls);
+            s = replaceBuiltinPattern(s, GL_MULTI_TEXCOORD0_PATTERN, "celtium_MultiTexCoord0", "attribute", "vec4",
+                    decls);
+            s = replaceBuiltinPattern(s, GL_FRONT_COLOR_PATTERN, "celtium_FrontColor", "varying", "vec4", decls);
         } else {
-            s = replaceBuiltin(s, "gl_Color", "celtium_FrontColor", "varying", "vec4", decls);
+            s = replaceBuiltinPattern(s, GL_COLOR_PATTERN, "celtium_FrontColor", "varying", "vec4", decls);
         }
-        if (s.matches("(?s).*\\bgl_TexCoord\\s*\\[\\s*[1-9].*")) {
+        if (TEXCOORD_BAD_PATTERN.matcher(s).matches()) {
             throw new IllegalArgumentException("only gl_TexCoord[0] is lowered");
         }
-        s = replaceBuiltinPattern(s, "\\bgl_TexCoord\\s*\\[\\s*0\\s*\\]", "celtium_TexCoord0", "varying", "vec4", decls);
-        s = replaceBuiltin(s, "gl_ModelViewProjectionMatrix", "celtium_ModelViewProjectionMatrix", "uniform", "mat4",
-                decls);
-        s = replaceBuiltin(s, "gl_ModelViewMatrix", "celtium_ModelViewMatrix", "uniform", "mat4", decls);
-        s = replaceBuiltin(s, "gl_ProjectionMatrix", "celtium_ProjectionMatrix", "uniform", "mat4", decls);
-        Matcher leftover = Pattern.compile("\\bgl_(?!Position\\b|FragColor\\b|FragData\\b|FragCoord\\b|PointSize\\b)"
-                + "(\\w+)").matcher(s);
+        s = replaceBuiltinPattern(s, TEXCOORD0_PATTERN, "celtium_TexCoord0", "varying", "vec4", decls);
+        s = replaceBuiltinPattern(s, GL_MVP_PATTERN, "celtium_ModelViewProjectionMatrix", "uniform", "mat4", decls);
+        s = replaceBuiltinPattern(s, GL_MV_PATTERN, "celtium_ModelViewMatrix", "uniform", "mat4", decls);
+        s = replaceBuiltinPattern(s, GL_PROJ_PATTERN, "celtium_ProjectionMatrix", "uniform", "mat4", decls);
+        Matcher leftover = GL_LEFTOVER_PATTERN.matcher(s);
         if (leftover.find()) {
             throw new IllegalArgumentException("built-in gl_" + leftover.group(1) + " is not lowered");
         }
         return s;
     }
 
-    private static String replaceBuiltin(String s, String builtin, String name, String qualifier, String type,
-                                         List<Declaration> decls) {
-        return replaceBuiltinPattern(s, "\\b" + builtin + "\\b", name, qualifier, type, decls);
-    }
-
-    private static String replaceBuiltinPattern(String s, String pattern, String name, String qualifier, String type,
+    private static String replaceBuiltinPattern(String s, Pattern pattern, String name, String qualifier, String type,
                                                 List<Declaration> decls) {
-        Matcher m = Pattern.compile(pattern).matcher(s);
+        Matcher m = pattern.matcher(s);
         if (!m.find()) {
             return s;
         }
@@ -388,10 +405,10 @@ public final class ModGlslTranslator {
     }
 
     private static String lowerTextureCalls(String s) {
-        return s.replaceAll("\\btexture2DLod\\s*\\(", "textureLod(")
-                .replaceAll("\\btexture2D\\s*\\(", "texture(")
-                .replaceAll("\\btexture3D\\s*\\(", "texture(")
-                .replaceAll("\\btextureCube\\s*\\(", "texture(");
+        s = TEX2D_LOD_PATTERN.matcher(s).replaceAll("textureLod(");
+        s = TEX2D_PATTERN.matcher(s).replaceAll("texture(");
+        s = TEX3D_PATTERN.matcher(s).replaceAll("texture(");
+        return TEXCUBE_PATTERN.matcher(s).replaceAll("texture(");
     }
 
     private static int locationsFor(String type) {

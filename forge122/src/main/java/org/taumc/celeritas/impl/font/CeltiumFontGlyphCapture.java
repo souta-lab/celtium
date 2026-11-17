@@ -268,6 +268,7 @@ public final class CeltiumFontGlyphCapture {
     private static float colorGreen = 1.0f;
     private static float colorBlue = 1.0f;
     private static float colorAlpha = 1.0f;
+    private static int currentPackedColor = 0xFFFFFFFF;
 
     private static int mode = -1;
     private static int vertexCount;
@@ -395,6 +396,8 @@ public final class CeltiumFontGlyphCapture {
         colorGreen = green;
         colorBlue = blue;
         colorAlpha = alpha;
+        currentPackedColor = byteValue(red) | (byteValue(green) << 8) | (byteValue(blue) << 16)
+                | (byteValue(alpha) << 24);
     }
 
     /**
@@ -503,8 +506,7 @@ public final class CeltiumFontGlyphCapture {
         // The buffered path writes the quad straight into the segment with no float-array round trip through the
         // capture arrays - at F3's ~15K glyphs a frame the arrays were a second copy of every vertex.
         if (DEBUG_RGB < 0 && !SCREEN_FILL && !ISOLATE_POSITION_COLOR && !FORCE_QUADS) {
-            int packed = byteValue(colorRed) | (byteValue(colorGreen) << 8) | (byteValue(colorBlue) << 16)
-                    | (byteValue(colorAlpha) << 24);
+            int packed = currentPackedColor;
             if (bufferedOpen && packed != bufferedColour) {
                 flushBufferedQuads(backend);
             }
@@ -640,8 +642,7 @@ public final class CeltiumFontGlyphCapture {
         vertexCount = MAX_VERTICES;
         texCoordCount = MAX_VERTICES;
         if (DEBUG_RGB < 0 && !SCREEN_FILL && !ISOLATE_POSITION_COLOR && !FORCE_QUADS) {
-            int packed = byteValue(colorRed) | (byteValue(colorGreen) << 8) | (byteValue(colorBlue) << 16)
-                    | (byteValue(colorAlpha) << 24);
+            int packed = currentPackedColor;
             if (bufferedOpen && packed != bufferedColour) {
                 flushBufferedQuads(backend);
             }
@@ -758,8 +759,7 @@ public final class CeltiumFontGlyphCapture {
         mode = GL_TRIANGLE_STRIP;
         vertexCount = MAX_VERTICES;
         texCoordCount = MAX_VERTICES;
-        int packed = byteValue(colorRed) | (byteValue(colorGreen) << 8) | (byteValue(colorBlue) << 16)
-                | (byteValue(colorAlpha) << 24);
+        int packed = currentPackedColor;
         if (bufferedOpen && packed != bufferedColour) {
             flushBufferedQuads(backend);
         }

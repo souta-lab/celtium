@@ -82,6 +82,11 @@ public abstract class RenderItemMixin {
      */
     private static final int ITEM_MESH_INVALIDATIONS = 4;
 
+    /** Fast path for untinted (color == -1) models, avoiding ItemMeshKey allocation on 99% of item draws. */
+    private final java.util.IdentityHashMap<IBakedModel, Plan> celtium$untintedItemMeshes =
+            new java.util.IdentityHashMap<>(64);
+    private static BufferBuilder celtium$scratchBuffer;
+    private static final WorldVertexBufferUploader CELTIUM_UPLOADER = new WorldVertexBufferUploader();
     /** model+color-keyed plans; render-thread confined, like every other per-draw structure here. */
     private final Map<ItemMeshKey, Plan> celtium$itemMeshes =
             new java.util.LinkedHashMap<>(64, 0.75f, true) {
@@ -145,10 +150,23 @@ public abstract class RenderItemMixin {
         Object manager = Minecraft.getMinecraft().getResourceManager();
         if (manager != this.celtium$resourceEpoch) {
             this.celtium$resourceEpoch = manager;
+            this.celtium$untintedItemMeshes.clear();
             this.celtium$itemMeshes.clear();
             this.celtium$uncacheableMeshes.clear();
             this.celtium$tintedModels.clear();
             this.celtium$probeFailures.clear();
+        }
+        if (color == -1) {
+            Plan untinted = this.celtium$untintedItemMeshes.get(model);
+            if (untinted != null) {
+                if (celtium$probe(model, untinted)) {
+                    celtium$replay(untinted, stack, color);
+                    this.celtium$itemMeshHits++;
+                    info.cancel();
+                    return;
+                }
+                this.celtium$untintedItemMeshes.remove(model);
+            }
         }
         ItemMeshKey key = new ItemMeshKey(model, color);
         Plan plan = this.celtium$itemMeshes.get(key);
@@ -183,11 +201,13 @@ public abstract class RenderItemMixin {
                 // uncacheable, because it will be the same reason next frame.
                 this.celtium$uncacheableMeshes.put(key, Boolean.TRUE);
             }
-            // An empty answer is a property of the frame - the model is a function of the stack it last saw, and a
-            // stack with no preview answers nothing while the next stack answers six faces. Demoting the key for
-            // that would take the model out of the cache for the whole resource epoch over one NBT-less stack, so
-            // the empty case is left cacheable and simply not cached: the next draw asks the model again.
             return;
+        }
+        if (color == -1) {
+            if (this.celtium$untintedItemMeshes.size() >= ITEM_MESH_CACHE_CAP) {
+                this.celtium$untintedItemMeshes.clear();
+            }
+            this.celtium$untintedItemMeshes.put(model, plan);
         }
         this.celtium$itemMeshes.put(key, plan);
         this.celtium$itemMeshMisses++;
@@ -217,6 +237,9 @@ public abstract class RenderItemMixin {
      * next stack rebuild instead of replay.
      */
     private static boolean celtium$probe(IBakedModel model, Plan plan) {
+        if (model.getClass() == net.minecraft.client.renderer.block.model.SimpleBakedModel.class) {
+            return true;
+        }
         List<BakedQuad> probe = model.getQuads((IBlockState) null, (EnumFacing) null, 0L);
         if (probe.size() != plan.probeCount) {
             return false;
@@ -261,29 +284,17 @@ public abstract class RenderItemMixin {
             // used range before the uploader runs and before the bytes are read out of the same range.
             scratch.finishDrawing();
             int[] data = celtium$bytes(scratch);
-            new WorldVertexBufferUploader().draw(scratch);
+            CELTIUM_UPLOADER.draw(scratch);
             return new Plan(new Segment[] {
                     new Segment(data, false, 0, 0, false, false) }, false, probeQuad, probe.size(),
                     faceProbeQuad, faceProbe.size());
         }
-        // renderLitItem, faithfully: gather all quads, walk them by (blockLight, skyLight, shade) transitions, and
-        // emit a segment whenever the lighting or shading state changes - with ITEM-format quads carrying no light
-        // data this usually collapses to one segment, but the structure is kept because mods' quads may differ.
         List<BakedQuad> allquads = new ArrayList<>();
         for (EnumFacing enumfacing : CELTIUM_FACINGS) {
             allquads.addAll(model.getQuads((IBlockState) null, enumfacing, 0L));
         }
         allquads.addAll(model.getQuads((IBlockState) null, (EnumFacing) null, 0L));
         if (allquads.isEmpty()) {
-            // A model that answers no quads right now is not a model that answers no quads always, and this used to
-            // store the difference as a plan with zero segments: the key is (model instance, colour), so the first
-            // draw of a model that happened to be empty took that whole model out of every later frame as well.
-            // Measured on the creative inventory (legs r22a/r22b): the grid's thirty `littletiles:premade` and six
-            // `littletiles:multitiles` stacks emit no immediate batch at all - not even an empty one - while the eight
-            // tool stacks beside them do, because every one of them shares a single CreativeCore `IBakedModel` whose
-            // quads are a function of the stack it last saw. Handing the draw back to the original code makes an
-            // empty answer a property of this frame instead of the process: nothing is emitted either way, but the
-            // cache no longer remembers it, so the next stack gets asked rather than replayed.
             this.celtium$planWasEmpty = true;
             if (this.celtium$itemMeshEmpty < 16) {
                 this.celtium$itemMeshEmpty++;
@@ -292,9 +303,6 @@ public abstract class RenderItemMixin {
             }
             return null;
         }
-        // Any quad outside the ITEM layout that carries a light element goes back to the original code: the light
-        // gatherer's pipe is the piece this port deliberately does not reimplement, and the format check is what
-        // tells it apart.
         VertexFormat itemFormat = DefaultVertexFormats.ITEM;
         for (BakedQuad quad : allquads) {
             if (quad.getFormat() != itemFormat && celtium$quadHasLightElement(quad)) {
@@ -306,7 +314,7 @@ public abstract class RenderItemMixin {
         int runBl = 0, runSl = 0;
         boolean runShade = true;
         boolean runLightingDirty = false, runShadingDirty = false, hasLighting = false;
-        WorldVertexBufferUploader uploader = new WorldVertexBufferUploader();
+        WorldVertexBufferUploader uploader = CELTIUM_UPLOADER;
         for (int i = 0; i < allquads.size(); i++) {
             BakedQuad quad = allquads.get(i);
             boolean shade = quad.shouldApplyDiffuseLighting();
@@ -412,7 +420,13 @@ public abstract class RenderItemMixin {
     }
 
     private static BufferBuilder celtium$scratch() {
-        BufferBuilder scratch = new BufferBuilder(1 << 17);
+        BufferBuilder scratch = celtium$scratchBuffer;
+        if (scratch == null) {
+            scratch = new BufferBuilder(1 << 17);
+            celtium$scratchBuffer = scratch;
+        } else {
+            scratch.reset();
+        }
         scratch.begin(org.lwjgl.opengl.GL11.GL_QUADS, DefaultVertexFormats.ITEM);
         return scratch;
     }

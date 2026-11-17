@@ -152,17 +152,35 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179147_l", at = @At("HEAD"), require = 0)
     private static void celtium$enableBlend(CallbackInfo info) {
-        celtium$mirror(backend -> backend.setBlendEnabled(true));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setBlendEnabled(true);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Inject(method = "func_179084_k", at = @At("HEAD"), require = 0)
     private static void celtium$disableBlend(CallbackInfo info) {
-        celtium$mirror(backend -> backend.setBlendEnabled(false));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setBlendEnabled(false);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Inject(method = "func_179132_a", at = @At("HEAD"), require = 0)
     private static void celtium$depthMask(boolean mask, CallbackInfo info) {
-        celtium$mirror(backend -> backend.setDepthMask(mask));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setDepthMask(mask);
+            } catch (Throwable ignored) {
+            }
+        }
         // The stub's attribute stack needs the same value to put back on glPopAttrib, and vanilla's cache means this
         // hook is the only place the managed route is visible at all.
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteDepthMask(mask);
@@ -170,28 +188,58 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179097_i", at = @At("HEAD"), require = 0)
     private static void celtium$disableDepth(CallbackInfo info) {
-        celtium$mirror(backend -> backend.setDepthTest(false));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setDepthTest(false);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Inject(method = "func_179126_j", at = @At("HEAD"), require = 0)
     private static void celtium$enableDepth(CallbackInfo info) {
-        celtium$mirror(backend -> backend.setDepthTest(true));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setDepthTest(true);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Inject(method = "func_179092_a", at = @At("HEAD"), require = 0)
     private static void celtium$alphaFunc(int glFunc, float reference, CallbackInfo info) {
-        celtium$mirror(backend -> backend.setAlphaFunc(glFunc, reference));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setAlphaFunc(glFunc, reference);
+            } catch (Throwable ignored) {
+            }
+        }
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteAlphaFunc(glFunc, reference);
     }
 
     @Inject(method = "func_179098_w", at = @At("HEAD"), require = 0)
     private static void celtium$enableTexture2d(CallbackInfo info) {
-        celtium$mirror(backend -> backend.setTexture2dEnabled(true));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setTexture2dEnabled(true);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Inject(method = "func_179090_x", at = @At("HEAD"), require = 0)
     private static void celtium$disableTexture2d(CallbackInfo info) {
-        celtium$mirror(backend -> backend.setTexture2dEnabled(false));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setTexture2dEnabled(false);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     /** Bounded caller census for BH-06: which code binds, and whether it is the light-map id. */
@@ -204,32 +252,51 @@ public abstract class GlStateManagerMixin {
 
     @Inject(method = "func_179131_c", at = @At("HEAD"), require = 0)
     private static void celtium$color(float red, float green, float blue, float alpha, CallbackInfo info) {
-        // Published for the one path that needs the current colour as vertex data rather than as pipeline state: the
-        // font's glyph quads are POSITION_TEX_COLOR, whose fragment stage computes texture * v_Color, so the colour
-        // has to travel in the vertices. This hook is the same call the backend's own colour mirror is fed from
-        // (formats 6, 7 and 9 read it back for their group tint), so both see one value and cannot disagree. It is
-        // recorded before the mirror so a backend-less frame still leaves the font with the colour vanilla set.
         CeltiumFontGlyphCapture.currentColor(red, green, blue, alpha);
-        celtium$mirror(backend -> backend.setColor(red, green, blue, alpha));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setColor(red, green, blue, alpha);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     /** The depth comparison, which the pipelines baked as LESS_OR_EQUAL until the state model carried it. */
     @Inject(method = "func_179143_c", at = @At("HEAD"), require = 0)
     private static void celtium$depthFunc(int func, CallbackInfo info) {
-        celtium$mirror(backend -> backend.depthFunc(func));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.depthFunc(func);
+            } catch (Throwable ignored) {
+            }
+        }
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteDepthFunc(func);
     }
 
     @Inject(method = "func_179094_E", at = @At("HEAD"), require = 0)
     private static void celtium$pushMatrix(CallbackInfo info) {
         org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_PUSH;
-        celtium$mirror(TerrainGpuBackend::pushMatrix);
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.pushMatrix();
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Inject(method = "func_179121_F", at = @At("HEAD"), require = 0)
     private static void celtium$popMatrix(CallbackInfo info) {
         org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_POP;
-        celtium$mirror(TerrainGpuBackend::popMatrix);
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.popMatrix();
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     /** Blend factors arrive as enum ordinals, which is what the backend's state model records. */
@@ -238,13 +305,17 @@ public abstract class GlStateManagerMixin {
                                                     GlStateManager.DestFactor destRgb,
                                                     GlStateManager.SourceFactor sourceAlpha,
                                                     GlStateManager.DestFactor destAlpha, CallbackInfo info) {
-        // The GL constant each constant carries, not its ordinal: the enum stores the real factor (SRC_ALPHA is 770)
-        // and reading that table once keeps the mirror correct even if the declaration order ever changes.
         int src = celtium$glFactor(SOURCE_FACTORS, sourceRgb);
         int dst = celtium$glFactor(DEST_FACTORS, destRgb);
         int srcAlpha = celtium$glFactor(SOURCE_FACTORS, sourceAlpha);
         int dstAlpha = celtium$glFactor(DEST_FACTORS, destAlpha);
-        celtium$mirror(backend -> backend.setBlendFunc(src, dst, srcAlpha, dstAlpha));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setBlendFunc(src, dst, srcAlpha, dstAlpha);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     // Matrix *contents* matter as much as the stack: without them an immediate draw uses identities and lands in
@@ -252,20 +323,38 @@ public abstract class GlStateManagerMixin {
     @Inject(method = "func_179128_n", at = @At("HEAD"), require = 0)
     private static void celtium$matrixMode(int mode, CallbackInfo info) {
         org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_MODE;
-        celtium$mirror(backend -> backend.matrixMode(mode));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.matrixMode(mode);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Inject(method = "func_179096_D", at = @At("HEAD"), require = 0)
     private static void celtium$loadIdentity(CallbackInfo info) {
         org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_IDENTITY;
-        celtium$mirror(TerrainGpuBackend::loadIdentity);
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.loadIdentity();
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Inject(method = "func_179130_a", at = @At("HEAD"), require = 0)
     private static void celtium$ortho(double left, double right, double bottom, double top, double near, double far,
                                       CallbackInfo info) {
         org.taumc.celeritas.core.CeltiumGllessHint.vanillaMatrixCall = org.taumc.celeritas.core.CeltiumGllessHint.MATRIX_ORTHO;
-        celtium$mirror(backend -> backend.ortho(left, right, bottom, top, near, far));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.ortho(left, right, bottom, top, near, far);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Inject(method = "func_179137_b", at = @At("HEAD"), require = 0)
@@ -314,7 +403,13 @@ public abstract class GlStateManagerMixin {
      */
     @Inject(method = "func_179138_g", at = @At("HEAD"), require = 1)
     private static void celtium$setActiveTexture(int texture, CallbackInfo info) {
-        celtium$mirror(backend -> backend.activeTextureUnit(texture - org.lwjgl.opengl.GL13.GL_TEXTURE0));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.activeTextureUnit(texture - org.lwjgl.opengl.GL13.GL_TEXTURE0);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Inject(method = "func_179083_b", at = @At("HEAD"), require = 0)
@@ -342,57 +437,50 @@ public abstract class GlStateManagerMixin {
         if (backend != null) backend.flushBeforeClear(mask); // ordering failure must not be swallowed as a state hint
     }
 
-    /**
-     * The blend factors, which the mirror never saw.
-     * <p>
-     * The audit lists the integer {@code blendFunc} overloads as part of S07, and this is the one whose body was confirmed
-     * to call {@code GL11.glBlendFunc}. The particle family was asserting its own blend because the mirror could not report
-     * these; with them captured the pipeline can use what Minecraft actually set.
-     */
     @Inject(method = "func_179112_b", at = @At("HEAD"), require = 0)
     private static void celtium$blendFunc(int sourceFactor, int destinationFactor, CallbackInfo info) {
-        celtium$mirror(backend -> backend.blendFunc(sourceFactor, destinationFactor));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.blendFunc(sourceFactor, destinationFactor);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
-    /**
-     * The integer {@code tryBlendFuncSeparate}, which is the canonical one: the enum overload above delegates to it,
-     * and it is the overload a caller with plain GL constants uses ({@code JsonBlendingMode} is the one in the game's
-     * own code). BH-07: the mixin hooked the enum overload alone, so an integer call never reached the mirror - and
-     * the two overloads are different SRG names, read in the SRG table rather than guessed
-     * ({@code (IIII)V -> func_179120_a}, the enum one {@code func_187428_a}).
-     * <p>
-     * Feeding both is not a double update in the sense that matters: the enum overload converts its constants and
-     * calls this one, so the two hooks write the same four values in the same call. The reason to hook this one as
-     * well is every caller that starts here.
-     */
     @Inject(method = "func_179120_a", at = @At("HEAD"), require = 0)
     private static void celtium$tryBlendFuncSeparateInt(int sourceRgb, int destRgb, int sourceAlpha, int destAlpha,
                                                         CallbackInfo info) {
-        celtium$mirror(backend -> backend.setBlendFunc(sourceRgb, destRgb, sourceAlpha, destAlpha));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setBlendFunc(sourceRgb, destRgb, sourceAlpha, destAlpha);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
-    /**
-     * BH-07's second half: the blend equation, which bakes into the same pipeline attachment as the factors.
-     * {@code GlStateManager.glBlendEquation} is a straight pass-through to {@code GL14.glBlendEquation}, so without a
-     * hook the equation never reaches the mirror - {@code JsonBlendingMode} is the caller in the game's own code, and
-     * the SRG table calls this one {@code func_187398_d}.
-     */
     @Inject(method = "func_187398_d", at = @At("HEAD"), require = 0)
     private static void celtium$blendEquation(int equation, CallbackInfo info) {
-        celtium$mirror(backend -> backend.blendEquation(equation, equation));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.blendEquation(equation, equation);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
-    /**
-     * BH-10: {@code GlStateManager.colorMask}, which is cached (it calls {@code GL11.glColorMask} only when the mask
-     * changes) - the Fancy cloud's depth-only pass is the caller that matters ({@code RenderGlobal:1655}). SRG name
-     * {@code func_179135_a}. Feeding the mirror here does not replace the stub's record, which is what the capture
-     * reads under GL-less; the two receive the same calls, and this half is what makes the bridge path carry the mask
-     * as well.
-     */
     @Inject(method = "func_179135_a", at = @At("HEAD"), require = 0)
     private static void celtium$colorMask(boolean red, boolean green, boolean blue, boolean alpha, CallbackInfo info) {
         int mask = (red ? 1 : 0) | (green ? 2 : 0) | (blue ? 4 : 0) | (alpha ? 8 : 0);
-        celtium$mirror(backend -> backend.colorMask(mask));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.colorMask(mask);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Inject(method = "func_179152_a", at = @At("HEAD"), require = 0)
@@ -482,40 +570,70 @@ public abstract class GlStateManagerMixin {
      */
     @Inject(method = "func_179141_d", at = @At("HEAD"), require = 0)
     private static void celtium$enableAlpha(CallbackInfo info) {
-        celtium$mirror(backend -> backend.setAlphaTestEnabled(true));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setAlphaTestEnabled(true);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Inject(method = "func_179118_c", at = @At("HEAD"), require = 0)
     private static void celtium$disableAlpha(CallbackInfo info) {
-        celtium$mirror(backend -> backend.setAlphaTestEnabled(false));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setAlphaTestEnabled(false);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
-    // Fixed-function lighting state. Item and entity rendering in 1.12.2 is lit by GL_LIGHTING (RenderHelper sets two
-    // directional lights); without these mirrors a native item draw could never reproduce the fixed-pipeline shading.
     @Inject(method = "func_179145_e", at = @At("HEAD"), require = 0)
     private static void celtium$enableLighting(CallbackInfo info) {
-        celtium$mirror(backend -> backend.setLightingEnabled(true));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setLightingEnabled(true);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Inject(method = "func_179140_f", at = @At("HEAD"), require = 0)
     private static void celtium$disableLighting(CallbackInfo info) {
-        celtium$mirror(backend -> backend.setLightingEnabled(false));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setLightingEnabled(false);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Inject(method = "func_179085_a", at = @At("HEAD"), require = 0)
     private static void celtium$enableLight(int index, CallbackInfo info) {
-        celtium$mirror(backend -> backend.setLightEnabled(index, true));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setLightEnabled(index, true);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Inject(method = "func_179122_b", at = @At("HEAD"), require = 0)
     private static void celtium$disableLight(int index, CallbackInfo info) {
-        celtium$mirror(backend -> backend.setLightEnabled(index, false));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setLightEnabled(index, false);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
-    /**
-     * {@code glLight}: the pnames a lit draw actually reads are GL_POSITION (the direction, which the mirror folds the
-     * current modelview into the way the driver would) and GL_DIFFUSE. Light indices map GL_LIGHT0+index onto 0 and 1.
-     */
     @Inject(method = "func_187438_a", at = @At("HEAD"), require = 0)
     private static void celtium$glLight(int light, int pname, java.nio.FloatBuffer params, CallbackInfo info) {
         int index = light - 16384; // GL_LIGHT0
@@ -526,10 +644,16 @@ public abstract class GlStateManagerMixin {
         float x = params.get(pos);
         float y = params.get(pos + 1);
         float z = params.get(pos + 2);
-        if (pname == 4611) { // GL_POSITION
-            celtium$mirror(backend -> backend.setLightPosition(index, x, y, z));
-        } else if (pname == 4609) { // GL_DIFFUSE
-            celtium$mirror(backend -> backend.setLightDiffuse(index, x, y, z));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                if (pname == 4611) { // GL_POSITION
+                    backend.setLightPosition(index, x, y, z);
+                } else if (pname == 4609) { // GL_DIFFUSE
+                    backend.setLightDiffuse(index, x, y, z);
+                }
+            } catch (Throwable ignored) {
+            }
         }
     }
 
@@ -543,12 +667,24 @@ public abstract class GlStateManagerMixin {
         float r = params.get(pos);
         float g = params.get(pos + 1);
         float b = params.get(pos + 2);
-        celtium$mirror(backend -> backend.setLightAmbient(r, g, b));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setLightAmbient(r, g, b);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Inject(method = "func_179103_j", at = @At("HEAD"), require = 0)
     private static void celtium$shadeModel(int mode, CallbackInfo info) {
-        celtium$mirror(backend -> backend.setShadeModel(mode));
+        TerrainGpuBackend backend = celtium$backendOrNull();
+        if (backend != null) {
+            try {
+                backend.setShadeModel(mode);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     private static final int[] SOURCE_FACTORS = celtium$factorTable(GlStateManager.SourceFactor.values());

@@ -12,10 +12,19 @@ public class SortedRenderLists implements ChunkRenderListIterable {
 
     private final ObjectArrayList<ChunkRenderList> lists;
     private final ReferenceOpenHashSet<TerrainRenderPass> passes;
+    private final boolean hasSortedPass;
 
     SortedRenderLists(ObjectArrayList<ChunkRenderList> lists) {
         this.lists = lists;
         this.passes = getAllPassesInLists(lists);
+        boolean sorted = false;
+        for (TerrainRenderPass pass : this.passes) {
+            if (pass.isSorted()) {
+                sorted = true;
+                break;
+            }
+        }
+        this.hasSortedPass = sorted;
     }
 
     private static ReferenceOpenHashSet<TerrainRenderPass> getAllPassesInLists(ObjectArrayList<ChunkRenderList> lists) {
@@ -50,6 +59,10 @@ public class SortedRenderLists implements ChunkRenderListIterable {
 
     public Set<TerrainRenderPass> getPasses() {
         return this.passes;
+    }
+
+    public boolean hasSortedPass() {
+        return this.hasSortedPass;
     }
 
     public static SortedRenderLists empty() {

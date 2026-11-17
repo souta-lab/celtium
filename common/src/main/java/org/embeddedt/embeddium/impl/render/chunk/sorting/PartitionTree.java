@@ -418,7 +418,10 @@ public final class PartitionTree implements SortState.Resortable {
         double lo = Math.min(from, to), hi = Math.max(from, to);
 
         for (float cut : cutPlanes[axis]) {
-            if (cut > lo && cut <= hi) {
+            if (cut > hi) {
+                break;
+            }
+            if (cut > lo) {
                 return true;
             }
         }

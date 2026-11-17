@@ -40,16 +40,34 @@ public final class ModelGeometryCache {
     /** The built meshes, keyed by display-list id, or null when they have not been built. */
     private it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<VulkanDynamicMesh> modelMeshes;
 
-    /** One-entry memo over {@link #meshFor}: consecutive replays often ask for the same list again. */
+    private static final int MESH_MEMO_SLOTS = 64;
+    /** One-entry + 64-slot direct-mapped memo over {@link #meshFor} for multi-part entity/TESR display lists. */
     private int lastMeshListId = Integer.MIN_VALUE;
     private VulkanDynamicMesh lastMesh;
+    private final int[] memoListIds = createEmptyMemoIds();
+    private final VulkanDynamicMesh[] memoMeshes = new VulkanDynamicMesh[MESH_MEMO_SLOTS];
+
+    private static int[] createEmptyMemoIds() {
+        int[] ids = new int[MESH_MEMO_SLOTS];
+        java.util.Arrays.fill(ids, Integer.MIN_VALUE);
+        return ids;
+    }
 
     /** {@return the mesh for a list, or null when the table has none}; a hit keeps the boxed key path out. */
     VulkanDynamicMesh meshFor(int listId) {
         if (listId == this.lastMeshListId) {
             return this.lastMesh;
         }
+        int slot = listId & (MESH_MEMO_SLOTS - 1);
+        if (this.memoListIds[slot] == listId) {
+            VulkanDynamicMesh hit = this.memoMeshes[slot];
+            this.lastMeshListId = listId;
+            this.lastMesh = hit;
+            return hit;
+        }
         VulkanDynamicMesh mesh = this.modelMeshes == null ? null : this.modelMeshes.get(listId);
+        this.memoListIds[slot] = listId;
+        this.memoMeshes[slot] = mesh;
         this.lastMeshListId = listId;
         this.lastMesh = mesh;
         return mesh;
@@ -58,6 +76,8 @@ public final class ModelGeometryCache {
     private void invalidateMeshMemo() {
         this.lastMeshListId = Integer.MIN_VALUE;
         this.lastMesh = null;
+        java.util.Arrays.fill(this.memoListIds, Integer.MIN_VALUE);
+        java.util.Arrays.fill(this.memoMeshes, null);
     }
     /** The capture stamp the table was built from; {@link Long#MIN_VALUE} forces a build. */
     private long builtStamp = Long.MIN_VALUE;
@@ -65,7 +85,8 @@ public final class ModelGeometryCache {
     // A model list can be captured and still be absent from the current GPU table after
     // a world/backend transition. Recover once per list per capture version, not every frame.
     private int missingRecoveryVersion = Integer.MIN_VALUE;
-    private final Set<Integer> missingRecoveryAttempts = new HashSet<Integer>();
+    private final it.unimi.dsi.fastutil.ints.IntOpenHashSet missingRecoveryAttempts =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
 
     /**
      * Reopen a completed model table for a single captured-but-missing list.
@@ -80,7 +101,7 @@ public final class ModelGeometryCache {
             this.missingRecoveryVersion = captureVersion;
             this.missingRecoveryAttempts.clear();
         }
-        if (!this.missingRecoveryAttempts.add(Integer.valueOf(listId))) {
+        if (!this.missingRecoveryAttempts.add(listId)) {
             return false;
         }
         // build() skips identical global capture stamps even if the current table omitted

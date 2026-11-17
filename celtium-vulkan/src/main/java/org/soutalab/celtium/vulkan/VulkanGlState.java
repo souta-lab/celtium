@@ -328,10 +328,7 @@ public final class VulkanGlState {
             return;
         }
         float[] matrix = this.matrixScratch;
-        int position = buffer.position();
-        for (int i = 0; i < MATRIX_FLOATS; i++) {
-            matrix[i] = buffer.get(position + i);
-        }
+        buffer.get(buffer.position(), matrix, 0, MATRIX_FLOATS);
         loadMatrix(matrix);
     }
 
@@ -341,10 +338,7 @@ public final class VulkanGlState {
             return;
         }
         float[] matrix = this.matrixScratch;
-        int position = buffer.position();
-        for (int i = 0; i < MATRIX_FLOATS; i++) {
-            matrix[i] = buffer.get(position + i);
-        }
+        buffer.get(buffer.position(), matrix, 0, MATRIX_FLOATS);
         multiplyMatrix(matrix);
     }
 
@@ -763,7 +757,7 @@ public final class VulkanGlState {
         if (index < 0 || index >= 2) {
             return;
         }
-        float[] m = matrix(MATRIX_MODE_MODELVIEW);
+        float[] m = peekMatrix(MATRIX_MODE_MODELVIEW);
         int base = index * 3;
         float nx = m[0] * x + m[4] * y + m[8] * z;
         float ny = m[1] * x + m[5] * y + m[9] * z;
@@ -1077,16 +1071,17 @@ public final class VulkanGlState {
      */
     public long pipelineKey(int vertexFormatHash) {
         long key = vertexFormatHash;
-        key = (key * 31) + (this.raster.blendEnabled() ? 1 : 0);
-        key = (key * 31) + (this.raster.blendEnabled() ? this.raster.blendSrcRgb() : 0);
-        key = (key * 31) + (this.raster.blendEnabled() ? this.raster.blendDstRgb() : 0);
-        key = (key * 31) + (this.raster.blendEnabled() ? this.raster.blendSrcAlpha() : 0);
-        key = (key * 31) + (this.raster.blendEnabled() ? this.raster.blendDstAlpha() : 0);
+        boolean blend = this.raster.blendEnabled();
+        key = (key * 31) + (blend ? 1 : 0);
+        key = (key * 31) + (blend ? this.raster.blendSrcRgb() : 0);
+        key = (key * 31) + (blend ? this.raster.blendDstRgb() : 0);
+        key = (key * 31) + (blend ? this.raster.blendSrcAlpha() : 0);
+        key = (key * 31) + (blend ? this.raster.blendDstAlpha() : 0);
         // BH-07, BH-10: the equations and the colour write mask bake into the same attachment and must therefore
         // close a pipeline the way the factors do. Before this they were not in the mirror at all, so the Fancy
         // cloud's depth-only pass and the visible pass shared one pipeline and the first pass painted colour.
-        key = (key * 31) + (this.raster.blendEnabled() ? this.raster.blendEquationRgb() : 0);
-        key = (key * 31) + (this.raster.blendEnabled() ? this.raster.blendEquationAlpha() : 0);
+        key = (key * 31) + (blend ? this.raster.blendEquationRgb() : 0);
+        key = (key * 31) + (blend ? this.raster.blendEquationAlpha() : 0);
         key = (key * 31) + this.raster.colorMask();
         key = (key * 31) + (this.depthTestEnabled ? this.depthFunc + 1 : 0);
         key = (key * 31) + (this.depthMask ? 1 : 0);
@@ -1163,14 +1158,19 @@ public final class VulkanGlState {
 
     /** Column-major {@code result = left * right}, the order Minecraft's matrix stack implies. */
     private static void multiply(float[] left, float[] right, float[] result) {
-        for (int column = 0; column < 4; column++) {
-            for (int row = 0; row < 4; row++) {
-                float sum = 0.0f;
-                for (int k = 0; k < 4; k++) {
-                    sum += left[k * 4 + row] * right[column * 4 + k];
-                }
-                result[column * 4 + row] = sum;
-            }
+        float l0 = left[0], l1 = left[1], l2 = left[2], l3 = left[3];
+        float l4 = left[4], l5 = left[5], l6 = left[6], l7 = left[7];
+        float l8 = left[8], l9 = left[9], l10 = left[10], l11 = left[11];
+        float l12 = left[12], l13 = left[13], l14 = left[14], l15 = left[15];
+        for (int col = 0; col < 16; col += 4) {
+            float r0 = right[col];
+            float r1 = right[col + 1];
+            float r2 = right[col + 2];
+            float r3 = right[col + 3];
+            result[col] = l0 * r0 + l4 * r1 + l8 * r2 + l12 * r3;
+            result[col + 1] = l1 * r0 + l5 * r1 + l9 * r2 + l13 * r3;
+            result[col + 2] = l2 * r0 + l6 * r1 + l10 * r2 + l14 * r3;
+            result[col + 3] = l3 * r0 + l7 * r1 + l11 * r2 + l15 * r3;
         }
     }
 }

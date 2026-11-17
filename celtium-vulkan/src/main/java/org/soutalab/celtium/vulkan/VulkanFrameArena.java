@@ -51,6 +51,7 @@ public final class VulkanFrameArena {
 
     private final VulkanContext context;
     private final Slot[] slots = new Slot[SLOT_COUNT];
+    private Slot activeSlot;
     private long frameId = -1L;
     private long completedEpoch;
     private long regionsOpened;
@@ -86,6 +87,9 @@ public final class VulkanFrameArena {
     public void beginFrame(long frameId, long completedEpoch) {
         this.frameId = frameId;
         this.completedEpoch = completedEpoch;
+        if (this.activeSlot != null && (!this.activeSlot.inUse || this.activeSlot.frameId != frameId)) {
+            this.activeSlot = null;
+        }
         for (Slot slot : this.slots) {
             if (!slot.inUse || slot.pendingGroups > 0) {
                 continue;
@@ -96,6 +100,9 @@ public final class VulkanFrameArena {
             if (!slot.awaitingCompletion && (slot.epoch < 0L || slot.epoch <= completedEpoch)) {
                 this.peakVertexBytes = Math.max(this.peakVertexBytes, slot.vertexCursor);
                 this.peakIndexBytes = Math.max(this.peakIndexBytes, slot.indexCursor);
+                if (this.activeSlot == slot) {
+                    this.activeSlot = null;
+                }
                 slot.reset();
                 this.reclaimedSlots++;
             }
@@ -122,8 +129,13 @@ public final class VulkanFrameArena {
 
     /** The frame's own slot, or a free one, or null when both are still held by earlier submissions. */
     private Slot slotForThisFrame() {
+        Slot active = this.activeSlot;
+        if (active != null && active.inUse && active.frameId == this.frameId) {
+            return active;
+        }
         for (Slot slot : this.slots) {
             if (slot.inUse && slot.frameId == this.frameId) {
+                this.activeSlot = slot;
                 return slot;
             }
         }
@@ -132,6 +144,7 @@ public final class VulkanFrameArena {
                 slot.inUse = true;
                 slot.frameId = this.frameId;
                 slot.epoch = -1L;
+                this.activeSlot = slot;
                 return slot;
             }
         }
@@ -147,6 +160,12 @@ public final class VulkanFrameArena {
      * is done" has to be a statement about that sequence, not about whichever fence happened to be observed last.
      */
     public void submitted(long frameId, long submitSequence) {
+        Slot active = this.activeSlot;
+        if (active != null && active.inUse && active.frameId == frameId) {
+            active.awaitingCompletion = true;
+            active.submitSequence = submitSequence;
+            return;
+        }
         for (Slot slot : this.slots) {
             if (slot.inUse && slot.frameId == frameId) {
                 slot.awaitingCompletion = true;
@@ -495,8 +514,11 @@ public final class VulkanFrameArena {
                 // an older batch, the slot's epoch is still -1).
                 VulkanHostBuffer replacement = new VulkanHostBuffer(this.context, align(target),
                         VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
-                org.lwjgl.system.MemoryUtil.memCopy(this.vertices.mappedAddress(), replacement.mappedAddress(),
-                        this.vertices.size());
+                long copyBytes = Math.min(this.vertexCursor, this.vertices.size());
+                if (copyBytes > 0L) {
+                    org.lwjgl.system.MemoryUtil.memCopy(this.vertices.mappedAddress(), replacement.mappedAddress(),
+                            copyBytes);
+                }
                 this.retiredBuffers.add(this.vertices);
                 this.vertices = replacement;
             }
@@ -519,8 +541,11 @@ public final class VulkanFrameArena {
             } else {
                 VulkanHostBuffer replacement = new VulkanHostBuffer(this.context, align(target),
                         VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT, true);
-                org.lwjgl.system.MemoryUtil.memCopy(this.indices.mappedAddress(), replacement.mappedAddress(),
-                        this.indices.size());
+                long copyBytes = Math.min(this.indexCursor, this.indices.size());
+                if (copyBytes > 0L) {
+                    org.lwjgl.system.MemoryUtil.memCopy(this.indices.mappedAddress(), replacement.mappedAddress(),
+                            copyBytes);
+                }
                 this.retiredBuffers.add(this.indices);
                 this.indices = replacement;
             }

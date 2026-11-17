@@ -2,6 +2,7 @@ package org.taumc.celeritas.impl;
 
 import it.unimi.dsi.fastutil.longs.Long2LongLinkedOpenHashMap;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.world.World;
@@ -78,6 +79,11 @@ public final class CeltiumLightCache {
     private static final long ABSENT = 0L;
     private static final Long2LongLinkedOpenHashMap COMBINED = new Long2LongLinkedOpenHashMap(CAP * 2);
     private static final Long2LongLinkedOpenHashMap BRIGHTNESS = new Long2LongLinkedOpenHashMap(CAP * 2);
+    /**
+     * Reusable mutable position for client-thread cache misses. Guarded by {@link #isClientMainThread()} so any
+     * off-thread caller on a client world falls back to a fresh position and leaves these maps untouched.
+     */
+    private static final BlockPos.MutableBlockPos MISS_POS = new BlockPos.MutableBlockPos();
 
     static {
         COMBINED.defaultReturnValue(ABSENT);
@@ -86,6 +92,11 @@ public final class CeltiumLightCache {
 
     /** The tag every live entry carries; 0 is never valid, so a fresh map cannot serve a stale value. */
     private static int generation = 1;
+
+    private static boolean isClientMainThread() {
+        Minecraft mc = Minecraft.getMinecraft();
+        return mc != null && mc.isCallingFromMinecraftThread();
+    }
 
     /** {@return the value tagged with the current generation, or {@link #ABSENT}}. */
     private static long tagged(int value) {
@@ -118,7 +129,7 @@ public final class CeltiumLightCache {
     public static int combinedLight(World world, BlockPos pos) {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("lightCache");
         try {
-            if (!ENABLED || !world.isRemote) {
+            if (!ENABLED || !world.isRemote || !isClientMainThread()) {
                 return world.getCombinedLight(pos, 0);
             }
             rollTick(world);
@@ -142,19 +153,19 @@ public final class CeltiumLightCache {
     public static int combinedLightAtPos(World world, double posX, double posY, double posZ) {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("lightCache");
         try {
-            if (!ENABLED || world == null || !world.isRemote) {
+            if (!ENABLED || world == null || !world.isRemote || !isClientMainThread()) {
                 BlockPos pos = new BlockPos(posX, posY, posZ);
                 return world != null && world.isBlockLoaded(pos) ? world.getCombinedLight(pos, 0) : 0;
             }
             rollTick(world);
-            long x = MathHelper.floor(posX), y = MathHelper.floor(posY), z = MathHelper.floor(posZ);
+            int x = MathHelper.floor(posX), y = MathHelper.floor(posY), z = MathHelper.floor(posZ);
             long key = pack(x, y, z);
             long cached = untag(COMBINED.getAndMoveToLast(key));
             if (cached != ABSENT) {
                 return (int) cached;
             }
-            BlockPos pos = new BlockPos(x, y, z);
-            int value = world.isBlockLoaded(pos) ? world.getCombinedLight(pos, 0) : 0;
+            MISS_POS.setPos(x, y, z);
+            int value = world.isBlockLoaded(MISS_POS) ? world.getCombinedLight(MISS_POS, 0) : 0;
             putCombined(key, value);
             return value;
         } finally {
@@ -169,7 +180,7 @@ public final class CeltiumLightCache {
     public static int entityCombinedLight(World world, double posX, double posYEye, double posZ) {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("lightCache");
         try {
-            if (!ENABLED || world == null || !world.isRemote) {
+            if (!ENABLED || world == null || !world.isRemote || !isClientMainThread()) {
                 BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(
                         MathHelper.floor(posX), 0, MathHelper.floor(posZ));
                 if (world == null || !world.isBlockLoaded(pos)) {
@@ -179,19 +190,19 @@ public final class CeltiumLightCache {
                 return world.getCombinedLight(pos, 0);
             }
             rollTick(world);
-            long x = MathHelper.floor(posX), y = MathHelper.floor(posYEye), z = MathHelper.floor(posZ);
+            int x = MathHelper.floor(posX), y = MathHelper.floor(posYEye), z = MathHelper.floor(posZ);
             long key = pack(x, y, z);
             long cached = untag(COMBINED.getAndMoveToLast(key));
             if (cached != ABSENT) {
                 return (int) cached;
             }
-            BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos((int) x, 0, (int) z);
+            MISS_POS.setPos(x, 0, z);
             int value;
-            if (!world.isBlockLoaded(pos)) {
+            if (!world.isBlockLoaded(MISS_POS)) {
                 value = 0;
             } else {
-                pos.setY((int) y);
-                value = world.getCombinedLight(pos, 0);
+                MISS_POS.setY(y);
+                value = world.getCombinedLight(MISS_POS, 0);
             }
             putCombined(key, value);
             return value;
@@ -204,7 +215,7 @@ public final class CeltiumLightCache {
     public static float entityBrightness(World world, double posX, double posYEye, double posZ) {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("lightCache");
         try {
-            if (!ENABLED || world == null || !world.isRemote) {
+            if (!ENABLED || world == null || !world.isRemote || !isClientMainThread()) {
                 BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(
                         MathHelper.floor(posX), 0, MathHelper.floor(posZ));
                 if (world == null || !world.isBlockLoaded(pos)) {
@@ -214,19 +225,19 @@ public final class CeltiumLightCache {
                 return world.getLightBrightness(pos);
             }
             rollTick(world);
-            long x = MathHelper.floor(posX), y = MathHelper.floor(posYEye), z = MathHelper.floor(posZ);
+            int x = MathHelper.floor(posX), y = MathHelper.floor(posYEye), z = MathHelper.floor(posZ);
             long key = pack(x, y, z);
             long cached = untag(BRIGHTNESS.getAndMoveToLast(key));
             if (cached != ABSENT) {
                 return Float.intBitsToFloat((int) cached);
             }
-            BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos((int) x, 0, (int) z);
+            MISS_POS.setPos(x, 0, z);
             float value;
-            if (!world.isBlockLoaded(pos)) {
+            if (!world.isBlockLoaded(MISS_POS)) {
                 value = 0.0F;
             } else {
-                pos.setY((int) y);
-                value = world.getLightBrightness(pos);
+                MISS_POS.setY(y);
+                value = world.getLightBrightness(MISS_POS);
             }
             putBrightness(key, value);
             return value;

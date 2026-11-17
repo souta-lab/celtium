@@ -777,10 +777,14 @@ public final class GllessFrameTarget implements FrameImageTarget {
             snapshot.chainColorLayouts = new int[size];
         }
         int n = 0;
-        for (java.util.Map.Entry<Long, Pair> entry : this.chainPairs.entrySet()) {
-            snapshot.chainKeys[n] = entry.getKey().longValue();
-            snapshot.chainAcquired[n] = entry.getValue().acquired;
-            snapshot.chainColorLayouts[n] = entry.getValue().colorImageLayout;
+        it.unimi.dsi.fastutil.objects.ObjectIterator<it.unimi.dsi.fastutil.longs.Long2ObjectMap.Entry<Pair>> it =
+                this.chainPairs.long2ObjectEntrySet().fastIterator();
+        while (it.hasNext()) {
+            it.unimi.dsi.fastutil.longs.Long2ObjectMap.Entry<Pair> entry = it.next();
+            Pair pair = entry.getValue();
+            snapshot.chainKeys[n] = entry.getLongKey();
+            snapshot.chainAcquired[n] = pair.acquired;
+            snapshot.chainColorLayouts[n] = pair.colorImageLayout;
             n++;
         }
         snapshot.chainCount = n;

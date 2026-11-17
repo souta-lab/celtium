@@ -3,10 +3,9 @@ package org.soutalab.celtium.vulkan;
 import static org.lwjgl.vulkan.VK10.vkCreateFramebuffer;
 import static org.lwjgl.vulkan.VK10.vkDestroyFramebuffer;
 
+import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import java.nio.LongBuffer;
 import java.util.Collection;
-import java.util.HashMap;
-import java.util.Map;
 
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkDevice;
@@ -34,13 +33,14 @@ final class FramebufferCache {
      * single-slot cache replaced the entry on every pass alternation - each replacement paying a device-idle wait
      * to retire the old handle. Measured ~5 settleGpu calls per frame on leg ind2-amd.
      */
-    private final Map<Long, Long> frameFramebuffers = new HashMap<Long, Long>();
+    private final Long2LongOpenHashMap frameFramebuffers = new Long2LongOpenHashMap();
     /** Per identity, the chain-pair generation its cached framebuffers were built over. */
-    private final Map<Long, Long> chainPairGenerations = new HashMap<Long, Long>();
+    private final Long2LongOpenHashMap chainPairGenerations = new Long2LongOpenHashMap();
 
     FramebufferCache(VulkanContext context, RenderTargetRegistry registry) {
         this.context = context;
         this.registry = registry;
+        this.chainPairGenerations.defaultReturnValue(-1L);
     }
 
     /**
@@ -50,9 +50,9 @@ final class FramebufferCache {
      * alive beside the new one.
      */
     long frame(long renderPass, long colorView, long depthView, int width, int height) {
-        Long cached = this.frameFramebuffers.get(renderPass);
-        if (cached != null) {
-            return cached.longValue();
+        long cached = this.frameFramebuffers.get(renderPass);
+        if (cached != 0L) {
+            return cached;
         }
         long handle = create(renderPass, colorView, depthView, width, height, null);
         this.frameFramebuffers.put(renderPass, handle);
@@ -93,8 +93,8 @@ final class FramebufferCache {
     long chainPair(long renderPass, GllessFrameTarget glless, int windowWidth, int windowHeight) {
         long identity = this.registry.currentIdentity();
         long generation = glless.chainPairGeneration(identity);
-        Long builtOver = this.chainPairGenerations.get(Long.valueOf(identity));
-        if (builtOver == null || builtOver.longValue() != generation) {
+        long builtOver = this.chainPairGenerations.get(identity);
+        if (builtOver != generation) {
             // Same rule as the default pair: replaced images mean the views every cached handle named are dead. Asked
             // of the pair's own images, not of the window's size - a pair at its framebuffer's size (Xaero's minimap)
             // never matched the window, and every pass into it settled the GPU to rebuild an identical framebuffer
@@ -103,7 +103,7 @@ final class FramebufferCache {
             if (!stale.isEmpty()) {
                 retire(stale);
                 this.registry.clearChainPairFramebuffer(identity);
-                this.chainPairGenerations.remove(Long.valueOf(identity));
+                this.chainPairGenerations.remove(identity);
             }
         }
         long cached = this.registry.chainPairFramebuffer(identity, renderPass);
@@ -119,7 +119,7 @@ final class FramebufferCache {
         long handle = create(renderPass, glless.chainPairColorView(identity), glless.chainPairDepthView(identity),
                 pairWidth, pairHeight, "chain-pair:" + Long.toHexString(identity));
         this.registry.noteChainPairFramebuffer(identity, handle, renderPass);
-        this.chainPairGenerations.put(Long.valueOf(identity), Long.valueOf(generation));
+        this.chainPairGenerations.put(identity, generation);
         // counted by noteChainPairFramebuffer
         return handle;
     }
@@ -136,7 +136,7 @@ final class FramebufferCache {
         Collection<Long> handles = this.registry.chainPairFramebufferHandles(identity);
         if (!handles.isEmpty()) retire(handles);
         this.registry.clearChainPairFramebuffer(identity);
-        this.chainPairGenerations.remove(Long.valueOf(identity));
+        this.chainPairGenerations.remove(identity);
     }
 
     /**
@@ -155,8 +155,9 @@ final class FramebufferCache {
         }
         this.registry.clearAllChainPairFramebuffers();
         this.chainPairGenerations.clear();
-        for (Long handle : this.frameFramebuffers.values()) {
-            vkDestroyFramebuffer(device, handle.longValue(), null);
+        it.unimi.dsi.fastutil.longs.LongIterator it = this.frameFramebuffers.values().iterator();
+        while (it.hasNext()) {
+            vkDestroyFramebuffer(device, it.nextLong(), null);
         }
         this.frameFramebuffers.clear();
     }

@@ -133,6 +133,8 @@ public class CompactChunkVertex implements ChunkVertexType {
     }
 
     private static int encodeTexture(float value) {
-        return Math.round(value * TEXTURE_MAX_VALUE) & TEXTURE_MASK;
+        float scaled = value * TEXTURE_MAX_VALUE;
+        int rounded = scaled >= 0.0f ? (int) (scaled + 0.5f) : Math.round(scaled);
+        return rounded & TEXTURE_MASK;
     }
 }

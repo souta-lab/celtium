@@ -24,6 +24,9 @@ public class SectionRenderDataStorage {
 
     public record BatchCacheParams(boolean useBlockFaceCulling) {}
 
+    public static final BatchCacheParams BATCH_CACHE_CULLING = new BatchCacheParams(true);
+    public static final BatchCacheParams BATCH_CACHE_NO_CULLING = new BatchCacheParams(false);
+
     // we only need to cache two batches in practice (shadow pass for shaders disables block face culling), so we unroll
     // what would otherwise be an LRU for simplicity
     private BatchCacheParams firstBatchParams;
@@ -177,18 +180,30 @@ public class SectionRenderDataStorage {
             new java.util.concurrent.atomic.AtomicLong();
     private static final java.util.concurrent.atomic.AtomicLong celtium$batchCachePrints =
             new java.util.concurrent.atomic.AtomicLong();
+    private static volatile boolean celtium$batchCachePrintsExhausted;
 
     private static void celtium$noteBatchCache(boolean hit) {
+        if (celtium$batchCachePrintsExhausted) {
+            return;
+        }
         if (hit) {
             celtium$batchCacheHits.incrementAndGet();
         } else {
             celtium$batchCacheMisses.incrementAndGet();
         }
         long total = celtium$batchCacheHits.get() + celtium$batchCacheMisses.get();
-        if (total > 0 && total % 2000 == 0 && celtium$batchCachePrints.getAndIncrement() < 12) {
-            System.out.println("[Celtium] CELTIUM_BATCH_CACHE lookups=" + total
-                    + " hits=" + celtium$batchCacheHits.get() + " misses=" + celtium$batchCacheMisses.get()
-                    + " stores=" + celtium$batchCacheStores.get());
+        if (total > 0 && total % 2000 == 0) {
+            long printIndex = celtium$batchCachePrints.getAndIncrement();
+            if (printIndex < 12) {
+                System.out.println("[Celtium] CELTIUM_BATCH_CACHE lookups=" + total
+                        + " hits=" + celtium$batchCacheHits.get() + " misses=" + celtium$batchCacheMisses.get()
+                        + " stores=" + celtium$batchCacheStores.get());
+                if (printIndex == 11) {
+                    celtium$batchCachePrintsExhausted = true;
+                }
+            } else {
+                celtium$batchCachePrintsExhausted = true;
+            }
         }
     }
 
@@ -206,7 +221,9 @@ public class SectionRenderDataStorage {
     }
 
     public void storeCachedMultiDrawBatch(BatchCacheParams params, CachedBatch batch) {
-        celtium$batchCacheStores.incrementAndGet();
+        if (!celtium$batchCachePrintsExhausted) {
+            celtium$batchCacheStores.incrementAndGet();
+        }
         if (params.equals(firstBatchParams) || firstBatchParams == null) {
             if (firstCachedBatch != null) {
                 firstCachedBatch.delete();

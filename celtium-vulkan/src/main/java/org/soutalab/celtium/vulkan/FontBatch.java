@@ -550,7 +550,7 @@ public final class FontBatch {
                             || drawMode == org.lwjgl.opengl.GL11.GL_TRIANGLE_FAN);
             int separatorBytes = needsSeparator ? 2 * vertexStride : 0;
             celtium$ensurePendingFontCapacity(this.pendingBytesUsed + separatorBytes + bytes);
-            long base = org.lwjgl.system.MemoryUtil.memAddress(this.pendingVertices, 0);
+            long base = this.pendingVerticesAddress;
             if (needsSeparator) {
                 long previousVertex = base + this.pendingBytesUsed - vertexStride;
                 org.lwjgl.system.MemoryUtil.memCopy(previousVertex, base + this.pendingBytesUsed, vertexStride);
@@ -613,16 +613,36 @@ public final class FontBatch {
         }
     }
 
+    private float lastColorR = Float.NaN;
+    private float lastColorG = Float.NaN;
+    private float lastColorB = Float.NaN;
+    private float lastColorA = Float.NaN;
+    private long lastColorBits;
+    private long pendingVerticesAddress;
+
     /** The current colour as four quantised bytes packed into one long: the run's colour witness. */
-    private static long celtium$fontColourBits(FontRunState view) {
+    private long celtium$fontColourBits(FontRunState view) {
+        float r = view.colorRed();
+        float g = view.colorGreen();
+        float b = view.colorBlue();
+        float a = view.colorAlpha();
+        if (r == this.lastColorR && g == this.lastColorG && b == this.lastColorB && a == this.lastColorA) {
+            return this.lastColorBits;
+        }
         // Packed as four bytes, not as float bit patterns: the first version shifted each 32-bit pattern by 48/32/16/0
         // and masked the low 16 bits, which for ordinary colours (1.0f = 0x3F800000, 0.25f, 0.0f) is zero - the
         // witness was 0 for almost every colour, so runs merged across colour changes, including the shadow pass and
         // its light pass. The quantised byte is what the vertex data carries anyway.
-        return ((long) celtium$colourByte(view.colorRed()) << 24)
-                | ((long) celtium$colourByte(view.colorGreen()) << 16)
-                | ((long) celtium$colourByte(view.colorBlue()) << 8)
-                | celtium$colourByte(view.colorAlpha());
+        long bits = ((long) celtium$colourByte(r) << 24)
+                | ((long) celtium$colourByte(g) << 16)
+                | ((long) celtium$colourByte(b) << 8)
+                | celtium$colourByte(a);
+        this.lastColorR = r;
+        this.lastColorG = g;
+        this.lastColorB = b;
+        this.lastColorA = a;
+        this.lastColorBits = bits;
+        return bits;
     }
 
     private static int celtium$colourByte(float value) {
@@ -744,12 +764,14 @@ public final class FontBatch {
         }
         int capacity = Math.max(4096, Integer.highestOneBit(Math.max(1, bytes)) * 2);
         ByteBuffer grown = org.lwjgl.system.MemoryUtil.memAlloc(capacity);
+        long grownAddress = org.lwjgl.system.MemoryUtil.memAddress(grown, 0);
         if (buffer != null) {
-            org.lwjgl.system.MemoryUtil.memCopy(org.lwjgl.system.MemoryUtil.memAddress(buffer, 0),
-                    org.lwjgl.system.MemoryUtil.memAddress(grown, 0), this.pendingBytesUsed);
+            org.lwjgl.system.MemoryUtil.memCopy(this.pendingVerticesAddress,
+                    grownAddress, this.pendingBytesUsed);
             org.lwjgl.system.MemoryUtil.memFree(buffer);
         }
         this.pendingVertices = grown;
+        this.pendingVerticesAddress = grownAddress;
     }
 
     /**
@@ -792,9 +814,10 @@ public final class FontBatch {
         // Every call is counted, before any early return: the classified counters below only move when a run was
         // actually open, so a stream of calls that find nothing to submit was invisible - which is the shape the
         // profile shows (4.5% of the warm window's self time against ~9.5 started runs a frame).
-        if ("intervening".equals(how)) {
+        int kind = "intervening".equals(how) ? 0 : ("boundary".equals(how) ? 1 : 2);
+        if (kind == 0) {
             this.flushCallsIntervening++;
-        } else if ("boundary".equals(how)) {
+        } else if (kind == 1) {
             this.flushCallsBoundary++;
         } else {
             this.flushCallsStateChange++;
@@ -817,9 +840,9 @@ public final class FontBatch {
             offerRetained(view, target);
             return;
         }
-        if ("intervening".equals(how)) {
+        if (kind == 0) {
             this.flushedIntervening++;
-        } else if ("boundary".equals(how)) {
+        } else if (kind == 1) {
             this.flushedBoundary++;
         } else {
             this.flushedStateChange++;
@@ -829,7 +852,7 @@ public final class FontBatch {
         // flush rather than offered again immediately - offering it twice in one flush asks the same question twice.
         offerRetained(view, target);
         Run run = new Run(this.pendingFormat, this.pendingStride, this.pendingFormatId,
-                org.lwjgl.system.MemoryUtil.memAddress(this.pendingVertices, 0), this.pendingVertexCount,
+                this.pendingVerticesAddress, this.pendingVertexCount,
                 this.pendingDrawMode, this.pendingTexture, this.pendingAlphaTest, this.pendingAlphaRef,
                 matrixSnapshot(true), matrixSnapshot(false), this.pendingTargetIdentity, how);
         this.pendingActive = false;

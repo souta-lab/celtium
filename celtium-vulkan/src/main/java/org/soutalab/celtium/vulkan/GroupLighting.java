@@ -22,6 +22,14 @@ final class GroupLighting {
      * A disabled light's diffuse is zeroed rather than the direction skipped - the shader's dot stays a constant.
      */
     float[] celtium$lightParams(int[] state, float[] modelView) {
+        if (state == null || state.length < 9 || state[8] == 0 || modelView == null) {
+            return null;
+        }
+        long generation = b.immediateState.lightGeneration();
+        float[] last = this.lastLightParams;
+        if (last != null && generation == this.lastImmediateLightGen && sameRotation(modelView, this.lastImmediateRotation)) {
+            return last;
+        }
         // Equal payloads share the previous array: the directions depend on the modelview's rotation only, and most
         // lit groups in a frame carry the same axis-aligned orientation - the per-group twenty-float allocation was
         // pure garbage for them. A changed payload gets a new array so groups already holding one keep its values.
@@ -29,7 +37,8 @@ final class GroupLighting {
         if (computed == null) {
             return null;
         }
-        float[] last = this.lastLightParams;
+        this.lastImmediateLightGen = generation;
+        copyRotation(modelView, this.lastImmediateRotation);
         if (last != null && java.util.Arrays.equals(last, computed)) {
             return last;
         }
@@ -38,9 +47,29 @@ final class GroupLighting {
         return fresh;
     }
 
+    private static boolean sameRotation(float[] mv, float[] cached) {
+        return mv[0] == cached[0] && mv[1] == cached[1] && mv[2] == cached[2]
+                && mv[4] == cached[3] && mv[5] == cached[4] && mv[6] == cached[5]
+                && mv[8] == cached[6] && mv[9] == cached[7] && mv[10] == cached[8];
+    }
+
+    private static void copyRotation(float[] mv, float[] cached) {
+        cached[0] = mv[0];
+        cached[1] = mv[1];
+        cached[2] = mv[2];
+        cached[3] = mv[4];
+        cached[4] = mv[5];
+        cached[5] = mv[6];
+        cached[6] = mv[8];
+        cached[7] = mv[9];
+        cached[8] = mv[10];
+    }
+
     /** Filled by the two-arg form before it decides whether a group needs its own array. */
     final float[] lightParamsScratch = new float[20];
     float[] lastLightParams;
+    private long lastImmediateLightGen = -1L;
+    private final float[] lastImmediateRotation = new float[9];
 
     /**
      * The model replay's lit payload, rebuilt only when the rotation or the light state moved.

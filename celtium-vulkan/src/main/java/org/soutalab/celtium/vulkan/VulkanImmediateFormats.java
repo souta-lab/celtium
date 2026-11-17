@@ -297,12 +297,14 @@ public final class VulkanImmediateFormats {
         if (elements == null) {
             return null;
         }
-        if ((elements.equals(LAYOUT_PARTICLE_NORMAL_PAD) && size == 32)
-                || (elements.equals(LAYOUT_PARTICLE_NORMAL) && size == 31)) {
-            return SEGMENTS_PARTICLE_PREFIX;
+        if (size == 28) {
+            return elements.equals(LAYOUT_PARTICLE_LMAP_COLOR) ? SEGMENTS_PARTICLE_LMAP_COLOR : null;
         }
-        if (elements.equals(LAYOUT_PARTICLE_LMAP_COLOR) && size == 28) {
-            return SEGMENTS_PARTICLE_LMAP_COLOR;
+        if (size == 32) {
+            return elements.equals(LAYOUT_PARTICLE_NORMAL_PAD) ? SEGMENTS_PARTICLE_PREFIX : null;
+        }
+        if (size == 31) {
+            return elements.equals(LAYOUT_PARTICLE_NORMAL) ? SEGMENTS_PARTICLE_PREFIX : null;
         }
         return null;
     }
@@ -311,31 +313,48 @@ public final class VulkanImmediateFormats {
         if (elements == null) {
             return 0;
         }
-        if (elements.equals(LAYOUT_POSITION_COLOR) && size == 16 && count == 2) return POSITION_COLOR;
-        if (elements.equals(LAYOUT_POSITION_TEX_COLOR) && size == 24 && count == 3) return POSITION_TEX_COLOR;
-        if (elements.equals(LAYOUT_BLOCK) && size == 28 && count == 4) return BLOCK;
-        if (elements.equals(LAYOUT_ITEM) && size == 28 && count == 5) return ITEM;
-        if (elements.equals(LAYOUT_PARTICLE) && size == 28 && count == 4) return PARTICLE;
-        if (elements.equals(LAYOUT_POSITION_TEX) && size == 20 && count == 2) return POSITION_TEX;
-        if (elements.equals(LAYOUT_POSITION) && size == 12 && count == 1) return POSITION;
-        // The order matters here and only here: this element list is a prefix of nothing, but the 24-byte form of it is
-        // POSITION_TEX_NORMAL and OLDMODEL_POSITION_TEX_NORMAL. Comparing the colour-carrying 28-byte one first is what
-        // makes the 24-byte one reachable; the two used to be one branch and the 24 was answered with the 28.
-        if (elements.equals(LAYOUT_POSITION_TEX_COLOR_NORMAL) && size == 28 && count == 5) {
-            return POSITION_TEX_COLOR_NORMAL;
+        switch ((size << 8) | count) {
+            case (16 << 8) | 2 -> {
+                if (elements.equals(LAYOUT_POSITION_COLOR)) return POSITION_COLOR;
+            }
+            case (24 << 8) | 3 -> {
+                if (elements.equals(LAYOUT_POSITION_TEX_COLOR)) return POSITION_TEX_COLOR;
+            }
+            case (28 << 8) | 4 -> {
+                if (elements.equals(LAYOUT_BLOCK)) return BLOCK;
+                if (elements.equals(LAYOUT_PARTICLE) || elements.equals(LAYOUT_PARTICLE_LMAP_COLOR)) return PARTICLE;
+            }
+            case (28 << 8) | 5 -> {
+                if (elements.equals(LAYOUT_ITEM)) return ITEM;
+                if (elements.equals(LAYOUT_POSITION_TEX_COLOR_NORMAL)) return POSITION_TEX_COLOR_NORMAL;
+            }
+            case (20 << 8) | 2 -> {
+                if (elements.equals(LAYOUT_POSITION_TEX)) return POSITION_TEX;
+            }
+            case (12 << 8) | 1 -> {
+                if (elements.equals(LAYOUT_POSITION)) return POSITION;
+            }
+            case (24 << 8) | 4 -> {
+                if (elements.equals(LAYOUT_POSITION_TEX_NORMAL)) return POSITION_TEX_NORMAL;
+            }
+            case (16 << 8) | 3 -> {
+                if (elements.equals(LAYOUT_POSITION_NORMAL)) return POSITION_NORMAL;
+            }
+            case (32 << 8) | 3 -> {
+                if (elements.equals(LAYOUT_POSITION_TEX_NORMAL_FLOAT)) return POSITION_TEX_NORMAL_FLOAT;
+            }
+            case (44 << 8) | 5 -> {
+                if (elements.equals(LAYOUT_COMBINE4)) return COMBINE4;
+            }
+            case (32 << 8) | 6 -> {
+                if (elements.equals(LAYOUT_PARTICLE_NORMAL_PAD)) return PARTICLE;
+            }
+            case (31 << 8) | 5 -> {
+                if (elements.equals(LAYOUT_PARTICLE_NORMAL)) return PARTICLE;
+            }
+            default -> {
+            }
         }
-        if (elements.equals(LAYOUT_POSITION_TEX_NORMAL) && size == 24 && count == 4) return POSITION_TEX_NORMAL;
-        // 16 bytes: 12 of position, 3 of normal and 1 of padding. No colour and no texture, so it is its own pipeline.
-        if (elements.equals(LAYOUT_POSITION_NORMAL) && size == 16 && count == 3) return POSITION_NORMAL;
-        if (elements.equals(LAYOUT_POSITION_TEX_NORMAL_FLOAT) && size == 32 && count == 3) {
-            return POSITION_TEX_NORMAL_FLOAT;
-        }
-        if (elements.equals(LAYOUT_COMBINE4) && size == 44 && count == 5) return COMBINE4;
-        // The first 28 bytes of this one are PARTICLE and the shaders read nothing after them; the uploader compacts the
-        // copy it hands to the backend so that the stride and the pipeline agree again.
-        if (elements.equals(LAYOUT_PARTICLE_NORMAL_PAD) && size == 32 && count == 6) return PARTICLE;
-        if (elements.equals(LAYOUT_PARTICLE_NORMAL) && size == 31 && count == 5) return PARTICLE;
-        if (elements.equals(LAYOUT_PARTICLE_LMAP_COLOR) && size == 28 && count == 4) return PARTICLE;
         return 0;
     }
 

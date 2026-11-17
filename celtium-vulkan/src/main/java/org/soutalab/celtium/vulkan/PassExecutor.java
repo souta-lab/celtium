@@ -106,6 +106,12 @@ final class PassExecutor {
     private final Map<FramebufferKey, Long> framebuffers = new HashMap<>();
     private final Map<PipelineKey, VulkanModProgramPipeline> pipelines = new HashMap<>();
     private VulkanDynamicMesh quadMesh;
+    private long[] scratchViews = new long[8];
+    private long[] scratchSamplers = new long[8];
+    private int[] scratchLayouts = new int[8];
+    private long[] scratchGenerations = new long[8];
+    private final long[] fallbackBindCache = new long[6];
+    private ByteBuffer scratchZeroUniforms;
 
     PassExecutor(VulkanContext context, RenderTargetRegistry targetRegistry,
                  PublishedFrameTextures publishedTextures, NativePassRegistry passRegistry) {
@@ -214,7 +220,7 @@ final class PassExecutor {
                 this.targetRegistry.namedTargetState(pass.spec().outputTarget());
         boolean shouldClear = shouldClearOutput(outputSpec, outputState, frameSerial);
 
-        try {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
             long renderPass = ensureRenderPass(output.vkFormat(), output.depth(), shouldClear);
             long framebuffer = ensureFramebuffer(output.name(), output.view(), renderPass,
                     output.width(), output.height());
@@ -222,23 +228,24 @@ final class PassExecutor {
 
             long samplerSet = 0L;
             if (inputs.length > 0) {
-                long[] views = new long[inputs.length];
-                long[] samplers = new long[inputs.length];
-                int[] layouts = new int[inputs.length];
-                long[] generations = new long[inputs.length];
+                ensureInputScratchCapacity(inputs.length);
+                long[] views = this.scratchViews;
+                long[] samplers = this.scratchSamplers;
+                int[] layouts = this.scratchLayouts;
+                long[] generations = this.scratchGenerations;
                 for (int i = 0; i < inputs.length; i++) {
                     int sampledLayout = inputs[i].depth()
                             ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
                             : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
                     transitionImageLayout(commandBuffer, inputs[i].image(), inputs[i].layout(), sampledLayout,
-                            inputs[i].depth());
+                            inputs[i].depth(), stack);
                     this.targetRegistry.noteNamedTargetLayout(inputs[i].name(), sampledLayout);
                     views[i] = inputs[i].view();
                     samplers[i] = inputs[i].sampler();
                     layouts[i] = sampledLayout;
                     generations[i] = inputs[i].generation();
                 }
-                samplerSet = pipeline.samplerSetForHandles(views, samplers, layouts, generations);
+                samplerSet = pipeline.samplerSetForHandles(views, samplers, layouts, generations, inputs.length);
                 if (samplerSet == 0L) {
                     this.passRegistry.noteExecutionRefusal(pass.spec().name(), "failed to allocate sampler descriptor set");
                     return false;
@@ -248,49 +255,50 @@ final class PassExecutor {
             int attachmentLayout = output.depth()
                     ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
                     : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            transitionImageLayout(commandBuffer, output.image(), output.layout(), attachmentLayout, output.depth());
+            transitionImageLayout(commandBuffer, output.image(), output.layout(), attachmentLayout, output.depth(),
+                    stack);
 
             ensureQuadMesh();
-            ByteBuffer uniforms = pass.spec().state().pushBytes() > 0
-                    ? ByteBuffer.allocateDirect(pass.spec().state().pushBytes())
-                            .order(java.nio.ByteOrder.nativeOrder())
-                    : null;
-            VulkanModProgramPipeline.Draw draw = pipeline.createDraw(uniforms, samplerSet,
-                    "nativePass=" + pass.spec().name(), null);
+            int pushBytes = pass.spec().state().pushBytes();
+            ByteBuffer uniforms = pushBytes > 0 ? zeroUniforms(pushBytes) : null;
 
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                VkRenderPassBeginInfo begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
-                        .renderPass(renderPass)
-                        .framebuffer(framebuffer);
-                begin.renderArea().offset().set(0, 0);
-                begin.renderArea().extent().set(output.width(), output.height());
-                if (shouldClear && outputSpec != null) {
-                    VkClearValue.Buffer clearValues = VkClearValue.calloc(1, stack);
-                    if (output.depth()) {
-                        clearValues.get(0).depthStencil().set(outputSpec.clearDepth(), 0);
-                    } else {
-                        clearValues.get(0).color().float32()
-                                .put(0, outputSpec.clearRed())
-                                .put(1, outputSpec.clearGreen())
-                                .put(2, outputSpec.clearBlue())
-                                .put(3, outputSpec.clearAlpha());
-                    }
-                    begin.pClearValues(clearValues);
+            VkRenderPassBeginInfo begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
+                    .renderPass(renderPass)
+                    .framebuffer(framebuffer);
+            begin.renderArea().offset().set(0, 0);
+            begin.renderArea().extent().set(output.width(), output.height());
+            if (shouldClear && outputSpec != null) {
+                VkClearValue.Buffer clearValues = VkClearValue.calloc(1, stack);
+                if (output.depth()) {
+                    clearValues.get(0).depthStencil().set(outputSpec.clearDepth(), 0);
+                } else {
+                    clearValues.get(0).color().float32()
+                            .put(0, outputSpec.clearRed())
+                            .put(1, outputSpec.clearGreen())
+                            .put(2, outputSpec.clearBlue())
+                            .put(3, outputSpec.clearAlpha());
                 }
-
-                vkCmdBeginRenderPass(commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
-                VkViewport.Buffer viewport = VkViewport.calloc(1, stack);
-                viewport.get(0).set(0.0f, 0.0f, output.width(), output.height(), 0.0f, 1.0f);
-                vkCmdSetViewport(commandBuffer, 0, viewport);
-                VkRect2D.Buffer scissor = VkRect2D.calloc(1, stack);
-                scissor.get(0).offset().set(0, 0);
-                scissor.get(0).extent().set(output.width(), output.height());
-                vkCmdSetScissor(commandBuffer, 0, scissor);
-
-                long[] activeBindCache = bindCache != null ? bindCache : new long[6];
-                draw.draw(commandBuffer, this.quadMesh, activeBindCache);
-                vkCmdEndRenderPass(commandBuffer);
+                begin.pClearValues(clearValues);
             }
+
+            vkCmdBeginRenderPass(commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
+            VkViewport.Buffer viewport = VkViewport.calloc(1, stack);
+            viewport.get(0).set(0.0f, 0.0f, output.width(), output.height(), 0.0f, 1.0f);
+            vkCmdSetViewport(commandBuffer, 0, viewport);
+            VkRect2D.Buffer scissor = VkRect2D.calloc(1, stack);
+            scissor.get(0).offset().set(0, 0);
+            scissor.get(0).extent().set(output.width(), output.height());
+            vkCmdSetScissor(commandBuffer, 0, scissor);
+
+            long[] activeBindCache;
+            if (bindCache != null) {
+                activeBindCache = bindCache;
+            } else {
+                java.util.Arrays.fill(this.fallbackBindCache, 0L);
+                activeBindCache = this.fallbackBindCache;
+            }
+            pipeline.draw(commandBuffer, this.quadMesh, uniforms, samplerSet, activeBindCache);
+            vkCmdEndRenderPass(commandBuffer);
 
             this.targetRegistry.noteNamedTargetLayout(output.name(), attachmentLayout);
             if (shouldClear) {
@@ -440,46 +448,65 @@ final class PassExecutor {
         return index;
     }
 
+    private void ensureInputScratchCapacity(int required) {
+        if (this.scratchViews.length >= required) {
+            return;
+        }
+        int next = Math.max(required, this.scratchViews.length * 2);
+        this.scratchViews = new long[next];
+        this.scratchSamplers = new long[next];
+        this.scratchLayouts = new int[next];
+        this.scratchGenerations = new long[next];
+    }
+
+    private ByteBuffer zeroUniforms(int pushBytes) {
+        ByteBuffer buf = this.scratchZeroUniforms;
+        if (buf == null || buf.capacity() < pushBytes) {
+            buf = ByteBuffer.allocateDirect(Math.max(128, pushBytes)).order(java.nio.ByteOrder.nativeOrder());
+            this.scratchZeroUniforms = buf;
+        }
+        buf.position(0).limit(pushBytes);
+        return buf;
+    }
+
     private static void transitionImageLayout(VkCommandBuffer commandBuffer, long image, int oldLayout, int newLayout,
-                                              boolean depth) {
+                                              boolean depth, MemoryStack stack) {
         if (oldLayout == newLayout) {
             return;
         }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
-            barrier.get(0).sType$Default()
-                    .oldLayout(oldLayout)
-                    .newLayout(newLayout)
-                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                    .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                    .image(image)
-                    .srcAccessMask(oldLayout == VK_IMAGE_LAYOUT_UNDEFINED ? 0
-                            : (depth ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
-                                    : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT) | VK_ACCESS_SHADER_READ_BIT)
-                    .dstAccessMask(newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-                            || newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
-                                    ? VK_ACCESS_SHADER_READ_BIT
-                                    : (depth ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
-                                            | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
-                                            : VK_ACCESS_COLOR_ATTACHMENT_READ_BIT
-                                                    | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT));
-            barrier.get(0).subresourceRange()
-                    .aspectMask(depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT)
-                    .baseMipLevel(0)
-                    .levelCount(1)
-                    .baseArrayLayer(0)
-                    .layerCount(1);
-            int srcStage = oldLayout == VK_IMAGE_LAYOUT_UNDEFINED
-                    ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
-                    : (depth ? VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT
-                            : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-            int dstStage = (newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-                    || newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL)
-                            ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
-                            : (depth ? VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
-                                    : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-            vkCmdPipelineBarrier(commandBuffer, srcStage, dstStage, 0, null, null, barrier);
-        }
+        VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
+        barrier.get(0).sType$Default()
+                .oldLayout(oldLayout)
+                .newLayout(newLayout)
+                .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .image(image)
+                .srcAccessMask(oldLayout == VK_IMAGE_LAYOUT_UNDEFINED ? 0
+                        : (depth ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                                : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT) | VK_ACCESS_SHADER_READ_BIT)
+                .dstAccessMask(newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                        || newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+                                ? VK_ACCESS_SHADER_READ_BIT
+                                : (depth ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                                        | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                                        : VK_ACCESS_COLOR_ATTACHMENT_READ_BIT
+                                                | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT));
+        barrier.get(0).subresourceRange()
+                .aspectMask(depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT)
+                .baseMipLevel(0)
+                .levelCount(1)
+                .baseArrayLayer(0)
+                .layerCount(1);
+        int srcStage = oldLayout == VK_IMAGE_LAYOUT_UNDEFINED
+                ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
+                : (depth ? VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT
+                        : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+        int dstStage = (newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                || newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL)
+                        ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+                        : (depth ? VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+                                : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+        vkCmdPipelineBarrier(commandBuffer, srcStage, dstStage, 0, null, null, barrier);
     }
 
     void delete() {

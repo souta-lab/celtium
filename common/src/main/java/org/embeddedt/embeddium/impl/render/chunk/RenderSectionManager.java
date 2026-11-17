@@ -556,7 +556,7 @@ public abstract class RenderSectionManager {
     public abstract FogService getFogService();
 
     private boolean hasTranslucencySortedSections() {
-        return this.getCurrentRenderListManager().getRenderLists().getPasses().stream().anyMatch(TerrainRenderPass::isSorted);
+        return this.getCurrentRenderListManager().getRenderLists().hasSortedPass();
     }
 
     protected abstract boolean isSectionVisuallyEmpty(int x, int y, int z);

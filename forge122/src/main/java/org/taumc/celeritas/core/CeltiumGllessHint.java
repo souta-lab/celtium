@@ -37,13 +37,31 @@ public final class CeltiumGllessHint {
     // takes). Reflection only, and never throws: a surface whose capabilities do not exist yet is retried on a
     // later call, and a surface that cannot be read at all reports itself unavailable once instead of failing
     // the query it rode in on.
+    private static boolean probingCaps;
+    private static volatile boolean capsProbeAllDone;
+
     static void noteCapsProbe() {
-        probeCapabilities("lwjgl3", "org.lwjgl.opengl.GL", "getCapabilities");
-        probeCapabilities("lwjgl2", "org.lwjgl.opengl.GLContext", "getCapabilities");
-        probeCapabilities("lwjgl2", "org.lwjglx.opengl.GLContext", "getCapabilities");
+        if (capsProbeAllDone || probingCaps) {
+            return;
+        }
+        probingCaps = true;
+        try {
+            boolean lwjgl3 = probeCapabilities("lwjgl3", "org.lwjgl.opengl.GL", "getCapabilities");
+            boolean lwjgl2 = probeCapabilities("lwjgl2", "org.lwjgl.opengl.GLContext", "getCapabilities")
+                    || probeCapabilities("lwjgl2", "org.lwjglx.opengl.GLContext", "getCapabilities");
+            if (lwjgl3 && lwjgl2) {
+                capsProbeAllDone = true;
+            }
+        } finally {
+            probingCaps = false;
+        }
     }
 
     private static boolean probeCapabilities(String surface, String holderClass, String getter) {
+        String key = "CELTIUM_CAPS_PROBE." + surface;
+        if (NOTED_ONCE.contains(key)) {
+            return true;
+        }
         Object caps;
         try {
             Class<?> holder = Class.forName(holderClass, false, CeltiumGllessHint.class.getClassLoader());
@@ -54,7 +72,7 @@ public final class CeltiumGllessHint {
         if (caps == null) {
             return false;
         }
-        if (!NOTED_ONCE.add("CELTIUM_CAPS_PROBE." + surface)) return true;
+        if (!NOTED_ONCE.add(key)) return true;
         StringBuilder line = new StringBuilder("[Celtium] CELTIUM_CAPS_PROBE surface=").append(surface)
                 .append(" caps=").append(caps.getClass().getName());
         for (String flag : new String[] {"OpenGL33", "OpenGL42", "GL_ARB_shader_image_load_store",
@@ -275,38 +293,35 @@ public final class CeltiumGllessHint {
 
     /** The scalar uniform setters: the values belong to the program currently bound, as in GL. */
     public static void glUniform1f(int location, float x) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloats(boundProgram(), location, new float[] {x});
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloat1(boundProgram(), location, x);
     }
 
     public static void glUniform2f(int location, float x, float y) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloats(boundProgram(), location, new float[] {x, y});
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloat2(boundProgram(), location, x, y);
     }
 
     public static void glUniform3f(int location, float x, float y, float z) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloats(boundProgram(), location,
-                new float[] {x, y, z});
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloat3(boundProgram(), location, x, y, z);
     }
 
     public static void glUniform4f(int location, float x, float y, float z, float w) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloats(boundProgram(), location,
-                new float[] {x, y, z, w});
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloat4(boundProgram(), location, x, y, z, w);
     }
 
     public static void glUniform1i(int location, int x) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInts(boundProgram(), location, new int[] {x});
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInt1(boundProgram(), location, x);
     }
 
     public static void glUniform2i(int location, int x, int y) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInts(boundProgram(), location, new int[] {x, y});
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInt2(boundProgram(), location, x, y);
     }
 
     public static void glUniform3i(int location, int x, int y, int z) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInts(boundProgram(), location, new int[] {x, y, z});
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInt3(boundProgram(), location, x, y, z);
     }
 
     public static void glUniform4i(int location, int x, int y, int z, int w) {
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInts(boundProgram(), location,
-                new int[] {x, y, z, w});
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInt4(boundProgram(), location, x, y, z, w);
     }
 
     /**
@@ -319,22 +334,8 @@ public final class CeltiumGllessHint {
         if (values == 0L || count <= 0) {
             return;
         }
-        float[] out = new float[count * components];
-        for (int i = 0; i < out.length; i++) {
-            out[i] = org.lwjgl.system.MemoryUtil.memGetFloat(values + 4L * i);
-        }
-        if (transpose && matrixSide > 0) {
-            for (int m = 0; m < count; m++) {
-                int base = m * components;
-                float[] copy = java.util.Arrays.copyOfRange(out, base, base + components);
-                for (int r = 0; r < matrixSide; r++) {
-                    for (int c = 0; c < matrixSide; c++) {
-                        out[base + c * matrixSide + r] = copy[r * matrixSide + c];
-                    }
-                }
-            }
-        }
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloats(boundProgram(), location, out);
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformFloatPtr(boundProgram(), location, count, values,
+                components, transpose, matrixSide);
     }
 
     /** {@code nglUniform{1..4}iv}. */
@@ -342,11 +343,8 @@ public final class CeltiumGllessHint {
         if (values == 0L || count <= 0) {
             return;
         }
-        int[] out = new int[count * components];
-        for (int i = 0; i < out.length; i++) {
-            out[i] = org.lwjgl.system.MemoryUtil.memGetInt(values + 4L * i);
-        }
-        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformInts(boundProgram(), location, out);
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.uniformIntPtr(boundProgram(), location, count, values,
+                components);
     }
 
     /** The DSA spellings of the texture-parameter setter (the first argument is the texture name). */

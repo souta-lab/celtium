@@ -72,7 +72,17 @@ public final class VulkanModProgramPipeline {
     private long pipelineLayout = VK_NULL_HANDLE;
     private long pipeline = VK_NULL_HANDLE;
     private long descriptorPool = VK_NULL_HANDLE;
-    private final Map<String, Long> setsByTextures = new HashMap<>();
+    private static final VulkanGlTexture[] EMPTY_IMAGES = new VulkanGlTexture[0];
+    private static final long[] EMPTY_LONG = new long[0];
+    private static final int[] EMPTY_INT = new int[0];
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap setsByKey =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    private final long[] scratchViews;
+    private final long[] scratchSamplers;
+    private final int[] scratchLayouts;
+    private final long[] scratchImageViews;
+    private long lastSamplerKey;
+    private long lastSamplerSet;
     /** Sets one pipeline may hold; a program samples a handful of framebuffer textures that rarely change. */
     private static final int MAX_SETS = 64;
 
@@ -86,6 +96,10 @@ public final class VulkanModProgramPipeline {
         this.images = images;
         this.imageCount = images.size();
         this.pushBytes = pushBytes;
+        this.scratchViews = this.samplerCount > 0 ? new long[this.samplerCount] : EMPTY_LONG;
+        this.scratchSamplers = this.samplerCount > 0 ? new long[this.samplerCount] : EMPTY_LONG;
+        this.scratchLayouts = this.samplerCount > 0 ? new int[this.samplerCount] : EMPTY_INT;
+        this.scratchImageViews = this.imageCount > 0 ? new long[this.imageCount] : EMPTY_LONG;
     }
 
     /**
@@ -178,7 +192,7 @@ public final class VulkanModProgramPipeline {
 
     /** Creates a prepared draw bound to this pipeline. */
     public Draw createDraw(ByteBuffer uniforms, long samplerSet, String label, VulkanGlTexture[] inputs) {
-        return new Draw(this, uniforms, samplerSet, label, inputs, new VulkanGlTexture[0]);
+        return new Draw(this, uniforms, samplerSet, label, inputs, EMPTY_IMAGES);
     }
 
     public Draw createDraw(ByteBuffer uniforms, long descriptorSet, String label, VulkanGlTexture[] inputs,
@@ -340,51 +354,80 @@ public final class VulkanModProgramPipeline {
      * {@return the sampler set for these textures (binding i = textures[i])}, cached by their keys; 0 when the pool is
      * exhausted, which the caller refuses as a missing draw.
      */
+    private static long mix64(long z) {
+        z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+        z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+        return z ^ (z >>> 31);
+    }
+
     public long samplerSet(VulkanGlTexture[] textures) {
-        return samplersAndImages(textures, new VulkanGlTexture[0]);
+        return samplersAndImages(textures, EMPTY_IMAGES);
     }
 
     /** Builds the one descriptor set from sampler bindings followed by storage-image bindings. */
     public long samplersAndImages(VulkanGlTexture[] textures, VulkanGlTexture[] imageTextures) {
-        if (this.samplerCount + this.imageCount == 0) return 0L;
-        StringBuilder key = new StringBuilder();
-        long[] views = new long[this.samplerCount];
-        long[] samplers = new long[this.samplerCount];
-        int[] layouts = new int[this.samplerCount];
+        if (this.samplerCount + this.imageCount == 0) {
+            return 0L;
+        }
+        long hash = 0x9E3779B97F4A7C15L;
+        long[] views = this.scratchViews;
+        long[] samplers = this.scratchSamplers;
+        int[] layouts = this.scratchLayouts;
         for (int i = 0; i < this.samplerCount; i++) {
-            key.append(textures[i].key()).append(',');
-            views[i] = textures[i].view();
-            samplers[i] = textures[i].sampler();
-            layouts[i] = textures[i].samplingLayout();
+            VulkanGlTexture tex = textures[i];
+            long view = tex.view();
+            long sampler = tex.sampler();
+            int layout = tex.samplingLayout();
+            views[i] = view;
+            samplers[i] = sampler;
+            layouts[i] = layout;
+            hash = mix64(hash ^ tex.key()) ^ mix64(view ^ (sampler * 31L) ^ layout);
         }
-        long[] imageViews = new long[this.imageCount];
+        long[] imageViews = this.scratchImageViews;
         for (int i = 0; i < this.imageCount; i++) {
-            key.append("img:").append(imageTextures[i].key()).append(',');
-            imageViews[i] = imageTextures[i].view();
+            VulkanGlTexture img = imageTextures[i];
+            long view = img.view();
+            imageViews[i] = view;
+            hash = mix64(hash ^ img.key() ^ 0x517CC1B727220A95L) ^ mix64(view);
         }
-        return allocateOrReuseDescriptorSet(key.toString(), views, samplers, layouts, imageViews);
+        if (hash == 0L) {
+            hash = 1L;
+        }
+        return allocateOrReuseDescriptorSet(hash, views, samplers, layouts, imageViews);
     }
 
     /** Allocates or reuses a descriptor set binding explicit image views, samplers and layouts. */
     public long samplerSetForHandles(long[] views, long[] samplers, int[] layouts, long[] generations) {
-        if (this.samplerCount == 0) {
-            return 0L;
-        }
-        StringBuilder key = new StringBuilder();
-        for (int i = 0; i < this.samplerCount; i++) {
-            key.append(views[i]).append(':').append(samplers[i]).append(':').append(layouts[i])
-                    .append(':').append(generations[i]).append(',');
-        }
-        return allocateOrReuseDescriptorSet(key.toString(), views, samplers, layouts, new long[0]);
+        return samplerSetForHandles(views, samplers, layouts, generations, this.samplerCount);
     }
 
-    private long allocateOrReuseDescriptorSet(String key, long[] views, long[] samplers, int[] layouts,
-                                              long[] imageViews) {
-        Long cached = this.setsByTextures.get(key);
-        if (cached != null) {
-            return cached.longValue();
+    public long samplerSetForHandles(long[] views, long[] samplers, int[] layouts, long[] generations, int count) {
+        if (this.samplerCount == 0 || count <= 0) {
+            return 0L;
         }
-        if (this.setsByTextures.size() >= MAX_SETS) {
+        long hash = 0x9E3779B97F4A7C15L;
+        int n = Math.min(this.samplerCount, count);
+        for (int i = 0; i < n; i++) {
+            hash = mix64(hash ^ views[i]) ^ mix64(samplers[i]) ^ mix64(generations[i] ^ ((long) layouts[i] << 32));
+        }
+        if (hash == 0L) {
+            hash = 1L;
+        }
+        return allocateOrReuseDescriptorSet(hash, views, samplers, layouts, EMPTY_LONG);
+    }
+
+    private long allocateOrReuseDescriptorSet(long key, long[] views, long[] samplers, int[] layouts,
+                                              long[] imageViews) {
+        if (key == this.lastSamplerKey && this.lastSamplerSet != 0L) {
+            return this.lastSamplerSet;
+        }
+        long cached = this.setsByKey.get(key);
+        if (cached != 0L) {
+            this.lastSamplerKey = key;
+            this.lastSamplerSet = cached;
+            return cached;
+        }
+        if (this.setsByKey.size() >= MAX_SETS) {
             return 0L;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -411,7 +454,9 @@ public final class VulkanModProgramPipeline {
                         .pImageInfo(VkDescriptorImageInfo.create(imageInfos.address(index), 1));
             }
             vkUpdateDescriptorSets(this.context.device(), writes, null);
-            this.setsByTextures.put(key, Long.valueOf(set));
+            this.setsByKey.put(key, set);
+            this.lastSamplerKey = key;
+            this.lastSamplerSet = set;
             return set;
         }
     }
@@ -421,15 +466,26 @@ public final class VulkanModProgramPipeline {
      * a uniform never set is zero, as in GL.
      */
     public static ByteBuffer packUniforms(ModProgramRegistry.Program program) {
+        ByteBuffer cached = program.cachedPackedUniforms();
+        if (cached != null) {
+            return cached;
+        }
+        long version = program.uniformVersion();
         ModGlslTranslator.Result lowered = program.lowered();
         ByteBuffer block = ByteBuffer.allocateDirect(Math.max(16, lowered.uniformBlockSize()))
                 .order(java.nio.ByteOrder.nativeOrder());
         for (ModGlslTranslator.UniformMember member : lowered.uniforms()) {
             float[] floats = program.floats(member.name());
             int[] ints = program.ints(member.name());
-            int components = componentsOf(member.type());
-            int columns = columnsOf(member.type());
+            if (floats == null && ints == null) {
+                continue;
+            }
+            String type = member.type();
+            int components = componentsOf(type);
+            int columns = columnsOf(type);
             int elements = Math.max(1, member.arrayLength());
+            boolean integerType = type.startsWith("i") || type.startsWith("u")
+                    || type.equals("int") || type.equals("bool");
             // std140: an array element or a matrix column starts on a 16-byte boundary; a plain vector packs tightly.
             int columnStride = (member.arrayLength() > 0 || columns > 1) ? 16 : components * 4;
             int value = 0;
@@ -444,8 +500,7 @@ public final class VulkanModProgramPipeline {
                         if (floats != null && value < floats.length) {
                             block.putFloat(at, floats[value]);
                         } else if (ints != null && value < ints.length) {
-                            if (member.type().startsWith("i") || member.type().startsWith("u")
-                                    || member.type().equals("int") || member.type().equals("bool")) {
+                            if (integerType) {
                                 block.putInt(at, ints[value]);
                             } else {
                                 block.putFloat(at, ints[value]);
@@ -455,6 +510,7 @@ public final class VulkanModProgramPipeline {
                 }
             }
         }
+        program.cachePackedUniforms(version, block);
         return block;
     }
 
@@ -477,6 +533,11 @@ public final class VulkanModProgramPipeline {
     }
 
     void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer uniforms, long samplerSet,
+              long[] bindCache) {
+        draw(commandBuffer, mesh, uniforms, samplerSet, EMPTY_IMAGES, bindCache);
+    }
+
+    void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer uniforms, long samplerSet,
               VulkanGlTexture[] images, long[] bindCache) {
         if (this.pipeline == VK_NULL_HANDLE || mesh == null || mesh.isEmpty()) {
             return;
@@ -494,16 +555,13 @@ public final class VulkanModProgramPipeline {
         bindCache[5] = -1L;
         VulkanPushCache.SHARED.invalidate();
         if (samplerSet != 0L) {
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
-                        stack.longs(samplerSet), null);
-            }
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
+                    MemoryStack.stackGet().longs(samplerSet), null);
         }
-        if (this.pushBytes > 0) {
-            ByteBuffer view = uniforms.duplicate();
-            view.position(0).limit(this.pushBytes);
-            vkCmdPushConstants(commandBuffer, this.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                    0, view);
+        if (this.pushBytes > 0 && uniforms != null) {
+            uniforms.position(0).limit(this.pushBytes);
+            vkCmdPushConstants(commandBuffer, this.pipelineLayout,
+                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, uniforms);
         }
         if (SKIP_DRAW_CALL) {
             // Lab: every bind of the pass without its pixels, to tell "the pass's pixels are wrong" from "the pass
@@ -544,7 +602,9 @@ public final class VulkanModProgramPipeline {
             vkDestroyDescriptorSetLayout(device, this.setLayout, null);
             this.setLayout = VK_NULL_HANDLE;
         }
-        this.setsByTextures.clear();
+        this.setsByKey.clear();
+        this.lastSamplerKey = 0L;
+        this.lastSamplerSet = 0L;
     }
 
     private static void check(int result, String what) {
