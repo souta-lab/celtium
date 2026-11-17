@@ -6120,7 +6120,113 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     public void celtium$rawAttachmentChanged(int framebuffer) {
         this.rawDeletedAttachmentTargets.remove(Long.valueOf(RenderTargetRegistry.rawFramebufferIdentity(framebuffer)));
+        // The attach is also a registration: a framebuffer whose binds the raw-bind report never saw (GLSM's binds
+        // go through its own state cache, and a bind made before this backend existed reports to nothing) still
+        // needs its identity recorded and its pair borrowing the shared depth before the pass that draws into it.
+        celtium$registerRawFramebuffer(framebuffer, false);
     }
+
+    /**
+     * Registers a raw (non-vanilla-object) framebuffer with the renderer: identity + colour/depth records, and the
+     * pair + shared-depth borrow that lets the window head and the native depth copy find it.
+     * <p>
+     * The registration the hint's raw-bind report used to make, moved here because that report only fires for binds
+     * that reach {@code CeltiumGllessHint.glBindFramebuffer} with {@code vanillaFramebufferDepth == 0} — and the
+     * measured leg-15 case is that GLSM's binds of the shadow framebuffers never produced a report at all (only the
+     * game-alias binds of FBO 220 did), so no shadow identity ever became current, no pair ever borrowed the shared
+     * depth, and the native depth copy refused every frame with served = 0. The stub's bind record is the
+     * registration's trigger now: every raw bind lands in the stub, and the stub calls this (with
+     * {@code selectTarget = true}) unless the hint suppressed it for a vanilla bracket. The case the old report was
+     * written for still holds: a mod framebuffer whose class overrides the vanilla bind with raw GL (Xaero's
+     * Minimap's ImprovedFramebuffer) reaches the stub's record, so its draws land under its own identity rather
+     * than the game's image.
+     * <p>
+     * With {@code selectTarget = false} (attach and copy-time calls) the records and the pair are registered but the
+     * current target is left alone — an attach is not a bind, and moving the current identity there would misroute
+     * the next window.
+     */
+    public void celtium$registerRawFramebuffer(int framebuffer, boolean selectTarget) {
+        if (framebuffer < 0 || this.gpuStalled || this.context.celtium$isDeviceLost()) return;
+        if (framebuffer == 0) {
+            if (selectTarget) bindFramebuffer(0L, false);
+            return;
+        }
+        int color = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferColorTexture(framebuffer);
+        if (color != 0) {
+            long game = celtium$gameIdentityForRawColorTexture(color);
+            if (game != Long.MIN_VALUE) {
+                // A raw bind of the game framebuffer draws into the main target: report the game identity, not a
+                // raw one (the hint's report made the same call; this is its alias branch, relocated).
+                if (selectTarget) bindFramebuffer(game, true);
+                if (this.rawBindGameLogs < 4) {
+                    this.rawBindGameLogs++;
+                    System.out.println("[Celtium] CELTIUM_RAW_BIND_GAME_FRAMEBUFFER framebuffer=" + framebuffer
+                            + " colorTexture=" + color + " identity=0x" + Long.toHexString(game)
+                            + " (a raw bind of the game framebuffer draws into the main target)");
+                }
+                return;
+            }
+        }
+        long identity = RenderTargetRegistry.rawTargetIdentity(framebuffer, color);
+        if (selectTarget) bindFramebuffer(identity, false);
+        int depth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferDepthTexture(framebuffer);
+        int[] colorExtent = color != 0 ? textureSize(color) : null;
+        int[] depthExtent = depth != 0 ? textureSize(depth) : null;
+        if (color != 0 && colorExtent != null && colorExtent.length >= 2 && colorExtent[0] > 0 && colorExtent[1] > 0) {
+            bindFramebufferColorTexture(identity, color, colorExtent[0], colorExtent[1]);
+        }
+        // Reported on every registration, not only when filled, as the hint's report did: a framebuffer that
+        // detached an attachment clears the record it no longer has (a zero depth name clears the depth record).
+        bindFramebufferColorAttachments(identity,
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferColorAttachments(framebuffer));
+        bindFramebufferDepthTexture(identity, depth);
+        // The pair and the shared-depth borrow, done here rather than at the next window: a window only engages
+        // them for an identity that is already current, and the shadow pass's draws happen in the frame between
+        // this bind and the copy — if the pair is not borrowed by then, the copy has nothing to serve.
+        long[] previous = this.rawRegisteredTargets.get(framebuffer);
+        boolean tupleChanged = previous == null || previous[0] != color || previous[1] != depth
+                || previous[2] != (colorExtent == null ? 0 : colorExtent[0])
+                || previous[3] != (colorExtent == null ? 0 : colorExtent[1])
+                || previous[4] != (depthExtent == null ? 0 : depthExtent[0])
+                || previous[5] != (depthExtent == null ? 0 : depthExtent[1]);
+        GllessFrameTarget target = offTargetTarget();
+        if (tupleChanged && target != null && color != 0 && colorExtent != null && colorExtent.length >= 2
+                && colorExtent[0] > 0 && colorExtent[1] > 0) {
+            int colorCount = Math.max(1, this.publishedTextures.colorAttachmentCount(identity));
+            target.ensureChainPairColors(identity, colorCount, colorExtent[0], colorExtent[1]);
+            boolean shared = false;
+            if (depth != 0 && depthExtent != null && depthExtent.length >= 2 && depthExtent[0] > 0
+                    && depthExtent[1] > 0) {
+                shared = target.ensureChainPairSharedDepth(identity,
+                        RenderTargetRegistry.rawColorTextureIdentity(depth), depthExtent[0], depthExtent[1]);
+            }
+            long[] next = new long[7];
+            next[0] = color;
+            next[1] = depth;
+            next[2] = colorExtent[0];
+            next[3] = colorExtent[1];
+            next[4] = depthExtent == null ? 0 : depthExtent[0];
+            next[5] = depthExtent == null ? 0 : depthExtent[1];
+            next[6] = shared ? 1L : 0L;
+            this.rawRegisteredTargets.put(framebuffer, next);
+            if (this.rawDepthRegisterLogs < 8) {
+                this.rawDepthRegisterLogs++;
+                System.out.println("[Celtium] CELTIUM_RAW_DEPTH_REGISTER framebuffer=" + framebuffer
+                        + " identity=0x" + Long.toHexString(identity) + " colorTexture=" + color
+                        + " depthTexture=" + depth + " via=" + (selectTarget ? "bind" : "attach")
+                        + " size=" + colorExtent[0] + "x" + colorExtent[1]
+                        + " shared=" + shared + " sharedDepths=" + target.sharedDepthCount());
+            }
+        }
+    }
+
+    /** Last registered (colour, depth, colour extent, depth extent, shared?) per raw framebuffer name. */
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<long[]> rawRegisteredTargets =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<long[]>();
+    /** Bounded CELTIUM_RAW_DEPTH_REGISTER lines. */
+    private int rawDepthRegisterLogs;
+    /** Bounded CELTIUM_RAW_BIND_GAME_FRAMEBUFFER lines (relocated from the hint's report). */
+    private int rawBindGameLogs;
 
     public void celtium$rawFramebufferDeleted(int framebuffer, int colorTexture) {
         if (framebuffer == 0 || this.gpuStalled || this.context.celtium$isDeviceLost()) return;
@@ -18016,10 +18122,28 @@ this.frameBufferOpen = false;
         long destKey = RenderTargetRegistry.rawColorTextureIdentity(destDepthTexture);
         long sourceImage = target.sharedDepthImage(sourceKey);
         long destImage = target.sharedDepthImage(destKey);
-        if (sourceImage == 0L || destImage == 0L) {
-            return "the depth copy's " + (sourceImage == 0L ? "source" : "destination") + " texture "
-                    + (sourceImage == 0L ? sourceDepthTexture : destDepthTexture)
+        if (sourceImage == 0L) {
+            // Registration normally lands at bind/attach time. A source whose framebuffer was only ever attached
+            // before this backend existed registers here instead — too late for this frame's copy (the pass has
+            // already drawn into whatever target it drew into, not into a pair created now), so the refusal
+            // stands, but the store is filled for the frames that follow.
+            int sourceFbo = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                    .celtium$framebufferForDepthTexture(sourceDepthTexture);
+            if (sourceFbo != 0) celtium$registerRawFramebuffer(sourceFbo, false);
+            return "the depth copy's source texture " + sourceDepthTexture
                     + " is not in the shared depth store (its framebuffer's pair never borrowed it)";
+        }
+        if (destImage == 0L) {
+            // The destination's content is defined by this copy, so registering it now is exact rather than late:
+            // its framebuffer's pair borrows the shared depth image and the copy lands in it below.
+            int destFbo = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                    .celtium$framebufferForDepthTexture(destDepthTexture);
+            if (destFbo != 0) celtium$registerRawFramebuffer(destFbo, false);
+            destImage = target.sharedDepthImage(destKey);
+            if (destImage == 0L) {
+                return "the depth copy's destination texture " + destDepthTexture
+                        + " is not in the shared depth store (its framebuffer's pair never borrowed it)";
+            }
         }
         int[] sourceExtent = target.sharedDepthExtent(sourceKey);
         int[] destExtent = target.sharedDepthExtent(destKey);
