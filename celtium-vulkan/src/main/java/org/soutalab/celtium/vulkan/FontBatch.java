@@ -907,15 +907,21 @@ public final class FontBatch {
         }
         long current = view.targetIdentity();
         while (!this.retained.isEmpty() && this.retained.peekFirst().targetIdentity == current) {
-            RetainedRun run = this.retained.peekFirst();
+            // Detached before the offer, for the same reason the open run is marked inactive before its submission:
+            // the submission's own entry flush re-enters this method, and a head still on the queue is offered again
+            // by that nested call - the leg-5 Demonica run recursed on exactly that until the stack ran out, because
+            // a retained run existed at all (under GLSM a startup font run is refused once and retained, where the
+            // vanilla path retains nothing). A refused offer goes back at the head, so the oldest-first order and
+            // the stop-at-first-refusal rule are unchanged.
+            RetainedRun run = this.retained.removeFirst();
             Run offer = new Run(run.format, run.stride, run.formatId,
                     org.lwjgl.system.MemoryUtil.memAddress(run.vertices, 0), run.vertexCount, run.drawMode,
                     run.texture, run.alphaTest, run.alphaRef, run.projection, run.modelView, run.targetIdentity,
                     "retained");
             if (!offer(offer, target)) {
+                this.retained.addFirst(run);
                 return;
             }
-            this.retained.removeFirst();
             this.retainedBytes -= run.vertexCount * run.stride;
             org.lwjgl.system.MemoryUtil.memFree(run.vertices);
         }
