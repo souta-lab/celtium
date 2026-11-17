@@ -276,7 +276,6 @@ void main() {
     if (dynamicLevel > 0.0) {
         lightCoord.x = max(lightCoord.x, min(dynamicLevel, 15.0) * 16.0);
     }
-    lightCoord.x = 128.0; // TEMP item-326 sample-response probe (probe 4)
     vec4 lightColor = _sample_lightmap(u_LightTex, lightCoord);
     v_Color = _vert_color * lightColor;
     v_RdhFactor.rgb *= lightColor.rgb;
