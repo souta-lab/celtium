@@ -839,11 +839,12 @@ public final class CeltiumGllessHint {
             case 0x84FF: // GL_MAX_TEXTURE_MAX_ANISOTROPY - no anisotropic filtering
                 value = 1;
                 break;
-            case 0x8CDF: // GL_MAX_COLOR_ATTACHMENTS - the single chain attachment
-                value = 1;
+            case 0x8CDF: // GL_MAX_COLOR_ATTACHMENTS - the MRT ledger size, the stub's COLOR_ATTACHMENT_SLOTS:
+                // a chain target holds a colour image per slot and a pass is built with that many attachments
+                value = 8;
                 break;
-            case 0x8824: // GL_MAX_DRAW_BUFFERS
-                value = 1;
+            case 0x8824: // GL_MAX_DRAW_BUFFERS - the same ledger
+                value = 8;
                 break;
             case 0x8B4D: // GL_MAX_GEOMETRY_TEXTURE_IMAGE_UNITS - geometry is not a lowered stage;
                 // the value is the stub's own answer, unchanged (the combined limit is 0x8F39, above)

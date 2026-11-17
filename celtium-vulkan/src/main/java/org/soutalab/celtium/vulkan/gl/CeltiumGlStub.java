@@ -7325,10 +7325,12 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return 16;
             case 0x85B5: // GL_VERTEX_ARRAY_BINDING
                 return this.boundVertexArray;
-            case 0x8CDF: // GL_MAX_COLOR_ATTACHMENTS - one colour attachment is what the chain targets provide
-                return 1;
-            case 0x8824: // GL_MAX_DRAW_BUFFERS
-                return 1;
+            case 0x8CDF: // GL_MAX_COLOR_ATTACHMENTS - the MRT ledger size: a chain target holds a colour image
+                // per slot up to COLOR_ATTACHMENT_SLOTS, and a pass is built with that many attachments
+                return COLOR_ATTACHMENT_SLOTS;
+            case 0x8824: // GL_MAX_DRAW_BUFFERS - the same ledger: a program's outputs lower to that many
+                // per-location fragment outputs (ModGlslTranslator's MAX_FRAG_OUTPUTS)
+                return COLOR_ATTACHMENT_SLOTS;
             case 0x84E8: { // GL_MAX_RENDERBUFFER_SIZE
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
                 return vulkan != null ? vulkan.celtium$maxTextureSize() : 16384;
