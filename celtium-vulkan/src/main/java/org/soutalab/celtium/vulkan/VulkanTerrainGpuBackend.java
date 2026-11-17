@@ -12948,6 +12948,22 @@ this.frameBufferOpen = false;
                     // one depth storage, as GL says. The depth texture's own extent decides; a mismatch with
                     // the pair's extent leaves the pair's private depth standing and is counted, not hidden.
                     int windowDepthTexture = this.publishedTextures.depthTexture(chainIdentityValue);
+                    String depthTextureSource = "record";
+                    if (windowDepthTexture == 0) {
+                        // The record is filled at bind time by the hint's raw-bind report, and a bind that
+                        // route does not report leaves the identity's entry empty. The stub's own record is
+                        // keyed by the bound name, and the name bound at window time is this window's
+                        // framebuffer - a bind flushes the old target's window before the identity switches
+                        // (bindFramebuffer's HEAD flush) - so it answers for this window directly. Measured
+                        // on leg 14: the identity record was empty for the shadow framebuffers while the
+                        // stub's record named their depth texture, and no pair ever borrowed a shared depth.
+                        int boundFbo = drawFramebufferBinding();
+                        if (boundFbo > 0) {
+                            windowDepthTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                                    .celtium$framebufferDepthTexture(boundFbo);
+                            depthTextureSource = "stub-bound-" + boundFbo;
+                        }
+                    }
                     if (windowDepthTexture != 0) {
                         int[] depthSize = textureSize(windowDepthTexture);
                         if (depthSize != null && depthSize.length >= 2 && depthSize[0] > 0 && depthSize[1] > 0) {
@@ -12958,7 +12974,8 @@ this.frameBufferOpen = false;
                                 this.sharedDepthWindowLogs++;
                                 System.out.println("[Celtium] CELTIUM_SHARED_DEPTH identity=0x"
                                         + Long.toHexString(chainIdentityValue) + " depthTexture="
-                                        + windowDepthTexture + " size=" + depthSize[0] + "x" + depthSize[1]
+                                        + windowDepthTexture + " via=" + depthTextureSource
+                                        + " size=" + depthSize[0] + "x" + depthSize[1]
                                         + " pairSize=" + pairWidth + "x" + pairHeight
                                         + " shared=" + sharedDepth
                                         + " sharedDepths=" + offTarget.sharedDepthCount());
