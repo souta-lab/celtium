@@ -12,6 +12,14 @@ against the baseline revision (the R0 freeze, docs/plan.md section 0.383) and re
 whose baseline form carried an initializer and whose current form does not. It cannot prove the
 initializer was *needed* - only a leg can - but it makes the loss impossible to miss.
 
+The comparison is by field name alone, so a new class that reuses a baseline name for a
+different field reads as a loss. KNOWN_NAME_COLLISIONS below records the audited cases: each is
+a constructor-injected `private final` field in a Phase 0 class, distinct from the backend
+field of the same name (which still exists, initializer intact, only no longer `private`, so
+this scan does not see it). A `final` field cannot be left unassigned - the compiler refuses -
+so the accident this check guards against cannot occur there. Entries are (file, field) pairs,
+and an entry applies only while the declaration is still `final`; anything else still fails.
+
     scripts/cpu-contract/field_initializer_check.py [baseline-revision]
 
 Exit code 0 when nothing was lost, 1 with a list of the fields otherwise.
@@ -25,16 +33,24 @@ ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan"
 DEFAULT_BASELINE = "5a22acb5b"  # the R0 freeze, before the R1-R7 extraction stretch
 
-DECL = re.compile(r"^    private (?:static )?(?:final )?[\w<>.\[\], ?]+ (\w+)( = [^;]*)?;$")
+DECL = re.compile(r"^    private (?:static )?(final )?[\w<>.\[\], ?]+ (\w+)( = [^;]*)?;$")
+
+# Audited name collisions (see the module docstring): constructor-injected `private final`
+# fields of the Phase 0 classes, not the backend fields whose names they reuse.
+KNOWN_NAME_COLLISIONS = {
+    ("NativePassRegistry.java", "targetRegistry"),
+    ("PassExecutor.java", "targetRegistry"),
+    ("PassExecutor.java", "publishedTextures"),
+}
 
 
 def declarations(source):
-    """{field name: initializer or None} for one file's text."""
+    """{field name: (initializer or None, is_final)} for one file's text."""
     found = {}
     for line in source.split("\n"):
         m = DECL.match(line)
         if m:
-            found[m.group(1)] = m.group(2)
+            found[m.group(2)] = (m.group(3), m.group(1) is not None)
     return found
 
 
@@ -46,11 +62,17 @@ def main():
         raise SystemExit("could not read the baseline revision %s" % baseline)
     old = declarations(old_text)
     lost = []
+    known = []
     for path in sorted((ROOT / PACKAGE).glob("*.java")):
-        for name, init in declarations(path.read_text(encoding="utf-8")).items():
-            if init is None and old.get(name) is not None:
-                lost.append((path.name, name, old[name].strip()))
-    print("baseline: %s (%d fields with an initializer)" % (baseline, sum(1 for v in old.values() if v)))
+        for name, (init, is_final) in declarations(path.read_text(encoding="utf-8")).items():
+            if init is None and old.get(name, (None, False))[0] is not None:
+                if is_final and (path.name, name) in KNOWN_NAME_COLLISIONS:
+                    known.append((path.name, name))
+                else:
+                    lost.append((path.name, name, old[name][0].strip()))
+    print("baseline: %s (%d fields with an initializer)" % (baseline, sum(1 for v in old.values() if v[0])))
+    for file, name in known:
+        print("  known name collision (constructor-injected final, audited): %s %s" % (file, name))
     if lost:
         print("FIELDS THAT LOST THEIR INITIALIZER:")
         for file, name, init in lost:
