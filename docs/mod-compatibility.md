@@ -280,6 +280,13 @@ draws, and the outcome is recorded per mod rather than promised in advance.
 | Framebuffers other than the verified RGBA8 + D24 contract (MSAA, other formats, custom blit chains) | The hybrid copies through a fixed contract; a mod using something else needs explicit support or a real fallback (audit S14) |
 | Shader packs, OptiFine-style pipelines, and mods that bind their own GL programs | They replace the GL pipeline the swap sits in; no support is planned without a per-mod answer |
 | Mods that call GL directly for drawing | Captured only if they happen to route through the entry points; otherwise a per-mod investigation, not a layer |
+| Gnetum (gnetum) | Refused at startup (`CeltiumCompetitors`): it draws the HUD into its own framebuffer and composites it later, while Celtium draws the HUD natively every frame. Measured on legs e2ee-amd14/15, the presented frame lost the hotbar, the hand and the minimap and was darkened or washed out around them |
+| Custom Loading Screen (customloadingscreen) | Refused at startup (`CeltiumCompetitors`): replaces the Forge loading screen, which Celtium draws natively |
+| SmoothFont (smoothfont) | Refused at startup (`CeltiumCompetitors`): replaces the font renderer's glyph drawing, which Celtium batches natively (a VerifyError against Celtium's text path was observed on leg e2ee-amd3) |
+| Nothirium (nothirium), Naughthirium (naughthirium) | Refused at startup (`CeltiumCompetitors`): replaces the terrain renderer |
+
+The startup refusal keys on a marker class only the mod's own jar carries. `-Dceltium.allowCompetitors=true` lifts the
+refusal at the user's own risk; the measured failures in the rows above are what it re-admits.
 
 ## What is measured, and how
 
