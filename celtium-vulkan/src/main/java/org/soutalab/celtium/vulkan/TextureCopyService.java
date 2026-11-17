@@ -257,6 +257,8 @@ public final class TextureCopyService {
     private int textureCopyWindowAlphaBlitsDeclined;
     private String lastTextureCopyRefusal = "none";
     private int readResolveLogs;
+    /** Bounded lines for reads refused because the resolved chain pair was never acquired (see ownedReadImage). */
+    private int virginPairReadLogs;
     /** Copies that took the native GPU blit route, and those the blit refused, with the last reason. */
     private int textureCopyBlits;
     private int textureCopyBlitRefusals;
@@ -995,7 +997,23 @@ public final class TextureCopyService {
             if (identity == 0L || identity == this.host.mainTargetIdentity()) {
                 return this.host.frameTarget() == null ? 0L : this.host.frameTarget().colorImage();
             }
-            return glless.chainPairColorImage(identity);
+            long pairImage = glless.chainPairColorImage(identity);
+            if (pairImage != 0L && !glless.chainPairAcquired(identity)) {
+                // A pair that registration alone ensured (item 333: raw binds/attaches create the pair and its
+                // shared-depth borrow ahead of any window) has never been drawn into, so its colour image is
+                // still UNDEFINED - serving a copy from it reads undefined content and the serve's own draws
+                // trip VUID-vkCmdDraw-None-09600 (measured on leg 16: Iris's center-depth and composite reads
+                // resolved to pairs no window ever acquired). Until a window acquires the pair, the honest
+                // answer is the one the unregistered case already gave: not an image this renderer owns.
+                if (this.virginPairReadLogs < 2) {
+                    this.virginPairReadLogs++;
+                    System.out.println("[Celtium] CELTIUM_READ_VIRGIN_PAIR readFbo=" + readFbo
+                            + " identity=0x" + Long.toHexString(identity)
+                            + " (the pair exists but no window has acquired it; its content is undefined)");
+                }
+                return 0L;
+            }
+            return pairImage;
         }
         // The routing decision, printed bounded: which facts the read resolved from and which image it chose. The
         // panorama copy reads GL name 0 while the cube faces were offered for a non-zero identity, and uniform white
