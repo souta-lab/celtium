@@ -1521,7 +1521,10 @@ public final class VulkanContext {
     // rules out unsafe cross-thread queue/lifetime interaction, default to the
     // single-threaded present path on Windows. Users can explicitly opt back in.
     static boolean asyncPresentDefaultForOs(String osName) {
-        return osName == null || !osName.toLowerCase(java.util.Locale.ROOT).contains("win");
+        // The decision is a recorded hardware-profile gate now (HardwareProfileGates carries the profile and
+        // its citation - the device losses the comment above records). Behaviour is unchanged, including for
+        // a null OS name, which no profile matches.
+        return !HardwareProfileGates.gated(HardwareProfileGates.GatedFeature.ASYNC_PRESENT, osName, null);
     }
 
     // Windows defaults off, but an explicit opt-in must always be respected.
