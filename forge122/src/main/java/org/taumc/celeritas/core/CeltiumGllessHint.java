@@ -1362,7 +1362,9 @@ public final class CeltiumGllessHint {
         for (int i = 0; i < count; i++) {
             int name = org.lwjgl.system.MemoryUtil.memGetInt(names + (long) i * 4L);
             if (name != 0 && name == rawDrawFramebuffer) {
-                if (vanillaFramebufferDepth == 0) reportRawFramebuffer(0);
+                if (vanillaFramebufferDepth == 0) {
+                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$registerRawFramebuffer(0);
+                }
                 rawDrawFramebuffer = 0;
                 break;
             }
@@ -1455,9 +1457,8 @@ public final class CeltiumGllessHint {
                     + Long.toHexString(org.soutalab.celtium.vulkan.RenderTargetRegistry.rawTargetIdentity(
                             rawDrawFramebuffer, texture)));
         }
-        if (vanillaFramebufferDepth == 0 && target != GL_READ_FRAMEBUFFER) {
-            reportRawFramebuffer(rawDrawFramebuffer);
-        }
+        // No bind report from here any more: the stub's attach record registers the framebuffer with the
+        // renderer itself (records + pair + shared-depth borrow, without moving the current target).
     }
 
     /**
@@ -1468,72 +1469,31 @@ public final class CeltiumGllessHint {
 
     private static final int GL_READ_FRAMEBUFFER = 0x8CA8;
 
-    /** CELTIUM_RAW_BIND_GAME_FRAMEBUFFER lines printed so far. */
-    private static int RAW_GAME_ALIAS_LOGS;
-
     /** CELTIUM_RAW_ATTACH lines printed so far. */
     private static int RAW_ATTACH_LOGS;
 
     /** The draw framebuffer the last raw bind named; 0 is the default framebuffer. */
     private static int rawDrawFramebuffer;
 
-    /**
-     * Tells the renderer which target a raw framebuffer bind makes current, and which colour texture stands for it.
-     * <p>
-     * A mod framebuffer whose class overrides the vanilla bind with raw GL - Xaero's Minimap's ImprovedFramebuffer -
-     * reached only the stub's binding record, so the renderer kept drawing into the game's image: the minimap's clear
-     * blacked out the world, its tile draws landed on the screen at the framebuffer's viewport (the "wrong position"
-     * the user reported), and the HUD quad that samples its texture found nothing.
-     */
-    private static void reportRawFramebuffer(int framebuffer) {
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-        if (!(current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend backend)) {
-            return;
-        }
-        if (framebuffer == 0) {
-            backend.bindFramebuffer(0L, false);
-            return;
-        }
-        int color = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferColorTexture(framebuffer);
-        // The game's own framebuffer bound by name (ATM3's first-person hand): its draws belong to the main target.
-        long game = backend.celtium$gameIdentityForRawColorTexture(color);
-        if (game != Long.MIN_VALUE) {
-            if (RAW_GAME_ALIAS_LOGS < 4) {
-                RAW_GAME_ALIAS_LOGS++;
-                System.out.println("[Celtium] CELTIUM_RAW_BIND_GAME_FRAMEBUFFER framebuffer=" + framebuffer
-                        + " colorTexture=" + color + " identity=0x" + Long.toHexString(game)
-                        + " (a raw bind of the game framebuffer draws into the main target)");
-            }
-            backend.bindFramebuffer(game, true);
-            return;
-        }
-        long identity = org.soutalab.celtium.vulkan.RenderTargetRegistry.rawTargetIdentity(framebuffer, color);
-        backend.bindFramebuffer(identity, false);
-        int[] extent = color == 0 ? null : org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$textureExtent(color);
-        if (extent != null && extent[0] > 0 && extent[1] > 0) {
-            backend.bindFramebufferColorTexture(identity, color, extent[0], extent[1]);
-        }
-        // The tuple beyond slot 0: this is what makes the identity a multi-target one for the window that draws
-        // into it. Reported on every raw bind, not only when a slot is filled, so a framebuffer that detached its
-        // extra attachments also clears the tuple it no longer has.
-        backend.bindFramebufferColorAttachments(identity,
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferColorAttachments(framebuffer));
-        // The depth attachment, reported the same way: the window that draws into this framebuffer points its
-        // pair at the shared depth image for the texture named here, because GL keys depth storage by the
-        // texture - a family of framebuffers over one depth texture (Iris's shadow targets) shares one image.
-        backend.bindFramebufferDepthTexture(identity,
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferDepthTexture(framebuffer));
-    }
-
     /** Which framebuffer is bound; the attachment record above is filed under it. */
     public static void glBindFramebuffer(int target, int framebuffer) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindFramebuffer(target, framebuffer);
+        // The registration this bind makes with the renderer lives in the stub's bind record now (the backend's
+        // celtium$registerRawFramebuffer): every raw bind lands there, including the ones this class's old
+        // report never saw. Inside a vanilla bracket the mixin reports the object's own identity, so the stub's
+        // registration is suppressed for the bracket's duration instead.
+        boolean suppressed = vanillaFramebufferDepth > 0;
+        if (suppressed) {
+            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$pushBindReportSuppression();
+        }
+        try {
+            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindFramebuffer(target, framebuffer);
+        } finally {
+            if (suppressed) {
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$popBindReportSuppression();
+            }
+        }
         if (target != GL_READ_FRAMEBUFFER) {
             rawDrawFramebuffer = framebuffer;
-            if (vanillaFramebufferDepth == 0) {
-                reportRawFramebuffer(framebuffer);
-            }
         }
     }
 
