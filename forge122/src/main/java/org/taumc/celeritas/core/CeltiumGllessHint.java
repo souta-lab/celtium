@@ -2560,15 +2560,17 @@ public final class CeltiumGllessHint {
      */
     public static void noteContextRequest() {
         try {
-            org.soutalab.celtium.vulkan.gl.GlContextTerms.noteContextRequest(
-                    net.minecraftforge.common.ForgeEarlyConfig.OPENGL_VERSION_MAJOR,
-                    net.minecraftforge.common.ForgeEarlyConfig.OPENGL_VERSION_MINOR,
-                    net.minecraftforge.common.ForgeEarlyConfig.OPENGL_COMPAT_PROFILE);
+            // Read reflectively: ForgeEarlyConfig is a Cleanroom runtime class, not part of the Forge
+            // userdev this module compiles against, so naming it in source does not compile. The fields
+            // are public statics written before the window exists (that timing is the point of the call).
+            Class<?> config = Class.forName("net.minecraftforge.common.ForgeEarlyConfig");
+            int major = config.getField("OPENGL_VERSION_MAJOR").getInt(null);
+            int minor = config.getField("OPENGL_VERSION_MINOR").getInt(null);
+            boolean compat = config.getField("OPENGL_COMPAT_PROFILE").getBoolean(null);
+            org.soutalab.celtium.vulkan.gl.GlContextTerms.noteContextRequest(major, minor, compat);
             org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.info(
                     "CELTIUM_GL_CONTEXT_TERMS latched: requested={}.{} compat={} -> version={}",
-                    Integer.valueOf(net.minecraftforge.common.ForgeEarlyConfig.OPENGL_VERSION_MAJOR),
-                    Integer.valueOf(net.minecraftforge.common.ForgeEarlyConfig.OPENGL_VERSION_MINOR),
-                    Boolean.valueOf(net.minecraftforge.common.ForgeEarlyConfig.OPENGL_COMPAT_PROFILE),
+                    Integer.valueOf(major), Integer.valueOf(minor), Boolean.valueOf(compat),
                     org.soutalab.celtium.vulkan.gl.GlContextTerms.versionString());
         } catch (Throwable error) {
             org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.warn(
