@@ -30,6 +30,197 @@ final class PublishedFrameTextures {
     /** Direct-indexed table mapping GL texture name -> framebuffer identity (Long.MIN_VALUE when absent). */
     private volatile long[] identityByTexId = createIdentityTable(4096);
 
+    /** Colour attachment slots a framebuffer record carries; matches the GL stub's COLOR_ATTACHMENT_SLOTS. */
+    static final int MAX_COLOR_SLOTS = 8;
+
+    /**
+     * Colour attachment tuples beyond slot 0, per framebuffer identity: index i of an entry is the GL texture name
+     * attached at GL_COLOR_ATTACHMENT0+i. Slot 0 of an entry mirrors the {@link #fbAttachments} record (that record
+     * stays the authority for slot 0); this table exists so a multi-target framebuffer's full tuple - the thing an
+     * MRT window sizes itself by - has exactly one owner, like the rest of the census.
+     */
+    private long[] fbSlotIdentities = new long[16];
+    private int[][] fbSlotTextures = new int[16][];
+    private int fbSlotCount;
+
+    /** Direct-indexed tables mapping a slot >= 1 GL texture name -> its framebuffer identity and slot index. */
+    private volatile long[] slotIdentityByTexId = createIdentityTable(4096);
+    private volatile int[] slotIndexByTexId = createSlotIndexTable(4096);
+
+    private static int[] createSlotIndexTable(int length) {
+        int[] table = new int[length];
+        Arrays.fill(table, -1);
+        return table;
+    }
+
+    private void setSlotForTexture(int glTextureName, long identity, int slot) {
+        if (glTextureName <= 0) {
+            return;
+        }
+        long[] identities = this.slotIdentityByTexId;
+        int[] slots = this.slotIndexByTexId;
+        if (glTextureName >= identities.length) {
+            int nextLen = Math.max(identities.length * 2, glTextureName + 1);
+            identities = Arrays.copyOf(identities, nextLen);
+            Arrays.fill(identities, this.slotIdentityByTexId.length, nextLen, Long.MIN_VALUE);
+            slots = Arrays.copyOf(slots, nextLen);
+            Arrays.fill(slots, this.slotIndexByTexId.length, nextLen, -1);
+            this.slotIdentityByTexId = identities;
+            this.slotIndexByTexId = slots;
+        }
+        identities[glTextureName] = identity;
+        slots[glTextureName] = slot;
+    }
+
+    private void clearSlotForTexture(int glTextureName) {
+        if (glTextureName <= 0) {
+            return;
+        }
+        long[] identities = this.slotIdentityByTexId;
+        if (glTextureName < identities.length) {
+            identities[glTextureName] = Long.MIN_VALUE;
+            this.slotIndexByTexId[glTextureName] = -1;
+        }
+    }
+
+    /** {@return the identity a slot >= 1 texture name belongs to}, or {@code Long.MIN_VALUE} when it fills no slot. */
+    long slotIdentityForColorTexture(int glTextureName) {
+        if (glTextureName <= 0) {
+            return Long.MIN_VALUE;
+        }
+        long[] table = this.slotIdentityByTexId;
+        return glTextureName < table.length ? table[glTextureName] : Long.MIN_VALUE;
+    }
+
+    /** {@return the slot a GL texture name fills (>= 1)}, or -1 when it fills no slot beyond slot 0's own record. */
+    int slotIndexForColorTexture(int glTextureName) {
+        if (glTextureName <= 0) {
+            return -1;
+        }
+        int[] table = this.slotIndexByTexId;
+        return glTextureName < table.length ? table[glTextureName] : -1;
+    }
+
+    private int indexOfSlots(long framebufferIdentity) {
+        for (int i = 0; i < this.fbSlotCount; i++) {
+            if (this.fbSlotIdentities[i] == framebufferIdentity) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private void removeSlotsAt(int index) {
+        int[] removed = this.fbSlotTextures[index];
+        for (int s = 1; s < MAX_COLOR_SLOTS; s++) {
+            if (removed[s] != 0 && slotIdentityForColorTexture(removed[s]) == this.fbSlotIdentities[index]) {
+                clearSlotForTexture(removed[s]);
+            }
+        }
+        int last = --this.fbSlotCount;
+        if (index != last) {
+            this.fbSlotIdentities[index] = this.fbSlotIdentities[last];
+            this.fbSlotTextures[index] = this.fbSlotTextures[last];
+        }
+        this.fbSlotTextures[last] = null;
+    }
+
+    /**
+     * Records a framebuffer's colour attachment tuple (index = slot, 0 marks a detached slot). Only slots >= 1 are
+     * stored; slot 0 stays owned by {@link #bindColorTexture}. A tuple with nothing beyond slot 0 clears the
+     * identity's record - a single-target framebuffer has no tuple.
+     */
+    synchronized void bindColorAttachments(long framebufferIdentity, int[] colorTextures) {
+        boolean hasExtra = false;
+        if (colorTextures != null) {
+            for (int s = 1; s < colorTextures.length && s < MAX_COLOR_SLOTS; s++) {
+                if (colorTextures[s] != 0) {
+                    hasExtra = true;
+                    break;
+                }
+            }
+        }
+        int index = indexOfSlots(framebufferIdentity);
+        if (!hasExtra) {
+            if (index >= 0) {
+                removeSlotsAt(index);
+            }
+            return;
+        }
+        int[] tuple = new int[MAX_COLOR_SLOTS];
+        for (int s = 0; s < MAX_COLOR_SLOTS && s < colorTextures.length; s++) {
+            tuple[s] = colorTextures[s];
+        }
+        if (index < 0) {
+            if (this.fbSlotCount == this.fbSlotIdentities.length) {
+                int nextCap = this.fbSlotIdentities.length * 2;
+                this.fbSlotIdentities = Arrays.copyOf(this.fbSlotIdentities, nextCap);
+                this.fbSlotTextures = Arrays.copyOf(this.fbSlotTextures, nextCap);
+            }
+            index = this.fbSlotCount++;
+            this.fbSlotIdentities[index] = framebufferIdentity;
+        } else {
+            int[] old = this.fbSlotTextures[index];
+            for (int s = 1; s < MAX_COLOR_SLOTS; s++) {
+                if (old[s] != 0 && old[s] != tuple[s]
+                        && slotIdentityForColorTexture(old[s]) == framebufferIdentity) {
+                    clearSlotForTexture(old[s]);
+                }
+            }
+        }
+        this.fbSlotTextures[index] = tuple;
+        for (int s = 1; s < MAX_COLOR_SLOTS; s++) {
+            if (tuple[s] != 0) {
+                setSlotForTexture(tuple[s], framebufferIdentity, s);
+            }
+        }
+    }
+
+    /** {@return the colour texture name recorded at a slot of an identity, or 0 when that slot is empty}. */
+    synchronized int colorTextureAt(long identity, int slot) {
+        if (slot == 0) {
+            return colorTextureName(identity);
+        }
+        if (slot < 0 || slot >= MAX_COLOR_SLOTS) {
+            return 0;
+        }
+        int index = indexOfSlots(identity);
+        return index < 0 ? 0 : this.fbSlotTextures[index][slot];
+    }
+
+    /**
+     * {@return how many colour attachments an identity draws into}: the leading run of non-zero slots from slot 0.
+     * A gap ends the count - a framebuffer with slot 2 attached but slot 1 empty is not a three-target framebuffer
+     * this renderer can build (GL would call it incomplete), so the window sizes itself by the run it can honour.
+     */
+    synchronized int colorAttachmentCount(long identity) {
+        if (colorTextureName(identity) == 0) {
+            return 0;
+        }
+        int index = indexOfSlots(identity);
+        if (index < 0) {
+            return 1;
+        }
+        int[] tuple = this.fbSlotTextures[index];
+        int count = 1;
+        while (count < MAX_COLOR_SLOTS && tuple[count] != 0) {
+            count++;
+        }
+        return count;
+    }
+
+    /**
+     * {@return the attachment slot a GL texture name fills for its framebuffer} (0 for the slot-0 record), or -1
+     * when the name is no framebuffer's colour attachment. The layout a published wrapper declares depends on which
+     * slot's image it wraps, so the publication bridge asks here rather than assuming slot 0.
+     */
+    int attachmentSlotForTexture(int glTextureName) {
+        if (identityForColorTexture(glTextureName) != Long.MIN_VALUE) {
+            return 0;
+        }
+        return slotIndexForColorTexture(glTextureName);
+    }
+
     /** Direct-indexed table mapping GL texture name -> published VulkanGlTexture, paired with dense iteration arrays. */
     private volatile VulkanGlTexture[] publishedByTexId = new VulkanGlTexture[4096];
     private int[] publishedKeys = new int[16];
@@ -132,6 +323,26 @@ final class PublishedFrameTextures {
 
     /** Drops every framebuffer's colour-attachment record that names this GL texture (it was deleted or reused). */
     synchronized void forgetColorTexture(int glTextureName) {
+        long slotIdentity = slotIdentityForColorTexture(glTextureName);
+        if (slotIdentity != Long.MIN_VALUE) {
+            int slot = slotIndexForColorTexture(glTextureName);
+            clearSlotForTexture(glTextureName);
+            int index = indexOfSlots(slotIdentity);
+            if (index >= 0 && slot > 0 && slot < MAX_COLOR_SLOTS) {
+                int[] tuple = this.fbSlotTextures[index];
+                tuple[slot] = 0;
+                boolean hasExtra = false;
+                for (int s = 1; s < MAX_COLOR_SLOTS; s++) {
+                    if (tuple[s] != 0) {
+                        hasExtra = true;
+                        break;
+                    }
+                }
+                if (!hasExtra) {
+                    removeSlotsAt(index);
+                }
+            }
+        }
         long identity = identityForColorTexture(glTextureName);
         if (identity != Long.MIN_VALUE) {
             setIdentityForTexture(glTextureName, Long.MIN_VALUE);

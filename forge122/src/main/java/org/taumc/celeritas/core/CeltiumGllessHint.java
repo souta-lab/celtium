@@ -1445,6 +1445,11 @@ public final class CeltiumGllessHint {
         if (extent != null && extent[0] > 0 && extent[1] > 0) {
             backend.bindFramebufferColorTexture(identity, color, extent[0], extent[1]);
         }
+        // The tuple beyond slot 0: this is what makes the identity a multi-target one for the window that draws
+        // into it. Reported on every raw bind, not only when a slot is filled, so a framebuffer that detached its
+        // extra attachments also clears the tuple it no longer has.
+        backend.bindFramebufferColorAttachments(identity,
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferColorAttachments(framebuffer));
     }
 
     /** Which framebuffer is bound; the attachment record above is filed under it. */

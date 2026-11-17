@@ -6105,6 +6105,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /**
+     * The full colour attachment tuple behind a bound raw framebuffer (index = slot), as the GL stub recorded it.
+     * Slot 0 is reported through {@link #bindFramebufferColorTexture}; this carries slots 1+ so the record can say
+     * how many targets a multi-target framebuffer draws into - the fact an MRT window sizes itself by. A tuple
+     * with nothing beyond slot 0 clears the identity's tuple record.
+     */
+    public void bindFramebufferColorAttachments(long framebufferIdentity, int[] colorTextures) {
+        this.publishedTextures.bindColorAttachments(framebufferIdentity, colorTextures);
+    }
+
+    /**
      * Notes a render-target identity the first time a group is offered under it, so the line can be printed with the
      * group's own texture and format once they are known.
      * <p>
