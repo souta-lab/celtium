@@ -145,7 +145,7 @@ public final class ModProgramRegistry {
             }
         }
         p.lowered = fragment == null
-                ? new ModGlslTranslator.Result(null, null, List.of(), List.of(), 0, List.of(), List.of(), List.of(),
+                ? new ModGlslTranslator.Result(null, null, List.of(), List.of(), 0, List.of(), List.of(), List.of(), 0,
                         "no fragment stage attached (" + p.shaders.size() + " shaders)")
                 : ModGlslTranslator.translate(vertex, fragment);
         p.nameByLocation.clear();

@@ -25,7 +25,8 @@ import java.util.regex.Pattern;
  * <li>Every non-sampler {@code uniform} -> one std140 push-constant block (at most {@link #MAX_PUSH_BYTES}), with the
  * byte offset of each member, so the values {@code glUniform*} recorded can be packed. Samplers -> combined image
  * samplers at set 0, bindings 0..n-1.</li>
- * <li>{@code gl_FragColor}/{@code gl_FragData[0]} -> an output at location 0; {@code texture2D}, {@code texture2DLod}
+ * <li>{@code gl_FragColor}/{@code gl_FragData[0]} -> an output at location 0; {@code gl_FragData[n]} -> an output
+ * at location n, up to {@link #MAX_FRAG_OUTPUTS} draw buffers; {@code texture2D}, {@code texture2DLod}
  * -> {@code texture}, {@code textureLod}.</li>
  * <li>The fixed-function inputs mods still read: {@code gl_Vertex}, {@code gl_Color}, {@code gl_MultiTexCoord0},
  * {@code gl_ModelViewProjectionMatrix}, {@code gl_ModelViewMatrix}, {@code gl_ProjectionMatrix},
@@ -52,7 +53,7 @@ public final class ModGlslTranslator {
     /** The lowered program, or why it could not be lowered. */
     public record Result(String vertex, String fragment, List<Attribute> attributes, List<UniformMember> uniforms,
                          int uniformBlockSize, List<SamplerBinding> samplers, List<ImageBinding> images, List<String> varyings,
-                         String failure) {
+                         int fragOutputCount, String failure) {
         public boolean ok() {
             return this.failure == null;
         }
@@ -74,6 +75,9 @@ public final class ModGlslTranslator {
                     + "resource|subroutine|precise|coherent|restrict|readonly|writeonly|superp)\\b");
     private static final Pattern FRAG_COLOR_PATTERN = Pattern.compile("\\bgl_FragColor\\b");
     private static final Pattern FRAG_DATA0_PATTERN = Pattern.compile("\\bgl_FragData\\s*\\[\\s*0\\s*\\]");
+    private static final Pattern FRAG_DATA_PATTERN = Pattern.compile("\\bgl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
+    /** The draw buffers lowered to fragment outputs; Iris's own ceiling, and the mod pipeline's attachment ledger. */
+    static final int MAX_FRAG_OUTPUTS = 8;
     private static final Pattern FTRANSFORM_PATTERN = Pattern.compile("\\bftransform\\s*\\(\\s*\\)");
     private static final Pattern TEXCOORD_BAD_PATTERN = Pattern.compile("(?s).*\\bgl_TexCoord\\s*\\[\\s*[1-9].*");
     private static final Pattern TEXCOORD0_PATTERN = Pattern.compile("\\bgl_TexCoord\\s*\\[\\s*0\\s*\\]");
@@ -104,7 +108,7 @@ public final class ModGlslTranslator {
         try {
             return translateOrThrow(vertexSource, fragmentSource);
         } catch (IllegalArgumentException outside) {
-            return new Result(null, null, List.of(), List.of(), 0, List.of(), List.of(), List.of(), outside.getMessage());
+            return new Result(null, null, List.of(), List.of(), 0, List.of(), List.of(), List.of(), 0, outside.getMessage());
         }
     }
 
@@ -259,15 +263,42 @@ public final class ModGlslTranslator {
             }
             location += locationsFor(d.type) * Math.max(1, d.arrayLength);
         }
+        // Draw buffers beyond the first lower to their own outputs (MRT): gl_FragData[n] becomes the output at
+        // location n. The scan runs on the unlowered fragment so the indices are the source's own.
+        java.util.TreeSet<Integer> fragDataIndices = new java.util.TreeSet<>();
+        Matcher fragDataScan = FRAG_DATA_PATTERN.matcher(fragment);
+        while (fragDataScan.find()) {
+            int index = Integer.parseInt(fragDataScan.group(1));
+            if (index >= MAX_FRAG_OUTPUTS) {
+                throw new IllegalArgumentException(
+                        "gl_FragData[" + index + "] exceeds the " + MAX_FRAG_OUTPUTS + " lowered draw buffers");
+            }
+            fragDataIndices.add(index);
+        }
+        int fragOutputCount = Math.max(1, fragDataIndices.isEmpty() ? 1 : fragDataIndices.last() + 1);
         fs.append("layout(location = 0) out vec4 celtium_FragColor;\n");
+        for (int index : fragDataIndices) {
+            if (index > 0) {
+                fs.append("layout(location = ").append(index).append(") out vec4 celtium_FragData")
+                        .append(index).append(";\n");
+            }
+        }
 
         vertex = renameMain(vertex, "vertex");
         fragment = renameMain(fragment, "fragment");
         fragment = FRAG_DATA0_PATTERN.matcher(
                 FRAG_COLOR_PATTERN.matcher(fragment).replaceAll("celtium_FragColor"))
                 .replaceAll("celtium_FragColor");
+        Matcher fragData = FRAG_DATA_PATTERN.matcher(fragment);
+        StringBuffer lowered = new StringBuffer(fragment.length());
+        while (fragData.find()) {
+            fragData.appendReplacement(lowered,
+                    Matcher.quoteReplacement("celtium_FragData" + fragData.group(1)));
+        }
+        fragData.appendTail(lowered);
+        fragment = lowered.toString();
         if (fragment.contains("gl_FragData")) {
-            throw new IllegalArgumentException("only gl_FragData[0] is lowered");
+            throw new IllegalArgumentException("gl_FragData with a non-constant index is not lowered");
         }
         vertex = lowerTextureCalls(vertex);
         fragment = lowerTextureCalls(fragment);
@@ -280,7 +311,7 @@ public final class ModGlslTranslator {
         return new Result(vs.toString(), fs.toString(), Collections.unmodifiableList(attributes),
                 Collections.unmodifiableList(members), blockSize, Collections.unmodifiableList(samplers),
                 Collections.unmodifiableList(images),
-                Collections.unmodifiableList(varyings), null);
+                Collections.unmodifiableList(varyings), fragOutputCount, null);
     }
 
     /**

@@ -127,6 +127,40 @@ class ModGlslTranslatorTest {
     }
 
     @Test
+    void lowersMultipleDrawBuffersToTheirOwnOutputs() {
+        String fragment = """
+                #version 120
+                void main() {
+                    gl_FragData[0] = vec4(1.0, 0.0, 0.0, 1.0);
+                    gl_FragData[1] = vec4(0.0, 1.0, 0.0, 1.0);
+                    gl_FragData[2] = vec4(0.0, 0.0, 1.0, 1.0);
+                }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, fragment);
+        assertTrue(result.ok(), result.failure());
+        assertEquals(3, result.fragOutputCount());
+        assertTrue(result.fragment().contains("layout(location = 0) out vec4 celtium_FragColor;"));
+        assertTrue(result.fragment().contains("layout(location = 1) out vec4 celtium_FragData1;"));
+        assertTrue(result.fragment().contains("layout(location = 2) out vec4 celtium_FragData2;"));
+        assertTrue(result.fragment().contains("celtium_FragData1 = vec4(0.0, 1.0, 0.0, 1.0);"));
+        assertFalse(result.fragment().contains("gl_FragData"), result.fragment());
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void refusesDrawBuffersPastTheLoweredCeilingAndDynamicIndices() {
+        ModGlslTranslator.Result past = ModGlslTranslator.translate(QUAD_VERTEX,
+                "void main() { gl_FragData[8] = vec4(1.0); }");
+        assertFalse(past.ok());
+        assertTrue(past.failure().contains("gl_FragData[8]"), past.failure());
+
+        ModGlslTranslator.Result dynamic = ModGlslTranslator.translate(QUAD_VERTEX,
+                "uniform int i;\nvoid main() { gl_FragData[i] = vec4(1.0); }");
+        assertFalse(dynamic.ok());
+        assertTrue(dynamic.failure().contains("non-constant"), dynamic.failure());
+    }
+
+    @Test
     void namesUnsupportedImageShapesAndStages() {
         assertTrue(ModGlslTranslator.translate("uniform image2D vertexImage; void main(){gl_Position=vec4(0.0);}",
                 "void main(){gl_FragColor=vec4(1.0);}").failure().contains("vertexImage"));
