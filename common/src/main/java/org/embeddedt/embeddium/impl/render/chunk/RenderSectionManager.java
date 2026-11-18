@@ -68,17 +68,15 @@ public abstract class RenderSectionManager {
     /** Whether to print the build-flow line, which says who fills the queues and how fast they drain. */
     private static final boolean BUILD_FLOW_LOG = Boolean.getBoolean("celtium.debug.buildFlow");
     /**
-     * Whether {@code celtium$queueMeshUpdates} also queues pending sections the visibility search did not reach.
-     * The search already queues the visible ones, nearest first (upstream behaviour); this extra producer builds the
-     * hidden ones as well. Measured 2026-11-05 (wall profile r69prof, warm ticks): Celtium's client thread spent
-     * ~2% in submitRebuildTasks/WorldSlice.prepare plus worker wake-ups while Celeritas submitted no rebuild at all.
-     * Off by default since r70hidden (paired, same jar d9d3844c, AMD world-accept, 3 reps, all PASSED with 17 listed
-     * sections): warm p50 2.483/2.413/2.468 ms off against 2.857/2.637/2.483 on, median control ratio 0.915x.
-     * {@code -Dceltium.terrain.queueHiddenPending=true} restores it, for the case it was added for (queues that the
-     * search never fed: leg gv-cohort-rl2 read P0=P1=P2=0 with real chunk data).
+     * History for {@code celtium$queueMeshUpdates} never queueing pending sections the visibility search did not
+     * reach: the search already queues the visible ones, nearest first (upstream behaviour); the extra producer that
+     * also built the hidden ones was measured 2026-11-05 (wall profile r69prof, warm ticks) with Celtium's client
+     * thread spending ~2% in submitRebuildTasks/WorldSlice.prepare plus worker wake-ups while Celeritas submitted no
+     * rebuild at all. Off since r70hidden (paired, same jar d9d3844c, AMD world-accept, 3 reps, all PASSED with 17
+     * listed sections): warm p50 2.483/2.413/2.468 ms off against 2.857/2.637/2.483 on, median control ratio 0.915x.
+     * The switch that restored it (for queues that the search never fed: leg gv-cohort-rl2 read P0=P1=P2=0 with real
+     * chunk data) was removed in QUEUE 396; the behaviour is now unconditional.
      */
-    private static final boolean QUEUE_HIDDEN_PENDING =
-            Boolean.getBoolean("celtium.terrain.queueHiddenPending");
     private static int buildFlowLines;
 
     /**
@@ -693,71 +691,17 @@ public abstract class RenderSectionManager {
             java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
 
     /**
-     * Moves sections with a pending mesh update into the rebuild lists the submission path reads.
+     * Formerly the producer that moved sections with a pending mesh update - including ones the visibility search
+     * did not reach - into the rebuild lists the submission path reads. Since r70hidden the hidden-pending arm is
+     * off (see the measurement history at the top of this class), and QUEUE 396 removed the switch and the arm
+     * itself: hidden pending sections are never queued here, unconditionally.
      * <p>
-     * The two existing producers of those lists are sort schedulers, so this is the only path that carries
-     * {@link ChunkUpdateType#INITIAL_BUILD} and {@link ChunkUpdateType#REBUILD} to {@code submitRebuildTasks}.
+     * The candidate set is still cleared, exactly as the adopted arm did: the search's own lists carry the visible
+     * sections, and the set is only this producer's state, so it is dropped rather than left to collect disposed
+     * sections.
      */
     private void celtium$queueMeshUpdates() {
-        // Nothing pending means nothing to queue: asked before the membership sets below are built over every queue.
-        if (!QUEUE_HIDDEN_PENDING) {
-            // The search's own lists carry the visible sections; the candidate set is only this producer's state, so
-            // it is dropped rather than left to collect disposed sections.
-            this.celtiumPendingMeshUpdates.clear();
-            return;
-        }
-        if (this.celtiumPendingMeshUpdates.isEmpty()) {
-            return;
-        }
-        var rebuildLists = this.getCurrentRenderListManager().getRebuildLists().byUpdateType();
-        if (rebuildLists.isEmpty()) {
-            return;
-        }
-        // Membership is asked for up to three times per section, over every loaded section, and the queues are
-        // ArrayDeques - whose contains() is a linear scan with equals on each element. Built once per call, one
-        // identity set per queue turns that question into a hash lookup; the walk over the sections remains, and is the
-        // next thing to remove (19,600 of them at render distance 18, and this method is still 9.2% of the client
-        // thread's JFR samples at the shipping configuration). RenderSection does not override equals/hashCode, so an
-        // identity set answers exactly what the deque scan answered.
-        java.util.Map<ChunkUpdateType, java.util.Set<RenderSection>> queued = new java.util.EnumMap<>(
-                ChunkUpdateType.class);
-        for (var entry : rebuildLists.entrySet()) {
-            // Every queue gets a set, empty ones included: a section is only queued when its type's set exists, so
-            // skipping the empty queues meant an empty INITIAL_BUILD queue never received a newly loaded section, and
-            // terrain filled in only as other queue activity happened to open it (measured on Enigmatica 2 Expert: the
-            // flat floor still missing beyond a few chunks at tick 200 while Celeritas showed it to the horizon).
-            java.util.Set<RenderSection> membership =
-                    java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>(
-                            Math.max(4, entry.getValue().size())));
-            membership.addAll(entry.getValue());
-            queued.put(entry.getKey(), membership);
-        }
-
-
-        java.util.Iterator<RenderSection> candidates = this.celtiumPendingMeshUpdates.iterator();
-        while (candidates.hasNext()) {
-            RenderSection section = candidates.next();
-            if (section.isDisposed()) {
-                candidates.remove();
-                continue;
-            }
-
-            ChunkUpdateType pending = section.getPendingUpdate();
-
-            if (pending != ChunkUpdateType.INITIAL_BUILD
-                    && pending != ChunkUpdateType.REBUILD
-                    && pending != ChunkUpdateType.IMPORTANT_REBUILD) {
-                candidates.remove();
-                continue;
-            }
-
-            var queue = rebuildLists.get(pending);
-            var membership = queued.get(pending);
-
-            if (queue != null && membership != null && membership.add(section)) {
-                queue.add(section);
-            }
-        }
+        this.celtiumPendingMeshUpdates.clear();
     }
 
     /** The rebuild queues' lengths by update type, for the bounded list-size line. */

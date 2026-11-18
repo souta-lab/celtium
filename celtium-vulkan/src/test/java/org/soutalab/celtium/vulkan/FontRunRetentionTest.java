@@ -100,7 +100,7 @@ class FontRunRetentionTest {
     }
 
     /**
-     * One witness's count out of {@code colourWitness=true by[colour=1 modelView=0]}. The entries sit inside the
+     * One witness's count out of {@code colourWitness=combine by[colour=1 modelView=0]}. The entries sit inside the
      * brackets, so the plain {@link #field} splitter (which expects top-level {@code key=value} tokens) cannot read
      * them; a witness that never fired is absent and reads as 0.
      */
@@ -251,7 +251,7 @@ class FontRunRetentionTest {
      * {@code immediate_tex_color.frag} multiplies the sample by the vertex colour and reads {@code u_ColorR/G/B} only
      * inside {@code if (u_AlphaRef < 0.0)}. Every text draw has a non-negative reference, so its colour is per vertex
      * and a run may span a colour change: the quads keep their own colours and the picture is the one a run per colour
-     * would have produced. This is the merge the {@code -Dceltium.font.colourWitness=false} arm measured (menu runs
+     * would have produced. This is the merge the removed witness-off arm measured (menu runs
      * 284 -> 123), applied only where it is provably invisible.
      */
     @Test
@@ -283,23 +283,19 @@ class FontRunRetentionTest {
     }
 
     /**
-     * The narrowing itself: under the shipped {@code combine} mode the colour is a witness only under the combine,
-     * {@code all} keeps the previous behaviour, and {@code off} removes it everywhere. A run can never span a change
+     * The narrowing itself: under the shipped {@code combine} rule the colour is a witness only under the combine.
+     * A run can never span a change
      * of the branch, because the alpha reference is compared by the key on its own line - so the only runs that lose
      * the colour are the ones whose submission colour the fragment stage cannot read.
      */
     @Test
     void theColourWitnessIsNeededOnlyUnderTheCombine() {
-        assertFalse(FontBatch.celtium$colourWitnessNeeded("combine", 0.0F),
+        assertFalse(FontBatch.celtium$colourWitnessNeeded(0.0F),
                 "the alpha test path never reads the push colour");
-        assertFalse(FontBatch.celtium$colourWitnessNeeded("combine", 0.1F),
+        assertFalse(FontBatch.celtium$colourWitnessNeeded(0.1F),
                 "a positive reference is the alpha test path too");
-        assertTrue(FontBatch.celtium$colourWitnessNeeded("combine", -0.5F),
+        assertTrue(FontBatch.celtium$colourWitnessNeeded(-0.5F),
                 "a negative reference selects the combine, which reads it");
-        assertTrue(FontBatch.celtium$colourWitnessNeeded("all", 0.0F),
-                "the A/B arm compares the colour on every run");
-        assertFalse(FontBatch.celtium$colourWitnessNeeded("off", -0.5F),
-                "the diagnostic control removes the witness even under the combine");
     }
 
     /**

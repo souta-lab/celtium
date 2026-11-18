@@ -243,28 +243,25 @@ public final class FontBatch {
     }
 
     /**
-     * {@code -Dceltium.font.batching=false} is the one-flag control: with batching off every glyph goes back to its own
-     * {@code submitImmediateBatch} call, so a crash or a picture change can be attributed to the coalescing rather than
-     * to the tree.
+     * Batching is unconditional: every glyph joins the open run rather than going back to its own
+     * {@code submitImmediateBatch} call. (History: batching was adopted as the default after the one-flag A/B control
+     * attributed crashes and picture changes to the coalescing rather than to the tree; the off arm was removed in
+     * QUEUE 396.)
      */
-    private static final boolean BATCHING = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.font.batching", "true"));
 
     /**
-     * Retention is the fix, not the flag: a refused or abandoned run is kept and offered again, because a refused run
-     * that is dropped is text drawn by nobody. {@code -Dceltium.font.retaining=false} exists only as a diagnostic
-     * control for a leg that wants the old behaviour (drop the run and count it), the same shape as
-     * {@code -Dceltium.vulkan.nativeTextureCopy=false}: correctness does not depend on a lab flag.
+     * Retention is unconditional, not a flag: a refused or abandoned run is kept and offered again, because a refused
+     * run that is dropped is text drawn by nobody. (History: retention was the fix adopted as the default; the
+     * diagnostic arm that dropped the run and counted it was removed in QUEUE 396 - correctness does not depend on a
+     * lab flag, the same shape as the native texture copy.)
      */
-    private static final boolean RETAINING = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.font.retaining", "true"));
 
     /** Bounds on the retention queue: a refused run is kept, but a session that can never submit must not grow. */
     private static final int MAX_RETAINED_RUNS = 64;
     private static final int MAX_RETAINED_BYTES = 4 * 1024 * 1024;
 
     /**
-     * The colour witness's mode, and the only switch over it.
+     * The colour witness's rule, unconditional since QUEUE 396 removed the mode switch.
      * <p>
      * The colour is <em>per vertex</em> for every font run: the glyph capture writes the live colour into the quad's
      * four bytes, the textured vertex stage passes {@code a_Color} through unchanged, and the fragment stage reads
@@ -273,21 +270,17 @@ public final class FontBatch {
      * non-negative the colour the group is submitted under cannot reach the picture, and a run may span a colour
      * change.
      * <p>
-     * {@code combine} (the default) is that rule: the colour is compared only where the push block's colour can reach
-     * the picture. {@code all} is the previous behaviour and the A/B arm - it compares the colour on every run, which
-     * is the side the earlier acceptance was taken on. {@code off} removes the witness everywhere, including the
-     * combine branch where the push colour <em>is</em> read, and exists only as a diagnostic control.
-     * <p>
-     * The merge {@code combine} buys is the one the {@code off} arm measured (menu runs 284 -> 123, frame 3.8 ->
-     * 3.7 ms) without the one case that arm gets wrong.
+     * The adopted {@code combine} rule is that the colour is compared only where the push block's colour can reach
+     * the picture. (History: {@code all} compared the colour on every run - the previous behaviour, and the side the
+     * earlier acceptance was taken on - and {@code off} removed the witness everywhere; both arms were removed in
+     * QUEUE 396. The merge {@code combine} buys is the one the {@code off} arm measured (menu runs 284 -> 123, frame
+     * 3.8 -> 3.7 ms) without the one case that arm gets wrong.)
      */
-    private static final String COLOUR_WITNESS_MODE = System.getProperty("celtium.font.colourWitness", "combine")
-            .trim().toLowerCase(java.util.Locale.ROOT);
 
     /**
      * Whether a run's colour has to match for the next glyph to join it.
      * <p>
-     * Under {@code combine} the answer is "only under the combine": {@code immediate_tex_color.frag} multiplies the
+     * The answer is "only under the combine": {@code immediate_tex_color.frag} multiplies the
      * sample by the <em>vertex</em> colour and reads {@code u_ColorR/G/B} only inside
      * {@code if (u_AlphaRef < 0.0)}, the GL_COMBINE branch a negative alpha reference selects. Every other branch -
      * the alpha test and the no-test path - never reads the push colour, so a run that spans a colour change draws
@@ -298,13 +291,7 @@ public final class FontBatch {
      * narrowing safe rather than a bet - the only runs whose key loses the colour are the ones whose submission colour
      * the fragment stage cannot read.
      */
-    static boolean celtium$colourWitnessNeeded(String mode, float alphaReference) {
-        if ("off".equals(mode) || "false".equals(mode)) {
-            return false;
-        }
-        if ("all".equals(mode) || "true".equals(mode)) {
-            return true;
-        }
+    static boolean celtium$colourWitnessNeeded(float alphaReference) {
         return alphaReference < 0.0F;
     }
 
@@ -400,8 +387,6 @@ public final class FontBatch {
     private long retainedQuads;
     private long retainedDroppedRuns;
     private long retainedDroppedQuads;
-    /** Runs dropped because the retention control is off: the old behaviour, counted so a leg can say it happened. */
-    private long retainedControlDrops;
     /** Bounded log for retained runs dropped at a frame boundary; see celtium$dropRetainedAtFrameBoundary. */
     private int retainedBoundaryLogs;
 
@@ -478,9 +463,6 @@ public final class FontBatch {
                                       int vertexCount, int drawMode) {
         long started = System.nanoTime();
         try {
-            if (!BATCHING) {
-                return false;
-            }
             if (vertexAddress == 0L || vertexCount <= 0 || vertexStride <= 0) {
                 return false;
             }
@@ -666,7 +648,7 @@ public final class FontBatch {
         // disableDepth/enableDepth bracket and the main pass is submitted after it.
         return this.pendingFormatId == formatId && this.pendingStride == stride
                 && this.pendingDrawMode == drawMode && this.pendingTexture == texture
-                && (!celtium$colourWitnessNeeded(COLOUR_WITNESS_MODE, alphaRef) || this.pendingColorBits == colourBits)
+                && (!celtium$colourWitnessNeeded(alphaRef) || this.pendingColorBits == colourBits)
                 && this.pendingAlphaTest == alphaTest
                 && Float.compare(this.pendingAlphaRef, alphaRef) == 0
                 && this.pendingAlphaFunc == alphaFunc
@@ -695,7 +677,7 @@ public final class FontBatch {
             slot = 2;
         } else if (this.pendingTexture != texture) {
             slot = 3;
-        } else if (celtium$colourWitnessNeeded(COLOUR_WITNESS_MODE, alphaRef) && this.pendingColorBits != colourBits) {
+        } else if (celtium$colourWitnessNeeded(alphaRef) && this.pendingColorBits != colourBits) {
             slot = 4;
         } else if (this.pendingAlphaTest != alphaTest) {
             slot = 5;
@@ -730,11 +712,11 @@ public final class FontBatch {
      * {@link #celtium$fontBatchSummary()}: that string is quoted by past acceptances and compared byte for byte.
      */
     public String celtium$fontWitnessSummary() {
-        // The mode, not just a boolean: "combine" is the shipped narrowing, "all" is the arm that compares the colour
-        // on every run, and "off" is the arm that never does. A leg that reads only a boolean cannot tell the shipped
-        // rule from the arm that removes it under the combine as well.
+        // The rule's name, not just a boolean: "combine" is the shipped narrowing (the colour is a witness only
+        // under the combine). The name stays in the line so a leg can tell the shipped rule from the removed arms
+        // that compared the colour on every run or never did.
         StringBuilder out = new StringBuilder(160).append("colourWitness=")
-                .append(COLOUR_WITNESS_MODE).append(" by[");
+                .append("combine").append(" by[");
         boolean first = true;
         for (int i = 0; i < this.witnessMismatches.length; i++) {
             if (this.witnessMismatches[i] == 0) {
@@ -878,12 +860,6 @@ public final class FontBatch {
 
     /** Copies a refused run out of the pending buffer, bounded, so the next glyph cannot overwrite it. */
     private void retain(Run run) {
-        if (!RETAINING) {
-            // The diagnostic control: the old behaviour, where a refused run's bytes are simply dropped. Counted, so
-            // a leg run under the control can say how much it lost instead of leaving it to be inferred.
-            this.retainedControlDrops++;
-            return;
-        }
         int bytes = run.vertexCount * run.stride;
         if (this.retained.size() >= MAX_RETAINED_RUNS || this.retainedBytes + bytes > MAX_RETAINED_BYTES) {
             this.retainedDroppedRuns++;
@@ -1001,8 +977,7 @@ public final class FontBatch {
                 + " retainedPendingRuns=" + this.retained.size()
                 + " retainedPendingBytes=" + this.retainedBytes
                 + " retainedDroppedRuns=" + this.retainedDroppedRuns
-                + " retainedDroppedQuads=" + this.retainedDroppedQuads
-                + " retainedControlDrops=" + this.retainedControlDrops;
+                + " retainedDroppedQuads=" + this.retainedDroppedQuads;
     }
 
     /**

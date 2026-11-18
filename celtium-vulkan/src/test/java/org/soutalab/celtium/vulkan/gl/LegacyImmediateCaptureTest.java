@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * The defect this class exists for: {@code glBegin}/{@code glVertex*}/{@code glEnd} under the GL-less window used to
  * be state-set no-ops, so a mod that draws its models this way - and Forge's own SplashProgress, which draws the
  * loading bar this way - lost every vertex. The capture was then written and wired but could only be observed by
- * starting a game with {@code -Dceltium.gless.legacyImmediate=true}, which is why its packing rules were never pinned:
+ * starting a game with the legacy routes armed, which is why its packing rules were never pinned:
  * a wrong stride, an uninitialised colour byte or a lost {@code w} division would all look the same from a log line.
  * <p>
  * What is checked here is the whole of what the capture can get wrong on its own: the layout it chooses, the bytes it

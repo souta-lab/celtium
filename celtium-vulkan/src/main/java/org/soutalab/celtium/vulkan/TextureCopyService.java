@@ -169,12 +169,11 @@ public final class TextureCopyService {
     }
 
     /**
-     * {@code -Dceltium.vulkan.nativeTextureCopy=false} forces the host route (flush, device wait, readback, upload),
-     * which is the measurement control for this unit: the same jar then has both paths and the counters say which one
-     * ran. Default on - the native route is what the menu's frame should pay.
+     * The native route is unconditional (QUEUE 396 removed the switch that forced the host route - flush, device
+     * wait, readback, upload - as a measurement control): the native route is what the menu's frame should pay, and
+     * the host route below stays reachable as the fallback for a copy the blit refuses, with the counters saying
+     * which one ran.
      */
-    private static final boolean NATIVE_TEXTURE_COPY = !"false".equalsIgnoreCase(
-        System.getProperty("celtium.vulkan.nativeTextureCopy", "true"));
     /**
      * {@code -Dceltium.vulkan.copyOrderWithoutIdle=false} restores the device-idle wait that used to order the source's
      * draws before a native copy. The A/B switch stays because the wait is what the copy's ordering was measured with.
@@ -471,7 +470,7 @@ public final class TextureCopyService {
         // ---- the native route: the GPU writes the mirror, so the render thread neither waits for the source's draws
         // nor round-trips the pixels through host memory. Everything checkable was checked before this point, and the
         // blit's own refusal names itself; the host route below stays reachable and the counters say which ran.
-        if (NATIVE_TEXTURE_COPY) {
+        {
             String blitRefusal = this.host.registry().blitRefusal(destName, image, sourceImageWidth,
                     sourceImageHeight, x, y, width, height, xoffset, yoffset);
             boolean windowSource = windowAlphaSource(readFbo, image);
@@ -575,7 +574,7 @@ public final class TextureCopyService {
                         // in the same frame's recordings and would read the stale mirror. Submitting now keeps the
                         // blit in queue order before everything the game records from here on, which is the ordering
                         // the host route got from waiting for the device. Measured as the main menu's panorama: with
-                        // the host route (nativeTextureCopy=false) the frame held 50,882 distinct colours, with the
+                        // the host route the frame held 50,882 distinct colours, with the
                         // deferred blit 1,830 - a grey background.
                         this.host.context().celtium$flushBatchedSubmits();
                         this.textureCopyBlits++;
@@ -598,7 +597,7 @@ public final class TextureCopyService {
             this.lastTextureCopyBlitRefusal = blitRefusal;
         }
         // ---- the host route: flush, wait for the device, read the rectangle back and upload it. Kept reachable (a
-        // device without the blit features, a mirror that does not exist yet, the control flag) and counted.
+        // device without the blit features, a mirror that does not exist yet, a blit refusal above) and counted.
         // What the game drew into that image is still queued as groups: submitting them is what makes the read the
         // frame the copy is about. flushPendingBeforeGlDraw draws into an open pass if there is one, otherwise it opens
         // and completes an immediate window, which is the same ordering boundary the game's own draw calls use.

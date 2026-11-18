@@ -332,12 +332,11 @@ public final class CeltiumFontGlyphCapture {
     private static long renderStringCalls;
     private static long renderStringStartNanos;
     /**
-     * {@code -Dceltium.font.fastPath=false} turns the Celtium-side default-glyph path off inside the same jar, so the
-     * before/after is one variable: with it off every glyph goes through vanilla's body (the {@code bindTexture} chain
-     * and the nine {@code GlStateManager} wrappers) and the capture window, exactly as before this path existed.
+     * The Celtium-side default-glyph path is unconditional. (History: a same-jar A/B switch could turn it off, so
+     * the before/after was one variable - with it off every glyph went through vanilla's body (the
+     * {@code bindTexture} chain and the nine {@code GlStateManager} wrappers) and the capture window, exactly as
+     * before this path existed. The off arm was removed in QUEUE 396.)
      */
-    private static final boolean FAST_PATH = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.font.fastPath", "true"));
     /**
      * {@code -Dceltium.font.timings=true}: keep the capture's own per-glyph clock brackets on.
      * <p>
@@ -461,7 +460,7 @@ public final class CeltiumFontGlyphCapture {
 
     /** {@return whether the Celtium-side default-glyph path may draw a glyph itself right now}. */
     public static boolean fastPathAvailable() {
-        return FAST_PATH && TerrainGpuBackends.current() != null;
+        return TerrainGpuBackends.current() != null;
     }
 
     /** Records that the fast path had to re-bind the font sheet because another texture had taken the unit. */
@@ -1492,7 +1491,7 @@ public final class CeltiumFontGlyphCapture {
                     + " " + vulkan.celtium$fontBakeSummary();
         }
         return "retainedRuns=0 retainedQuads=0 retainedPendingRuns=0 retainedPendingBytes=0 retainedDroppedRuns=0"
-                + " retainedDroppedQuads=0 retainedControlDrops=0 fontRunRefusals=0 (no coalescing backend)";
+                + " retainedDroppedQuads=0 fontRunRefusals=0 (no coalescing backend)";
     }
 
     /**

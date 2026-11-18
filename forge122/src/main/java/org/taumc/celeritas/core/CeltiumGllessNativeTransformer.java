@@ -47,9 +47,8 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             "glLightModeliv", "glColorMaterial", "glMaterialf", "glMaterialfv", "glMateriali", "glShadeModel",
             "glStencilFunc", "glStencilFuncSeparate", "glStencilOp",
             "glStencilOpSeparate", "glStencilMask", "glStencilMaskSeparate", "glNormal3f", "glNormal3b", "glNormal3fv",
-            // These texcoord/vertex names are switch-conditional: their routes are installed while the legacy capture
-            // is on (the default), and the route is consulted before this set, so an entry here only answers the calls
-            // a run with -Dceltium.gless.legacyImmediate=false still makes.
+            // These texcoord/vertex names also have legacy-capture routes: the route is consulted before this set,
+            // so an entry here never answers them (the listing is kept for the names that have no route).
             "glTexCoord2f", "glTexCoord2d", "glVertex3f",
             // The uniform setters, the shader source, attachment and link are routed to ModProgramRegistry
             // (celtium$routeModProgram, 2026-11-05) and are therefore absent.
@@ -59,14 +58,12 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // in the measured session was 3.4e3.
             // glPushAttrib/glPopAttrib and the client pair are routed below to their state records.
             "glCompileShader",
-            // Spellings whose only route belongs to the legacy capture, which is armed by
-            // -Dceltium.gless.legacyImmediate=true and runs above this set. With the switch off the answer here is GL's
-            // silent no-op without a native crossing - the same answer these calls had before a route existed - and
-            // with it on the route is consulted first, so the listing cannot shadow it. The unconditional routes are
+            // Spellings whose only route belongs to the legacy capture, which runs above this set. The route is
+            // consulted first, so the listing cannot shadow it. The unconditional routes are
             // the different case the note at the top of this set names: those names must not be listed at all.
             //
             // The vertex/rect/texcoord spellings that are routed above and are still here are exactly these
-            // switch-conditional ones: glVertex2i, glTexCoord2f/2d/3f/4f and the multi-texture 2d/3f/4f forms. Every
+            // legacy-capture ones: glVertex2i, glTexCoord2f/2d/3f/4f and the multi-texture 2d/3f/4f forms. Every
             // colour spelling is absent because the raw colour routes answer all 32 natives (glColor3/4 x
             // b/s/i/f/d/ub/us/ui and their 16 buffer forms) unconditionally, so the colour mirror and the font's
             // current colour no longer depend on which spelling a mod happened to call.
@@ -569,21 +566,18 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
     }
 
     /**
-     * The legacy {@code glBegin}/{@code glVertex*}/{@code glEnd} routes, on by default; {@code -D...=false} turns them
-     * off as one A/B switch.
+     * The legacy {@code glBegin}/{@code glVertex*}/{@code glEnd} routes are installed unconditionally (QUEUE 396
+     * removed the A/B switch that could turn them off as one).
      * <p>
      * They were off while the RADV GPUVM fault one tester reported was bisected: both of that session's logs ended
      * right after the legacy loading-bar quad was submitted. The fault was the retire queue discarding a command
      * buffer that was still recording (VUID-vkEndCommandBuffer-00059), fixed in rc.24 - not the legacy vertices, whose
      * draw goes through the same immediate accept path as the Tessellator's. With the routes off, every direct-GL mod's
      * {@code glBegin} surface was silently dropped. Measured on the Supersymmetry title screen: given its images (the
-     * pack's {@code resources} carried into the leg), the menu drew the font labels and the bottom lines only;
-     * {@code -Dceltium.gless.legacyImmediate=true} draws the SUPERSYMMETRY banner, the button frame and the Discord
-     * icon from the same instance, and the leg is PASSED with validation 0. The switch stays so a mod's legacy surface
-     * can still be excluded from a leg without rebuilding.
+     * pack's {@code resources} carried into the leg), the menu drew the font labels and the bottom lines only; with
+     * the routes on, the same instance draws the SUPERSYMMETRY banner, the button frame and the Discord
+     * icon, and the leg is PASSED with validation 0.
      */
-    private static final boolean LEGACY_IMMEDIATE =
-            Boolean.parseBoolean(System.getProperty("celtium.gless.legacyImmediate", "true"));
 
     /** {@code -Dceltium.glless.census=true} makes every rewritten native count its own calls; see the emitter. */
     private static final boolean REWRITE_CENSUS = Boolean.getBoolean("celtium.glless.census");
@@ -910,7 +904,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // UV - the same wrong-atlas-region defect glTexCoord2i had. The unit decides, inside the capture: unit 0
             // is applied, any other unit is counted, because writing a lightmap coordinate into the albedo pair is a
             // wrong picture rather than a missing one.
-            if (LEGACY_IMMEDIATE) {
+            {
                 method.visitVarInsn(Opcodes.ILOAD, 0);
                 method.visitVarInsn(Opcodes.FLOAD, 1);
                 method.visitVarInsn(Opcodes.FLOAD, 2);
@@ -922,20 +916,20 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
         // Legacy immediate mode. The census measured these as the largest unmapped class in a menu run (82% of the
         // zero-answered calls), and unlike the state classes each call is a draw the picture lost.
-        if (LEGACY_IMMEDIATE && "glBegin".equals(name) && "(I)V".equals(descriptor)) {
+        if ("glBegin".equals(name) && "(I)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glLegacyBegin", "(I)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
-        if (LEGACY_IMMEDIATE && "glEnd".equals(name) && "()V".equals(descriptor)) {
+        if ("glEnd".equals(name) && "()V".equals(descriptor)) {
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glLegacyEnd", "()V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
-        if (LEGACY_IMMEDIATE && "glVertex3f".equals(name) && "(FFF)V".equals(descriptor)) {
+        if ("glVertex3f".equals(name) && "(FFF)V".equals(descriptor)) {
             for (int slot = 0; slot < 3; slot++) method.visitVarInsn(Opcodes.FLOAD, slot);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glLegacyVertex3f", "(FFF)V", false);
@@ -947,7 +941,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         // glVertex3f lost the vertices of any mod that rounded its positions through glVertex3d or wrote flat
         // geometry with glVertex2f. Each one appends through the same capture; the double forms narrow to the float
         // layout and the four-component forms divide by w, which is the whole of GL's vertex semantics here.
-        if (LEGACY_IMMEDIATE && "glVertex2f".equals(name) && "(FF)V".equals(descriptor)) {
+        if ("glVertex2f".equals(name) && "(FF)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.FLOAD, 0);
             method.visitVarInsn(Opcodes.FLOAD, 1);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
@@ -955,7 +949,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
-        if (LEGACY_IMMEDIATE && "glVertex2d".equals(name) && "(DD)V".equals(descriptor)) {
+        if ("glVertex2d".equals(name) && "(DD)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.DLOAD, 0);
             method.visitVarInsn(Opcodes.DLOAD, 2);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
@@ -963,7 +957,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
-        if (LEGACY_IMMEDIATE && "glVertex3d".equals(name) && "(DDD)V".equals(descriptor)) {
+        if ("glVertex3d".equals(name) && "(DDD)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.DLOAD, 0);
             method.visitVarInsn(Opcodes.DLOAD, 2);
             method.visitVarInsn(Opcodes.DLOAD, 4);
@@ -972,21 +966,21 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
-        if (LEGACY_IMMEDIATE && "glVertex4f".equals(name) && "(FFFF)V".equals(descriptor)) {
+        if ("glVertex4f".equals(name) && "(FFFF)V".equals(descriptor)) {
             for (int slot = 0; slot < 4; slot++) method.visitVarInsn(Opcodes.FLOAD, slot);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glLegacyVertex4f", "(FFFF)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
-        if (LEGACY_IMMEDIATE && "glVertex4d".equals(name) && "(DDDD)V".equals(descriptor)) {
+        if ("glVertex4d".equals(name) && "(DDDD)V".equals(descriptor)) {
             for (int slot = 0; slot < 8; slot += 2) method.visitVarInsn(Opcodes.DLOAD, slot);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glLegacyVertex4d", "(DDDD)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
-        if (LEGACY_IMMEDIATE && "glTexCoord2f".equals(name) && "(FF)V".equals(descriptor)) {
+        if ("glTexCoord2f".equals(name) && "(FF)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.FLOAD, 0);
             method.visitVarInsn(Opcodes.FLOAD, 1);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
@@ -994,7 +988,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
-        if (LEGACY_IMMEDIATE && "glTexCoord2d".equals(name) && "(DD)V".equals(descriptor)) {
+        if ("glTexCoord2d".equals(name) && "(DD)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.DLOAD, 0);
             method.visitVarInsn(Opcodes.DLOAD, 2);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
@@ -1008,64 +1002,64 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         // components to float, which is what the capture's layout carries; the hint does the narrowing once, so the
         // bytecode here is a straight pass-through of the int locals. A {@code (SS)V} descriptor's locals are already
         // sign-extended ints, which is why one emitter serves both widths.
-        if (LEGACY_IMMEDIATE && "glVertex2i".equals(name) && "(II)V".equals(descriptor)) {
+        if ("glVertex2i".equals(name) && "(II)V".equals(descriptor)) {
             emitLegacyIntRoute(method, "glLegacyVertex2i", "(II)V");
             return;
         }
-        if (LEGACY_IMMEDIATE && "glVertex3i".equals(name) && "(III)V".equals(descriptor)) {
+        if ("glVertex3i".equals(name) && "(III)V".equals(descriptor)) {
             emitLegacyIntRoute(method, "glLegacyVertex3i", "(III)V");
             return;
         }
-        if (LEGACY_IMMEDIATE && "glVertex4i".equals(name) && "(IIII)V".equals(descriptor)) {
+        if ("glVertex4i".equals(name) && "(IIII)V".equals(descriptor)) {
             emitLegacyIntRoute(method, "glLegacyVertex4i", "(IIII)V");
             return;
         }
-        if (LEGACY_IMMEDIATE && "glVertex2s".equals(name) && "(SS)V".equals(descriptor)) {
+        if ("glVertex2s".equals(name) && "(SS)V".equals(descriptor)) {
             emitLegacyIntRoute(method, "glLegacyVertex2s", "(II)V");
             return;
         }
-        if (LEGACY_IMMEDIATE && "glVertex3s".equals(name) && "(SSS)V".equals(descriptor)) {
+        if ("glVertex3s".equals(name) && "(SSS)V".equals(descriptor)) {
             emitLegacyIntRoute(method, "glLegacyVertex3s", "(III)V");
             return;
         }
-        if (LEGACY_IMMEDIATE && "glTexCoord2i".equals(name) && "(II)V".equals(descriptor)) {
+        if ("glTexCoord2i".equals(name) && "(II)V".equals(descriptor)) {
             emitLegacyIntRoute(method, "glLegacyTexCoord2i", "(II)V");
             return;
         }
-        if (LEGACY_IMMEDIATE && "glTexCoord2s".equals(name) && "(SS)V".equals(descriptor)) {
+        if ("glTexCoord2s".equals(name) && "(SS)V".equals(descriptor)) {
             emitLegacyIntRoute(method, "glLegacyTexCoord2s", "(II)V");
             return;
         }
         // glRect* is the one legacy primitive that is not a vertex spelling: GL defines it as a whole quad, so each
         // call is a draw. It was in VOID_NOOPS, which means a mod drawing its boxes this way lost the rectangle itself.
         // The capture expands it with GL's own four (texcoord, vertex) pairs, in the layout the run is opened for.
-        if (LEGACY_IMMEDIATE && "glRectf".equals(name) && "(FFFF)V".equals(descriptor)) {
+        if ("glRectf".equals(name) && "(FFFF)V".equals(descriptor)) {
             for (int slot = 0; slot < 4; slot++) method.visitVarInsn(Opcodes.FLOAD, slot);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glLegacyRectf", "(FFFF)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
-        if (LEGACY_IMMEDIATE && "glRectd".equals(name) && "(DDDD)V".equals(descriptor)) {
+        if ("glRectd".equals(name) && "(DDDD)V".equals(descriptor)) {
             for (int slot = 0; slot < 8; slot += 2) method.visitVarInsn(Opcodes.DLOAD, slot);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glLegacyRectd", "(DDDD)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
-        if (LEGACY_IMMEDIATE && "glRecti".equals(name) && "(IIII)V".equals(descriptor)) {
+        if ("glRecti".equals(name) && "(IIII)V".equals(descriptor)) {
             emitLegacyIntRoute(method, "glLegacyRecti", "(IIII)V");
             return;
         }
-        if (LEGACY_IMMEDIATE && "glRects".equals(name) && "(SSSS)V".equals(descriptor)) {
+        if ("glRects".equals(name) && "(SSSS)V".equals(descriptor)) {
             emitLegacyIntRoute(method, "glLegacyRects", "(IIII)V");
             return;
         }
         // The other component counts and widths of the same current texture coordinate, and their buffer forms. Their
         // default answer must stay a no-op (the coordinate is not state the native path reads until a vertex takes it),
-        // so the emitter runs only under the legacy switch; a name that is in VOID_NOOPS below is answered by that set
-        // when the switch is off, exactly as the two-component spellings already are.
-        if (LEGACY_IMMEDIATE && emitLegacyTexCoordRoute(method, name, descriptor)) {
+        // so the emitter is what answers them under the legacy capture; a name that is in VOID_NOOPS below is reached
+        // only when this emitter declines it, exactly as the two-component spellings already are.
+        if (emitLegacyTexCoordRoute(method, name, descriptor)) {
             return;
         }
         // The stub's table answers these state setters with SEM_NOOP ("record only - state the Vulkan side owns or
