@@ -2217,19 +2217,90 @@ public final class VulkanContext {
      */
     public static int createGraphicsPipelines(org.lwjgl.vulkan.VkDevice device,
             org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo.Buffer info, java.nio.LongBuffer pipelines) {
+        return createGraphicsPipelines(device, info, pipelines, "unspecified");
+    }
+
+    /**
+     * As {@link #createGraphicsPipelines(org.lwjgl.vulkan.VkDevice, org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo.Buffer, java.nio.LongBuffer)},
+     * plus the identity record item 414 found missing: until now a creation left only its duration and the running
+     * totals, so when the summary moved (the measured burst was generations 39-45, inside two milliseconds) nothing
+     * anywhere said which shader stages, vertex bindings, render pass or layout any of those generations was built
+     * from, and the two hypotheses that turned on it could not be separated. Every creation now prints one
+     * {@code CELTIUM_PIPELINE_CREATE} line - generation, the calling site's name for its family, the created handle,
+     * and the identity read out of the create info itself - and leaves the same binding in the breadcrumb ring.
+     * The tag is exempt from the log limiter (creations are one per distinct state, not per frame), and reading the
+     * identity is defensive: a struct this code cannot read must never change whether the pipeline is created.
+     *
+     * @param site the creating family's name, from the call site ({@code terrain}, {@code immediate-item}, ...)
+     */
+    public static int createGraphicsPipelines(org.lwjgl.vulkan.VkDevice device,
+            org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo.Buffer info, java.nio.LongBuffer pipelines, String site) {
         long start = System.nanoTime();
         int result = vkCreateGraphicsPipelines(device, sharedPipelineCache, info, null, pipelines);
         long took = System.nanoTime() - start;
-        pipelineCreations++;
+        long generation = ++pipelineCreations;
         pipelineCreationNanos += took;
         if (took > pipelineCreationWorstNanos) {
             pipelineCreationWorstNanos = took;
+        }
+        if (result == VK_SUCCESS) {
+            int count = Math.min(info.remaining(), pipelines.remaining());
+            if (count > 1) {
+                // Generations are per pipeline, not per call, so a multi-create call takes the whole span.
+                pipelineCreations += count - 1;
+            }
+            for (int i = 0; i < count; i++) {
+                long handle = pipelines.get(pipelines.position() + i);
+                long renderPass = pipelineRenderPass(info, i);
+                System.out.println("[Celtium] CELTIUM_PIPELINE_CREATE generation=" + (generation + i)
+                        + " site=" + site + " pipeline=0x" + Long.toHexString(handle)
+                        + " " + pipelineIdentity(info, i) + " ms=" + took / 1_000_000L);
+                if (CrashBreadcrumbs.enabled()) {
+                    CrashBreadcrumbs.note3(CrashBreadcrumbs.PIPELINE_CREATE, generation + i, handle, renderPass);
+                }
+            }
         }
         if (took > 2_000_000L) {
             System.out.println("[Celtium] CELTIUM_PIPELINE_SLOW ms=" + took / 1_000_000L + " thread="
                     + Thread.currentThread().getName() + " " + pipelineCreationSummary());
         }
         return result;
+    }
+
+    /** {@return the render pass the {@code index}-th create info names}, or 0 when it cannot be read. */
+    private static long pipelineRenderPass(org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo.Buffer info, int index) {
+        try {
+            return info.get(info.position() + index).renderPass();
+        } catch (RuntimeException | LinkageError unreadable) {
+            return 0L;
+        }
+    }
+
+    /**
+     * {@return the identity of one create info as log fields}: render pass, layout, stage count, input topology and
+     * vertex binding/attribute counts - the fields that separate one generation from the next in a log. Any field
+     * that cannot be read is left out rather than guessed; a wholly unreadable struct answers {@code identity=unreadable}.
+     */
+    private static String pipelineIdentity(org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo.Buffer info, int index) {
+        try {
+            org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo one = info.get(info.position() + index);
+            StringBuilder identity = new StringBuilder(96);
+            identity.append("renderPass=0x").append(Long.toHexString(one.renderPass()));
+            identity.append(" layout=0x").append(Long.toHexString(one.layout()));
+            identity.append(" stages=").append(one.stageCount());
+            org.lwjgl.vulkan.VkPipelineInputAssemblyStateCreateInfo assembly = one.pInputAssemblyState();
+            if (assembly != null) {
+                identity.append(" topology=").append(assembly.topology());
+            }
+            org.lwjgl.vulkan.VkPipelineVertexInputStateCreateInfo vertexInput = one.pVertexInputState();
+            if (vertexInput != null) {
+                identity.append(" bindings=").append(vertexInput.vertexBindingDescriptionCount());
+                identity.append(" attributes=").append(vertexInput.vertexAttributeDescriptionCount());
+            }
+            return identity.toString();
+        } catch (RuntimeException | LinkageError unreadable) {
+            return "identity=unreadable";
+        }
     }
 
     /** {@return the pipeline creations so far}: count, total and worst milliseconds. */

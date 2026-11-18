@@ -43,6 +43,8 @@ public final class CrashBreadcrumbs {
     public static final int FRAME_CACHE_HIT = 10;
     /** The frame-target cache had no entry for these views and built one (its handle is the first number). */
     public static final int FRAME_CACHE_MISS = 11;
+    /** A graphics pipeline was created: its generation number, its handle, and its render pass. */
+    public static final int PIPELINE_CREATE = 12;
 
     private CrashBreadcrumbs() {
     }
@@ -138,6 +140,9 @@ public final class CrashBreadcrumbs {
                 return "window-pass renderPass=0x" + Long.toHexString(first)
                         + " framebuffer=0x" + Long.toHexString(second)
                         + " extent=" + (third >>> 32) + "x" + (third & 0xffffffffL);
+            case PIPELINE_CREATE:
+                return "pipeline-create generation=" + first + " pipeline=0x" + Long.toHexString(second)
+                        + " renderPass=0x" + Long.toHexString(third);
             case FRAME_CACHE_HIT:
             case FRAME_CACHE_MISS:
                 return (code == FRAME_CACHE_HIT ? "frame-cache hit framebuffer=0x" : "frame-cache miss framebuffer=0x")

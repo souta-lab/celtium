@@ -30,6 +30,17 @@ class CeltiumLogLimiterTest {
     }
 
     @Test
+    void pipelineCreateLinesAreNeverLimited() {
+        // A creation the limiter cut is a generation no diagnosis can name (item 414, hole 2), so the identity
+        // tag shares the crumb exemption; generations past the ordinary limit must still print.
+        for (int i = 0; i < CeltiumLogLimiter.LIMIT + 40; i++) {
+            assertTrue(CeltiumLogLimiter.admit(
+                    "[Celtium] CELTIUM_PIPELINE_CREATE generation=" + i + " site=terrain pipeline=0x1"));
+        }
+        assertTrue(CeltiumLogLimiter.isUnlimited("CELTIUM_PIPELINE_CREATE"));
+    }
+
+    @Test
     void eachTagPassesItsLimitAndNoMore() {
         String line = "[Celtium] CELTIUM_LIMITER_TEST_TAG n";
         int admitted = 0;

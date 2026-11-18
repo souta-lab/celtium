@@ -303,7 +303,7 @@ vkDestroyDescriptorPool(this.context.device(), this.descriptorPool, null);
                         .renderPass(this.renderPass)
                         .subpass(0);
                 LongBuffer pipelineHandle = stack.mallocLong(1);
-                check(VulkanContext.createGraphicsPipelines(this.context.device(), create, pipelineHandle),
+                check(VulkanContext.createGraphicsPipelines(this.context.device(, "ui"), create, pipelineHandle),
                         "vkCreateGraphicsPipelines(ui)");
                 this.pipeline = pipelineHandle.get(0);
             } finally {

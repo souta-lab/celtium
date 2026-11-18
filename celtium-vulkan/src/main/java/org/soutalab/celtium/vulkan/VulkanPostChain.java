@@ -1993,7 +1993,7 @@ public final class VulkanPostChain {
                         .pMultisampleState(multisample).pColorBlendState(blend).pDynamicState(dynamicState)
                         .layout(layout).renderPass(renderPass).subpass(0);
                 LongBuffer pipelineHandle = stack.mallocLong(1);
-                check(VulkanContext.createGraphicsPipelines(device, info, pipelineHandle),
+                check(VulkanContext.createGraphicsPipelines(device, info, pipelineHandle, "post-chain"),
                         "vkCreateGraphicsPipelines(post " + fragment + ")");
                 vkDestroyShaderModule(device, stages.get(0).module(), null);
                 vkDestroyShaderModule(device, stages.get(1).module(), null);

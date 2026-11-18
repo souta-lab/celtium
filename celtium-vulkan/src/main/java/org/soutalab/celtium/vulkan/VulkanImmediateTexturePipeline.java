@@ -1270,7 +1270,7 @@ public final class VulkanImmediateTexturePipeline {
                         .renderPass(this.renderPass)
                         .subpass(0);
                 LongBuffer pipelineHandle = stack.mallocLong(1);
-                check(VulkanContext.createGraphicsPipelines(this.context.device(), create, pipelineHandle),
+                check(VulkanContext.createGraphicsPipelines(this.context.device(, "immediate-texture"), create, pipelineHandle),
                         "vkCreateGraphicsPipelines(immediate)");
                 this.pipeline = pipelineHandle.get(0);
             } finally {
