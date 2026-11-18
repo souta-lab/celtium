@@ -3177,8 +3177,43 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private static final boolean TERRAIN_TO_BOUND_TARGET = Boolean.getBoolean("celtium.vulkan.terrainToBoundTarget");
     private long terrainPassesToBoundTarget;
+    /**
+     * {@code -Dceltium.vulkan.terrainToDepthTarget=true}: draw a terrain pass into the bound framebuffer's chain pair
+     * when that pair renders into the <em>shared depth image</em> the framebuffer's depth texture owns (item 332).
+     * <p>
+     * A different question from {@link #TERRAIN_TO_BOUND_TARGET}, which asks only "is a non-main framebuffer bound and
+     * is a pair at the window's extent there" (GTCEu's bloom layer). This one asks about the depth: an Iris shadow
+     * pass's terrain has to land in the depth image the shadow family shares, because that image is what the
+     * pre-translucent depth copy reads and what the shadow samplers expect - drawing into the frame image leaves the
+     * store's source image unwritten, which is the residual {@code SHADOW-NATIVE-DESIGN} §6 names. The routing rule is
+     * pure function {@link #celtium$routeTerrainToDepthTarget} and the extent it uses is the pair's own, never the
+     * window's.
+     * <p>
+     * Off by default, and the whole route - the pass, its clear, the window's depth preservation and every census line
+     * - lives inside the switch, so the default build records the same commands it did before this item. On lands with
+     * the acceptance leg; making it the default is a separate item after that measurement.
+     */
+    private static final boolean TERRAIN_TO_DEPTH_TARGET =
+            Boolean.getBoolean("celtium.vulkan.terrainToDepthTarget");
+    /** Bounded census counters for the route and its refusals (see {@link #celtium$routeTerrainToDepthTarget}). */
+    private int terrainDepthTargetLogs;
+    private int terrainDepthTargetDrawLogs;
+    private int terrainDepthTargetRefusalLogs;
+    private int pairWindowPreserveDepthLogs;
+    private int sharedDepthClearRefusalLogs;
     /** The open group is a mod program's draw: nothing else may merge into it, and it into nothing. */
     private boolean currentGroupIsModProgram;
+    /**
+     * The render area of the pass currently open, in the images it attaches.
+     * <p>
+     * Two of the three sites that place geometry - {@code setViewportAndScissor} and {@code celtium$setGroupViewport} -
+     * are also reached from {@code drawPendingImmediate}, which an ordering flush can enter from any GL call inside the
+     * pass, so the value has to live somewhere the pass's own locals cannot reach. It is written at each pass begin and
+     * nowhere else, so a routed pass cannot leave its extent behind: every pass states its own area before its first
+     * draw, and {@link #beginCommands} resets both to the window's extent for the same reason.
+     */
+    int passAreaWidth;
+    int passAreaHeight;
     /** A mod's own shader programs drawn natively (opt-in); split out of this class (2026-11-06), see ModPrograms. */
     final ModPrograms modPrograms = new ModPrograms(this);
     /** Core-owned native fullscreen pass registry and frame executor (Phase 0); no-op when no passes are registered. */
@@ -13241,26 +13276,17 @@ this.frameBufferOpen = false;
                     // attaching the same depth texture (Iris's shadow family over one mainDepth) renders into
                     // one depth storage, as GL says. The depth texture's own extent decides; a mismatch with
                     // the pair's extent leaves the pair's private depth standing and is counted, not hidden.
-                    int windowDepthTexture = this.publishedTextures.depthTexture(chainIdentityValue);
-                    String depthTextureSource = "record";
-                    if (windowDepthTexture == 0) {
-                        // The record is filled at bind time by the hint's raw-bind report, and a bind that
-                        // route does not report leaves the identity's entry empty. The stub's own record is
-                        // keyed by the bound name, and the name bound at window time is this window's
-                        // framebuffer - a bind flushes the old target's window before the identity switches
-                        // (bindFramebuffer's HEAD flush) - so it answers for this window directly. Measured
-                        // on leg 14: the identity record was empty for the shadow framebuffers while the
-                        // stub's record named their depth texture, and no pair ever borrowed a shared depth.
-                        int boundFbo = drawFramebufferBinding();
-                        if (boundFbo > 0) {
-                            windowDepthTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
-                                    .celtium$framebufferDepthTexture(boundFbo);
-                            depthTextureSource = "stub-bound-" + boundFbo;
-                        }
-                    }
+                    // The two layers that can name it - the publication record and the stub's own record for the
+                    // target bound right now - are resolved in one place, which the routed pass asks too. Measured
+                    // on leg 14: the identity record was empty for the shadow framebuffers while the stub's record
+                    // named their depth texture, and no pair ever borrowed a shared depth.
+                    int[] windowDepthRecord = celtium$depthTextureForTarget(chainIdentityValue);
+                    int windowDepthTexture = windowDepthRecord == null ? 0 : windowDepthRecord[0];
+                    String depthTextureSource = windowDepthRecord == null || windowDepthRecord[3] == 0
+                            ? "record" : "stub-bound-" + windowDepthRecord[3];
                     if (windowDepthTexture != 0) {
-                        int[] depthSize = textureSize(windowDepthTexture);
-                        if (depthSize != null && depthSize.length >= 2 && depthSize[0] > 0 && depthSize[1] > 0) {
+                        int[] depthSize = new int[] { windowDepthRecord[1], windowDepthRecord[2] };
+                        if (depthSize[0] > 0 && depthSize[1] > 0) {
                             boolean sharedDepth = offTarget.ensureChainPairSharedDepth(chainIdentityValue,
                                     RenderTargetRegistry.rawColorTextureIdentity(windowDepthTexture),
                                     depthSize[0], depthSize[1]);
@@ -13404,6 +13430,27 @@ this.frameBufferOpen = false;
                         offTarget.recordChainPairColorAcquire(chainIdentityValue, this.commandBuffer);
                         framebuffer = framebufferCache().chainPairMulti(passRenderPass, offTarget,
                                 windowColorCount, this.targetWidth, this.targetHeight);
+                    } else if (TERRAIN_TO_DEPTH_TARGET && celtium$depthTextureForTarget(chainIdentityValue) != null) {
+                        // Item 332: a window whose framebuffer records a depth texture carries depth, and the routed
+                        // terrain pass has just written into the shared depth image this pair borrows. The
+                        // discard-depth chain pass would CLEAR it (a fast clear) and then drop what this window's
+                        // draws wrote (DONT_CARE), so a copy later in the frame would serve an empty image - the pair
+                        // looks attached and the depth is gone. The frame pass loads and stores instead (passRenderPass
+                        // keeps the frame pass it was initialised with); render-pass compatibility compares formats,
+                        // samples and attachment references, not load and store ops, so the same pipelines draw here.
+                        // Bounded census, because this is the branch the design review's §2.5 risk is measured by.
+                        // (Item 419: e611cb5's separate CHAIN_PAIR_DISCARD_DEPTH arm is not carried over - on current
+                        // main that arm is the final else below, generalised by pairClass, the constant being pinned.)
+                        framebuffer = ensureChainPairFramebuffer(passRenderPass);
+                        if (this.pairWindowPreserveDepthLogs < 8) {
+                            this.pairWindowPreserveDepthLogs++;
+                            long[] keptExtent = offTarget.chainPairExtent(chainIdentityValue);
+                            System.out.println("[Celtium] CELTIUM_PAIR_WINDOW_PRESERVE_DEPTH identity=0x"
+                                    + Long.toHexString(chainIdentityValue) + " extent="
+                                    + (keptExtent == null ? "none" : keptExtent[0] + "x" + keptExtent[1])
+                                    + " colors=" + windowColorCount + " frame=" + this.frameId
+                                    + " site=" + this.immediateDrawSite);
+                        }
                     } else {
                         passRenderPass = chainPairRenderPass(pairClass);
                         framebuffer = ensureChainPairFramebuffer(passRenderPass);
@@ -13697,9 +13744,15 @@ this.frameBufferOpen = false;
             }
         }
         this.activeImmediateTarget = this.targetRegistry.currentIdentity();
+        // The window's pass area stays the frame's extent: a chain pair at its framebuffer's size (the minimap's,
+        // the loading screen's 256x256) is smaller than the window, and narrowing the pass-level viewport and the
+        // group rectangles to it would change what every existing off-target window draws. Only a routed terrain
+        // pass states a different area, and it states its own.
+        this.passAreaWidth = this.targetWidth;
+        this.passAreaHeight = this.targetHeight;
         this.commandState.beginPass(this.activeImmediateTarget);
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(true);
-        setViewportAndScissor(stack);
+        setViewportAndScissor(stack, this.passAreaWidth, this.passAreaHeight);
         // A measured marker, not a mode. The loading screen's frame image is uniform white, and on an image that is
         // already white "the composite wrote the white it sampled" and "nothing in the frame's pass wrote at all" are
         // the same picture. Clearing the frame image to a colour no game draw uses, at the head of the frame's own
@@ -15318,6 +15371,255 @@ this.frameBufferOpen = false;
         record(line);
     }
 
+    /**
+     * {@return whether the terrain pass about to be recorded draws into the bound framebuffer's chain pair instead of
+     * the frame image} (item 332).
+     * <p>
+     * The rule is "the pair renders into the depth image the framebuffer's depth texture owns", and nothing wider: the
+     * pass is routed only when the image it would write is the image a depth copy or a sampler is going to read. That
+     * is what separates this from {@link #TERRAIN_TO_BOUND_TARGET}, which routes on "a non-main framebuffer is bound and
+     * a pair exists at the window's extent" and was measured for GTCEu's bloom only.
+     * <p>
+     * Package-private and static so the table is pinned without a device. The arguments are the facts the caller
+     * already has in hand (switch, current target, pair, depth texture) and nothing else - no lookups happen here, so
+     * the decision cannot race a registry mutation between two of its own conditions. {@code false} is the answer for
+     * every state but the measured one, which is also the second half of "the main path is unchanged": off is off at
+     * the switch, and on is still off for main, identity 0, a pair-less identity, a non-shared depth, an extent
+     * mismatch and a multi-target pair.
+     */
+    static boolean celtium$routeTerrainToDepthTarget(boolean enabled, boolean currentIsMain, long identity,
+            boolean pairExists, int pairWidth, int pairHeight, int depthWidth, int depthHeight,
+            boolean depthShared, int pairColorCount) {
+        return celtium$depthTargetRefusal(enabled, currentIsMain, identity, pairExists, pairWidth, pairHeight,
+                depthWidth, depthHeight, depthShared, pairColorCount) == null;
+    }
+
+    /**
+     * {@return why {@link #celtium$routeTerrainToDepthTarget} answered false, or null when it answered true}.
+     * <p>
+     * The one place the conditions live, so the predicate and the census line that explains a refusal cannot disagree
+     * about which condition failed. The conditions, in the order they are asked:
+     * <ol>
+     *   <li>{@code enabled} - the lab switch; off in the default build by design (see {@link #TERRAIN_TO_DEPTH_TARGET}).</li>
+     *   <li>{@code !currentIsMain} - a main-target pass belongs to the frame image and to no pair.</li>
+     *   <li>{@code identity != 0} - GL name 0 is the window; its draws already land in the frame image.</li>
+     *   <li>{@code pairExists} - the pair is item 333's registration's work; without one the pass stays on the frame.</li>
+     *   <li>{@code pairColorCount == 1} - the frame pass attaches one colour target, and render-pass compatibility
+     *       compares the attachment count, so a multi-target pair needs a different pass (named refusal, not a
+     *       silent fallback; {@code ModProgramMrtRefusalTest} is the neighbouring rule).</li>
+     *   <li>{@code depthShared} - the pair must be rendering into the shared depth image for the depth texture: that
+     *       image is the GL-framebuffer's depth storage, and it is the whole point of the route.</li>
+     *   <li>{@code pair extent == depth extent} - a Vulkan framebuffer's attachments share one extent, which is the
+     *       same invariant {@code ensureChainPairSharedDepth} borrows under.</li>
+     * </ol>
+     * The extents compared are the <b>pair's</b> and the depth texture's, never the window's: the shadow pair is
+     * 2048x2048 while the window is not, and that difference is the reason the older route cannot reach it.
+     */
+    static String celtium$depthTargetRefusal(boolean enabled, boolean currentIsMain, long identity,
+            boolean pairExists, int pairWidth, int pairHeight, int depthWidth, int depthHeight,
+            boolean depthShared, int pairColorCount) {
+        if (!enabled) {
+            return "disabled";
+        }
+        if (currentIsMain) {
+            return "main";
+        }
+        if (identity == 0L) {
+            return "window";
+        }
+        if (!pairExists) {
+            return "no-pair";
+        }
+        if (pairColorCount != 1) {
+            return "mrt";
+        }
+        if (!depthShared) {
+            return "not-shared";
+        }
+        if (depthWidth <= 0 || depthHeight <= 0 || pairWidth != depthWidth || pairHeight != depthHeight) {
+            return "extent";
+        }
+        return null;
+    }
+
+    /**
+     * Resolves the depth texture recorded for an identity's framebuffer, as {@code {texture, width, height, source}}.
+     * <p>
+     * Two layers, and they answer different questions. The publication record is filled at framebuffer-bind time by the
+     * hint's raw-bind report; a bind that route does not report leaves the identity's entry empty (measured on the
+     * shadow family, leg 14: the record was empty for the shadow framebuffers while the stub's own record named their
+     * depth texture). The stub's record is keyed by the bound GL name, and a bind flushes the old target's window before
+     * the identity switches, so it answers for the target that is bound now.
+     * <p>
+     * {@code source} is 0 when the publication record named the texture and the GL framebuffer name when the stub's
+     * record did, so a census line can say which layer answered without a second lookup. Null when neither has a depth
+     * texture for this identity. Both the window path and the routed pass ask this one question here rather than
+     * carrying two copies of it.
+     */
+    int[] celtium$depthTextureForTarget(long identity) {
+        int depthTexture = this.publishedTextures.depthTexture(identity);
+        int source = 0;
+        if (depthTexture == 0) {
+            int boundFbo = drawFramebufferBinding();
+            if (boundFbo > 0) {
+                depthTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferDepthTexture(boundFbo);
+                source = boundFbo;
+            }
+        }
+        if (depthTexture == 0) {
+            return null;
+        }
+        int[] size = textureSize(depthTexture);
+        if (size == null || size.length < 2 || size[0] <= 0 || size[1] <= 0) {
+            return new int[] {depthTexture, 0, 0, source};
+        }
+        return new int[] {depthTexture, size[0], size[1], source};
+    }
+
+    /**
+     * Decides, records and reports the terrain pass' routed attachment (item 332).
+     * <p>
+     * Returns null when the pass draws into the frame image, which is every pass of the default build (the switch is
+     * the first thing asked). Otherwise the pass attaches the bound framebuffer's chain pair, and this method has
+     * already recorded everything that has to happen outside the pass: the clear the game asked for (once per frame
+     * per identity, with the shared depth's own once-per-frame guard) and the pair's acquire. The begin, the draws and
+     * the hand-back stay with the caller, which is where the pass' own extent lives.
+     *
+     * @return {@code {framebuffer, identity, depthKey, width, height}} for the routed pass, null to draw into the frame
+     */
+    private long[] celtium$routeTerrainPassToDepthTarget(String passName, long renderPass) {
+        if (!TERRAIN_TO_DEPTH_TARGET) {
+            // The default build reaches nothing below this line: no lookup, no barrier, no census.
+            return null;
+        }
+        GllessFrameTarget owner = offTargetTarget();
+        long identity = this.targetRegistry.currentIdentity();
+        int[] depthRecord = celtium$depthTextureForTarget(identity);
+        long depthKey = depthRecord == null ? 0L
+                : RenderTargetRegistry.rawColorTextureIdentity(depthRecord[0]);
+        long[] pairExtent = owner == null ? null : owner.chainPairExtent(identity);
+        boolean pairExists = pairExtent != null;
+        int pairWidth = pairExists ? (int) pairExtent[0] : 0;
+        int pairHeight = pairExists ? (int) pairExtent[1] : 0;
+        int depthWidth = depthRecord == null ? 0 : depthRecord[1];
+        int depthHeight = depthRecord == null ? 0 : depthRecord[2];
+        boolean shared = owner != null && depthKey != 0L && owner.chainPairUsesSharedDepth(identity, depthKey);
+        int colors = owner == null ? 0 : owner.chainPairColorCount(identity);
+        String refusal = celtium$depthTargetRefusal(TERRAIN_TO_DEPTH_TARGET, this.targetRegistry.currentIsMain(),
+                identity, pairExists, pairWidth, pairHeight, depthWidth, depthHeight, shared, colors);
+        if (refusal != null) {
+            // Named, not silent: "the pass stayed on the frame image" and "the pair had no room for it" look the same
+            // in every other line this run prints.
+            if (this.terrainDepthTargetRefusalLogs < 12) {
+                this.terrainDepthTargetRefusalLogs++;
+                System.out.println("[Celtium] CELTIUM_TERRAIN_DEPTH_TARGET_REFUSED reason=" + refusal
+                        + " pass=" + passName + " identity=0x" + Long.toHexString(identity)
+                        + " pair=" + pairWidth + "x" + pairHeight + " depth=" + depthWidth + "x" + depthHeight
+                        + " colors=" + colors + " frame=" + this.frameId);
+            }
+            return null;
+        }
+        long pairFramebuffer;
+        try {
+            pairFramebuffer = ensureChainPairFramebuffer(renderPass);
+        } catch (RuntimeException error) {
+            // R9 of the design review: a pair whose views are gone (retired by a depth-texture reallocation between the
+            // decision and here) makes the framebuffer cache refuse - a null attachment is a validation error and a
+            // driver crash. The pass stays on the frame image and the reason is counted.
+            if (this.terrainDepthTargetRefusalLogs < 12) {
+                this.terrainDepthTargetRefusalLogs++;
+                System.out.println("[Celtium] CELTIUM_TERRAIN_DEPTH_TARGET_REFUSED reason=no-framebuffer pass=" + passName
+                        + " identity=0x" + Long.toHexString(identity) + " error=" + describe(error));
+            }
+            return null;
+        }
+        if (pairFramebuffer == 0L) {
+            if (this.terrainDepthTargetRefusalLogs < 12) {
+                this.terrainDepthTargetRefusalLogs++;
+                System.out.println("[Celtium] CELTIUM_TERRAIN_DEPTH_TARGET_REFUSED reason=no-framebuffer pass=" + passName
+                        + " identity=0x" + Long.toHexString(identity) + " frame=" + this.frameId);
+            }
+            return null;
+        }
+        if (this.terrainDepthTargetLogs < 12) {
+            this.terrainDepthTargetLogs++;
+            System.out.println("[Celtium] CELTIUM_TERRAIN_DEPTH_TARGET pass=" + passName + " identity=0x"
+                    + Long.toHexString(identity) + " extent=" + pairWidth + "x" + pairHeight
+                    + " depthTexture=" + depthRecord[0]
+                    + " via=" + (depthRecord[3] == 0 ? "record" : "stub-bound-" + depthRecord[3])
+                    + " shared=true colors=" + colors + " frame=" + this.frameId);
+        }
+        celtium$consumeRoutedTargetClear(owner, identity, depthKey);
+        owner.recordChainPairAttachAcquire(identity, depthKey, this.commandBuffer);
+        return new long[] {pairFramebuffer, identity, depthKey, pairWidth, pairHeight};
+    }
+
+    /**
+     * Consumes the clear a routed pass owes before its pass begins, outside the pass.
+     * <p>
+     * Same three arms as the window path's clear (self-test, latched game clear, ordinary once-per-frame clear) minus
+     * the in-pass deferral: a routed pass defers nothing, because the deferred clear's only consumer is a window's
+     * begin, and a clear that waited for the next window would erase the depth this pass is about to write.
+     * <p>
+     * The one rule this site adds is the shared depth's: a family of framebuffers attaching one depth texture shares
+     * one image here, so the depth is cleared <b>once per frame per depth key</b>. A second member whose pair was
+     * created later in the same frame would otherwise clear what the first member already drew, and the depth copy
+     * that follows would serve a cleared image. A refused depth clear is named, and the colour half still runs.
+     */
+    private void celtium$consumeRoutedTargetClear(GllessFrameTarget owner, long identity, long depthKey) {
+        if (!celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.CHAIN_PAIR, owner.chainPairAcquired(identity),
+                this.targetRegistry.chainPairClearContentIdentity(identity), identity)) {
+            return;
+        }
+        boolean latched = this.targetRegistry.hasLatchedClear()
+                && this.targetRegistry.latchedIdentity() == identity;
+        int mask = latched ? this.targetRegistry.latchedMask() : (0x4000 | 0x0100);
+        boolean depthAllowed = GllessFrameTarget.celtium$sharedDepthClearNeeded(depthKey,
+                owner.sharedDepthClearedFrameSerial(depthKey), celtium$frameSerial());
+        if ((mask & 0x0100) != 0 && !depthAllowed) {
+            mask &= ~0x0100;
+            if (this.sharedDepthClearRefusalLogs < 8) {
+                this.sharedDepthClearRefusalLogs++;
+                System.out.println("[Celtium] CELTIUM_SHARED_DEPTH_CLEAR_REFUSED depthKey=0x"
+                        + Long.toHexString(depthKey) + " identity=0x" + Long.toHexString(identity)
+                        + " frame=" + this.frameId + " site=" + this.immediateDrawSite);
+            }
+        }
+        if (mask == 0) {
+            return;
+        }
+        boolean applied;
+        if (!latched && owner.chainPairNeedsSelfTest(identity) && depthAllowed) {
+            // The pair's one-shot first legal-use clear; it clears both images, so it may only stand in for the
+            // ordinary clear where the shared depth's guard allows a depth clear at all.
+            record(owner.chainPairSelfTest(identity, this.commandBuffer));
+            applied = true;
+        } else {
+            float[] colour;
+            double depth;
+            if (latched) {
+                colour = this.targetRegistry.latchedColour();
+                depth = this.targetRegistry.latchedDepth();
+            } else {
+                colour = new float[4];
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(colour);
+                depth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth();
+            }
+            applied = owner.applyGameClearToChainPair(identity, this.commandBuffer, mask, colour, depth);
+        }
+        if (!applied) {
+            // The pair went away between the decision and the clear; nothing was recorded and nothing is recorded as
+            // consumed, so the next pass of this identity asks the same question again.
+            return;
+        }
+        if ((mask & 0x0100) != 0) {
+            owner.noteSharedDepthCleared(depthKey, celtium$frameSerial());
+        }
+        this.targetRegistry.noteClear(RenderTargetRegistry.ImageSlot.CHAIN_PAIR, (mask & 0x4000) != 0, latched);
+        this.targetRegistry.noteChainPairCleared(identity, celtium$frameSerial(), identity);
+        celtium$noteChainPairClear("routed-terrain-pass");
+    }
+
     private void recordRenderPass(MemoryStack stack,
                                   VulkanTerrainPipeline pipeline,
                                   ChunkRenderMatrices matrices,
@@ -15336,6 +15638,15 @@ this.frameBufferOpen = false;
         printFinishedTerrainBudgetWindow();
         // The slot lives past the prepare bracket: the end-of-pass timestamp is recorded after the draw loop.
         int timestampSlot = -1;
+        // The routed pass's own state (item 332): which identity and shared depth the pass is drawing for, and the area
+        // its render pass, viewport, scissor and group rectangles are measured in. All five are decided once, before the
+        // pass begins, and they outlive the prepare bracket because the hand-back and the draw census at the end of the
+        // method read them. The pass area is also published to the pass-area fields at the begin, because
+        // drawPendingImmediate's restore is reached from inside the pass.
+        long routedDepthIdentity = 0L;
+        long routedDepthKey = 0L;
+        int passAreaWidth = this.targetWidth;
+        int passAreaHeight = this.targetHeight;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("recordPrepare");
         try {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("prepDescriptors");
@@ -15387,7 +15698,17 @@ this.frameBufferOpen = false;
 
         long renderPass = pipeline.renderPass();
         long terrainFramebuffer = ensureFramebuffer(renderPass);
-        if (TERRAIN_TO_BOUND_TARGET && !this.targetRegistry.currentIsMain()) {
+        long[] depthRouting = celtium$routeTerrainPassToDepthTarget(pass.name(), renderPass);
+        if (depthRouting != null) {
+            // Item 332: the bound framebuffer's pair borrows this framebuffer's depth texture, so the terrain of this
+            // pass belongs in that pair - that image is what the pre-translucent depth copy reads. The pair's own
+            // extent decides the render area; the window's does not (the shadow pair is 2048x2048).
+            terrainFramebuffer = depthRouting[0];
+            routedDepthIdentity = depthRouting[1];
+            routedDepthKey = depthRouting[2];
+            passAreaWidth = (int) depthRouting[3];
+            passAreaHeight = (int) depthRouting[4];
+        } else if (TERRAIN_TO_BOUND_TARGET && !this.targetRegistry.currentIsMain()) {
             // A mod that binds its own framebuffer around renderBlockLayer wants that layer in it: GTCEu renders its
             // Bloom layer into bloomFBO and builds the bloom mask from it, which stays empty (no halo) while the terrain
             // pass always draws into the game's framebuffer. The chain pair of the bound framebuffer is attached with
@@ -15410,7 +15731,7 @@ this.frameBufferOpen = false;
                 .renderPass(renderPass)
                 .framebuffer(terrainFramebuffer);
         begin.renderArea().offset().set(0, 0);
-        begin.renderArea().extent().set(this.targetWidth, this.targetHeight);
+        begin.renderArea().extent().set(passAreaWidth, passAreaHeight);
         timestampSlot = this.timestampsUsable && this.timestampSlots < WINDOW_SLOT_BASE
                 ? this.timestampSlots : -1;
         gpuMark("terrain-begin");
@@ -15444,6 +15765,8 @@ this.frameBufferOpen = false;
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         this.terrainPassBeginNanos += System.nanoTime() - passBeginStarted;
         this.activeImmediateTarget = this.targetRegistry.currentIdentity();
+        this.passAreaWidth = passAreaWidth;
+        this.passAreaHeight = passAreaHeight;
         this.commandState.beginPass(this.activeImmediateTarget);
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(true);
 
@@ -15452,7 +15775,7 @@ this.frameBufferOpen = false;
         // rectangle, and the terrain draws need the pass's full-target one, so setViewportAndScissor has to run
         // after the last group has set its own.
         celtium$preflushBeforeTerrain();
-        setViewportAndScissor(stack);
+        setViewportAndScissor(stack, passAreaWidth, passAreaHeight);
         pipeline.bindPipeline(this.commandBuffer);
         pipeline.pushMatrices(this.commandBuffer, vulkanProjection(matrices.projection()), matrices.modelView());
         } finally {
@@ -15766,7 +16089,41 @@ this.frameBufferOpen = false;
             }
             this.readbackDone = true;
         }
+        // One call: this method is one of the renderer's largest, and a routed pass' census and hand-back are not
+        // worth the bytes of inlining them (see HugeMethodLimitTest).
+        celtium$finishRoutedDepthPass(pass.name(), routedDepthIdentity, routedDepthKey, passAreaWidth, passAreaHeight);
         this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+    }
+
+    /**
+     * The routed terrain pass' hand-back and draw census, at the end of the pass (item 332).
+     * <p>
+     * No command is recorded here - the frame pass' {@code finalLayout} is the attachment layout the store now names -
+     * but the store's record is what makes the depth copy's {@code oldLayout} readable later in the frame, and a copy
+     * whose record says {@code UNDEFINED} discards the depth it is meant to serve (design review §2.4, R4). The draw
+     * counts are the pass' own: {@code setLastDrawCommands(0)} ran before its draw loop, so a routed pass that reported
+     * zero is a real "routed but empty" and not a stale count from the previous pass (acceptance A2).
+     * <p>
+     * A no-op for every pass of the default build and for every refused pass: {@code identity} is 0 there.
+     */
+    private void celtium$finishRoutedDepthPass(String passName, long identity, long depthKey, int areaWidth,
+            int areaHeight) {
+        if (identity == 0L) {
+            return;
+        }
+        GllessFrameTarget depthOwner = offTargetTarget();
+        if (depthOwner != null) {
+            depthOwner.recordChainPairAttachRelease(identity, depthKey);
+        }
+        if (this.terrainDepthTargetDrawLogs < 12) {
+            this.terrainDepthTargetDrawLogs++;
+            System.out.println("[Celtium] CELTIUM_TERRAIN_DEPTH_TARGET_DRAW pass=" + passName
+                    + " identity=0x" + Long.toHexString(identity)
+                    + " commands=" + this.terrainStatistics.lastDrawCommands()
+                    + " sections=" + this.terrainStatistics.lastSectionsDrawn()
+                    + " merged=" + this.terrainStatistics.lastDrawCommandsMerged()
+                    + " area=" + areaWidth + "x" + areaHeight);
+        }
     }
 
     /**
@@ -16227,34 +16584,44 @@ this.frameBufferOpen = false;
 
 
 
-    private void setViewportAndScissor(MemoryStack stack) {
+    /**
+     * Sets the pass' full-area viewport and scissor, in the extent the render area is measured in.
+     * <p>
+     * The extent is an argument rather than {@code targetWidth}/{@code targetHeight} because a routed terrain pass
+     * (item 332) attaches a pair at that pair's own extent - the shadow pair is 2048x2048 while the window is not -
+     * and a pass-level viewport or scissor left at the window's size would draw the shadow map into a window-sized
+     * corner of it. A scissor rectangle that is not inside the render area is the other half of the same mistake
+     * (VUID-vkCmdDrawIndexed-None-04789, which the item's acceptance leg gates on), so the area is passed in rather
+     * than read from the window. Every other pass passes the frame's extent, which is what this always used.
+     */
+    private void setViewportAndScissor(MemoryStack stack, int areaWidth, int areaHeight) {
         // Both are dynamic state, and dynamic state is not reset by vkCmdBeginRenderPass: within one command buffer
         // the values a previous window set are still in force. The trackers below already hold what the buffer has
         // (they are reset to their never-matching sentinels at beginCommands), so a window that wants the same
         // viewport and scissor as the last one emits nothing. On the measured scene that is 46 vkCmdSet* calls a
         // frame - two per window over 23 windows, of which 13 are GregTech's post chain at the same full-frame
         // extent.
-        if (this.passVpX == 0 && this.passVpY == 0 && this.passVpW == this.targetWidth
-                && this.passVpH == this.targetHeight && this.passScX == 0 && this.passScY == 0
-                && this.passScW == this.targetWidth && this.passScH == this.targetHeight) {
+        if (this.passVpX == 0 && this.passVpY == 0 && this.passVpW == areaWidth
+                && this.passVpH == areaHeight && this.passScX == 0 && this.passScY == 0
+                && this.passScW == areaWidth && this.passScH == areaHeight) {
             this.immediateStatistics.noteStateSkipsViewport();
             return;
         }
         org.lwjgl.vulkan.VkViewport.Buffer viewport = org.lwjgl.vulkan.VkViewport.calloc(1, stack);
         // Positive height: see vulkanProjection() for why the Vulkan convention is used unchanged.
-        viewport.get(0).x(0.0f).y(0.0f).width(this.targetWidth).height(this.targetHeight)
+        viewport.get(0).x(0.0f).y(0.0f).width(areaWidth).height(areaHeight)
                 .minDepth(0.0f).maxDepth(1.0f);
         vkCmdSetViewport(this.commandBuffer, 0, viewport);
         org.lwjgl.vulkan.VkRect2D.Buffer scissor = org.lwjgl.vulkan.VkRect2D.calloc(1, stack);
         scissor.get(0).offset().set(0, 0);
-        scissor.get(0).extent().set(this.targetWidth, this.targetHeight);
+        scissor.get(0).extent().set(areaWidth, areaHeight);
         vkCmdSetScissor(this.commandBuffer, 0, scissor);
         this.passVpX = this.passVpY = 0;
-        this.passVpW = this.targetWidth;
-        this.passVpH = this.targetHeight;
+        this.passVpW = areaWidth;
+        this.passVpH = areaHeight;
         this.passScX = this.passScY = 0;
-        this.passScW = this.targetWidth;
-        this.passScH = this.targetHeight;
+        this.passScW = areaWidth;
+        this.passScH = areaHeight;
     }
 
     /** Writes one dynamic uniform block and returns its byte offset. */
@@ -18497,11 +18864,36 @@ this.frameBufferOpen = false;
         this.depthCopiesServed++;
         if (this.depthCopyLogs < 8) {
             this.depthCopyLogs++;
+            // The source layout is the difference between serving the depth the pass drew and serving an image the
+            // barrier treated as undefined (item 332): a copy whose oldLayout is UNDEFINED discards the content it
+            // reads, so a SERVED line alone cannot say the shadow pass reached the copy's source. With this field the
+            // acceptance leg reads "served, and it was the attachment layout" from one line.
             System.out.println("[Celtium] CELTIUM_DEPTH_COPY source=" + sourceDepthTexture + " dest="
                     + destDepthTexture + " " + width + "x" + height + " servedFrom=native-depth"
+                    + " sourceLayout=" + celtium$layoutName(sourceFrom)
                     + " served=" + this.depthCopiesServed);
         }
         return "served";
+    }
+
+    /** {@return the name of a Vulkan image layout, for the census lines that have to be read against a claim}. */
+    static String celtium$layoutName(int layout) {
+        switch (layout) {
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED:
+                return "UNDEFINED";
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL:
+                return "GENERAL";
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+                return "SHADER_READ_ONLY";
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+                return "TRANSFER_SRC";
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+                return "TRANSFER_DST";
+            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+                return "DEPTH_RENDER_LAYOUT";
+            default:
+                return "layout-" + layout;
+        }
     }
 
     /** {@return the access mask a depth image in {@code layout} may have pending}, for the copy's barriers. */
@@ -19887,6 +20279,9 @@ this.frameBufferOpen = false;
         this.passVpX = this.passVpY = this.passVpW = this.passVpH = -1;
         this.passScX = this.passScY = this.passScW = this.passScH = -1;
         this.passBiasC = this.passBiasS = Float.NaN;
+        // The pass area is the window's until a pass says otherwise; see the field's own note.
+        this.passAreaWidth = this.targetWidth;
+        this.passAreaHeight = this.targetHeight;
         // Open the unified frame buffer for this frame when the target carries no semaphore contract - a target that
         // needs the wait/signal pair keeps the per-recording submits the contract was built on.
         this.frameBufferOpen = this.frameTarget == null || !this.frameTarget.needsFrameSemaphores();
@@ -20549,7 +20944,7 @@ this.frameBufferOpen = false;
                 org.soutalab.celtium.vulkan.FramePassTimings.end("rcPush");
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("rcViewport");
                 {
-                    celtium$setGroupViewport(stack, group);
+                    celtium$setGroupViewport(stack, group, this.passAreaWidth, this.passAreaHeight);
                     // After the viewport and before the draw: the read-back records what the command will actually fetch
                     // from the group's slice, which is the one fact the accept-time reads cannot supply.
                     this.highlightProbe.celtium$probeReadBack(group, mesh);
@@ -20928,7 +21323,7 @@ this.frameBufferOpen = false;
             // flush - terrain, another pass, the final blit - expects the target's viewport, not the last GUI batch's.
             if (this.groupViewportNarrowed) {
                 this.groupViewportNarrowed = false;
-                setViewportAndScissor(stack);
+                setViewportAndScissor(stack, this.passAreaWidth, this.passAreaHeight);
             }
         }
     }
@@ -20976,17 +21371,19 @@ this.frameBufferOpen = false;
      * already been corrected to the unflipped form ("No y flip ... the flipped conversion clipped the wrong band"),
      * which left it intersecting an unflipped box with a flipped rectangle.
      */
-    void celtium$setGroupViewport(MemoryStack stack, ImmediateGroup group) {
+    void celtium$setGroupViewport(MemoryStack stack, ImmediateGroup group, int areaWidth, int areaHeight) {
         int[] viewport = group.viewportValues;
         if (viewport == null || viewport.length < 4) {
             return;
         }
-        // Clipped to the target: GL clips a viewport wider or taller than the drawable at rasterization, and the GUI
-        // stage really does ask for 1281 columns on a 1280 target. The intersection is what Vulkan is given.
+        // Clipped to the drawable: GL clips a viewport wider or taller than the drawable at rasterization, and the GUI
+        // stage really does ask for 1281 columns on a 1280 target. The intersection is what Vulkan is given. The
+        // drawable is the pass' render area, which for a routed terrain pass (item 332) is the pair's own extent - the
+        // shadow pass' GL viewport is 2048 wide, and clipping it to the window would draw a quarter of the shadow map.
         int x0 = Math.max(0, viewport[0]);
         int yBottom0 = Math.max(0, viewport[1]);
-        int x1 = Math.min(this.targetWidth, viewport[0] + viewport[2]);
-        int yBottom1 = Math.min(this.targetHeight, viewport[1] + viewport[3]);
+        int x1 = Math.min(areaWidth, viewport[0] + viewport[2]);
+        int yBottom1 = Math.min(areaHeight, viewport[1] + viewport[3]);
         // BH-13: the viewport is dynamic command state, so it is set for *every* group - and this is exactly where
         // the old code went wrong twice. It returned early when the group's rectangle was the full target, on the
         // assumption that "the pass already set exactly this rectangle": true at the pass's first group, false after
@@ -21111,7 +21508,7 @@ this.frameBufferOpen = false;
         // is drawn after several hundred other groups, so the line that would say whether the rectangle came back to
         // the full target was never printed (round 218: the panorama covers 1486x934 of a 1920x1080 frame). So the
         // *transition* back to the full target is printed too, bounded, as is every 256th narrow group.
-        boolean restoredToFull = width == this.targetWidth && height == this.targetHeight;
+        boolean restoredToFull = width == areaWidth && height == areaHeight;
         if (this.immediateNarrowViewports <= 3
                 || (restoredToFull && this.immediateNarrowViewportLogs < 8)
                 || (PeriodicLog.ENABLED && this.immediateNarrowViewports % 256 == 0)) {
@@ -21121,6 +21518,7 @@ this.frameBufferOpen = false;
             System.out.println("[Celtium] CELTIUM_GROUP_VIEWPORT gl=" + viewport[0] + "," + viewport[1] + " "
                     + viewport[2] + "x" + viewport[3] + " clipped=" + x0 + "," + y + " " + width + "x" + height
                     + " target=" + this.targetWidth + "x" + this.targetHeight
+                    + " area=" + areaWidth + "x" + areaHeight
                     + " narrowCount=" + this.immediateNarrowViewports
                     + " full=" + restoredToFull);
         }
