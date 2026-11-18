@@ -180,8 +180,6 @@ public final class FrameCoordinator {
         return submitCommands(true);
     }
 
-    /** Bounded probe counter for the submit entry (2026-10-15). */
-    private static int celtium$submitEntryLogs;
     /**
      * Wall time spent inside the queue submission. The steady-state profile put 61% of the client thread's samples inside
      * vkQueueSubmit while the GPU sat at 3% busy, so the question is whether that call blocks and for how long; these
@@ -200,13 +198,6 @@ public final class FrameCoordinator {
     }
 
     Submission submitCommands(boolean withFrameSemaphores) {
-        // Temporary probe: the present skips with "no completed frame waiting" and the frame-queued setter is never
-        // called with true, while gpuStalled is false. This line says whether the submit is entered at all, which
-        // splits "never called" from "returns early" in one leg.
-        if (celtium$submitEntryLogs++ < 12) {
-            System.out.println("[Celtium] CELTIUM_SUBMIT_ENTRY call=" + celtium$submitEntryLogs
-                    + " withFrameSemaphores=" + withFrameSemaphores + " gpuStalled=" + this.host.gpuStalled());
-        }
         if (this.host.gpuStalled()) {
             // Nothing to end: the buffer was never begun. This is the last of the recording entries the steady-state injection
             // reported, after the pass-level ones.
