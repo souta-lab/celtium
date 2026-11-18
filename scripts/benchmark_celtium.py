@@ -15,9 +15,9 @@ What this produces, per configuration:
 * the renderer's own chunk-queue counters and device-memory counters (steady state and the
   post-placement rebuild window) and, when the backend publishes them, per-terrain-pass GPU times
   from its Vulkan timestamp queries;
-* the selected GPU from the renderer's own ``CELTIUM_NATIVE_DEVICE`` line, plus
-  ``logs/celtium-capabilities.json`` when the renderer's capability command ran, plus the fixture's
-  own GL renderer string.
+* the selected GPU from the renderer's own ``CELTIUM_NATIVE_DEVICE`` line, the launcher's record of
+the device it was told to use, and the fixture's own GL renderer string. There is no enumerated-device
+table: nothing in a benchmark run writes one (see the note in ``run_configuration``).
 
 What it deliberately does not do: change the renderer, touch the validation fixture, copy anything into
 the Prism instance, or claim a speed-up. It runs one game instance at a time (the same ``pgrep -x java``
@@ -768,33 +768,15 @@ def run_configuration(config_key, run_ordinal, args, bench_jar, out_root, pinned
             "gttUsedBytes": gpu_statistics(window_samples, "gttUsedBytes"),
         }
 
-    record["capabilitiesFile"] = None
-    capabilities = run_dir / "logs" / "celtium-capabilities.json"
-    if capabilities.is_file():
-        try:
-            caps = json.loads(capabilities.read_text())
-            devices = []
-            for device in caps.get("vulkanDevices") or []:
-                if isinstance(device, dict):
-                    devices.append({key: device.get(key) for key in
-                                    ("name", "apiVersion", "deviceType", "deviceId", "vendorId",
-                                     "deviceUUID", "driverVersion")})
-            record["capabilitiesFile"] = {
-                "path": str(capabilities.relative_to(ROOT)),
-                "status": caps.get("status"),
-                "effectiveTerrainBackend": caps.get("effectiveTerrainBackend"),
-                "nativeTerrainImplemented": caps.get("nativeTerrainImplemented"),
-                "depthRoundtripVerified": caps.get("depthRoundtripVerified"),
-                "matchedVulkanDeviceUuid": caps.get("matchedVulkanDeviceUuid"),
-                "lwjglVersion": caps.get("lwjglVersion"),
-                "vulkanLoaderVersion": caps.get("vulkanLoaderVersion"),
-                "vulkanDevices": devices,
-                "openGlRenderer": (caps.get("openGl") or {}).get("renderer"),
-                "reasons": caps.get("reasons"),
-            }
-        except ValueError:
-            record["capabilitiesFile"] = {"path": str(capabilities.relative_to(ROOT)),
-                                          "error": "unreadable"}
+    # There is no enumerated-device block here on purpose (item 375). The benchmark fixture used to ask the probe
+    # class directly for `logs/celtium-capabilities.json`, which fed a "device list" table; the probe module was
+    # retired (item 341/C9) and a benchmark run executes no `/celtium vulkan`, so nothing writes that file or its
+    # replacement in this run. Keeping a reader for it would be the same silent hole the retirement left in
+    # `prism_validation.py`. What was measured is still recorded per run: `nativeDevice` (the renderer's own
+    # `CELTIUM_NATIVE_DEVICE` line, name + UUID + GL-UUID match), the same line as the harness parsed it
+    # (`nativeDeviceFromLauncher` - a second parser over the same evidence, so a disagreement is visible), the
+    # fixture's GL renderer/version string, and the pinned jar hash. Driver *version* is not recoverable and is not
+    # claimed; `terrainBackend` per run comes from the renderer's own "Terrain Backend:" line.
     record["consoleLines"] = {
         "CeltiumBench": [line for line in console_text.splitlines() if "[CeltiumBench]" in line][:60],
         "CELTIUM_": [line for line in console_text.splitlines() if "CELTIUM_" in line][:20],
@@ -1405,22 +1387,8 @@ def render_markdown(results, args):
             % (run.get("ordinal"), run["config"], cell, launcher_cell,
                fixture.get("glRendererString") or "n/a", fixture.get("glVersionString") or "n/a"))
     add("")
-    caps = [run for run in measured if (run.get("capabilitiesFile") or {}).get("vulkanDevices")]
-    for run in caps[:1]:
-        add("`%s` enumerated by the renderer's capability command:" % run["capabilitiesFile"]["path"])
-        add("")
-        add("| device | type | api | vendor/device id | uuid | driver |")
-        add("| --- | --- | --- | --- | --- | --- |")
-        for device in run["capabilitiesFile"]["vulkanDevices"]:
-            add("| %s | %s | %s | %s/%s | %s | %s |"
-                % (device.get("name"), device.get("deviceType"), device.get("apiVersion"),
-                   device.get("vendorId"), device.get("deviceId"), device.get("deviceUUID"),
-                   device.get("driverVersion")))
-        add("")
-        add("Effective terrain backend reported by the capability command: `%s`; matched Vulkan device "
-            "uuid: `%s`." % (run["capabilitiesFile"].get("effectiveTerrainBackend"),
-                             run["capabilitiesFile"].get("matchedVulkanDeviceUuid")))
-        add("")
+    # No "enumerated devices" block follows: the table came from the retired capability file (item 375), and the
+    # per-run cells above already name the device that rendered, the launcher's record of it and the GL renderer.
 
     add("## GPU time (renderer's own timestamp queries, where published)")
     add("")

@@ -204,6 +204,17 @@ wrapperのexit 0は、当該legについて実装された受入条件をすべ�
 | raw JVM exit / fixture / GPU / validation exit | `.gv-verify/run-<leg>/validation-process.json` |
 | scene・camera・較正・画像verdict・計器 | `.gv-verify/run-<leg>/logs/celtium-validation.json` |
 | device行を含むconsole / 全logs / 画像 | `.gv-verify/run-<leg>/validation-console.log`, `logs/`, `screenshots/` |
+| device bootstrapの全内容（status・reasons・extends・queue） | `.gv-verify/run-<leg>/logs/celtium-vulkan-device.json` |
+
+**device provenance（2026-11-18、item 375）**: probe退役で `logs/celtium-capabilities.json` のwriterは消えた。
+validation legのdevice記録は、同じrunが書く `logs/celtium-vulkan-device.json` から読む（fixtureがtick 100で
+`/celtium vulkan` を実行し、reportとlive backendの一致を検査する）。`prism_validation.py` の `driver` は
+`matched` / `openGl` / `loaderVersion` を報告書と同じ名前で写し、bootstrapが測らない `driverVersion` と
+`vulkanDeviceCount` は `notInSource` で欠落と明示する。旧読み手は `deviceUUID` を探していたが、
+bootstrapの綴りは `deviceUuid` で、UUID照合は成立していなかった。device列挙表はbenchmarkレポートに無い
+（benchのrunはそのfileを書かない）。benchのdevice identityは `CELTIUM_NATIVE_DEVICE`（name/uuid/GL UUID一致）・
+同じ行のharness側parser（`nativeDeviceFromLauncher`。同じ証拠の別parserなので不一致が見える）・fixtureのGL renderer
+文字列・pinned JAR hashで、driver **version** は取得できないので主張しない。
 
 **profileを取るleg（JFR）はdumpを切る**。picture dumpは1枚あたり~340ms（1280x720の**GPU sync＋per-pixel変換＋PNG**）かかり、
 1 legで13枚≈4.2秒＝client threadサンプルの**15%**を占めます（`readBackBlock`が最大のleafになる）。

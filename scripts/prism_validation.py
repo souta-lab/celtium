@@ -380,6 +380,59 @@ def release_game_slot(lock):
 RELAUNCHER_MOD_GLOB = "*cleanroom-relauncher*.jar"
 
 
+# Fields the retired capability report (`logs/celtium-capabilities.json`, item 341/C9) carried and the device
+# bootstrap does not measure. Named rather than left silently missing, so nobody reads the absence as a lost reader.
+NOT_IN_DEVICE_BOOTSTRAP_REPORT = {
+    "driverVersion": "the bootstrap report carries driverUuid, not a driver version string",
+    "vulkanDeviceCount": "the bootstrap reports the device it matched, not the loader's device list",
+}
+
+
+def device_bootstrap_record(bootstrap):
+    """{@return} the per-leg device record, from the run's own `logs/celtium-vulkan-device.json`.
+
+    The values are copied under the names the bootstrap report uses (`matched.*`, `openGl.*`, `loaderVersion`), never
+    under a name borrowed from the retired capability file: that file spelled the device UUID `deviceUuid` while the
+    harness looked for `deviceUUID`, so its UUID match never fired and the reader fell back to a name comparison. The
+    field `deviceMatch` states how the reported device relates to the OpenGL device instead of implying a selection:
+    the bootstrap takes the first non-CPU device with a sufficient API version and *records* whether its UUID matched,
+    so in a multi-GPU box its pick and the renderer's own choice can differ - `nativeDeviceName`/`nativeDeviceUuid`
+    in the same report remain the device the renderer said it rendered with.
+    """
+    matched = bootstrap.get("matched") or {}
+    open_gl = bootstrap.get("openGl") or {}
+    open_gl_uuids = [uuid for uuid in (open_gl.get("deviceUuids") or []) if isinstance(uuid, str) and uuid]
+    if not matched:
+        # status UNSUPPORTED_OR_UNAVAILABLE: a reason, not a device. `deviceMatch` must not imply one was chosen.
+        match = "no-matched-device"
+    elif matched.get("uuidMatchesOpenGl"):
+        match = "uuid-matched"
+    elif not open_gl_uuids:
+        # A GL-less process: the stub answers the vendor/renderer/version queries and exposes no device UUID.
+        match = "no-opengl-device-uuid"
+    else:
+        match = "not-uuid-matched"
+    return {
+        "reportScope": bootstrap.get("scope"),
+        "status": bootstrap.get("status"),
+        "logicalDeviceCreated": bootstrap.get("logicalDeviceCreated"),
+        "deviceMatch": match,
+        "deviceName": matched.get("name"),
+        "deviceUuid": matched.get("deviceUuid"),
+        "driverUuid": matched.get("driverUuid"),
+        "uuidMatchesOpenGl": matched.get("uuidMatchesOpenGl"),
+        "driverUuidMatchesOpenGl": matched.get("driverUuidMatchesOpenGl"),
+        "apiVersion": matched.get("apiVersion"),
+        "deviceType": matched.get("deviceTypeName") or matched.get("deviceType"),
+        "queueFamilyIndex": matched.get("queueFamilyIndex"),
+        "lwjglVersion": bootstrap.get("lwjglVersion"),
+        "vulkanLoaderVersion": bootstrap.get("loaderVersion"),
+        "openGlRenderer": open_gl.get("renderer"),
+        "openGlVersion": open_gl.get("version"),
+        "notInSource": NOT_IN_DEVICE_BOOTSTRAP_REPORT,
+    }
+
+
 def instance_heap_mib(instance, explicit=None):
     """{@return} the heap the launched JVM is given, in MiB.
 
@@ -665,20 +718,12 @@ def main():
             cp.append(str(target))
             report["extraTestLibraries"].append({"file": target.name, "sha256": digest(target)})
     report["testMods"] = [{"file": p.name, "sha256": digest(p)} for p in sorted((game / "mods").glob("*.jar"))]
-    # Reference the capabilities the renderer recorded rather than duplicating them (audit S24): the driver and limits
-    # belong to the run, and that file is where they are measured rather than restated.
-    capabilities = game / "logs" / "celtium-capabilities.json"
-    if capabilities.is_file():
-        try:
-            caps = json.loads(capabilities.read_text())
-            report["driver"] = {
-                "source": str(capabilities.relative_to(game)),
-                "deviceName": caps.get("deviceName") or caps.get("device", {}).get("deviceName"),
-                "driverVersion": caps.get("driverVersion") or caps.get("device", {}).get("driverVersion"),
-                "apiVersion": caps.get("apiVersion") or caps.get("device", {}).get("apiVersion"),
-            }
-        except (OSError, ValueError):
-            report["driver"] = {"source": str(capabilities.relative_to(game)), "error": "unreadable"}    # The runner's own arguments are a separate channel from the profile's, and only the union reaches the JVM.
+    # The device record is read after the run, from the report the run itself wrote (see the device-bootstrap block in
+    # run_locked). It used to be read here as well, from the retired `logs/celtium-capabilities.json`, which could only
+    # ever find a previous run's file: this report is written before `create_isolated_game_directory` below, and that
+    # directory is required not to exist beforehand. Dead when nothing wrote the file any more, and stale provenance if
+    # anything had, so the branch is gone rather than migrated.
+    # The runner's own arguments are a separate channel from the profile's, and only the union reaches the JVM.
     report["effectiveConfig"]["runnerJvmArgs"] = [str(a) for a in (args.jvm_arg or [])]
     report["effectiveConfig"]["jvmArgs"] = (list(report["effectiveConfig"].get("profileJvmArgs", []))
             + report["effectiveConfig"]["runnerJvmArgs"])
@@ -965,56 +1010,23 @@ def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, ass
         outcome["validationClean"] = False
         if outcome["validationExitCode"] == 0:
             outcome["validationExitCode"] = 1
-    # The driver and limits the renderer recorded, referenced rather than duplicated (audit S24). This is read after the
-    # run, which is when the file exists - reading it when the lock is written finds nothing, which is what the first
-    # attempt did.
-    capabilities = game / "logs" / "celtium-capabilities.json"
-    if capabilities.is_file():
+    # The device the run itself recorded. The retired capability file used to be read here; its writer went with the
+    # probe module (item 341/C9), and the replacement the same run writes is the device bootstrap's report:
+    # `ValidationClient` executes `/celtium vulkan` at worldTicks 100 and the fixture refuses a run whose report
+    # disagrees with the live terrain backend, so this is a file the run produced and judged, not one that may be left
+    # over from before. It is read after the run because that is when it exists.
+    device_report = game / "logs" / "celtium-vulkan-device.json"
+    if device_report.is_file():
+        source = str(device_report.relative_to(game))
         try:
-            caps = json.loads(capabilities.read_text())
-            devices = caps.get("vulkanDevices") or []
-            # The device this run used, not the first one the loader listed: those differ whenever more than one GPU is
-            # present, which is exactly the case this reporting exists for. Matched by the UUID the renderer printed,
-            # then by name; the first entry is only the last resort.
-            # Selected device, read here rather than from a name that only the earlier reporting block binds: that
-            # block is on a path which does not always run, and reading its local raised UnboundLocalError mid-run -
-            # which aborted the harness after the game had started, so the report was cut off and the run looked like
-            # a slow one.
-            selected_uuid = selected_name = None
-            try:
-                console_text = (game / "validation-console.log").read_text(errors="replace")
-            except OSError:
-                console_text = ""
-            picked = re.search(
-                r'CELTIUM_NATIVE_DEVICE name="([^"]*)" uuid=([0-9a-fA-F]*) matchedOpenGl=(\w+)', console_text)
-            if picked:
-                selected_name, selected_uuid = picked.group(1), picked.group(2)
-            device = {}
-            for candidate in devices:
-                if not isinstance(candidate, dict):
-                    continue
-                if selected_uuid and candidate.get("deviceUUID") == selected_uuid:
-                    device = candidate
-                    break
-                if selected_name and candidate.get("name") == selected_name:
-                    device = candidate
-                    break
-            if not device and devices:
-                device = devices[0]
-                flat_note = "first-listed"
-            else:
-                flat_note = "selected"
-            outcome.setdefault("driverSelection", flat_note)
-            flat = {"lwjglVersion": caps.get("lwjglVersion"),
-                    "vulkanLoaderVersion": caps.get("vulkanLoaderVersion"),
-                    "vulkanDeviceCount": len(devices)}
-            for key in ("name", "deviceName", "driverName", "driverInfo", "driverVersion", "apiVersion", "deviceType",
-                        "deviceId", "vendorId", "deviceUUID"):
-                if isinstance(device, dict) and device.get(key) is not None:
-                    flat[key] = device[key]
-            outcome["driver"] = {"source": str(capabilities.relative_to(game)), **flat}
+            outcome["driver"] = {"source": source, **device_bootstrap_record(json.loads(device_report.read_text()))}
         except (OSError, ValueError) as error:
-            outcome["driver"] = {"source": str(capabilities.relative_to(game)), "error": str(error)}
+            outcome["driver"] = {"source": source, "error": type(error).__name__ + ": " + str(error)}
+    else:
+        # Absence is a fact about the run, not an empty field: a run killed before tick 100, a process without the
+        # Celtium command, or a bootstrap that failed before writing all leave no file, and the verdict readers should
+        # be able to tell that from a harness that no longer asks for it.
+        outcome["driverUnavailable"] = "no logs/celtium-vulkan-device.json: this run recorded no device bootstrap report"
     (game / "validation-process.json").write_text(json.dumps(outcome, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(outcome))
     return code if ended_by == "process-exit" else 124
