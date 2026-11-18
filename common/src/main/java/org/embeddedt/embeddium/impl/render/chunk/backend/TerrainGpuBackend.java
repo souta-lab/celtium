@@ -15,8 +15,17 @@ import java.util.Collection;
 public interface TerrainGpuBackend {
     String getName();
 
+    /**
+     * Draws one terrain pass.
+     *
+     * @param view the perspective this pass is drawn for, from the fixed set named by
+     *             {@code SectionRenderDataStorage.BatchCacheParams} ({@code DEFAULT_VIEW} for the player camera,
+     *             {@code SHADOW_VIEW} for a shader pack's shadow camera). It is part of the key of the per-region batch
+     *             cache: two views drawn through the same region storage keep their own batches instead of evicting
+     *             each other's every frame.
+     */
     void render(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists, TerrainRenderPass pass,
-                CameraTransform occlusionCamera, CameraTransform camera, boolean profile);
+                CameraTransform occlusionCamera, CameraTransform camera, Object view, boolean profile);
 
     // ---------------------------------------------------------------- immediate-mode drawing (Forge API swap)
 

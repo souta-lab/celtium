@@ -71,7 +71,7 @@ class ReadableMemoryRangesTest {
 
         @Override
         public void render(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists, TerrainRenderPass pass,
-                           CameraTransform occlusionCamera, CameraTransform camera, boolean profile) {
+                           CameraTransform occlusionCamera, CameraTransform camera, Object view, boolean profile) {
         }
 
         @Override

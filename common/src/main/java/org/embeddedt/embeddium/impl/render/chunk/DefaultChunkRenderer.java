@@ -42,6 +42,25 @@ public abstract class DefaultChunkRenderer extends ShaderChunkRenderer {
         return true;
     }
 
+    /**
+     * {@return the view being rendered} A view is one perspective the world is drawn from, such as the player camera
+     * or a shader pack's shadow camera. Each view keeps its own cached batches, so views that alternate within a frame
+     * do not rebuild each other's. Views are compared by identity and must come from a small fixed set, since every
+     * distinct view adds an entry to every region's batch cache.
+     */
+    protected Object getRenderView() {
+        return SectionRenderDataStorage.BatchCacheParams.DEFAULT_VIEW;
+    }
+
+    /**
+     * {@return the cache key for a pass drawn with {@code useBlockFaceCulling}} Overridable so a platform whose
+     * renderer knows it draws another view can key its batches by that view; the default keys by
+     * {@link #getRenderView()}.
+     */
+    protected SectionRenderDataStorage.BatchCacheParams batchCacheParams(boolean useBlockFaceCulling) {
+        return new SectionRenderDataStorage.BatchCacheParams(useBlockFaceCulling, this.getRenderView());
+    }
+
     protected final SharedQuadIndexBuffer getSharedIndexBuffer(ChunkPrimitiveType type, CommandList commandList) {
         var buffer = this.sharedIndexBuffers.get(type);
         if (buffer == null) {
@@ -88,9 +107,7 @@ public abstract class DefaultChunkRenderer extends ShaderChunkRenderer {
             long timestamp = System.nanoTime();
 
             useBlockFaceCulling = useBlockFaceCulling && !renderPass.isSorted();
-            var cacheParams = useBlockFaceCulling
-                    ? SectionRenderDataStorage.BATCH_CACHE_CULLING
-                    : SectionRenderDataStorage.BATCH_CACHE_NO_CULLING;
+            var cacheParams = this.batchCacheParams(useBlockFaceCulling);
 
             while (iterator.hasNext()) {
                 ChunkRenderList renderList = iterator.next();

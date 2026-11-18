@@ -22,17 +22,35 @@ public class SectionRenderDataStorage {
 
     private int numAllocations;
 
-    public record BatchCacheParams(boolean useBlockFaceCulling) {}
+    /**
+     * The key a cached region batch is held under: the flags the batch was assembled with, and the view it was
+     * assembled for.
+     * <p>
+     * The view is part of the key because a view is one perspective the world is drawn from - the player camera, or a
+     * shader pack's shadow camera - and two views can share every other field: a sorted pass culls no faces in
+     * either, and the shadow pass draws the same passes over the same section storage as the terrain pass does. Keyed
+     * by the flags alone, each view does not fit the other's cached batch, so each rebuild overwrites the other's
+     * entry and both rebuild every frame. Upstream Celeritas keyed its cached region batches by the render view for
+     * exactly this case (its commit message states the eviction, and its
+     * {@code oneViewRebuildsOnEveryAlternation} test names the behaviour); item 337's audit brought the change here.
+     * <p>
+     * Views are compared by identity and must come from a small fixed set ({@link #DEFAULT_VIEW}, {@link #SHADOW_VIEW}),
+     * because every distinct view adds an entry to every region's batch cache.
+     */
+    public record BatchCacheParams(boolean useBlockFaceCulling, Object view) {
+        /** The player camera's view: the only perspective drawn when no shadow pass runs. */
+        public static final Object DEFAULT_VIEW = new Object();
 
-    public static final BatchCacheParams BATCH_CACHE_CULLING = new BatchCacheParams(true);
-    public static final BatchCacheParams BATCH_CACHE_NO_CULLING = new BatchCacheParams(false);
+        /** A shader pack's shadow camera. Distinguishing it keeps the shadow and terrain passes out of one entry. */
+        public static final Object SHADOW_VIEW = new Object();
+    }
 
-    // we only need to cache two batches in practice (shadow pass for shaders disables block face culling), so we unroll
-    // what would otherwise be an LRU for simplicity
-    private BatchCacheParams firstBatchParams;
-    private CachedBatch firstCachedBatch;
-    private BatchCacheParams secondBatchParams;
-    private CachedBatch secondCachedBatch;
+    /**
+     * The batches assembled for this region storage, one per key. It replaces the two unrolled slots that were enough
+     * while the key was a single culling flag: with the view in the key the key space is the views times the flags,
+     * and a fixed pair of slots would thrash exactly as a pair keyed by the flag alone did.
+     */
+    private final BatchCache batchCache = new BatchCache();
 
     public SectionRenderDataStorage(ChunkPrimitiveType primitiveType, boolean sorted, int verticesPerArenaElement) {
         this.storageStrategy = sorted ? SectionRenderDataUnsafe.Strategy.FULL : SectionRenderDataUnsafe.Strategy.COMPACT;
@@ -160,7 +178,7 @@ public class SectionRenderDataStorage {
     }
 
     /**
-     * Hits, misses and stores of this two-slot batch cache, counted because the terrain pass's own recording
+     * Hits, misses and stores of this batch cache, counted because the terrain pass's own recording
      * measured 6.5 ms p50 and rebuilding a batch - with the GPU buffer it allocates - is the largest thing inside it.
      * <p>
      * Measured 2026-10-16 (leg gv-notax-r37-bcache): {@code lookups=6000 hits=1431 misses=4569}, a 24% hit rate. The
@@ -169,6 +187,16 @@ public class SectionRenderDataStorage {
      * terrain bracket to 9.6 ms p50 against the two-slot arm's 8.7 ms. So the entries are displaced by a changing
      * key, not by a shortage of slots, and the next question is which field of {@link BatchCacheParams} changes every
      * frame. The counter stays because that is the number any fix has to move.
+     * <p>
+     * The answer taken 2026-11-18 (item 397, from the item 337 sync audit) is that the missing field is the view: a
+     * shader pack's shadow pass draws the same passes over the same storage as the terrain pass, and the two can share
+     * the culling flag, so the two render lists alternate under one key - which is the shape that displaces an entry
+     * every frame. The key now carries the view, and {@code views=} (the number of distinct keys currently held) is
+     * printed with it so a leg can tell two views keeping their own entries from one view being hit twice.
+     * <p>
+     * That <em>explains a mechanism</em>, not this reading: nothing in the tree calls the shadow-pass setup yet, so the
+     * 24% above is not claimed to be accounted for. A leg that runs a shader pack's shadow pass is what would show the
+     * rate move, and the number to compare is this same counter.
      * <p>
      * Printed by the storage itself, bounded, because the fixture cannot reach this class.
      */
@@ -182,7 +210,7 @@ public class SectionRenderDataStorage {
             new java.util.concurrent.atomic.AtomicLong();
     private static volatile boolean celtium$batchCachePrintsExhausted;
 
-    private static void celtium$noteBatchCache(boolean hit) {
+    private static void celtium$noteBatchCache(boolean hit, int views) {
         if (celtium$batchCachePrintsExhausted) {
             return;
         }
@@ -197,7 +225,7 @@ public class SectionRenderDataStorage {
             if (printIndex < 12) {
                 System.out.println("[Celtium] CELTIUM_BATCH_CACHE lookups=" + total
                         + " hits=" + celtium$batchCacheHits.get() + " misses=" + celtium$batchCacheMisses.get()
-                        + " stores=" + celtium$batchCacheStores.get());
+                        + " stores=" + celtium$batchCacheStores.get() + " views=" + views);
                 if (printIndex == 11) {
                     celtium$batchCachePrintsExhausted = true;
                 }
@@ -208,48 +236,20 @@ public class SectionRenderDataStorage {
     }
 
     public @Nullable CachedBatch getCachedMultiDrawBatch(BatchCacheParams params) {
-        if (params.equals(firstBatchParams)) {
-            celtium$noteBatchCache(true);
-            return firstCachedBatch;
-        } else if (params.equals(secondBatchParams)) {
-            celtium$noteBatchCache(true);
-            return secondCachedBatch;
-        } else {
-            celtium$noteBatchCache(false);
-            return null;
-        }
+        CachedBatch cached = this.batchCache.get(params);
+        celtium$noteBatchCache(cached != null, this.batchCache.size());
+        return cached;
     }
 
     public void storeCachedMultiDrawBatch(BatchCacheParams params, CachedBatch batch) {
         if (!celtium$batchCachePrintsExhausted) {
             celtium$batchCacheStores.incrementAndGet();
         }
-        if (params.equals(firstBatchParams) || firstBatchParams == null) {
-            if (firstCachedBatch != null) {
-                firstCachedBatch.delete();
-            }
-            firstBatchParams = params;
-            firstCachedBatch = batch;
-        } else {
-            if (secondCachedBatch != null) {
-                secondCachedBatch.delete();
-            }
-            secondBatchParams = params;
-            secondCachedBatch = batch;
-        }
+        this.batchCache.store(params, batch);
     }
 
     public void invalidateCachedBatches() {
-        if (firstCachedBatch != null) {
-            firstCachedBatch.delete();
-            firstCachedBatch = null;
-        }
-        if (secondCachedBatch != null) {
-            secondCachedBatch.delete();
-            secondCachedBatch = null;
-        }
-        firstBatchParams = null;
-        secondBatchParams = null;
+        this.batchCache.invalidate();
     }
 
     public void delete() {

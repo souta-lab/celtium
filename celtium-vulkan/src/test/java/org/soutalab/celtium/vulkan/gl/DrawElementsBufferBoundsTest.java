@@ -49,7 +49,7 @@ class DrawElementsBufferBoundsTest {
         @Override
         public void render(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists, TerrainRenderPass pass,
                            org.embeddedt.embeddium.impl.render.viewport.CameraTransform occlusionCamera,
-                           org.embeddedt.embeddium.impl.render.viewport.CameraTransform camera, boolean profile) {
+                           org.embeddedt.embeddium.impl.render.viewport.CameraTransform camera, Object view, boolean profile) {
         }
 
         @Override

@@ -22,6 +22,7 @@ import org.embeddedt.embeddium.impl.render.chunk.compile.tasks.ChunkBuilderTask;
 import org.embeddedt.embeddium.impl.render.chunk.data.BuiltRenderSectionData;
 import org.embeddedt.embeddium.impl.render.chunk.data.BuiltSectionMeshParts;
 import org.embeddedt.embeddium.impl.render.chunk.data.MinecraftBuiltRenderSectionData;
+import org.embeddedt.embeddium.impl.render.chunk.data.SectionRenderDataStorage;
 import org.embeddedt.embeddium.impl.render.chunk.fog.FogService;
 import org.embeddedt.embeddium.impl.render.chunk.lists.ChunkRenderList;
 import org.embeddedt.embeddium.impl.render.chunk.lists.RenderListManager;
@@ -650,8 +651,15 @@ public abstract class RenderSectionManager {
             System.out.println("[Celtium] CELTIUM_SEARCH_JOIN layers=" + this.joinCensusLayers + " "
                     + this.renderListManager.joinDecisionSummary());
         }
+        // Which perspective this pass belongs to. It is the same fact that selects the render list manager above
+        // (the shadow pass draws the shadow lists, the terrain pass the terrain lists), and it keys the per-region
+        // batch cache: with the culling flag alone, a shadow pass that shares the flag with the terrain pass evicts
+        // the terrain pass's batch out of the region's one entry every frame (item 397, item 337's take 1).
+        Object view = this.isInShadowPass()
+                ? SectionRenderDataStorage.BatchCacheParams.SHADOW_VIEW
+                : SectionRenderDataStorage.BatchCacheParams.DEFAULT_VIEW;
         this.terrainBackend.render(matrices, this.getCurrentRenderListManager().getRenderLists(), pass,
-                occlusionCamera, camera, isDebugInfoShown());
+                occlusionCamera, camera, view, isDebugInfoShown());
     }
 
     public boolean isSectionVisible(int x, int y, int z) {

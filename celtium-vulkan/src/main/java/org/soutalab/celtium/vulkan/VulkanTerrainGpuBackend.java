@@ -1072,20 +1072,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     @Override
     public void render(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists, TerrainRenderPass pass,
-                       CameraTransform occlusionCamera, CameraTransform camera, boolean profile) {
+                       CameraTransform occlusionCamera, CameraTransform camera, Object view, boolean profile) {
         // "terrain" inside "world": the world pass holds the spike (fixture worst 368 ms of a 411 ms frame) and
         // its named parts stop at the immediate flush - the terrain pass's own submit+record share needs a bracket
         // of its own to be told from the game's renderWorldPass work around it.
         FramePassTimings.begin("terrain");
         try {
-            celtium$renderPass(matrices, renderLists, pass, occlusionCamera, camera, profile);
+            celtium$renderPass(matrices, renderLists, pass, occlusionCamera, camera, view, profile);
         } finally {
             FramePassTimings.end("terrain");
         }
     }
 
     private void celtium$renderPass(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists,
-            TerrainRenderPass pass, CameraTransform occlusionCamera, CameraTransform camera, boolean profile) {
+            TerrainRenderPass pass, CameraTransform occlusionCamera, CameraTransform camera, Object view,
+            boolean profile) {
         // The split's named parts stop at 0.5 ms of this pass's 3.4 ms, so the span before the recording - guards,
         // snapshots, pipeline lookup, uniform capacity - is measured as one bracket. Whatever this reports is the cost
         // that has no other name; it gets split further once it is visible.
@@ -1312,7 +1313,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // without subtracting them from the frame's residual.
             org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainRecord");
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                recordRenderPass(stack, pipeline, matrices, renderLists, pass, occlusionCamera, camera,
+                recordRenderPass(stack, pipeline, matrices, renderLists, pass, occlusionCamera, camera, view,
                         useBlockFaceCulling, primitiveType);
             }
             org.soutalab.celtium.vulkan.FramePassTimings.end("terrainRecord");
@@ -15235,6 +15236,7 @@ this.frameBufferOpen = false;
                                   TerrainRenderPass pass,
                                   CameraTransform occlusionCamera,
                                   CameraTransform camera,
+                                  Object view,
                                   boolean useBlockFaceCulling,
                                   ChunkPrimitiveType primitiveType) {
         this.terrainStatistics.noteTerrainPasses();
@@ -15374,8 +15376,13 @@ this.frameBufferOpen = false;
         }
 
         Iterator<ChunkRenderList> iterator = renderLists.iterator(pass.isReverseOrder());
+        // The pass and its culling flag are the same for the shadow pass and the terrain pass (a sorted shadow pass
+        // culls no faces either), so the view the caller is drawing has to be in the key too. Keyed without it, the
+        // two render lists alternate under one entry, each does not fit the other's cached batch, and each rebuild
+        // overwrites it. The storage recorded a 24% hit rate and could not name the field that changed (its counter's
+        // javadoc); the audit's answer is this one (item 337, ITEM337-AUDIT-2026-11-18 §4.1).
         SectionRenderDataStorage.BatchCacheParams cacheParams =
-                useBlockFaceCulling ? BATCH_CACHE_CULLING : BATCH_CACHE_NO_CULLING;
+                new SectionRenderDataStorage.BatchCacheParams(useBlockFaceCulling, view);
         boolean indexBound = false;
 
         while (iterator.hasNext()) {
@@ -21168,11 +21175,6 @@ this.frameBufferOpen = false;
             record("ui test quad failed: " + describe(error));
         }
     }
-
-    private static final SectionRenderDataStorage.BatchCacheParams BATCH_CACHE_CULLING =
-            new SectionRenderDataStorage.BatchCacheParams(true);
-    private static final SectionRenderDataStorage.BatchCacheParams BATCH_CACHE_NO_CULLING =
-            new SectionRenderDataStorage.BatchCacheParams(false);
 
     /** z' = (z + w) / 2: GL's [-1, 1] clip depth onto Vulkan's [0, 1]. Read-only; was a new array per call. */
     private static final float[] CLIP_DEPTH_REMAP = {1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0.5f, 0f, 0f, 0f, 0.5f, 1f};
