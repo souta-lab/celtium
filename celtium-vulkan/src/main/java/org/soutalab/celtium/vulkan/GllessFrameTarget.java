@@ -161,8 +161,31 @@ public final class GllessFrameTarget implements FrameImageTarget {
     /** Reverse lookup for the sampling hot path; only live colour images have entries. */
     private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap chainPairOwners =
             new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
-    /** Chain-pair image sets created so far; the source of {@link #chainPairGeneration}. */
+    /**
+     * Chain-pair image-set changes so far; the source of {@link #chainPairGeneration}. Created <em>and</em> retired
+     * count, because the number a framebuffer is stamped with has to change for either - see
+     * {@link #celtium$nextPairGeneration}.
+     */
     private long chainPairGenerations;
+
+    /**
+     * {@return the next value of the chain-pair generation counter}.
+     * <p>
+     * One function for the two events that change which images a pair holds: its creation and its retirement. The
+     * consumer's rule is only "the number moved" - {@link FramebufferCache#chainPair} keeps its stamp per identity
+     * and retires the cached handles when it disagrees - so a retirement that left the number alone was invisible to
+     * it, and only the callers' ordering (ensure before asking the cache) kept a framebuffer built over retired views
+     * from being handed out (item 372, hole 3). Advancing on retirement makes the guarantee the pair's own rather than
+     * its callers'.
+     */
+    static long celtium$nextPairGeneration(long counter) {
+        return counter + 1;
+    }
+
+    /** Takes the next chain-pair generation, for a pair whose images were just created or just retired. */
+    private long nextChainPairGeneration() {
+        return this.chainPairGenerations = celtium$nextPairGeneration(this.chainPairGenerations);
+    }
 
     private boolean frameOpen;
     private boolean deleted;
@@ -2345,7 +2368,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 // A pair that was just created holds images nothing has transitioned yet.
                 this.colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
                 this.creations++;
-                this.generation = ++GllessFrameTarget.this.chainPairGenerations;
+                this.generation = GllessFrameTarget.this.nextChainPairGeneration();
                 // Set last: until here the pair must still read as owning whatever depth release() would free.
                 this.sharedDepthKey = sharedDepth != null ? sharedKey : 0L;
             } catch (RuntimeException | LinkageError error) {
@@ -3033,6 +3056,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 VulkanRetireQueue.retire(() -> VulkanContext.freeMemory(device, depthMemory));
             }
             retireExtras();
+            // The generation moves with the images: a framebuffer built over the views just handed to the retire
+            // queue must read as stale even though this pair is asked for them again only when it is re-ensured.
+            this.generation = GllessFrameTarget.this.nextChainPairGeneration();
             // The handles are gone from this pair; release() now only forgets the size and layouts.
             release();
         }

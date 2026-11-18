@@ -13403,6 +13403,15 @@ this.frameBufferOpen = false;
             this.wsPairNanos += now - this.wsMark;
             this.wsMark = now;
         }
+        if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
+            // The handles this pass is about to begin against, for the ring the device-loss report dumps: an
+            // address-only fault inside vkCmdBeginRenderPass cannot say whether the pass, the framebuffer or one of its
+            // views was dead, and these numbers plus the frame cache's own note are what identify it (#423, item 372
+            // audit section 5). The extent is the render area's, which a framebuffer too small for would also fault on.
+            org.soutalab.celtium.vulkan.CrashBreadcrumbs.note3(
+                    org.soutalab.celtium.vulkan.CrashBreadcrumbs.WINDOW_PASS, passRenderPass, framebuffer,
+                    ((long) passWidth << 32) | (passHeight & 0xffffffffL));
+        }
         org.lwjgl.vulkan.VkRenderPassBeginInfo begin =
                 celtium$windowBeginInfo(passRenderPass, framebuffer, passWidth, passHeight);
         if (WINDOW_SPLIT) {
@@ -14917,6 +14926,19 @@ this.frameBufferOpen = false;
         if (immediate > 0) {
             record("world teardown released " + immediate + " immediate pipeline(s) built for the world's render pass");
         }
+        // Every render pass those pipelines owned is destroyed by now, and the frame framebuffers are keyed by those
+        // passes: a driver is free to hand the same handle value to the next world's pass, and the cache would then
+        // answer with a framebuffer built for a pass that no longer exists (item 372, hole 2). The UI pass survives a
+        // world change, but its entry goes with the rest - re-creating one command on the next world's first window is
+        // cheaper than a rule that has to know which keys are still live. Retired, not destroyed: a recording can still
+        // name these handles.
+        if (this.framebufferCache != null) {
+            int frameFramebuffers = this.framebufferCache.retireFrameFramebuffers();
+            if (frameFramebuffers > 0) {
+                record("world teardown retired " + frameFramebuffers
+                        + " frame-target framebuffer(s) keyed by the destroyed render passes");
+            }
+        }
         for (VulkanBuffer buffer : this.sharedIndexBuffers.values()) {
             buffer.delete();
         }
@@ -16030,18 +16052,39 @@ this.frameBufferOpen = false;
         return (float) (Math.round(value * 1000.0D) / 1000.0D);
     }
 
-    private void destroyFramebuffer() {
+    /**
+     * {@return whether the old frame target may be released and replaced}, given whether its framebuffers could be
+     * freed.
+     * <p>
+     * The release's outcome is the gate, not a report. A cache that could not be emptied still holds framebuffers
+     * built over the old target's views, so deleting those views would leave the next window beginning a pass against
+     * a framebuffer naming dead attachments - the fault the audit of issue #423 describes (item 372 hole 1). A false
+     * keeps the old target and retries the recreation on a later frame, the direction {@code settleGpu}'s own failure
+     * already takes.
+     */
+    static boolean celtium$frameTargetReplaceable(boolean framebuffersReleased) {
+        return framebuffersReleased;
+    }
+
+    /**
+     * Frees every cached framebuffer in place.
+     *
+     * @return whether they were all freed: false when the settle did not land, in which case nothing was touched and
+     *     the caller must keep the target these handles name (see {@link #celtium$frameTargetReplaceable})
+     */
+    private boolean destroyFramebuffer() {
         // Full target teardown settles once and then frees every framebuffer in place; mid-session replacements
         // retire instead (FramebufferCache). VUID-vkDestroyFramebuffer-framebuffer-00892 is what the settle is for.
         if (this.framebufferCache == null || this.framebufferCache.isEmpty()) {
-            return;
+            return true;
         }
         if (!settleGpu("framebuffer release")) {
             // Fail closed, exactly as the callers do: an unsettled GPU means these handles cannot be released yet.
             // Leaking them until process exit is the safe direction.
-            return;
+            return false;
         }
         this.framebufferCache.destroyAll();
+        return true;
     }
 
 
@@ -19126,7 +19169,13 @@ this.frameBufferOpen = false;
             // Fail closed: without a settled GPU the old target cannot be released, so no new one is built either.
             return false;
         }
-        destroyFramebuffer();
+        if (!celtium$frameTargetReplaceable(destroyFramebuffer())) {
+            // The framebuffers could not be freed, so they still name the old target's views: deleting them here is
+            // what left a later window's begin pointing at a dead view (issue #423, item 372 hole 1). Same direction
+            // as the failed settle above - the old target keeps drawing, the recreation is retried on a later frame.
+            record("frame target " + width + "x" + height + " recreation refused: its framebuffers could not be freed");
+            return false;
+        }
         if (this.frameTarget != null) {
             this.frameTarget.delete();
             this.frameTarget = null;

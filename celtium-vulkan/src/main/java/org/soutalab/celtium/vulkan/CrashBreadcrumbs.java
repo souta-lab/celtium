@@ -6,9 +6,10 @@ package org.soutalab.celtium.vulkan;
  * <p>
  * A RADV GPUVM fault reports an address and nothing else; the log around it carries whatever diagnostic lines happened
  * to print, which in the measured case were a texture dump and a loading-bar quad rather than the faulting call. This
- * ring records the operations themselves - code, and two numbers that mean whatever the code says (a window's target and
- * group count, an upload's GL name and extent, a chain pair's identity) - and formats them only when the device is
- * actually lost. That is why there is no switch to remember in the launcher: three array writes per operation.
+ * ring records the operations themselves - code, and up to three numbers that mean whatever the code says (a window's target
+ * and group count, an upload's GL name and extent, a chain pair's identity, a window's render pass and framebuffer
+ * handles) - and formats them only when the device is actually lost. That is why there is no switch to remember in the
+ * launcher: three array writes per operation, four for the {@link #note3} form.
  */
 public final class CrashBreadcrumbs {
     /** {@code -Dceltium.vulkan.crashBreadcrumbs=false} turns the ring off; it is on by default. */
@@ -18,6 +19,12 @@ public final class CrashBreadcrumbs {
     private static final int[] CODES = new int[CAPACITY];
     private static final long[] FIRST = new long[CAPACITY];
     private static final long[] SECOND = new long[CAPACITY];
+    /**
+     * The third number, for the codes that need one (a window's pass, the frame cache's view tuple). Only
+     * {@link #note3} writes it, so a slot held by a two-number note keeps whatever the previous occupant of that
+     * index left there; {@link #describe} reads it only for the codes that record one.
+     */
+    private static final long[] THIRD = new long[CAPACITY];
     private static int cursor;
     private static boolean dumped;
 
@@ -30,6 +37,12 @@ public final class CrashBreadcrumbs {
     public static final int PRESENT = 6;
     public static final int COALESCED_COPY = 7;
     public static final int FRAMEBUFFER_BIND = 8;
+    /** A window's begin: the render pass, the framebuffer, and the extent packed as {@code hi=width, lo=height}. */
+    public static final int WINDOW_PASS = 9;
+    /** The frame-target cache answered with an entry built over the two views in the second and third numbers. */
+    public static final int FRAME_CACHE_HIT = 10;
+    /** The frame-target cache had no entry for these views and built one (its handle is the first number). */
+    public static final int FRAME_CACHE_MISS = 11;
 
     private CrashBreadcrumbs() {
     }
@@ -51,6 +64,24 @@ public final class CrashBreadcrumbs {
         cursor++;
     }
 
+    /**
+     * Records one operation that needs three numbers. No allocation and no formatting: four array writes.
+     * <p>
+     * A second entry point rather than a third field on every note: the two-number notes are the ones on the hottest
+     * paths (one per texture upload, one per coalesced copy) and they are most of what the ring holds.
+     */
+    public static void note3(int code, long first, long second, long third) {
+        if (!ENABLED) {
+            return;
+        }
+        int index = cursor % CAPACITY;
+        CODES[index] = code;
+        FIRST[index] = first;
+        SECOND[index] = second;
+        THIRD[index] = third;
+        cursor++;
+    }
+
     /** Prints the ring once, oldest first, naming each operation; the first device loss is the one that matters. */
     public static void dump(String trigger) {
         if (!ENABLED || dumped) {
@@ -68,7 +99,7 @@ public final class CrashBreadcrumbs {
         report.append("renderer operations recorded before the loss, oldest first.\n\n");
         for (int i = 0; i < count; i++) {
             int index = Math.floorMod(cursor - count + i, CAPACITY);
-            String line = describe(CODES[index], FIRST[index], SECOND[index]);
+            String line = describe(CODES[index], FIRST[index], SECOND[index], THIRD[index]);
             System.out.println("[Celtium] CELTIUM_CRUMB #" + i + " " + line);
             report.append('#').append(i).append(' ').append(line).append('\n');
         }
@@ -83,7 +114,7 @@ public final class CrashBreadcrumbs {
         }
     }
 
-    private static String describe(int code, long first, long second) {
+    private static String describe(int code, long first, long second, long third) {
         switch (code) {
             case WINDOW:
                 return "window target=0x" + Long.toHexString(first) + " groups=" + second;
@@ -101,6 +132,17 @@ public final class CrashBreadcrumbs {
                 return "coalesced-copy texture=" + first + " mirrors=" + second;
             case FRAMEBUFFER_BIND:
                 return "framebuffer-bind identity=0x" + Long.toHexString(first) + " main=" + (second != 0L);
+            case WINDOW_PASS:
+                // The handles a begin is made of, so a loss inside vkCmdBeginRenderPass can say which one may have
+                // been dead: the pass, the framebuffer, and the extent the render area was declared at.
+                return "window-pass renderPass=0x" + Long.toHexString(first)
+                        + " framebuffer=0x" + Long.toHexString(second)
+                        + " extent=" + (third >>> 32) + "x" + (third & 0xffffffffL);
+            case FRAME_CACHE_HIT:
+            case FRAME_CACHE_MISS:
+                return (code == FRAME_CACHE_HIT ? "frame-cache hit framebuffer=0x" : "frame-cache miss framebuffer=0x")
+                        + Long.toHexString(first) + " over color=0x" + Long.toHexString(second)
+                        + " depth=0x" + Long.toHexString(third);
             default:
                 return "op=" + code + " a=" + first + " b=" + second;
         }

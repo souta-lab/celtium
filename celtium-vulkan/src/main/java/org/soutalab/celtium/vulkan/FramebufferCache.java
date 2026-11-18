@@ -4,8 +4,11 @@ import static org.lwjgl.vulkan.VK10.vkCreateFramebuffer;
 import static org.lwjgl.vulkan.VK10.vkDestroyFramebuffer;
 
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import java.nio.LongBuffer;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkDevice;
@@ -23,6 +26,11 @@ import org.lwjgl.vulkan.VkFramebufferCreateInfo;
  * for because it has not been submitted: those handles are retired ({@link VulkanRetireQueue}). Destroying them in
  * place invalidated the frame (E2E-E leg e2ee-amd10). Teardown, {@link #destroyAll()}, runs only after the caller
  * settled the GPU and nothing more will be recorded against the old target, so it frees in place.
+ * <p>
+ * Every kind also carries what it was built over, and answers only for that: the frame target's view tuple
+ * ({@link FrameEntry}), the default pair's extent, the chain pair's generations. A handle is a fact about the images
+ * it names, not only about the render pass it is compatible with, and the caches are asked long after the images
+ * changed.
  */
 final class FramebufferCache {
     private final VulkanContext context;
@@ -31,9 +39,10 @@ final class FramebufferCache {
      * The frame target's framebuffers keyed by the render pass each is compatible with. One entry per render pass,
      * not one framebuffer total: the terrain and immediate pipelines build their own render passes, and a
      * single-slot cache replaced the entry on every pass alternation - each replacement paying a device-idle wait
-     * to retire the old handle. Measured ~5 settleGpu calls per frame on leg ind2-amd.
+     * to retire the old handle. Measured ~5 settleGpu calls per frame on leg ind2-amd. Each entry also carries the
+     * attachments it was built over; see {@link FrameEntry}.
      */
-    private final Long2LongOpenHashMap frameFramebuffers = new Long2LongOpenHashMap();
+    private final Long2ObjectOpenHashMap<FrameEntry> frameFramebuffers = new Long2ObjectOpenHashMap<>();
     /** Per identity, the chain-pair generation its cached framebuffers were built over. */
     private final Long2LongOpenHashMap chainPairGenerations = new Long2LongOpenHashMap();
     /** Per identity, the colour-tuple generation its cached multi-target framebuffers were built over. */
@@ -51,15 +60,112 @@ final class FramebufferCache {
      * compatibility is defined by the render pass the pipeline built, and one framebuffer serves every pass that is
      * compatible with it. Creating one needs no settle: nothing is destroyed, the map keeps the older passes' handles
      * alive beside the new one.
+     * <p>
+     * The render pass alone is not a safe key: it says which pass the framebuffer is compatible with, not which
+     * views it attaches. The map was emptied only by {@link #destroyAll()}, whose caller refuses to run when its
+     * settle does not land, so an entry built over the previous frame target could survive a replacement and answer
+     * the next window - which then began a pass against a framebuffer naming destroyed image views (issue #423,
+     * item 372 hole 1). The entry therefore records its attachments and is rebuilt when they no longer match, the
+     * same way the chain pair's entry is rebuilt when its generation moves.
      */
     long frame(long renderPass, long colorView, long depthView, int width, int height) {
-        long cached = this.frameFramebuffers.get(renderPass);
-        if (cached != 0L) {
-            return cached;
+        FrameEntry cached = this.frameFramebuffers.get(renderPass);
+        if (celtium$frameEntryReusable(cached, colorView, depthView, width, height)) {
+            noteFrameCache(CrashBreadcrumbs.FRAME_CACHE_HIT, cached);
+            return cached.handle;
         }
-        long handle = create(renderPass, colorView, depthView, width, height, null);
-        this.frameFramebuffers.put(renderPass, handle);
-        return handle;
+        if (cached != null) {
+            // Built over a target that is gone. This handle is named by nothing the GPU can still be reading - it is
+            // an unused cache entry, not a pass in an open recording - so it goes to the retire queue rather than
+            // being destroyed in place: the queue is the rule every handle of this kind follows (see the class note).
+            this.frameFramebuffers.remove(renderPass);
+            retire(List.of(cached.handle));
+        }
+        FrameEntry entry = new FrameEntry(create(renderPass, colorView, depthView, width, height, null),
+                colorView, depthView, width, height);
+        this.frameFramebuffers.put(renderPass, entry);
+        noteFrameCache(CrashBreadcrumbs.FRAME_CACHE_MISS, entry);
+        return entry.handle;
+    }
+
+    /**
+     * {@return whether the cached entry may answer for a pass that attaches these views at this extent}.
+     * <p>
+     * The rule the frame side was missing: the entry is stamped with what it was built over, and only an entry whose
+     * stamp matches answers. No entry (null) means "build one", a different stamp means "this handle names views that
+     * are gone or an extent that is wrong - retire it and build again".
+     */
+    static boolean celtium$frameEntryReusable(FrameEntry cached, long colorView, long depthView, int width,
+            int height) {
+        return cached != null && cached.builtOver(colorView, depthView, width, height);
+    }
+
+    /**
+     * One frame-target framebuffer and the attachments it was created over.
+     * <p>
+     * The views are the frame target's colour and depth views, so a replacement of the target makes every entry's
+     * views dead while the entry itself still looks usable by its render-pass key. Comparing them is what keeps the
+     * cache from answering with such a handle; the extent is compared with them because a framebuffer created at
+     * the old size is equally unusable for the new target's passes.
+     */
+    static final class FrameEntry {
+        private final long handle;
+        private final long colorView;
+        private final long depthView;
+        private final int width;
+        private final int height;
+
+        FrameEntry(long handle, long colorView, long depthView, int width, int height) {
+            this.handle = handle;
+            this.colorView = colorView;
+            this.depthView = depthView;
+            this.width = width;
+            this.height = height;
+        }
+
+        /** {@return whether this entry was built over exactly the attachments the caller is about to draw with}. */
+        boolean builtOver(long colorView, long depthView, int width, int height) {
+            return this.colorView == colorView && this.depthView == depthView
+                    && this.width == width && this.height == height;
+        }
+    }
+
+    /**
+     * Records the frame cache's decision for the crash ring: which handle answers, and the views it was built over.
+     * <p>
+     * The ring is dumped only when a device is lost, and an address-only fault report cannot say whether the dead
+     * object was the render pass, the framebuffer or one of its views (item 372 audit, section 5). These numbers
+     * plus the window's own note are what identify the object when the loss recurs.
+     */
+    private static void noteFrameCache(int code, FrameEntry entry) {
+        if (CrashBreadcrumbs.enabled()) {
+            CrashBreadcrumbs.note3(code, entry.handle, entry.colorView, entry.depthView);
+        }
+    }
+
+    /**
+     * Retires every frame-target framebuffer and forgets them all.
+     * <p>
+     * For a world teardown, where the render passes these entries are keyed by were just destroyed: a driver is free
+     * to reuse a freed handle value for the next world's pass, and the cache would then answer with a framebuffer
+     * built for a pass that no longer exists (item 372, hole 2). Retired rather than destroyed for the same reason as
+     * any other mid-session handle - an open recording can still name them - and every entry goes, including the UI
+     * pass's, so the rule need not know which keys are still live: a re-creation costs one command per pass on the
+     * next world's first window.
+     *
+     * @return how many handles were retired
+     */
+    int retireFrameFramebuffers() {
+        if (this.frameFramebuffers.isEmpty()) {
+            return 0;
+        }
+        List<Long> handles = new ArrayList<>(this.frameFramebuffers.size());
+        for (FrameEntry entry : this.frameFramebuffers.values()) {
+            handles.add(entry.handle);
+        }
+        this.frameFramebuffers.clear();
+        retire(handles);
+        return handles.size();
     }
 
     /**
@@ -206,9 +312,8 @@ final class FramebufferCache {
         this.registry.clearAllChainPairFramebuffers();
         this.chainPairGenerations.clear();
         this.chainPairTupleGenerations.clear();
-        it.unimi.dsi.fastutil.longs.LongIterator it = this.frameFramebuffers.values().iterator();
-        while (it.hasNext()) {
-            vkDestroyFramebuffer(device, it.nextLong(), null);
+        for (FrameEntry entry : this.frameFramebuffers.values()) {
+            vkDestroyFramebuffer(device, entry.handle, null);
         }
         this.frameFramebuffers.clear();
     }
