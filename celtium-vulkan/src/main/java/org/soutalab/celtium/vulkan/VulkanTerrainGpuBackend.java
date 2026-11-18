@@ -1899,6 +1899,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The framebuffer identity of the last bind the game made, i.e. what it is rendering into now. */
     long currentFramebufferIdentity;
     int chainAdoptionsRefused;
+    /**
+     * Adoptions refused because the pair's format class is not the post chain pass' 8-bit format
+     * (QUEUE 404, rule R10) - a subset of {@link #chainAdoptionsRefused}'s reasons, kept apart so a leg can
+     * tell "the format gate fired" from the size/existence refusals. Item 395 replaces this refusal with
+     * matching the chain's format to the pair's.
+     */
+    int chainAdoptionFormatRefusals;
     /** How many lightmap identity lines have been recorded; bounded. */
     private int lightmapIdentityLogs;
     /**

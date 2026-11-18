@@ -266,6 +266,8 @@ public final class TextureCopyService {
     /** Reads that resolved through the frame's last non-main draw target rather than the bound target (panorama). */
     private int readResolvedFromLastDrawnTarget;
     private int copyReadLogs;
+    /** Bounded lines for reads refused because the image is a non-default-format chain pair (QUEUE 404, R10). */
+    private int formatRefusedReadLogs;
     private int copyOrderLogs;
     private int copyCallerLogs;
 
@@ -1587,6 +1589,21 @@ public final class TextureCopyService {
     }
 
     public int[] readImageRectangle(long image, int x, int y, int width, int height) {
+        // This read expands 4 bytes per pixel (the buffer below is w*h*4 and the unpacking assumes
+        // R8G8B8A8). A chain pair allocated in a non-default format class (QUEUE 404) does not have 4-byte
+        // pixels: reading it this way would return half the bytes with wrong values, which is worse than
+        // refusing - the caller already handles null as "no readback" (rule R10). Converting instead of
+        // refusing is a separate item; the refusal keeps the two cases distinguishable.
+        GllessFrameTarget readTarget = this.host.offTargetTarget();
+        if (readTarget != null && readTarget.chainPairImageHasNonDefaultFormat(image)) {
+            if (this.formatRefusedReadLogs < 2) {
+                this.formatRefusedReadLogs++;
+                System.out.println("[Celtium] CELTIUM_COPY_READ_FORMAT_REFUSED image=0x"
+                        + Long.toHexString(image)
+                        + " (a chain pair in a non-RGBA8 format class; the 4-byte readback does not apply)");
+            }
+            return null;
+        }
         // The copy's own facts, so the white is decided independently of the hold leg's VUID: which image is read,
         // its extent, the frame, and whether it is the image the current pass attached.
         if (this.copyReadLogs < 6) {

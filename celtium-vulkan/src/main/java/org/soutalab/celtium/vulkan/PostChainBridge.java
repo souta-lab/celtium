@@ -203,6 +203,15 @@ b.frameBufferOpen = false;
             // let the preflight accept an input the frame cannot supply, which is the N04 stand-in failure.
             return false;
         }
+        if (glless.chainPairFormatClass(chainIdentity)
+                != RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM) {
+            // The post chain's pass is 8-bit (QUEUE 404, rule R10): adopting a non-default pair's view into
+            // it would attach an image to a pass of a different format. Not declaring the adoption lets the
+            // preflight refuse and the game's own GL chain draw, as with any undeclared input; item 395
+            // (the chain's own format selection) is where this refusal is replaced.
+            b.chainAdoptionFormatRefusals++;
+            return false;
+        }
         try {
             b.postChain.adoptTarget(identity, glless.chainPairColorImage(chainIdentity), glless.chainPairColorView(chainIdentity),
                     first.groupMainW, first.groupMainH);
@@ -360,6 +369,19 @@ b.frameBufferOpen = false;
             b.record("post chain adoption refused: the chain image is "
                     + (glless.chainPairExists(chainIdentity) ? "not " + width + "x" + height : "absent")
                     + " (asked for " + width + "x" + height + ", identity " + chainIdentity + ")");
+            return;
+        }
+        if (glless.chainPairFormatClass(chainIdentity)
+                != RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM) {
+            // Rule R10 (QUEUE 404): the chain writes the adopted image through its 8-bit pass, so a pair
+            // allocated in another format class cannot be adopted - the view's format and the pass' would
+            // disagree. Refusing leaves the game's own GL chain in charge (the N04 rule), and item 395
+            // replaces this refusal with matching the chain's format to the pair's.
+            b.chainAdoptionsRefused++;
+            b.chainAdoptionFormatRefusals++;
+            b.record("post chain adoption refused: the chain image's format class is "
+                    + glless.chainPairFormatClass(chainIdentity)
+                    + ", not the chain pass' RGBA8_UNORM (identity " + chainIdentity + ")");
             return;
         }
         // Before anything in this submission clears, attaches or samples the image: the previous frame's composite
