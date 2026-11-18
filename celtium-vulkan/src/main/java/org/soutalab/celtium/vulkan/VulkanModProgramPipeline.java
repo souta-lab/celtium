@@ -448,7 +448,7 @@ public final class VulkanModProgramPipeline {
                     .pMultisampleState(multisample).pDepthStencilState(depth).pColorBlendState(blend)
                     .pDynamicState(dynamic).layout(this.pipelineLayout).renderPass(renderPass)
                     .subpass(0);
-            check(VulkanContext.createGraphicsPipelines(this.context.device(, "mod-program"), create, handle),
+            check(VulkanContext.createGraphicsPipelines(this.context.device(), create, handle, "mod-program"),
                     "vkCreateGraphicsPipelines(mod program)");
             this.pipeline = handle.get(0);
         } finally {

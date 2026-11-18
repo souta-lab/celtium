@@ -815,7 +815,7 @@ final class VulkanModelInstances {
                         .pMultisampleState(multisample).pDepthStencilState(depth).pColorBlendState(blend)
                         .pDynamicState(dynamic).layout(this.pipelineLayout).renderPass(renderPass).subpass(0);
                 LongBuffer pipelineHandle = stack.mallocLong(1);
-                check(VulkanContext.createGraphicsPipelines(this.context.device(, "model-instances"), create, pipelineHandle),
+                check(VulkanContext.createGraphicsPipelines(this.context.device(), create, pipelineHandle, "model-instances"),
                         "model instance pipeline");
                 return pipelineHandle.get(0);
             } finally {
