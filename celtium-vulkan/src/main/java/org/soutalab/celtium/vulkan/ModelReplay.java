@@ -767,7 +767,8 @@ final class ModelReplay {
         }
         b.indirectRuns.celtium$flushIndirectRun();
         try (MemoryStack groupStack = MemoryStack.stackPush()) {
-            b.celtium$setGroupViewport(groupStack, group);
+            // The pass' own render area, which a routed terrain pass (item 332) takes from the pair it attaches.
+            b.celtium$setGroupViewport(groupStack, group, b.passAreaWidth, b.passAreaHeight);
         }
         if (b.passBiasC != 0.0F || b.passBiasS != 0.0F) {
             org.lwjgl.vulkan.VK10.vkCmdSetDepthBias(b.commandBuffer, 0.0F, 0.0F, 0.0F);

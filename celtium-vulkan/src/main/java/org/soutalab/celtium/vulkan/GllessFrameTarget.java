@@ -13,6 +13,7 @@ import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_TILING_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_TYPE_2D;
@@ -1447,6 +1448,16 @@ public final class GllessFrameTarget implements FrameImageTarget {
         private int width;
         private int height;
         private int layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        /**
+         * The frame serial this image was last cleared in, or -1 when it has not been cleared yet.
+         * <p>
+         * A GL shadow family is several framebuffers attaching one depth texture, so a clear of one identity's pair
+         * is a clear of every family member's depth. The identity-keyed once-per-frame clear rule cannot see that -
+         * it asks about the pair, and each family member has its own - so a second identity whose pair has just been
+         * created (not acquired yet) clears the family's shadow depth in the middle of the frame. This record is the
+         * depth-keyed half of that rule; see {@link #celtium$sharedDepthClearNeeded(long, long, long)}.
+         */
+        private long clearedFrameSerial = -1L;
     }
 
     /** Shared depth images by depth-texture identity; see {@link SharedDepth}. */
@@ -1557,6 +1568,63 @@ public final class GllessFrameTarget implements FrameImageTarget {
         if (entry != null) {
             entry.layout = layout;
         }
+    }
+
+    /** {@return the frame serial the shared depth image for {@code depthKey} was last cleared in}, -1 when never. */
+    public long sharedDepthClearedFrameSerial(long depthKey) {
+        SharedDepth entry = this.sharedDepths.get(depthKey);
+        return entry == null ? -1L : entry.clearedFrameSerial;
+    }
+
+    /** Records that the shared depth image for {@code depthKey} was cleared in {@code frameSerial}. */
+    public void noteSharedDepthCleared(long depthKey, long frameSerial) {
+        SharedDepth entry = this.sharedDepths.get(depthKey);
+        if (entry != null) {
+            entry.clearedFrameSerial = frameSerial;
+        }
+    }
+
+    /**
+     * {@return whether a pair that renders into the shared depth image for {@code depthKey} may clear its depth in
+     * {@code frameSerial}}.
+     * <p>
+     * Once per frame per depth image, not once per pair: the shadow family's framebuffers share one depth texture
+     * (GL's own semantics - the game's {@code glClear} on any of them clears that texture), and every member
+     * borrowing it here means the first member's clear is enough for the frame. Without this a member whose pair was
+     * created later in the same frame clears the depth the earlier member's pass already wrote, and the copy that
+     * follows reads a cleared image.
+     * <p>
+     * Package-private and static so the rule is pinned without a device. A {@code depthKey} of 0 means "no shared
+     * depth" and answers {@code false}: there is nothing to guard, and the caller only asks when the pair borrows one.
+     */
+    static boolean celtium$sharedDepthClearNeeded(long depthKey, long clearedFrameSerial, long frameSerial) {
+        return depthKey != 0L && clearedFrameSerial != frameSerial;
+    }
+
+    /**
+     * {@return the access mask an image last moved to {@code layout} may have pending}.
+     * <p>
+     * The one table both of a pair's own acquires use, so a barrier's {@code oldLayout} and {@code srcAccessMask}
+     * cannot disagree: every layout the pair's images are ever left in by this class, by the clear's transfer move, or
+     * by the sampling wrapper ({@code SHADER_READ_ONLY_OPTIMAL}) is answered here. A layout transition preserves
+     * content, so naming the wrong source access leaves the previous writes unavailable rather than discarding them -
+     * which is a synchronisation bug that only a validation layer or a wrong picture would show.
+     */
+    static int celtium$layoutSourceAccess(int layout) {
+        if (layout == VK_IMAGE_LAYOUT_UNDEFINED) {
+            return 0;
+        }
+        if (layout == DEPTH_TRANSFER_LAYOUT) {
+            return VK_ACCESS_TRANSFER_WRITE_BIT;
+        }
+        if (layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+            return VK_ACCESS_SHADER_READ_BIT;
+        }
+        if (layout == DEPTH_RENDER_LAYOUT) {
+            return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                    | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        }
+        return VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     }
 
     /** {@return how many shared depth images the store holds}. */
@@ -1725,6 +1793,45 @@ public final class GllessFrameTarget implements FrameImageTarget {
     public long chainPairColorTupleGeneration(long identity) {
         Pair pair = existingChainPair(identity);
         return pair == null ? 0L : pair.extraGeneration;
+    }
+
+    /**
+     * Records the acquire the identity's chain pair needs before a render pass attaches it for draws, outside any
+     * clear: the colour moves from wherever it is to {@code GENERAL} and the depth - borrowed from the shared store or
+     * the pair's own - moves to the attachment layout the frame pass declares.
+     * <p>
+     * Distinct from {@link #clearChainPair} and {@link Pair#deferClear}: those are the clear's own entry points and
+     * leave the depth in the clear's transfer layout, because a {@code vkCmdClearDepthStencilImage} needs it there. A
+     * pass that draws into the pair without clearing it first (item 332's routed terrain pass) has to arrive at the
+     * attachment layout directly, and must not discard what another pair sharing the same depth image already wrote -
+     * so the barrier's old layout is the store's record rather than {@code UNDEFINED}.
+     *
+     * @param depthKey the shared depth store key this pair borrows, 0 when its depth is private
+     */
+    public void recordChainPairAttachAcquire(long identity, long depthKey, VkCommandBuffer command) {
+        checkAlive();
+        Pair pair = existingChainPair(identity);
+        if (pair != null && pair.exists()) {
+            pair.recordAttachAcquire(command);
+        }
+    }
+
+    /**
+     * Records the hand-back a routed pass owes after its draws: the shared depth image is left in the attachment
+     * layout and that layout is recorded in the store, which is what a later depth copy reads as its {@code oldLayout}.
+     * No command is recorded - the pass' {@code finalLayout} is that same layout, so nothing has to move - but the
+     * store's record is what makes the copy's source layout readable, and a copy whose record says
+     * {@code UNDEFINED} discards the content it is supposed to serve.
+     */
+    public void recordChainPairAttachRelease(long identity, long depthKey) {
+        checkAlive();
+        Pair pair = existingChainPair(identity);
+        if (pair != null && pair.exists()) {
+            pair.noteColorLayout(COLOR_RENDER_LAYOUT);
+        }
+        if (depthKey != 0L) {
+            noteSharedDepthLayout(depthKey, DEPTH_RENDER_LAYOUT);
+        }
     }
 
     /** Records the acquire barriers the identity's tuple images need before a pass attaches them. */
@@ -3055,6 +3162,60 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 this.colorImageLayout = VK_IMAGE_LAYOUT_GENERAL;
                 depthLayout(DEPTH_TRANSFER_LAYOUT);
             }
+        }
+
+        /**
+         * The acquire for a pass that attaches this pair to draw, without clearing it first.
+         * <p>
+         * Same two images, same two moves as {@link #recordAcquire}, except for where the depth arrives: the
+         * attachment layout the frame pass declares rather than the clear's transfer layout. A borrowed depth starts
+         * from the store's record, so a member of a shadow family arriving second does not discard what the first
+         * member's pass wrote - a layout transition preserves content unless its old layout is {@code UNDEFINED}, which
+         * for a shared image is only the first pair's acquire.
+         * <p>
+         * Both barriers use {@code ALL_COMMANDS} on both sides. {@code TOP_OF_PIPE} supports no access flags at all,
+         * and a barrier that names the previous attachment or transfer writes under it is
+         * {@code VUID-vkCmdPipelineBarrier-pImageMemoryBarriers-02819} - measured in item 333's first shared-depth leg.
+         */
+        private void recordAttachAcquire(VkCommandBuffer command) {
+            checkAlive();
+            if (command == null || command.address() == 0L) {
+                throw new IllegalArgumentException(this.label + " pair acquire needs a command buffer");
+            }
+            if (!exists()) {
+                throw new IllegalStateException("ensure must run before the " + this.label + " pair is acquired");
+            }
+            int queueFamily = context.queueFamilyIndex();
+            try (MemoryStack stack = stackPush()) {
+                VkImageMemoryBarrier.Buffer barriers = VkImageMemoryBarrier.calloc(2, stack);
+                int colorFrom = colorLayout();
+                VkImageMemoryBarrier colorBarrier = barriers.get(0);
+                colorBarrier.sType$Default()
+                        .image(this.colorImage)
+                        .oldLayout(colorFrom).newLayout(COLOR_RENDER_LAYOUT)
+                        .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                        .srcAccessMask(GllessFrameTarget.celtium$layoutSourceAccess(colorFrom))
+                        .dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT
+                                | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+                colorBarrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+
+                int depthFrom = depthLayout();
+                VkImageMemoryBarrier depthBarrier = barriers.get(1);
+                depthBarrier.sType$Default()
+                        .image(this.depthImage)
+                        .oldLayout(depthFrom).newLayout(DEPTH_RENDER_LAYOUT)
+                        .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                        .srcAccessMask(GllessFrameTarget.celtium$layoutSourceAccess(depthFrom))
+                        .dstAccessMask(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                                | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+                depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+
+                vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barriers);
+            }
+            this.colorImageLayout = COLOR_RENDER_LAYOUT;
+            depthLayout(DEPTH_RENDER_LAYOUT);
+            this.acquired = true;
         }
 
         /**
