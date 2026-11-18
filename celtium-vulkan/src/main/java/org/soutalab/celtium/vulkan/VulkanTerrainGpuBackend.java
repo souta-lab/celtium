@@ -37,6 +37,7 @@ import org.lwjgl.vulkan.VkFenceCreateInfo;
 import org.lwjgl.vulkan.VkRenderPassBeginInfo;
 import org.lwjgl.vulkan.VkClearValue;
 import org.lwjgl.vulkan.VkSubmitInfo;
+import org.soutalab.celtium.vulkan.RenderTargetRegistry.TargetFormatClass;
 
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
@@ -170,6 +171,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (this.chainPairRenderPass == 0L) {
             this.chainPairRenderPass = VulkanTerrainPipeline.createChainPairRenderPass(this.context);
             record("chain-pair render pass created (depth cleared and discarded)");
+            System.out.println("[Celtium] CELTIUM_CHAIN_PASS class=RGBA8_UNORM vk=37 count=1 discard=true");
         }
         return this.chainPairRenderPass;
     }
@@ -189,11 +191,87 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             cached = VulkanTerrainPipeline.createChainPairRenderPass(this.context, colorAttachments);
             this.chainPairRenderPassesByCount[colorAttachments] = cached;
             record("chain-pair MRT render pass created (colors=" + colorAttachments + ")");
+            System.out.println("[Celtium] CELTIUM_CHAIN_PASS class=RGBA8_UNORM vk=37 count="
+                    + colorAttachments + " discard=true");
         }
         return cached;
     }
 
-    /** {@return whether a render pass is one of the chain-pair passes} (any colour count). */
+    /**
+     * {@return the variant key of a chain-pair render pass}: the (colour attachment count, Vk colour format)
+     * pair, packed so the two dimensions cannot collide. Pure and static so the key is pinned without a
+     * device (QUEUE 404, S4).
+     */
+    static long celtium$chainPassKey(int colorCount, int vkFormat) {
+        return ((long) colorCount << 32) | (vkFormat & 0xFFFF_FFFFL);
+    }
+
+    /**
+     * The one-colour chain-pair pass for a pair allocated in {@code formatClass} (QUEUE 404, S4). The default
+     * class is the ordinary pass above - same handle, same creation order - so the shipped path gains no pass
+     * and loses none (rule R6); a non-default class gets its own discard-depth pass in that format, cached in
+     * the variant map.
+     */
+    long chainPairRenderPass(TargetFormatClass formatClass) {
+        if (formatClass == null || formatClass == TargetFormatClass.RGBA8_UNORM) {
+            return chainPairRenderPass();
+        }
+        return chainPairVariantPass(1, formatClass);
+    }
+
+    /**
+     * The chain-pair render pass for {@code colorAttachments} colour targets in {@code formatClass}
+     * (QUEUE 404, S4): the variant keyed by (count, class). The default class delegates to the per-count
+     * cache above, unchanged (rule R6).
+     */
+    long chainPairRenderPass(int colorAttachments, TargetFormatClass formatClass) {
+        if (formatClass == null || formatClass == TargetFormatClass.RGBA8_UNORM) {
+            return chainPairRenderPass(colorAttachments);
+        }
+        return chainPairVariantPass(Math.max(1, colorAttachments), formatClass);
+    }
+
+    /** Creates (once) and returns the discard-depth variant chain pass for a non-default (count, class). */
+    private long chainPairVariantPass(int colorAttachments, TargetFormatClass formatClass) {
+        long key = celtium$chainPassKey(colorAttachments, formatClass.vkFormat());
+        long cached = this.chainPairVariantPasses.get(key);
+        if (cached == 0L) {
+            cached = VulkanTerrainPipeline.createChainPairRenderPass(this.context, colorAttachments,
+                    formatClass.vkFormat());
+            this.chainPairVariantPasses.put(key, cached);
+            this.chainPairVariantColorCounts.put(cached, colorAttachments);
+            record("chain-pair variant render pass created (class=" + formatClass
+                    + " colors=" + colorAttachments + ")");
+            System.out.println("[Celtium] CELTIUM_CHAIN_PASS class=" + formatClass
+                    + " vk=" + formatClass.vkFormat() + " count=" + colorAttachments
+                    + " discard=true");
+        }
+        return cached;
+    }
+
+    /**
+     * The frame-shaped pass (load/store, one colour) in {@code formatClass} - the pass immediate and
+     * mod-program pipelines are built against when the current target is a non-default-class pair
+     * (QUEUE 404, S4). A pipeline built against the 8-bit frame pass cannot be bound in a 16F chain pass:
+     * render-pass compatibility compares attachment formats. This pass is compatible with the class'
+     * one-colour chain pass (load/store operations are not compared), which is the same relation the frame
+     * pass has to the ordinary chain pass. Only called for non-default classes; the handles are kept per
+     * class in {@link #formatClassPipelinePasses}, apart from the discard-form variant map.
+     */
+    long formatClassPipelinePass(TargetFormatClass formatClass) {
+        int slot = formatClass.ordinal();
+        long cached = this.formatClassPipelinePasses[slot];
+        if (cached == 0L) {
+            cached = VulkanTerrainPipeline.createFrameRenderPass(this.context, formatClass.vkFormat());
+            this.formatClassPipelinePasses[slot] = cached;
+            record("format-class pipeline render pass created (class=" + formatClass + ")");
+            System.out.println("[Celtium] CELTIUM_CHAIN_PASS class=" + formatClass
+                    + " vk=" + formatClass.vkFormat() + " count=1 discard=false");
+        }
+        return cached;
+    }
+
+    /** {@return whether a render pass is one of the chain-pair passes} (any colour count, any format class). */
     boolean isChainPairRenderPass(long renderPass) {
         if (renderPass == 0L) {
             return false;
@@ -206,10 +284,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 return true;
             }
         }
-        return false;
+        return this.chainPairVariantColorCounts.containsKey(renderPass);
     }
 
-    /** {@return how many colour attachments a chain-pair render pass has}, or 0 when it is not one. */
+    /**
+     * {@return how many colour attachments a chain-pair render pass has}, or 0 when it is not one. The
+     * contract is "how many colours", whatever the pass' format class: the window's clear-value count reads
+     * it, and a variant pass must answer its count exactly like a default-class one.
+     */
     int chainPairRenderPassColorCount(long renderPass) {
         if (renderPass != 0L && renderPass == this.chainPairRenderPass) {
             return 1;
@@ -219,7 +301,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 return count;
             }
         }
-        return 0;
+        return this.chainPairVariantColorCounts.getOrDefault(renderPass, 0);
     }
 
     /**
@@ -234,6 +316,52 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     long chainPairRenderPass;
     /** The multi-target chain-pair render passes, indexed by colour attachment count (2..8 used). */
     final long[] chainPairRenderPassesByCount = new long[9];
+    /**
+     * The non-default-class chain-pair passes (QUEUE 404, S4), keyed by
+     * {@link #celtium$chainPassKey(int, int)}: only (count, class) combinations a pair actually resolved to
+     * are created, so the default class - which keeps the two fields above - creates none of these.
+     */
+    final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap chainPairVariantPasses =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    /** The reverse of {@link #chainPairVariantPasses}: a variant pass handle to its colour count. */
+    final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap chainPairVariantColorCounts =
+            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+    /** The frame-shaped pipeline passes for non-default classes, indexed by class ordinal (0 = unused). */
+    final long[] formatClassPipelinePasses = new long[TargetFormatClass.values().length];
+
+    /**
+     * {@return the pipeline cache key for a batch offered under {@code classOrdinal}}: the state key with the
+     * format class folded in (QUEUE 404, S4). Pure and static so the fold is pinned without a device.
+     * <p>
+     * The default class (ordinal 0) is the identity - the key's value does not change, so every cache that
+     * compares keys (the pipeline caches, {@code prepareCache}'s entry key) hits exactly as before (rule R6).
+     * A non-default class folds below {@link #LINE_KEY_BIT}: the bit is saved, the fold runs with it clear,
+     * and it is restored afterwards, so the fold can neither set the line flag on a triangle batch nor clear
+     * it on a line batch - the measured failure the bit exists to prevent.
+     */
+    static long celtium$pipelineKey(long stateKey, int classOrdinal) {
+        if (classOrdinal == 0) {
+            return stateKey;
+        }
+        long flag = stateKey & LINE_KEY_BIT;
+        long mixed = ((stateKey & ~LINE_KEY_BIT) * 31L + classOrdinal) & ~LINE_KEY_BIT;
+        return mixed | flag;
+    }
+
+    /**
+     * {@return the format class of the pair the current target's batches will be drawn into}: the frame's
+     * class ({@code RGBA8_UNORM}) for identity 0 and the main identity (rule R1), the current identity's
+     * chain-pair class otherwise. The prepare path reads this because a batch is offered while its target is
+     * current - the same fact the state key's window term already relies on.
+     */
+    TargetFormatClass celtium$currentPairFormatClass() {
+        long identity = this.targetRegistry.currentIdentity();
+        if (identity == 0L || identity == this.targetRegistry.mainIdentity()) {
+            return TargetFormatClass.RGBA8_UNORM;
+        }
+        GllessFrameTarget target = offTargetTarget();
+        return target == null ? TargetFormatClass.RGBA8_UNORM : target.chainPairFormatClass(identity);
+    }
     int targetWidth;
     int targetHeight;
     /**
@@ -15102,6 +15230,20 @@ this.frameBufferOpen = false;
                 org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(),
                         this.chainPairRenderPassesByCount[count], null);
                 this.chainPairRenderPassesByCount[count] = 0;
+            }
+        }
+        for (long variantPass : this.chainPairVariantPasses.values()) {
+            if (variantPass != 0) {
+                org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(), variantPass, null);
+            }
+        }
+        this.chainPairVariantPasses.clear();
+        this.chainPairVariantColorCounts.clear();
+        for (int slot = 0; slot < this.formatClassPipelinePasses.length; slot++) {
+            if (this.formatClassPipelinePasses[slot] != 0) {
+                org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(),
+                        this.formatClassPipelinePasses[slot], null);
+                this.formatClassPipelinePasses[slot] = 0;
             }
         }
         for (VulkanBuffer buffer : this.sharedIndexBuffers.values()) {
