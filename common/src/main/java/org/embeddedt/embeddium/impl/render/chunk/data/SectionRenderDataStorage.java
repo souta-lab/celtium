@@ -36,6 +36,13 @@ public class SectionRenderDataStorage {
      * <p>
      * Views are compared by identity and must come from a small fixed set ({@link #DEFAULT_VIEW}, {@link #SHADOW_VIEW}),
      * because every distinct view adds an entry to every region's batch cache.
+     * <p>
+     * Do not grow {@code static final BatchCacheParams} companion constants for the key combinations: a constant
+     * that reads a sentinel while it is being initialised is the declaration-order trap
+     * (docs/verification-traps.md). Keys are assembled at the call site instead (item 406 kept the landed sentinel
+     * shape - the two {@code Object} constants in this record - over item 397 plan §2.1's dedicated
+     * {@code TerrainView} class, because no static key constant exists to observe the order and the key is built
+     * once per pass, outside the region loop).
      */
     public record BatchCacheParams(boolean useBlockFaceCulling, Object view) {
         /** The player camera's view: the only perspective drawn when no shadow pass runs. */
@@ -191,64 +198,44 @@ public class SectionRenderDataStorage {
      * The answer taken 2026-11-18 (item 397, from the item 337 sync audit) is that the missing field is the view: a
      * shader pack's shadow pass draws the same passes over the same storage as the terrain pass, and the two can share
      * the culling flag, so the two render lists alternate under one key - which is the shape that displaces an entry
-     * every frame. The key now carries the view, and {@code views=} (the number of distinct keys currently held) is
-     * printed with it so a leg can tell two views keeping their own entries from one view being hit twice.
+     * every frame. The key now carries the view. Item 406 completed the census the 397 plan (§2.5) fixed:
+     * {@code inval} counts the invalidations that dropped at least one entry, {@code keyMismatch} the misses against
+     * a cache holding only other keys, and {@code views} the distinct views observed across the process, counted by
+     * identity - so a leg can tell two views keeping their own entries from one view being hit twice, and can split
+     * the misses into invalidation-driven and alternation-driven. The count this storage itself holds is printed as
+     * {@code entries=}; that is what {@code views=} held before item 406, and legs from before the rename read it as
+     * an entry count.
      * <p>
-     * That <em>explains a mechanism</em>, not this reading: nothing in the tree calls the shadow-pass setup yet, so the
-     * 24% above is not claimed to be accounted for. A leg that runs a shader pack's shadow pass is what would show the
-     * rate move, and the number to compare is this same counter.
+     * That <em>explains a mechanism</em>, not this reading: nothing in the tree calls the shadow-pass setup yet -
+     * {@code RenderSectionManager.isInShadowPass()} is a fixed {@code false} with no override in this tree, so
+     * {@code SHADOW_VIEW} never reaches a key here and {@code views} stays 1 (item 406) - so the 24% above is not
+     * claimed to be accounted for. A leg that runs a shader pack's shadow pass is what would show the rate move, and
+     * the number to compare is this same counter.
      * <p>
      * Printed by the storage itself, bounded, because the fixture cannot reach this class.
      */
-    private static final java.util.concurrent.atomic.AtomicLong celtium$batchCacheHits =
-            new java.util.concurrent.atomic.AtomicLong();
-    private static final java.util.concurrent.atomic.AtomicLong celtium$batchCacheMisses =
-            new java.util.concurrent.atomic.AtomicLong();
-    private static final java.util.concurrent.atomic.AtomicLong celtium$batchCacheStores =
-            new java.util.concurrent.atomic.AtomicLong();
-    private static final java.util.concurrent.atomic.AtomicLong celtium$batchCachePrints =
-            new java.util.concurrent.atomic.AtomicLong();
-    private static volatile boolean celtium$batchCachePrintsExhausted;
-
-    private static void celtium$noteBatchCache(boolean hit, int views) {
-        if (celtium$batchCachePrintsExhausted) {
-            return;
-        }
-        if (hit) {
-            celtium$batchCacheHits.incrementAndGet();
-        } else {
-            celtium$batchCacheMisses.incrementAndGet();
-        }
-        long total = celtium$batchCacheHits.get() + celtium$batchCacheMisses.get();
-        if (total > 0 && total % 2000 == 0) {
-            long printIndex = celtium$batchCachePrints.getAndIncrement();
-            if (printIndex < 12) {
-                System.out.println("[Celtium] CELTIUM_BATCH_CACHE lookups=" + total
-                        + " hits=" + celtium$batchCacheHits.get() + " misses=" + celtium$batchCacheMisses.get()
-                        + " stores=" + celtium$batchCacheStores.get() + " views=" + views);
-                if (printIndex == 11) {
-                    celtium$batchCachePrintsExhausted = true;
-                }
-            } else {
-                celtium$batchCachePrintsExhausted = true;
-            }
-        }
-    }
+    private static final BatchCacheCensus CENSUS = new BatchCacheCensus();
 
     public @Nullable CachedBatch getCachedMultiDrawBatch(BatchCacheParams params) {
         CachedBatch cached = this.batchCache.get(params);
-        celtium$noteBatchCache(cached != null, this.batchCache.size());
+        CENSUS.noteLookup(cached != null, this.batchCache.size());
+        String line = CENSUS.line();
+        if (line != null) {
+            System.out.println(line);
+        }
         return cached;
     }
 
     public void storeCachedMultiDrawBatch(BatchCacheParams params, CachedBatch batch) {
-        if (!celtium$batchCachePrintsExhausted) {
-            celtium$batchCacheStores.incrementAndGet();
+        String transition = CENSUS.noteStore(params.view());
+        if (transition != null) {
+            System.out.println(transition);
         }
         this.batchCache.store(params, batch);
     }
 
     public void invalidateCachedBatches() {
+        CENSUS.noteInvalidate(this.batchCache.size());
         this.batchCache.invalidate();
     }
 

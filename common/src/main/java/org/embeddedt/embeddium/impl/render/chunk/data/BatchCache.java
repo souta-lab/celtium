@@ -12,7 +12,9 @@ import org.jetbrains.annotations.Nullable;
  * key was a single culling flag, because a sorted pass never culls faces and at most one key was live per storage; the
  * view in the key turns the key space into the views times the flags, which a fixed pair of slots cannot hold. Views
  * come from a small fixed set ({@code DEFAULT_VIEW}, {@code SHADOW_VIEW}), so the map is bounded by that set and a miss
- * never has to evict anything: the entries are only ever dropped by {@link #invalidate()}.
+ * never has to evict anything: the entries are only ever dropped by {@link #invalidate()}. That fixed set is a bound,
+ * not a usage claim: only one of its members ever keys an entry in the current tree - {@code SHADOW_VIEW} does not
+ * reach a key until the shadow wiring lands (item 406) - so today every map holds a single view's entries.
  * <p>
  * Invalidation is the owner's, not the map's. Every mutation of the mesh data a cached batch refers to - the storage's
  * {@code setMeshes}, {@code removeMeshes}, {@code removeIndexBuffer}, {@code replaceIndexBuffer}, {@code onBufferResized}
@@ -51,7 +53,7 @@ final class BatchCache {
         this.batches.clear();
     }
 
-    /** {@return the number of distinct keys currently held} Printed as {@code views=} by the storage's census. */
+    /** {@return the number of distinct keys currently held} Printed as {@code entries=} by the storage's census. */
     int size() {
         return this.batches.size();
     }
