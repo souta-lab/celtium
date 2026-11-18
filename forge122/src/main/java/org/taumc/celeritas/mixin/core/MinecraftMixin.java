@@ -204,6 +204,13 @@ public class MinecraftMixin {
             if (GL_LESS_SYNC_SKIPPED) {
                 // Stands in for the game's limiter, at the same point in the loop: after the frame has been presented,
                 // so the sleep is behind the frame rather than in front of it.
+                // The idle cap's settings ride along every frame (item 388): default off, and the pacing class
+                // applies min(frame limit, cap) only while the window is unfocused or input has gone quiet.
+                org.embeddedt.embeddium.impl.gui.SodiumGameOptions.PerformanceSettings celtium$perf =
+                        CeleritasVintage.options().performance;
+                org.soutalab.celtium.vulkan.CeltiumFramePacing.setIdleCapConfig(
+                        celtium$perf.useIdleFrameCap, celtium$perf.unfocusedFrameLimit,
+                        celtium$perf.idleFrameLimit, celtium$perf.idleDelaySeconds);
                 org.soutalab.celtium.vulkan.CeltiumFramePacing.pace(
                         ((Minecraft) (Object) this).world != null ? fps : 0);
                 return;

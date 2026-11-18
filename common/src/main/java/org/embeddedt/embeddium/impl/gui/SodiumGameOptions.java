@@ -85,6 +85,16 @@ public class SodiumGameOptions implements OptionStorage<SodiumGameOptions> {
         public AsyncOcclusionMode asyncOcclusionMode = AsyncOcclusionMode.ONLY_SHADOW;
 
         public boolean useRasterOcclusionCulling = false;
+
+        // Idle/unfocused frame cap (item 388, absorption rank #12 - the FPS Reducer mechanism, in
+        // Celtium's own shape). Default OFF, deliberately: the headless fixture has neither focus nor
+        // input, so a default-on cap would silently cap every validation/KPI leg. When on, the cap is
+        // applied inside CeltiumFramePacing as min(player frame limit, cap); the values are the
+        // unfocused cap, the idle cap, and the input-free seconds before the idle cap applies.
+        public boolean useIdleFrameCap = false;
+        public int unfocusedFrameLimit = 30;
+        public int idleFrameLimit = 30;
+        public int idleDelaySeconds = 300;
     }
 
     public static class AdvancedSettings {

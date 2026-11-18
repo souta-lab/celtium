@@ -69,5 +69,9 @@ public final class StandardOptions {
         public static final OptionIdentifier<Void> ASYNC_GRAPH_SEARCH = OptionIdentifier.create(EMBEDDIUM_MOD_ID, "async_graph_search");
         public static final OptionIdentifier<Void> CHUNK_FADE_IN_DURATION = OptionIdentifier.create(EMBEDDIUM_MOD_ID, "chunk_fade_in_duration");
         public static final OptionIdentifier<Void> RASTER_OCCLUSION_CULLING = OptionIdentifier.create(EMBEDDIUM_MOD_ID, "raster_occlusion_culling");
+        public static final OptionIdentifier<Void> IDLE_FRAME_CAP = OptionIdentifier.create(EMBEDDIUM_MOD_ID, "idle_frame_cap");
+        public static final OptionIdentifier<Void> UNFOCUSED_FRAME_LIMIT = OptionIdentifier.create(EMBEDDIUM_MOD_ID, "unfocused_frame_limit");
+        public static final OptionIdentifier<Void> IDLE_FRAME_LIMIT = OptionIdentifier.create(EMBEDDIUM_MOD_ID, "idle_frame_limit");
+        public static final OptionIdentifier<Void> IDLE_DELAY_SECONDS = OptionIdentifier.create(EMBEDDIUM_MOD_ID, "idle_delay_seconds");
     }
 }

@@ -76,6 +76,8 @@ public final class ValidationClient {
     /** Reported once, so a leg names the scale it actually ran at. */
     private boolean celtium$guiScaleForcedReported;
     private boolean celtium$guiScaleRestoredReported;
+    /** Reported once: whether the idle frame cap (item 388) was enabled for this run, and at what values. */
+    private boolean celtium$idleCapReported;
     /** The tick at which the forced GUI scale is set back to the vanilla default, 0 disables the restore. */
     private static final int GUI_SCALE_RESTORE_AT_TICK =
             Integer.getInteger("celtium.validation.guiScaleRestoreAtTick", 0).intValue();
@@ -4073,6 +4075,15 @@ public final class ValidationClient {
                         celtium$guiScaleForcedReported = true;
                         report.addProperty("guiScaleForced", Integer.valueOf(FORCED_GUI_SCALE));
                     }
+                }
+                // The idle frame cap (item 388), for the same reason the scale is named: the fixture has
+                // neither focus nor input, so if a run ever had the cap on, every frame interval it
+                // measured was capped - the report says so instead of leaving a leg to infer it. The
+                // option defaults off, so an untouched run reports "disabled".
+                if (!celtium$idleCapReported) {
+                    celtium$idleCapReported = true;
+                    report.addProperty("idleCap",
+                            org.soutalab.celtium.vulkan.CeltiumFramePacing.idleCapStatus());
                 }
                 // The cloud setting, for the same reason the time is pinned: the user's complaint names clouds, and no
                 // run of this fixture could contain a cloud pixel because nothing set the game's own cloud option. The
