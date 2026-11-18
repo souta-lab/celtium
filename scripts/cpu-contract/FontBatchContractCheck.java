@@ -19,11 +19,10 @@
  *   NATIVES=$(find ~/.gradle/caches -name 'lwjgl-3.4.1-natives-linux.jar' | head -1)
  *   javac -nowarn -cp "$LWJGL" -d /tmp/fontbatch-check scripts/cpu-contract/FontBatchContractCheck.java \
  *       celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FontBatch.java
- *   java -cp "/tmp/fontbatch-check:$LWJGL:$NATIVES" FontBatchContractCheck            # retention on (default)
- *   java -Dceltium.font.retaining=false -cp "/tmp/fontbatch-check:$LWJGL:$NATIVES" FontBatchContractCheck
+ *   java -cp "/tmp/fontbatch-check:$LWJGL:$NATIVES" FontBatchContractCheck
  *
- * The second run is the diagnostic control: with retention off the refused run is dropped and counted, which is what
- * the backend does today.
+ * Retention is unconditional (item 396 removed the -Dceltium.font.retaining control arm: the refused run is
+ * always retained and offered again, so this check always runs the retained arm).
  */
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -254,8 +253,7 @@ public final class FontBatchContractCheck {
     }
 
     public static void main(String[] args) {
-        boolean retaining = !"false".equalsIgnoreCase(System.getProperty("celtium.font.retaining", "true"));
-        System.out.println("FontBatch contract check, retaining=" + retaining);
+        System.out.println("FontBatch contract check, retaining=true (unconditional since item 396)");
         ByteBuffer source = MemoryUtil.memAlloc(4 * STRIDE);
         for (int i = 0; i < 4 * STRIDE; i++) {
             source.put(i, (byte) (i + 1));
@@ -300,15 +298,12 @@ public final class FontBatchContractCheck {
         sink.refuse = true;
         batch.celtium$flushPendingFontBatch("intervening");
         check("the refusal was seen", sink.refusals, 1);
-        if (retaining) {
+        {
             check("the refused run is retained", batch.celtium$retainedRunCount(), 1);
             check("retention counted one run", field(batch.celtium$fontRetentionSummary(), "retainedRuns"), 1);
-        } else {
-            check("the control dropped the run", batch.celtium$retainedRunCount(), 0);
-            check("the control counted the drop", field(batch.celtium$fontRetentionSummary(), "retainedControlDrops"), 1);
         }
 
-        if (retaining) {
+        {
             // A run appended after the refusal and flushed while another target is current is refused too, so the
             // queue holds two runs for target 1 - both waiting for it, neither dropped.
             for (int i = 0; i < 4 * STRIDE; i++) {

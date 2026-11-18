@@ -2079,8 +2079,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /**
      * The chain-pair identity whose clear the routing deferred to the pass that follows it, or 0 when none is waiting.
      * <p>
-     * Only set with {@code -Dceltium.vulkan.pairClearInPass=true}; see
-     * {@code GllessFrameTarget.Pair.PAIR_CLEAR_IN_PASS}. The pass that consumes it is recorded unconditionally a few
+     * Set whenever the chain pair's clear is deferred into the pass that follows it (item 396: the
+     * in-pass clear is unconditional; see {@code GllessFrameTarget.Pair.PAIR_CLEAR_IN_PASS}). The pass that
+     * consumes it is recorded unconditionally a few
      * statements later in the same method, so the window between the two is a handful of field reads.
      */
     private long pendingChainPairClear;
@@ -13349,8 +13350,7 @@ this.frameBufferOpen = false;
                                     (latchedMask & 0x4000) != 0, true);
                             offTarget.applyGameClearToChainPair(chainIdentityValue, this.commandBuffer,
                                     latchedMask, latchedColour, latchedDepth);
-                        } else if (GllessFrameTarget.celtium$pairClearInPass()
-                                && offTarget.deferChainPairClear(chainIdentityValue, this.commandBuffer)) {
+                        } else if (offTarget.deferChainPairClear(chainIdentityValue, this.commandBuffer)) {
                             // The clear is recorded inside the pass below, as one vkCmdClearAttachments: the two
                             // barriers and the two vkCmdClear*Image calls it replaces are the window's largest named
                             // item (see GllessFrameTarget.Pair.PAIR_CLEAR_IN_PASS). The pass that follows always
@@ -14739,27 +14739,6 @@ this.frameBufferOpen = false;
     /** Lines {@link #PAIR_LAYOUT_LINES} has already printed, and the last line printed, so repeats are silent. */
     int pairLayoutLogs;
     String lastPairLayoutLine = "";
-    /**
-     * Whether the chain pair is kept in {@code GENERAL} and its descriptors declare it.
-     * <p>
-     * Always on (pinned; <b>on by default as of round 255</b>), because the
-     * pair's three {@code VUID-vkCmdDraw-None-09600} messages were measured gone with it and back without it, on one
-     * jar per state (legs r212-world-hud38 and hud42). The pair's pass
-     * declares the constant {@code GENERAL}, its published wrappers declared {@code SHADER_READ_ONLY_OPTIMAL} in every
-     * descriptor written from them, and the sampling-side transition moved the image to that layout as well - three
-     * declarations of one image that did not agree, and the layer reports the disagreement at submit time against the
-     * layout the command buffer ends in (Vulkan-ValidationLayers#409). Keeping the pair in the layout its pass declares
-     * makes all three {@code GENERAL}.
-     * <p>
-     * Measured three times: with the switch passed explicitly (leg r212-world-hud38, jar 81bdd5bbd85afac5) the count
-     * fell from 4 to 1; with the backend on and this class's twin constant off - the same property read with two
-     * defaults, which is a defect this commit fixes - it rose to 10 (leg r212-world-hud39); and with both constants
-     * consistent and this on by default it is 1 again (leg r212-world-hud42). The two runs with the same jar
-     * (r212-world-hud40 and hud41) both measure 4, so the count is deterministic and the 1-versus-10 difference was
-     * the inconsistency, not the validation layer. The picture is unchanged in every one of them
-     * (presentedMean=71.302086, fixture PASSED/PASSED).
-     */
-    static final boolean PAIR_STAY_GENERAL = true;
     /**
      * Whether the game's finished-frame composite is dropped when it samples the image it is drawn into.
      * <p>

@@ -1117,8 +1117,8 @@ public final class TextureCopyService {
      * <p>
      * The contract is GL's synchronous one: the reads see every draw the game has issued so far, which the deferred
      * submission model makes an explicit ordering point - pending groups flush, the frame's recordings submit, and the
-     * device is waited before the rectangle is read (the wait itself now does that submission under
-     * {@code batchFrameSubmits}). Only {@code GL_RGBA}/{@code GL_BGRA} + {@code GL_UNSIGNED_BYTE} into a client
+     * device is waited before the rectangle is read (the wait itself now does that submission, frame
+     * submits being batched unconditionally since item 396). Only {@code GL_RGBA}/{@code GL_BGRA} + {@code GL_UNSIGNED_BYTE} into a client
      * address are served; everything else is a refusal a mod sees as untouched buffer, the same answer a noop gives
      * but named in the log instead of silent.
      *
@@ -1171,7 +1171,7 @@ public final class TextureCopyService {
             return false;
         }
         // The draws the read must see, then the submission the wait must cover. Both were already the copy path's
-        // contract; under batchFrameSubmits the wait's own submitOpenFrameBuffer is what sends them to the queue.
+        // contract; with batched frame submits the wait's own submitOpenFrameBuffer is what sends them to the queue.
         if (this.host.hasPendingImmediateWork()) {
             this.host.flushPendingBeforeGlDraw();
         }

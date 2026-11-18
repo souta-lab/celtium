@@ -73,9 +73,9 @@ public class TransformerRouteVerifierCheck {
         "nglGetSamplerParameteriv", "nglGetSamplerParameterfv", "glGetMultisamplefv",
         "nglColor3fv", "nglColor4fv", "nglColor3bv", "nglColor4bv", "nglColor3ubv", "nglColor4ubv",
         "glColor4b", "glColor3b", "glAlphaFunc",
-        // The legacy immediate-mode surface, in every vertex spelling the transformer routes. These are only routed
-        // with -Dceltium.gless.legacyImmediate=true, so the script runs this check once per setting: a route that
-        // emits bad bytecode must fail in the configuration that installs it, not only in the one that does not.
+        // The legacy immediate-mode surface, in every vertex spelling the transformer routes. The routes are
+        // unconditional (item 396), so one run of this check covers them: a route that emits bad bytecode must
+        // fail here, in the only configuration that exists.
         // The integer and short spellings are listed with the float ones: they share one emitter, and the emitter's
         // arity is what decides the descriptor - a spelling left out here would be exactly the route whose bytecode
         // no run ever verifies.
@@ -89,7 +89,7 @@ public class TransformerRouteVerifierCheck {
         // that installs it, which is why the script runs this list twice.
         "glRectf", "glRectd", "glRecti", "glRects", "glMultiTexCoord2f",
         // The rest of the texcoord component counts and widths, and their buffer forms. Like the vertex spellings
-        // above, these are routed only with -Dceltium.gless.legacyImmediate=true; listing every one means the emitter's
+        // above, these routes are unconditional (item 396); listing every one means the emitter's
         // descriptor decoding is exercised for each spelling in the configuration that installs it, and the texcoord
         // phase below reads the emitted hint call back out of the transformed probe.
         "glTexCoord1f", "glTexCoord1d", "glTexCoord1i", "glTexCoord1s",
@@ -318,9 +318,9 @@ public class TransformerRouteVerifierCheck {
         // cannot see it. The probe is scanned for the legacy entry points only - noteUnrouted is also a hint call - so the
         // positive control (one route deleted) reports the spelling by name instead of still reading full coverage.
         int texcoordMissing = 0;
-        // The product default is on (2026-11-02), so the check runs unless a run explicitly turns it off; the script
-        // still also runs the -D...=true configuration, which then reports the same coverage.
-        if (Boolean.parseBoolean(System.getProperty("celtium.gless.legacyImmediate", "true"))) {
+        // The legacy immediate-mode routes are unconditional (item 396 removed the
+        // -Dceltium.gless.legacyImmediate switch), so this phase always runs.
+        if (true) {
             final Set<String> wantedCoords = new HashSet<>(Arrays.asList(TEXCOORD_NATIVES));
             final Map<String, Boolean> routedCoords = new HashMap<>();
             new ClassReader(rewritten).accept(new ClassVisitor(Opcodes.ASM9) {

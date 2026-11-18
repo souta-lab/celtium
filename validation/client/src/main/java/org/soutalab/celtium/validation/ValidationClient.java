@@ -6833,45 +6833,6 @@ public final class ValidationClient {
         }
     }
 
-    /**
-     * The within-run A/B for the lit ITEM family's fog: flip the renderer's switch between consecutive frames and dump
-     * each frame.
-     * <p>
-     * Why within a run. Two runs of the same world scene differ on most of the frame - the animated water/lava/fire
-     * textures, the clouds and the entity animation phases are wall-clock driven - so a cross-run pair cannot separate
-     * "the fog was applied" from "the animation was at another phase". Measured on legs {@code r43b}/{@code r43c}, which
-     * differed only in {@code -Dceltium.vulkan.litFog}: 82% of the frame changed, mean |A-B| 14.1. Two consecutive
-     * frames of one run share the scene, the camera and (within a tick) the animation phase, so the only difference is
-     * the flag.
-     * <p>
-     * {@code -Dceltium.validation.litFogFrames=60,61,62} names the world frames (the fixture's own count, not the JVM's
-     * frame counter, which starts on the loading screen): the first is dumped with the fog off, the second with it on,
-     * the third off again. The third is the control - it is two frames after the first with the same
-     * flag, so whatever it differs by is the animation noise the pair has to be read against. The stages are
-     * {@code litfog-a}, {@code litfog-b} and {@code litfog-c}.
-     */
-    private void celtium$litFogFrame(Minecraft mc) {
-        String spec = System.getProperty("celtium.validation.litFogFrames", "").trim();
-        if (spec.isEmpty() || mc.world == null) {
-            return;
-        }
-        // The fixture's world-frame count: the JVM frame counter starts on the loading screen, so a number read from
-        // it would name a frame before the world exists. This one is incremented by the first world frame.
-        int frame = this.worldFrames;
-        String[] parts = spec.split(",");
-        for (int i = 0; i < parts.length && i < 3; i++) {
-            if (parts[i].trim().isEmpty() || Integer.parseInt(parts[i].trim()) != frame) {
-                continue;
-            }
-            // The flag is set before the frame draws, which is where the push block is written.
-            boolean on = i == 1;
-            Object applied = celtium$backendCall("celtium$setLitFog", new Class<?>[] {boolean.class},
-                    Boolean.valueOf(on));
-            report.addProperty("litFogFrame" + (char) ('a' + i), frame + " on=" + on + " applied=" + applied);
-            celtium$requestPresentedDump(mc, "litfog-" + (char) ('a' + i));
-            return;
-        }
-    }
 
     /** Controlled fog for comparing lit model shading with the GL reference; never part of a calibrated scene. */
     private static final float MODEL_FOG_END = Float.parseFloat(System.getProperty("celtium.validation.testFogEnd", "-1"));
@@ -6912,7 +6873,6 @@ public final class ValidationClient {
             // is not the pose ... measured pitch=-14". A pose comparison across legs is only a comparison if both legs
             // render the same pose.
             celtium$applyClientPoseOverride(Minecraft.getMinecraft());
-            celtium$litFogFrame(Minecraft.getMinecraft());
             return;
         }
         if (celtium$frameEndSeen++ == 0) {
