@@ -48,7 +48,7 @@ jobs:
       - name: Install the shader compiler
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends glslang-tools
+          sudo apt-get install -y --no-install-recommends glslang-tools spirv-tools
           glslangValidator --version | head -1
 
       - name: Test celtium-vulkan
@@ -76,6 +76,9 @@ jobs:
           python3 scripts/verify_forge_jar.py "$jar" --output release-verify-forge-jar.json
           python3 scripts/verify_version_consistency.py --jar "$jar" --json | tee release-verify-version.json
           echo "jar=$jar" >> "$GITHUB_OUTPUT"
+
+      - name: Re-validate packaged SPIR-V from the jar
+        run: python3 scripts/verify_jar_spirv.py "${{ steps.verify.outputs.jar }}"
 
       - name: Package release assets and SHA-256
         run: |
