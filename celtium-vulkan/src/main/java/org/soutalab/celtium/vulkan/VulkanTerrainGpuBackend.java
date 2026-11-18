@@ -389,6 +389,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         GllessFrameTarget target = offTargetTarget();
         return target == null ? TargetFormatClass.RGBA8_UNORM : target.chainPairFormatClass(identity);
     }
+
+    /**
+     * Counts one framebuffer bit-count answer against the current target's pair class (QUEUE 405, S6):
+     * the stub answers {@code GL_RED_BITS} and its siblings with the delivered frame's 8 bits, and while
+     * a non-default pair is the current target that answer describes the frame, not the target being
+     * drawn into. The census counts the disagreement; the answer itself is the stub's behaviour and
+     * does not change here.
+     */
+    public void celtium$noteTargetFormatBitsAnswer(int pname, int answeredBits) {
+        TargetFormatCensus.noteBitsAnswer(pname, answeredBits, celtium$currentPairFormatClass());
+    }
     int targetWidth;
     int targetHeight;
     /**
@@ -6375,7 +6386,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // The pair's format class is resolved here, once (QUEUE 404, S3): this registration is the single
         // junction every raw framebuffer passes, and the window path follows the pair's class from here on
         // rather than re-reading the request (rule R5).
-        TargetFormatClass pairClass = celtium$resolvePairFormatClass(identity, color, colorCount);
+        TargetFormatCensus.Resolution formatResolution = celtium$resolvePairFormat(identity, color, colorCount);
+        TargetFormatClass pairClass = formatResolution.chosen();
         long[] previous = this.rawRegisteredTargets.get(framebuffer);
         boolean tupleChanged = previous == null || previous.length != 8 || previous[0] != color
                 || previous[1] != depth
@@ -6388,6 +6400,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (tupleChanged && target != null && color != 0 && colorExtent != null && colorExtent.length >= 2
                 && colorExtent[0] > 0 && colorExtent[1] > 0) {
             target.ensureChainPairColors(identity, colorCount, colorExtent[0], colorExtent[1], pairClass);
+            // The decision's census (QUEUE 405, S5), counted here where the resolution takes effect: a
+            // re-registration whose tuple did not change is not a second decision. The chosen class's
+            // device features are asked only when a line is due, and only for a non-default class - the
+            // resolution never checks the default, so its line says unknown rather than inventing one.
+            boolean[] formatFeatures = TargetFormatCensus.wantsLine()
+                    && pairClass != TargetFormatClass.RGBA8_UNORM
+                    ? VulkanColorFormat.attachmentFeatures(this.context.physicalDevice(), pairClass) : null;
+            String formatCensusLine = TargetFormatCensus.noteResolution(identity, formatResolution,
+                    formatFeatures);
+            if (formatCensusLine != null) {
+                System.out.println(formatCensusLine);
+            }
             boolean shared = false;
             if (depth != 0 && depthExtent != null && depthExtent.length >= 2 && depthExtent[0] > 0
                     && depthExtent[1] > 0) {
@@ -6422,22 +6446,36 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<long[]>();
 
     /**
-     * {@return the format class a raw framebuffer's chain pair is allocated in} (QUEUE 404, S3), resolved
-     * from the colour textures' recorded GL internal formats through the existing stub read
-     * ({@code textureLevelParameter(name, 0, 0x1003)} - no new read path). The rules, in order: the main
-     * identity and identity 0 are pinned to {@code RGBA8_UNORM} (R1, via
-     * {@link VulkanColorFormat#pinnedOrRequested}); the forced class, when set, wins over the request (R8);
-     * a multi-target tuple takes the widest class any slot asked for (R4); and a class this device cannot
-     * use as a sampled colour attachment falls back to {@code RGBA8_UNORM} (R5 of the readiness, the device
-     * check). An unrecorded texture answers 0 and an unmapped format answers no class - both resolve to the
-     * default, which is the behaviour every pair had before classes existed (R2).
+     * {@return the format-class resolution for a raw framebuffer's chain pair} (QUEUE 404, S3): the class
+     * the pair is allocated in, resolved from the colour textures' recorded GL internal formats through
+     * the existing stub read ({@code textureLevelParameter(name, 0, 0x1003)} - no new read path), plus
+     * the request facts the format census (QUEUE 405, S5) classifies the decision by. The census facts
+     * are read off the same pass that resolves the class - they change nothing about it.
+     * <p>
+     * The rules, in order: the main identity and identity 0 are pinned to {@code RGBA8_UNORM} (R1, via
+     * {@link VulkanColorFormat#pinnedOrRequested}); the forced class, when set, wins over the request (R8)
+     * and is resolved without reading one, which its census record says ({@code slot0Gl} -1); a multi-target
+     * tuple takes the widest class any slot asked for (R4); and a class this device cannot use as a sampled
+     * colour attachment falls back to {@code RGBA8_UNORM} (R5 of the readiness, the device check). An
+     * unrecorded texture answers 0 and an unmapped format answers no class - both resolve to the default,
+     * which is the behaviour every pair had before classes existed (R2). The resolution carries the widest
+     * class the slots <em>asked</em> for beside the class it will serve, because the pin makes the two
+     * differ exactly where the census has something to count.
      */
-    private TargetFormatClass celtium$resolvePairFormatClass(long identity, int color, int colorCount) {
+    private TargetFormatCensus.Resolution celtium$resolvePairFormat(long identity, int color, int colorCount) {
         boolean pinned = identity == 0L || identity == this.targetRegistry.mainIdentity();
         if (!pinned && FORCED_TARGET_FORMAT_CLASS != null) {
-            return celtium$deviceCheckedFormatClass(FORCED_TARGET_FORMAT_CLASS);
+            TargetFormatClass chosen = celtium$deviceCheckedFormatClass(FORCED_TARGET_FORMAT_CLASS);
+            return new TargetFormatCensus.Resolution(chosen, color, -1, FORCED_TARGET_FORMAT_CLASS,
+                    false, false, false, false, true, chosen != FORCED_TARGET_FORMAT_CLASS);
         }
         TargetFormatClass widest = TargetFormatClass.RGBA8_UNORM;
+        TargetFormatClass widestRequested = TargetFormatClass.RGBA8_UNORM;
+        int slot0Gl = 0;
+        boolean slotsDiffer = false;
+        boolean anyUnmapped = false;
+        boolean anyWidenable = false;
+        TargetFormatClass firstMapped = null;
         for (int slot = 0; slot < colorCount; slot++) {
             int name = slot == 0 ? color : this.publishedTextures.colorTextureAt(identity, slot);
             if (name == 0) {
@@ -6445,10 +6483,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             int glInternal = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
                     .textureLevelParameter(name, 0, 0x1003);
+            if (slot == 0) {
+                slot0Gl = glInternal;
+            }
+            TargetFormatClass mapped = TargetFormatClass.forGlInternalFormat(glInternal);
+            if (mapped != null) {
+                if (firstMapped == null) {
+                    firstMapped = mapped;
+                } else if (firstMapped != mapped) {
+                    slotsDiffer = true;
+                }
+                widestRequested = VulkanColorFormat.widest(widestRequested, mapped);
+            } else if (glInternal != 0 && !TargetFormatCensus.isDepthInternalFormat(glInternal)) {
+                if (TargetFormatCensus.isWidenableToRgba8(glInternal)) {
+                    anyWidenable = true;
+                } else {
+                    anyUnmapped = true;
+                }
+            }
             widest = VulkanColorFormat.widest(widest,
                     VulkanColorFormat.pinnedOrRequested(pinned, glInternal));
         }
-        return celtium$deviceCheckedFormatClass(widest);
+        TargetFormatClass chosen = celtium$deviceCheckedFormatClass(widest);
+        return new TargetFormatCensus.Resolution(chosen, color, slot0Gl, widestRequested, slotsDiffer,
+                anyUnmapped, anyWidenable, pinned, false, chosen != widest);
     }
 
     /** {@return {@code wanted} when this device can use it as a pair colour image, else the default class}. */

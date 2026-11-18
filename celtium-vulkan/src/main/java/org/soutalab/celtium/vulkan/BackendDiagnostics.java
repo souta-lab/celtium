@@ -651,6 +651,11 @@ final class BackendDiagnostics {
                 + " driverInfo=[" + VulkanContext.driverSummary() + "]"
                 + " waitOutcomes=[" + VulkanContext.waitOutcomeSummary() + "]"
                 + " identityPairs=[" + org.soutalab.celtium.vulkan.GllessFrameTarget.identityPairCensus() + "]"
+                // QUEUE 405 (S5/S6): what the chain pairs were asked for against what they were allocated
+                // in - exact/widened/fallback with the fallback reasons kept apart, the stub-side request
+                // distribution, and the bit-count answers that no longer describe the current target.
+                // Counted at the junction and in the stub; printed here so a leg answers with numbers.
+                + " targetFormats=[" + TargetFormatCensus.summary() + "]"
                 + " presentMode=[" + VulkanSwapchain.presentModeSummary()
                 + " rebuilds=" + b.submissionStatistics.presentModeRebuilds() + "]"
                 + " quarantined=[buffers=" + VulkanContext.quarantinedResourceCounts()[0]
