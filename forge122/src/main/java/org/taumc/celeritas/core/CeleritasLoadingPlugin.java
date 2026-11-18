@@ -74,6 +74,18 @@ public class CeleritasLoadingPlugin implements IFMLLoadingPlugin, IEarlyMixinLoa
 
     @Override
     public List<String> getMixinConfigs() {
+        // The patch-failure recorder (item 356-C) is registered before any config is named, so a mixin that
+        // fails while the first config is prepared is still recorded into the patch ledger for the next
+        // launch. Registration must never cost the launch its configs: if it fails, the configs are still
+        // returned and patch failures simply go unrecorded, exactly as before the handler existed.
+        try {
+            org.spongepowered.asm.mixin.Mixins.registerErrorHandlerClass(
+                    CeltiumMixinErrorHandler.class.getName());
+        } catch (Throwable error) {
+            org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin.LOGGER.warn(
+                    "Failed to register the celtium mixin error handler; patch failures will not be recorded: {}",
+                    error.toString());
+        }
         return Collections.singletonList("mixins.celeritas.json");
     }
 }
