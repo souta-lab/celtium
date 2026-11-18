@@ -29,8 +29,10 @@ public final class FrameSubmissionScheduler {
     /**
      * Command slots the frame cycles through.
      * <p>
-     * Four, as measured by OPT-08: the frame is only ready to be recorded again once the slot it used two frames ago
-     * has completed, so fewer slots turn into waits and more slots hold more fences and command buffers for no gain.
+     * Four, as measured by OPT-08: a slot comes round again four frames after the submission that last used it, and
+     * recording into it waits only when that submission has not completed, so fewer slots turn into waits and more
+     * slots hold more fences and command buffers for no gain. The frames-in-flight policy this number is one half of
+     * is stated once in docs/development.md (フレームの先行深度).
      */
     public static final int FRAME_SLOTS = 4;
 

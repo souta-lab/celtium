@@ -310,6 +310,39 @@ provenance/sha不一致、`warmSampleCount<50`、`worldTicksAtEnd<600`、両arm�
 - whole-runのtick合計にはstartupが含まれる。warm costやどのmod由来かは別に判別する。
 - 画像受入を黙って無効化して性能を成功扱いしない。測定条件の異なるrunは明示的に別用途とする。
 
+### フレームの先行深度（frames in flight）
+
+celtium は1つの queue に提出し、フレームの先行深度を**2つの独立な上限**で決める。
+
+1. **コマンドスロット = 4**（`FrameSubmissionScheduler.FRAME_SLOTS`）。記録は常に次のスロットを取り、
+   **そのスロット自身の前回提出が未完了の時だけ** `vkWaitForFences` で待つ。他のスロットは実行中でよい。
+   資源の解放は「スロットのリセット」で行い、デバイス全体の待ちは通常フレーム経路に置かない。
+   なおフレーム提出の fence は**スロット専用ではなく batch 共有 fence** で、スロット待ちはその batch に
+   同居した非フレーム提出（upload バッチ等）の完了まで含む。深度を語るときは「4フレーム分のスロット」ではなく
+   「4本のスロットと、そのスロットが指す batch の完了」と言うのが正確。
+2. **swapchain 画像 = max(ドライバの最小, 3)**。`vkAcquireNextImageKHR` は空き画像が無い間ブロックするので、
+   ここが実効的な流速制御になる。提示モードが MAILBOX/IMMEDIATE の時は `vkQueuePresentKHR` は待たず、
+   FIFO の時は表示レートで待つ。
+
+**フレーム画像（色・深度）は複製しない。** per-slot に複製するのはコマンドバッファ、fence、uniform の
+スロット別オフセットとディスクリプタセット、frame arena、model segment である。
+フレーム N と N+1 が同じ画像を書く順序は、**単一 queue の提出順**だけで担保されている。
+したがって (a) 複数 queue に提出を分けた時点で、この前提は per-slot の画像複製を要求する。
+(b) フレーム内セマフォ（`celtium.vulkan.frameSemaphores`）は既定 off であり、有効化は順序の担保を
+セマフォ側へ移す操作であって、深度を増やす操作ではない。
+
+**async presenter**（`celtium.vulkan.asyncPresent`、Windows は `HardwareProfileGates` が既定 off）は
+バッチ提出・present blit・`vkQueuePresentKHR` をワーカーへ移し、ゲームスレッドは次の queue アクセスで join する。
+買うのは「present のドライバ時間と次フレームの記録の重なり」であり、深度は増えない。
+
+**深度は計測で決める。** 律速しているかを言う計器は `CELTIUM_FRAME_BUDGET` の `slot` 列、
+`CELTIUM_VERIFY` の `frameSlotReuseWaits` / `slotWaitConfirms`、`CELTIUM_BOUNDARY_SPLIT` の
+`slotWaitMillisPerFrame`。**「slot が 0」は、同じビルドで深度を落とした対照脚が待ちを出す時にだけ
+「待っていない」の証拠になる**（正の対照のない 0 は計器の不作動と区別できない）。
+
+**入力遅延は測っていない。** 遅延を測る計器は存在しない（`CELTIUM_FRAME_BUDGET` は CPU/GPU 分割のみ）。
+深度の議論から入力遅延の主張はしない。必要になったら遅延計器を別項目として切る。
+
 ## 7. 終了と保全
 
 自分のjobは結果を回収し、不要なら管理ツールで停止して終了を確認する。全javaをkillせず、他人のlockを消さない。
