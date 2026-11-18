@@ -5686,6 +5686,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return reason;
     }
 
+    /**
+     * Whether the stall latch has closed this backend (item 416): once it has, no draw can be recorded, and
+     * the native draw entry in the Forge layer reads this to skip a draw instead of failing the frame over a
+     * refusal the latch already explains. The latch never clears, by design - the resources it protects may
+     * still be owned by a command buffer that never completed.
+     */
+    public boolean celtium$isGpuStalled() {
+        return this.gpuStalled;
+    }
+
     @Override
     public String lastRefusal() {
         if (this.immediateLastRefusal != null && this.immediateLastRefusal.startsWith("unrecorded")) {
@@ -21377,6 +21387,16 @@ this.frameBufferOpen = false;
      * Used for resource release/replacement, including a pair framebuffer's render-pass change.
      * Cache hits and initial pair-framebuffer creation do not call this wait.
      */
+    /**
+     * Whether a {@code vkDeviceWaitIdle} result is the device-loss report {@code settleGpu} absorbs as a
+     * false return instead of an exception (item 416). Only {@code VK_ERROR_DEVICE_LOST} qualifies: it is the
+     * one result that says the device is gone for good, so no caller's release may proceed and no reload is
+     * served by dying on the detection.
+     */
+    static boolean celtium$settleReportsDeviceLoss(int result) {
+        return result == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST;
+    }
+
     private boolean settleGpu(String reason) {
         celtium$watchDeviceWait(reason);
         if (this.gpuStalled) {
@@ -21398,6 +21418,19 @@ this.frameBufferOpen = false;
         }
         if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
             this.noteStalled();
+            if (celtium$settleReportsDeviceLoss(result)) {
+                // The device is already gone (issue #425, item 416): the wait did not lose it, it detected the
+                // loss. Every caller of this wait already treats a false return as "release nothing" - delete()
+                // stops, eviction keeps its regions, a recreation keeps the old target, the loading screen keeps
+                // its resources - which is the only safe answer when nothing the GPU holds can be waited on.
+                // Throwing instead turned a renderer reload whose teardown merely detected the loss into the
+                // crash that reported it (the reporter's first report, on a scheduled task thread). Other
+                // failures keep the throw: they are not a known-gone device, and absorbing them silently would
+                // let a caller free resources under a GPU whose state nobody has established.
+                record("settleGpu(" + reason + "): vkDeviceWaitIdle returned VK_ERROR_DEVICE_LOST; the device is"
+                        + " already lost, so nothing is released and the teardown stops here");
+                return false;
+            }
             throw new IllegalStateException("settleGpu(" + reason + "): vkDeviceWaitIdle returned " + result);
         }
         long millis = (System.nanoTime() - start) / 1_000_000L;
