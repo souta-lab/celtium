@@ -2,14 +2,12 @@ package org.soutalab.celtium.vulkan;
 
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
-import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkSubmitInfo;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 import static org.lwjgl.vulkan.VK10.vkQueueSubmit;
 import static org.lwjgl.vulkan.VK10.vkQueueWaitIdle;
 import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
-import static org.lwjgl.vulkan.VK10.vkResetFences;
 import static org.lwjgl.vulkan.VK10.vkEndCommandBuffer;
 
 /**
@@ -29,41 +27,16 @@ public final class FrameCoordinator {
     private static int FAIL_SUBMITS_REMAINING = Integer.getInteger("celtium.vulkan.failSubmits", 0).intValue();
 
     /**
-     * Whether a frame's command buffer is ended and submitted once, at the frame boundary, instead of per segment.
+     * A frame's command buffer is always ended and submitted once, at the frame boundary, instead of per segment:
+     * every device batches, unconditionally.
      * <p>
-     * On a discrete card that is the cheaper arrangement and it has been the default since it was measured. On an
-     * integrated Intel part it is not: the same build, the same scene and the same three alternating pairs read
-     * 3.69 / 3.60 / 3.66 ms with the batched path off and 31.4 / 9.6 / 10.0 ms with it on - a median ratio of 0.374x, and
-     * a spread on the batched side that says the frame is waiting for something rather than working. On the discrete
-     * AMD card the same flag costs 10% (1.102x), so this is a per-device decision, not a better default.
-     * <p>
-     * The property still wins when it is set, so a leg can choose either path on either device.
+     * Measured history: an Intel exception was measured early - the same build, the same scene and the same three
+     * alternating pairs read 3.69 / 3.60 / 3.66 ms with the batched path off and 31.4 / 9.6 / 10.0 ms with it on -
+     * but that predated the frame-slot and upload-ordering fixes. Re-measured 2026-10-25 on UHD 630
+     * (jar 276f85c17c60d579, KPI flags, alternated): batched 2.23 / 2.23 ms p50, unbatched 3.56 / 4.04 ms, with 10k
+     * against 53-64k queue submits. Intel's driver pays per vkQueueSubmit, and unbatched frames were what made
+     * Intel 1.68x slower than Celeritas. On the discrete AMD card the per-segment path costs 10% (1.102x).
      */
-    private static final Boolean BATCH_FRAME_SUBMITS_OVERRIDE = batchFrameSubmitsOverride();
-
-    private static Boolean batchFrameSubmitsOverride() {
-        String value = System.getProperty("celtium.vulkan.batchFrameSubmits",
-                System.getProperty("celtium.vulkan.batchedSubmits"));
-        if (value == null) {
-            return null;
-        }
-        return Boolean.valueOf(!"false".equalsIgnoreCase(value));
-    }
-
-    /**
-     * {@return whether this device's frames are submitted in one batch}.
-     * <p>
-     * The property, when set, decides. Otherwise every device batches. The Intel exception above was measured before the
-     * frame-slot and upload-ordering fixes; re-measured 2026-10-25 on UHD 630 (jar 276f85c17c60d579, KPI flags,
-     * alternated): batched 2.23 / 2.23 ms p50, unbatched 3.56 / 4.04 ms, with 10k against 53-64k queue submits. Intel's
-     * driver pays per vkQueueSubmit, and unbatched frames were what made Intel 1.68x slower than Celeritas.
-     */
-    private boolean batchFrameSubmits() {
-        if (BATCH_FRAME_SUBMITS_OVERRIDE != null) {
-            return BATCH_FRAME_SUBMITS_OVERRIDE.booleanValue();
-        }
-        return true;
-    }
 
     /** What the coordinator needs from the renderer that owns the frame. */
     public interface Host {
@@ -215,7 +188,7 @@ public final class FrameCoordinator {
             // Unified frame buffer: the segment's commands stay recorded; end, submission and bookkeeping all happen
             // once at the frame boundary via celtium$finishFrameBuffer. A frame that switched to a semaphore-carrying
             // target mid-recording falls through instead and takes the direct path below.
-            if (!frameSemaphores && this.batchFrameSubmits()) {
+            if (!frameSemaphores) {
                 return Submission.RECORDED;
             }
         }
@@ -239,36 +212,6 @@ public final class FrameCoordinator {
                 stageArray = new int[] {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
                 signalArray = new long[] {this.host.frameTarget().doneSemaphore()};
             }
-            VkSubmitInfo submit = null;
-            if (!this.batchFrameSubmits()) {
-            this.host.check(vkResetFences(this.host.context().device(), this.host.fence()), "vkResetFences");
-            submit = VkSubmitInfo.calloc(stack).sType$Default();
-            LongBuffer waitSemaphores = null;
-            IntBuffer waitStages = null;
-            LongBuffer signalSemaphores = null;
-            if (frameSemaphores) {
-                waitSemaphores = stack.mallocLong(1);
-                waitSemaphores.put(0, this.host.frameTarget().waitSemaphore());
-                waitStages = stack.mallocInt(1);
-                waitStages.put(0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
-            }
-            if (frameSemaphores) {
-                signalSemaphores = stack.mallocLong(1);
-                signalSemaphores.put(0, this.host.frameTarget().doneSemaphore());
-            }
-            org.lwjgl.PointerBuffer commandBuffers = stack.mallocPointer(1);
-            commandBuffers.put(0, this.host.commandBuffer().address());
-            // LWJGL derives the semaphore counts from the buffers, so only the pointers are set here.
-            // waitSemaphoreCount must be set explicitly: LWJGL's pWaitSemaphores(LongBuffer) writes only the
-            // pointer, unlike pSignalSemaphores which also sets its count. Leaving it to calloc's zero meant this
-            // submission waited on nothing at all - which is what the validation layer was reporting all along.
-            if (frameSemaphores) {
-                submit.waitSemaphoreCount(waitSemaphores.remaining());
-                submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages)
-                        .pSignalSemaphores(signalSemaphores);
-            }
-            submit.pCommandBuffers(commandBuffers);
-            }
             if (this.host.immediateWindowBusy() && !this.host.recordedImmediateGroups().isEmpty() && this.host.failImmediateSubmits() > 0) {
                 this.host.noteImmediateSubmitFailure();
                 throw new IllegalStateException("injected immediate submit failure before queue ownership");
@@ -288,15 +231,10 @@ public final class FrameCoordinator {
                 this.host.check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
             }
             long submitStartedNanos = System.nanoTime();
-            if (this.batchFrameSubmits()) {
-                // One vkQueueSubmit arms ONE fence, so ~9 recordings a frame were ~9 driver calls. The batch keeps
-                // every VkSubmitInfo and submits them together at the frame's flush points: same queue order, one
-                // call, and the shared batch fence stands in for the slot's own fence via the reclaim callback.
-                this.host.celtium$submitSlotDeferred(this.host.commandBuffer(), waitArray, stageArray, signalArray);
-            } else {
-                        VulkanContext.queueSubmitCalls++;
-                        this.host.check(vkQueueSubmit(this.host.context().queue(), submit, this.host.fence()), "vkQueueSubmit");
-            }
+            // One vkQueueSubmit arms ONE fence, so ~9 recordings a frame were ~9 driver calls. The batch keeps
+            // every VkSubmitInfo and submits them together at the frame's flush points: same queue order, one
+            // call, and the shared batch fence stands in for the slot's own fence via the reclaim callback.
+            this.host.celtium$submitSlotDeferred(this.host.commandBuffer(), waitArray, stageArray, signalArray);
             submitQueueNanos += System.nanoTime() - submitStartedNanos;
             submitQueueCalls++;
 
@@ -313,7 +251,7 @@ public final class FrameCoordinator {
      * <p>
      * Called from {@code celtium$flushPendingAtFrameBoundary} after the last window's records land in the buffer,
      * and again defensively at the top of the present path for callers that skip the boundary. No-op when no
-     * unified buffer is open ({@code batchFrameSubmits} off, a fallback direct submit already ran, or a semaphore
+     * unified buffer is open (a fallback direct submit already ran, or a semaphore
      * target mid-frame).
      */
     void celtium$finishFrameBuffer(boolean withFrameSemaphores) {

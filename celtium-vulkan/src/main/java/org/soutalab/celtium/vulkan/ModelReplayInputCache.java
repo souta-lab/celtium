@@ -58,15 +58,13 @@ final class ModelReplayInputCache {
     }
 
     /**
-     * {@code -Dceltium.vulkan.replayInputCache=false}: the control arm for the next measurement.
-     * <p>
-     * A cache that is on by default must be measurable against the same jar in the same scene, or its saving is a
-     * cross-leg comparison. With this off, both {@code reuse*} answer false for every replay - the counters then read
-     * all misses - and the path does exactly the work it did before the cache existed. The two arms differ in nothing
-     * else, so the difference in {@code modelEnqueueMicrosPerCall} is the cache's own.
+     * The cache is always on, pinned: it was the control arm for measurement (with it off, both {@code reuse*}
+     * answered false for every replay - the counters then read all misses - and the path did exactly the work it
+     * did before the cache existed, so the difference in {@code modelEnqueueMicrosPerCall} was the cache's own,
+     * measurable against the same jar in the same scene rather than as a cross-leg comparison), and the on side
+     * was adopted.
      */
-    static final boolean ENABLED =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.replayInputCache", "true"));
+    static final boolean ENABLED = true;
 
     private final float[] lightRotation = new float[ROTATION_FLOATS];
     private long lightGeneration = Long.MIN_VALUE;

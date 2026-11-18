@@ -385,11 +385,10 @@ public final class VulkanContext {
     private final java.util.ArrayList<DeferredSubmit> pendingBatchedSubmits = new java.util.ArrayList<DeferredSubmit>();
     private final java.util.ArrayList<DeferredSubmit> flushBatchScratch = new java.util.ArrayList<DeferredSubmit>();
     private SharedBatch pendingBatch;
-    /** Batched deferred submits are the default; {@code -Dceltium.vulkan.batchedSubmits=false} restores per-call submits. */
+    /** Batched deferred submits are unconditional: every deferred submit joins the batch. */
     /** Lab switch: {@code -Dceltium.vulkan.pollUploadsAlways=true} polls in flushUploads even with nothing to copy. */
     static final boolean POLL_UPLOADS_ALWAYS = Boolean.getBoolean("celtium.vulkan.pollUploadsAlways");
-    private static final boolean BATCHED_SUBMITS =
-            !"false".equals(System.getProperty("celtium.vulkan.batchedSubmits", "true"));
+    private static final boolean BATCHED_SUBMITS = true;
     private int batchedFlushes;
     private int batchedSubmissions;
 
@@ -1132,56 +1131,20 @@ public final class VulkanContext {
         }
         requireUsable();
         check(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer (deferred)");
-        if (BATCHED_SUBMITS) {
-            DeferredSubmit entry = takeDeferredEntry();
-            entry.commandBuffer = commandBuffer;
-            entry.uploadSlotMask = uploadSlotMask;
-            entry.batch = celtium$currentBatch();
-            entry.batch.pending++;
-            entry.fence = entry.batch.fence;
-            this.pendingBatchedSubmits.add(entry);
-            this.deferredSubmits.add(entry);
-            this.deferredSubmitsOutstanding++;
-            if (this.deferredSubmitsOutstanding > this.deferredSubmitsPeak) {
-                this.deferredSubmitsPeak = this.deferredSubmitsOutstanding;
-            }
-            SubmitTrail.note(SubmitTrail.DEFERRED, entry.fence, uploadSlotMask);
-            return entry.fence;
+        DeferredSubmit entry = takeDeferredEntry();
+        entry.commandBuffer = commandBuffer;
+        entry.uploadSlotMask = uploadSlotMask;
+        entry.batch = celtium$currentBatch();
+        entry.batch.pending++;
+        entry.fence = entry.batch.fence;
+        this.pendingBatchedSubmits.add(entry);
+        this.deferredSubmits.add(entry);
+        this.deferredSubmitsOutstanding++;
+        if (this.deferredSubmitsOutstanding > this.deferredSubmitsPeak) {
+            this.deferredSubmitsPeak = this.deferredSubmitsOutstanding;
         }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
-                    .pCommandBuffers(stack.pointers(commandBuffer));
-            long fence = celtium$borrowDeferredFence();
-            try {
-                VulkanContext.queueSubmitCalls++;
-                celtium$awaitPresenter();
-                int result = vkQueueSubmit(this.queue, submit, fence);
-                if (result == VK_ERROR_DEVICE_LOST) {
-                    throw celtium$reportDeviceLost("vkQueueSubmit (deferred)", result);
-                }
-                check(result, "vkQueueSubmit (deferred)");
-            } catch (RuntimeException | LinkageError submitError) {
-                if (this.deviceLost) {
-                    // A lost NVIDIA device may no longer tolerate fence or command-buffer operations.
-                    quarantine(commandBuffer, fence);
-                } else {
-                    vkFreeCommandBuffers(this.device, this.commandPool, commandBuffer);
-                    vkDestroyFence(this.device, fence, null);
-                }
-                throw submitError;
-            }
-            DeferredSubmit entry = takeDeferredEntry();
-            entry.commandBuffer = commandBuffer;
-            entry.fence = fence;
-            entry.uploadSlotMask = uploadSlotMask;
-            this.deferredSubmits.add(entry);
-            this.deferredSubmitsOutstanding++;
-            if (this.deferredSubmitsOutstanding > this.deferredSubmitsPeak) {
-                this.deferredSubmitsPeak = this.deferredSubmitsOutstanding;
-            }
-            SubmitTrail.note(SubmitTrail.DEFERRED, fence, uploadSlotMask);
-            return fence;
-        }
+        SubmitTrail.note(SubmitTrail.DEFERRED, entry.fence, uploadSlotMask);
+        return entry.fence;
     }
 
     /**
@@ -1198,13 +1161,10 @@ public final class VulkanContext {
      * (the coordinator already ended it inside its own bookkeeping), and it is never freed on reclaim - a frame
      * slot's buffer belongs to the coordinator's pool and outlives the entry.
      * <p>
-     * Requires {@link #BATCHED_SUBMITS}; callers gate themselves on it.
+     * The buffer joins the batched deferred list; there is no per-call submit path.
      */
     public long celtium$submitDeferredFrame(VkCommandBuffer commandBuffer, long[] waitSemaphores, int[] waitStages,
             long[] signalSemaphores, int frameSlot, java.util.function.Consumer<Boolean> slotReclaim) {
-        if (!BATCHED_SUBMITS) {
-            throw new IllegalStateException("celtium$submitDeferredFrame requires batchedSubmits");
-        }
         if (commandBuffer == null || frameSlot < 0 || slotReclaim == null) {
             throw new IllegalArgumentException("deferred frame submit needs a buffer, a slot and a reclaim callback");
         }

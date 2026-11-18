@@ -28,13 +28,11 @@ package org.soutalab.celtium.vulkan;
 final class ModelReplayFastPath {
 
     /**
-     * {@code -Dceltium.vulkan.modelReplayFastPath=false}: the control arm for the next measurement.
-     * <p>
-     * A path that is on by default must be measurable against the same jar in the same scene, or its saving is a
-     * cross-build comparison. With this off every replay takes the unchanged path and the counters read all misses.
+     * The fast path is always on, pinned: it was the control arm for measurement (with it off every replay took
+     * the unchanged path and the counters read all misses, so the saving was measurable against the same jar in
+     * the same scene rather than as a cross-build comparison), and the on side was adopted.
      */
-    static final boolean ENABLED =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modelReplayFastPath", "true"));
+    static final boolean ENABLED = true;
 
     /**
      * {@code -Dceltium.vulkan.replayValueVersions=false}: the control arm for the same jar.

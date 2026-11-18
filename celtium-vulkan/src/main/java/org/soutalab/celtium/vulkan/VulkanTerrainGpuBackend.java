@@ -178,9 +178,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /**
      * The chain-pair render pass for a framebuffer with {@code colorAttachments} colour targets, cached per
-     * count. Always the discard-depth form: the flag's A/B ({@link #CHAIN_PAIR_DISCARD_DEPTH}) compares the
-     * one-colour picture, and a multi-target framebuffer's depth is the chain's own either way - no pass reads
-     * it back. A count of 1 is the ordinary chain pass above.
+     * count. Always the discard-depth form ({@link #CHAIN_PAIR_DISCARD_DEPTH} is pinned on): a multi-target
+     * framebuffer's depth is the chain's own either way - no pass reads it back. A count of 1 is the ordinary
+     * chain pass above.
      */
     long chainPairRenderPass(int colorAttachments) {
         if (colorAttachments <= 1) {
@@ -305,12 +305,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /**
-     * {@code -Dceltium.vulkan.chainPairDiscardDepth=false} draws a mod's own framebuffer through the frame pass again,
-     * loading and storing the pair's depth. On by default; the switch is the A/B for the picture, because the only
-     * thing that can say whether discarding the depth kept the picture is the same-pose comparison.
+     * A chain pair's depth is always discarded: a mod's own framebuffer draws through the chain-pair pass, never
+     * through the frame pass again loading and storing the pair's depth. Pinned on: the switch was the A/B for
+     * the picture, because the only thing that could say whether discarding the depth kept the picture was the
+     * same-pose comparison, and that comparison adopted the discard side.
      */
-    static final boolean CHAIN_PAIR_DISCARD_DEPTH = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.vulkan.chainPairDiscardDepth", "true"));
+    static final boolean CHAIN_PAIR_DISCARD_DEPTH = true;
 
     /**
      * {@code -Dceltium.vulkan.targetFormatClass=RGBA16_FLOAT} forces every chain pair's format class
@@ -737,13 +737,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /**
      * {@return whether this frame's recordings are being coalesced into one open frame buffer}.
      * <p>
-     * With {@code celtium.vulkan.batchFrameSubmits} on, an immediate window's groups are recorded into the open
-     * unified buffer and the submission happens at the frame boundary, so the execution counters cannot advance at a
-     * bind the way they do on the direct path. A validation client has to read this to assert the right contract in
-     * both modes instead of encoding one mode's timing as the rule.
+     * An immediate window's groups are recorded into the open unified buffer and the submission happens at the
+     * frame boundary, so the execution counters cannot advance at a bind the way they do on the direct path. A
+     * validation client has to read this to assert the right contract instead of encoding one mode's timing as
+     * the rule.
      */
     public boolean celtium$unifiedFrameBuffer() {
-        return BATCH_FRAME_SUBMITS && !this.gpuStalled
+        return !this.gpuStalled
                 && (this.frameTarget == null || !this.frameTarget.needsFrameSemaphores());
     }
 
@@ -1287,16 +1287,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // frame BEFORE the terrain: leaving them queued submits them after this pass, and the void plane then paints
         // over the terrain it is supposed to be hidden behind.
         //
-        // With PREFLUSH_IN_PASS the flush happens inside this pass's own render pass instead of here, where no pass is
-        // open and it therefore costs a window of its own: a render pass begin and end, the acquire and release
-        // barriers, the target routing and the sampling-side transitions, all for the handful of groups the sky is.
-        // Measured on the settled warm window (leg r9const-amd, CELTIUM_FRAME_TICK_CONSTANTS): terrainPreflush is
-        // 102 us of the terrain pass's 185, and the group loop inside it is ~52 of that - the rest is the window.
-        // The in-pass site is the same render pass handle (both are buildFrameRenderPass) and the same order (before
-        // the terrain draws), so the picture is unchanged and one window a frame disappears.
-        if (!PREFLUSH_IN_PASS) {
-            celtium$preflushBeforeTerrain();
-        }
+        // The flush happens inside this pass's own render pass (after its vkCmdBeginRenderPass) instead of here,
+        // where no pass is open and it would cost a window of its own: a render pass begin and end, the acquire and
+        // release barriers, the target routing and the sampling-side transitions, all for the handful of groups the
+        // sky is. Measured on the settled warm window (leg r9const-amd, CELTIUM_FRAME_TICK_CONSTANTS):
+        // terrainPreflush is 102 us of the terrain pass's 185, and the group loop inside it is ~52 of that - the
+        // rest is the window. The in-pass site is the same render pass handle (both are buildFrameRenderPass) and
+        // the same order (before the terrain draws), so the picture is unchanged and one window a frame disappears.
         // The pass' work before the first bracket: the pre-flush and the two gates below. Measured separately because
         // the pass reads 0.8 ms against 0.2 ms of brackets and this is the first of the spans that is not covered.
         org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainSetup");
@@ -1317,22 +1314,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return;
         }
         if (!renderLists.hasPass(pass)) {
-            // No geometry for this pass; nothing is opened, nothing has to be closed. The pre-terrain groups still have
-            // to reach the image before whatever draws next, so a deferred flush runs here - it is the same window the
-            // head of this method used to open, and this is the one early return that is a normal frame.
-            //
-            // Unless PREFLUSH_WHEN_EMPTY is on, in which case the groups stay queued. The flush exists to put them in
-            // the image *before this pass records the terrain into the same command buffer*; a pass with no geometry
-            // records nothing, so there is nothing for them to be ordered against, and the queue is FIFO - the next
-            // window drains them in the order they were offered. That is the world-entry regime on the KPI scene,
-            // where every pass reports hasPass=false until the chunks arrive (CELTIUM_LAYER_GEOMETRY): there the flush
-            // was the *only* thing the terrain pass did, and because no render pass is open at this point it took the
-            // window path - a render pass begin/end, the acquire and release barriers, the target routing, the
-            // sampling-side transitions and a submit - for the sky, the void plane and the sun. In the settled warm
-            // window the pass has geometry, so this branch is not taken and the flush stays in-pass.
-            if (PREFLUSH_WHEN_EMPTY) {
-                celtium$preflushIfDeferred();
-            }
+            // No geometry for this pass; nothing is opened, nothing has to be closed. The pre-terrain groups stay
+            // queued (the deferred drain, adopted by the A/B: legs r11ab-on-amd / r11ab-off-amd, same jar - the
+            // same-tick presented pictures differ by 0.1 mean abs diff / 0.07 % of pixels over 24 levels, and the
+            // world-entry blocks' terrainPreflush falls from 125 us to under 10 us). The flush exists to put them
+            // in the image *before this pass records the terrain into the same command buffer*; a pass with no
+            // geometry records nothing, so there is nothing for them to be ordered against, and the queue is FIFO -
+            // the next window drains them in the order they were offered, into the same render pass
+            // (recordImmediateOnlyPass takes terrain.renderPass()). That is the world-entry regime on the KPI
+            // scene, where every pass reports hasPass=false until the chunks arrive (CELTIUM_LAYER_GEOMETRY):
+            // there the flush was the *only* thing the terrain pass did, and because no render pass is open at
+            // this point it took the window path - a render pass begin/end, the acquire and release barriers, the
+            // target routing, the sampling-side transitions and a submit - for the sky, the void plane and the
+            // sun. In the settled warm window the pass has geometry, so this branch is not taken and the flush
+            // stays in-pass.
             org.soutalab.celtium.vulkan.FramePassTimings.end("terrainSetup");
             return;
         }
@@ -2119,12 +2114,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // drawn with the function of its submission for every quad - the same hole the reference closed.
             @Override public int alphaFuncSelector() { return VulkanTerrainGpuBackend.this.immediateState.alphaFunc(); }
             @Override public float[] projection() { return VulkanTerrainGpuBackend.this.glProjection; }
-            // The bake's other half: a run whose glyphs carry the modelView records the identity, so the per-string
-            // translate is no longer part of the run's identity and two strings with the same colour, texture, state
-            // and projection join one run. The projection stays in the key - it is not baked.
             @Override public float[] modelView() {
-                return VulkanTerrainGpuBackend.this.fontBakeActive
-                        ? FONT_IDENTITY_MODELVIEW : VulkanTerrainGpuBackend.this.glModelView;
+                return VulkanTerrainGpuBackend.this.glModelView;
             }
             // The draw state the batch path reads at *submit* time and the coalesced run key has to see at *append*
             // time (task-66): a run held across a state change is submitted under the state the second pass has, not
@@ -2624,7 +2615,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     // appended before anything that came after them - never after. The counters say how each run went out, because a
     // batching that silently changed ordering is exactly the class of change this project has been bitten by.
     /**
-     * The batching, on by default: `-Dceltium.font.batching=false` is the one-flag control.
+     * The batching is unconditional.
      * <p>
      * It is 16x cheaper per glyph (the user's session with it on: 275,503 quads in 1,014 ms = 3.7 us per quad, against
      * 59 us with it off). It used to garble text, and the mechanism was that {@code submitImmediateBatch} captures the
@@ -2641,50 +2632,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * flush this run must first pull in whatever the capture is still holding.
      */
     private Runnable fontPreFlush;
-
-    /**
-     * Whether a glyph segment's modelView is baked into its positions, so one font run can span the per-string
-     * {@code pushMatrix/translate/popMatrix} brackets.
-     * <p>
-     * <b>Default off, and the measurement is why.</b> The hypothesis was that the per-string translate is what splits
-     * the font run - 94 runs a frame carrying 1.2 quads each on the shipped world profile - and that removing the
-     * matrix from the run's identity would coalesce them. It does not: leg r53b-bakeon (same JAR, same scene, same
-     * flags, only this switch differing from r53a-bakeoff) measured {@code immediateOffered} 238.3 -> 230.1 a frame and
-     * {@code immediateGroupsDrawn} 136.5 -> 133.5, i.e. 8 of the 94 runs coalesced. The other 86 are flushed by an
-     * intervening submission - the HUD interleaves text with other quads - which is an ordering rule the bake cannot
-     * touch. The frame interval moved 3.06 -> 3.89 ms, but the whole of that is the frame budget's {@code other}
-     * bracket (the game's own work, 1.6 -> 2.1 ms) while the renderer's own brackets are unchanged (record 0.5 -> 0.6,
-     * batch 0.4 -> 0.4), so it is drift between two sequential runs rather than this change.
-     * <p>
-     * The mechanism is kept because it is correct on its own and because the condition for re-opening it is now named:
-     * a scene where the font runs are <em>not</em> interleaved with other draws, or a change that lets a run be
-     * reordered past a non-overlapping draw. {@code -Dceltium.vulkan.fontBake=true} turns it on.
-     */
-    private static final boolean FONT_BAKE = Boolean.parseBoolean(
-            System.getProperty("celtium.vulkan.fontBake", "false"));
-
-    /** The modelView a baked run records: the transform is in the vertices, so the group carries none. */
-    private static final float[] FONT_IDENTITY_MODELVIEW = {
-            1.0F, 0.0F, 0.0F, 0.0F,
-            0.0F, 1.0F, 0.0F, 0.0F,
-            0.0F, 0.0F, 1.0F, 0.0F,
-            0.0F, 0.0F, 0.0F, 1.0F};
-
-    /** The bake's own scratch: one segment at a time, grown to the largest segment seen. */
-    private java.nio.ByteBuffer fontBakeScratch;
-    private long fontBakeScratchAddress;
-    private long fontBakedSegments;
-    private long fontBakedVertices;
-    /**
-     * Whether the glyphs the capture and the pending run hold carry their modelView in their positions.
-     * <p>
-     * Set by the last {@link #celtium$fontAppend}, and read in two places: the run's recorded modelView (the identity
-     * when baked, so the per-string translate is not part of the run's identity) and the matrix boundary (a baked run
-     * is not split by a modelView change). It is a field rather than a fresh question about the live matrix because the
-     * two are not the same question: a run opened while the matrix was bakeable must keep the identity even after the
-     * game has moved to a rotated one, or the flush would submit it under a transform it was never appended under.
-     */
-    private boolean fontBakeActive;
 
     /** Registers the capture's pre-flush hook; invoked with {@code null} to clear it. */
     public void celtium$setFontPreFlush(Runnable hook) {
@@ -3397,8 +3344,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     final ModelReplayInputCache modelReplayInputCache = new ModelReplayInputCache();
     /**
      * The last model replay's whole resolved tuple, so the next replay that repeats it writes its record without
-     * resolving anything but its own matrix. Its census is on the verification line as {@code modelFastPath}; the
-     * control arm is {@code -Dceltium.vulkan.modelReplayFastPath=false}. See {@link ModelReplayFastPath}.
+     * resolving anything but its own matrix. Its census is on the verification line as {@code modelFastPath}.
+     * See {@link ModelReplayFastPath}.
      */
     final ModelReplayFastPath modelReplayFastPath = new ModelReplayFastPath();
     /** {@code POSITION_COLOR_TEXGEN}: the texgen variant, one per drawing state like the other families. */
@@ -3550,7 +3497,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * frame 0.977) moved every percentile the same way and none the other - the GUI's font runs filled 8192 several
      * times a frame and each fill opened a window.
      */
-    private static final int IMMEDIATE_FLUSH_INDICES = Integer.getInteger("celtium.vulkan.immediateFlushIndices", 32768);
+    private static final int IMMEDIATE_FLUSH_INDICES = 32768;
     /**
      * Per-call isolation/inspection switches, read once at class init: each of these was re-queried through
      * {@code Boolean.getBoolean}/{@code Integer.getInteger} on every call it gated - the format-refusal check ran
@@ -4362,28 +4309,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     final ImmediateFogState fog = ImmediateFogState.current();
 
     /**
-     * The lit ITEM family's fog, on by default: the block at 224..255 and the eye-space reconstruction in
-     * {@code immediate_tex_color_lit.vert}. The switch exists so the fix can be measured as one flag apart on one jar -
-     * with it false the block is still written (selector 0) and the picture is exactly the unfogged one this family
-     * produced before.
-     * <p>
-     * Mutable rather than final because the only clean A/B for a world scene is a <em>within-run</em> one: two runs of
-     * the same scene differ on most of the frame (animated water/lava/fire textures, clouds and entity animation phases
-     * are wall-clock driven, measured on legs r43b/r43c: 82% of the frame changed between two runs that differ only in
-     * this flag). {@link #celtium$setLitFog} lets the fixture flip it between two consecutive frames of one run, where
-     * the scene is the same scene. The push-block cache keys on it, so a cached block cannot carry the other arm's fog.
+     * The lit ITEM family's fog: the block at 224..255 and the eye-space reconstruction in
+     * {@code immediate_tex_color_lit.vert}. Always on, pinned: the fogged side was adopted after the within-run
+     * A/B (two runs of the same scene differ on most of the frame - animated water/lava/fire textures, clouds and
+     * entity animation phases are wall-clock driven, measured on legs r43b/r43c: 82% of the frame changed between
+     * two runs that differed only in this flag - so the fixture flipped it between two consecutive frames of one
+     * run, where the scene is the same scene). The push-block cache keys on it, so a cached block cannot carry
+     * the unfogged arm's fog.
      */
-    static boolean LIT_FOG = !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.litFog", "true"));
-
-    /**
-     * Flips the lit ITEM family's fog at runtime, for the fixture's within-run A/B.
-     *
-     * @return the value now in force
-     */
-    public boolean celtium$setLitFog(boolean enabled) {
-        LIT_FOG = enabled;
-        return LIT_FOG;
-    }
+    static final boolean LIT_FOG = true;
     /** Lit groups whose fog block was written: the number that says the fix is on the path, not merely compiled. */
     private long litFogGroups;
     /**
@@ -4603,9 +4537,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 && Math.abs(projection[12]) < 1.0e-6f && Math.abs(projection[13]) < 1.0e-6f
                 && projection[0] != 0.0f && projection[5] != 0.0f;
         float[] fog = group.fog;
-        if (fog == null || !LIT_FOG || !perspective) {
+        if (fog == null || !perspective) {
             push.putFloat(240 + 12, 0.0f); // u_FogParams.w: 0 = mode NONE
-            if (fog != null && LIT_FOG) {
+            if (fog != null) {
                 this.litFogSkippedNonPerspective++;
                 if (this.litFogSkipLogs < 4) {
                     this.litFogSkipLogs++;
@@ -4788,13 +4722,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** The mirror whose patch batch {@link #beginAnimationUploads(int)} opened, closed by the matching end. */
     private VulkanGlTexture animationBatchTexture;
-    /** {@code -Dceltium.vulkan.batchAnimationUploads=false}: one submission per animated sprite, as before. */
-    private static final boolean BATCH_ANIMATION_UPLOADS = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.vulkan.batchAnimationUploads"));
-
     @Override
     public void beginAnimationUploads(int glTextureId) {
-        if (!BATCH_ANIMATION_UPLOADS || this.animationBatchTexture != null || glTextureId <= 0) {
+        if (this.animationBatchTexture != null || glTextureId <= 0) {
             return;
         }
         if (this.textureRegistry == null) {
@@ -7712,120 +7642,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     public boolean celtium$fontAppend(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
             int vertexCount, int drawMode) {
-        if (FONT_BAKE) {
-            // The bake reads glModelView, so the mirror has to be in it first: the same capture the ordinary batch path
-            // performs, and the same two array copies. Without it a run opened while the mirror had moved would record
-            // the previous batch's matrix - which is exactly the state the run key's matricesDirty term refuses.
-            if (this.matricesDirty) {
-                captureGlMatrices();
-                this.matricesDirty = false;
-            }
-            boolean bake = vertexAddress != 0L && vertexCount > 0 && vertexStride >= 12 && celtium$fontBakeable();
-            if (bake) {
-                long baked = celtium$bakeFontSegment(vertexAddress, vertexStride, vertexCount);
-                if (baked != 0L) {
-                    vertexAddress = baked;
-                } else {
-                    bake = false;
-                }
-            }
-            this.fontBakeActive = bake;
-        }
         // The pending run, its boundary rule and the retention queue moved to FontBatch (R3b).
         return this.fontBatch.celtium$fontAppend(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount,
                 drawMode);
     }
 
     /**
-     * Whether a glyph segment may have the live modelView baked into its positions, which is what lets one font run
-     * span the per-string {@code pushMatrix/translate/popMatrix} brackets.
-     * <p>
-     * The run key carries the modelView, so a matrix change is a run boundary: every HUD string is drawn under its own
-     * translate, so the run is flushed once per string. Measured on the shipped world profile (leg r52f-sticky,
-     * 2365 frames): {@code fontRunsStarted=221565} against {@code fontQuadsAppended=265707} - 94 runs a frame carrying
-     * 1.2 quads each, and every run is an offer through the accept path (~3.5 us) and a group of its own.
-     * <p>
-     * Baking removes the matrix from the run's identity: the positions carry the transform, the run's recorded
-     * modelView is the identity, and the group's own key is the identity too - so consecutive strings with the same
-     * colour, texture, state and projection join one run and one group. The bake is legal exactly where
-     * {@link #celtium$axisAlignedModelView} holds, which is the same condition
-     * {@link VulkanDynamicMesh#copyVerticesTransformed} already bakes under for pre-transformed groups, and the
-     * textured family's vertex shader applies the projection only - the modelView reaches the GPU solely through the
-     * baked positions. Fog is excluded because it is computed from view-space distance, which the bake would move.
+     * {@return the retired bake census}. The font-run matrix bake was removed (rejected: leg r53b-bakeon coalesced
+     * only 8 of 94 runs), so the counts are permanently zero; the line's shape is kept because the capture's
+     * shutdown census prints it beside the batch summary.
      */
-    private boolean celtium$fontBakeable() {
-        return celtium$fontBakeable(FONT_BAKE, this.fog.enabled, this.glModelView);
-    }
-
-    /**
-     * The bake decision itself, without the device: {@code true} when the switch is on, fog is off and the modelView is
-     * the translate/scale/flip shape the diagonal product reproduces exactly.
-     * <p>
-     * Package-private and static so the table can be pinned without a device, the same rule the other accept-path
-     * predicates follow. The three inputs are the whole state the decision has, and the cases that matter are the two
-     * refusals: a rotated matrix (the diagonal product would drop its off-axis terms) and fog (the shader computes it
-     * from view-space distance, which the bake would move).
-     */
-    static boolean celtium$fontBakeable(boolean bakeSwitch, boolean fogEnabled, float[] modelView) {
-        if (!bakeSwitch || fogEnabled || modelView == null || modelView.length < 16) {
-            return false;
-        }
-        return modelView[1] == 0.0F && modelView[2] == 0.0F && modelView[3] == 0.0F
-                && modelView[4] == 0.0F && modelView[6] == 0.0F && modelView[7] == 0.0F
-                && modelView[8] == 0.0F && modelView[9] == 0.0F && modelView[11] == 0.0F
-                && modelView[15] == 1.0F;
-    }
-
-    /**
-     * Copies one glyph segment into the bake scratch with the live modelView applied to its positions.
-     * <p>
-     * The diagonal product is exact for the shape {@link #celtium$axisAlignedModelView} admits - the dropped terms are
-     * exact zeroes - so the bytes are the ones the shader would have computed. Everything after the position (the
-     * texture coordinates and the packed colour) is copied verbatim, which is the same split
-     * {@link VulkanDynamicMesh#copyVerticesTransformed} uses.
-     *
-     * @return the scratch address holding the baked segment, or 0 when the scratch could not be grown
-     */
-    private long celtium$bakeFontSegment(long source, int stride, int count) {
-        long bytes = (long) stride * (long) count;
-        if (bytes <= 0L || bytes > Integer.MAX_VALUE) {
-            return 0L;
-        }
-        if (this.fontBakeScratch == null || this.fontBakeScratch.capacity() < bytes) {
-            int capacity = Integer.highestOneBit((int) Math.max(bytes, 4096L) - 1) << 1;
-            try {
-                this.fontBakeScratch = java.nio.ByteBuffer.allocateDirect(capacity)
-                        .order(java.nio.ByteOrder.nativeOrder());
-            } catch (OutOfMemoryError error) {
-                this.fontBakeScratch = null;
-                this.fontBakeScratchAddress = 0L;
-                return 0L;
-            }
-            this.fontBakeScratchAddress = org.lwjgl.system.MemoryUtil.memAddress(this.fontBakeScratch);
-        }
-        float[] m = this.glModelView;
-        float m00 = m[0], m11 = m[5], m22 = m[10], tx = m[12], ty = m[13], tz = m[14];
-        long target = this.fontBakeScratchAddress;
-        for (int i = 0; i < count; i++) {
-            long from = source + (long) i * stride;
-            long to = target + (long) i * stride;
-            org.lwjgl.system.MemoryUtil.memPutFloat(to,
-                    m00 * org.lwjgl.system.MemoryUtil.memGetFloat(from) + tx);
-            org.lwjgl.system.MemoryUtil.memPutFloat(to + 4,
-                    m11 * org.lwjgl.system.MemoryUtil.memGetFloat(from + 4) + ty);
-            org.lwjgl.system.MemoryUtil.memPutFloat(to + 8,
-                    m22 * org.lwjgl.system.MemoryUtil.memGetFloat(from + 8) + tz);
-            org.lwjgl.system.MemoryUtil.memCopy(from + 12, to + 12, (long) stride - 12L);
-        }
-        this.fontBakedSegments++;
-        this.fontBakedVertices += count;
-        return target;
-    }
-
-    /** {@return the bake census, so a leg can tell "the bake never fired" from "it fired and changed nothing"}. */
     public String celtium$fontBakeSummary() {
-        return "fontBakedSegments=" + this.fontBakedSegments + " fontBakedVertices=" + this.fontBakedVertices
-                + " fontBake=" + (FONT_BAKE ? "on" : "off");
+        return "fontBakedSegments=0 fontBakedVertices=0 fontBake=off";
     }
 
     /**
@@ -7872,8 +7700,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // The run's matrices are the ones it was appended under, so the mirror's "moved since the last capture"
             // flag must not make the submission below re-capture the live ones over them. It could: a matrix operation
             // between the append and this flush sets the flag, and submitImmediateBatchBody captures on it - which
-            // would draw the run with a transform it was never appended under. With the bake on this is the normal
-            // case rather than a corner, because a baked run deliberately survives the per-string matrix brackets.
+            // would draw the run with a transform it was never appended under.
             this.matricesDirty = false;
             // The sink's contract is that a refused run comes back as false so FontBatch can retain it and offer it
             // again at the next flush - {@link FontBatch.RunSink}'s own doc: "a refused run that is dropped is text
@@ -7917,17 +7744,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     private void celtium$fontMatrixBoundary() {
-        // A baked run carries its transform in the vertices, so a modelView change is not a boundary for it: the next
-        // segment is baked with the new matrix and joins the same run. The projection is still in the run key, so a
-        // projection change flushes at the next append - and the flush submits with the run's own projection, which is
-        // why the run's matrices are installed by celtium$submitFontRun rather than read from the live mirror.
-        //
-        // The capture's own buffer is still drained here: its glyphs were drawn under the matrix that is current right
-        // now, and appending them now bakes them with it. Only the run's submission is skipped.
-        if (FONT_BAKE && this.fontBakeActive) {
-            this.fontBatch.celtium$fontMatrixBoundaryBaked();
-            return;
-        }
         this.fontBatch.celtium$fontMatrixBoundary();
     }
 
@@ -9127,22 +8943,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             // count equals the offer count. Never an acceptance configuration - the draws that cannot merge are exactly the ones the
             // grouping exists to combine.
             if (NO_MERGE || retained != null || this.currentImmediateMesh == null
-                    || (!MERGE_ACROSS_FORMAT && this.currentGroupFormatId != formatId)
-                    // Diagnostic only: -Dceltium.vulkan.mergeAcrossTexture=true pretends every batch uses the group's
-                    // texture, which draws the wrong picture on purpose. It exists to measure the ceiling of a bindless
-                    // merge - how many groups and how many microseconds a real implementation could save - before paying
-                    // for one. Every leg using it is a measurement, never an acceptance run.
-                    || (!MERGE_ACROSS_TEXTURE && this.currentGroupTexture != boundTexture)
-                    || (!MERGE_ACROSS_STATE && this.currentGroupStateKey != stateKey) || !samePass
+                    || this.currentGroupFormatId != formatId
+                    || this.currentGroupTexture != boundTexture
+                    || this.currentGroupStateKey != stateKey || !samePass
                     || scissorMoved
                     || this.currentPreparedImmediate == null
-                    // The descriptor is built from the texture, so a texture change moves this term as well - which is why
-                    // the first version of the ceiling measurement changed nothing: the texture term was neutralised and
-                    // the split happened here instead. A real bindless merge would carry the texture as an index instead
-                    // of as part of the descriptor's identity, so the ceiling measurement has to drop both terms.
-                    || (!MERGE_ACROSS_TEXTURE
-                            && (this.currentPreparedImmediate.pipeline != prepared.pipeline
-                                    || this.currentPreparedImmediate.descriptor != prepared.descriptor))
+                    // The descriptor is built from the texture, so a texture change moves this term as well: the
+                    // texture is part of the descriptor's identity, never carried as an index, so a texture change
+                    // splits the group here as surely as it does at the texture term above.
+                    || this.currentPreparedImmediate.pipeline != prepared.pipeline
+                    || this.currentPreparedImmediate.descriptor != prepared.descriptor
                     || matrixMoved
                     // BH-04: the colour is part of the group's state, so a draw that arrives with a different current
                     // colour cannot join it - the colourless layouts carry it as the tint, and a batch appended after
@@ -11406,7 +11216,7 @@ this.frameBufferOpen = false;
             }
             // Batched frame submissions reach the queue here at the latest: the frame's recordings are queued in
             // order, and the boundary is the last ordering point before the present's own submit (which also
-            // flushes). A no-op when nothing batched - i.e. every run with batchFrameSubmits off.
+            // flushes). A no-op when nothing is batched.
             // With the async presenter the batch stays pending for the present, which hands it to the worker together
             // with the blit; presentFrame flushes it on the game thread if no present took it.
             if (!VulkanContext.ASYNC_PRESENT) {
@@ -11478,37 +11288,6 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * {@code -Dceltium.vulkan.preflushInPass=false} restores the pre-terrain flush as a window of its own.
-     * <p>
-     * The flush itself is not optional: the sky, the void plane and the sun are queued immediate work that has to
-     * reach the image before the terrain, or the void plane paints over the terrain it is hidden behind. What the
-     * switch chooses is <em>where</em> it is recorded. Off, it runs at the head of the terrain pass, where no render
-     * pass is open, so {@link #flushPendingBeforeGlDraw()} opens a window: its own render pass begin and end, the
-     * acquire and release barriers, the target routing and the sampling-side transitions. On, the same call is made
-     * after the terrain pass's own {@code vkCmdBeginRenderPass}, so it takes the in-pass path
-     * ({@code drawPendingImmediate}) and the window disappears. The two sites record the same groups in the same
-     * order into compatible render passes, so the picture is the A/B's positive control.
-     */
-    private static final boolean PREFLUSH_IN_PASS = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.vulkan.preflushInPass", "true"));
-
-    /**
-     * {@code -Dceltium.vulkan.preflushWhenEmpty=true} restores the pre-terrain flush on a pass that has no geometry.
-     * <p>
-     * The flush is not optional in general: with geometry in the pass, the terrain is recorded into the same command
-     * buffer right after the queued groups, so they have to be in the image first. With no geometry there is nothing
-     * to be ordered against, and the queue's own FIFO order is the ordering - the next window drains them in the order
-     * they were offered, into the same render pass ({@code recordImmediateOnlyPass} takes
-     * {@code terrain.renderPass()}), so the picture is unchanged. Measured on the KPI scene (legs
-     * {@code r11ab-on-amd} / {@code r11ab-off-amd}, same jar, this switch the only difference): the same-tick
-     * presented pictures differ by 0.1 mean abs diff / 0.07 % of pixels over 24 levels, and the world-entry blocks'
-     * {@code terrainPreflush} falls from 125 us to under 10 us. The switch exists because the two cases are one
-     * branch apart and the picture is the only thing that can say whether the deferred drain kept the order.
-     */
-    private static final boolean PREFLUSH_WHEN_EMPTY = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.vulkan.preflushWhenEmpty", "false"));
-
-    /**
      * The pre-terrain flush, with the bracket and the counters that say what it drained.
      * <p>
      * Read from the queue itself, not {@code DrawCounters.immediateGroups()}: that counter only runs when
@@ -11530,15 +11309,14 @@ this.frameBufferOpen = false;
     /**
      * The deferred pre-terrain flush, for the pass' early returns.
      * <p>
-     * With {@link #PREFLUSH_IN_PASS} the flush happens inside the pass's render pass, so a pass that returns before
-     * that point would leave the sky, the void plane and the sun queued behind whatever draws next. Every early
-     * return calls this, which is the same window the head of {@code celtium$renderPass} used to open. With the
-     * switch off the head already flushed, so this is a no-op.
+     * The flush is recorded inside the pass's render pass, so a pass that returns before that point would leave
+     * the sky, the void plane and the sun queued behind whatever draws next. Every early return calls this, which
+     * is the same window the head of {@code celtium$renderPass} used to open. The flush itself is not optional:
+     * the sky, the void plane and the sun are queued immediate work that has to reach the image before the
+     * terrain, or the void plane paints over the terrain it is hidden behind.
      */
     private void celtium$preflushIfDeferred() {
-        if (PREFLUSH_IN_PASS) {
-            celtium$preflushBeforeTerrain();
-        }
+        celtium$preflushBeforeTerrain();
     }
 
     void flushPendingBeforeGlDraw() {
@@ -12184,7 +11962,7 @@ this.frameBufferOpen = false;
 this.frameBufferOpen = false;
                         // The recording has to be unwound with the flag, or the state keeps saying "recording"
                         // while no frame buffer owns it. The recovery submission above is either deferred
-                        // (batchFrameSubmits: submitCommands() returns RECORDED without ending the buffer) or was
+                        // (the unified buffer: submitCommands() returns RECORDED without ending the buffer) or was
                         // waited on its own slot, so the buffer is not in flight and may be reset here. Without
                         // this the next ordering flush met `recording() && !frameBufferOpen` and threw "nested
                         // immediate command recording", dropping every batch it held: measured on RLCraft (leg
@@ -13622,16 +13400,8 @@ this.frameBufferOpen = false;
                         offTarget.recordChainPairColorAcquire(chainIdentityValue, this.commandBuffer);
                         framebuffer = framebufferCache().chainPairMulti(passRenderPass, offTarget,
                                 windowColorCount, this.targetWidth, this.targetHeight);
-                    } else if (CHAIN_PAIR_DISCARD_DEPTH) {
-                        passRenderPass = chainPairRenderPass(pairClass);
-                        framebuffer = ensureChainPairFramebuffer(passRenderPass);
-                    } else if (pairClass != TargetFormatClass.RGBA8_UNORM) {
-                        // The discard-depth A/B's frame-pass arm is an 8-bit comparison: a non-default pair
-                        // cannot attach to the frame pass at all (its format differs), so it takes the
-                        // class' frame-shaped pass instead. The A/B stays an 8-bit-only comparison.
-                        passRenderPass = formatClassPipelinePass(pairClass);
-                        framebuffer = ensureChainPairFramebuffer(passRenderPass);
                     } else {
+                        passRenderPass = chainPairRenderPass(pairClass);
                         framebuffer = ensureChainPairFramebuffer(passRenderPass);
                     }
                     this.passAttachedColorImage = offTarget.chainPairColorImage(chainIdentityValue);
@@ -13955,9 +13725,7 @@ this.frameBufferOpen = false;
         // that pass loads or the game's last clear left there.
         this.immediateDrawSite = "immediate-only-window";
         org.soutalab.celtium.vulkan.FramePassTimings.begin("wrecLoop");
-        if (!SKIP_IMMEDIATE_RECORD) {
-            drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
-        }
+        drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
         org.soutalab.celtium.vulkan.FramePassTimings.end("wrecLoop");
         // The pass close on its own (see winPrefix): the unnamed remainder of a window is either its prefix or this.
         FramePassTimings.begin("winPassEnd");
@@ -14974,7 +14742,7 @@ this.frameBufferOpen = false;
     /**
      * Whether the chain pair is kept in {@code GENERAL} and its descriptors declare it.
      * <p>
-     * {@code -Dceltium.vulkan.pairStayGeneral=false} turns it off; <b>on by default as of round 255</b>, because the
+     * Always on (pinned; <b>on by default as of round 255</b>), because the
      * pair's three {@code VUID-vkCmdDraw-None-09600} messages were measured gone with it and back without it, on one
      * jar per state (legs r212-world-hud38 and hud42). The pair's pass
      * declares the constant {@code GENERAL}, its published wrappers declared {@code SHADER_READ_ONLY_OPTIMAL} in every
@@ -14991,7 +14759,7 @@ this.frameBufferOpen = false;
      * the inconsistency, not the validation layer. The picture is unchanged in every one of them
      * (presentedMean=71.302086, fixture PASSED/PASSED).
      */
-    static final boolean PAIR_STAY_GENERAL = Boolean.parseBoolean(System.getProperty("celtium.vulkan.pairStayGeneral", "true"));
+    static final boolean PAIR_STAY_GENERAL = true;
     /**
      * Whether the game's finished-frame composite is dropped when it samples the image it is drawn into.
      * <p>
@@ -15700,9 +15468,7 @@ this.frameBufferOpen = false;
         // celtium$renderPass). They go before the viewport and the terrain pipeline: each group carries its own
         // rectangle, and the terrain draws need the pass's full-target one, so setViewportAndScissor has to run
         // after the last group has set its own.
-        if (PREFLUSH_IN_PASS) {
-            celtium$preflushBeforeTerrain();
-        }
+        celtium$preflushBeforeTerrain();
         setViewportAndScissor(stack);
         pipeline.bindPipeline(this.commandBuffer);
         pipeline.pushMatrices(this.commandBuffer, vulkanProjection(matrices.projection()), matrices.modelView());
@@ -17251,27 +17017,8 @@ this.frameBufferOpen = false;
     public String mergeRefusalSummary() {
         return this.mergeRefusals.toString();
     }
-    private static final boolean MERGE_ACROSS_TEXTURE =
-            Boolean.getBoolean("celtium.vulkan.mergeAcrossTexture");
-    /** Diagnostic only, like {@link #MERGE_ACROSS_TEXTURE}: measures the ceiling of merging across vertex formats. */
-    private static final boolean MERGE_ACROSS_FORMAT =
-            Boolean.getBoolean("celtium.vulkan.mergeAcrossFormat");
-    /** Diagnostic only: measures the ceiling of merging across pipeline state. */
-    private static final boolean MERGE_ACROSS_STATE =
-            Boolean.getBoolean("celtium.vulkan.mergeAcrossState");
     /** Diagnostic only: refuses every merge, so one offer is one draw - the other end of the design. */
     private static final boolean NO_MERGE = Boolean.getBoolean("celtium.vulkan.noMerge");
-    /**
-     * Measurement switch, off by default: drops the immediate group recording entirely.
-     * <p>
-     * It does not measure what it was added for. The intent was the ceiling of the per-group work the merge is meant to
-     * remove, and the measurement says the opposite: with the recording dropped the frame goes from 3.9 ms to 124 ms
-     * (legs ceilBase2 / ceilSkip2, same flags back to back). Dropping every immediate draw does not make the renderer
-     * cheaper - it changes what the game does next, so the number is the game's reaction and not the cost that was
-     * removed. Kept because a future attempt should not have to rediscover that an empty frame is not a cheap frame.
-     */
-    private static final boolean SKIP_IMMEDIATE_RECORD =
-            Boolean.getBoolean("celtium.vulkan.skipImmediateRecord");
 
     /**
      * Whether the per-component push census runs: {@code -Dceltium.debug.pushComponentCensus=true}, off by default.
@@ -17612,9 +17359,9 @@ this.frameBufferOpen = false;
         hash = celtium$mixPushFloats(hash, group.texMatrix);
         hash = celtium$mixPushFloats(hash, group.lightParams);
         hash = celtium$mixPushFloats(hash, group.lightmapCoords);
-        // The lit fog switch is part of the block's content: the same group drawn with it off writes selector 0 at 240,
-        // and a cached block from the other arm would otherwise be reused unchanged.
-        hash = celtium$mixPushKey(hash, LIT_FOG ? 0x1f0 : 0x0f1);
+        // The lit fog is part of the block's content: the same group drawn unfogged writes selector 0 at 240,
+        // and a cached block from that arm would otherwise be reused unchanged.
+        hash = celtium$mixPushKey(hash, 0x1f0);
         return celtium$mixPushFloats(hash, group.fog);
     }
 
@@ -19894,10 +19641,12 @@ this.frameBufferOpen = false;
      */
     private final long[] slotDeferredFences = new long[FRAME_SLOTS];
     /**
-     * The unified frame buffer's open state: when {@code batchFrameSubmits} is on and the target carries no frame
-     * semaphores, the first {@link #beginCommands()} of a frame begins the slot's buffer and every later recording
-     * of the same frame only re-points the aliases below - one vkReset+vkBegin, one end, one submission per frame
-     * instead of one per recording. Cleared at the frame's boundary submit and at every mid-frame reset path.
+     * The unified frame buffer's open state: when the target carries no frame semaphores, the first
+     * {@link #beginCommands()} of a frame begins the slot's buffer and every later recording of the same frame
+     * only re-points the aliases below - one vkReset+vkBegin, one end, one submission per frame instead of one
+     * per recording. Frame recordings are always coalesced this way (the measured A/B on AMD RX 6400: flush
+     * 3.82 -> 2.35-2.41 ms per frame at 4.55 flushes/frame, queue submissions per frame from 12.7 to 4.6).
+     * Cleared at the frame's boundary submit and at every mid-frame reset path.
      */
     boolean frameBufferOpen;
     /**
@@ -19909,24 +19658,6 @@ this.frameBufferOpen = false;
      * the acquire actually did, so the two can never disagree about the image's layout.
      */
     private boolean windowFrameImageAttached = true;
-    /**
-     * Whether a frame's recordings are coalesced into one open frame buffer and submitted once at the frame
-     * boundary. OFF by default: with it the flush wall time falls from 3.82 to 2.35-2.41 ms per frame (AMD RX 6400,
-     * 4.55 flushes/frame) and queue submissions per frame from 12.7 to 4.6, but the E2E 1.93a pack produces
-     * command-buffer state validation errors under it (legs unife2e1 and uniE1, 8 VUIDs of the
-     * vkCmd*-commandBuffer-recording family, then the process ended with no report). The validation text names the
-     * mechanism exactly: the open command buffer "is now in an invalid state ... because the following objects bound
-     * to the command buffer were invalidated: VkBuffer ... was destroyed, VkDescriptorSet ... was destroyed or
-     * updated without UPDATE_AFTER_BIND". A long-lived open recording holds references to buffers and descriptor
-     * sets that the E2E pack's world load and mod framebuffer paths grow, replace or rewrite mid-frame, so the
-     * resource-lifetime contract has to become "nothing an open recording references is destroyed or rewritten
-     * before that recording is submitted" (the OPT-07 ownership contract the upload path already names) before this
-     * can be the default. Take the win only then: {@code -Dceltium.vulkan.batchFrameSubmits=true} is the measured
-     * A/B (flush 3.82 -> 2.35 ms/frame, submits 12.7 -> 4.6) for that work.
-     */
-    private static final boolean BATCH_FRAME_SUBMITS =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.batchFrameSubmits", "true"))
-                    && !"false".equals(System.getProperty("celtium.vulkan.batchedSubmits", "true"));
     /**
      * Mid-frame clear ordering for a framebuffer whose draws the S10 flush already submitted: on, the clear is
      * recorded against the pair image in its own submission (queue order puts it after those draws); off, it
@@ -20175,8 +19906,7 @@ this.frameBufferOpen = false;
         this.passBiasC = this.passBiasS = Float.NaN;
         // Open the unified frame buffer for this frame when the target carries no semaphore contract - a target that
         // needs the wait/signal pair keeps the per-recording submits the contract was built on.
-        this.frameBufferOpen = BATCH_FRAME_SUBMITS
-                && (this.frameTarget == null || !this.frameTarget.needsFrameSemaphores());
+        this.frameBufferOpen = this.frameTarget == null || !this.frameTarget.needsFrameSemaphores();
     }
 
     /**
@@ -21971,7 +21701,7 @@ this.frameBufferOpen = false;
             this.frameTarget.abandonFrame("injected idle failure");
             return false;
         }
-        // Under batchFrameSubmits the frame's recorded draws sit in the open unified buffer, visible to no fence:
+        // The frame's recorded draws sit in the open unified buffer, visible to no fence:
         // a wait that skipped them would answer "idle" while the draws the caller is about to read (the texture
         // copy's framebuffer readback is the measured case: its waitForIdle returned instantly and the PNG held
         // the pair's untouched clear) are still just commands. Submitting them first is what the wait means, and
@@ -22002,7 +21732,7 @@ this.frameBufferOpen = false;
     /**
      * Submits the recordings this frame has made so far, without consuming the frame's semaphores.
      * <p>
-     * Under {@code batchFrameSubmits} the frame's work sits in the open unified buffer until the boundary: a
+     * The frame's work sits in the open unified buffer until the boundary: a
      * mid-frame ordering point (the copy readback's {@link #waitForIdle} call, which a framebuffer-pixel read
      * must not race) would otherwise wait on fences that carry none of the recorded draws and read the image
      * before its content exists. Ending the buffer here and queueing its submission keeps the single-queue
