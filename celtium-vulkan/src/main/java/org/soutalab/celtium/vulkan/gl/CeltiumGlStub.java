@@ -599,6 +599,22 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<int[]> texLevels =
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
     /**
+     * {@code -Dceltium.vulkan.targetFormatCensus=true}: the stub side of the format census (QUEUE 405, S5) -
+     * the same switch the backend's decision census reads, so one leg flag turns the whole census on. Off,
+     * the distribution below is never touched.
+     */
+    private static final boolean TARGET_FORMAT_CENSUS = Boolean.getBoolean("celtium.vulkan.targetFormatCensus");
+    /** Distinct internal formats the distribution tracks; past the cap a format is not recorded. */
+    private static final int MAX_TARGET_FORMATS = 32;
+    /**
+     * How often each colour internal format was recorded into {@link #texLevels} at level 0, under
+     * {@link #TARGET_FORMAT_CENSUS}: the distribution that answers "did this fixture's mods actually ask
+     * for 16F" at the GL surface, before any pair decision is made about it. Depth formats are not
+     * counted - a frame's depth is {@code VulkanDepthFormat}'s answer, not a colour request.
+     */
+    private final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap targetFormatRequests =
+            new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
+    /**
      * Captured uploads in RGBA8, keyed like {@link #texLevels}. A full {@code glTexImage*} publishes a new record, so
      * a reader sees the old image or the new one and never a half-written one; {@code glTexSubImage2D} patches rows
      * of the record that is already there.
@@ -711,6 +727,38 @@ public final class CeltiumGlStub implements FunctionProvider {
         return "main=" + stub.mainClears + "/" + stub.lastMainClearRed + "," + stub.lastMainClearGreen + ","
                 + stub.lastMainClearBlue + " foreign=" + stub.foreignClears + "/" + stub.lastForeignClearRed + ","
                 + stub.lastForeignClearGreen + "," + stub.lastForeignClearBlue;
+    }
+
+    /**
+     * {@return the recorded colour internal formats and their counts} for the format census (QUEUE 405,
+     * S5), as {@code 0x<gl>=<count>} pairs in GLenum order: {@code "off"} when the census switch is off
+     * (a distribution that was never counted must not read as an empty one) and {@code "none"} when it
+     * is on but no colour format was recorded.
+     */
+    public static String targetFormatDistribution() {
+        if (!TARGET_FORMAT_CENSUS) {
+            return "off";
+        }
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return "none";
+        }
+        synchronized (stub.targetFormatRequests) {
+            if (stub.targetFormatRequests.isEmpty()) {
+                return "none";
+            }
+            int[] formats = stub.targetFormatRequests.keySet().toIntArray();
+            java.util.Arrays.sort(formats);
+            StringBuilder out = new StringBuilder();
+            for (int format : formats) {
+                if (out.length() > 0) {
+                    out.append(' ');
+                }
+                out.append("0x").append(Integer.toHexString(format)).append('=')
+                        .append(stub.targetFormatRequests.get(format));
+            }
+            return out.toString();
+        }
     }
     /** Set by the backend after each bind, so a clear is classified by routing rather than by a raw GL name. */
     private volatile boolean drawFramebufferIsMain = true;
@@ -7415,10 +7463,13 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x0C11: return enabledCap(GL_SCISSOR_TEST) ? 1 : 0; // GL_SCISSOR_TEST
             // The delivered frame is RGBA8 colour with D24 depth and no stencil. Mods probe these to pick a format or
             // a shadow path; the old answer was zero for every one of them, which reads as "no colour bits at all".
-            case 0x0D52: return 8; // GL_RED_BITS
-            case 0x0D53: return 8; // GL_GREEN_BITS
-            case 0x0D54: return 8; // GL_BLUE_BITS
-            case 0x0D55: return 8; // GL_ALPHA_BITS
+            // The colour answers describe the frame, so while a non-default chain pair is the current target
+            // they are stale for the target actually being drawn into - QUEUE 405 (S6) counts that mismatch
+            // (targetFormatBitsAnsweredStale) rather than changing an answer mods pick formats by.
+            case 0x0D52: celtium$noteBitsAnswer(0x0D52, 8); return 8; // GL_RED_BITS
+            case 0x0D53: celtium$noteBitsAnswer(0x0D53, 8); return 8; // GL_GREEN_BITS
+            case 0x0D54: celtium$noteBitsAnswer(0x0D54, 8); return 8; // GL_BLUE_BITS
+            case 0x0D55: celtium$noteBitsAnswer(0x0D55, 8); return 8; // GL_ALPHA_BITS
             case 0x0D56: return 24; // GL_DEPTH_BITS
             case 0x0D57: return 0; // GL_STENCIL_BITS - this renderer keeps no stencil
             // Display/format probes: the window is double buffered, not stereo, and the delivered frame has no MSAA.
@@ -7959,6 +8010,19 @@ public final class CeltiumGlStub implements FunctionProvider {
         return backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan ? vulkan : null;
     }
 
+    /**
+     * Hands one framebuffer bit-count answer to the format census (QUEUE 405, S6): the answer is this
+     * stub's flat value for the delivered frame, and the backend counts it when the current target's
+     * pair class carries different bits. Without a Vulkan backend there is no pair class to disagree
+     * with, so nothing is counted.
+     */
+    private void celtium$noteBitsAnswer(int pname, int answeredBits) {
+        org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        if (vulkan != null) {
+            vulkan.celtium$noteTargetFormatBitsAnswer(pname, answeredBits);
+        }
+    }
+
     /** {@return whether a capability this stub records is enabled}. */
     private boolean enabledCap(int cap) {
         switch (cap) {
@@ -8495,6 +8559,14 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** The extent record for a texture already named, as the DSA storage forms carry it. */
     private void recordExtentForName(int name, int level, int internal, int width, int height) {
         int[] previous = this.texLevels.put(putTexLevelKey(name, level), new int[] { width, height, internal });
+        if (TARGET_FORMAT_CENSUS && level == 0 && internal != 0 && !isDepthInternalFormat(internal)) {
+            synchronized (this.targetFormatRequests) {
+                if (this.targetFormatRequests.containsKey(internal)
+                        || this.targetFormatRequests.size() < MAX_TARGET_FORMATS) {
+                    this.targetFormatRequests.addTo(internal, 1L);
+                }
+            }
+        }
         if (level == 0 && previous != null && (previous[0] != width || previous[1] != height)
                 && previous[0] * previous[1] >= 1024 * 1024 && RESPECIFIED_LINES.getAndDecrement() > 0) {
             // A large level re-specified at another size: the texture name was handed to something else (a mod that
