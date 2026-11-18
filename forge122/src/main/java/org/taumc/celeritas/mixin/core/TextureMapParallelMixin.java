@@ -54,6 +54,10 @@ public class TextureMapParallelMixin {
                     target = "Lnet/minecraft/client/renderer/texture/TextureMap;func_184397_a(Lnet/minecraft/client/resources/IResourceManager;Lnet/minecraft/client/renderer/texture/TextureAtlasSprite;)Z"))
     private boolean celeritas$parallelMipmaps(TextureMap self, IResourceManager resourceManager,
             TextureAtlasSprite sprite) {
+        // Item 387: the frame census/release registry is fed from here - the one call every sprite that takes
+        // the generateMipmaps path passes, with the parallel loader on or off. Sprites whose custom loader
+        // succeeds return before this call and stay unregistered (and unreleased) on purpose.
+        org.taumc.celeritas.impl.CeltiumFrameRelease.noteSprite(sprite);
         if (!CeltiumAtlasLoader.ENABLED) {
             return this.func_184397_a(resourceManager, sprite);
         }

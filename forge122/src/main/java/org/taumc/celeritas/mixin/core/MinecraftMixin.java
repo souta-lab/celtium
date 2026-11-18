@@ -293,6 +293,16 @@ public class MinecraftMixin {
         System.out.println("[Celtium] CELTIUM_SPLASH_HOOK startGame=true (mixin applied; the splash hook is live)");
     }
 
+    /**
+     * Item 387: {@code refreshResources} runs every reload listener synchronously (the initial load goes
+     * through it too), so RETURN is the one point where every {@code TextureMap} has finished loading - the
+     * moment the frame census/release pass is defined to run at, never per atlas.
+     */
+    @Inject(method = "refreshResources", at = @At("RETURN"), require = 0)
+    private void celtium$frameReleasePass(CallbackInfo ci) {
+        org.taumc.celeritas.impl.CeltiumFrameRelease.onResourceReloadComplete();
+    }
+
     /** Read once: this hook runs per splash frame, and the fixture switch cannot change mid-run. */
     private static final boolean celtium$VALIDATION = Boolean.getBoolean("celtium.validation");
 

@@ -605,6 +605,17 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private final it.unimi.dsi.fastutil.longs.Long2ObjectMap<TexCapture> texCaptures =
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    /**
+     * The write serial each level's capture carried when {@link #textureUploadRgba8} last handed it to a reader,
+     * keyed like {@link #texCaptures}. A level whose entry still equals its capture's serial at release time is
+     * one a mirror has already taken in full and nothing has rewritten since - the pair of facts
+     * {@link #releaseSettledTextureCaptures} needs before it may drop the stub's own copy. Entries are removed
+     * with their texture and with a released capture, so the map stays the size of the supplied set. Every
+     * access holds the map's own monitor: the recording write happens inside {@link #textureUploadRgba8}, which
+     * is documented safe from any thread, while the release reads and removes on the render thread.
+     */
+    private final it.unimi.dsi.fastutil.longs.Long2LongMap suppliedSerials =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
     /** The capture census {@link #textureCaptureSummary()} reports: full images, patches and refused uploads. */
     private final java.util.concurrent.atomic.AtomicInteger fullCaptures =
             new java.util.concurrent.atomic.AtomicInteger();
@@ -4603,6 +4614,13 @@ public final class CeltiumGlStub implements FunctionProvider {
             outWidthHeight[0] = capture.width;
             outWidthHeight[1] = capture.height;
         }
+        // The hand-out is the mirror taking this level's bytes: remember which serial it took, so the settled
+        // release can tell "already mirrored in full" from "never read". A later write bumps the capture's
+        // serial and the remembered one no longer matches, which is the whole test. Locked on the map: this
+        // query is documented safe from any thread, and the release mutates the same map on the render thread.
+        synchronized (stub.suppliedSerials) {
+            stub.suppliedSerials.put(texLevelKey(textureName, level), capture.serial);
+        }
         ByteBuffer view = capture.data.duplicate();
         view.clear();
         return view.asReadOnlyBuffer();
@@ -4976,6 +4994,85 @@ public final class CeltiumGlStub implements FunctionProvider {
             out.append(", ");
         }
         out.append(name).append('=').append(count);
+    }
+
+    /** {@return the RGBA8 bytes the filed captures currently hold} - the total {@link #textureCaptureSummary}
+     * prints as {@code bytes=}, without building the line. */
+    public static long textureCaptureBytes() {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return 0L;
+        }
+        long bytes = 0L;
+        for (TexCapture capture : stub.texCaptures.values()) {
+            bytes += capture.data.capacity();
+        }
+        return bytes;
+    }
+
+    /**
+     * Drops the stub's CPU copy of every captured level that has settled - the celtium-owned half of the TexFix
+     * rule (item 387 / 361-B). A level qualifies only when every one of these holds:
+     * <ul>
+     *   <li>the record holds game pixels from a full upload (not an undefined surface),</li>
+     *   <li>no {@code glTexSubImage2D} patch has ever touched the record ({@link TexCapture#patched}) - a patch
+     *   that arrives after a release would be pasted into a fresh undefined surface and zero the rest of the
+     *   level, so a level that is patched at all is treated as patched forever,</li>
+     *   <li>the record covers the whole recorded extent from the origin,</li>
+     *   <li>no backlog patches are waiting for the level,</li>
+     *   <li>a reader has already taken exactly this serial through {@link #textureUploadRgba8} - the mirror
+     *   holds the full content, so the stub's copy is a second copy,</li>
+     *   <li>the texture is not a framebuffer colour attachment (its capture is the readback source for a surface
+     *   the renderer itself rewrites).</li>
+     * </ul>
+     * A level that fails any test keeps its copy. A later full upload simply files a fresh record, so a texture
+     * the game re-uploads after a release is captured again as before. The caller decides when uploads have
+     * settled; this method only applies the rule.
+     *
+     * @return {@code {levels released, bytes released}}
+     */
+    public static long[] releaseSettledTextureCaptures() {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return new long[] { 0L, 0L };
+        }
+        long levels = 0L;
+        long bytes = 0L;
+        long[] keys = stub.texCaptures.keySet().toLongArray();
+        // The supplied-serial test and the removals hold the map's monitor throughout: a concurrent
+        // textureUploadRgba8 put (it is documented safe from any thread) must not interleave with the
+        // check-then-remove, or it could re-record a serial for a capture that is being dropped.
+        synchronized (stub.suppliedSerials) {
+            for (long key : keys) {
+                TexCapture capture = stub.texCaptures.get(key);
+                if (capture == null || !capture.gamePixels || capture.patched) {
+                    continue;
+                }
+                if (capture.x != 0 || capture.y != 0) {
+                    continue;
+                }
+                int[] extent = stub.texLevels.get(key);
+                if (extent == null || extent[0] != capture.width || extent[1] != capture.height) {
+                    continue;
+                }
+                java.util.List<TexCapture> pending = stub.texPatchBacklog.get(key);
+                if (pending != null && !pending.isEmpty()) {
+                    continue;
+                }
+                if (!stub.suppliedSerials.containsKey(key) || stub.suppliedSerials.get(key) != capture.serial) {
+                    continue;
+                }
+                int textureName = (int) (key >> 16);
+                if (celtium$framebufferForColorTexture(textureName) != 0) {
+                    continue;
+                }
+                stub.texCaptures.remove(key);
+                stub.suppliedSerials.remove(key);
+                levels++;
+                bytes += capture.data.capacity();
+            }
+        }
+        return new long[] { levels, bytes };
     }
 
     private final org.soutalab.celtium.vulkan.NativeRasterState raster;
@@ -6950,6 +7047,9 @@ public final class CeltiumGlStub implements FunctionProvider {
             if (hasCaptures) {
                 this.texCaptures.remove(key);
             }
+            synchronized (this.suppliedSerials) {
+                this.suppliedSerials.remove(key);
+            }
             if (hasBacklog) {
                 java.util.List<TexCapture> pending = this.texPatchBacklog.remove(key);
                 if (pending != null) {
@@ -8536,6 +8636,16 @@ public final class CeltiumGlStub implements FunctionProvider {
          */
         volatile long serial;
         /**
+         * Whether a {@code glTexSubImage2D} patch has ever been written into this record (or the record was itself
+         * filed by one). The settled-capture release ({@link CeltiumGlStub#releaseSettledTextureCaptures}) refuses
+         * a patched record outright: a patch that arrives after a release would be pasted into a freshly laid
+         * undefined surface and silently zero the rest of the level, so "was ever patched" is the stub's proof
+         * that a level is not a write-once image. The lightmap and the block atlas - the two levels patched every
+         * tick - are excluded by this flag from their first patch on. Set on the game thread, read by the release
+         * on the same thread; volatile because a reader may poll the record from elsewhere.
+         */
+        volatile boolean patched;
+        /**
          * The texel offset this record covers inside its level, for a capture that is a {@code glTexSubImage2D}
          * patch rather than the whole level. Zero on every record that fills its level from the origin; the patch
          * case exists because a level too large for the capture budget keeps its patch at patch size instead of an
@@ -8859,9 +8969,12 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (existing == null) {
             // Over the capture budget, or no extent recorded at all: keep the patch as a patch-sized capture with
             // its offset, so the mirror path can write it into the extent-sized image as a region instead of
-            // treating the patch as the whole level.
-            this.texCaptures.put(putTexLevelKey(name, level),
-                    new TexCapture(width, height, patch, true, this.texUploadSerial.incrementAndGet(), x, y));
+            // treating the patch as the whole level. The record was born from a patch, so it is marked patched:
+            // it is a fragment of its level, never a settled full image.
+            TexCapture lone = new TexCapture(width, height, patch, true,
+                    this.texUploadSerial.incrementAndGet(), x, y);
+            lone.patched = true;
+            this.texCaptures.put(putTexLevelKey(name, level), lone);
             this.subCaptures.incrementAndGet();
             this.patchBranchLone++;
             return;
@@ -8871,6 +8984,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         int dstX = x - existing.x;
         int dstY = y - existing.y;
         this.patchBranchPaste++;
+        // The level takes patches, so its record is never a settled-release candidate - even when this patch
+        // turns out identical and writes nothing. Marked before the refusal below for the same reason: the
+        // game's intent to patch is the fact the release rule reads, not the write's success.
+        existing.patched = true;
         if (dstX < 0 || dstY < 0 || dstX + width > existing.width || dstY + height > existing.height) {
             this.unconvertedUploads.incrementAndGet();
             return;

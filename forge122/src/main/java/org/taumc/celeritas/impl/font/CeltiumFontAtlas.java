@@ -62,8 +62,12 @@ public final class CeltiumFontAtlas {
     private static AbstractTexture atlasTexture;
     private static int atlasName;
 
-    /** The image the atlas texture was last uploaded from - kept so {@link #noteMirrorSource} can count it. */
-    private static BufferedImage atlasImage;
+    /**
+     * The heap bytes of the raster the atlas was last built from ({@code atlasW x atlasH x 4}). The raster
+     * itself is no longer retained (item 387): its only consumer was the upload in
+     * {@link AtlasTexture#loadTexture}, so what stays behind is the count, not the 69.2 MB image.
+     */
+    private static long atlasImageBytes;
 
     private static boolean buildFailed;
 
@@ -156,7 +160,8 @@ public final class CeltiumFontAtlas {
         tm.loadTexture(ATLAS_LOCATION, atlasTexture);
         atlasName = atlasTexture.getGlTextureId();
         System.out.println("[Celtium] font atlas built: " + atlasW + "x" + atlasH
-                + " unicodeDim=" + unicodeDim + " asciiDim=" + asciiDim + " texture=" + atlasName);
+                + " unicodeDim=" + unicodeDim + " asciiDim=" + asciiDim + " texture=" + atlasName
+                + " imageBytes=" + atlasImageBytes);
         if (MIRROR_FONT_ATLAS) {
             // Reproducing the tester's black screen needs a group that samples this atlas; menus that draw text through
             // the renderer's own font path have none. This hands the exact GL name to the renderer, which mirrors it the
@@ -207,7 +212,7 @@ public final class CeltiumFontAtlas {
         } catch (Exception ignored) {
         }
         g.dispose();
-        atlasImage = image;
+        atlasImageBytes = 4L * atlasW * atlasH;
         // Diagnostics: write the rasterised sheet where a probe asks for it, so "the atlas cell a glyph samples
         // holds what the resource manager served" is a picture and not an assumption.
         String dump = ATLAS_DUMP;
@@ -248,6 +253,7 @@ public final class CeltiumFontAtlas {
      * same entry the announce hook mirrors - with the atlas's own image.
      */
     private static final class AtlasTexture extends AbstractTexture {
+        /** The raster awaiting upload, or the one a pack change just produced. Null between uploads (item 387). */
         private BufferedImage content;
         private boolean uploaded;
 
@@ -269,13 +275,26 @@ public final class CeltiumFontAtlas {
                     return;
                 }
                 this.content = rasterise(mc);
-                atlasImage = this.content;
+            }
+            if (this.content == null) {
+                // The retained image is dropped after every upload (below), so a load that arrives with no
+                // image in hand has to rasterise first. The constructor is the only other source of an image
+                // and build() always hands one over, so this is a guard, not a path.
+                if (mc == null) {
+                    return;
+                }
+                this.content = rasterise(mc);
             }
             deleteGlTexture();
             this.getGlTextureId();
             TextureUtil.uploadTextureImageAllocate(this.getGlTextureId(), this.content, false, false);
             this.uploaded = true;
             atlasName = this.getGlTextureId();
+            // Item 387: the upload was the image's only consumer. A reload with the same packs returns at the
+            // signature check above without touching the image, and a changed pack re-rasterises into a fresh
+            // one - the pack signature alone carries the "do not re-rasterise" contract, so the raster itself
+            // (69.2 MB of heap at vanilla page size) does not stay resident between uploads.
+            this.content = null;
         }
     }
 }
