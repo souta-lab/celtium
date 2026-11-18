@@ -6400,18 +6400,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (tupleChanged && target != null && color != 0 && colorExtent != null && colorExtent.length >= 2
                 && colorExtent[0] > 0 && colorExtent[1] > 0) {
             target.ensureChainPairColors(identity, colorCount, colorExtent[0], colorExtent[1], pairClass);
-            // The decision's census (QUEUE 405, S5), counted here where the resolution takes effect: a
-            // re-registration whose tuple did not change is not a second decision. The chosen class's
-            // device features are asked only when a line is due, and only for a non-default class - the
-            // resolution never checks the default, so its line says unknown rather than inventing one.
-            boolean[] formatFeatures = TargetFormatCensus.wantsLine()
-                    && pairClass != TargetFormatClass.RGBA8_UNORM
-                    ? VulkanColorFormat.attachmentFeatures(this.context.physicalDevice(), pairClass) : null;
-            String formatCensusLine = TargetFormatCensus.noteResolution(identity, formatResolution,
-                    formatFeatures);
-            if (formatCensusLine != null) {
-                System.out.println(formatCensusLine);
-            }
+            celtium$noteFormatCensus(identity, formatResolution, pairClass);
             boolean shared = false;
             if (depth != 0 && depthExtent != null && depthExtent.length >= 2 && depthExtent[0] > 0
                     && depthExtent[1] > 0) {
@@ -6507,6 +6496,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         TargetFormatClass chosen = celtium$deviceCheckedFormatClass(widest);
         return new TargetFormatCensus.Resolution(chosen, color, slot0Gl, widestRequested, slotsDiffer,
                 anyUnmapped, anyWidenable, pinned, false, chosen != widest);
+    }
+
+    /**
+     * Counts one pair-class decision in the format census (QUEUE 405, S5), at the point where the
+     * resolution takes effect: a re-registration whose tuple did not change never reaches here, so it
+     * is not counted as a second decision. The chosen class's device features are asked only when a
+     * census line is due, and only for a non-default class - the resolution never checks the default,
+     * so its line says unknown rather than inventing a check result.
+     */
+    private void celtium$noteFormatCensus(long identity, TargetFormatCensus.Resolution resolution,
+            TargetFormatClass pairClass) {
+        boolean[] features = TargetFormatCensus.wantsLine() && pairClass != TargetFormatClass.RGBA8_UNORM
+                ? VulkanColorFormat.attachmentFeatures(this.context.physicalDevice(), pairClass) : null;
+        String line = TargetFormatCensus.noteResolution(identity, resolution, features);
+        if (line != null) {
+            System.out.println(line);
+        }
     }
 
     /** {@return {@code wanted} when this device can use it as a pair colour image, else the default class}. */
