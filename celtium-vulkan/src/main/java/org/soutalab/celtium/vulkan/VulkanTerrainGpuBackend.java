@@ -312,6 +312,33 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     static final boolean CHAIN_PAIR_DISCARD_DEPTH = !"false".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.chainPairDiscardDepth", "true"));
 
+    /**
+     * {@code -Dceltium.vulkan.targetFormatClass=RGBA16_FLOAT} forces every chain pair's format class
+     * (QUEUE 404, rule R8), so a leg can walk the non-default path whether or not the fixture's mods ask for
+     * it. The default ({@code default}) lets the GL request decide. The main identity and identity 0 are
+     * never forced (rule R1). An unrecognised or depth name is ignored, not fatal: a mistyped A/B arm must
+     * not take the renderer down, and the census (QUEUE 405) is where the effective class is reported.
+     */
+    static final TargetFormatClass FORCED_TARGET_FORMAT_CLASS = celtium$parseForcedTargetFormatClass(
+            System.getProperty("celtium.vulkan.targetFormatClass", "default"));
+
+    /** {@return the class a {@code celtium.vulkan.targetFormatClass} value names}, or null for no forcing. */
+    static TargetFormatClass celtium$parseForcedTargetFormatClass(String propertyValue) {
+        if (propertyValue == null) {
+            return null;
+        }
+        String name = propertyValue.trim();
+        if (name.isEmpty() || name.equalsIgnoreCase("default")) {
+            return null;
+        }
+        for (TargetFormatClass candidate : TargetFormatClass.values()) {
+            if (!candidate.isDepth() && candidate.name().equalsIgnoreCase(name)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
     /** The chain-pair render pass handle, or 0 before the first mod-framebuffer window asked for it. */
     long chainPairRenderPass;
     /** The multi-target chain-pair render passes, indexed by colour attachment count (2..8 used). */
@@ -6337,24 +6364,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // The pair and the shared-depth borrow, done here rather than at the next window: a window only engages
         // them for an identity that is already current, and the shadow pass's draws happen in the frame between
         // this bind and the copy — if the pair is not borrowed by then, the copy has nothing to serve.
+        int colorCount = Math.max(1, this.publishedTextures.colorAttachmentCount(identity));
+        // The pair's format class is resolved here, once (QUEUE 404, S3): this registration is the single
+        // junction every raw framebuffer passes, and the window path follows the pair's class from here on
+        // rather than re-reading the request (rule R5).
+        TargetFormatClass pairClass = celtium$resolvePairFormatClass(identity, color, colorCount);
         long[] previous = this.rawRegisteredTargets.get(framebuffer);
-        boolean tupleChanged = previous == null || previous[0] != color || previous[1] != depth
+        boolean tupleChanged = previous == null || previous.length != 8 || previous[0] != color
+                || previous[1] != depth
                 || previous[2] != (colorExtent == null ? 0 : colorExtent[0])
                 || previous[3] != (colorExtent == null ? 0 : colorExtent[1])
                 || previous[4] != (depthExtent == null ? 0 : depthExtent[0])
-                || previous[5] != (depthExtent == null ? 0 : depthExtent[1]);
+                || previous[5] != (depthExtent == null ? 0 : depthExtent[1])
+                || previous[7] != pairClass.ordinal();
         GllessFrameTarget target = offTargetTarget();
         if (tupleChanged && target != null && color != 0 && colorExtent != null && colorExtent.length >= 2
                 && colorExtent[0] > 0 && colorExtent[1] > 0) {
-            int colorCount = Math.max(1, this.publishedTextures.colorAttachmentCount(identity));
-            target.ensureChainPairColors(identity, colorCount, colorExtent[0], colorExtent[1]);
+            target.ensureChainPairColors(identity, colorCount, colorExtent[0], colorExtent[1], pairClass);
             boolean shared = false;
             if (depth != 0 && depthExtent != null && depthExtent.length >= 2 && depthExtent[0] > 0
                     && depthExtent[1] > 0) {
                 shared = target.ensureChainPairSharedDepth(identity,
                         RenderTargetRegistry.rawColorTextureIdentity(depth), depthExtent[0], depthExtent[1]);
             }
-            long[] next = new long[7];
+            long[] next = new long[8];
             next[0] = color;
             next[1] = depth;
             next[2] = colorExtent[0];
@@ -6362,6 +6395,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             next[4] = depthExtent == null ? 0 : depthExtent[0];
             next[5] = depthExtent == null ? 0 : depthExtent[1];
             next[6] = shared ? 1L : 0L;
+            // The resolved class is part of the tuple (rule R7): an internal format can be re-specified at
+            // the same extent, and without this element that change would compare equal and never re-resolve.
+            next[7] = pairClass.ordinal();
             this.rawRegisteredTargets.put(framebuffer, next);
             if (this.rawDepthRegisterLogs < 8) {
                 this.rawDepthRegisterLogs++;
@@ -6374,9 +6410,48 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
     }
 
-    /** Last registered (colour, depth, colour extent, depth extent, shared?) per raw framebuffer name. */
+    /** Last registered (colour, depth, colour extent, depth extent, shared?, format class) per raw name. */
     private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<long[]> rawRegisteredTargets =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<long[]>();
+
+    /**
+     * {@return the format class a raw framebuffer's chain pair is allocated in} (QUEUE 404, S3), resolved
+     * from the colour textures' recorded GL internal formats through the existing stub read
+     * ({@code textureLevelParameter(name, 0, 0x1003)} - no new read path). The rules, in order: the main
+     * identity and identity 0 are pinned to {@code RGBA8_UNORM} (R1, via
+     * {@link VulkanColorFormat#pinnedOrRequested}); the forced class, when set, wins over the request (R8);
+     * a multi-target tuple takes the widest class any slot asked for (R4); and a class this device cannot
+     * use as a sampled colour attachment falls back to {@code RGBA8_UNORM} (R5 of the readiness, the device
+     * check). An unrecorded texture answers 0 and an unmapped format answers no class - both resolve to the
+     * default, which is the behaviour every pair had before classes existed (R2).
+     */
+    private TargetFormatClass celtium$resolvePairFormatClass(long identity, int color, int colorCount) {
+        boolean pinned = identity == 0L || identity == this.targetRegistry.mainIdentity();
+        if (!pinned && FORCED_TARGET_FORMAT_CLASS != null) {
+            return celtium$deviceCheckedFormatClass(FORCED_TARGET_FORMAT_CLASS);
+        }
+        TargetFormatClass widest = TargetFormatClass.RGBA8_UNORM;
+        for (int slot = 0; slot < colorCount; slot++) {
+            int name = slot == 0 ? color : this.publishedTextures.colorTextureAt(identity, slot);
+            if (name == 0) {
+                continue;
+            }
+            int glInternal = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                    .textureLevelParameter(name, 0, 0x1003);
+            widest = VulkanColorFormat.widest(widest,
+                    VulkanColorFormat.pinnedOrRequested(pinned, glInternal));
+        }
+        return celtium$deviceCheckedFormatClass(widest);
+    }
+
+    /** {@return {@code wanted} when this device can use it as a pair colour image, else the default class}. */
+    private TargetFormatClass celtium$deviceCheckedFormatClass(TargetFormatClass wanted) {
+        if (wanted == TargetFormatClass.RGBA8_UNORM) {
+            return wanted;
+        }
+        return VulkanColorFormat.usable(this.context.physicalDevice(), wanted)
+                ? wanted : TargetFormatClass.RGBA8_UNORM;
+    }
     /** Bounded CELTIUM_RAW_DEPTH_REGISTER lines. */
     private int rawDepthRegisterLogs;
     /** Bounded CELTIUM_RAW_BIND_GAME_FRAMEBUFFER lines (relocated from the hint's report). */
@@ -13422,18 +13497,28 @@ this.frameBufferOpen = false;
                     // pipelines (same attachment formats, samples and subpass references - load and store operations
                     // are not part of the compatibility rule), so the same immediate and mod-program pipelines draw
                     // here. The framebuffer cache is keyed by render pass, so this pass gets its own handle.
+                    // The pass is the (count, class) variant of this pair (QUEUE 404, S4): the pair's class
+                    // is followed, never re-resolved here (rule R5). For the default class these are the
+                    // same handles this code always used.
+                    TargetFormatClass pairClass = offTarget.chainPairFormatClass(chainIdentityValue);
                     if (windowColorCount > 1) {
                         // The multi-target pass for this tuple: attachment count is part of render-pass
                         // compatibility, so neither the frame pass nor the one-colour chain pass can stand in
                         // for it, and the pipelines that draw here are the ones built against it (the
                         // mod-program cache keys on the render pass). The tuple's acquire belongs before the
                         // begin: the pass declares GENERAL for every colour attachment it attaches.
-                        passRenderPass = chainPairRenderPass(windowColorCount);
+                        passRenderPass = chainPairRenderPass(windowColorCount, pairClass);
                         offTarget.recordChainPairColorAcquire(chainIdentityValue, this.commandBuffer);
                         framebuffer = framebufferCache().chainPairMulti(passRenderPass, offTarget,
                                 windowColorCount, this.targetWidth, this.targetHeight);
                     } else if (CHAIN_PAIR_DISCARD_DEPTH) {
-                        passRenderPass = chainPairRenderPass();
+                        passRenderPass = chainPairRenderPass(pairClass);
+                        framebuffer = ensureChainPairFramebuffer(passRenderPass);
+                    } else if (pairClass != TargetFormatClass.RGBA8_UNORM) {
+                        // The discard-depth A/B's frame-pass arm is an 8-bit comparison: a non-default pair
+                        // cannot attach to the frame pass at all (its format differs), so it takes the
+                        // class' frame-shaped pass instead. The A/B stays an 8-bit-only comparison.
+                        passRenderPass = formatClassPipelinePass(pairClass);
                         framebuffer = ensureChainPairFramebuffer(passRenderPass);
                     } else {
                         framebuffer = ensureChainPairFramebuffer(passRenderPass);
