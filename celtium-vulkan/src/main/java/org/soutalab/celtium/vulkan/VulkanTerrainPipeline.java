@@ -1246,6 +1246,19 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
     }
 
     /**
+     * The frame-shaped pass (load/store, one colour) in a non-default colour format - the pass immediate and
+     * mod-program pipelines for a non-{@code RGBA8_UNORM} chain pair are built against (QUEUE 404). It is
+     * compatible with that class' one-colour chain pass: compatibility compares attachment formats, samples and
+     * subpass references, not load/store operations, which is the same relation the frame pass has to the
+     * ordinary chain pass.
+     */
+    static long createFrameRenderPass(VulkanContext context, int colorFormat) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            return buildFrameRenderPass(stack, context.device(), false, 1, colorFormat);
+        }
+    }
+
+    /**
      * Builds the render pass a mod's own framebuffer draws through: the frame pass' attachments and subpass, with the
      * depth attachment cleared and discarded instead of loaded and stored.
      * <p>
@@ -1289,17 +1302,33 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
         }
     }
 
+    /**
+     * The chain-pair pass for a pair allocated in a non-default colour format (QUEUE 404): the discard-depth
+     * form above, with every colour attachment in {@code colorFormat}. A pass built for one format cannot attach
+     * an image of another, so the (attachment count, format class) pair is the variant key the backend caches by.
+     */
+    static long createChainPairRenderPass(VulkanContext context, int colorAttachments, int colorFormat) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            return buildFrameRenderPass(stack, context.device(), true, colorAttachments, colorFormat);
+        }
+    }
+
     private static long buildFrameRenderPass(MemoryStack stack, VkDevice device, boolean discardDepth) {
         return buildFrameRenderPass(stack, device, discardDepth, 1);
     }
 
     private static long buildFrameRenderPass(MemoryStack stack, VkDevice device, boolean discardDepth,
             int colorAttachments) {
+        return buildFrameRenderPass(stack, device, discardDepth, colorAttachments, COLOR_FORMAT);
+    }
+
+    private static long buildFrameRenderPass(MemoryStack stack, VkDevice device, boolean discardDepth,
+            int colorAttachments, int colorFormat) {
         int colors = Math.max(1, colorAttachments);
         VkAttachmentDescription.Buffer attachments = VkAttachmentDescription.calloc(colors + 1, stack);
         for (int index = 0; index < colors; index++) {
             VkAttachmentDescription color = attachments.get(index);
-            color.format(COLOR_FORMAT)
+            color.format(colorFormat)
                     .samples(VK_SAMPLE_COUNT_1_BIT)
                     // LOAD, not CLEAR: the frame target is shared with OpenGL, which has already cleared it and may
                     // already have drawn into it, so clearing here would erase that work.
