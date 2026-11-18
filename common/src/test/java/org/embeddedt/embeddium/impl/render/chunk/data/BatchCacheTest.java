@@ -142,6 +142,67 @@ class BatchCacheTest {
         assertSame(newTerrain, this.cache.get(params(true, BatchCacheParams.DEFAULT_VIEW)));
     }
 
+    // ---------------------------------------------------------------- retirement (item 398)
+
+    @Test
+    void retireDeletesOnlyTheBatchUnderTheKey() {
+        CountingBatch terrain = new CountingBatch();
+        CountingBatch shadow = new CountingBatch();
+
+        this.cache.store(params(false, BatchCacheParams.DEFAULT_VIEW), terrain);
+        this.cache.store(params(false, BatchCacheParams.SHADOW_VIEW), shadow);
+
+        this.cache.retire(params(false, BatchCacheParams.DEFAULT_VIEW));
+
+        // The retired batch is deleted and no longer handed out; the other view's batch is untouched,
+        // which is what separates a retire from an invalidation.
+        assertEquals(1, terrain.deletes);
+        assertEquals(0, shadow.deletes);
+        assertNull(this.cache.get(params(false, BatchCacheParams.DEFAULT_VIEW)));
+        assertSame(shadow, this.cache.get(params(false, BatchCacheParams.SHADOW_VIEW)));
+        assertEquals(1, this.cache.size());
+    }
+
+    @Test
+    void retireOfAnAbsentKeyDeletesNothing() {
+        CountingBatch terrain = new CountingBatch();
+        this.cache.store(params(false, BatchCacheParams.DEFAULT_VIEW), terrain);
+
+        this.cache.retire(params(false, BatchCacheParams.SHADOW_VIEW));
+        this.cache.retire(params(true, BatchCacheParams.DEFAULT_VIEW));
+
+        assertEquals(0, terrain.deletes);
+        assertSame(terrain, this.cache.get(params(false, BatchCacheParams.DEFAULT_VIEW)));
+        assertEquals(1, this.cache.size());
+
+        // Retiring the same key twice deletes the batch once: the second retire finds the key empty.
+        this.cache.retire(params(false, BatchCacheParams.DEFAULT_VIEW));
+        this.cache.retire(params(false, BatchCacheParams.DEFAULT_VIEW));
+        assertEquals(1, terrain.deletes);
+        assertEquals(0, this.cache.size());
+    }
+
+    @Test
+    void storingAfterARetireDoesNotDeleteTheReplacement() {
+        // The rebuild sequence the renderers now run: retire the stale batch, create the replacement,
+        // then store it. The store must find the key empty - if it deleted anything, it would be deleting
+        // the batch that was just stored under a different key or the replacement itself.
+        CountingBatch stale = new CountingBatch();
+        CountingBatch shadow = new CountingBatch();
+        CountingBatch replacement = new CountingBatch();
+
+        this.cache.store(params(false, BatchCacheParams.DEFAULT_VIEW), stale);
+        this.cache.store(params(false, BatchCacheParams.SHADOW_VIEW), shadow);
+        this.cache.retire(params(false, BatchCacheParams.DEFAULT_VIEW));
+        this.cache.store(params(false, BatchCacheParams.DEFAULT_VIEW), replacement);
+
+        assertEquals(1, stale.deletes);
+        assertEquals(0, shadow.deletes);
+        assertEquals(0, replacement.deletes);
+        assertSame(replacement, this.cache.get(params(false, BatchCacheParams.DEFAULT_VIEW)));
+        assertEquals(2, this.cache.size());
+    }
+
     // ---------------------------------------------------------------- invalidation
 
     @Test

@@ -159,6 +159,12 @@ public abstract class DefaultChunkRenderer extends ShaderChunkRenderer {
 
         if (cached == null || !cached.isValidFor(renderList.getSectionsWithGeometry(), renderList.getSectionsWithGeometryCount(),
                 occlusionCamera.intX, occlusionCamera.intY, occlusionCamera.intZ)) {
+            // Retire the stale batch first, before its replacement is created (item 398): the store no longer
+            // has to delete the old batch inline with the new one already alive.
+            if (cached != null) {
+                storage.retireCachedMultiDrawBatch(cacheParams);
+            }
+
             cached = BatchAssembler.createCachedBatch(region, storage, renderList, occlusionCamera, renderPass,
                     useBlockFaceCulling, commandList, this.tessellationProvider);
 

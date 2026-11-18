@@ -36,6 +36,10 @@ sourceSets {
     main {
         compileClasspath += lwjglCommon.output
     }
+    test {
+        compileClasspath += lwjglCommon.output
+        runtimeClasspath += lwjglCommon.output
+    }
 }
 
 configurations {
@@ -84,6 +88,10 @@ tasks.named('test', Test) {
     useJUnitPlatform()
 
     maxHeapSize = '1G'
+
+    // Tests have no GL context; this one records buffer calls instead (item 398, the test-harness shape
+    // upstream added with its batch-buffer recycling).
+    systemProperty 'celeritas.lwjglService', 'org.taumc.celeritas.lwjgl.FakeGlLWJGLService'
 
     testLogging {
         events "passed"

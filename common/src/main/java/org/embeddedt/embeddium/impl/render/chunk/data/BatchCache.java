@@ -32,11 +32,30 @@ final class BatchCache {
         return this.batches.get(params);
     }
 
-    /** Stores {@code batch} under {@code params}, deleting the batch it replaces if the key was already held. */
+    /**
+     * Stores {@code batch} under {@code params}, deleting the batch it replaces if the key was already held.
+     * <p>
+     * The rebuild paths do not rely on that replacement delete: they retire the stale batch first (see
+     * {@link #retire}), so by the time the replacement is stored the key is empty and nothing is deleted here.
+     * The delete stays for stores that replace without retiring first, so a batch is never leaked by a direct
+     * store - but a caller that creates the replacement before storing it must retire first if the old batch's
+     * resources have to be released before the new batch is created.
+     */
     void store(SectionRenderDataStorage.BatchCacheParams params, CachedBatch batch) {
         CachedBatch replaced = this.batches.put(params, batch);
         if (replaced != null) {
             replaced.delete();
+        }
+    }
+
+    /**
+     * Removes the batch held under {@code params} and deletes it; does nothing when the key holds none.
+     * Only that key's batch is touched - the other views' entries survive a retire, unlike an invalidation.
+     */
+    void retire(SectionRenderDataStorage.BatchCacheParams params) {
+        CachedBatch retired = this.batches.remove(params);
+        if (retired != null) {
+            retired.delete();
         }
     }
 

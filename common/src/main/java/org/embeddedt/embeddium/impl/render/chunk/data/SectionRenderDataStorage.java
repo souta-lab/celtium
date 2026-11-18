@@ -234,6 +234,26 @@ public class SectionRenderDataStorage {
         this.batchCache.store(params, batch);
     }
 
+    /**
+     * Discards the cached batch for {@code params} ahead of its rebuild, so the stale batch is deleted before
+     * its replacement is created rather than inside {@link #storeCachedMultiDrawBatch} after the replacement
+     * already exists (item 398, the ordering half of upstream's "Reuse the indirect command buffer when a
+     * region batch is rebuilt", from item 337's audit). Upstream retires first so the new batch can adopt the
+     * old one's GL buffer; celtium's batches own no GL buffer ({@code VulkanMultiDrawBatch.upload} is a no-op
+     * and its commands stay in CPU arrays), so there is nothing to adopt - what the ordering buys here is that
+     * the stale batch's own resources (a Vulkan batch's retained packet buffers, freed by its {@code delete()})
+     * are released before the replacement allocates its own, instead of both being alive across the rebuild.
+     * <p>
+     * A retire is not an invalidation: the mesh data the batch was assembled from has not changed - the batch
+     * is being replaced because its validity window lapsed - so the census does not count it as one, and the
+     * other keys' batches are left alone. Callers that hold the stale batch as a fallback (the Vulkan
+     * backend's deferred rebuild under the item 328 budget) must retire only once the rebuild is actually
+     * going ahead, never before the deferral decision.
+     */
+    public void retireCachedMultiDrawBatch(BatchCacheParams params) {
+        this.batchCache.retire(params);
+    }
+
     public void invalidateCachedBatches() {
         CENSUS.noteInvalidate(this.batchCache.size());
         this.batchCache.invalidate();

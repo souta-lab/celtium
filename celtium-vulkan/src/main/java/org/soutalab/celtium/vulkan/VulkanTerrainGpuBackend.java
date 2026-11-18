@@ -15415,6 +15415,14 @@ this.frameBufferOpen = false;
                         // separately rather than charged to the allowance.
                         boolean hasStored = cached != null;
                         if (!hasStored || this.terrainBudget.rebuildAllowed()) {
+                            // Retire-before-rebuild (item 398): the stale batch is deleted before its
+                            // replacement is created, so its retained packets are freed before the new batch
+                            // encodes its own. Only inside this branch - a deferred rebuild below draws the
+                            // stored batch as-is, so retiring before the budget decision would destroy the
+                            // last-good batch the deferral exists to reuse.
+                            if (hasStored) {
+                                storage.retireCachedMultiDrawBatch(cacheParams);
+                            }
                             long rebuildStarted = System.nanoTime();
                             cached = BatchAssembler.createCachedBatch(region, storage, renderList, occlusionCamera, pass,
                                     useBlockFaceCulling, null, (commands, ignored, ignoredPass) -> null);
