@@ -10,6 +10,10 @@ spec.loader.exec_module(groups)
 
 TABLE = "celtium-vulkan/src/main/java/org/soutalab/celtium/patch/PatchGroups.java"
 MIXINS = "forge122/src/main/java/org/taumc/celeritas/mixin"
+CONFIG_JSON = "forge122/src/main/resources/mixins.celeritas.json"
+PLUGIN = "forge122/src/main/java/org/taumc/celeritas/mixin/CeleritasVintageMixinPlugin.java"
+SHADOW_JSON = '{\n  "client": [\n    "core.SplashProgressMixin",\n    "core.GLAllocationMixin"\n  ]\n}\n'
+CLEAN_PLUGIN = "package org.taumc.celeritas.mixin;\npublic class CeleritasVintageMixinPlugin {}\n"
 
 # A mixin is a file carrying the annotation in code; the body is irrelevant to the checker.
 MIXIN = "package org.taumc.celeritas.mixin;\n@Mixin(Target.class)\npublic class {} {}\n"
@@ -27,7 +31,7 @@ class PatchGroupTableTests(unittest.TestCase):
                 + "".join(f'              "{member}",\n' for member in members)
                 + "        );\n")
 
-    def tree(self, tmp, entries, mixins):
+    def tree(self, tmp, entries, mixins, config_json=SHADOW_JSON, plugin=CLEAN_PLUGIN):
         root = Path(tmp)
         table = root / TABLE
         table.parent.mkdir(parents=True)
@@ -36,6 +40,14 @@ class PatchGroupTableTests(unittest.TestCase):
             path = root / MIXINS / (name.replace(".", "/") + ".java")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(MIXIN.replace("{}", name.rsplit(".", 1)[-1]), encoding="utf-8")
+        if config_json is not None:
+            config = root / CONFIG_JSON
+            config.parent.mkdir(parents=True, exist_ok=True)
+            config.write_text(config_json, encoding="utf-8")
+        if plugin is not None:
+            plugin_path = root / PLUGIN
+            plugin_path.parent.mkdir(parents=True, exist_ok=True)
+            plugin_path.write_text(plugin, encoding="utf-8")
         return root
 
     def test_consistent_table_passes(self):
@@ -155,12 +167,51 @@ class PatchGroupTableTests(unittest.TestCase):
             problems = groups.check(root)
             self.assertTrue(any("no mixins discovered" in problem for problem in problems))
 
+    def test_shadow_json_is_pinned(self):
+        entries = self.entry("mechanism", True, ["core.AlphaMixin"])
+        mixins = ["core.AlphaMixin"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.tree(tmp, entries, mixins)
+            self.assertEqual(groups.check(root), [])
+            _, summary = groups.analyze(root)
+            self.assertEqual(summary["shadow"], ["core.GLAllocationMixin", "core.SplashProgressMixin"])
+            self.assertIn("shadow-json=2 entries (unchanged)", groups.describe(summary))
+        with tempfile.TemporaryDirectory() as tmp:
+            # One shadow entry removed: the companion pass would apply that mixin for the first time.
+            root = self.tree(tmp, entries, mixins,
+                             config_json='{\n  "client": [\n    "core.SplashProgressMixin"\n  ]\n}\n')
+            problems = groups.check(root)
+            self.assertTrue(any("pinned shadow list" in problem for problem in problems), problems)
+        with tempfile.TemporaryDirectory() as tmp:
+            # A third name added: it would be shadowed exactly like the known two.
+            root = self.tree(tmp, entries, mixins,
+                             config_json='{\n  "client": [\n    "core.SplashProgressMixin",\n'
+                                         '    "core.GLAllocationMixin",\n    "core.AlphaMixin"\n  ]\n}\n')
+            problems = groups.check(root)
+            self.assertTrue(any("pinned shadow list" in problem for problem in problems), problems)
+
+    def test_plugin_property_literal_is_reported(self):
+        entries = self.entry("mechanism", True, ["core.AlphaMixin"])
+        mixins = ["core.AlphaMixin"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.tree(tmp, entries, mixins)
+            _, summary = groups.analyze(root)
+            self.assertEqual(summary["plugin_property_reads"], 0)
+            self.assertIn("plugin property reads=0", groups.describe(summary))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.tree(tmp, entries, mixins,
+                             plugin='class P { String s = "celtium.patch.tweaks"; }\n')
+            problems = groups.check(root)
+            self.assertTrue(any("patch property literal" in problem for problem in problems), problems)
+
     def test_repository_table_matches_the_mixin_tree(self):
         self.assertEqual(groups.check(), [])
         _, summary = groups.analyze()
         self.assertEqual(len(summary["discovered"]), 86)
         self.assertEqual(sorted(summary["collisions"]),
                          ["RenderItemMixin", "TextureAtlasSpriteMixin", "TextureUtilMixin"])
+        self.assertEqual(summary["shadow"], ["core.GLAllocationMixin", "core.SplashProgressMixin"])
+        self.assertEqual(summary["plugin_property_reads"], 0)
 
 
 if __name__ == "__main__":

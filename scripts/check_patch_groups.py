@@ -13,6 +13,16 @@ Three properties are checked, from two inputs (the Java table and the mixin sour
 3. **No simple-name addressing** - three simple names are already shared by two mixins each (`RenderItemMixin`,
    `TextureUtilMixin`, `TextureAtlasSpriteMixin`), so a member written as a bare simple name would file one of
    the pair under the other's group. The collision sets themselves are reported, not rejected.
+4. **The JSON shadow list is pinned** - `mixins.celeritas.json`'s arrays hold exactly the two known shadow
+   entries (item 356-B's ruling). The JSON pass runs before the companion pass and claims those names in the
+   global mixin list, while the plugin's `shouldApplyMixin` refuses them, so the two are registered by nobody:
+   they are shadowed, not merely unused. Adding a name there would silently shadow a live mixin the same way,
+   and removing one of the two would let the companion pass register and apply it for the first time - both
+   are behaviour changes that belong to their own item, not to an edit of this file.
+5. **No patch property reads in the plugin** - the mixin plugin may not carry a `celtium.patch.` property
+   literal: the kill-switch and ledger reads live in the ledger class, so the gate's decisions stay in the
+   module the offline tests can reach (and the plugin's early path stays free of property reads, as the
+   GL-less CPU contract already requires for its own reasons).
 
 Discovery mirrors the runtime rule in `CeleritasVintageMixinPlugin.getMixins()` at source level: a file below the
 mixin package that carries an `@Mixin` annotation in code (comments and string literals do not count) is a mixin.
@@ -21,12 +31,17 @@ Exit status is 0 when clean and 1 when a problem is reported, like `scripts/chec
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import re
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 TABLE = Path("celtium-vulkan/src/main/java/org/soutalab/celtium/patch/PatchGroups.java")
 MIXIN_DIR = Path("forge122/src/main/java/org/taumc/celeritas/mixin")
+CONFIG_JSON = Path("forge122/src/main/resources/mixins.celeritas.json")
+PLUGIN = Path("forge122/src/main/java/org/taumc/celeritas/mixin/CeleritasVintageMixinPlugin.java")
+SHADOW_ENTRIES = ("core.GLAllocationMixin", "core.SplashProgressMixin")
+PROPERTY_LITERAL = '"celtium.patch.'
 PACKAGE = "org.taumc.celeritas.mixin."
 MIXIN_ANNOTATION = re.compile(r"@Mixin\s*\(")
 GROUP_CALL = re.compile(r"(?<![\w.$])group\s*\(")
@@ -196,11 +211,42 @@ def analyze(root=ROOT):
         if name not in listed:
             problems.append(f"mixin not in the patch-group table: {name} (an unlisted name falls back to mechanism)")
 
+    shadow = None
+    json_path = root / CONFIG_JSON
+    if json_path.is_file():
+        try:
+            config = json.loads(json_path.read_text(encoding="utf-8"))
+            entries = []
+            for key in ("mixins", "client", "server"):
+                value = config.get(key) if isinstance(config, dict) else None
+                if isinstance(value, list):
+                    entries.extend(item for item in value if isinstance(item, str))
+            shadow = sorted(entries)
+            if sorted(entries) != sorted(SHADOW_ENTRIES) or len(entries) != len(SHADOW_ENTRIES):
+                problems.append(
+                    f"{CONFIG_JSON} lists {sorted(entries)}, but the pinned shadow list is "
+                    f"{sorted(SHADOW_ENTRIES)}: the JSON arrays shadow the companion pass (the plugin refuses "
+                    "what they name and they claim the name first), so adding a name shadows a live mixin and "
+                    "removing one applies it for the first time - either change belongs to its own item")
+        except (OSError, ValueError) as failure:
+            problems.append(f"{CONFIG_JSON}: cannot parse the mixin config ({failure})")
+
+    plugin_property_reads = None
+    plugin_path = root / PLUGIN
+    if plugin_path.is_file():
+        plugin_property_reads = plugin_path.read_text(encoding="utf-8", errors="replace").count(PROPERTY_LITERAL)
+        if plugin_property_reads:
+            problems.append(
+                f"{PLUGIN} carries {plugin_property_reads} patch property literal(s): the kill-switch and "
+                "ledger reads belong in the patch ledger class, not in the mixin plugin")
+
     summary = {
         "groups": groups,
         "discovered": discovered,
         "collisions": collisions,
         "listed": listed,
+        "shadow": shadow,
+        "plugin_property_reads": plugin_property_reads,
     }
     return problems, summary
 
@@ -225,6 +271,10 @@ def describe(summary):
         parts.append(f"{len(collisions)} simple-name collisions addressed by relative names ({detail})")
     else:
         parts.append("no simple-name collisions")
+    if summary.get("shadow") is not None:
+        parts.append(f"shadow-json={len(summary['shadow'])} entries (unchanged)")
+    if summary.get("plugin_property_reads") is not None:
+        parts.append(f"plugin property reads={summary['plugin_property_reads']}")
     return ", ".join(parts) + "."
 
 
