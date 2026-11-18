@@ -28,6 +28,7 @@ jobs:
           python3 scripts/cpu-contract/shared_game_slot_check.py
           python3 scripts/cpu-contract/glless_hint_descriptor_check.py
           python3 scripts/check_agent_docs.py
+          python3 scripts/check_patch_groups.py
           bash -n scripts/gv-leg.sh
       - uses: actions/setup-java@v4
         with:
