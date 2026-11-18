@@ -115,6 +115,30 @@ public final class VulkanColorFormat {
         }
     }
 
+    /**
+     * {@return the chosen class's colour-attachment feature triple} - {@code [attach, blend, sampled]} from
+     * its optimal-tiling features - or {@code null} when there is no device or the class is not a colour
+     * class. Read-only and uncached: the only caller is the format census (QUEUE 405), which asks at most
+     * once per printed line, and a census must report the device it asked rather than a cached answer
+     * taken for a different question ({@link #usable} also requires the image to be creatable, which the
+     * three feature bits alone do not say).
+     */
+    public static boolean[] attachmentFeatures(VkPhysicalDevice device, TargetFormatClass formatClass) {
+        if (device == null || formatClass == null || formatClass.isDepth()) {
+            return null;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkFormatProperties properties = VkFormatProperties.calloc(stack);
+            vkGetPhysicalDeviceFormatProperties(device, formatClass.vkFormat(), properties);
+            int features = properties.optimalTilingFeatures();
+            return new boolean[] {
+                (features & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0,
+                (features & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT) != 0,
+                (features & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0
+            };
+        }
+    }
+
     private static boolean queryUsable(VkPhysicalDevice device, int format) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkFormatProperties properties = VkFormatProperties.calloc(stack);
