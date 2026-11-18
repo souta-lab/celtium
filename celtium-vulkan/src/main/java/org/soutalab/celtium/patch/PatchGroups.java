@@ -233,6 +233,14 @@ public final class PatchGroups {
               "features.textures.TextureAtlasSpriteMixin",
               "features.textures.RenderItemMixin"
         );
+        group("model_phase_instrument", "model phase instrument", false,
+              "the CELTIUM_MODEL_PHASE phase lines (item 338a) stop; model loading itself is untouched because every injector is require=0 and read-only",
+              "core.model.ModelManagerPhaseMixin",
+              "core.model.ModelLoaderPhaseMixin",
+              "core.model.ModelBakeryPhaseMixin",
+              "core.model.BlockModelShapesPhaseMixin",
+              "features.textures.TextureMapStitchPhaseMixin"
+        );
         group("text", "text", false,
               "the font batcher stops and glyphs fall back to the generic recording through the GL stub (unmeasured)",
               "core.FontRendererMixin",

@@ -2,7 +2,7 @@
 
 生成: `python3 scripts/instrument-index.py`。手で編集しない。
 
-システムプロパティの読み取りキー **549 個**／文字列内マーカー **516 個**。
+システムプロパティの読み取りキー **550 個**／文字列内マーカー **517 個**。
 機能設定・故障注入も含む。すべてが計測用スイッチという意味ではない。
 
 名前を検索してリンク先の実装を読む。既定値・有効条件・出力上限は推測で掲載しない。
@@ -38,6 +38,7 @@
 | [celtium.gpuPassTimings](#group-celtium-gpuPassTimings) | 1 |
 | [celtium.itemMeshCache](#group-celtium-itemMeshCache) | 1 |
 | [celtium.mirrorDump](#group-celtium-mirrorDump) | 1 |
+| [celtium.modelPhaseReport](#group-celtium-modelPhaseReport) | 1 |
 | [celtium.native](#group-celtium-native) | 4 |
 | [celtium.parallelAtlas](#group-celtium-parallelAtlas) | 1 |
 | [celtium.particleCache](#group-celtium-particleCache) | 1 |
@@ -274,6 +275,13 @@
 | キー | 読み取りAPI | 位置 |
 |---|---|---|
 | `celtium.mirrorDump` | `System.getProperty` | [VulkanTerrainGpuBackend.java:2903](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L2903>) |
+
+<a id="group-celtium-modelPhaseReport"></a>
+## `celtium.modelPhaseReport.*`
+
+| キー | 読み取りAPI | 位置 |
+|---|---|---|
+| `celtium.modelPhaseReport` | `Boolean.getBoolean` | [ModelPhaseTrace.java:34](<../forge122/src/main/java/org/taumc/celeritas/impl/model/ModelPhaseTrace.java#L34>) |
 
 <a id="group-celtium-native"></a>
 ## `celtium.native.*`
@@ -1094,6 +1102,7 @@
 | `CELTIUM_MODEL_OFFTARGET` | [ModelReplay.java:67](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L67>) |
 | `CELTIUM_MODEL_OFFTARGET_BATCHES` | [ModelReplay.java:74](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L74>) |
 | `CELTIUM_MODEL_OFFTARGET_FLUSH` | [ModelReplay.java:432](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L432>) |
+| `CELTIUM_MODEL_PHASE` | [PatchGroups.java:237](<../celtium-vulkan/src/main/java/org/soutalab/celtium/patch/PatchGroups.java#L237>), [ModelPhaseTrace.java:168](<../forge122/src/main/java/org/taumc/celeritas/impl/model/ModelPhaseTrace.java#L168>), [ModelPhaseTrace.java:170](<../forge122/src/main/java/org/taumc/celeritas/impl/model/ModelPhaseTrace.java#L170>), [ModelPhaseTrace.java:172](<../forge122/src/main/java/org/taumc/celeritas/impl/model/ModelPhaseTrace.java#L172>), [ModelPhaseTrace.java:174](<../forge122/src/main/java/org/taumc/celeritas/impl/model/ModelPhaseTrace.java#L174>), [ModelPhaseTrace.java:176](<../forge122/src/main/java/org/taumc/celeritas/impl/model/ModelPhaseTrace.java#L176>), [ModelPhaseTrace.java:178](<../forge122/src/main/java/org/taumc/celeritas/impl/model/ModelPhaseTrace.java#L178>), [ModelPhaseTrace.java:180](<../forge122/src/main/java/org/taumc/celeritas/impl/model/ModelPhaseTrace.java#L180>), [ModelPhaseTrace.java:182](<../forge122/src/main/java/org/taumc/celeritas/impl/model/ModelPhaseTrace.java#L182>), [ModelPhaseTrace.java:184](<../forge122/src/main/java/org/taumc/celeritas/impl/model/ModelPhaseTrace.java#L184>), [ModelPhaseTrace.java:186](<../forge122/src/main/java/org/taumc/celeritas/impl/model/ModelPhaseTrace.java#L186>) |
 | `CELTIUM_MODEL_QUAD` | [VulkanModelQuadCapture.java:299](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModelQuadCapture.java#L299>) |
 | `CELTIUM_MODEL_QUAD_REFUSALS` | [VulkanModelQuadCapture.java:481](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModelQuadCapture.java#L481>) |
 | `CELTIUM_MODEL_QUAD_REFUSED` | [VulkanModelQuadCapture.java:474](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanModelQuadCapture.java#L474>) |
