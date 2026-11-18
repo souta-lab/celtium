@@ -396,7 +396,7 @@ class LegacyAttribStackTest {
                 "a group that is restored must not also be counted as the unmodelled gap");
         assertEquals(0, LegacyAttribSnapshot.partial(
                         LegacyAttribSnapshot.ENABLE_BIT | LegacyAttribSnapshot.SCISSOR_BIT),
-                "only the lighting group is partial - the others are restored whole");
+                "neither of these groups is partial - they are restored whole");
     }
 
     /** Two pushes own separate lighting records, so the second push cannot overwrite what the first one saved. */
@@ -448,5 +448,162 @@ class LegacyAttribStackTest {
         assertEquals(0xF, second.colorMask, "and its own values");
         assertTrue(first.restores(LegacyAttribSnapshot.ENABLE_BIT));
         assertEquals(0x1, first.colorMask);
+    }
+
+    private static final int GL_FOG = 0x0B60;
+    private static final int GL_FOG_MODE = 0x0B65;
+    private static final int GL_FOG_DENSITY = 0x0B62;
+    private static final int GL_FOG_START = 0x0B63;
+    private static final int GL_FOG_END = 0x0B64;
+    private static final int GL_FOG_COLOR = 0x0B66;
+    private static final int GL_LINEAR = 9729;
+    private static final int GL_EXP = 2048;
+
+    /** One tracked float query, through {@code glGetFloatv} as a mod's own save/restore reads it. */
+    private float queryFloat(int pname) throws Exception {
+        var out = MemoryUtil.memAlloc(16);
+        try {
+            call("glGetFloatv", pname, MemoryUtil.memAddress(out));
+            return MemoryUtil.memGetFloat(MemoryUtil.memAddress(out));
+        } finally {
+            MemoryUtil.memFree(out);
+        }
+    }
+
+    /** The fog colour is a four-float vector; the scalar helper above cannot read it. */
+    private float[] queryFloats(int pname, int count) throws Exception {
+        var out = MemoryUtil.memAlloc(16 * Math.max(1, count));
+        try {
+            call("glGetFloatv", pname, MemoryUtil.memAddress(out));
+            float[] values = new float[count];
+            for (int i = 0; i < count; i++) {
+                values[i] = MemoryUtil.memGetFloat(MemoryUtil.memAddress(out) + 4L * i);
+            }
+            return values;
+        } finally {
+            MemoryUtil.memFree(out);
+        }
+    }
+
+    private void setFogColour(float red, float green, float blue, float alpha) throws Exception {
+        var values = MemoryUtil.memAlloc(16);
+        try {
+            MemoryUtil.memPutFloat(MemoryUtil.memAddress(values), red);
+            MemoryUtil.memPutFloat(MemoryUtil.memAddress(values) + 4L, green);
+            MemoryUtil.memPutFloat(MemoryUtil.memAddress(values) + 8L, blue);
+            MemoryUtil.memPutFloat(MemoryUtil.memAddress(values) + 12L, alpha);
+            call("glFogfv", GL_FOG_COLOR, MemoryUtil.memAddress(values));
+        } finally {
+            MemoryUtil.memFree(values);
+        }
+    }
+
+    /** The fog owner is one JVM-wide record, so a fog test leaves GL's defaults behind for the next one. */
+    private void resetFog() throws Exception {
+        call("glDisable", GL_FOG);
+        call("glFogi", GL_FOG_MODE, GL_EXP);
+        call("glFogf", GL_FOG_DENSITY, Float.floatToRawIntBits(1.0f));
+        call("glFogf", GL_FOG_START, Float.floatToRawIntBits(0.0f));
+        call("glFogf", GL_FOG_END, Float.floatToRawIntBits(1.0f));
+        setFogColour(0.0f, 0.0f, 0.0f, 0.0f);
+    }
+
+    /**
+     * {@code GL_FOG_BIT}: the measured provider's own shape (item 420, from the ATM3 scan's section 3.1).
+     *
+     * <p>AdvancedRocketry's {@code RocketEventHandler.onPostWorldRender} pushes {@code 0xBC1} - the fog group
+     * without {@code GL_ENABLE_BIT} - writes {@code disableFog} and then {@code enableFog} inside the block and
+     * lets the pop undo them. GL keeps the fog enable in the fog group, so the pop has to put it back even though
+     * the mask never selected the capabilities; the parameters are the rest of the same group and come back with
+     * it. The assertions read the state back through the queries a mod's own save/restore uses.
+     */
+    @Test
+    void theFogBitPutsTheEnableAndTheParametersBack() throws Exception {
+        resetFog();
+        call("glFogi", GL_FOG_MODE, GL_LINEAR);
+        call("glFogf", GL_FOG_DENSITY, Float.floatToRawIntBits(0.05f));
+        call("glFogf", GL_FOG_START, Float.floatToRawIntBits(10.0f));
+        call("glFogf", GL_FOG_END, Float.floatToRawIntBits(90.0f));
+        setFogColour(0.25f, 0.5f, 0.75f, 0.5f);
+        int mask = LegacyAttribSnapshot.CURRENT_BIT | LegacyAttribSnapshot.LIGHTING_BIT
+                | LegacyAttribSnapshot.FOG_BIT | LegacyAttribSnapshot.DEPTH_BUFFER_BIT
+                | LegacyAttribSnapshot.ACCUM_BUFFER_BIT | LegacyAttribSnapshot.VIEWPORT_BIT;
+        assertEquals(0xBC1, mask, "the provider's mask, named group by group");
+        CeltiumGlStub.celtium$pushAttrib(mask);
+        call("glEnable", GL_FOG);
+        call("glFogi", GL_FOG_MODE, GL_EXP);
+        call("glFogf", GL_FOG_DENSITY, Float.floatToRawIntBits(0.5f));
+        call("glFogf", GL_FOG_START, Float.floatToRawIntBits(1.0f));
+        call("glFogf", GL_FOG_END, Float.floatToRawIntBits(2.0f));
+        setFogColour(1.0f, 0.0f, 0.0f, 1.0f);
+        assertEquals(1, call("glIsEnabled", GL_FOG), "the block's own fog state is in force inside the push");
+        CeltiumGlStub.celtium$popAttrib();
+        assertEquals(0, call("glIsEnabled", GL_FOG),
+                "GL_FOG is GL_FOG_BIT state, so the pop puts the enable back without GL_ENABLE_BIT");
+        assertEquals(GL_LINEAR, queryInt(GL_FOG_MODE), "GL_FOG_MODE is GL_FOG_BIT state");
+        assertEquals(0.05f, queryFloat(GL_FOG_DENSITY), 0.0f);
+        assertEquals(10.0f, queryFloat(GL_FOG_START), 0.0f);
+        assertEquals(90.0f, queryFloat(GL_FOG_END), 0.0f);
+        assertArrayEquals(new float[] {0.25f, 0.5f, 0.75f, 0.5f}, queryFloats(GL_FOG_COLOR, 4), 0.0f,
+                "GL_FOG_COLOR is GL_FOG_BIT state");
+        resetFog();
+    }
+
+    /**
+     * The mask rule for the same state, split the way GL splits it: the enable is a capability as well as fog
+     * state, so an {@code GL_ENABLE_BIT} pop puts it back - but the parameters belong to the fog group alone, so
+     * a push that does not select that group leaves the block's parameters in force. The provider's leak lived
+     * in the complementary shape (fog group without the enable group), which the test above pins.
+     */
+    @Test
+    void aPushThatDoesNotSelectTheFogGroupLeavesTheParametersItFoundInForce() throws Exception {
+        resetFog();
+        CeltiumGlStub.celtium$pushAttrib(LegacyAttribSnapshot.ENABLE_BIT);
+        call("glEnable", GL_FOG);
+        call("glFogf", GL_FOG_DENSITY, Float.floatToRawIntBits(0.5f));
+        CeltiumGlStub.celtium$popAttrib();
+        assertEquals(0, call("glIsEnabled", GL_FOG),
+                "the enable is restored here too, through the capability the enable group saved");
+        assertEquals(0.5f, queryFloat(GL_FOG_DENSITY), 0.0f,
+                "but the parameters are the fog group's alone, so the block's density stays in force");
+        resetFog();
+    }
+
+    /**
+     * The fog group is in the modelled set <em>and</em> in the partial one, and the unmodelled set must not still
+     * claim it - the same census rule the lighting test pins, for the second group that joined both sets.
+     *
+     * <p>The mask is the provider's {@code 0xBC1}: of its six groups only the accum group stays in the gap, and
+     * the partial count names the two groups restored in part (lighting for its material terms, fog for
+     * {@code GL_FOG_INDEX}).
+     */
+    @Test
+    void theFogGroupIsRestoredInPartAndNotCountedAsTheGap() {
+        int arMask = 0xBC1;
+        assertEquals(LegacyAttribSnapshot.FOG_BIT,
+                LegacyAttribSnapshot.modelled(arMask) & LegacyAttribSnapshot.FOG_BIT,
+                "the group is restored");
+        assertEquals(LegacyAttribSnapshot.LIGHTING_BIT | LegacyAttribSnapshot.FOG_BIT,
+                LegacyAttribSnapshot.partial(arMask),
+                "and reported as restored in part, because GL_FOG_INDEX is not modelled");
+        assertEquals(LegacyAttribSnapshot.ACCUM_BUFFER_BIT, LegacyAttribSnapshot.unmodelled(arMask),
+                "only the accum group of the provider's mask is left in the gap");
+    }
+
+    /** Two pushes own separate fog records, so the second push cannot overwrite what the first one saved. */
+    @Test
+    void eachPushOwnsItsFogRecord() {
+        LegacyAttribSnapshot first = new LegacyAttribSnapshot(2);
+        LegacyAttribSnapshot second = new LegacyAttribSnapshot(2);
+        first.fogEnabled = true;
+        first.fogDensity = 0.5f;
+        first.fogColor[0] = 0.25f;
+        assertFalse(second.fogEnabled, "each push allocates its own fog record");
+        assertEquals(1.0f, second.fogDensity, "and its own density, GL's default");
+        assertEquals(0.0f, second.fogColor[0], "and its own colour");
+        assertEquals(GL_EXP, second.fogMode, "and its own mode, GL_EXP by default");
+        assertEquals(1.0f, second.fogEnd, "and its own end, GL's default");
+        assertTrue(first.fogEnabled);
+        assertEquals(0.5f, first.fogDensity);
     }
 }

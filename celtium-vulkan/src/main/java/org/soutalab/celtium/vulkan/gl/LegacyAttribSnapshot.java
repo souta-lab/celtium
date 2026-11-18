@@ -51,7 +51,8 @@ public final class LegacyAttribSnapshot {
 
     /** The groups this stack puts back. Kept beside {@link #UNMODELLED_GROUPS} so the census names a real gap. */
     public static final int MODELLED_GROUPS = CURRENT_BIT | POINT_BIT | LINE_BIT | POLYGON_BIT | DEPTH_BUFFER_BIT
-            | ENABLE_BIT | COLOR_BUFFER_BIT | LIST_BIT | TEXTURE_BIT | SCISSOR_BIT | VIEWPORT_BIT | LIGHTING_BIT;
+            | ENABLE_BIT | COLOR_BUFFER_BIT | LIST_BIT | TEXTURE_BIT | SCISSOR_BIT | VIEWPORT_BIT | LIGHTING_BIT
+            | FOG_BIT;
     /**
      * The groups a push may select that this renderer restores only in part.
      *
@@ -67,8 +68,17 @@ public final class LegacyAttribSnapshot {
      * light-model ambient, so none of them can be put back - and a pop that claimed to restore the group while leaving
      * them at the block's values is the same class of leak the mask rule was added to stop. What <em>is</em> restored
      * is the pair of directions, the pair of diffuse colours, the scene ambient and the shade model.
+     *
+     * <p>{@code GL_FOG_BIT} is the second entry, and the part that is missing is {@code GL_FOG_INDEX}: the colour-index
+     * fog index has no counterpart in this renderer's RGBA fog owner ({@code ImmediateFogState} carries the enable,
+     * the mode, the density, the start and end and the colour, and those are all put back). The measured provider is
+     * an enable leak, not a parameter one: the ATM3 scan (ITEM382-SCAN §3.1) named AdvancedRocketry's
+     * {@code RocketEventHandler.onPostWorldRender}, which pushes mask {@code 0xBC1} - the fog group without
+     * {@code GL_ENABLE_BIT} - and writes {@code disableFog}/{@code enableFog} inside the block, so a pop that only
+     * restored capabilities left fog in the block's state whenever the push had found it disabled. GL keeps the fog
+     * enable in the fog group as well as in the enable group, which is why this group has to restore it too.
      */
-    public static final int PARTIAL_GROUPS = LIGHTING_BIT;
+    public static final int PARTIAL_GROUPS = LIGHTING_BIT | FOG_BIT;
     /**
      * The groups a push may select that this renderer cannot restore.
      *
@@ -91,10 +101,13 @@ public final class LegacyAttribSnapshot {
      * the pop undo it. The scan's "no mod calls {@code glLightfv}" was true and beside the point: the vanilla helper
      * they call does, through {@code GlStateManager}.
      *
-     * <p>{@code GL_FOG_BIT} still has no in-pack provider (only BiomesOPlenty references {@code glFog}, and no
-     * {@code 0xFFFFF} pusher changes fog state).
+     * <p>{@code GL_FOG_BIT} is <em>not</em> in this list any more either. The sentence that used to stand here - that
+     * the group had no in-pack provider - was a Supersymmetry finding (only BiomesOPlenty references {@code glFog}
+     * there, and no {@code 0xFFFFF} pusher changes fog state). The ATM3 scan found the provider in another pack:
+     * AdvancedRocketry pushes {@code 0xBC1} around fog enable writes (ITEM382-SCAN §3.1), so the group is restored
+     * now and counted partial for {@code GL_FOG_INDEX} only (see {@link #PARTIAL_GROUPS}).
      */
-    public static final int UNMODELLED_GROUPS = POLYGON_STIPPLE_BIT | PIXEL_MODE_BIT | FOG_BIT
+    public static final int UNMODELLED_GROUPS = POLYGON_STIPPLE_BIT | PIXEL_MODE_BIT
             | ACCUM_BUFFER_BIT | STENCIL_BUFFER_BIT | TRANSFORM_BIT | HINT_BIT | EVAL_BIT
             | MULTISAMPLE_BIT;
 
@@ -171,6 +184,25 @@ public final class LegacyAttribSnapshot {
      * from turning "nothing was captured" into "the defaults were in force".
      */
     public boolean lightingCaptured;
+    /**
+     * The restorable part of {@code GL_FOG_BIT}: the fog enable and the four parameters, as the fog owner
+     * ({@code ImmediateFogState}) held them at the push.
+     *
+     * <p>The enable is here and not only in {@link #capabilities} because GL keeps it in both groups: a push whose
+     * mask names the fog group but not {@code GL_ENABLE_BIT} - AdvancedRocketry's {@code 0xBC1} is the measured case -
+     * still expects the pop to put the enable back. {@code GL_FOG_INDEX} is the one term of the group with no field
+     * here; see {@link #PARTIAL_GROUPS}.
+     */
+    public boolean fogEnabled;
+    /** {@code GL_FOG_MODE}, GL_EXP (2048) by default. */
+    public int fogMode = 2048;
+    /** {@code GL_FOG_DENSITY}. */
+    public float fogDensity = 1.0f;
+    /** {@code GL_FOG_START} and {@code GL_FOG_END}. */
+    public float fogStart;
+    public float fogEnd = 1.0f;
+    /** {@code GL_FOG_COLOR}, red/green/blue/alpha. */
+    public final float[] fogColor = new float[4];
 
     public LegacyAttribSnapshot(int capabilityCount) {
         this.capabilities = new boolean[Math.max(0, capabilityCount)];

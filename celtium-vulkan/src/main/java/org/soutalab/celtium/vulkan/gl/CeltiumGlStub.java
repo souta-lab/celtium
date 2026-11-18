@@ -2518,6 +2518,22 @@ public final class CeltiumGlStub implements FunctionProvider {
             snapshot.shadeModel = lighting.celtium$shadeModel();
             snapshot.lightingCaptured = true;
         }
+        // GL_FOG_BIT's restorable part. The authority is the fog owner, which the game's GlStateManager path and
+        // the raw glFog route both write; it exists unconditionally, so there is no "not captured" case here of
+        // the kind the lighting group needs. The enable is captured beside the parameters because GL keeps it in
+        // the fog group too: a mask like AdvancedRocketry's 0xBC1 (fog group, no GL_ENABLE_BIT) still expects the
+        // pop to put it back (ITEM382-SCAN section 3.1).
+        org.soutalab.celtium.vulkan.ImmediateFogState fog = org.soutalab.celtium.vulkan.ImmediateFogState.current();
+        snapshot.fogEnabled = fog.enabled();
+        snapshot.fogMode = fog.glMode();
+        snapshot.fogDensity = fog.getFogDensity();
+        snapshot.fogStart = fog.getFogStart();
+        snapshot.fogEnd = fog.getFogEnd();
+        float[] fogColor = fog.getFogColor();
+        snapshot.fogColor[0] = fogColor[0];
+        snapshot.fogColor[1] = fogColor[1];
+        snapshot.fogColor[2] = fogColor[2];
+        snapshot.fogColor[3] = fog.colorAlpha();
         stub.attribPushes++;
         stub.noteAttribMask(mask);
         if (stub.attribStack.size() >= MAX_ATTRIB_DEPTH) {
@@ -2653,6 +2669,21 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
             this.attribLightingRestores++;
             restored |= LegacyAttribSnapshot.LIGHTING_BIT;
+        }
+        if (restoresAttrib(snapshot, LegacyAttribSnapshot.FOG_BIT)) {
+            // The group is restored in part (see LegacyAttribSnapshot.PARTIAL_GROUPS): the enable, the mode, the
+            // density, the start/end and the colour go back through the fog owner's own setters, so a restore
+            // that changes a value takes the same batch-boundary flush a game write would. GL_FOG_INDEX has no
+            // counterpart in the owner and is the counted partial gap.
+            org.soutalab.celtium.vulkan.ImmediateFogState fog =
+                    org.soutalab.celtium.vulkan.ImmediateFogState.current();
+            fog.enabled(snapshot.fogEnabled);
+            fog.parameter(0x0B65, snapshot.fogMode);
+            fog.parameter(0x0B62, snapshot.fogDensity);
+            fog.parameter(0x0B63, snapshot.fogStart);
+            fog.parameter(0x0B64, snapshot.fogEnd);
+            fog.color(snapshot.fogColor[0], snapshot.fogColor[1], snapshot.fogColor[2], snapshot.fogColor[3]);
+            restored |= LegacyAttribSnapshot.FOG_BIT;
         }
         this.attribRestoredGroups += Integer.bitCount(restored);
         this.attribUnrestoredGroups += Integer.bitCount(selectsAttrib(snapshot, LegacyAttribSnapshot.UNMODELLED_GROUPS));
