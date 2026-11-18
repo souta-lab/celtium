@@ -337,6 +337,72 @@ class ModGlslTranslatorTest {
                 "uniform image2D images[2]; void main(){gl_FragColor=vec4(1.0);}").failure().contains("images"));
     }
 
+    /** U+0000, the terminator Iris's {@code GlShader} appends ({@code glShaderSource(handle, src + '\0')}). */
+    private static final String NUL = "\0";
+
+    /**
+     * The shape Iris's centerDepthSmooth program hands over (written for the test, not copied): one
+     * {@code layout(location = 0) in vec3}, two samplers, two floats, its own {@code out float} - the four fields the
+     * Demonica legs logged for the program that failed ({@code samplers=2 uniformBytes=16 vertex=own}).
+     */
+    private static final String DEPTH_QUAD_VERTEX = """
+            #version 330 core
+            layout(location = 0) in vec3 a_Position;
+            void main() { gl_Position = vec4(a_Position.xyz * 2.0 - 1.0, 1.0); }
+            """;
+
+    private static final String DEPTH_QUAD_FRAGMENT = """
+            #version 330 core
+            uniform sampler2D depth;
+            uniform sampler2D altDepth;
+            uniform float lastFrameTime;
+            uniform float decay;
+            out float fragDepth;
+            void main() {
+                fragDepth = mix(texture(depth, vec2(0.5)).r, texture(altDepth, vec2(0.5)).r,
+                        1.0 - exp(-decay * lastFrameTime));
+            }
+            """;
+
+    /**
+     * Every source Iris hands over ends in U+0000 (item 371). The lowering appends its own entry point after the mod's
+     * body, so a kept terminator sits mid-file and glslang stops with {@code '' : unexpected token} - the message this
+     * program's stage produced in every leg since 5a (leg 18: {@code celtium-mod-program:16}).
+     */
+    @Test
+    void lowersAndCompilesStagesThatKeepIrisNulTerminator() {
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(DEPTH_QUAD_VERTEX + NUL,
+                DEPTH_QUAD_FRAGMENT + NUL);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertEquals(List.of(new ModGlslTranslator.Attribute("a_Position", "vec3", 0)), result.attributes());
+        assertEquals(List.of(new ModGlslTranslator.SamplerBinding("depth", "sampler2D", 0),
+                new ModGlslTranslator.SamplerBinding("altDepth", "sampler2D", 1)), result.samplers());
+        // std140: two floats are the whole block, aligned up to 16 - the size the fixture logged for the program.
+        assertEquals(16, result.uniformBlockSize());
+        assertEquals(1, result.fragOutputCount());
+        assertFalse(result.vertex().contains(NUL), "the vertex stage still carries its terminator");
+        assertFalse(result.fragment().contains(NUL), "the fragment stage still carries its terminator");
+        assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    /**
+     * A terminator is a terminator: one that would end up <em>inside</em> the text is not text, and it is refused with
+     * the stage and the offset rather than spliced into the output for glslang to choke on.
+     */
+    @Test
+    void refusesAnInteriorNulNamingTheStageAndTheOffset() {
+        String fragment = "#version 120\nvoid celtium_user_main() {}" + NUL + "void main() {}";
+        int offset = fragment.indexOf('\0');
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, fragment);
+        assertFalse(result.ok());
+        assertTrue(result.failure().contains("fragment stage"), result.failure());
+        assertTrue(result.failure().contains("offset " + offset), result.failure());
+        // Nothing was handed to shaderc, so no lowered stage comes back beside the failure.
+        assertNull(result.vertex());
+        assertNull(result.fragment());
+    }
+
     /**
      * A mod's real shaders, when a directory of them is named by {@code CELTIUM_MOD_SHADER_DIR}: every {@code *.frag}
      * paired with the directory's single {@code *.vert} (the shape GTCEu's {@code Shaders} uses) must lower and

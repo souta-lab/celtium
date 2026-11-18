@@ -158,10 +158,36 @@ public final class ModGlslTranslator {
             }
             """;
 
+    /**
+     * A source may be NUL-terminated: GL's {@code length == NULL} form makes the driver stop at the terminator, and a
+     * measured caller sends it (Iris's {@code GlShader}: {@code glShaderSource(handle, src + '\0')}). This lowering
+     * appends its own entry point after the mod's body, which would leave that terminator mid-file, where glslang
+     * refuses it as {@code '' : unexpected token} (item 371, Demonica's centerDepthSmooth program). Trailing
+     * terminators are dropped; an interior one is a refusal naming the stage and the offset, not a silent splice.
+     */
+    private static String withoutNulTerminator(String source, String stage) {
+        if (source == null) {
+            // A missing stage is strip()'s refusal ("a stage has no source"), not this normalisation's.
+            return null;
+        }
+        int end = source.length();
+        while (end > 0 && source.charAt(end - 1) == '\u0000') {
+            end--;
+        }
+        int interior = source.indexOf('\u0000');
+        if (interior >= 0 && interior < end) {
+            throw new IllegalArgumentException("the " + stage + " stage's source holds a NUL at offset " + interior
+                    + " (a NUL is a terminator, not part of GLSL text)");
+        }
+        return source.substring(0, end);
+    }
+
     private static Result translateOrThrow(String vertexSource, String fragmentSource) {
         if (vertexSource == null) {
             vertexSource = FIXED_FUNCTION_VERTEX;
         }
+        vertexSource = withoutNulTerminator(vertexSource, "vertex");
+        fragmentSource = withoutNulTerminator(fragmentSource, "fragment");
         Matcher laidOutImage = LAID_OUT_IMAGE.matcher(strip(fragmentSource));
         if (laidOutImage.find()) {
             String qualifier = laidOutImage.group(1).trim();
