@@ -46,7 +46,9 @@ public abstract class DefaultChunkRenderer extends ShaderChunkRenderer {
      * {@return the view being rendered} A view is one perspective the world is drawn from, such as the player camera
      * or a shader pack's shadow camera. Each view keeps its own cached batches, so views that alternate within a frame
      * do not rebuild each other's. Views are compared by identity and must come from a small fixed set, since every
-     * distinct view adds an entry to every region's batch cache.
+     * distinct view adds an entry to every region's batch cache. No consumer in this tree overrides this - there is
+     * no module here corresponding to upstream's {@code modern} - so the default always returns
+     * {@code DEFAULT_VIEW} (item 406).
      */
     protected Object getRenderView() {
         return SectionRenderDataStorage.BatchCacheParams.DEFAULT_VIEW;

@@ -22,7 +22,8 @@ public interface TerrainGpuBackend {
      *             {@code SectionRenderDataStorage.BatchCacheParams} ({@code DEFAULT_VIEW} for the player camera,
      *             {@code SHADOW_VIEW} for a shader pack's shadow camera). It is part of the key of the per-region batch
      *             cache: two views drawn through the same region storage keep their own batches instead of evicting
-     *             each other's every frame.
+     *             each other's every frame. The in-tree callers currently pass {@code DEFAULT_VIEW} only;
+     *             {@code SHADOW_VIEW} is not passed yet (item 406).
      */
     void render(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists, TerrainRenderPass pass,
                 CameraTransform occlusionCamera, CameraTransform camera, Object view, boolean profile);

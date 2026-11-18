@@ -246,6 +246,12 @@ public abstract class RenderSectionManager {
 
     /**
      * Whether terrain is being rendered for shadows.
+     * <p>
+     * In this tree the answer is always {@code false}: the method is a fixed implementation and nothing overrides
+     * it, and the shadow pass reaches terrain through the shader-pack path (items 332/399), not through an in-tree
+     * caller of {@link #updateForShadowPass}. Until a change makes this return {@code true}, the batch cache's
+     * {@code SHADOW_VIEW} key is never used - the view derivation in {@link #renderLayer} is wired but unreachable
+     * (item 406).
      */
     public boolean isInShadowPass() {
         return false;
@@ -655,6 +661,9 @@ public abstract class RenderSectionManager {
         // (the shadow pass draws the shadow lists, the terrain pass the terrain lists), and it keys the per-region
         // batch cache: with the culling flag alone, a shadow pass that shares the flag with the terrain pass evicts
         // the terrain pass's batch out of the region's one entry every frame (item 397, item 337's take 1).
+        // At present only the false side of this branch is ever taken - isInShadowPass() is a fixed false with no
+        // override in this tree - so SHADOW_VIEW looks wired but is unreachable; it is enabled together with the
+        // shadow wiring of items 332/399, not before it (item 406).
         Object view = this.isInShadowPass()
                 ? SectionRenderDataStorage.BatchCacheParams.SHADOW_VIEW
                 : SectionRenderDataStorage.BatchCacheParams.DEFAULT_VIEW;

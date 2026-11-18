@@ -559,3 +559,30 @@ modelview の下で設定した同じ値なので、push 時の snapshot と pop
 
 関連: 前述の節「上限付きの計器の『行が無い』を『出来事が無い』と読まない」は同じ族の逆向き
 （あちらは行が**無い**側、こちらは行が**出た**側の読み違い）。
+
+## 到達しない分岐を「配線済み」と読まない（2026-11-18、項目397 の訂正）
+
+**症状**: コード上に分岐と定数が揃っているのを見て、その経路が生きていると読む。項目397 の batch cache の
+view キーが実例で、着地形は「影パスの view 分離が配線された」形をしているが、現行ツリーでは分岐の片側に
+到達する経路が無い。
+
+**原典（どちらも grep と定義で確認した一次事実）**
+- `RenderSectionManager.isInShadowPass()` は `return false;` の固定実装で、この木に override は無い。
+  view の供給点は `renderLayer` のこの分岐だけなので、`BatchCacheParams.SHADOW_VIEW` はどの経路でもキーに
+  入らない。`CELTIUM_BATCH_CACHE` の `views=` は 1 のまま、`keyMismatch=` は 0 のままになる。
+- `updateForShadowPass` の in-tree 呼び出し元は `SimpleWorldRenderer.setupShadowTerrain`（:205）経由だけ
+  で、その `setupShadowTerrain` 自体の in-tree 呼び出し元は 0 件。実際の呼び出し元は shader pack 経路
+  （Demonica）側にある。
+- `views=` は**キーの多様性**であって絵の違いではない。バッチの内容は view に依存しない:
+  `BatchAssembler.createCachedBatch` の引数（`VulkanTerrainGpuBackend.java:15419-15420`）にも
+  `CachedBatch.isValidFor`（同 :15406）の照合にも view は入っていない。
+
+**規約**
+- `views=1` を「影の分離が効いていない欠陥」と読まない。到達不能な分岐の未使用は、配線の欠陥ではなく
+  有効化条件（項目332/399 の影配線）がまだ来ていないという事実である。
+- 逆に、将来 `views=2` が出ても「影が正しく描けている」とは読まない。言えるのは「2 種類のキーが生きた」
+  までで、絵の判定は影パス自体の計器と presented image で別に取る。
+- 分岐の到達可能性を主張する前に、条件式の定義と override の有無、呼び出し元の有無を原典で確認する。
+  「配線済み」「対応済み」と書けるのは、到達する経路が 1 本でも実在する時だけ。
+- この分岐の判別（view 分離がヒット率を変えるか）は、有効化条件が着地した後の leg で取る。それまでは
+  項目406 の記録どおり「到達不能な仮配線」と明記した状態が正しい記述である。
