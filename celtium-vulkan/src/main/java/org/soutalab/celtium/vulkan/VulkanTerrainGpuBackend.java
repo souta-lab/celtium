@@ -12510,6 +12510,13 @@ this.frameBufferOpen = false;
             org.soutalab.celtium.vulkan.VulkanGlTexture knownLive, boolean liveKnown) {
         Object pass = this.lastUiPass;
         this.prepareCacheCalls++;
+        // The format class of the target this batch was offered for (QUEUE 404, S4): folded into the key so
+        // the pipeline caches and this cache tell classes apart, and handed to the uncached path so the
+        // pipeline is built against a pass of that class. The batch's group key is not folded - the fold
+        // happens here, at the pipeline boundary only, so groups do not split by class. For the default
+        // class the fold is the identity and the pass choice is the one this code always made (rule R6).
+        TargetFormatClass pairClass = celtium$currentPairFormatClass();
+        long effectiveKey = celtium$pipelineKey(key, pairClass.ordinal());
         // Keyed by the pass and by the texture's live wrapper key (view + generation), each held per slot. The first
         // version cleared the whole cache on every pass change and hashed the texture's upload serial - which an
         // animated atlas moves every tick - so half the asks missed (633,773 hits of 1,305,294 calls, 24,415 resets
@@ -12529,14 +12536,15 @@ this.frameBufferOpen = false;
                 ? knownLive
                 : (resolvedKnown ? celtium$registry().get(textureId) : null);
         if (textureId > 0 && (live == null || !live.hasFullContent())) {
-            return prepareImmediateUncached(format, textureId, key, state, live, resolvedKnown);
+            return prepareImmediateUncached(format, textureId, effectiveKey, state, live, resolvedKnown,
+                    pairClass);
         }
         long textureKey = live == null ? 0L : live.key();
         // The lit families' descriptors also name the light map, which a resource reload replaces.
         long lightKey = this.lightmapTexture == null ? 0L : this.lightmapTexture.key();
         long mix = (((long) format) * 0x9E3779B97F4A7C15L)
                 ^ (((long) textureId) * 0xC2B2AE3D27D4EB4FL)
-                ^ (key * 0x165667B19E3779F9L)
+                ^ (effectiveKey * 0x165667B19E3779F9L)
                 ^ (textureKey * 0x27D4EB2F165667C5L)
                 ^ ((long) System.identityHashCode(pass) * 0x94D049BB133111EBL)
                 ^ (lightKey * 0xBF58476D1CE4E5B9L);
@@ -12546,11 +12554,12 @@ this.frameBufferOpen = false;
         // runs once per slow-path offer (~129 a frame) inside a method the batch-timing census puts at 493 ns. The
         // entry holds the six key fields and the value together, so a hit is one array load and one object.
         PrepareCacheEntry entry = this.prepareCache[slot];
-        if (celtium$prepareCacheHit(entry, pass, format, textureId, key, textureKey, lightKey)) {
+        if (celtium$prepareCacheHit(entry, pass, format, textureId, effectiveKey, textureKey, lightKey)) {
             this.prepareCacheHits++;
             return entry.value;
         }
-        PreparedImmediate prepared = prepareImmediateUncached(format, textureId, key, state, live, resolvedKnown);
+        PreparedImmediate prepared = prepareImmediateUncached(format, textureId, effectiveKey, state, live,
+                resolvedKnown, pairClass);
         if (prepared != null) {
             if (entry == null) {
                 entry = new PrepareCacheEntry();
@@ -12559,7 +12568,7 @@ this.frameBufferOpen = false;
             entry.pass = pass;
             entry.format = format;
             entry.textureId = textureId;
-            entry.key = key;
+            entry.key = effectiveKey;
             entry.textureKey = textureKey;
             entry.lightKey = lightKey;
             entry.value = prepared;
@@ -12652,7 +12661,8 @@ this.frameBufferOpen = false;
      *                      no mirror it is the whole cost of the call.
      */
     private PreparedImmediate prepareImmediateUncached(int format, int textureId, long key, int[] state,
-            org.soutalab.celtium.vulkan.VulkanGlTexture resolved, boolean resolvedKnown) {
+            org.soutalab.celtium.vulkan.VulkanGlTexture resolved, boolean resolvedKnown,
+            TargetFormatClass pairClass) {
         // Split of the 1.09 ms per prepareImmediate call: the pipeline lookup and the texture registry lookup (which
         // can reach OpenGL and mirror an image) against the pipeline/descriptor branch below.
         long prepLookupStart = BATCH_TIMINGS ? System.nanoTime() : 0;
@@ -12728,7 +12738,14 @@ this.frameBufferOpen = false;
                     + " (no complete native image or initialized framebuffer attachment)";
             return null;
         }
-        long pass = terrain != null ? terrain.renderPass() : uiRenderPass();
+        // The pass the pipeline is built against: the frame pass for the default class, as always. A batch
+        // offered for a non-default-class pair gets the class' frame-shaped pass instead (QUEUE 404, S4) -
+        // a pipeline built against the 8-bit frame pass is not compatible with that pair's pass, because
+        // compatibility compares attachment formats. The class' pass is compatible with the pair's
+        // one-colour chain pass, so the same pipeline draws in the window.
+        long pass = pairClass != TargetFormatClass.RGBA8_UNORM
+                ? formatClassPipelinePass(pairClass)
+                : terrain != null ? terrain.renderPass() : uiRenderPass();
         long prepBranchStart = BATCH_TIMINGS ? System.nanoTime() : 0;
         Object pipeline;
         long descriptor = 0;

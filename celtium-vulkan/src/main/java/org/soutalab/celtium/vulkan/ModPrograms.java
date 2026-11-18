@@ -129,8 +129,12 @@ final class ModPrograms {
         if (mrtRefusal != null) {
             return celtium$modFailure(programId, mrtRefusal);
         }
+        // The pass variant matches the target pair's format class (QUEUE 404, S4): for several targets the
+        // (count, class) chain pass; for one target the standard pipeline's own pass, which the prepare path
+        // already built against the class' frame-shaped pass when the class is not the default.
         long targetRenderPass = targetColors > 1
-                ? b.chainPairRenderPass(targetColors) : like.celtium$renderPassHandle();
+                ? b.chainPairRenderPass(targetColors, b.celtium$currentPairFormatClass())
+                : like.celtium$renderPassHandle();
         VulkanModProgramPipeline pipeline;
         if (program == this.lastModProgram && formatId == this.lastModFormatId && like == this.lastModLike
                 && targetRenderPass == this.lastModRenderPass && targetColors == this.lastModColorCount
