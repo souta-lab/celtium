@@ -176,6 +176,7 @@ public final class SectionLattice {
     // answers nothing but frame queries, and copying ints halves the memory traffic of the per-search copy.
     private static final class SnapshotBuffers {
         private final int[][] buffers = new int[2][];
+        private final boolean[][] installedBuffers = new boolean[2][];
         private int parity;
 
         int[] acquire(int length) {
@@ -186,6 +187,23 @@ public final class SectionLattice {
             if (buffer == null || buffer.length != length) {
                 buffer = new int[length];
                 this.buffers[slot] = buffer;
+            }
+
+            return buffer;
+        }
+
+        /**
+         * The install bits paired with the frame buffer {@link #acquire} handed out most recently. Both
+         * buffers are acquired once per snapshot, in the same order, so the shared parity keeps a snapshot's
+         * two arrays in the same generation slot.
+         */
+        boolean[] acquireInstalled(int length) {
+            int slot = this.parity ^ 1;
+
+            boolean[] buffer = this.installedBuffers[slot];
+            if (buffer == null || buffer.length != length) {
+                buffer = new boolean[length];
+                this.installedBuffers[slot] = buffer;
             }
 
             return buffer;
@@ -317,9 +335,9 @@ public final class SectionLattice {
      * <p>{@link SectionLattice#findVisible} runs asynchronously and mutates the
      * live lattice while another thread queries section visibility. Rather than
      * read the live arrays across that boundary, a search returns a snapshot: a
-     * copy of each cell's decoded frame stamp plus the window geometry that
-     * indexes it. The snapshot's array is not the live lattice, so a running
-     * search's mutations cannot race a query against it.
+     * copy of each cell's decoded frame stamp and install bit plus the window
+     * geometry that indexes them. The snapshot's arrays are not the live
+     * lattice, so a running search's mutations cannot race a query against it.
      *
      * <p>To avoid a per-frame allocation, {@code visibleFrames} is a buffer
      * recycled from the appropriate pair of snapshot buffers rather than a fresh clone. The
@@ -331,38 +349,93 @@ public final class SectionLattice {
      *                      search, already shifted down from the visitState
      *                      encoding; a recycled buffer that stays valid until
      *                      the search two generations later overwrites it
+     * @param installed     whether each cell held an installed section when the
+     *                      snapshot was taken, in the same indexing as
+     *                      {@code visibleFrames}; a recycled buffer under the
+     *                      same two-generation rule. The frame stamps alone
+     *                      cannot carry this: an installed cell a search never
+     *                      reached and a cell with no section at all both
+     *                      decode to a stamp below every real frame, and a
+     *                      caller deciding whether something may be hidden
+     *                      has to tell "known, and not reached" apart from
+     *                      "not known at all"
      */
-    public record VisibilitySnapshot(int[] visibleFrames, int baseX, int baseY, int baseZ,
+    public record VisibilitySnapshot(int[] visibleFrames, boolean[] installed, int baseX, int baseY, int baseZ,
                                      int dimX, int dimY, int dimZ) {
-        /** A snapshot with no window, reporting every section as not visible. */
+        /** A snapshot with no window, reporting every section as unknown. */
         public static final VisibilitySnapshot EMPTY =
-                new VisibilitySnapshot(new int[0], 0, 0, 0, 0, 0, 0);
+                new VisibilitySnapshot(new int[0], new boolean[0], 0, 0, 0, 0, 0, 0);
 
         /**
-         * Tests whether the section at a world position was marked visible in or
-         * after the requested frame. Positions outside the captured window, or
-         * never visited, are treated as never-visible.
+         * A snapshot for a caller that has frame stamps but no install information: every cell is
+         * treated as not known to be installed, so {@link #sectionReach} answers {@code UNKNOWN}
+         * everywhere and {@link #isSectionVisible} keeps its previous meaning.
          */
-        public boolean isSectionVisible(int x, int y, int z, int minVisibleFrame) {
+        public VisibilitySnapshot(int[] visibleFrames, int baseX, int baseY, int baseZ,
+                                  int dimX, int dimY, int dimZ) {
+            this(visibleFrames, new boolean[visibleFrames.length], baseX, baseY, baseZ, dimX, dimY, dimZ);
+        }
+
+        /**
+         * What a search can say about one section, in three values rather than two.
+         * <p>
+         * The two-valued {@link #isSectionVisible} collapses "the lattice holds no section there"
+         * (outside the window, or never installed) into the same {@code false} as "a section is
+         * installed there and the search did not reach it". A consumer that hides things - the
+         * particle submission filter is the first - may only act on the second of those: hiding on
+         * the strength of an unknown section would make particles vanish in chunks that are merely
+         * unloaded or outside the window.
+         */
+        public enum SectionReach {
+            /** Outside the captured window, or no section is installed there: nothing is known. */
+            UNKNOWN,
+            /** A section is installed there and a search reached it in or after the requested frame. */
+            REACHED,
+            /** A section is installed there and no search reached it in or after the requested frame. */
+            NOT_REACHED
+        }
+
+        /**
+         * Classifies the section at a world position as {@link SectionReach#UNKNOWN},
+         * {@link SectionReach#REACHED} or {@link SectionReach#NOT_REACHED} for the requested frame.
+         */
+        public SectionReach sectionReach(int x, int y, int z, int minVisibleFrame) {
             int lx = x - this.baseX;
             int ly = y - this.baseY;
             int lz = z - this.baseZ;
 
             // Same interior test as SectionLattice.indexOf: only cells strictly
             // inside the sentinel border can hold a section, so anything outside
-            // it (including an empty snapshot) is never visible.
+            // it (including an empty snapshot) is not known at all.
             if (lx < 1 || lx > this.dimX - 2
                     || ly < 1 || ly > this.dimY - 2
                     || lz < 1 || lz > this.dimZ - 2) {
-                return false;
+                return SectionReach.UNKNOWN;
             }
 
             int idx = (lx * this.dimZ + lz) * this.dimY + ly;
 
-            // The frame in which the slot was last marked visible by the search. The snapshot copy already
-            // decoded the stamp; an unvisited or empty cell held INITIAL/SENTINEL, which decode to a value
-            // below any real frame and are therefore treated as never-visible.
-            return this.visibleFrames[idx] >= minVisibleFrame;
+            if (idx >= this.installed.length || !this.installed[idx]) {
+                return SectionReach.UNKNOWN;
+            }
+
+            // The frame in which the slot was last reached by a search. The snapshot copy already
+            // decoded the stamp; an unvisited cell held INITIAL, which decodes to a value below any
+            // real frame and is therefore never reached.
+            return this.visibleFrames[idx] >= minVisibleFrame
+                    ? SectionReach.REACHED : SectionReach.NOT_REACHED;
+        }
+
+        /**
+         * Tests whether the section at a world position was last reached by a search in or
+         * after the requested frame. Positions outside the captured window, never installed,
+         * or never reached, are treated as never-reached.
+         * <p>
+         * This is exactly {@code sectionReach(...) == REACHED}; the three-valued form exists for
+         * callers that must not treat "unknown" and "known, not reached" as the same answer.
+         */
+        public boolean isSectionVisible(int x, int y, int z, int minVisibleFrame) {
+            return this.sectionReach(x, y, z, minVisibleFrame) == SectionReach.REACHED;
         }
     }
 
@@ -372,16 +445,20 @@ public final class SectionLattice {
         }
 
         int[] dst = buffers.acquire(src.length);
+        boolean[] installed = buffers.acquireInstalled(src.length);
 
         // Decode each cell's frame stamp while copying. Narrowing (int) after the logical shift recovers
         // the 32-bit frame, and INITIAL/SENTINEL both truncate to -1, below every real frame. The loop
         // auto-vectorizes on JDK 21 C2 and, being store-bound, stays cheaper than a full long[] copy even
         // on JVMs that compile it scalar.
+        // The install bits ride in the same loop: latticeSection is the parallel array that says whether
+        // the cell holds a section at all, which the decoded stamps cannot express (see VisibilitySnapshot).
         for (int i = 0; i < src.length; i++) {
             dst[i] = (int) (src[i] >>> FRAME_SHIFT);
+            installed[i] = this.latticeSection != null && this.latticeSection[i] != null;
         }
 
-        return new VisibilitySnapshot(dst, this.baseX, this.baseY, this.baseZ,
+        return new VisibilitySnapshot(dst, installed, this.baseX, this.baseY, this.baseZ,
                 this.dimX, this.dimY, this.dimZ);
     }
 

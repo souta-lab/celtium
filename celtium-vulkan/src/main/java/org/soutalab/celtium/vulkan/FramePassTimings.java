@@ -42,8 +42,13 @@ public final class FramePassTimings {
      * {@code prepBarriers} (acquire barriers + published-texture transitions) and {@code prepBegin} (render-pass
      * begin through pipeline bind) - recordPrepare ran ~70-85% of record on both GPUs, and these three names say
      * which of its driver-visible calls owns that.
+     * <p>
+     * {@code particlesLit} is the lit particle loop ({@code ParticleManager.renderLitParticles}, layer 3), bracketed
+     * separately from {@code particles} (the normal three layers): the lit loop was previously outside every bracket,
+     * so a "particles" number silently excluded the explosion/footstep/pickup layer. The two together - never either
+     * alone - are the whole particle submission cost.
      */
-    private static final String[] INSIDE = {"lightmap", "mouseOver", "worldPass", "entities", "particles", "present", "flush", "terrain", "chunkUpload",
+    private static final String[] INSIDE = {"lightmap", "mouseOver", "worldPass", "entities", "particles", "particlesLit", "present", "flush", "terrain", "chunkUpload",
             // The entity pass' four parts, because `entities` is 54-56 % of the p99 frame's excess and the bracket
             // cannot say which part owns it: the membership gather (tick-gated: the chunk walk runs once per tick),
             // the per-entity cull (every gathered entity, every pass), the draw itself (the model replays), and the

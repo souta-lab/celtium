@@ -38,28 +38,38 @@ public abstract class ParticleDrawProbeMixin {
             return;
         }
         Minecraft mc = Minecraft.getMinecraft();
-        int lit = 0;
+        // fxLayers is [layer][depth-mask]: layers 0-2 are the three texture sheets renderParticles draws,
+        // layer 3 alone is the lit layer renderLitParticles draws. Each layer is reported on its own
+        // (layers0..layers3); normal is their 0-2 sum and lit is layer 3 alone. An earlier revision of this
+        // probe filed layers 1-3 together as "lit", which made layers1 a mixture of two normal sheets and
+        // the lit layer - neither number meant what its name said.
+        int[] layerSizes = new int[4];
         int normal = 0;
+        int lit = 0;
         try {
             java.util.ArrayDeque<?>[][] layers =
                     ((ParticleManagerAccessor) (Object) this).celtium$getFxLayers();
-            for (int i = 0; i < layers.length; i++) {
+            for (int i = 0; i < layers.length && i < layerSizes.length; i++) {
                 for (int j = 0; j < layers[i].length; j++) {
-                    if (i == 0) {
-                        normal += layers[i][j].size();
-                    } else {
-                        lit += layers[i][j].size();
-                    }
+                    layerSizes[i] += layers[i][j].size();
                 }
             }
+            normal = layerSizes[0] + layerSizes[1] + layerSizes[2];
+            lit = layerSizes[3];
         } catch (RuntimeException | LinkageError error) {
+            // -1 is a failed read, not an empty layer set: a reader must not file it as zero.
+            java.util.Arrays.fill(layerSizes, -1);
             lit = -1;
             normal = -1;
         }
         System.out.println("[Celtium] CELTIUM_PARTICLE_CALL calls=" + calls
                 + " tick=" + (mc.world == null ? -1L : mc.world.getTotalWorldTime())
-                + " layers0=" + normal
-                + " layers1=" + lit
+                + " layers0=" + layerSizes[0]
+                + " layers1=" + layerSizes[1]
+                + " layers2=" + layerSizes[2]
+                + " layers3=" + layerSizes[3]
+                + " normal=" + normal
+                + " lit=" + lit
                 + " particlesSetting=" + mc.gameSettings.particleSetting);
     }
 }

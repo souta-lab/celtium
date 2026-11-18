@@ -97,6 +97,14 @@ def main():
     print("  {}".format(decisions or "not printed (the counter prints every 1000 offers)"))
     arrivals = last_match(r"CELTIUM_ARRIVALS total=\d+ byFormat=\[[^\]]*\]", console)
     print("  arrivals : {}".format(arrivals or "not printed"))
+    # Source vertices per format, counted in the uploader before any repack. Batch counts cannot show
+    # particle culling (a layer batch survives while one particle remains); the format-5 vertex count is
+    # the number that falls by exactly four per culled batched particle.
+    vertices = last_match(r"verticesByFormat=\[[^\]]*\]", console)
+    print("  vertices : {}".format(vertices or "not printed"))
+    if vertices:
+        entries = dict(re.findall(r"(\d+):(\d+)", vertices))
+        print("  vertices format 5 : {}".format(entries.get("5", "absent")))
 
     print("== format 5 ==")
     offered = last_match(r"immediate formats offered/accepted: [^|]*", summary)

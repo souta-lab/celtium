@@ -57,6 +57,16 @@ public abstract class WorldVertexBufferUploaderMixin {
     /** Uploads seen per mapped format id, before any accept/refuse decision. */
     private static final int[] celtium$arrivalsByFormat =
             new int[org.soutalab.celtium.vulkan.VulkanImmediateFormats.COUNT];
+    /**
+     * Source vertices seen per mapped format id, accumulated beside {@link #celtium$arrivalsByFormat} from the
+     * buffer's own vertex count - that is, before any repack (a 32-byte particle layout is compacted to 28 bytes
+     * on its way to the backend, so counting after the repack would understate the particle family by that ratio)
+     * and before the accept/refuse decision. Batch counts cannot stand in for this: a layer batch that keeps even
+     * one particle still arrives, so {@code arrivalsByFormat[5]} does not move when particles are culled - the
+     * vertex count is the number that has to fall by exactly four per culled batched particle.
+     */
+    private static final long[] celtium$verticesByFormat =
+            new long[org.soutalab.celtium.vulkan.VulkanImmediateFormats.COUNT];
     private static int celtium$arrivalTotal;
     /** The distinct shapes arriving with no mapped id, counted by element signature. */
     private static final java.util.Map<String, Integer> celtium$unmappedShapes =
@@ -263,6 +273,10 @@ public abstract class WorldVertexBufferUploaderMixin {
             // batches arrive and are declined" is to count them here, before any decision is made.
             if (formatId >= 0 && formatId < celtium$arrivalsByFormat.length) {
                 celtium$arrivalsByFormat[formatId]++;
+                // Source vertices, counted here - after the empty-batch and no-data returns above, so a finished
+                // batch with no vertices is never counted - and from `vertices`, the count the buffer itself
+                // carries before the repack below rewrites the layout.
+                celtium$verticesByFormat[formatId] += vertices;
                 celtium$arrivalTotal++;
                 if (formatId == 0) {
                     // The largest category still going to OpenGL, identified rather than counted: the shapes that reach the
@@ -278,8 +292,13 @@ public abstract class WorldVertexBufferUploaderMixin {
                     for (int i = 0; i < celtium$arrivalsByFormat.length; i++) {
                         table.append(i).append(':').append(celtium$arrivalsByFormat[i]).append(' ');
                     }
+                    StringBuilder vertexTable = new StringBuilder();
+                    for (int i = 0; i < celtium$verticesByFormat.length; i++) {
+                        vertexTable.append(i).append(':').append(celtium$verticesByFormat[i]).append(' ');
+                    }
                     System.out.println("[Celtium] CELTIUM_ARRIVALS total=" + celtium$arrivalTotal
-                            + " byFormat=[" + table.toString().trim() + "]");
+                            + " byFormat=[" + table.toString().trim() + "]"
+                            + " verticesByFormat=[" + vertexTable.toString().trim() + "]");
                     for (java.util.Map.Entry<String, Integer> shape : celtium$unmappedShapes.entrySet()) {
                         System.out.println("[Celtium] CELTIUM_UNMAPPED count=" + shape.getValue()
                                 + " shape=[" + shape.getKey() + "]");
