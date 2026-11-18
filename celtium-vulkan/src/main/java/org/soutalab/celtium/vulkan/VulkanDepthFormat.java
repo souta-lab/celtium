@@ -3,6 +3,7 @@ package org.soutalab.celtium.vulkan;
 import static org.lwjgl.vulkan.VK10.*;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntPredicate;
 
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkFormatProperties;
@@ -47,6 +48,36 @@ public final class VulkanDepthFormat {
 
     /** The override property, so an unusual device can be pinned without a rebuild. */
     public static final String OVERRIDE_PROPERTY = "celtium.vulkan.depthFormat";
+
+    /** {@return how many depth formats this renderer will consider}, most preferred first (item 431 pin). */
+    static int candidateCount() {
+        return CANDIDATES.length;
+    }
+
+    /** {@return the candidate at {@code index} in preference order} (item 431 pin). */
+    static int candidateAt(int index) {
+        return CANDIDATES[index];
+    }
+
+    /** {@return the candidate name at {@code index}, aligned with {@link #candidateAt(int)}} (item 431 pin). */
+    static String candidateNameAt(int index) {
+        return NAMES[index];
+    }
+
+    /**
+     * {@return the index of the first candidate the {@code usable} probe accepts, or -1 when it accepts
+     * none}. The probe is asked lazily, in preference order, and never past the first acceptance - the
+     * device probe behind it issues Vulkan queries, and the choice must not depend on candidates the
+     * renderer never reached. Pure: the device half is the probe the caller supplies (item 431 pin).
+     */
+    static int firstUsableIndex(IntPredicate usable) {
+        for (int i = 0; i < CANDIDATES.length; i++) {
+            if (usable.test(CANDIDATES[i])) {
+                return i;
+            }
+        }
+        return -1;
+    }
 
     private static final AtomicInteger CHOSEN = new AtomicInteger(VK_FORMAT_UNDEFINED);
     /** The device the choice was made on, so a static caller (the render-pass builder) asks about the same one. */
@@ -145,14 +176,15 @@ public final class VulkanDepthFormat {
             decision = "celtium.vulkan.depthFormat=" + override + " (override, verified usable)";
             return wanted;
         }
+        int picked = firstUsableIndex(format -> usable(device, format));
+        if (picked >= 0) {
+            chosenName = NAMES[picked];
+            decision = "chose " + NAMES[picked] + " (candidate " + (picked + 1) + " of " + CANDIDATES.length + ")"
+                    + capabilityNote(device);
+            return CANDIDATES[picked];
+        }
         StringBuilder why = new StringBuilder();
         for (int i = 0; i < CANDIDATES.length; i++) {
-            if (usable(device, CANDIDATES[i])) {
-                chosenName = NAMES[i];
-                decision = "chose " + NAMES[i] + " (candidate " + (i + 1) + " of " + CANDIDATES.length + ")"
-                        + capabilityNote(device);
-                return CANDIDATES[i];
-            }
             why.append(why.length() == 0 ? "" : ", ").append(NAMES[i]).append(": rejected");
         }
         throw new IllegalStateException("no sampled depth format: none of " + String.join(", ", NAMES)
@@ -194,7 +226,7 @@ public final class VulkanDepthFormat {
         }
     }
 
-    private static int formatNamed(String name) {
+    static int formatNamed(String name) {
         for (int i = 0; i < NAMES.length; i++) {
             if (NAMES[i].equalsIgnoreCase(name)) {
                 return CANDIDATES[i];
