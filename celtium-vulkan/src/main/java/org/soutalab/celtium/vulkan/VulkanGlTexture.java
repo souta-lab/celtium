@@ -1161,7 +1161,7 @@ public final class VulkanGlTexture {
      */
     public void ensureSampledLayout(VkCommandBuffer commandBuffer) {
         requireForeign("ensureSampledLayout");
-        // The layout this wrapper's descriptors declare: a pair image under PAIR_STAY_GENERAL samples in GENERAL -
+        // The layout this wrapper's descriptors declare: a pair image samples in GENERAL -
         // the layout its pass attaches it in - so the transition that used to move every sampled image to
         // SHADER_READ_ONLY must leave the pair where the pass put it. The three callers that transition the chain
         // output unconditionally (and the published-textures loop, when the same name is not recognised as the pair)
@@ -1568,7 +1568,7 @@ public final class VulkanGlTexture {
                 }
                 long applied = this.lastAppliedPatchSerial;
                 // One command buffer and one submission for the whole drain (see patchBatch).
-                this.patchBatching = PATCH_BATCH;
+                this.patchBatching = true;
                 try {
                 if (level != null) {
                     int[] offset = this.patchOffsetScratch;
@@ -2439,17 +2439,6 @@ public final class VulkanGlTexture {
         return ((this.view * 31L) ^ this.generation) * 31L + samplingLayout();
     }
 
-    /**
-     * Whether a descriptor written from this wrapper is being asked to declare the sampling layout, or the pair's.
-     * <p>
-     * The same switch the backend reads ({@code -Dceltium.vulkan.pairStayGeneral=false} turns it off), and it must
-     * read it with the same default: round 254 ran the backend with this on and this class with it off, because the two
-     * constants read one property with two defaults, and the leg measured ten {@code VUID-vkCmdDraw-None-09600}
-     * messages instead of the one the consistent pair had measured (legs r212-world-hud39 versus hud38). One property,
-     * one default.
-     */
-    private static final boolean PAIR_STAY_GENERAL = Boolean.parseBoolean(System.getProperty("celtium.vulkan.pairStayGeneral", "true"));
-
     /** Marks this wrapper as standing for one of the renderer's pair images; see {@link #samplingLayout()}. */
     public void notePairImage(boolean pairImage) {
         this.pairImage = pairImage;
@@ -2460,12 +2449,14 @@ public final class VulkanGlTexture {
     /**
      * {@return the layout a descriptor written from this wrapper should declare}.
      * <p>
-     * {@code SHADER_READ_ONLY_OPTIMAL} unless this wrapper stands for a pair image and the pair is being kept in
-     * {@code GENERAL} ({@link #PAIR_STAY_GENERAL}), in which case it declares {@code GENERAL} - which is a legal layout
-     * for a sampled image and the layout the pair's pass and its hand-back leave the image in.
+     * {@code SHADER_READ_ONLY_OPTIMAL} unless this wrapper stands for a pair image, in which case it declares
+     * {@code GENERAL} - which is a legal layout for a sampled image and the layout the pair's pass and its hand-back
+     * leave the image in. Pair images stay in {@code GENERAL} unconditionally: round 254's legs
+     * r212-world-hud38/39 measured the consistent pair at one {@code VUID-vkCmdDraw-None-09600} message against
+     * ten for an inconsistent one.
      */
     public int samplingLayout() {
-        return this.pairImage && PAIR_STAY_GENERAL
+        return this.pairImage
                 ? VK_IMAGE_LAYOUT_GENERAL
                 : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
@@ -4119,7 +4110,6 @@ public final class VulkanGlTexture {
      * allocations over 42 world frames; uploadPatchedLevels was the loading-screen JFR's largest client-thread item).
      * The drain now opens the batch, every patch records into it in order, and it is submitted once - before the
      * staging ring may wait or wrap, before a mirror dump reads the image, and when the drain ends.
-     * {@code -Dceltium.vulkan.batchTexturePatches=false} keeps one submission per patch.
      */
     /**
      * {@code -Dceltium.vulkan.layoutTrace=true}: a ring of the last layout-relevant recordings and submissions of every
@@ -4193,8 +4183,6 @@ public final class VulkanGlTexture {
         }
     }
 
-    private static final boolean PATCH_BATCH = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.vulkan.batchTexturePatches"));
     private boolean patchBatching;
     private VkCommandBuffer patchBatch;
 
@@ -4205,11 +4193,11 @@ public final class VulkanGlTexture {
      * opened the batch, so a caller nested inside an already open one does not close it.
      */
     public boolean beginPatchBatch() {
-        if (!PATCH_BATCH || this.patchBatching) {
+        if (this.patchBatching) {
             return false;
         }
         this.patchBatching = true;
-        this.regionDeferring = DEFER_PATCH_REGIONS;
+        this.regionDeferring = true;
         return true;
     }
 
@@ -4224,15 +4212,13 @@ public final class VulkanGlTexture {
     }
 
     /**
-     * {@code -Dceltium.vulkan.deferPatchRegions=false}: inside an animation batch, record each sprite's barriers and
-     * copies on the spot as before. With it on (default), the sprites' regions are recorded together - one barrier,
-     * one {@code vkCmdCopyBufferToImage} per mip level carrying every region, one barrier back. Measured 2026-11-05:
-     * skipping the animated uploads altogether (r75anim, reps 1-2) took the warm tick frame from 5.43/4.77 ms to
-     * 4.57/4.44 ms, and the aligned profile put the per-sprite copies at most of that path; RADV implements each
-     * buffer-to-image copy as its own meta operation.
+     * Inside an animation batch the sprites' regions are recorded together - one barrier, one
+     * {@code vkCmdCopyBufferToImage} per mip level carrying every region, one barrier back - rather than each
+     * sprite's barriers and copies being recorded on the spot. Measured 2026-11-05: skipping the animated uploads
+     * altogether (r75anim, reps 1-2) took the warm tick frame from 5.43/4.77 ms to 4.57/4.44 ms, and the aligned
+     * profile put the per-sprite copies at most of that path; RADV implements each buffer-to-image copy as its own
+     * meta operation.
      */
-    private static final boolean DEFER_PATCH_REGIONS = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.vulkan.deferPatchRegions"));
     private boolean regionDeferring;
     private int deferredDepth;
     private int deferredCount;

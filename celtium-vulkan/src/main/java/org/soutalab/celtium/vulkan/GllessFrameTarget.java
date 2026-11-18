@@ -1009,11 +1009,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 // cube visible only where it was drawn directly, against the accepted (98,102,96)).
                 value.float32(3, 1.0f);
                 range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
-                if (COLOR_CLEAR_TRANSFER) {
-                    recordColorToTransfer(command, this.colorImage);
-                }
+                recordColorToTransfer(command, this.colorImage);
                 org.lwjgl.vulkan.VK10.vkCmdClearColorImage(command, this.colorImage,
-                        COLOR_CLEAR_TRANSFER ? DEPTH_TRANSFER_LAYOUT : COLOR_RENDER_LAYOUT, value, range);
+                        DEPTH_TRANSFER_LAYOUT, value, range);
             }
             if (depth) {
                 double mainDepth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mainClearValues(this.clearColourScratch);
@@ -1076,15 +1074,14 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * {@link #TRANSFER_COLOR} and {@link #TRANSFER_DEPTH} bits.
      * <p>
      * The pure half of {@code Pair.toTransfer}, package-private and static so the rule is pinned without a device. The
-     * cases that matter are the ones that must record <em>no</em> barrier at all - an image already in the transfer
-     * layout, and a colour clear with {@code COLOR_CLEAR_TRANSFER} off, which clears in GENERAL and needs no move -
-     * because a barrier recorded for an image that is already where the clear wants it is a driver call that buys
-     * nothing.
+     * case that matters is the one that must record <em>no</em> barrier at all - an image already in the transfer
+     * layout - because a barrier recorded for an image that is already where the clear wants it is a driver call
+     * that buys nothing.
      */
-    static int celtium$transferImages(boolean wantColor, boolean wantDepth, boolean colorClearTransfer,
+    static int celtium$transferImages(boolean wantColor, boolean wantDepth,
             boolean colorInTransfer, boolean depthInTransfer) {
         int images = 0;
-        if (wantColor && colorClearTransfer && !colorInTransfer) {
+        if (wantColor && !colorInTransfer) {
             images |= TRANSFER_COLOR;
         }
         if (wantDepth && !depthInTransfer) {
@@ -1094,15 +1091,13 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
-     * Colour clears run in TRANSFER_DST_OPTIMAL instead of GENERAL, which lets Intel's driver use a CCS fast clear where
-     * it otherwise writes the whole surface: under INTEL_MEASURE on the UHD 630 the three "slow color clear"s a frame
-     * (263 us) became fast clears (17 us) plus partial resolves (62 us), and the draws that follow on the compressed
-     * surface cost less as well. {@code -Dceltium.vulkan.colorClearTransfer=false} clears in GENERAL again.
+     * Moves a GENERAL colour image to the transfer layout a clear uses, after whatever touched it before.
+     * <p>
+     * Colour clears run in TRANSFER_DST_OPTIMAL instead of GENERAL, which lets Intel's driver use a CCS fast clear
+     * where it otherwise writes the whole surface: under INTEL_MEASURE on the UHD 630 the three "slow color clear"s
+     * a frame (263 us) became fast clears (17 us) plus partial resolves (62 us), and the draws that follow on the
+     * compressed surface cost less as well.
      */
-    static final boolean COLOR_CLEAR_TRANSFER = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.vulkan.colorClearTransfer"));
-
-    /** Moves a GENERAL colour image to the transfer layout a clear uses, after whatever touched it before. */
     private void recordColorToTransfer(VkCommandBuffer command, long image) {
         try (MemoryStack stack = stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
@@ -1135,7 +1130,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             if (color) {
                 VkImageMemoryBarrier barrier = barriers.get(index++);
                 barrier.sType$Default().image(this.colorImage)
-                        .oldLayout(COLOR_CLEAR_TRANSFER ? DEPTH_TRANSFER_LAYOUT : COLOR_RENDER_LAYOUT)
+                        .oldLayout(DEPTH_TRANSFER_LAYOUT)
                         .newLayout(COLOR_RENDER_LAYOUT)
                         .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
                         .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
@@ -1779,7 +1774,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
     /**
      * {@return whether a pair clear is recorded inside the pass that follows it}.
      * <p>
-     * The switch lives on {@code Pair} because that is the class whose clear it changes; this accessor is what the
+     * The rule lives on {@code Pair} because that is the class whose clear it changes; this accessor is what the
      * backend and the test read, because {@code Pair} is private to this class.
      */
     static boolean celtium$pairClearInPass() {
@@ -1794,14 +1789,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
      */
     static boolean celtium$deferredClearNeedsDepthBarrier(int depthLayout) {
         return Pair.celtium$deferredClearNeedsDepthBarrier(depthLayout);
-    }
-
-    /**
-     * {@return whether the deferred clear is the default}, from the raw value of
-     * {@code -Dceltium.vulkan.pairClearInPass}; see {@link Pair#celtium$pairClearInPassDefault(String)}.
-     */
-    static boolean celtium$pairClearInPassDefault(String propertyValue) {
-        return Pair.celtium$pairClearInPassDefault(propertyValue);
     }
 
     /**
@@ -2585,9 +2572,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
 
         /**
-         * {@code -Dceltium.vulkan.pairClearInPass=true}: record the pair's once-per-frame clear as one
-         * {@code vkCmdClearAttachments} inside the pass that follows it, instead of two {@code vkCmdClear*Image} calls
-         * and the two barriers that make them legal.
+         * The pair's once-per-frame clear is recorded as one {@code vkCmdClearAttachments} inside the pass that
+         * follows it, instead of two {@code vkCmdClear*Image} calls and the two barriers that make them legal.
          * <p>
          * Why: the window split put the pair clear at 19 us a window against 12 us for the command-buffer begin and
          * 10 us for the acquire, and the world scene clears 12 pairs a frame (GregTech's bloom chain binds a mip
@@ -2596,19 +2582,14 @@ public final class GllessFrameTarget implements FrameImageTarget {
          * write has to be made visible to the attachment reads that follow. Inside the pass none of that exists - the
          * attachment is already in the layout the pass declares, and the clear is ordered by the pass itself.
          * <p>
-         * <b>On by default since round 54.</b> It was off while the two paths had to be compared on a leg; the paired
-         * measurement (legs r53a/r53b, AMD) put {@code winHead} at 0.1 ms a frame with the clear outside the pass and
-         * 0.0 with it inside, and the acceptance legs on both GPUs found no validation message and no picture change.
-         * The colour is cleared in the attachment layout rather than in {@code TRANSFER_DST_OPTIMAL}, which is the
-         * layout {@link #COLOR_CLEAR_TRANSFER} exists for on Intel, so the Intel leg is the one that says the fast
-         * clear survives the move - see {@code docs/evidence/pair-clear-default-2026-11-04.md}.
-         * <p>
-         * The property is an opt-out: absent means on, and an explicit value is read with
-         * {@link Boolean#parseBoolean(String)}, so {@code -Dceltium.vulkan.pairClearInPass=false} restores the two
-         * {@code vkCmdClear*Image} calls and their barriers for an A/B.
+         * Adopted in round 54: the paired measurement (legs r53a/r53b, AMD) put {@code winHead} at 0.1 ms a frame
+         * with the clear outside the pass and 0.0 with it inside, and the acceptance legs on both GPUs found no
+         * validation message and no picture change. The colour is cleared in the attachment layout rather than in
+         * {@code TRANSFER_DST_OPTIMAL}, the layout the colour clear uses for its fast clear on Intel, so the Intel
+         * leg is the one that says the fast clear survives the move - see
+         * {@code docs/evidence/pair-clear-default-2026-11-04.md}.
          */
-        static final boolean PAIR_CLEAR_IN_PASS =
-                celtium$pairClearInPassDefault(System.getProperty("celtium.vulkan.pairClearInPass"));
+        static final boolean PAIR_CLEAR_IN_PASS = true;
 
         /** Whether a clear is waiting for the pass that follows it; see {@link #PAIR_CLEAR_IN_PASS}. */
         private boolean deferredClearPending;
@@ -2658,19 +2639,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
          */
         static boolean celtium$deferredClearNeedsDepthBarrier(int depthLayout) {
             return depthLayout != DEPTH_RENDER_LAYOUT;
-        }
-
-        /**
-         * {@return whether the deferred clear is the default}, from the raw value of
-         * {@code -Dceltium.vulkan.pairClearInPass}.
-         * <p>
-         * Absent means on; an explicit value is read with {@link Boolean#parseBoolean(String)}, so only {@code true}
-         * (any case) keeps it on and {@code false} - or any other explicit value - turns it off. Package-private and
-         * static so the table is pinned without a device: the field it feeds is a {@code static final} read once at
-         * class initialisation, which a test cannot vary.
-         */
-        static boolean celtium$pairClearInPassDefault(String propertyValue) {
-            return propertyValue == null || Boolean.parseBoolean(propertyValue);
         }
 
         /**
@@ -2969,7 +2937,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.depthLayout = layout;
         }
 
-        /** Whether the pair's colour sits in the clear's transfer layout (only with COLOR_CLEAR_TRANSFER). */
+        /** Whether the pair's colour sits in the clear's transfer layout. */
         private boolean colorInTransfer;
 
         /**
@@ -2990,7 +2958,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
          * @param wantDepth whether the caller is about to clear the depth image
          */
         private void toTransfer(VkCommandBuffer command, boolean wantColor, boolean wantDepth) {
-            int images = GllessFrameTarget.celtium$transferImages(wantColor, wantDepth, COLOR_CLEAR_TRANSFER,
+            int images = GllessFrameTarget.celtium$transferImages(wantColor, wantDepth,
                     this.colorInTransfer, depthLayout() == DEPTH_TRANSFER_LAYOUT);
             if (images == 0) {
                 return;

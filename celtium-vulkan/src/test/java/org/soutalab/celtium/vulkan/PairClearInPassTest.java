@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * The one layout question a pair clear recorded inside the pass still has to answer.
  * <p>
- * {@code -Dceltium.vulkan.pairClearInPass=true} records the pair's once-per-frame clear as one
+ * The pair's once-per-frame clear is recorded as one
  * {@code vkCmdClearAttachments} inside the pass that follows it, instead of two {@code vkCmdClear*Image} calls and the
  * two barriers that make them legal outside a pass. Inside the pass the attachment is already in the layout the pass
  * declares, so the only move that can still be needed is the depth's: a pair that was just created is left in
@@ -50,19 +50,12 @@ class PairClearInPassTest {
     }
 
     @Test
-    void theClearIsInsideThePassUnlessThePropertySaysOtherwise() {
-        // Round 54 moved the default: the paired measurement put winHead at 0.1 ms a frame with the clear outside the
-        // pass and 0.0 with it inside. The property is an opt-out, so an absent value is the new default and only an
-        // explicit false restores the two vkCmdClear*Image calls and their barriers.
-        assertTrue(GllessFrameTarget.celtium$pairClearInPassDefault(null),
-                "absent means on: the default is the clear inside the pass");
-        assertTrue(GllessFrameTarget.celtium$pairClearInPassDefault("true"));
-        assertTrue(GllessFrameTarget.celtium$pairClearInPassDefault("TRUE"),
-                "Boolean.parseBoolean ignores case");
-        assertFalse(GllessFrameTarget.celtium$pairClearInPassDefault("false"),
-                "the opt-out has to reach the old path, or the A/B cannot be run");
-        assertFalse(GllessFrameTarget.celtium$pairClearInPassDefault("0"),
-                "an explicit value is read as a boolean, so anything but true is off");
+    void theClearIsInsideThePass() {
+        // Round 54 adopted the clear inside the pass: the paired measurement put winHead at 0.1 ms a frame with the
+        // clear outside the pass and 0.0 with it inside. The rule is unconditional now - there is no opt-out that
+        // restores the two vkCmdClear*Image calls and their barriers.
+        assertTrue(GllessFrameTarget.celtium$pairClearInPass(),
+                "the pair clear is recorded inside the pass that follows it");
     }
 
     @Test

@@ -465,7 +465,7 @@ b.frameBufferOpen = false;
         b.publishedFrameImages.put(glTextureName, image);
         b.publishedTextures.noteCreated();
         // Which image this name stands for decides the layout a descriptor from it declares: a pair image is attached
-        // by a pass that declares GENERAL, so with -Dceltium.vulkan.pairStayGeneral it must declare GENERAL too.
+        // by a pass that declares GENERAL, and pair images stay in GENERAL, so it must declare GENERAL too.
         GllessFrameTarget offTarget = b.offTargetTarget();
         // The native main attachment also stays in GENERAL. Treating only auxiliary pairs this way let its
         // published sampler move the main image to SHADER_READ_ONLY behind the native target owner's back;
@@ -811,7 +811,7 @@ b.frameBufferOpen = false;
             }
             if (general) {
                 entryValue.ensureGeneralLayout(b.commandBuffer);
-            } else if (b.PAIR_STAY_GENERAL && pairImageName) {
+            } else if (pairImageName) {
                 // The pair is never moved out of the layout its pass declares, so its sampling transition is not
                 // served. Counted, so "the transition was skipped" is a measurement; and the pair's own record follows,
                 // because the image is still in GENERAL and a record left at SHADER_READ_ONLY would be stale.
