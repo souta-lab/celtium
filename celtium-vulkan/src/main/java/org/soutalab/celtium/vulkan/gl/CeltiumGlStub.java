@@ -2533,8 +2533,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * <p>The rule is GL's: a group is restored when the <em>pushed</em> mask selected it. {@code GL_ENABLE_BIT} alone
      * therefore restores the capability bits and leaves a {@code glColorMask} written inside the block in force - which
      * is what a mod that mirrors GL depends on, and what the old "restore everything" made impossible to see.
-     * {@code -Dceltium.glstub.attribMasks=false} restores every modelled group regardless of the mask, which is the
-     * old behaviour and the A/B arm for this rule.
+     * This mask rule is unconditional: the former A/B switch that restored every modelled group regardless of the
+     * mask was removed once the mask-selective behaviour was adopted (item 396).
      */
     public static void celtium$popAttrib() {
         CeltiumGlStub stub = installed;
@@ -2661,24 +2661,15 @@ public final class CeltiumGlStub implements FunctionProvider {
         this.lastAttribMask = snapshot.mask;
     }
 
-    /** {@return whether this pop restores {@code group}} - the mask rule, or the all-groups A/B arm. */
+    /** {@return whether this pop restores {@code group}} - the mask rule, applied unconditionally. */
     private static boolean restoresAttrib(LegacyAttribSnapshot snapshot, int group) {
-        return !ATTRIB_MASKS || snapshot.restores(group);
+        return snapshot.restores(group);
     }
 
     /** {@return the groups a push with this mask selects that this renderer cannot put back}. */
     private static int selectsAttrib(LegacyAttribSnapshot snapshot, int groups) {
         return snapshot.mask & groups;
     }
-
-    /**
-     * {@code -Dceltium.glstub.attribMasks=false} restores every modelled group whatever the mask said.
-     *
-     * <p>It is the A/B arm for the mask rule, not a supported mode: the old behaviour is what the mask-selective
-     * measurements are compared against, and a leg that needs one number for both can run twice on one jar.
-     */
-    private static final boolean ATTRIB_MASKS = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.glstub.attribMasks", "true"));
 
     /** The pushes a pop could not match, and the pushes dropped for depth - both visible in the census. */
     private long attribUnmatchedPops;
@@ -2767,7 +2758,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             return "absent";
         }
         StringBuilder line = new StringBuilder();
-        line.append("masks=").append(ATTRIB_MASKS)
+        line.append("masks=").append(true)
                 .append(" pushes=").append(stub.attribPushes)
                 .append(" pops=").append(stub.attribPops)
                 .append(" unmatchedPops=").append(stub.attribUnmatchedPops)
@@ -2948,47 +2939,29 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final java.util.Set<String> legacyRunSignatures = new java.util.HashSet<String>();
     private int legacyRunLogs;
 
-    /**
-     * Whether {@code glBegin} geometry inside a {@code glNewList} compile is filed with the list,
-     * {@code -Dceltium.glstub.legacyListCompile=false} keeps the previous rule (refuse it and count the loss).
-     * <p>
-     * On by default: a refused run is a list that replays nothing, and GregTech's tool rotation marker - a
-     * {@code GL_COMPILE} list of {@code GL_LINE_LOOP} vertices, called every frame while a wrench is held - is drawn by
-     * exactly this route. Written from its class file, not from a guess:
-     * {@code gregtech/common/ToolEventHandlers.drawRotationMarker} calls {@code glNewList(4864)} (4864 is
-     * {@code GL_COMPILE}), {@code glBegin(GL_LINE_LOOP)}, 121 {@code glVertex3d}, {@code glEnd}, {@code glEndList}, and
-     * {@code glCallList} on every frame after that. The switch exists so the change can be taken back without a
-     * rebuild if a pack's list turns out to depend on the old silence.
+    /*
+     * The three display-list rules below are unconditional (item 396 removed their A/B switches once each adopted
+     * side was decided):
+     *
+     * - {@code glBegin} geometry inside a {@code glNewList} compile is filed with the list. A refused run is a list
+     *   that replays nothing, and GregTech's tool rotation marker - a {@code GL_COMPILE} list of
+     *   {@code GL_LINE_LOOP} vertices, called every frame while a wrench is held - is drawn by exactly this route.
+     *   Written from its class file, not from a guess: {@code gregtech/common/ToolEventHandlers.drawRotationMarker}
+     *   calls {@code glNewList(4864)} (4864 is {@code GL_COMPILE}), {@code glBegin(GL_LINE_LOOP)},
+     *   121 {@code glVertex3d}, {@code glEnd}, {@code glEndList}, and {@code glCallList} on every frame after that.
+     * - A compiled legacy run takes an attribute the list never set from the state current at {@code glCallList},
+     *   which is GL's rule for a display list, rather than the bytes baked at compile time. Baking is a wrong
+     *   picture and not a smaller one: a mod that compiles a mesh once and draws it in a different colour per
+     *   instance gets the compile-time colour under the baked rule, and OpenComputers' screen text, AE-Net-Vis'
+     *   link renderers and GregTech's marker all set the colour immediately before {@code glCallList}.
+     * - A compiled legacy run's vertex layout is chosen from the texturing state at {@code glCallList} rather than
+     *   fixed at compile time. GL selects the layout when the vertex is executed, so a list compiled with
+     *   {@code GL_TEXTURE_2D} enabled and called with it disabled draws untextured geometry carrying the colour it
+     *   stored, and the reverse draws textured geometry with the caller's current coordinate. Replaying the
+     *   compile-time layout instead samples whatever texture the caller had bound - or leaves the caller's texture
+     *   unsampled - which is a wrong picture. Both directions are measured by
+     *   {@code -Dceltium.validation.screen=displaylist}.
      */
-    private static final boolean LEGACY_LIST_COMPILE =
-            Boolean.parseBoolean(System.getProperty("celtium.glstub.legacyListCompile", "true"));
-
-    /**
-     * Whether a compiled legacy run takes an attribute the list never set from the state current at {@code glCallList},
-     * which is GL's rule for a display list; {@code -Dceltium.glstub.legacyCallState=false} keeps the bytes baked at
-     * compile time, which is the behaviour that shipped with display-list replay.
-     * <p>
-     * On by default because baking is a wrong picture and not a smaller one: a mod that compiles a mesh once and draws
-     * it in a different colour per instance gets the compile-time colour under the baked rule, and OpenComputers'
-     * screen text, AE-Net-Vis' link renderers and GregTech's marker all set the colour immediately before
-     * {@code glCallList}. The switch keeps the old answer reachable for an A/B on one JAR.
-     */
-    private static final boolean LEGACY_CALL_STATE =
-            Boolean.parseBoolean(System.getProperty("celtium.glstub.legacyCallState", "true"));
-
-    /**
-     * Whether a compiled legacy run's vertex layout is chosen from the texturing state at {@code glCallList} rather
-     * than fixed at compile time; {@code -Dceltium.glstub.legacyCallLayout=false} keeps the compiled layout.
-     * <p>
-     * GL selects the layout when the vertex is executed, so a list compiled with {@code GL_TEXTURE_2D} enabled and
-     * called with it disabled draws untextured geometry carrying the colour it stored, and the reverse draws textured
-     * geometry with the caller's current coordinate. Replaying the compile-time layout instead samples whatever texture
-     * the caller had bound - or leaves the caller's texture unsampled - which is a wrong picture. Both directions are
-     * measured by {@code -Dceltium.validation.screen=displaylist}. On by default, and a switch of its own so it can be
-     * A/B'd against {@link #LEGACY_CALL_STATE} on one JAR.
-     */
-    private static final boolean LEGACY_CALL_LAYOUT =
-            Boolean.parseBoolean(System.getProperty("celtium.glstub.legacyCallLayout", "true"));
 
     /**
      * The most bytes the stub will hold for compiled legacy runs across every list.
@@ -3035,7 +3008,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         long nested = stub.legacyCapture.nestedRefusals();
         long lists = stub.legacyCapture.listRefusals();
         long modes = stub.legacyCapture.modeRefusals();
-        stub.legacyCapture.begin(mode, textured, LEGACY_LIST_COMPILE && stub.compilingList != 0, LEGACY_MODE_GATE);
+        stub.legacyCapture.begin(mode, textured, stub.compilingList != 0, LEGACY_MODE_GATE);
         if (stub.legacyCapture.nestedRefusals() != nested && stub.legacyRefusalLogs < LEGACY_REFUSAL_LOG_LIMIT) {
             stub.legacyRefusalLogs++;
             System.out.println("[Celtium] CELTIUM_LEGACY_REFUSED mode=" + mode + " reason=a second glBegin before glEnd");
@@ -3422,19 +3395,13 @@ public final class CeltiumGlStub implements FunctionProvider {
         // a run whose list changes an attribute between its vertices.
         CompiledLegacyRun.Submission submission;
         int substitutedBefore = run.callTimeColourReplays() + run.callTimeTexReplays();
-        if (LEGACY_CALL_LAYOUT) {
-            boolean texturedAtCall = vulkanBackend
-                    && ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) backend).celtium$texture2dEnabled();
-            submission = run.prepareCall(LEGACY_CALL_STATE, texturedAtCall, this.legacyCapture.red(),
-                    this.legacyCapture.green(), this.legacyCapture.blue(), this.legacyCapture.alpha(),
-                    this.legacyCapture.texU(), this.legacyCapture.texV());
-            if (submission.format != run.format) {
-                this.legacyListRunsLayout++;
-            }
-        } else {
-            submission = run.prepareCompiled(LEGACY_CALL_STATE, this.legacyCapture.red(),
-                    this.legacyCapture.green(), this.legacyCapture.blue(), this.legacyCapture.alpha(),
-                    this.legacyCapture.texU(), this.legacyCapture.texV());
+        boolean texturedAtCall = vulkanBackend
+                && ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) backend).celtium$texture2dEnabled();
+        submission = run.prepareCall(true, texturedAtCall, this.legacyCapture.red(),
+                this.legacyCapture.green(), this.legacyCapture.blue(), this.legacyCapture.alpha(),
+                this.legacyCapture.texU(), this.legacyCapture.texV());
+        if (submission.format != run.format) {
+            this.legacyListRunsLayout++;
         }
         if (run.callTimeColourReplays() + run.callTimeTexReplays() != substitutedBefore) {
             this.legacyListRunsCallState++;
@@ -3468,7 +3435,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return "none";
         }
-        return "enabled=" + LEGACY_LIST_COMPILE
+        return "enabled=" + true
                 + " recorded=" + stub.legacyListRunsRecorded + "/" + stub.legacyListRunVertices
                 + " replayed=" + stub.legacyListRunsReplayed + "/" + stub.legacyListRunReplayedVertices
                 + " lists=" + stub.legacyListRunBytesByList.size()
@@ -3480,7 +3447,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 + " tex=" + stub.legacyCapture.compiledCallStateTex()
                 + " midRun=" + stub.legacyCapture.compiledMidRunChanges()
                 + " rollbacks=" + stub.legacyCapture.compileRollbacks() + "]"
-                + " callStateSwitch=" + LEGACY_CALL_STATE + " callLayoutSwitch=" + LEGACY_CALL_LAYOUT;
+                + " callStateSwitch=" + true + " callLayoutSwitch=" + true;
     }
 
     /**
@@ -9827,24 +9794,11 @@ public final class CeltiumGlStub implements FunctionProvider {
      * The default is the honest stub answer rather than a safe one: a texture the game never parameterised really does
      * wrap by repeating in GL, which is why the options background tiles without anyone setting a wrap on it.
      * <p>
-     * {@code -Dceltium.stub.texWrapClampControl=true} is the one-flag control for the settings-background defect: it
-     * answers exactly what this class hardcoded before the record existed (wrap CLAMP_TO_EDGE, filters LINEAR), so the
-     * same jar, scene and pose can be run one flag apart and the tiling compared. A control run says so in its own
-     * census line.
+     * This record-based answer is unconditional: the former one-flag control for the settings-background defect,
+     * which answered the values hardcoded before the record existed (wrap CLAMP_TO_EDGE, filters LINEAR), was
+     * removed once the record side was adopted (item 396).
      */
-    private static final boolean TEX_WRAP_CLAMP_CONTROL =
-            Boolean.getBoolean("celtium.stub.texWrapClampControl");
-
     private static int textureParameterValue(int textureName, int pname) {
-        if (TEX_WRAP_CLAMP_CONTROL) {
-            if (pname == GL_TEXTURE_WRAP_S || pname == GL_TEXTURE_WRAP_T) {
-                return GL_CLAMP_TO_EDGE;
-            }
-            if (pname == GL_TEXTURE_MAG_FILTER || pname == GL_TEXTURE_MIN_FILTER) {
-                return GL_LINEAR;
-            }
-            return 0;
-        }
         CeltiumGlStub stub = installed;
         if (stub != null && textureName > 0) {
             long key = texParamKey(textureName, pname);
@@ -9922,7 +9876,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 + " wrapRepeat=" + repeat + " wrapClamp=" + clamp
                 + " calls=" + stub.texParamCalls.get() + " unbound=" + stub.texParamUnbound.get()
                 + " overflow=" + stub.texParamOverflow.get() + " queries=" + stub.texParamQueries.get()
-                + " wrapClampControl=" + TEX_WRAP_CLAMP_CONTROL;
+                + " wrapClampControl=" + false;
     }
 
     /**
