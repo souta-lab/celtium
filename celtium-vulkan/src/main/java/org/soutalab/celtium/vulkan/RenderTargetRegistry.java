@@ -768,6 +768,14 @@ public final class RenderTargetRegistry {
         DEPTH32_FLOAT(126, true),
         DEPTH24_STENCIL8(129, true);
 
+        // The GL internal formats the D18-A mapping (QUEUE 394) names, pinned against lwjgl-opengl 3.4.3's constants:
+        // GL_RGBA8=0x8058, GL_RGBA=0x1908, GL_RGBA16F=0x881A, GL_RGBA32F=0x8814, GL_R11F_G11F_B10F=0x8C3A.
+        private static final int GL_RGBA = 0x1908;
+        private static final int GL_RGBA8 = 0x8058;
+        private static final int GL_RGBA16F = 0x881A;
+        private static final int GL_RGBA32F = 0x8814;
+        private static final int GL_R11F_G11F_B10F = 0x8C3A;
+
         private final int vkFormat;
         private final boolean depth;
 
@@ -782,6 +790,52 @@ public final class RenderTargetRegistry {
 
         public boolean isDepth() {
             return this.depth;
+        }
+
+        /** {@return the bytes one pixel of this class occupies}: the figure the memory arithmetic and the format
+         * census report. Packed formats are their storage size, not four channels of their top precision
+         * ({@link #R11G11B10_FLOAT} is 32 bits, {@link #DEPTH24_STENCIL8} is 24+8). */
+        public int bytesPerPixel() {
+            return switch (this) {
+                case RGBA8_UNORM, R11G11B10_FLOAT, DEPTH32_FLOAT, DEPTH24_STENCIL8 -> 4;
+                case RGBA16_FLOAT -> 8;
+                case RGBA32_FLOAT -> 16;
+            };
+        }
+
+        /**
+         * The format class a GL internal format asks for, or {@code null} when celtium has no class for it (D18-A,
+         * QUEUE 394).
+         * <p>
+         * The mapping is deliberately a table and not a guess: these are the internal formats the D18 split's readiness
+         * note (item 394, §2.1) enumerates with both a GLenum and a class in this enum - five GLenums onto four classes.
+         * {@code GL_RGBA} is the unsized base format, which GL resolves to 8 bits per channel; that is the precision
+         * the delivered frame has ({@code CeltiumGlStub} answers {@code GL_RED_BITS}=8 for it).
+         * <p>
+         * <b>{@code null} is the refusal, and the caller owns the fallback.</b> An unmapped internal format must be
+         * allocated as {@link #RGBA8_UNORM} <em>and counted</em> (readiness §2.2 rule 2: no silent defaults), so this
+         * method answers "no class" instead of answering {@code RGBA8_UNORM} - a caller that cannot tell the two
+         * apart would record a 16-bit request as a default rather than as a dropped requirement. The named and
+         * unmapped remainders, each with the reason it is not mapped here, are in {@code TargetFormatMappingTest}:
+         * {@code GL_RGB10_A2} (VK_FORMAT_A2B10G10R10_UNORM_PACK32 = 64, no class in this enum), {@code GL_RGBA16}
+         * (91), {@code GL_SRGB8_ALPHA8} (43), {@code GL_RGBA8_SNORM}, {@code GL_RGB565}, and the single/dual/RGB
+         * channel formats ({@code GL_R8/RG8/R16F/RG16F/R32F/RGB8/RGB16F/RGB}) - the class vocabulary here is
+         * RGBA-shaped, and widening it is a separate change, not a mapping.
+         * <p>
+         * Depth internal formats ({@code GL_DEPTH_COMPONENT24} and the rest of the stub's
+         * {@code isDepthInternalFormat} set) return {@code null} on purpose: the depth/stencil format of a frame is
+         * chosen by {@link VulkanDepthFormat} from the device's feature set, with this class's
+         * {@link #DEPTH32_FLOAT}/{@link #DEPTH24_STENCIL8} as its vocabulary, so a GL depth request is not this
+         * table's answer to give.
+         */
+        public static TargetFormatClass forGlInternalFormat(int glInternalFormat) {
+            return switch (glInternalFormat) {
+                case GL_RGBA8, GL_RGBA -> RGBA8_UNORM;
+                case GL_RGBA16F -> RGBA16_FLOAT;
+                case GL_RGBA32F -> RGBA32_FLOAT;
+                case GL_R11F_G11F_B10F -> R11G11B10_FLOAT;
+                default -> null;
+            };
         }
     }
 
