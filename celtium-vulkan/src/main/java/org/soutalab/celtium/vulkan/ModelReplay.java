@@ -391,7 +391,9 @@ final class ModelReplay {
         if (b.TARGET_CENSUS_ENABLED) {
             b.celtium$noteTargetStage(target != Long.MIN_VALUE ? target : b.currentGroupTarget, texture, VulkanImmediateFormats.ITEM);
         }
-        b.immediateGroups.add(group);
+        // Queued with the mutation stamp: a display-list replay adds a group outside closeCurrentImmediateGroup, and an
+        // add that skipped the stamp left countGroupsForTarget's cached 0 standing for the rest of the frame.
+        b.celtium$queueImmediateGroup(group);
         b.immediateStatistics.noteImmediateGroupsClosed();
         if (b.GROUP_BOUNDS_DIAGNOSTICS) {
             // The model path creates its own group, so the bounds report has to be asked for here too: measured on leg
@@ -526,7 +528,9 @@ final class ModelReplay {
             group.fog = b.fog.snapshot();
             group.viewportValues = viewport;
             group.stamp = GroupStamp.obtain(b.frameId, (int) b.targetRegistry.generation(), true, b.worldEpoch);
-            b.immediateGroups.add(group);
+            // Same rule as the display-list path above: a model run is a queue addition of its own, so the count cache
+            // must be invalidated with it - a model run's cached 0 is the pack-scale candidate in item 342's §8.
+            b.celtium$queueImmediateGroup(group);
             b.immediateStatistics.noteImmediateGroupsClosed();
             b.openModelRunGroup = group;
             open = group;

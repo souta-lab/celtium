@@ -122,7 +122,9 @@ final class NativeFramebufferCompositor {
         }
         group.stamp = GroupStamp.obtain(b.frameId, (int) b.targetRegistry.generation(), true, b.worldEpoch);
         group.batches = 1;
-        b.immediateGroups.add(group);
+        // Queued with the stamp: the queue gained a group for this target, and countGroupsForTarget's cached answer
+        // must not keep saying 0 (item 342 item A - the stale 0 kept this composite undrawn until the boundary drop).
+        b.celtium$queueImmediateGroup(group);
         b.pendingImmediateIndices += 6;
         b.immediateStatistics.noteImmediateGroupsClosed();
         this.queued++;

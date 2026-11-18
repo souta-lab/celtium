@@ -12931,11 +12931,45 @@ this.frameBufferOpen = false;
      * on counting. Membership changes only where the queue changes, so the answer is cached against a mutation stamp; a
      * repeat ask for the same target costs a compare. Mesh state cannot change while a group sits in the queue, because a
      * drawn group leaves it through the same mutations.
+     * <p>
+     * "The same mutations" is the whole contract, and three paths broke it: the native framebuffer composite, both model
+     * replay paths and this class's own kept-only rebuild changed the queue without advancing the stamp, so a cached 0
+     * stayed valid. The flush then took its "this target has no groups" early return, the group sat in the queue
+     * undrawn, and the next frame boundary destroyed it - the 1-3 stale batches item 342 measured, and the reason a
+     * composite group could live two seconds in the queue while identity 0 was the bound target. Adds and removals that
+     * do not go through {@link #closeCurrentImmediateGroup()} must use {@link #celtium$queueImmediateGroup(ImmediateGroup)}
+     * or {@link #celtium$retainQueuedImmediateGroups(java.util.List)}, where the mutation and the stamp cannot be written
+     * separately.
      */
     private long groupQueueMutation;
     private long cachedCountTarget = Long.MIN_VALUE;
     private long cachedCountMutation = -1L;
     private int cachedCountValue;
+
+    /**
+     * Queues one group and advances the mutation stamp with the add.
+     * <p>
+     * For the paths that build their own group instead of closing an open immediate batch: the native framebuffer
+     * composite ({@code NativeFramebufferCompositor}) and the two model replay paths ({@code ModelReplay}). They cannot
+     * use {@link #closeCurrentImmediateGroup()}, which is why the stamp used to be missing there and the count cache
+     * answered with a 0 that no longer described the queue.
+     */
+    void celtium$queueImmediateGroup(ImmediateGroup group) {
+        this.immediateGroups.add(group);
+        this.groupQueueMutation++;
+    }
+
+    /**
+     * Rebuilds the queue as the kept groups of a finished window and advances the mutation stamp with the removal.
+     * <p>
+     * The flush leaves the other targets' groups where they are and drops the drawn ones; the cached count of the next
+     * pass has to see that new membership, or it answers with the count from before the window ran.
+     */
+    void celtium$retainQueuedImmediateGroups(java.util.List<ImmediateGroup> kept) {
+        this.immediateGroups.clear();
+        this.immediateGroups.addAll(kept);
+        this.groupQueueMutation++;
+    }
 
     /**
      * True while a command buffer this renderer is still recording can hold recorded work.
@@ -20808,9 +20842,9 @@ this.frameBufferOpen = false;
             this.celtium$flushPendingModelRun();
             // Rebuild immediateGroups as only the kept groups, in order. Drawn and retired groups were moved to their
             // own lists during the pass; what remains in keptImmediateGroups is exactly the other-target groups the
-            // old iterator.remove() would have left behind, in the same order.
-            groups.clear();
-            groups.addAll(this.keptImmediateGroups);
+            // old iterator.remove() would have left behind, in the same order. Through the stamping helper: the cached
+            // per-target count has to see that the drawn groups left the queue.
+            celtium$retainQueuedImmediateGroups(this.keptImmediateGroups);
             // The window counter is what is still queued, recomputed here rather than kept by per-group decrements:
             // groups retired without drawing (stale target, stale world, self-composite) never decremented it, so it
             // drifted upward, and the per-group model replays - decremented at draw but never counted at accept - had
