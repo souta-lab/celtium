@@ -6356,6 +6356,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
         }
         long identity = RenderTargetRegistry.rawTargetIdentity(framebuffer, color);
+        if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
+            // A raw framebuffer's registration is its creation-side record: item 414's window created two of them
+            // (a mod's own FBO chain) with no breadcrumb code that could name the operation at all.
+            int crumbDepth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferDepthTexture(framebuffer);
+            org.soutalab.celtium.vulkan.CrashBreadcrumbs.note3(
+                    org.soutalab.celtium.vulkan.CrashBreadcrumbs.RAW_FBO, identity, color, crumbDepth);
+        }
         if (selectTarget) {
             bindFramebuffer(identity, false);
             // The latch has its own bounded line, separate from the tuple-gated depth-register print: leg 16
@@ -13249,6 +13256,16 @@ this.frameBufferOpen = false;
     void celtium$queueImmediateGroup(ImmediateGroup group) {
         this.immediateGroups.add(group);
         this.groupQueueMutation++;
+        if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
+            // Every group the window will draw passes this one queueing point, model groups included: the format,
+            // the pipeline it was prepared with, and the target it is stamped for are what item 414's window
+            // needed to name the immediate draws (Citadel's format-9 quads) and had no code for.
+            org.soutalab.celtium.vulkan.CrashBreadcrumbs.note3(
+                    org.soutalab.celtium.vulkan.CrashBreadcrumbs.IMMEDIATE_GROUP, group.formatId,
+                    group.prepared == null || group.prepared.pipeline == null
+                            ? 0L : System.identityHashCode(group.prepared.pipeline),
+                    group.target);
+        }
     }
 
     /**

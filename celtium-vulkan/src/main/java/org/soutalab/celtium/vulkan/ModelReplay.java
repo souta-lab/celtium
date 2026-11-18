@@ -440,6 +440,11 @@ final class ModelReplay {
                 b.modelOffTargetCoalesced++;
             }
         }
+        if (CrashBreadcrumbs.enabled()) {
+            // The replay is queued: this is the operation a device loss after this point can be charged to, and
+            // item 414's window held a first-ever model replay that no breadcrumb code could name.
+            CrashBreadcrumbs.note3(CrashBreadcrumbs.MODEL_REPLAY, mesh.ownerList(), texture, key);
+        }
         return true;
     }
 
@@ -671,6 +676,9 @@ final class ModelReplay {
         open.batches += cached.quads;
         celtium$noteModelReplayServed(texture, cached.stateKey, projection, modelView);
         b.modelDraws++;
+        if (CrashBreadcrumbs.enabled()) {
+            CrashBreadcrumbs.note3(CrashBreadcrumbs.MODEL_REPLAY, listId, texture, cached.stateKey);
+        }
         fast.noteHit();
         return true;
     }

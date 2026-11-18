@@ -45,6 +45,14 @@ public final class CrashBreadcrumbs {
     public static final int FRAME_CACHE_MISS = 11;
     /** A graphics pipeline was created: its generation number, its handle, and its render pass. */
     public static final int PIPELINE_CREATE = 12;
+    /** A model display list was replayed natively: the list, the texture it samples, and its state key. */
+    public static final int MODEL_REPLAY = 13;
+    /** An immediate group was queued for the window: its vertex format, its pipeline, and its target. */
+    public static final int IMMEDIATE_GROUP = 14;
+    /** A raw (mod-created) framebuffer was registered: its identity, its colour texture, and its depth texture. */
+    public static final int RAW_FBO = 15;
+    /** A texture's deferred upload was submitted: the texture's GL name and the fence that stands for the submit. */
+    public static final int DEFERRED_UPLOAD = 16;
 
     private CrashBreadcrumbs() {
     }
@@ -116,7 +124,8 @@ public final class CrashBreadcrumbs {
         }
     }
 
-    private static String describe(int code, long first, long second, long third) {
+    /** Package-private for the format pin in {@code CrashBreadcrumbsTest}, like the limiter's test hooks. */
+    static String describe(int code, long first, long second, long third) {
         switch (code) {
             case WINDOW:
                 return "window target=0x" + Long.toHexString(first) + " groups=" + second;
@@ -143,6 +152,15 @@ public final class CrashBreadcrumbs {
             case PIPELINE_CREATE:
                 return "pipeline-create generation=" + first + " pipeline=0x" + Long.toHexString(second)
                         + " renderPass=0x" + Long.toHexString(third);
+            case MODEL_REPLAY:
+                return "model-replay list=" + first + " texture=" + second + " key=0x" + Long.toHexString(third);
+            case IMMEDIATE_GROUP:
+                return "immediate-group format=" + first + " pipeline=0x" + Long.toHexString(second)
+                        + " target=0x" + Long.toHexString(third);
+            case RAW_FBO:
+                return "raw-fbo identity=0x" + Long.toHexString(first) + " color=" + second + " depth=" + third;
+            case DEFERRED_UPLOAD:
+                return "deferred-upload texture=" + first + " fence=0x" + Long.toHexString(second);
             case FRAME_CACHE_HIT:
             case FRAME_CACHE_MISS:
                 return (code == FRAME_CACHE_HIT ? "frame-cache hit framebuffer=0x" : "frame-cache miss framebuffer=0x")

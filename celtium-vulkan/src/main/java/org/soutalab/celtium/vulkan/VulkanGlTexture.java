@@ -4384,6 +4384,14 @@ public final class VulkanGlTexture {
             org.soutalab.celtium.vulkan.FramePassTimings.begin("animBatchCmd");
             try {
                 this.outstandingUploadFence = context.celtium$submitDeferred(batch, 0L);
+                if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
+                    // The texture-to-fence binding a later staging wait is charged to: TEXTURE_UPLOAD records the
+                    // upload itself, but the submit that carries it - and the fence awaitOutstandingUpload will
+                    // wait on - was recorded nowhere (item 414, hole 6's recording half).
+                    org.soutalab.celtium.vulkan.CrashBreadcrumbs.note(
+                            org.soutalab.celtium.vulkan.CrashBreadcrumbs.DEFERRED_UPLOAD, glTextureName(),
+                            this.outstandingUploadFence);
+                }
             } finally {
                 org.soutalab.celtium.vulkan.FramePassTimings.end("animBatchCmd");
             }
