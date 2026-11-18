@@ -150,10 +150,40 @@ GL-less は唯一のモードであり、切替プロパティ（旧 `celtium.vu
   `fillFromCapture` が既に守っていた規則で、ここだけ欠けていた。告知サイズが違えば `uploadFromImage` は像を
   作り直すので、古い extent は以後の patch 境界と whole-texture 判定を誤らせる）。
   計器は `CELTIUM_DIRECT_SUPPLY` の `arm` と `full`、`pass skipped` の理由行 |
+| object 名の非再利用 | **`glGen*`/`glCreate*` の名前はプロセス生存期間で再発行されない**（2026-11-18、項目367 の監査で確認・明文化）。名前は `RenderObjectIds` の単一 `AtomicInteger` から取り、**削除しても返却しない**（free list 無し。上限到達は throw で、wrap しない）。stub の dispatch と transformer の hint は同じカウンタを共有する（`CeltiumGlStub.celtium$reserveNames` / `CeltiumGllessHint.glGenNames`）。したがって
+  `RenderTargetRegistry.rawFramebufferIdentity` / `rawColorTextureIdentity` は名前の単射関数で、1つの identity が
+  2つのオブジェクトを指すことはない。**これは複数の記録の寿命が依存する不変条件**である: `GllessFrameTarget.chainPairs`
+  と `rawOrphanedTargets`（FBO 削除後、colour texture の削除まで pair を駐留させる設計）、stub の
+  `framebufferColorTextures` 系 attachment map（テクスチャ削除で scrub しない）、backend の `rawRegisteredTargets`。
+  いずれも「名前が再利用されたら古い状態を引き継ぐ」形をしており、**再利用を導入する変更はこの群の再監査を伴う**
+  （受容した残差と再入条件は下の「受容した残差」）。なお実 GL ドライバは名前を再利用するので、
+  `celtium$gameIdentityForRawColorTexture` の「GL 名ではなく colour texture を比較する」判断のような防御はそのまま残す |
 
 ⇒ 2026-10-29 時点の「`SEM_BEGIN` は記録のみ、`glVertex3f` は no-op」は**当時の事実**であり、2026-11-02 以降は**既定ON**
 （下の「現在地（2026-11-02、既定ON）」参照）。AMD RX 6400 と Intel UHD 630 の world+menu leg（`r13f`/`r13g`）で
 validation clean・device lost 0 を確認済みで、`-Dceltium.gless.legacyImmediate=false` で従来の記録のみ/no-op に戻せる。
+
+### 受容した残差（2026-11-18、項目328 V-04 の4群／項目367 の処分）
+
+328 が「変換せず名前を残した」残差は、367 の監査で **受容リスクとして記録して閉じた**（変換しない）。根拠は
+上の非再利用の不変条件1つ: どの群も、残差が誤描画（別のオブジェクトの絵に載る）へ至る条件は「GL 名の再発行」に
+還元され、現行 allocator では作れない。よって残るのは**件数上限のあるリーク**と**死んだ名前への数えられる拒否**で、
+どちらも別のオブジェクトを指さない。項目332（shadow draw route）の着地は処分のトリガにしない — 未着地であり、
+着地しても変わるのは identity の**使い方**だけで、導出は変わらない。
+
+| 群 | 残差（現行コードで実際に残るもの） | 処分と理由 | 再入条件 |
+|---|---|---|---|
+| chain-pair 群（`RenderTargetRegistry` の alias/name 記録、`GllessFrameTarget.chainPairs`/`chainPairOwners`、`FramebufferCache` の世代） | FBO だけ削除すると pair（自前 VkImage/VkFramebuffer と owners 記録）は `rawOrphanedTargets` に**設計として**駐留し、colour texture の削除か teardown まで残る（333 leg 16 の exit 時 ~90 pair。増加は Framebuffer 生成数に比例し、フレーム数には比例しない）。加えて `forgetSharedDepth` 経由の `retireChainPair` は `FramebufferCache`/registry の `chainPairFramebuffer` を更新しないので、teardown まで死んだ image view を名指す handle が registry に残る（読み手は `FramebufferCache` だけで、使用前に必ず世代比較で retire される） | 受容。名前が再発行されなければ駐留 pair に同じ identity が再導出されない／残るのは上限付きリークと使用前 retire される handle で誤描画に至らない／pair 機構の再キーは 314・333 が作りたての機構を触る割に、観測された欠陥が無い | 名前の再発行を導入したとき（free list・別 allocator・ドライバ供給の名前・`RenderObjectIds` の reset） |
+| stub の FBO attachment maps（`framebufferColorTextures` と逆引き/depth maps） | テクスチャ削除で scrub しないので、順引き map は死んだ texture 名を保持しうる。FBO が生きたまま再 bind されると、その死んだ名前が published attachment / depth 記録に書かれる（解像側は「この GL id の mirror は無い」という拒否に落ちる）。extent 門（削除で `texLevels` が落ちて 0x0）により pair の ensure/borrow は走らない。MRT slot>0 のテクスチャ削除は通知されないので、その pair は退去せず駐留する（上限は slot 0 の削除か teardown） | 受容。alias の前提は chain-pair 群と同じ「名前の再発行」1条件に還元される／テクスチャ削除での scrub は駐留 pair の鍵を先に消す側に動くので strand を増やしうる（害は増えないが得も無い）／逆引きは lazy validate + rescan で自己修復し、順引きの古さは extent 門で無害化される | 同上 |
+| (1b) vanilla `System.identityHashCode` 経路（chain-pair 群の一部だが鍵が別） | 鍵が GL 名ではなく JVM の `identityHashCode`（`FramebufferMixin`）なので、**GC 後の再利用は名前の非再利用では閉じない**。穴の条件は1つ: vanilla `Framebuffer` が `deleteFramebuffer()` を呼ばずに捨てられ、その値が新しい `Framebuffer` に再利用される（新 object の extent が一致したときだけ pair が silent 再利用される）。この経路の状態は delete フック（`celtium$forgetDeletedFramebuffer`）が一括で忘れる | 受容＋**未測定仮説**（実行で観測していない）。反証計器は提案のみ・未実装: backend 生存中に一度でも bind された identity の集合を持ち、`bindFramebuffer` 入口で「その identity の初 bind より前に `chainPairExists` が真」なら bounded 1行を出す。世界再入場を含む leg で 0 行なら「測っていない」から「その leg の範囲で観測されず」に格上げできる | vanilla `Framebuffer` が delete されずに捨てられる経路が実測されたとき（反証計器を実装してから、経路の所有者を特定する） |
+| 333 が増やした `rawRegisteredTargets`（raw framebuffer 名 → colour/depth/extents/shared の `long[7]`） | 削除 funnel（`celtium$rawFramebufferDeleted` / `celtium$rawTextureDeleted` / `celtium$forgetDeletedFramebuffer`）のどれも落とさない。名前ごとに1個で、名前は再発行されないので単調増加の上限付きリーク（同じ FBO の attach が変われば tuple が変わり再登録される） | 受容。壊れ方が上の2群と違う（alias ではなく、tuple 一致時の**無言の登録スキップ**）が、前提は同じ「名前の再発行」 | 同上 |
+
+**この不変条件が崩れる条件**: 名前の再発行を導入したとき（free list・別 allocator・ドライバ供給の名前・
+`RenderObjectIds` の reset）は上4群を再監査し、最小の変換（`celtium$registerRawFramebuffer` の入口で観測した
+colour texture が駐留鍵と違えば先に `celtium$forgetDeletedFramebuffer(identity)` で退去させ、bounded 1行を出す、約15行）を
+入れる。ほかに、名前非再利用が崩れた leg が出たとき（同一 identity が別の絵を指した）、MRT slot>0 のテクスチャ削除が
+駐留リークを伸ばしているのが計測されたとき（`deleteTexture` の通知ループを全 slot へ広げる）、332 が identity の
+**導出**に触る設計に変わったとき。恒久案は allocator 側で名前に発行世代を付け、identity を `(name, issueSerial)` にする。
 
 ## 参考実装と採用順位
 
