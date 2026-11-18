@@ -49,6 +49,7 @@ import static org.lwjgl.vulkan.VK10.vkQueueSubmit;
 
 import java.nio.LongBuffer;
 import org.lwjgl.system.MemoryStack;
+import org.soutalab.celtium.vulkan.RenderTargetRegistry.TargetFormatClass;
 import org.lwjgl.vulkan.VkClearColorValue;
 import org.lwjgl.vulkan.VkClearDepthStencilValue;
 import org.lwjgl.vulkan.VkCommandBuffer;
@@ -264,11 +265,13 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
         GllessFrameTarget target = new GllessFrameTarget(context, width, height);
         try {
-            long[] color = target.allocateImage(true, width, height);
+            // The frame's own colour is always RGBA8_UNORM (QUEUE 404 rule R1): it is the image the finished
+            // frame is composed into and presented from, whatever a mod's own framebuffer asked for.
+            long[] color = target.allocateImage(true, width, height, TargetFormatClass.RGBA8_UNORM);
             target.colorImage = color[0];
             target.colorMemory = color[1];
             target.colorView = color[2];
-            long[] depth = target.allocateImage(false, width, height);
+            long[] depth = target.allocateImage(false, width, height, TargetFormatClass.RGBA8_UNORM);
             target.depthImage = depth[0];
             target.depthMemory = depth[1];
             target.depthView = depth[2];
@@ -283,13 +286,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
     /**
      * Creates one image of a pair at the given size - the image, its device-local memory and a 2D view - and
      * returns them as {@code {image, memory, view}}. The reason this is one method rather than one per pair: the
-     * off-target pair is the same pair of formats and usages as the frame's own, only at the size the game's
-     * framebuffer asks for.
+     * off-target pair is the same pair of usages as the frame's own, only at the size the game's framebuffer
+     * asks for. The colour format is {@code colorClass}'s - the frame's own format for the frame and the
+     * default pair, the resolved class for a chain pair (QUEUE 404) - and is ignored for depth, whose format
+     * {@link VulkanDepthFormat} chooses.
      * <p>
      * A failure after the image or the memory exists frees what was created here before it propagates, so the
      * caller only ever adopts complete handles and {@link #delete()} never has to know about a half-created image.
      */
-    private long[] allocateImage(boolean color, int imageWidth, int imageHeight) {
+    private long[] allocateImage(boolean color, int imageWidth, int imageHeight, TargetFormatClass colorClass) {
         VkDevice device = this.context.device();
         long image = VK_NULL_HANDLE;
         long memory = VK_NULL_HANDLE;
@@ -300,7 +305,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
             // two GPUs this project verifies on. The usage gains SAMPLED_BIT because the contract the choice is made
             // against is "a depth attachment that can also be sampled", and an image created without it would not be
             // the image that predicate was verified for.
-            int format = color ? VK_FORMAT_R8G8B8A8_UNORM
+            // The colour format is the caller's class (QUEUE 404, S3): the frame and the default pair pass
+            // RGBA8_UNORM, a chain pair passes the class its identity resolved. The class was device-checked by
+            // the resolver (VulkanColorFormat.usable) before it reached a pair, so creation does not re-decide it.
+            int format = color ? colorClass.vkFormat()
                     : VulkanDepthFormat.chosen(this.context.physicalDevice());
             int usage = color
                     ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
@@ -1234,10 +1242,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
     // and {@link #chainPairs} takes every other non-main identity, which is what makes each pair have exactly one
     // writer and the chain's input the silhouette.
     //
-    // Both repeat the frame images' formats and usages - so the frame-compatible render pass built by
-    // VulkanTerrainPipeline.createFrameRenderPass accepts them unchanged, GENERAL attachments included - and both
-    // are created on demand at the size the game's framebuffer asks for rather than up front, because most sessions
-    // never bind a second framebuffer at all.
+    // Both repeat the frame images' usages, and the default pair repeats its format too - so the frame-compatible
+    // render pass built by VulkanTerrainPipeline.createFrameRenderPass accepts it unchanged, GENERAL attachments
+    // included. A chain pair's colour format is the class its identity resolved (QUEUE 404): the default class is
+    // the frame's format, and a non-default class gets its own variant pass instead. Both pairs are created on
+    // demand at the size the game's framebuffer asks for rather than up front, because most sessions never bind
+    // a second framebuffer at all.
     // ----------------------------------------------------------------------------------------------------------
 
     /**
@@ -1465,7 +1475,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.sharedDepths.remove(depthKey);
             retirePairsBorrowing(depthKey);
         }
-        long[] allocated = allocateImage(false, width, height);
+        long[] allocated = allocateImage(false, width, height, TargetFormatClass.RGBA8_UNORM);
         SharedDepth created = new SharedDepth();
         created.image = allocated[0];
         created.memory = allocated[1];
@@ -1606,15 +1616,68 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
+     * Makes the identity's chain pair exist at the requested size in {@code formatClass} (QUEUE 404, S3): the
+     * pair is rebuilt when its live class differs, through the same retire path a resize takes. This is the
+     * one ensure that sets a pair's class - the registration junction is its only caller, so the class a pair
+     * carries is decided in exactly one place (rule R5: the window path never re-reads the request, it
+     * follows the pair).
+     */
+    public void ensureChainPair(long identity, int width, int height, TargetFormatClass formatClass) {
+        Pair pair = chainPairFor(identity);
+        if (pair.matches(width, height) && pair.matchesFormat(formatClass)) return;
+        if (pair.colorImage != 0L) this.chainPairOwners.remove(pair.colorImage);
+        try {
+            pair.ensure(width, height, 0L, null, formatClass);
+        } finally {
+            if (pair.colorImage != 0L) this.chainPairOwners.put(pair.colorImage, identity);
+        }
+    }
+
+    /**
+     * {@return the format class the identity's chain pair is allocated in}, or {@code RGBA8_UNORM} before the
+     * pair exists - the answer consumers gate on (the window's render-pass choice, the post chain's adoption
+     * refusal, the readback refusal).
+     */
+    public TargetFormatClass chainPairFormatClass(long identity) {
+        Pair pair = existingChainPair(identity);
+        return pair == null ? TargetFormatClass.RGBA8_UNORM : pair.formatClass;
+    }
+
+    /**
+     * {@return whether {@code image} is a colour image of a chain pair allocated in a non-default format
+     * class}. The readback path asks this because it expands 4 bytes per pixel: a 16F pair's image read that
+     * way is half read and wrong, not merely imprecise (QUEUE 404 rule R10).
+     */
+    public boolean chainPairImageHasNonDefaultFormat(long image) {
+        long identity = chainPairIdentityForImage(image);
+        return identity != Long.MIN_VALUE
+                && chainPairFormatClass(identity) != TargetFormatClass.RGBA8_UNORM;
+    }
+
+    /**
      * Makes the identity's chain pair exist at the requested size, holding colour images for {@code attachments}
      * colour targets: the pair itself first (its ensure retires any extras at the old size), then the tuple.
      * The owners map learns the extra images here, so the sampling side's membership questions
      * ({@link #isChainPairColorImage}, {@link #chainPairIdentityForImage}) cover every slot, not only slot 0.
      */
     public void ensureChainPairColors(long identity, int attachments, int width, int height) {
+        // The class-preserving form: the pair keeps the class the registration junction resolved for it
+        // (rule R5). A pair nobody resolved a class for keeps RGBA8_UNORM, its field's initial value.
+        Pair existing = existingChainPair(identity);
+        ensureChainPairColors(identity, attachments, width, height,
+                existing == null ? TargetFormatClass.RGBA8_UNORM : existing.formatClass);
+    }
+
+    /**
+     * {@link #ensureChainPairColors(long, int, int, int)} in a resolved format class (QUEUE 404, S3): the
+     * pair is ensured in the class first, then the tuple - the extras are allocated in the pair's class, so
+     * the whole tuple shares one format (rule R4).
+     */
+    public void ensureChainPairColors(long identity, int attachments, int width, int height,
+            TargetFormatClass formatClass) {
         Pair pair = chainPairFor(identity);
         long[] before = pair.extraColorImageSnapshot();
-        ensureChainPair(identity, width, height);
+        ensureChainPair(identity, width, height, formatClass);
         pair.ensureExtras(attachments);
         long[] after = pair.extraColorImageSnapshot();
         if (before != null) {
@@ -1756,6 +1819,16 @@ public final class GllessFrameTarget implements FrameImageTarget {
      */
     static boolean celtium$extrasNeedRebuild(int liveExtraCount, int attachments) {
         return Pair.celtium$extrasNeedRebuild(liveExtraCount, attachments);
+    }
+
+    /**
+     * {@return whether a pair must be rebuilt for an ensure}; package-private and static so the rule is pinned
+     * without a device; see {@link Pair#celtium$pairRebuildNeeded(boolean, boolean, TargetFormatClass,
+     * TargetFormatClass)}.
+     */
+    static boolean celtium$pairRebuildNeeded(boolean sizeMatches, boolean sharedMatches,
+            TargetFormatClass liveClass, TargetFormatClass wantedClass) {
+        return Pair.celtium$pairRebuildNeeded(sizeMatches, sharedMatches, liveClass, wantedClass);
     }
 
     /**
@@ -2025,6 +2098,13 @@ public final class GllessFrameTarget implements FrameImageTarget {
          * the reverse. This field is the fact the two sides are compared against.
          */
         private int colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        /**
+         * The format class this pair's colour images are allocated in (QUEUE 404, S3). An attribute of the
+         * pair, not of its slot: it is fixed for the pair's current images, and a different wanted class is a
+         * rebuild, exactly like a different size (rule R3). The default pair and a pair nobody resolved a
+         * class for stay {@code RGBA8_UNORM}, which is the format every pair had before classes existed.
+         */
+        private TargetFormatClass formatClass = TargetFormatClass.RGBA8_UNORM;
         private int creations;
         /** Unique across pairs and evictions: which images a framebuffer built over this pair's views names. */
         private long generation;
@@ -2051,6 +2131,23 @@ public final class GllessFrameTarget implements FrameImageTarget {
 
         private boolean matches(int requestedWidth, int requestedHeight) {
             return exists() && this.width == requestedWidth && this.height == requestedHeight;
+        }
+
+        /** {@return whether this pair's colour images are allocated in {@code wanted}} (QUEUE 404's named rule). */
+        private boolean matchesFormat(TargetFormatClass wanted) {
+            return this.formatClass == wanted;
+        }
+
+        /**
+         * {@return whether a pair must be rebuilt for an ensure}: the pure form of {@link #ensure}'s early
+         * return, so the rule is pinned without a device. A live pair is kept only when the size matches, the
+         * shared-depth borrow is the one asked for, and the format class is the one asked for - a class change
+         * retires and recreates the pair, as a size change does (rule R3), because the existing framebuffers
+         * and render passes name the old format.
+         */
+        static boolean celtium$pairRebuildNeeded(boolean sizeMatches, boolean sharedMatches,
+                TargetFormatClass liveClass, TargetFormatClass wantedClass) {
+            return !(sizeMatches && sharedMatches && liveClass == wantedClass);
         }
 
         /** {@return whether the images this pair holds now have not had their one legal-use self-test yet}. */
@@ -2139,7 +2236,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 long[] views = new long[extras];
                 int[] layouts = new int[extras];
                 for (int i = 0; i < extras; i++) {
-                    long[] allocated = allocateImage(true, this.width, this.height);
+                    // The tuple's images are the pair's own class (rule R4): one class per tuple, because the
+                    // render pass declares one format for every colour attachment.
+                    long[] allocated = allocateImage(true, this.width, this.height, this.formatClass);
                     images[i] = allocated[0];
                     memories[i] = allocated[1];
                     views[i] = allocated[2];
@@ -2326,7 +2425,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
          * any render pass binds these views.
          */
         private void ensure(int requestedWidth, int requestedHeight) {
-            ensure(requestedWidth, requestedHeight, 0L, null);
+            ensure(requestedWidth, requestedHeight, 0L, null, this.formatClass);
         }
 
         /**
@@ -2337,18 +2436,31 @@ public final class GllessFrameTarget implements FrameImageTarget {
          * recreation, on the first window that asks for it.
          */
         private void ensure(int requestedWidth, int requestedHeight, long sharedKey, long[] sharedDepth) {
+            ensure(requestedWidth, requestedHeight, sharedKey, sharedDepth, this.formatClass);
+        }
+
+        /**
+         * {@link #ensure(int, int, long, long[])} in a wanted format class: the pair is rebuilt when the class
+         * differs from the live one, through the same retire path a resize takes (rule R3) - the framebuffers
+         * and render passes built over the old views name the old format, and the generation bump in the
+         * rebuild is what retires them.
+         */
+        private void ensure(int requestedWidth, int requestedHeight, long sharedKey, long[] sharedDepth,
+                TargetFormatClass wantedClass) {
             checkAlive();
             if (requestedWidth <= 0 || requestedHeight <= 0) {
                 throw new IllegalArgumentException(this.label + " pair size must be positive, got "
                         + requestedWidth + "x" + requestedHeight);
             }
-            if (matches(requestedWidth, requestedHeight) && this.sharedDepthKey == sharedKey
-                    && (sharedDepth == null || this.depthImage == sharedDepth[0])) {
+            boolean sharedMatches = this.sharedDepthKey == sharedKey
+                    && (sharedDepth == null || this.depthImage == sharedDepth[0]);
+            if (!celtium$pairRebuildNeeded(matches(requestedWidth, requestedHeight), sharedMatches,
+                    this.formatClass, wantedClass)) {
                 return;
             }
             retire();
             try {
-                long[] color = allocateImage(true, requestedWidth, requestedHeight);
+                long[] color = allocateImage(true, requestedWidth, requestedHeight, wantedClass);
                 this.colorImage = color[0];
                 this.colorMemory = color[1];
                 this.colorView = color[2];
@@ -2357,7 +2469,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     this.depthMemory = VK_NULL_HANDLE;
                     this.depthView = sharedDepth[2];
                 } else {
-                    long[] depth = allocateImage(false, requestedWidth, requestedHeight);
+                    long[] depth = allocateImage(false, requestedWidth, requestedHeight,
+                            TargetFormatClass.RGBA8_UNORM);
                     this.depthImage = depth[0];
                     this.depthMemory = depth[1];
                     this.depthView = depth[2];
@@ -2369,6 +2482,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 this.colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
                 this.creations++;
                 this.generation = GllessFrameTarget.this.nextChainPairGeneration();
+                // Set with the depth ownership, last: until here the pair must still read as the pair it was,
+                // so a failure above leaves release() freeing the old images under the old class.
+                this.formatClass = wantedClass;
                 // Set last: until here the pair must still read as owning whatever depth release() would free.
                 this.sharedDepthKey = sharedDepth != null ? sharedKey : 0L;
             } catch (RuntimeException | LinkageError error) {
