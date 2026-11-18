@@ -1,9 +1,13 @@
 package org.taumc.celeritas.mixin;
 
+import net.minecraft.launchwrapper.Launch;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.embeddedt.embeddium.impl.util.MixinClassValidator;
 import org.objectweb.asm.tree.ClassNode;
+import org.soutalab.celtium.patch.PatchGate;
+import org.soutalab.celtium.patch.PatchGroups;
+import org.soutalab.celtium.patch.PatchLedger;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
 
@@ -58,6 +62,21 @@ public class CeleritasVintageMixinPlugin implements IMixinConfigPlugin {
         return "";
     }
 
+    /**
+     * This {@code false} is load-bearing, and it is not the patch gate.
+     * <p>
+     * The companion list returned by {@link #getMixins()} is prepared with the plugin ignored
+     * (CleanMix prepares companion mixins with {@code ignorePlugin = true}), so this method is never consulted
+     * for celtium's own mixins - the group gate therefore lives in {@code getMixins()} itself, which is the
+     * only place a companion mixin can be refused before it is registered. What this {@code false} does decide
+     * is the fate of the two entries in {@code mixins.celeritas.json}'s {@code client} list
+     * ({@code core.SplashProgressMixin} and {@code core.GLAllocationMixin}): the JSON arrays are prepared with
+     * the plugin consulted, so both are refused here, and because the JSON pass runs first and claims their
+     * names in the global mixin list, the companion pass then skips them as duplicates. The two are shadowed,
+     * not dead code in the JSON: deleting those JSON lines, or returning {@code true} here, would register and
+     * apply both mixins for the first time. That ruling is item 356-B's; changing it is a separate item with
+     * its own leg, because both mixins duplicate answers the transformers and the GL stub already give.
+     */
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
         return false;
@@ -133,7 +152,82 @@ public class CeleritasVintageMixinPlugin implements IMixinConfigPlugin {
         // unmodified jar's 3 and 65). The mixin and the JSON entry are both gone; the window hint comes from
         // CeltiumGllessWindowTransformer and the stub from this plugin's onLoad, and the cohort leg passes with
         // openGl.vendor="Celtium" without either of them.
-        return new ArrayList<>(possibleMixinClasses);
+        List<String> discovered = new ArrayList<>(possibleMixinClasses);
+        List<String> registered = discovered;
+        PatchLedger ledger;
+        try {
+            // The patch gate (item 356-B): filter the companion list by patch group before it is handed to
+            // Mixin. This must never throw. Mixin's post-initialise call site catches Exception and carries on
+            // with the config registered and zero companion mixins, so a gate that threw would not stop the
+            // game - it would start it with every patch silently gone. Any failure therefore returns the
+            // discovered list untouched: exactly the behaviour before the gate existed.
+            ledger = celtium$patchLedger();
+            registered = PatchGate.register(discovered, ledger);
+        } catch (Throwable error) {
+            LOGGER.warn("CELTIUM_PATCH_TABLE gate=fail-open error={}: {}",
+                    error.getClass().getSimpleName(), celtium$firstLine(error));
+            return discovered;
+        }
+        try {
+            celtium$announcePatches(ledger, discovered, registered);
+        } catch (Throwable error) {
+            LOGGER.warn("CELTIUM_PATCH_TABLE announce=failed error={}", error.getClass().getSimpleName());
+        }
+        return registered;
+    }
+
+    private static PatchLedger celtium$ledger;
+    private static boolean celtium$announced;
+
+    /** {@return the launch's patch ledger, loaded once; the decision is a launch property, not a per-call one}. */
+    private static synchronized PatchLedger celtium$patchLedger() {
+        if (celtium$ledger == null) {
+            celtium$ledger = PatchLedger.load();
+        }
+        return celtium$ledger;
+    }
+
+    /**
+     * Announces the gate's decision once per launch: one skip line per filtered group, one line per ignored
+     * switch, the table summary, and - only when the census switch is on - one registration line per mixin.
+     * The skipped map is also published on the launch blackboard for a future screen; that hand-off is inside
+     * the caller's guard, so a blackboard that is not ready yet costs the publication, never the decision.
+     */
+    private void celtium$announcePatches(PatchLedger ledger, List<String> discovered, List<String> registered) {
+        synchronized (CeleritasVintageMixinPlugin.class) {
+            if (celtium$announced) {
+                return;
+            }
+            celtium$announced = true;
+        }
+        for (String group : ledger.skippedGroups()) {
+            LOGGER.info(ledger.skippedLine(group));
+        }
+        for (String line : ledger.ignoredLines()) {
+            LOGGER.info(line);
+        }
+        LOGGER.info(ledger.tableLine(discovered.size(), registered.size()));
+        if (ledger.census()) {
+            for (String name : registered) {
+                LOGGER.info("CELTIUM_PATCH_REGISTERED mixin={} group={}", name, PatchGroups.of(name));
+            }
+        }
+        try {
+            if (Launch.blackboard != null) {
+                Launch.blackboard.put(PatchLedger.SKIPPED_BLACKBOARD_KEY, ledger.skipped());
+            }
+        } catch (Throwable error) {
+            LOGGER.warn("CELTIUM_PATCH_TABLE blackboard=failed error={}", error.getClass().getSimpleName());
+        }
+    }
+
+    private static String celtium$firstLine(Throwable error) {
+        String message = error.getMessage();
+        if (message == null) {
+            return "";
+        }
+        int end = message.indexOf('\n');
+        return (end < 0 ? message : message.substring(0, end)).trim();
     }
 
     @Override

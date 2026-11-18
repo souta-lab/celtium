@@ -18,8 +18,10 @@ import org.objectweb.asm.Opcodes;
  * <p>
  * The splash thread creates a shared GL context, which a {@code GLFW_NO_API} window cannot provide, and Forge's own
  * reports recommend {@code enabled=false} in {@code config/splash.properties} - this is that, one step earlier.
- * {@code getMaxTextureSize} is left alone: it has no {@code enabled} guard and the atlas needs its answer, which the
- * mixin still supplies.
+ * {@code getMaxTextureSize} is answered by this transformer instead (see the method body): it has no
+ * {@code enabled} guard and the atlas needs its answer, and the mixin that was meant to supply it
+ * ({@code core.GLAllocationMixin}, shadowed in the mixin config - see {@code CeleritasVintageMixinPlugin})
+ * never applied either, so the answer is given here, where the stubbing above proves this transformer runs.
  * <p>
  * The replaced {@code start()} keeps one instruction from the original body, under a guard: the shared-context
  * hand-off, {@code shared.makeCurrent()}, executed only if a shared context exists. Another mod's required mixin
