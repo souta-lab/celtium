@@ -25,14 +25,60 @@ import static org.lwjgl.vulkan.VK10.*;
  * {@link org.soutalab.celtium.vulkan.gl.ModPushConstantLimit} records at selection and the lowering checks) and their
  * sampler set.
  * <p>
- * Vertex inputs follow GL's aliasing of generic attribute 0 with the conventional vertex position: the program's
- * first attribute takes the position, a lowered {@code celtium_MultiTexCoord0} the texture coordinate and a lowered
- * {@code celtium_Color} the colour. Any other attribute shape is refused with a reason.
+ * Vertex inputs follow GL's aliasing of generic attribute 0 with the conventional vertex position: a known position
+ * name or an unnumbered first attribute takes the position, a texture coordinate attribute the format's UV element
+ * and a colour attribute its colour element. Which attribute is which is decided by name, not by location, because
+ * the location belongs to the program (a {@code #version 120} program's declaration order, GLSM's
+ * {@code VertexFormatElement.Usage} numbers) while the batch's field order belongs to the uploader - the vocabularies
+ * {@link #source} knows are the lowering's own {@code celtium_Vertex}/{@code celtium_MultiTexCoord0}/
+ * {@code celtium_Color} and the GLSL 330 fixed-function generator's {@code a_Color}/{@code a_TexCoord0}. Any other
+ * attribute is refused with a reason, naming the attribute.
  * <p>
  * One instance per (program, layout, render state); {@link Draw} is the per-batch half (uniform bytes and sampler set)
  * that a group carries as its prepared pipeline.
  */
 public final class VulkanModProgramPipeline {
+
+    /**
+     * A field of the batch's vertex stream a program attribute can read, with the format and offset the immediate
+     * path's own pipelines declare for it: position at 0, the UV's two floats at 12, the colour's four bytes at 20
+     * (the POSITION_TEX_COLOR layout, 24 bytes - {@code VulkanImmediateTexturePipeline}'s own attribute descriptions
+     * say the same numbers). A wrong offset here reads a neighbour's bytes and draws the wrong picture without any
+     * Vulkan error, so the numbers are asserted by {@code ModProgramAttributeSourceTest}.
+     */
+    enum Source {
+        POSITION(VK_FORMAT_R32G32B32_SFLOAT, 0),
+        TEXCOORD(VK_FORMAT_R32G32_SFLOAT, 12),
+        COLOR(VK_FORMAT_R8G8B8A8_UNORM, 20);
+
+        final int format;
+        final int offset;
+
+        Source(int format, int offset) {
+            this.format = format;
+            this.offset = offset;
+        }
+    }
+
+    /**
+     * The texture-coordinate names: the lowering's own (a legacy {@code gl_MultiTexCoord0} comes back as
+     * {@code celtium_MultiTexCoord0}) and the GLSL 330 fixed-function generator's {@code a_TexCoord0}, which is a
+     * {@code vec4} reading the batch's two UV floats - Vulkan fills the missing components with (0, 0, 0, 1), the same
+     * values GL supplies, which is what the generator's {@code coord.st / q} division needs.
+     */
+    private static final java.util.Set<String> TEXCOORD_NAMES =
+            java.util.Set.of("celtium_MultiTexCoord0", "a_TexCoord0");
+
+    /**
+     * The position names: the lowering's {@code celtium_Vertex}, which is {@code gl_Vertex} - and {@code ftransform()},
+     * which expands to a use of it, so a legacy program that both declares its own attributes and calls
+     * {@code ftransform()} has this one at a nonzero location. It was refused as "no source" for that reason and only
+     * that reason. The three-float format fills its {@code vec4}'s w with 1, as GL's vertex position had.
+     */
+    private static final java.util.Set<String> POSITION_NAMES = java.util.Set.of("celtium_Vertex");
+
+    /** The colour names: the lowering's {@code celtium_Color} and the fixed-function generator's {@code a_Color}. */
+    private static final java.util.Set<String> COLOR_NAMES = java.util.Set.of("celtium_Color", "a_Color");
 
     /** The per-batch part a group draws: the pipeline, the packed uniforms and the sampler set. */
     public static final class Draw {
@@ -115,20 +161,47 @@ public final class VulkanModProgramPipeline {
         if (!program.compiled()) {
             return "the program has no SPIR-V (" + program.compileFailure() + ")";
         }
+        return unsupportedAttributes(program.lowered().attributes(), formatId);
+    }
+
+    /**
+     * {@return why this program's attributes cannot be read from this batch layout}, or null when they can - the
+     * format half of {@link #unsupported}, split out so both halves are testable without a device: which formats map
+     * onto program attributes at all, and which attribute reads which of the layout's fields.
+     */
+    static String unsupportedAttributes(List<ModGlslTranslator.Attribute> attributes, int formatId) {
         if (formatId != VulkanImmediateFormats.POSITION_TEX && formatId != VulkanImmediateFormats.POSITION_TEX_COLOR) {
             return "batch format " + formatId + " is not mapped onto program attributes";
         }
-        List<ModGlslTranslator.Attribute> attributes = program.lowered().attributes();
         for (ModGlslTranslator.Attribute attribute : attributes) {
-            if (attribute.location() == 0 || attribute.name().equals("celtium_MultiTexCoord0")) {
-                continue;
+            if (source(attribute, formatId) == null) {
+                return "attribute " + attribute.name() + " has no source in format " + formatId;
             }
-            if (attribute.name().equals("celtium_Color") && formatId == VulkanImmediateFormats.POSITION_TEX_COLOR) {
-                continue;
-            }
-            return "attribute " + attribute.name() + " has no source in format " + formatId;
         }
         return null;
+    }
+
+    /**
+     * {@return the batch field this attribute reads}, or null when this layout has no such field.
+     * <p>
+     * Names first, then the location-0 alias: a vertex, a texture coordinate or a colour is identified by what the
+     * source called it, whichever location the program gave it, while GL's generic attribute 0 with no known name is
+     * the position - a rule that has to stay, because a legacy {@code attribute vec3 position;} is lowered to location
+     * 0 under its own name and a name whitelist alone would refuse every such program. An unknown attribute is null,
+     * never a guess: the same bytes read as the wrong field draw a wrong picture with no Vulkan error to show for it.
+     */
+    static Source source(ModGlslTranslator.Attribute attribute, int formatId) {
+        if (POSITION_NAMES.contains(attribute.name())) {
+            return Source.POSITION;
+        }
+        if (TEXCOORD_NAMES.contains(attribute.name())) {
+            return Source.TEXCOORD;
+        }
+        if (COLOR_NAMES.contains(attribute.name())) {
+            // POSITION_TEX has no colour element; a program that reads one needs the colour layout, not this batch.
+            return formatId == VulkanImmediateFormats.POSITION_TEX_COLOR ? Source.COLOR : null;
+        }
+        return attribute.location() == 0 ? Source.POSITION : null;
     }
 
     /** Builds the pipeline with the render state of {@code like}; throws on a Vulkan failure. */
@@ -313,15 +386,15 @@ public final class VulkanModProgramPipeline {
                     VkVertexInputAttributeDescription.calloc(declared.size(), stack);
             for (int i = 0; i < declared.size(); i++) {
                 ModGlslTranslator.Attribute attribute = declared.get(i);
-                VkVertexInputAttributeDescription out = attributes.get(i).location(attribute.location()).binding(0);
-                if (attribute.name().equals("celtium_MultiTexCoord0")) {
-                    out.format(VK_FORMAT_R32G32_SFLOAT).offset(12);
-                } else if (attribute.name().equals("celtium_Color")) {
-                    out.format(VK_FORMAT_R8G8B8A8_UNORM).offset(20);
-                } else {
-                    // Generic attribute 0 aliases the conventional vertex position (unsupported() admitted no other).
-                    out.format(VK_FORMAT_R32G32B32_SFLOAT).offset(0);
+                Source field = source(attribute, formatId);
+                if (field == null) {
+                    // unsupported() admitted no attribute without a source, so this is a caller's mistake, not a
+                    // layout fact: refuse loudly instead of falling back to the position and reading its bytes.
+                    throw new IllegalStateException("attribute " + attribute.name() + " has no source in format "
+                            + formatId);
                 }
+                attributes.get(i).location(attribute.location()).binding(0)
+                        .format(field.format).offset(field.offset);
             }
             VkPipelineVertexInputStateCreateInfo vertexInput = VkPipelineVertexInputStateCreateInfo.calloc(stack)
                     .sType$Default().pVertexBindingDescriptions(binding).pVertexAttributeDescriptions(attributes);
