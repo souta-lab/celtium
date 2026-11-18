@@ -18,9 +18,24 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>
  * Installed in front of whatever {@code System.out} is (Forge's tracing stream), so a dropped line never reaches the
  * stream's per-line caller lookup either.
+ * <p>
+ * Two tags are exempt ({@link #isUnlimited(String)}): the crash-breadcrumb dump. It exists for the one moment the
+ * device is lost, it is bounded by the ring itself (128 crumbs plus a header and a footer), and the bound above
+ * measured exactly the failure item 414 diagnosed - of 128 crumbs, the 16 the tag limit let through were all the
+ * loading screen's repeated window operations, so the dump reached the log with its evidence already cut away.
+ * The exemption is a named set, not a prefix or a flag on the line, so no other tag can drift into it.
  */
 public final class CeltiumLogLimiter extends PrintStream {
     static final int LIMIT = Integer.getInteger("celtium.debug.logLinesPerTag", 16);
+    /**
+     * Tags that always print, however many lines they reach: the breadcrumb dump (see the class comment) and the
+     * pipeline-creation identity line. Creations are one per distinct pipeline state, not per frame, so that tag is
+     * bounded by the number of states a session reaches - and a creation the limit cut is exactly the generation a
+     * device-loss diagnosis can no longer name (item 414: creations 39-45 sat behind earlier lines of other tags'
+     * summaries, with no identity anywhere).
+     */
+    private static final java.util.Set<String> UNLIMITED_TAGS = java.util.Set.of(
+            "CELTIUM_CRUMB", "CELTIUM_CRASH_BREADCRUMBS", "CELTIUM_PIPELINE_CREATE");
     private static final Map<String, AtomicLong> COUNTS = new ConcurrentHashMap<String, AtomicLong>();
     private static volatile boolean summaryHookInstalled;
 
@@ -67,10 +82,15 @@ public final class CeltiumLogLimiter extends PrintStream {
         return end > start ? line.substring(start, end) : "untagged";
     }
 
-    /** {@return whether a line may be printed}; counts it either way. */
+    /** {@return whether the tag prints without the per-tag bound}; see {@link #UNLIMITED_TAGS}. */
+    static boolean isUnlimited(String tag) {
+        return tag != null && UNLIMITED_TAGS.contains(tag);
+    }
+
+    /** {@return whether a line may be printed}; counts it either way, unless its tag is {@link #isUnlimited}. */
     static boolean admit(String line) {
         String tag = tagOf(line);
-        if (tag == null) {
+        if (tag == null || isUnlimited(tag)) {
             return true;
         }
         return COUNTS.computeIfAbsent(tag, ignored -> new AtomicLong()).incrementAndGet() <= LIMIT;

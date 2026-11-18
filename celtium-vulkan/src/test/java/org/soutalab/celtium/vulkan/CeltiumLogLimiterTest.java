@@ -15,6 +15,21 @@ class CeltiumLogLimiterTest {
     }
 
     @Test
+    void crumbDumpLinesAreNeverLimited() {
+        // Item 414: of 128 crumbs only the first 16 reached latest.log, because the dump prints one CELTIUM_CRUMB
+        // line per ring entry through the same stream the limiter bounds. The whole dump - header, crumbs and the
+        // footer that shares the header's tag - must pass however far past the limit it goes.
+        for (int i = 0; i < CeltiumLogLimiter.LIMIT + 128; i++) {
+            assertTrue(CeltiumLogLimiter.admit("[Celtium] CELTIUM_CRUMB #" + i + " window target=0x1 groups=2"));
+            assertTrue(CeltiumLogLimiter.admit("[Celtium] CELTIUM_CRASH_BREADCRUMBS trigger=x count=128"));
+        }
+        assertTrue(CeltiumLogLimiter.isUnlimited("CELTIUM_CRUMB"));
+        assertTrue(CeltiumLogLimiter.isUnlimited("CELTIUM_CRASH_BREADCRUMBS"));
+        assertFalse(CeltiumLogLimiter.isUnlimited("CELTIUM_CRUMB_EXTRA"));
+        assertFalse(CeltiumLogLimiter.isUnlimited(null));
+    }
+
+    @Test
     void eachTagPassesItsLimitAndNoMore() {
         String line = "[Celtium] CELTIUM_LIMITER_TEST_TAG n";
         int admitted = 0;
