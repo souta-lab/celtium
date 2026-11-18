@@ -2564,10 +2564,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 break;
             }
             this.submissionStatistics.setStallOrigin(where + " via " + site);
+            // The last submissions ride along (item 414, hole 3): the counters alone print at teardown, and the
+            // teardown that detects a loss throws before its own print - the stall line is the record that
+            // survives, so it carries the trail and both sequence watermarks with it.
             System.out.println("[Celtium] CELTIUM_STALL site=" + where + " latchSite=" + site
                     + " target=" + this.targetWidth + "x"
                     + this.targetHeight + " frameId=" + this.frameId + " frameTargetNull=" + (this.frameTarget == null)
-                    + " presentSkipReason=[" + this.presentSkipReason + "]");
+                    + " presentSkipReason=[" + this.presentSkipReason + "]"
+                    + " submitSequence=" + this.scheduler.submitSequence()
+                    + " completedSubmitSequence=" + this.scheduler.completedSubmitSequence()
+                    + " " + SubmitTrail.describe());
         }
         this.submissionStatistics.noteStalledStops();
     }

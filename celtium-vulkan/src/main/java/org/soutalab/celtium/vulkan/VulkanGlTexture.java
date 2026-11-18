@@ -4403,7 +4403,12 @@ public final class VulkanGlTexture {
         if (this.outstandingUploadFence != VK_NULL_HANDLE) {
             long fence = this.outstandingUploadFence;
             this.outstandingUploadFence = VK_NULL_HANDLE;
-            context.celtium$awaitDeferredSubmit(fence, "texture staging reuse");
+            // The reason names the owner (item 414, hole 6): it is the only text the wait's failure paths print,
+            // and the measured detection #2 - a staging-reuse wait reporting DEVICE_LOST - left no record of
+            // which texture's upload, or which fence, it had been waiting on. The GL name is this mirror's last
+            // upload's (-1 before any fill, which is itself the answer for a fresh mirror).
+            context.celtium$awaitDeferredSubmit(fence,
+                    "texture staging reuse gl=" + glTextureName() + " fence=0x" + Long.toHexString(fence));
         }
     }
 

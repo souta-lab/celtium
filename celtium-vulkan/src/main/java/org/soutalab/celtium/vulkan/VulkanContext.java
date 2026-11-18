@@ -1145,6 +1145,7 @@ public final class VulkanContext {
             if (this.deferredSubmitsOutstanding > this.deferredSubmitsPeak) {
                 this.deferredSubmitsPeak = this.deferredSubmitsOutstanding;
             }
+            SubmitTrail.note(SubmitTrail.DEFERRED, entry.fence, uploadSlotMask);
             return entry.fence;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -1178,6 +1179,7 @@ public final class VulkanContext {
             if (this.deferredSubmitsOutstanding > this.deferredSubmitsPeak) {
                 this.deferredSubmitsPeak = this.deferredSubmitsOutstanding;
             }
+            SubmitTrail.note(SubmitTrail.DEFERRED, fence, uploadSlotMask);
             return fence;
         }
     }

@@ -382,6 +382,7 @@ public final class FrameCoordinator {
         // buffer reusable, and the sequence watermark is what releases the resources this submission still names -
         // not "some wait succeeded", which is what a single-frame renderer could get away with.
         this.host.scheduler().noteSubmitted(this.host.frameSlot());
+        SubmitTrail.note(SubmitTrail.FRAME, this.host.scheduler().submitSequence(), this.host.frameSlot());
         this.host.commandState().submitted();
         for (ImmediateGroup group : this.host.recordedImmediateGroups()) {
             this.host.immediateStatistics().addImmediateSubmittedBatches(group.batches);
