@@ -56,8 +56,7 @@ fixture が `UNCALIBRATED_PRESENTED_IMAGE` を返し KPI が leg を拒否する
    **Nomi の画像は r14 以降の jar で撮り直す**（21,885 拒否は 0 になり chain が描くので r126 の数値は変更前）。
 4. **Xaero radar の entity icon**: 描かれるか未確認（entity の居る scene が必要、`-Dceltium.validation.keepEntities=true`）。
 5. **巨大クラス分割の継続**と効果の無い実験 switch の削除（挙動不変、CPU テストで確認）。
-6. **影**: 影パスの draw を影 target の chain pair に載せるのが残差（項目332）。（項目397 の view キーは
-   `SHADOW_VIEW` に到達しない仮配線＝項目406。有効化は 332/399 と同時）深度ストア・native depth copy・
+6. **影**: 影パスの draw を影 target の chain pair に載せるのが残差（項目332）。（397 の view キーは `SHADOW_VIEW` 未到達の仮配線 — 項目406）深度ストア・native depth copy・
    `glBlitFramebuffer` 深度経路と、影パス読み込みの native 提供（0.2.5-rc2、served ≥8・refused 0）は着地済み。
    shaderpack 対応は 0.2.4/0.2.5 のとおり本体 native 実装で進んでおり、別 addon jar の
    成果物はまだ無い。製品版 Demonica jar の QuarantineGuard は利用者側の制約として残る。

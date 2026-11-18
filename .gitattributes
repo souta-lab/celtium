@@ -1,0 +1,5 @@
+# Markdown is measured in bytes by scripts/check_agent_docs.py (entrypoint
+# budgets). Pin LF so the measured size is the same on every OS — a CRLF
+# checkout on Windows inflates each file by its line count and failed the
+# windows CI job for docs/plan.md (16,374 LF bytes read as 16,450).
+*.md text eol=lf
