@@ -77,6 +77,25 @@ public final class VulkanSwapchain {
     private String reconciliation = "not reconciled";
     /** Whether this swapchain's images were given defined content at creation, and how (issue #422). */
     private String imageInitialization = "not attempted";
+    /**
+     * Per-image "given defined content inside an ownership period" flags for this generation (item 515, design
+     * B1). Sized with {@link #images} when a generation's images are fixed and dropped with them in
+     * {@link #delete()}; null means no generation has fixed its images yet. The lifetime is the swapchain
+     * object's own - a rebuild is always a new object, so flags can never leak across generations.
+     */
+    private boolean[] imageInitialized;
+    /** Per-image record that the one-shot clear failed; the bare-present branch consults it (design section 3.4). */
+    private boolean[] imageInitializationFailed;
+    /** This generation's {@link #imageInitializationWanted(int)} verdict, fixed once at creation (condition (c)). */
+    private boolean imageInitializationWanted;
+    /** One-shot clears that failed this generation; the flag stays unset and the next acquire retries. */
+    private int imageInitializationFailures;
+    /** One-shot clears whose submission completed this generation; the V3 gate reconciliation counts these. */
+    private int imagesInitializedCount;
+    /** Times the flag array disagreed with the acquired index - impossible by construction, counted if it happens. */
+    private int imageInitializationAnomalies;
+    /** Cap on per-event stdout lines for initialization failures and anomalies; the counters always keep counting. */
+    private static final int MAX_IMAGE_INIT_LOG_LINES = 8;
     private long acquireSemaphore = VK_NULL_HANDLE;
 
     /**
@@ -1034,7 +1053,26 @@ public final class VulkanSwapchain {
         return "swapchain: platform=" + this.platform + " format=" + this.format + " colourSpace="
                 + this.colorSpace + " presentMode=" + this.presentMode + " images=" + this.images.length + " size="
                 + this.width + "x" + this.height + " " + offeredVersusRequested()
-                + " init=[" + this.imageInitialization + "]";
+                + " init=[" + describeImageInitialization() + "]";
+    }
+
+    /**
+     * The {@code init=[...]} text: the creation-time declaration while no clear has run, then the running
+     * aggregate built from the counters at display time (design section 3.8). A skipped generation keeps the
+     * creation wording, which names why no clear could be recorded.
+     */
+    private String describeImageInitialization() {
+        if (!this.imageInitializationWanted) {
+            return this.imageInitialization;
+        }
+        boolean[] flags = this.imageInitialized;
+        int total = flags == null ? this.images.length : flags.length;
+        String text = "deferred per-image initialized=" + this.imagesInitializedCount + "/" + total
+                + " failures=" + this.imageInitializationFailures;
+        if (this.imageInitializationAnomalies > 0) {
+            text += " anomalies=" + this.imageInitializationAnomalies;
+        }
+        return text;
     }
 
     /**
@@ -1079,6 +1117,10 @@ public final class VulkanSwapchain {
                 // The probe's semaphore is owned like any other until its image comes back (see acquireSemaphore).
                 celtium$noteAcquireOwner(stack, acquire, index.get(0));
                 long image = this.images[index.get(0)];
+                // Item 515 (design section 3.3): the probe clears the image it presents, so the image is defined -
+                // but the probe deliberately does not set the per-image initialization flag. The first real
+                // presentImage of this image runs the one-shot clear once more, which is redundant, not wrong,
+                // and keeps the flag's only writer in the present path.
                 VkCommandBuffer commands = this.context.beginCommands();
                 try {
                     transitionToTransferDst(stack, commands, image);
@@ -1356,7 +1398,21 @@ public final class VulkanSwapchain {
                     return "present image: could not create the render-finished semaphore";
                 }
             }
+            // Item 515 (design B1): the acquired image is given its defined content here - after the acquire
+            // succeeded and the render-finished semaphore is settled, before every branch that can present it
+            // (bare, async, synchronous). Under FRESH_SEMAPHORES the render-finished semaphore was created
+            // before the acquire and renderFinishedFor is not called; the insertion point is the same either
+            // way, and reads as "after the render-finished semaphore is settled".
+            ensureImageInitialized(stack, index.get(0));
             if (PRESENT_NO_RECORD) {
+                if (initializationFailed(this.imageInitializationFailed, index.get(0))) {
+                    // Design section 3.4: a bare present records nothing, so an image whose one-shot clear
+                    // failed would be presented undefined. Refuse it by name instead of presenting it
+                    // (guarantee (a)); the flag stays unset, so a later recorded present retries the clear.
+                    return "present image (no record): refused image " + index.get(0)
+                            + " because its first-acquire clear failed and a bare present cannot define"
+                            + " its content";
+                }
                 // Bisection switch: present the acquired image without touching it or recording anything. If the
                 // validation messages disappear, they come from the command recording (the layout transitions and the
                 // blit); if they stay, they come from the acquire/present semaphore usage itself.
@@ -2172,6 +2228,9 @@ public final class VulkanSwapchain {
         }
         this.views = new long[0];
         this.images = new long[0];
+        // The per-image initialization flags live and die with the images they describe (item 515).
+        this.imageInitialized = null;
+        this.imageInitializationFailed = null;
         if (this.swapchain != VK_NULL_HANDLE) {
             vkDestroySwapchainKHR(this.context.device(), this.swapchain, null);
             this.swapchain = VK_NULL_HANDLE;
@@ -2532,7 +2591,7 @@ public final class VulkanSwapchain {
                 }
                 this.views[i] = viewHandle.get(0);
             }
-            this.imageInitialization = initializeImages(stack, swapchainUsage);
+            this.imageInitialization = beginDeferredImageInitialization(swapchainUsage);
             System.out.println("[Celtium] CELTIUM_SWAPCHAIN_INIT " + this.imageInitialization);
             return true;
         }
@@ -2550,46 +2609,154 @@ public final class VulkanSwapchain {
     }
 
     /**
-     * Gives every image of the new swapchain defined content: opaque black, ending in PRESENT_SRC_KHR.
+     * Fixes this generation's initialization state now that its images are known: fresh all-false flags sized
+     * to the real image count, the wanted verdict computed once from the usage, and the counters back at zero.
+     * <p>
+     * Item 515 (design B1): until 2026-11-19 this point also submitted a bulk clear of every image. No image
+     * has been acquired yet at creation, so touching them here is outside any ownership period - the
+     * validation layer reported {@code UNASSIGNED-non-acquired-swapchain-image-used} once per image (item
+     * 514). The clear itself moved into the present path, at each image's first acquire
+     * ({@link #ensureImageInitialized}); this method only declares the deferral.
+     *
+     * @return the declaration, for {@link #describe()} and the console line
+     */
+    private String beginDeferredImageInitialization(int usage) {
+        this.imageInitialized = newInitializationFlags(this.images.length);
+        this.imageInitializationFailed = newInitializationFlags(this.images.length);
+        this.imageInitializationWanted = imageInitializationWanted(usage);
+        this.imageInitializationFailures = 0;
+        this.imagesInitializedCount = 0;
+        this.imageInitializationAnomalies = 0;
+        if (!this.imageInitializationWanted) {
+            return "skipped: the surface offered no TRANSFER_DST usage, so no clear could be recorded";
+        }
+        return "deferred: per-image initialization at first acquire (images=" + this.images.length + ")";
+    }
+
+    /**
+     * {@return a fresh flag array of {@code count} entries, all false; a non-positive count gives an empty
+     * array}. Pure, so the generation setup can be checked without a device (design section 3.7).
+     */
+    static boolean[] newInitializationFlags(int count) {
+        return new boolean[Math.max(0, count)];
+    }
+
+    /**
+     * {@return whether the image at {@code imageIndex} still needs its one-shot clear}. Pure. A skipped
+     * generation ({@code wanted} false) never needs one - that is the creation-time skip semantics, kept
+     * unchanged (condition (c)). A null array or an out-of-range index is not judged "needed": the helper
+     * records that disagreement as an anomaly instead of clearing on a guess.
+     */
+    static boolean initializationNeeded(boolean[] flags, boolean wanted, int imageIndex) {
+        if (!wanted || flags == null || imageIndex < 0 || imageIndex >= flags.length) {
+            return false;
+        }
+        return !flags[imageIndex];
+    }
+
+    /**
+     * {@return whether the one-shot clear of the image at {@code imageIndex} has a recorded failure}. Pure;
+     * a null array or an out-of-range index has no recorded failure.
+     */
+    static boolean initializationFailed(boolean[] failed, int imageIndex) {
+        return failed != null && imageIndex >= 0 && imageIndex < failed.length && failed[imageIndex];
+    }
+
+    /**
+     * Gives the just-acquired image defined content the first time this generation presents it: opaque black,
+     * ending in PRESENT_SRC_KHR (item 515, design B1).
      * <p>
      * A swapchain image's content is undefined until something writes it. The present blit is normally that
      * something, but it writes the frame image's content - and a frame the renderer has not fully written (the
      * first frames after a rebuild at world join are the reported case) passes its own undefined regions through
      * to the screen. On AMD hardware undefined image content characteristically appears as purple blocks (issue
-     * #422: random purple squares on the loading screen when joining a world). Clearing here means no image this
-     * swapchain owns can ever be presented undefined, whatever the frame that later fills it does. The frame
-     * target's own images carry the same rule at their first acquire ({@code GllessFrameTarget}'s
-     * {@code neverCleared}); the swapchain's images were the ones without it.
+     * #422: random purple squares on the loading screen when joining a world). Clearing at the first acquire
+     * means no image this swapchain owns can ever be presented undefined, whatever the frame that later fills
+     * it does. The frame target's own images carry the same rule at their first acquire
+     * ({@code GllessFrameTarget}'s {@code neverCleared}); the swapchain's images were the ones without it.
      * <p>
-     * The submission is the context's one-shot path, which waits for its own fence: when this returns, the images
-     * hold the clear. A failure is recorded rather than failed into creation - the swapchain is usable either
-     * way, and the record says which of the two a leg ran with.
-     *
-     * @return what was done, for {@link #describe()} and the console line
+     * The submission is the context's one-shot path, which waits for its own fence, and the flag is set only
+     * after that submission has completed - never at recording time, so a recorded-but-unsubmitted clear
+     * cannot leave the flag claiming content the image does not hold (the BH-26 lesson). One exception is
+     * checked explicitly: when the fence wait reports {@code VK_ERROR_DEVICE_LOST}, {@code endCommands}
+     * returns without throwing and marks the context unusable, so "it returned" is not by itself "the
+     * submission completed"; in that case the flag stays unset and the failure is recorded. Any other failure
+     * is likewise recorded rather than failed into the present - the present itself continues, because the
+     * synchronous and async branches overwrite the whole image with the blit - and the next acquire of the
+     * same image retries the clear. The bare-present branch is the one branch that overwrites nothing, so it
+     * refuses an image with a recorded failure instead of presenting it (design section 3.4).
      */
-    private String initializeImages(MemoryStack stack, int usage) {
-        if (!imageInitializationWanted(usage)) {
-            return "skipped: the surface offered no TRANSFER_DST usage, so no clear could be recorded";
+    private void ensureImageInitialized(MemoryStack stack, int imageIndex) {
+        if (!this.imageInitializationWanted) {
+            return;
+        }
+        boolean[] flags = this.imageInitialized;
+        if (flags == null || imageIndex < 0 || imageIndex >= flags.length) {
+            // Generation and array disagree, which the construction makes impossible; count it and let the
+            // present continue rather than clearing an image on a guess. The count reaches describe().
+            this.imageInitializationAnomalies++;
+            if (this.imageInitializationAnomalies <= MAX_IMAGE_INIT_LOG_LINES) {
+                System.out.println("[Celtium] CELTIUM_SWAPCHAIN_IMAGE_INIT anomaly: image=" + imageIndex
+                        + " flags=" + (flags == null ? "null" : Integer.toString(flags.length))
+                        + " images=" + this.images.length);
+            }
+            return;
+        }
+        if (!initializationNeeded(flags, true, imageIndex)) {
+            return;
         }
         try {
             VkCommandBuffer commands = this.context.beginCommands();
-            VkClearColorValue color = VkClearColorValue.calloc(stack);
-            color.float32(0, 0.0f);
-            color.float32(1, 0.0f);
-            color.float32(2, 0.0f);
-            color.float32(3, 1.0f);
-            VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack);
-            range.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
-            for (long image : this.images) {
-                transitionToTransferDst(stack, commands, image);
-                vkCmdClearColorImage(commands, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, color, range);
-                transitionToPresent(stack, commands, image);
-            }
+            recordImageClear(stack, commands, this.images[imageIndex]);
             this.context.endCommands(commands);
-            return "cleared " + this.images.length + " images to opaque black at creation";
+            if (!this.context.celtium$isUsable()) {
+                recordImageInitializationFailure(imageIndex,
+                        "the context became unusable during the clear submission (device lost)");
+                return;
+            }
+            flags[imageIndex] = true;
+            if (this.imageInitializationFailed != null
+                    && imageIndex < this.imageInitializationFailed.length) {
+                this.imageInitializationFailed[imageIndex] = false;
+            }
+            this.imagesInitializedCount++;
+            System.out.println("[Celtium] CELTIUM_SWAPCHAIN_IMAGE_INIT image=" + imageIndex
+                    + " initialized=" + this.imagesInitializedCount + "/" + flags.length);
         } catch (RuntimeException | LinkageError error) {
-            return "failed: " + error;
+            recordImageInitializationFailure(imageIndex, String.valueOf(error));
         }
+    }
+
+    /** Records a failed one-shot clear: the flag stays unset, the failure is counted and bounded-logged. */
+    private void recordImageInitializationFailure(int imageIndex, String reason) {
+        this.imageInitializationFailures++;
+        boolean[] failed = this.imageInitializationFailed;
+        if (failed != null && imageIndex >= 0 && imageIndex < failed.length) {
+            failed[imageIndex] = true;
+        }
+        if (this.imageInitializationFailures <= MAX_IMAGE_INIT_LOG_LINES) {
+            System.out.println("[Celtium] CELTIUM_SWAPCHAIN_IMAGE_INIT failed image=" + imageIndex
+                    + " failures=" + this.imageInitializationFailures + ": " + reason
+                    + " (the flag stays unset; the clear is retried at the next acquire of this image)");
+        }
+    }
+
+    /**
+     * Records the one-shot clear of a single image: the per-image cut of the creation-time bulk clear this
+     * replaced, reusing the existing barrier helpers unchanged - UNDEFINED to TRANSFER_DST, clear to opaque
+     * black, TRANSFER_DST to PRESENT_SRC.
+     */
+    private void recordImageClear(MemoryStack stack, VkCommandBuffer commands, long image) {
+        VkClearColorValue color = VkClearColorValue.calloc(stack);
+        color.float32(0, 0.0f);
+        color.float32(1, 0.0f);
+        color.float32(2, 0.0f);
+        color.float32(3, 1.0f);
+        VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack);
+        range.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
+        transitionToTransferDst(stack, commands, image);
+        vkCmdClearColorImage(commands, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, color, range);
+        transitionToPresent(stack, commands, image);
     }
 
     private void transitionToTransferDst(MemoryStack stack, VkCommandBuffer commands, long image) {
