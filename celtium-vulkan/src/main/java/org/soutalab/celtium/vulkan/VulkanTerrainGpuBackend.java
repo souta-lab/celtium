@@ -15545,12 +15545,23 @@ this.frameBufferOpen = false;
         int depthHeight = depthRecord == null ? 0 : depthRecord[2];
         boolean shared = owner != null && depthKey != 0L && owner.chainPairUsesSharedDepth(identity, depthKey);
         int colors = owner == null ? 0 : owner.chainPairColorCount(identity);
-        // The main-depth fact (item 419, defect 1 of item 408): the depth texture the game framebuffer itself owns,
-        // as FramebufferMixin reports it from the game's own framebuffer object on every bind. A deferred pipeline
-        // attaches that one texture to all of its gbuffer framebuffers, which is what made them indistinguishable
-        // from the shadow family by shape alone.
-        boolean depthIsMainDepth = depthRecord != null && this.gameFramebufferDepthTexture != 0
-                && depthRecord[0] == this.gameFramebufferDepthTexture;
+        // The main-depth fact (item 419, defect 1 of item 408): the depth texture the game framebuffer itself owns.
+        // FramebufferMixin reports the framebuffer object's own depth field on every bind, and where that field
+        // holds a name it is the fact - but it does not always hold one: a pipeline that attaches its own depth
+        // texture at GL level never writes the Java field (measured on the Demonica fixture, 2026-11-20: the field
+        // read -1 for the whole run while the pipeline's depth texture was the name every gbuffer record carried,
+        // so the comparison below could never answer true). For that case the name is read from the publication
+        // record for the game framebuffer's own identity instead - the same record layer that answered for the
+        // candidate above, so both sides of the comparison live in one naming system. The stub layer of
+        // celtium$depthTextureForTarget is not used for this: at judgment time it answers for the target bound
+        // now, which is the candidate itself. A deferred pipeline attaches the main depth texture to all of its
+        // gbuffer framebuffers, which is what made them indistinguishable from the shadow family by shape alone.
+        int mainDepthTexture = this.gameFramebufferDepthTexture;
+        if (mainDepthTexture <= 0 && this.gameFramebufferIdentity != 0L) {
+            mainDepthTexture = this.publishedTextures.depthTexture(this.gameFramebufferIdentity);
+        }
+        boolean depthIsMainDepth = depthRecord != null && mainDepthTexture > 0
+                && depthRecord[0] == mainDepthTexture;
         String refusal = celtium$depthTargetRefusal(TERRAIN_TO_DEPTH_TARGET, this.targetRegistry.currentIsMain(),
                 depthIsMainDepth, identity, pairExists, pairWidth, pairHeight, depthWidth, depthHeight, shared,
                 colors);
@@ -15569,6 +15580,7 @@ this.frameBufferOpen = false;
                         + " pass=" + passName + " identity=0x" + Long.toHexString(identity)
                         + " record0=" + depthRecord[0] + " via=" + depthRecord[3]
                         + " noted=" + this.gameFramebufferDepthTexture
+                        + " resolved=" + mainDepthTexture
                         + " mainDepth=" + depthIsMainDepth
                         + " refusal=" + (refusal == null ? "route" : refusal)
                         + " frame=" + this.frameId);
