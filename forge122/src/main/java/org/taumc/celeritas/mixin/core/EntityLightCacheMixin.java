@@ -1,7 +1,6 @@
 package org.taumc.celeritas.mixin.core;
 
 import net.minecraft.entity.Entity;
-import net.minecraft.util.math.MathHelper;
 import net.minecraft.world.World;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -11,16 +10,22 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.taumc.celeritas.impl.CeltiumLightCache;
 
 /**
- * Entity light lookups through the per-tick cache ({@link CeltiumLightCache}): vanilla
- * {@code Entity.getBrightnessForRender} and {@code getBrightness} run a column-loaded check plus a
- * light query per entity per frame - and the renderer calls them for every rendered entity. World
- * light changes on the tick, not the frame, so identical results are served from the shared
- * tick-epoch map and the {@code MutableBlockPos} the original allocates only materialises on a
- * cache miss.
+ * Entity light lookups through the per-tick cache ({@link CeltiumLightCache}).
  * <p>
- * Injected on {@link Entity} itself: subclasses that override the methods keep their own paths, so
+ * {@code Entity.getBrightness} runs a column-loaded check plus a {@code getLightBrightness} query
+ * per entity per frame; world light changes on the tick, not the frame, so the result is served
+ * from the shared tick-epoch map. This entry stays a caller-side injection because
+ * {@code getLightBrightness} does not pass through {@code World#getCombinedLight}.
+ * <p>
+ * {@code Entity.getBrightnessForRender} is deliberately no longer intercepted (item 378): its
+ * vanilla body runs as written and its {@code getCombinedLight} call is answered by the cache
+ * inside that method (the funnel, {@code WorldCombinedLightMixin}). The HEAD cancel that used to
+ * sit here silently disabled addons injecting on the vanilla method - their injections applied
+ * but never ran - for no remaining benefit, since the funnel serves the same cache.
+ * <p>
+ * Injected on {@link Entity} itself: subclasses that override the method keep their own paths, so
  * the cache applies exactly where the base implementation would have run. Kill switch
- * {@code -Dceltium.entityLightCache=false}.
+ * {@code -Dceltium.entityLightCache=false} (governed inside {@link CeltiumLightCache}).
  */
 @Mixin(Entity.class)
 public abstract class EntityLightCacheMixin {
@@ -29,23 +34,8 @@ public abstract class EntityLightCacheMixin {
     @Shadow public World world;
     @Shadow public abstract float getEyeHeight();
 
-    private static final boolean CELTIUM_ENTITY_LIGHT =
-            !"false".equals(System.getProperty("celtium.entityLightCache", "true"));
-
-    @Inject(method = "func_70070_b", at = @At("HEAD"), cancellable = true, require = 0)
-    private void celtium$cachedBrightnessForRender(CallbackInfoReturnable<Integer> info) {
-        if (!CELTIUM_ENTITY_LIGHT) {
-            return;
-        }
-        info.setReturnValue(Integer.valueOf(CeltiumLightCache.entityCombinedLight(
-                this.world, this.posX, this.posY + this.getEyeHeight(), this.posZ)));
-    }
-
     @Inject(method = "func_70013_c", at = @At("HEAD"), cancellable = true, require = 0)
     private void celtium$cachedBrightness(CallbackInfoReturnable<Float> info) {
-        if (!CELTIUM_ENTITY_LIGHT) {
-            return;
-        }
         info.setReturnValue(Float.valueOf(CeltiumLightCache.entityBrightness(
                 this.world, this.posX, this.posY + this.getEyeHeight(), this.posZ)));
     }

@@ -303,3 +303,24 @@ tasks.register<ReobfuscateCodeAndMixinsTask>("validationRemapJar") {
     input = validationJar.flatMap { it.archiveFile }
     dependsOn(mcpTasks.taskGenerateForgeSrgMappings)
 }
+
+// Offline unit tests for the pure decision logic that must not need a world to verify (item 378:
+// the light-cache funnel's gate and key layout). The test source set sees the main compile
+// classpath the same way the validation source set does; nothing here ships in the mod jar.
+sourceSets.named("test") {
+    compileClasspath += sourceSets.main.get().compileClasspath
+    runtimeClasspath += sourceSets.main.get().runtimeClasspath
+}
+dependencies {
+    "testImplementation"("org.junit.jupiter:junit-jupiter:5.13.4")
+    "testRuntimeOnly"("org.junit.platform:junit-platform-launcher")
+}
+tasks.named<JavaCompile>("compileTestJava") {
+    options.release = 21
+    javaCompiler = javaToolchains.compilerFor {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+tasks.withType<Test>().configureEach {
+    useJUnitPlatform()
+}

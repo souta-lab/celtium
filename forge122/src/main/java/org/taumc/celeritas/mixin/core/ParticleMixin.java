@@ -9,7 +9,6 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * Two per-particle-per-frame costs removed, after Flerovium's fast-math/light-cache items:
@@ -21,16 +20,19 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * coefficients are computed once per distinct argument set (once per frame in practice) and the
  * angle==0 case emits vertices with no Vec3d allocation and no basis math at all. Rotating particles
  * fall through to the original method unchanged.</li>
- * <li><b>Light lookup caching.</b> {@code getBrightnessForRender} allocates a {@code BlockPos} and
- * runs {@code World#getCombinedLight} per particle per frame. Light changes on the world tick, not
- * per frame, and particle clusters sit in the same block for many frames; the result is cached per
- * packed block position and reset on the world-tick boundary.</li>
+ * <li><b>Light lookup caching.</b> {@code getBrightnessForRender} is deliberately not intercepted
+ * (item 378): its vanilla body runs as written - including the {@code BlockPos} it allocates - and
+ * its {@code World#getCombinedLight} call is answered by the per-tick cache inside that method
+ * (the funnel, {@code WorldCombinedLightMixin}). A HEAD cancel used to sit on the method instead;
+ * it silently disabled addons injecting on it - their injections applied but never ran - for no
+ * remaining benefit, since the funnel serves the same cache.</li>
  * </ol>
  *
  * Injected on {@link Particle} itself: subclasses that override these methods keep their own paths,
  * so the fast path applies exactly where vanilla's own math would have run. Kill switch
- * {@code -Dceltium.particleCache=false}; light-cache off separately via
- * {@code -Dceltium.particleLightCache=false}.
+ * {@code -Dceltium.particleCache=false} (the render fast path); the light cache is governed at the
+ * funnel by {@code -Dceltium.entityLightCache=false}. The former
+ * {@code -Dceltium.particleLightCache} switch is retired with the injection it stood down.
  */
 @Mixin(Particle.class)
 public abstract class ParticleMixin {
@@ -49,25 +51,11 @@ public abstract class ParticleMixin {
 
     private static final boolean CELTIUM_PARTICLE =
             !"false".equals(System.getProperty("celtium.particleCache", "true"));
-    private static final boolean CELTIUM_PARTICLE_LIGHT =
-            !"false".equals(System.getProperty("celtium.particleLightCache", "true"));
 
     /** The twelve basis coefficients, without the per-particle scale: offsets = coeff * (0.1 * particleScale). */
     private static final float[] celtium$basis = new float[12];
     /** The arguments the cached basis was computed for; a changed value means a new frame/pass. */
     private static float celtium$basisX = Float.NaN, celtium$basisZ, celtium$basisYZ, celtium$basisXY, celtium$basisXZ;
-
-    @Inject(method = "func_189214_a", at = @At("HEAD"), cancellable = true, require = 0)
-    private void celtium$lightCache(float partialTicks, CallbackInfoReturnable<Integer> info) {
-        if (!CELTIUM_PARTICLE_LIGHT) {
-            return;
-        }
-        // The shared per-tick cache in CeltiumLightCache (also used by entities): the BlockPos the
-        // original allocates is only ever a key on the lookup path, so the key is packed by hand and
-        // the object materialises only on a miss, where the world call needs it anyway.
-        info.setReturnValue(Integer.valueOf(org.taumc.celeritas.impl.CeltiumLightCache
-                .combinedLightAtPos(this.world, this.posX, this.posY, this.posZ)));
-    }
 
     @Inject(method = "func_180434_a", at = @At("HEAD"), cancellable = true, require = 0)
     private void celtium$renderParticleFast(BufferBuilder buffer, Entity entityIn, float partialTicks,
@@ -164,7 +152,7 @@ public abstract class ParticleMixin {
         v[at + 6] = light;
     }
 
-    /** The same call the original makes - routed through the mixin so the light cache applies to our fast path too. */
+    /** The same call the original makes; the vanilla method's getCombinedLight call is answered by the funnel cache. */
     private static int celtium$brightness(Particle self, float partialTicks) {
         return self.getBrightnessForRender(partialTicks);
     }

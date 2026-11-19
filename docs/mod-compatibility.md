@@ -330,6 +330,55 @@ the full accounting (license route, proving measurement) is in the absorption le
 | FPS Reducer (idle/unfocused frame cap) | The idle throttle, as of 2026-11-18 (item 388): when the player enables it (`idle_frame_cap` in the video settings, **off by default** — the headless fixture has neither focus nor input, so a default-on cap would silently cap every measured leg), `CeltiumFramePacing` lowers its target to `min(player frame limit, cap)` while the SDL window lacks input focus or is minimized (cap: `unfocused_frame_limit`, default 30 fps), or after `idle_delay_seconds` (default 300) without keyboard/mouse input, watched through an SDL event watch (cap: `idle_frame_limit`, default 30 fps). Input restores the full rate on the next frame, the 20/s tick is untouched (the cap spaces frames, it does not skip ticks), and under FIFO present the pacing class still does not sleep, so the cap adds nothing there. An enabled cap announces itself once in the log (`CELTIUM_IDLE_CAP`) and in the validation report (`idleCap` property), so a leg always names whether it ran capped. Acceptance legs (unfocused interval matches the cap, focus regain restores the interval, off-state frame times unchanged) are the recorded remainder for the fixture slot; no measurement is claimed yet |
 
 | VulkanMod-Next (patch groups and quarantine, D19) | The per-group patch toggles and the cross-launch quarantine, as of 2026-11-18 (items 389/400/401; design ITEM356-DESIGN-2026-11-18): Celtium's mixin patches are registered in one string-only table (`PatchGroups`, ten groups) and gated before application — a group the player has switched off, or that an earlier launch recorded as failed, is not applied, and the skip is announced by name (`CELTIUM_PATCH_SKIPPED`, with the remedy in the same line). A patch that fails to apply still fails that launch — the rest of its group may already be mixed into the same classes, so the launch is not carried on a part-group — but the failure is written to the persistent ledger (`config/celtium-patches.cfg`) and the *next* launch skips the whole group and reaches the menu; deleting the `quarantine.<group>` line retries the group, and nothing clears a quarantine automatically. Four groups are essential (mechanism, terrain geometry, entities, textures): they can never be switched off or quarantined, their failure stays fatal, and the log says so (`CELTIUM_PATCH_ESSENTIAL`). Deliberate opt-outs use the per-launch kill switch `-Dceltium.patch.<group>=off` or `off.<group>=true` in the same file, and the gate fails open: an error inside the gate applies every patch rather than silently applying none. The original design's permanent broken latch and vanilla buffer refill were not taken — Celtium has no fallback renderer to refill for. The ledger, gate and recorder decisions are pinned by offline unit tests (`PatchGroupsTest`, `PatchLedgerTest`, `PatchGateTest`, `PatchErrorRecorderTest`); the four-launch fault-injection proof on the fixture is still owed (item 402), so no in-game proof is claimed yet |
+## Addon connection surface
+
+What an addon compiled against Celeritas can rely on when it runs on Celtium instead (item 378). The direction is
+deliberate: Celtium generalises the surface addons connect to rather than reimplementing any one addon's mechanisms —
+Dynamic Lights' brightness tables, falloff curves and item rules are not Celtium's to port, and they are not here.
+Three ledgers, in decreasing order of strength:
+
+**Ledger I — public API (frozen).** The `org.taumc.celeritas.api` symbols an addon compiles against (texture atlas
+and sprite events, the render-stage API, the option-extension and model-override interfaces) are a compile-time
+contract: they do not change shape under an addon. Item 378 adds no symbols to this ledger; it only stops the
+runtime behaviour below from silently breaking what the API already promised.
+
+**Ledger II — vanilla instruction points.** The points inside vanilla methods where addons inject. Celtium's fast
+paths sit *inside* vanilla's high-level queries, never in front of a vanilla method an addon targets: a HEAD cancel
+or a call-site wrap there makes the addon's own injection apply cleanly and then never run, which is the worst
+failure shape there is — nothing logs, nothing crashes, the feature is simply absent. The points and what Celtium
+keeps on each:
+
+| ID | Point | What Celtium keeps |
+|---|---|---|
+| II-1 | `IBlockState.getPackedLightmapCoords` (T) | No mixin on the method. Terrain light reads it by plain call (`LightDataCache`), so an addon's RETURN-value edit on it applies to Celtium's terrain too |
+| II-2 | `Entity.getBrightnessForRender` (E) | No injection. The vanilla body runs as written; its light query is answered inside `World.getCombinedLight` (II-7) |
+| II-3 | `Particle.getBrightnessForRender` (P) | No injection. The vanilla body runs as written, including the `BlockPos` it allocates; its light query is answered inside `World.getCombinedLight` (II-7) |
+| II-4 | the `getCombinedLight` call inside the block-entity dispatcher's `render` (B) | The call is not wrapped, redirected or argument-edited. The dispatcher's own call runs as written and is answered inside `World.getCombinedLight` (II-7), so an addon's argument edit on the call applies |
+| II-5 | `ItemRenderer.setLightmap` (H) | Untouched. No Celtium mixin names this method |
+| II-6 | `RenderGlobal.markBlocksForUpdate` (s1) | Celtium's `@Overwrite` stays: the method itself exists with vanilla's signature, so addons calling it — or injecting on it — find it where vanilla put it |
+| II-7 | `World.getCombinedLight` return semantics | The one place Celtium's per-tick light cache answers: inside the method itself, wrapped around the vanilla body, never instead of it. The cache answers only calls with `lightValue == 0` on a client world on the client main thread; every other call, and every cache miss, takes the vanilla body unchanged. Injections on the method — at its head, on its returns, on its call sites in other methods — apply as written |
+
+Two rules keep the ledger from drifting. **R1:** an injection Celtium does land on a ledger point declares its
+`require` explicitly, so a renamed target is a deliberate decision rather than a default's silent no-op or startup
+crash. **R2:** Celtium never replaces an instruction point an addon targets; where a Celtium mechanism would have
+to sit on one, it descends to the inner query instead (the light cache's move from the entity/particle/dispatcher
+entry points into `getCombinedLight` itself is the worked example). Both rules are lint-pinned:
+`scripts/check_addon_surface.py` holds this table's machine-readable source and fails when the mixin tree, the
+table and the list disagree.
+
+The light cache's kill switch changed meaning with the move: `-Dceltium.entityLightCache=false` now disables the
+cache inside the funnel (every lookup takes the vanilla body), where before it stood the caller-side cancels down.
+The retired `-Dceltium.particleLightCache` switch went with the injection it governed.
+
+**Ledger III — internal classes (not a contract).** Celeritas-internal GUI classes an addon might reach for are
+not a connection surface and are not promised. Named gap: the search-field classes
+(`SearchTextFieldComponent` / `SearchTextFieldModel`) do not exist in Celtium, so an addon whose options screen
+builds on them (the known case is Celeritas Extra's search page) cannot rely on them here; whether such an addon
+degrades or fails is its own code's decision, and no Celtium-side behaviour is claimed for it.
+
+Whether a given addon actually *works* on this surface is a measurement, not a consequence of the ledger: the
+acceptance legs (Dynamic Lights 1.2.11 visibly lighting on the fixture, and a second addon loading on the same
+surface) belong to the fixture protocol under "What is measured, and how", and are not claimed here.
 
 ## What is measured, and how
 

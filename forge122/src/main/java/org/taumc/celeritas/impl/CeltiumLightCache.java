@@ -17,6 +17,15 @@ import net.minecraft.world.World;
  * so each result is cached keyed by the packed block position and the whole cache is dropped on the
  * tick boundary - identical semantics to calling it fresh, minus the lookups between ticks.
  * <p>
+ * Since item 378 the {@code getCombinedLight} half is served through one funnel inside
+ * {@code World#getCombinedLight} itself ({@link #combinedLightFunnel}); there are no caller-side
+ * mixins left on the entity, particle or block-entity paths. The vanilla methods run as written -
+ * their own loaded checks, their own call into {@code getCombinedLight} - and the cache answers
+ * inside that call, which is also the shape addons injecting on those vanilla methods or on the
+ * call expect (see the addon connection surface ledger in {@code docs/mod-compatibility.md}).
+ * {@code Entity#getBrightness} still enters through its mixin: {@code getLightBrightness} does not
+ * pass through {@code getCombinedLight}, so it keeps its own entry below.
+ * <p>
  * The {@code BlockPos} the original allocates is only ever a key on the hit path, so the key packs
  * the same coordinates by hand ({@link BlockPos#toLong} layout: 25 bits z, 12 bits y, 25 bits x) and
  * the object is materialised only on a miss, where the world call needs it anyway. One map per
@@ -28,8 +37,10 @@ import net.minecraft.world.World;
  * {@code ArrayIndexOutOfBoundsException} inside the map on the server thread) and could hand one world's light to the
  * other. A server-world lookup takes the vanilla call unchanged.
  * <p>
- * Kill switch: {@code -Dceltium.entityLightCache=false} disables the whole cache (entity and
- * particle callers degrade to the vanilla call sites unchanged).
+ * Kill switch: {@code -Dceltium.entityLightCache=false} disables the cache inside the funnel
+ * (and the brightness entry); every lookup then takes the vanilla body unchanged. Before item 378
+ * the same property was the escape that restored the vanilla entity/particle methods by standing
+ * their HEAD cancels down; with the cancels gone it governs the funnel only.
  */
 public final class CeltiumLightCache {
 
@@ -123,14 +134,24 @@ public final class CeltiumLightCache {
     }
 
     /**
-     * {@code World#getCombinedLight(pos, 0)} with no loaded check - the TESR dispatcher's own call, which runs once per
-     * block entity per frame.
+     * The funnel (item 378): the one entry the combined-light cache is served through, inside
+     * {@code World#getCombinedLight(BlockPos, int)} itself. The mixin on that method hands every
+     * call here together with the vanilla body as {@code vanillaBody}; the cache answers only the
+     * calls it can answer identically - {@code lightValue == 0} (the cache key carries no
+     * lightValue, and folding a non-zero one in is the vanilla body's own work), on a client world,
+     * on the client main thread. Everything else takes the vanilla body unchanged, so the method
+     * keeps the vanilla contract for every caller: the entity, particle and block-entity render
+     * paths (whose own loaded checks run in their vanilla bodies before they call in) and any addon
+     * calling or injecting on this method alike. A miss also takes the vanilla body - supplied by
+     * the caller, so the computation is the original method, never a reimplementation and never a
+     * recursive call into this funnel.
      */
-    public static int combinedLight(World world, BlockPos pos) {
+    public static int combinedLightFunnel(World world, BlockPos pos, int lightValue,
+            java.util.function.IntSupplier vanillaBody) {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("lightCache");
         try {
-            if (!ENABLED || !world.isRemote || !isClientMainThread()) {
-                return world.getCombinedLight(pos, 0);
+            if (!funnelApplies(ENABLED, lightValue, world.isRemote, isClientMainThread())) {
+                return vanillaBody.getAsInt();
             }
             rollTick(world);
             long key = pack(pos.getX(), pos.getY(), pos.getZ());
@@ -138,7 +159,7 @@ public final class CeltiumLightCache {
             if (cached != ABSENT) {
                 return (int) cached;
             }
-            int value = world.getCombinedLight(pos, 0);
+            int value = vanillaBody.getAsInt();
             putCombined(key, value);
             return value;
         } finally {
@@ -147,68 +168,14 @@ public final class CeltiumLightCache {
     }
 
     /**
-     * {@code World#getCombinedLight(pos, 0)} with the isBlockLoaded guard the callers apply - the
-     * particle contract: the check runs at the position itself.
+     * The funnel's gate, kept pure and free of Minecraft types so the rule itself is unit-testable:
+     * the cache may answer exactly when it is enabled, the caller asked for no lightValue floor,
+     * the world is a client world and the call runs on the client main thread (the maps are
+     * unsynchronised statics, and a server world's light is a different world's answer).
      */
-    public static int combinedLightAtPos(World world, double posX, double posY, double posZ) {
-        org.soutalab.celtium.vulkan.FramePassTimings.begin("lightCache");
-        try {
-            if (!ENABLED || world == null || !world.isRemote || !isClientMainThread()) {
-                BlockPos pos = new BlockPos(posX, posY, posZ);
-                return world != null && world.isBlockLoaded(pos) ? world.getCombinedLight(pos, 0) : 0;
-            }
-            rollTick(world);
-            int x = MathHelper.floor(posX), y = MathHelper.floor(posY), z = MathHelper.floor(posZ);
-            long key = pack(x, y, z);
-            long cached = untag(COMBINED.getAndMoveToLast(key));
-            if (cached != ABSENT) {
-                return (int) cached;
-            }
-            MISS_POS.setPos(x, y, z);
-            int value = world.isBlockLoaded(MISS_POS) ? world.getCombinedLight(MISS_POS, 0) : 0;
-            putCombined(key, value);
-            return value;
-        } finally {
-            org.soutalab.celtium.vulkan.FramePassTimings.end("lightCache");
-        }
-    }
-
-    /**
-     * {@code Entity#getBrightnessForRender}: the loaded-check runs at (x, 0, z) - the column the
-     * entity stands in - and the light value is read at eye height.
-     */
-    public static int entityCombinedLight(World world, double posX, double posYEye, double posZ) {
-        org.soutalab.celtium.vulkan.FramePassTimings.begin("lightCache");
-        try {
-            if (!ENABLED || world == null || !world.isRemote || !isClientMainThread()) {
-                BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(
-                        MathHelper.floor(posX), 0, MathHelper.floor(posZ));
-                if (world == null || !world.isBlockLoaded(pos)) {
-                    return 0;
-                }
-                pos.setY(MathHelper.floor(posYEye));
-                return world.getCombinedLight(pos, 0);
-            }
-            rollTick(world);
-            int x = MathHelper.floor(posX), y = MathHelper.floor(posYEye), z = MathHelper.floor(posZ);
-            long key = pack(x, y, z);
-            long cached = untag(COMBINED.getAndMoveToLast(key));
-            if (cached != ABSENT) {
-                return (int) cached;
-            }
-            MISS_POS.setPos(x, 0, z);
-            int value;
-            if (!world.isBlockLoaded(MISS_POS)) {
-                value = 0;
-            } else {
-                MISS_POS.setY(y);
-                value = world.getCombinedLight(MISS_POS, 0);
-            }
-            putCombined(key, value);
-            return value;
-        } finally {
-            org.soutalab.celtium.vulkan.FramePassTimings.end("lightCache");
-        }
+    static boolean funnelApplies(boolean enabled, int lightValue, boolean remoteWorld,
+            boolean clientMainThread) {
+        return enabled && lightValue == 0 && remoteWorld && clientMainThread;
     }
 
     /** {@code Entity#getBrightness}: same column check, {@code getLightBrightness} at eye height. */
@@ -264,7 +231,8 @@ public final class CeltiumLightCache {
         }
     }
 
-    private static long pack(long x, long y, long z) {
+    /** Package-private so the key layout is unit-testable; see the class javadoc for the layout. */
+    static long pack(long x, long y, long z) {
         return (x & 0x3ffffffL) << 37 | (y & 0xfffL) << 25 | (z & 0x3ffffffL);
     }
 }

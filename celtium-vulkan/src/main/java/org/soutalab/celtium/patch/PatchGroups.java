@@ -213,6 +213,7 @@ public final class PatchGroups {
               "range limiting, the light cache and some TESRs return to the vanilla path; the design marks this group as still to be audited, so it stays essential until that read is done",
               "core.EntityItemRangeMixin",
               "core.EntityLightCacheMixin",
+              "core.WorldCombinedLightMixin",
               "core.EntityPlayerMPMixin",
               "core.EntityRendererFogGuardMixin",
               "core.EntityRendererFrameStateProbeMixin",
