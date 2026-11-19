@@ -46,6 +46,12 @@ import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
  * range back from the arena into host memory and compares it byte for byte with what it was given, so a partial or
  * stale transfer is reported as the offset and the byte that differ rather than inferred from the picture. Both are
  * diagnostics: the census costs a counter, and the check is off unless it is asked for.
+ * <p>
+ * The census line is paired with a {@code CELTIUM_ARENA_FRAGMENTATION} line (item 433): the same report
+ * separates the arena's free space into holes stranded between live segments and the tail at the end of the
+ * capacity, which is the split that decides whether unused headroom is fragmentation or growth slack. The
+ * aggregation is a pure function over a segment-list snapshot ({@link #summarizeFragmentation}); the arena
+ * only walks its list, and no allocation path consults the result.
  */
 public final class VulkanArena {
     /** Growth never asks for less than this, so small arenas do not grow on every other allocation. */
@@ -464,11 +470,120 @@ public final class VulkanArena {
                 + " arenaBytes=" + this.capacity + " used=" + this.used + " segments=" + liveSegments()
                 + " totalWrites=" + this.uploads + " totalBytes=" + this.uploadedBytes
                 + (VERIFY_ENABLED ? " verified=" + this.verifiedBytes + " verifyFailures=" + this.verifyFailures : ""));
+        System.out.println("[Celtium] " + fragmentationLine());
         this.writesSinceReport = 0L;
         this.bytesSinceReport = 0L;
         this.elementsSinceReport = 0L;
         this.firstReportedOffset = -1L;
         this.firstReportedLength = 0;
+    }
+
+    /**
+     * How this arena's free space is shaped right now: the split the D6 record asked for (item 433).
+     * <p>
+     * The upload census says how much of the arena is used, but the 40/13 MiB headroom question - is the
+     * unused part stranded between live segments (fragmentation, an allocator-strategy problem) or sitting
+     * at the end (growth slack, no problem at all) - needs the free ranges separated into holes and the
+     * tail. This walks the segment list once and changes nothing: no allocation path consults it.
+     */
+    public Fragmentation fragmentation() {
+        int count = 0;
+        for (Segment segment = this.head; segment != null; segment = segment.next) {
+            count++;
+        }
+        int[] offsets = new int[count];
+        int[] lengths = new int[count];
+        boolean[] free = new boolean[count];
+        int index = 0;
+        for (Segment segment = this.head; segment != null; segment = segment.next) {
+            offsets[index] = segment.offset;
+            lengths[index] = segment.length;
+            free[index] = segment.free;
+            index++;
+        }
+        return summarizeFragmentation(this.capacity, offsets, lengths, free);
+    }
+
+    /** {@return the {@code CELTIUM_ARENA_FRAGMENTATION} line for this arena's current shape}. */
+    public String fragmentationLine() {
+        return fragmentation().line();
+    }
+
+    /**
+     * The fragmentation instrument's core: a pure aggregation over a segment-list snapshot, so the counting
+     * can be pinned without a device (the arena's constructor requires one).
+     * <p>
+     * The snapshot is the arena's ranges in offset order, covering {@code [0, capacity)} contiguously - the
+     * arena's own invariant, since freeing merges adjacent free ranges and growth appends at the tail. The
+     * <b>tail</b> is the one free range that reaches the end of the capacity (the last range, when it is
+     * free); every other free range is a <b>hole</b>. Because the free list is merged, each free range is
+     * already maximal, so the counts are unique. The identity
+     * {@code usedBytes + holeBytes + tailBytes == capacity} holds for every snapshot the arena can produce;
+     * a snapshot that breaks it indicts the allocator, not this arithmetic, and the tests pin the identity
+     * alongside the split.
+     *
+     * @param capacity the arena's capacity in bytes
+     * @param offsets  each range's start, in offset order
+     * @param lengths  each range's length, parallel to {@code offsets}
+     * @param free     each range's free flag, parallel to {@code offsets}
+     */
+    static Fragmentation summarizeFragmentation(int capacity, int[] offsets, int[] lengths, boolean[] free) {
+        if (offsets == null || lengths == null || free == null
+                || lengths.length != offsets.length || free.length != offsets.length) {
+            throw new IllegalArgumentException("A fragmentation snapshot needs parallel offset/length/free arrays");
+        }
+        long used = 0L;
+        long holeBytes = 0L;
+        long largestHole = 0L;
+        int holes = 0;
+        long tail = 0L;
+        for (int i = 0; i < offsets.length; i++) {
+            if (!free[i]) {
+                used += lengths[i];
+            } else if (i == offsets.length - 1 && (long) offsets[i] + lengths[i] == capacity) {
+                tail = lengths[i];
+            } else {
+                holes++;
+                holeBytes += lengths[i];
+                if (lengths[i] > largestHole) {
+                    largestHole = lengths[i];
+                }
+            }
+        }
+        return new Fragmentation(capacity, used, holeBytes, holes, largestHole, tail);
+    }
+
+    /** One fragmentation reading: the arena's used bytes, its holes and its tail, as separate numbers. */
+    public static final class Fragmentation {
+        /** The arena's capacity in bytes. */
+        public final int capacity;
+        /** Bytes handed out to live segments. */
+        public final long usedBytes;
+        /** Bytes in free ranges that do not reach the end of the capacity. */
+        public final long holeBytes;
+        /** How many hole ranges there are (the free list is merged, so each is maximal). */
+        public final int holeCount;
+        /** The largest single hole in bytes, or 0 when there are no holes. */
+        public final long largestHoleBytes;
+        /** Bytes in the free range that reaches the end of the capacity, or 0 when the last range is used. */
+        public final long tailBytes;
+
+        private Fragmentation(int capacity, long usedBytes, long holeBytes, int holeCount,
+                long largestHoleBytes, long tailBytes) {
+            this.capacity = capacity;
+            this.usedBytes = usedBytes;
+            this.holeBytes = holeBytes;
+            this.holeCount = holeCount;
+            this.largestHoleBytes = largestHoleBytes;
+            this.tailBytes = tailBytes;
+        }
+
+        /** {@return the census line for this reading}. */
+        public String line() {
+            return "CELTIUM_ARENA_FRAGMENTATION capacity=" + this.capacity + " used=" + this.usedBytes
+                    + " holes=" + this.holeCount + " holeBytes=" + this.holeBytes
+                    + " largestHole=" + this.largestHoleBytes + " tailBytes=" + this.tailBytes;
+        }
     }
 
     /**
