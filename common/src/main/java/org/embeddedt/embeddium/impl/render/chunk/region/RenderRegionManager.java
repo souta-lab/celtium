@@ -6,7 +6,6 @@ import org.embeddedt.embeddium.impl.gl.arena.PendingUpload;
 import org.embeddedt.embeddium.impl.gl.arena.staging.FallbackStagingBuffer;
 import org.embeddedt.embeddium.impl.gl.arena.staging.MappedStagingBuffer;
 import org.embeddedt.embeddium.impl.gl.arena.staging.StagingBuffer;
-import org.embeddedt.embeddium.impl.common.util.MathUtil;
 import org.embeddedt.embeddium.impl.gl.device.CommandList;
 import org.embeddedt.embeddium.impl.gl.device.RenderDevice;
 import org.embeddedt.embeddium.impl.render.chunk.RenderPassConfiguration;
@@ -35,17 +34,9 @@ public class RenderRegionManager {
     public RenderRegionManager(CommandList commandList, RenderPassConfiguration<?> renderPassConfiguration) {
         this.stagingBuffer = createStagingBuffer(commandList);
         this.renderPassConfiguration = renderPassConfiguration;
-        this.commonVertexStride = computeCommonVertexStride(renderPassConfiguration);
-    }
-
-    /**
-     * Picks the stride that every region's geometry arena allocates in. The stride of any vertex format used by the
-     * configuration must divide it evenly.
-     */
-    private static int computeCommonVertexStride(RenderPassConfiguration<?> renderPassConfiguration) {
-        return renderPassConfiguration.getAllKnownRenderPasses()
-                .mapToInt(pass -> pass.vertexType().getVertexFormat().getStride())
-                .reduce(1, MathUtil::lcm);
+        // The arena element size is the configuration's one computation of it; see
+        // RenderPassConfiguration#commonVertexStride for why it is aligned to whole primitives.
+        this.commonVertexStride = renderPassConfiguration.commonVertexStride();
     }
 
     public void update() {

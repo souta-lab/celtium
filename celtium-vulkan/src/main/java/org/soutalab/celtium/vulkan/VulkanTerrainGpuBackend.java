@@ -4,7 +4,6 @@ import it.unimi.dsi.fastutil.objects.Object2LongMap;
 import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceMap;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
-import org.embeddedt.embeddium.impl.common.util.MathUtil;
 import org.embeddedt.embeddium.impl.render.chunk.ChunkRenderMatrices;
 import org.embeddedt.embeddium.impl.render.chunk.RenderPassConfiguration;
 import org.embeddedt.embeddium.impl.render.chunk.RenderSectionManager;
@@ -902,10 +901,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // first use, from this.configuration, which the world renderer hands over through celtium$adoptTerrainState when
         // it arrives. The stride is the one value computed here, and until a world exists there is no terrain vertex
         // format to take it from.
-        this.commonVertexStride = configuration == null ? 1
-                : configuration.getAllKnownRenderPasses()
-                        .mapToInt(pass -> pass.vertexType().getVertexFormat().getStride())
-                        .reduce(1, MathUtil::lcm);
+        this.commonVertexStride = configuration == null ? 1 : configuration.commonVertexStride();
         this.uniformAlignment = Math.max(MIN_UNIFORM_ALIGNMENT,
                 Integer.highestOneBit(Math.max(MIN_UNIFORM_ALIGNMENT, this.alignmentFromDevice())));
         this.terrain.setUniformStride(align(UNIFORM_BYTES, this.uniformAlignment));
@@ -1048,9 +1044,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.fogService = fogService;
         this.dynamicLightService = dynamicLightService;
         if (configuration != null) {
-            this.commonVertexStride = configuration.getAllKnownRenderPasses()
-                    .mapToInt(pass -> pass.vertexType().getVertexFormat().getStride())
-                    .reduce(1, MathUtil::lcm);
+            this.commonVertexStride = configuration.commonVertexStride();
         }
         this.windowBackend = false;
         // The presented-frame counter means world frames: it names the numbered dump files (`frame-N.png`) and the
