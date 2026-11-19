@@ -601,3 +601,39 @@ view キーが実例で、着地形は「影パスの view 分離が配線され
 **規約**
 - スイッチ削除の差分では、消える javadoc のうち「測定の履歴」と「再入条件」を分ける。履歴は
   plan.md 棄却節と証拠 doc が持つが、再入条件がコード内にしか無い場合は、このファイルへ移してから消す。
+
+---
+
+## パッチ群ゲートの罠（2026-11-19、項目356 設計 §7 を実行可能な形で）
+
+**症状**: パッチ群の隔離（quarantine）が「配線したはずなのに1件も断れない」「ゲートの例外で
+全パッチが静かに消える」「証明のつもりの注入で何も起きない」の形で壊れる。機構の原典は
+`org.soutalab.celtium.patch`（`PatchGroups` / `PatchLedger` / `PatchGate`）と
+forge122 の mixin プラグインで、設計は ITEM356-DESIGN-2026-11-18.md §7。
+
+**実例（設計時に原典の行つきで確定したもの。実走で踏んだ罠ではないので区別する）**
+- companion list はプラグインの適用判定を通らない（CleanMix の `MixinConfig.postInitialise` が
+  `ignorePlugin = true` で準備する）。判定メソッドの `false` だけを写すと dead code になり、
+  1件も断れない。celtium のゲートは `getMixins()` の濾過側に置いてある。
+- `getMixins()` が例外を投げると、Mixin 側はエラーを記録して **mixin 0件** で登録を続行する。
+  ゲームは起動するが全パッチが静かに消える。→ ゲートは `catch (Throwable)` で全件返す
+  fail-open が規約（`CELTIUM_PATCH_TABLE gate=fail-open` の行がその記録）。
+- 群のキーを mixin の単純名にすると衝突する組が実在する（`RenderItemMixin`、`TextureUtilMixin`、
+  `TextureAtlasSpriteMixin` はそれぞれ2箇所）。キーはパッケージ相対名
+  （`core.RenderItemMixin` の形）。単純名キーへの変更は `scripts/check_patch_groups.py` と
+  `PatchGroupsTest` が止める。
+- 群表にクラスリテラルを書くと、その mixin クラスがロードされて濾過自体が無意味になる。
+  群表は文字列のみ。同じ理由で台帳（`PatchLedger`）は mixin クラスも設定機構も読まない。
+- 証明用の故障注入に `require = 0` の probe 系 mixin を選ぶと、アンカーが外れても警告だけで
+  続行し「隔離が働かない」ように見える。注入先は required な mixin（項目402 の第一候補は
+  tweaks 群の `core.MixinDirection` 相当の required anchor）。
+- essential 群（mechanism / terrain_geometry / entities / textures）は隔離も off もできない。
+  失敗は fatal のままで、`CELTIUM_PATCH_ESSENTIAL` の1行が「切れない」ことを言う。
+  essential へ向けたスイッチや台帳行は黙って捨てず `CELTIUM_PATCH_IGNORED` で見える形にする。
+
+**規約**
+- ゲートまわりを触ったら、既定（全部 on）で APPLY 数が不変なことと、1群だけ切ったときに
+  その群の APPLY だけが消えることを、起動1回の census で確認する（項目356-B の受入そのもの）。
+- 隔離の証明は「落とした → 台帳に1行 → 次回起動で名指し skip（`CELTIUM_PATCH_SKIPPED`）→
+  台帳行を消すと再び落ちる → 戻すと正常」の4起動で取る（項目402）。途中の起動だけで
+  「働いた」と書かない。

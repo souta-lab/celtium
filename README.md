@@ -176,6 +176,22 @@ is pending.
 - **Xaero's Minimap radar entity icons** are not confirmed to draw.
 - Menu, tooltip and creative-tab fixes are confirmed by scenes and still need a check in the tester's environment.
 
+### If a patch group is quarantined
+
+Celtium applies its mixin patches in named groups. If a patch in a switchable group fails to apply, that launch
+still fails — but the failure is recorded in `config/celtium-patches.cfg`, and from the next launch the whole
+group is skipped by name (the log line `CELTIUM_PATCH_SKIPPED` names the group and the remedy), so the game
+reaches the menu without that group instead of failing at the same patch every time.
+
+- **Retry a quarantined group** (for example after updating a mod it clashed with): delete its
+  `quarantine.<group>` line from `config/celtium-patches.cfg`. Nothing clears a quarantine automatically.
+- **Switch a group off deliberately**: add `off.<group>=true` to the same file, or pass
+  `-Dceltium.patch.<group>=off` for one launch. The switchable groups are `tweaks`, `shaders`, `sky`,
+  `particles`, `text` and `model_phase_instrument`; what each group costs when off is printed in the
+  `CELTIUM_PATCH_TABLE` log line at startup.
+- Four groups — renderer core (`mechanism`), terrain geometry, entities and textures — are essential: they
+  cannot be switched off or quarantined, and a failure there stays fatal (`CELTIUM_PATCH_ESSENTIAL`).
+
 ## 🔧 Building and testing
 
 Build with JDK 25 (the build also uses the JDK 21 compilation toolchain and the JDK 8 Minecraft toolchain):
