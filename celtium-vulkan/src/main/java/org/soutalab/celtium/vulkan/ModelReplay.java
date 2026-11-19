@@ -60,8 +60,10 @@ final class ModelReplay {
         boolean offTargetCall = callTarget != b.targetRegistry.mainIdentity();
         if (offTargetCall) {
             b.modelOffTargetCalls++;
-            if (b.modelOffTargetLogged.add(listId + "@" + callTarget)
-                    && b.modelOffTargetLogs < b.MODEL_OFFTARGET_LOG_LIMIT) {
+            // The limit is asked first, as on the layer path below: with the add first, the dedupe set kept
+            // growing after the lines were spent - one entry per (list, target) per world, never cleared (audit F2).
+            if (b.modelOffTargetLogs < b.MODEL_OFFTARGET_LOG_LIMIT
+                    && b.modelOffTargetLogged.add(listId + "@" + callTarget)) {
                 b.modelOffTargetLogs++;
                 VulkanDynamicMesh looked = b.modelGeometry.meshFor(listId);
                 System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET list=" + listId + " texture=" + boundTextureId

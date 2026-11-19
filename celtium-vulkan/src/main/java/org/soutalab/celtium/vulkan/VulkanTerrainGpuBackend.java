@@ -15105,6 +15105,9 @@ this.frameBufferOpen = false;
         }
         this.worldEpoch++;
         this.modelGeometry.releaseAfterWorldTeardown();
+        // The off-target dedupe set keys on this world's framebuffer identities, which die with the world: cleared
+        // here so the set holds one world's pairs rather than every world's (audit F2).
+        this.modelOffTargetLogged.clear();
         int drained = VulkanRetireQueue.flush();
         if (drained > 0) {
             record("world teardown destroyed " + drained + " retired resources; the window device stays");

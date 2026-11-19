@@ -384,6 +384,11 @@ public final class ModelGeometryCache {
             }
             this.modelMeshes.clear();
             this.builtStamp = Long.MIN_VALUE;
+            // The memo is a second borrow path into the same meshes: left populated, it would hand a released mesh
+            // to the next world's first replay - one that arrives before the first terrain pass, so before any
+            // build could refresh the table (audit F1). A released mesh still reports its old counts, so the
+            // replay's empty check does not refuse it either.
+            invalidateMeshMemo();
         }
     }
 
@@ -399,6 +404,8 @@ public final class ModelGeometryCache {
             }
             this.modelMeshes.clear();
             this.builtStamp = Long.MIN_VALUE;
+            // Same memo hazard as the world teardown above (audit F1): the release must reach every borrow path.
+            invalidateMeshMemo();
         }
     }
 
