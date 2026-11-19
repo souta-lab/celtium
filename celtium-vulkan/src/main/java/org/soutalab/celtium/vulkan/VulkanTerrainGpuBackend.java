@@ -6231,6 +6231,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     /** The game framebuffer's depth texture as of its latest bind; 0 until one is reported. */
     private int gameFramebufferDepthTexture;
 
+    /** The game framebuffer's GL name as last reported for its identity; 0 until one is reported. */
+    private int gameFramebufferObjectName;
+
     /**
      * {@return the game framebuffer's identity when a raw framebuffer's colour attachment is that framebuffer's current
      * colour texture}, else {@link Long#MIN_VALUE}.
@@ -6958,6 +6961,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     public void celtium$noteFramebufferName(long identity, int framebufferObject) {
         this.targetRegistry.noteFramebufferName(identity, framebufferObject);
+        if (identity == this.gameFramebufferIdentity) {
+            // The game framebuffer's own name, kept beside its identity: the depth records are keyed by raw
+            // identity and by name, not by the object's identity, so the main-depth resolution in the terrain
+            // depth route needs the name to ask them about this framebuffer (item 419, defect 1).
+            this.gameFramebufferObjectName = framebufferObject;
+        }
     }
 
     /** {@return the identity a GL framebuffer name was reported under}, or {@link Long#MIN_VALUE} when unknown. */
@@ -15556,10 +15565,28 @@ this.frameBufferOpen = false;
         // celtium$depthTextureForTarget is not used for this: at judgment time it answers for the target bound
         // now, which is the candidate itself. A deferred pipeline attaches the main depth texture to all of its
         // gbuffer framebuffers, which is what made them indistinguishable from the shadow family by shape alone.
-        int mainDepthTexture = this.gameFramebufferDepthTexture;
-        if (mainDepthTexture <= 0 && this.gameFramebufferIdentity != 0L) {
-            mainDepthTexture = this.publishedTextures.depthTexture(this.gameFramebufferIdentity);
+        // The game's own publication record can still be empty, on a stack that publishes depths for raw
+        // framebuffers only (measured on the same fixture: resolved stayed 0 while the gbuffer records carried
+        // the depth). The resolution then asks the two name-keyed records about the game framebuffer itself:
+        // the publication for its raw identity ({@code 1<<40 | name}), and the stub's attachment record for its
+        // GL name. Both name this framebuffer's own depth attachment - the same fact the field was meant to
+        // carry, read from the records that actually hold it.
+        int notedDepth = this.gameFramebufferDepthTexture;
+        int gameRecordDepth = this.gameFramebufferIdentity == 0L
+                || this.gameFramebufferIdentity == Long.MIN_VALUE ? 0
+                : this.publishedTextures.depthTexture(this.gameFramebufferIdentity);
+        int gameRawDepth = 0;
+        int gameStubDepth = 0;
+        if (this.gameFramebufferObjectName > 0) {
+            gameRawDepth = this.publishedTextures.depthTexture(
+                    RenderTargetRegistry.rawFramebufferIdentity(this.gameFramebufferObjectName));
+            gameStubDepth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                    .celtium$framebufferDepthTexture(this.gameFramebufferObjectName);
         }
+        int mainDepthTexture = notedDepth > 0 ? notedDepth
+                : gameRecordDepth > 0 ? gameRecordDepth
+                : gameRawDepth > 0 ? gameRawDepth
+                : gameStubDepth;
         boolean depthIsMainDepth = depthRecord != null && mainDepthTexture > 0
                 && depthRecord[0] == mainDepthTexture;
         String refusal = celtium$depthTargetRefusal(TERRAIN_TO_DEPTH_TARGET, this.targetRegistry.currentIsMain(),
@@ -15581,6 +15608,8 @@ this.frameBufferOpen = false;
                         + " record0=" + depthRecord[0] + " via=" + depthRecord[3]
                         + " noted=" + this.gameFramebufferDepthTexture
                         + " resolved=" + mainDepthTexture
+                        + " grec=" + gameRecordDepth + " gname=" + this.gameFramebufferObjectName
+                        + " graw=" + gameRawDepth + " gstub=" + gameStubDepth
                         + " mainDepth=" + depthIsMainDepth
                         + " refusal=" + (refusal == null ? "route" : refusal)
                         + " frame=" + this.frameId);
