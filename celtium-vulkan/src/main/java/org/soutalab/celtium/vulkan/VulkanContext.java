@@ -1751,16 +1751,6 @@ public final class VulkanContext {
         return this.deviceLost;
     }
 
-    /**
-     * {@return whether this context still accepts submissions}. {@link #endCommands} returns without
-     * throwing when its fence wait reports {@code VK_ERROR_DEVICE_LOST}, marking the context unusable
-     * instead; a caller that treats "endCommands returned" as "the submission completed" (the swapchain's
-     * per-image initialization flag, item 515) has to ask this after the return.
-     */
-    boolean celtium$isUsable() {
-        return this.usable;
-    }
-
     IllegalStateException celtium$reportDeviceLost(String operation, int result) {
         return celtium$lostDevice(operation + " (VkResult=" + result + ")");
     }

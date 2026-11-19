@@ -79,18 +79,20 @@ public final class VulkanSwapchain {
     private String imageInitialization = "not attempted";
     /**
      * Per-image "given defined content inside an ownership period" flags for this generation (item 515, design
-     * B1). Sized with {@link #images} when a generation's images are fixed and dropped with them in
+     * B2). Sized with {@link #images} when a generation's images are fixed and dropped with them in
      * {@link #delete()}; null means no generation has fixed its images yet. The lifetime is the swapchain
-     * object's own - a rebuild is always a new object, so flags can never leak across generations.
+     * object's own - a rebuild is always a new object, so flags can never leak across generations. A flag is
+     * set only when the image's initialization-variant present blit has been submitted successfully (the
+     * synchronous path) or handed to the presenter (the async path) - never at recording time.
      */
     private boolean[] imageInitialized;
-    /** Per-image record that the one-shot clear failed; the bare-present branch consults it (design section 3.4). */
+    /** Per-image record that the initialization-variant submission failed; a later present retries the variant. */
     private boolean[] imageInitializationFailed;
     /** This generation's {@link #imageInitializationWanted(int)} verdict, fixed once at creation (condition (c)). */
     private boolean imageInitializationWanted;
-    /** One-shot clears that failed this generation; the flag stays unset and the next acquire retries. */
+    /** Initialization-variant submissions that failed this generation; the flag stays unset and the next present retries. */
     private int imageInitializationFailures;
-    /** One-shot clears whose submission completed this generation; the V3 gate reconciliation counts these. */
+    /** Initialization-variant submissions that completed this generation; the V3 gate reconciliation counts these. */
     private int imagesInitializedCount;
     /** Times the flag array disagreed with the acquired index - impossible by construction, counted if it happens. */
     private int imageInitializationAnomalies;
@@ -1119,8 +1121,8 @@ public final class VulkanSwapchain {
                 long image = this.images[index.get(0)];
                 // Item 515 (design section 3.3): the probe clears the image it presents, so the image is defined -
                 // but the probe deliberately does not set the per-image initialization flag. The first real
-                // presentImage of this image runs the one-shot clear once more, which is redundant, not wrong,
-                // and keeps the flag's only writer in the present path.
+                // presentImage of this image uses the initialization-variant blit once, whose extra clear is
+                // redundant, not wrong, and keeps the flag's only writer in the present path.
                 VkCommandBuffer commands = this.context.beginCommands();
                 try {
                     transitionToTransferDst(stack, commands, image);
@@ -1235,6 +1237,15 @@ public final class VulkanSwapchain {
      */
     private long presentBlitPool = VK_NULL_HANDLE;
     private long[] preRecordedBlits = new long[0];
+    /**
+     * The initialization variant of each pre-recorded blit (item 515, design B2): the same recording with an
+     * opaque-black clear of the destination inserted after its transition to TRANSFER_DST and before the
+     * blit, so an image's first present defines its content inside the present submission itself instead of
+     * in a separate one-shot submit. Sized like {@link #preRecordedBlits} and recorded in the same pool;
+     * empty in a skipped generation, which records no variants. Dropped together with the normal set by
+     * {@link #discardPreRecorded()}.
+     */
+    private long[] preRecordedInitBlits = new long[0];
     private long preRecordedSourceImage = VK_NULL_HANDLE;
     private int preRecordedSourceLayout = -1;
     private int preRecordedSourceLayoutAfter = -1;
@@ -1398,20 +1409,26 @@ public final class VulkanSwapchain {
                     return "present image: could not create the render-finished semaphore";
                 }
             }
-            // Item 515 (design B1): the acquired image is given its defined content here - after the acquire
-            // succeeded and the render-finished semaphore is settled, before every branch that can present it
-            // (bare, async, synchronous). Under FRESH_SEMAPHORES the render-finished semaphore was created
-            // before the acquire and renderFinishedFor is not called; the insertion point is the same either
-            // way, and reads as "after the render-finished semaphore is settled".
-            ensureImageInitialized(stack, index.get(0));
+            // Item 515 (design B2): the acquired image is given its defined content inside the recorded
+            // present submission itself - an uninitialized image is presented through the initialization
+            // variant of the pre-recorded blit (an opaque-black clear of the destination before the blit),
+            // so no separate submission ever touches the image outside the present's own semaphore contract.
+            // B1's separate one-shot clear at this point did exactly that and drew the acquire-semaphore
+            // variant of UNASSIGNED-non-acquired-swapchain-image-used once per image (leg d515-b1), which is
+            // the switch trigger design section 6.6 named. The variant is chosen below, where the recorded
+            // buffer is picked; the flag is set when that submission succeeds (synchronous) or is handed to
+            // the presenter (async). A bare present submits no buffer at all, so it cannot initialize: it
+            // refuses an image that is not initialized yet instead of presenting undefined content
+            // (guarantee (a)). An initialized image's bare present is unchanged.
             if (PRESENT_NO_RECORD) {
-                if (initializationFailed(this.imageInitializationFailed, index.get(0))) {
-                    // Design section 3.4: a bare present records nothing, so an image whose one-shot clear
-                    // failed would be presented undefined. Refuse it by name instead of presenting it
-                    // (guarantee (a)); the flag stays unset, so a later recorded present retries the clear.
+                boolean[] initFlags = this.imageInitialized;
+                boolean initialized = !this.imageInitializationWanted
+                        || (initFlags != null && index.get(0) >= 0 && index.get(0) < initFlags.length
+                                && initFlags[index.get(0)]);
+                if (!initialized) {
                     return "present image (no record): refused image " + index.get(0)
-                            + " because its first-acquire clear failed and a bare present cannot define"
-                            + " its content";
+                            + " because it has not been initialized yet and a bare present cannot define"
+                            + " its content (initialization happens only inside a recorded present blit)";
                 }
                 // Bisection switch: present the acquired image without touching it or recording anything. If the
                 // validation messages disappear, they come from the command recording (the layout transitions and the
@@ -1424,9 +1441,15 @@ public final class VulkanSwapchain {
                 int bareResult = vkQueuePresentKHR(this.context.queue(), bare);
                 return "present image (no record): presented image " + index.get(0) + " (" + bareResult + ")";
             }
+            boolean initVariant = initializationNeeded(this.imageInitialized, this.imageInitializationWanted,
+                    index.get(0));
             long recorded = preRecordedPresentBlit(index.get(0), sourceImage, sourceLayout,
-                    sourceLayoutAfter, width, height);
+                    sourceLayoutAfter, width, height, initVariant);
             if (recorded == VK_NULL_HANDLE) {
+                if (initVariant) {
+                    recordImageInitializationFailure(index.get(0),
+                            "the initialization-variant blit command buffer could not be recorded");
+                }
                 if ("retire".equals(presentStageDisposition(true, false, false))) {
                     abandonAcquiredImage("the blit command buffer could not be recorded after a successful acquire");
                 }
@@ -1444,6 +1467,12 @@ public final class VulkanSwapchain {
                 long asyncStartedNanos = System.nanoTime();
                 this.context.celtium$presentAsync(recorded, acquire, renderFinished, this.swapchain, index.get(0));
                 presentSubmitNanos += System.nanoTime() - asyncStartedNanos;
+                if (initVariant) {
+                    // Design section 3.6: on the async path the flag's confirmation point is the hand-off to
+                    // the presenter - the variant buffer is now the presenter's to submit, under the same
+                    // semaphore contract as any recorded present.
+                    markImageInitialized(index.get(0));
+                }
                 presentStageCalls++;
                 this.asyncPresents++;
                 this.lastPresentSubmitDone = true;
@@ -1461,10 +1490,20 @@ public final class VulkanSwapchain {
                     this.presentSignalSemaphores);
             presentSubmitNanos += System.nanoTime() - submitStartedNanos;
             if (submitError != null) {
+                if (initVariant) {
+                    recordImageInitializationFailure(index.get(0),
+                            "the initialization-variant submission failed: " + submitError);
+                }
                 if ("retire".equals(presentStageDisposition(true, true, false))) {
                     abandonAcquiredImage("the present submission failed after a successful acquire");
                 }
                 return submitError;
+            }
+            if (initVariant) {
+                // Design section 3.6: on the synchronous path the flag's confirmation point is
+                // submitPreRecorded's success - the variant's clear is part of that submission, so the image
+                // is defined from here on and later presents use the normal buffer.
+                markImageInitialized(index.get(0));
             }
             if (this.bridgeTarget != null && bridgeDone != 0L) {
                 this.bridgeTarget.noteDoneSignalled(bridgeDone);
@@ -1911,19 +1950,30 @@ public final class VulkanSwapchain {
      * allocated {@code SIMULTANEOUS}: the same image's buffer can be re-submitted while a previous present of it is
      * still on the queue (the presentation engine only returns an image after its last presentation retires, which
      * is exactly what makes re-submission legal).
+     * <p>
+     * Item 515, design B2: when {@code initVariant} is set the image's initialization variant is returned
+     * instead - the same recording with an opaque-black clear of the destination inserted after its transition
+     * to TRANSFER_DST and before the blit, and no extra barrier (the destination is already in TRANSFER_DST at
+     * that point). Both variants of every image are recorded together in the same pool whenever this
+     * generation wants initialization; a skipped generation records no variants at all and always takes the
+     * normal buffer.
      */
     private long preRecordedPresentBlit(int imageIndex, long sourceImage, int sourceLayout,
-            int sourceLayoutAfter, int width, int height) {
+            int sourceLayoutAfter, int width, int height, boolean initVariant) {
         boolean keyMatches = this.preRecordedSourceImage == sourceImage
                 && this.preRecordedSourceLayout == sourceLayout
                 && this.preRecordedSourceLayoutAfter == sourceLayoutAfter
                 && this.preRecordedWidth == width
                 && this.preRecordedHeight == height
                 && this.preRecordedSwapchain == this.swapchain;
-        if (keyMatches && imageIndex < this.preRecordedBlits.length
-                && this.preRecordedBlits[imageIndex] != VK_NULL_HANDLE) {
-            this.preRecordedBlitPresents++;
-            return this.preRecordedBlits[imageIndex];
+        if (keyMatches) {
+            long[] set = initVariant ? this.preRecordedInitBlits : this.preRecordedBlits;
+            if (imageIndex >= 0 && imageIndex < set.length && set[imageIndex] != VK_NULL_HANDLE) {
+                this.preRecordedBlitPresents++;
+                return set[imageIndex];
+            }
+            // The key matches but the wanted variant is missing - fall through and re-record the whole set
+            // rather than submitting the wrong variant for an uninitialized image.
         }
         discardPreRecorded();
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -1938,12 +1988,14 @@ public final class VulkanSwapchain {
                 return VK_NULL_HANDLE;
             }
             this.presentBlitPool = poolOut.get(0);
+            boolean recordVariants = this.imageInitializationWanted;
+            int bufferCount = recordVariants ? this.images.length * 2 : this.images.length;
             org.lwjgl.vulkan.VkCommandBufferAllocateInfo alloc =
                     org.lwjgl.vulkan.VkCommandBufferAllocateInfo.calloc(stack).sType$Default()
                             .commandPool(this.presentBlitPool)
                             .level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
-                            .commandBufferCount(this.images.length);
-            PointerBuffer handles = stack.mallocPointer(this.images.length);
+                            .commandBufferCount(bufferCount);
+            PointerBuffer handles = stack.mallocPointer(bufferCount);
             if (vkAllocateCommandBuffers(this.context.device(), alloc, handles) != VK_SUCCESS) {
                 return VK_NULL_HANDLE;
             }
@@ -1957,48 +2009,21 @@ public final class VulkanSwapchain {
             int blitWidth = width;
             int blitHeight = height;
             this.preRecordedBlits = new long[this.images.length];
+            this.preRecordedInitBlits = recordVariants ? new long[this.images.length] : new long[0];
             for (int i = 0; i < this.images.length; i++) {
-                long handle = handles.get(i);
-                VkCommandBuffer commands = new VkCommandBuffer(handle, this.context.device());
-                org.lwjgl.vulkan.VkCommandBufferBeginInfo begin =
-                        org.lwjgl.vulkan.VkCommandBufferBeginInfo.calloc(stack).sType$Default()
-                                .flags(VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT);
-                if (vkBeginCommandBuffer(commands, begin) != VK_SUCCESS) {
+                if (!recordPresentBlit(stack, handles.get(i), sourceImage, sourceLayout, sourceLayoutAfter,
+                        blitWidth, blitHeight, i, false)) {
                     return VK_NULL_HANDLE;
                 }
-                transitionForBlitSource(stack, commands, sourceImage, sourceLayout);
-                transitionToTransferDst(stack, commands, this.images[i]);
-                org.lwjgl.vulkan.VkImageBlit.Buffer region = org.lwjgl.vulkan.VkImageBlit.calloc(1, stack);
-                region.get(0).srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
-                        .layerCount(1);
-                region.get(0).srcOffsets().get(0).set(0, blitHeight, 0);
-                region.get(0).srcOffsets().get(1).set(blitWidth, 0, 1);
-                region.get(0).dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
-                        .layerCount(1);
-                region.get(0).dstOffsets().get(0).set(0, 0, 0);
-                region.get(0).dstOffsets().get(1).set(this.width, this.height, 1);
-                if (PRESENT_MARKER) {
-                    transitionToTransferDst(stack, commands, this.images[i]);
-                    org.lwjgl.vulkan.VkClearColorValue marker = org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
-                    marker.float32(0, 1.0f);
-                    marker.float32(1, 0.0f);
-                    marker.float32(2, 0.0f);
-                    marker.float32(3, 1.0f);
-                    org.lwjgl.vulkan.VkImageSubresourceRange.Buffer markerRange =
-                            org.lwjgl.vulkan.VkImageSubresourceRange.calloc(1, stack);
-                    markerRange.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
-                    vkCmdClearColorImage(commands, this.images[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                            marker, markerRange);
-                } else {
-                    vkCmdBlitImage(commands, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, this.images[i],
-                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, VK_FILTER_NEAREST);
+                this.preRecordedBlits[i] = handles.get(i);
+                if (recordVariants) {
+                    long variantHandle = handles.get(this.images.length + i);
+                    if (!recordPresentBlit(stack, variantHandle, sourceImage, sourceLayout, sourceLayoutAfter,
+                            blitWidth, blitHeight, i, true)) {
+                        return VK_NULL_HANDLE;
+                    }
+                    this.preRecordedInitBlits[i] = variantHandle;
                 }
-                transitionForBlitSourceBack(stack, commands, sourceImage, sourceLayoutAfter);
-                transitionToPresent(stack, commands, this.images[i]);
-                if (vkEndCommandBuffer(commands) != VK_SUCCESS) {
-                    return VK_NULL_HANDLE;
-                }
-                this.preRecordedBlits[i] = handle;
             }
             this.preRecordedSourceImage = sourceImage;
             this.preRecordedSourceLayout = sourceLayout;
@@ -2007,8 +2032,62 @@ public final class VulkanSwapchain {
             this.preRecordedHeight = height;
             this.preRecordedSwapchain = this.swapchain;
             this.preRecordedBlitRecords++;
-            return this.preRecordedBlits[imageIndex];
+            return initVariant ? this.preRecordedInitBlits[imageIndex] : this.preRecordedBlits[imageIndex];
         }
+    }
+
+    /**
+     * Records one pre-recorded present blit buffer for swapchain image {@code imageIndex}.
+     * <p>
+     * With {@code initVariant} set, an opaque-black clear of the destination is inserted right after the
+     * destination's transition to TRANSFER_DST and before the blit - the only difference from the normal
+     * recording, and the point where the destination is already in the layout a clear needs, so no barrier is
+     * added (item 515, design B2).
+     *
+     * @return whether the buffer was begun and ended successfully
+     */
+    private boolean recordPresentBlit(MemoryStack stack, long handle, long sourceImage, int sourceLayout,
+            int sourceLayoutAfter, int blitWidth, int blitHeight, int imageIndex, boolean initVariant) {
+        VkCommandBuffer commands = new VkCommandBuffer(handle, this.context.device());
+        org.lwjgl.vulkan.VkCommandBufferBeginInfo begin =
+                org.lwjgl.vulkan.VkCommandBufferBeginInfo.calloc(stack).sType$Default()
+                        .flags(VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT);
+        if (vkBeginCommandBuffer(commands, begin) != VK_SUCCESS) {
+            return false;
+        }
+        transitionForBlitSource(stack, commands, sourceImage, sourceLayout);
+        transitionToTransferDst(stack, commands, this.images[imageIndex]);
+        if (initVariant) {
+            recordOpaqueBlackClear(stack, commands, this.images[imageIndex]);
+        }
+        org.lwjgl.vulkan.VkImageBlit.Buffer region = org.lwjgl.vulkan.VkImageBlit.calloc(1, stack);
+        region.get(0).srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
+                .layerCount(1);
+        region.get(0).srcOffsets().get(0).set(0, blitHeight, 0);
+        region.get(0).srcOffsets().get(1).set(blitWidth, 0, 1);
+        region.get(0).dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
+                .layerCount(1);
+        region.get(0).dstOffsets().get(0).set(0, 0, 0);
+        region.get(0).dstOffsets().get(1).set(this.width, this.height, 1);
+        if (PRESENT_MARKER) {
+            transitionToTransferDst(stack, commands, this.images[imageIndex]);
+            org.lwjgl.vulkan.VkClearColorValue marker = org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
+            marker.float32(0, 1.0f);
+            marker.float32(1, 0.0f);
+            marker.float32(2, 0.0f);
+            marker.float32(3, 1.0f);
+            org.lwjgl.vulkan.VkImageSubresourceRange.Buffer markerRange =
+                    org.lwjgl.vulkan.VkImageSubresourceRange.calloc(1, stack);
+            markerRange.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
+            vkCmdClearColorImage(commands, this.images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    marker, markerRange);
+        } else {
+            vkCmdBlitImage(commands, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, this.images[imageIndex],
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, VK_FILTER_NEAREST);
+        }
+        transitionForBlitSourceBack(stack, commands, sourceImage, sourceLayoutAfter);
+        transitionToPresent(stack, commands, this.images[imageIndex]);
+        return vkEndCommandBuffer(commands) == VK_SUCCESS;
     }
 
     /**
@@ -2153,11 +2232,13 @@ public final class VulkanSwapchain {
         return "unconfirmed=" + this.unconfirmedDrains + " deviceLost=" + this.deviceLostDrains;
     }
 
-    /** Drops the recorded blit set: the queue is drained first because a previous present may still read them. */
+    /** Drops the recorded blit set - both the normal buffers and the initialization variants (item 515, B2):
+     * the queue is drained first because a previous present may still read them. */
     private void discardPreRecorded() {
         this.preRecordedSourceImage = VK_NULL_HANDLE;
         this.preRecordedSwapchain = VK_NULL_HANDLE;
         this.preRecordedBlits = new long[0];
+        this.preRecordedInitBlits = new long[0];
         if (this.presentBlitPool != VK_NULL_HANDLE && drainForCleanup("present blit pool")) {
             vkDestroyCommandPool(this.context.device(), this.presentBlitPool, null);
             this.presentBlitPool = VK_NULL_HANDLE;
@@ -2612,11 +2693,12 @@ public final class VulkanSwapchain {
      * Fixes this generation's initialization state now that its images are known: fresh all-false flags sized
      * to the real image count, the wanted verdict computed once from the usage, and the counters back at zero.
      * <p>
-     * Item 515 (design B1): until 2026-11-19 this point also submitted a bulk clear of every image. No image
+     * Item 515: until 2026-11-19 this point also submitted a bulk clear of every image. No image
      * has been acquired yet at creation, so touching them here is outside any ownership period - the
      * validation layer reported {@code UNASSIGNED-non-acquired-swapchain-image-used} once per image (item
-     * 514). The clear itself moved into the present path, at each image's first acquire
-     * ({@link #ensureImageInitialized}); this method only declares the deferral.
+     * 514). The clear itself moved into the present path: each image's first recorded present submits the
+     * initialization variant of the pre-recorded blit (design B2, {@link #preRecordedPresentBlit}); this
+     * method only declares the deferral.
      *
      * @return the declaration, for {@link #describe()} and the console line
      */
@@ -2642,10 +2724,11 @@ public final class VulkanSwapchain {
     }
 
     /**
-     * {@return whether the image at {@code imageIndex} still needs its one-shot clear}. Pure. A skipped
+     * {@return whether the image at {@code imageIndex} still needs its initialization variant}. Pure. A skipped
      * generation ({@code wanted} false) never needs one - that is the creation-time skip semantics, kept
-     * unchanged (condition (c)). A null array or an out-of-range index is not judged "needed": the helper
-     * records that disagreement as an anomaly instead of clearing on a guess.
+     * unchanged (condition (c)). A null array or an out-of-range index is not judged "needed": the present
+     * path takes the normal buffer then instead of clearing on a guess, and the bare-present branch, which
+     * cannot fall back to an overwriting blit, refuses such an image outright.
      */
     static boolean initializationNeeded(boolean[] flags, boolean wanted, int imageIndex) {
         if (!wanted || flags == null || imageIndex < 0 || imageIndex >= flags.length) {
@@ -2655,45 +2738,38 @@ public final class VulkanSwapchain {
     }
 
     /**
-     * {@return whether the one-shot clear of the image at {@code imageIndex} has a recorded failure}. Pure;
-     * a null array or an out-of-range index has no recorded failure.
+     * {@return whether the initialization variant of the image at {@code imageIndex} has a recorded
+     * failure}. Pure; a null array or an out-of-range index has no recorded failure.
      */
     static boolean initializationFailed(boolean[] failed, int imageIndex) {
         return failed != null && imageIndex >= 0 && imageIndex < failed.length && failed[imageIndex];
     }
 
     /**
-     * Gives the just-acquired image defined content the first time this generation presents it: opaque black,
-     * ending in PRESENT_SRC_KHR (item 515, design B1).
+     * Marks an image initialized at the moment its initialization variant is confirmed submitted (item 515,
+     * design B2).
      * <p>
      * A swapchain image's content is undefined until something writes it. The present blit is normally that
      * something, but it writes the frame image's content - and a frame the renderer has not fully written (the
      * first frames after a rebuild at world join are the reported case) passes its own undefined regions through
      * to the screen. On AMD hardware undefined image content characteristically appears as purple blocks (issue
-     * #422: random purple squares on the loading screen when joining a world). Clearing at the first acquire
-     * means no image this swapchain owns can ever be presented undefined, whatever the frame that later fills
-     * it does. The frame target's own images carry the same rule at their first acquire
-     * ({@code GllessFrameTarget}'s {@code neverCleared}); the swapchain's images were the ones without it.
+     * #422: random purple squares on the loading screen when joining a world). The variant's opaque-black
+     * clear, recorded before the blit inside the same submission, means no image this swapchain owns can ever
+     * be presented undefined, whatever the frame that later fills it does. The frame target's own images carry
+     * the same rule at their first acquire ({@code GllessFrameTarget}'s {@code neverCleared}); the swapchain's
+     * images were the ones without it.
      * <p>
-     * The submission is the context's one-shot path, which waits for its own fence, and the flag is set only
-     * after that submission has completed - never at recording time, so a recorded-but-unsubmitted clear
-     * cannot leave the flag claiming content the image does not hold (the BH-26 lesson). One exception is
-     * checked explicitly: when the fence wait reports {@code VK_ERROR_DEVICE_LOST}, {@code endCommands}
-     * returns without throwing and marks the context unusable, so "it returned" is not by itself "the
-     * submission completed"; in that case the flag stays unset and the failure is recorded. Any other failure
-     * is likewise recorded rather than failed into the present - the present itself continues, because the
-     * synchronous and async branches overwrite the whole image with the blit - and the next acquire of the
-     * same image retries the clear. The bare-present branch is the one branch that overwrites nothing, so it
-     * refuses an image with a recorded failure instead of presenting it (design section 3.4).
+     * The flag is set only at the confirmation points design section 3.6 fixes - {@code submitPreRecorded}'s
+     * success on the synchronous path, the hand-off to the presenter on the async path - never at recording
+     * time, so a recorded-but-unsubmitted variant cannot leave the flag claiming content the image does not
+     * hold (the BH-26 lesson). The {@code CELTIUM_SWAPCHAIN_IMAGE_INIT} line is printed here, at confirmation,
+     * so the V3 gate reconciliation counts exactly the images whose initialization is confirmed.
      */
-    private void ensureImageInitialized(MemoryStack stack, int imageIndex) {
-        if (!this.imageInitializationWanted) {
-            return;
-        }
+    private void markImageInitialized(int imageIndex) {
         boolean[] flags = this.imageInitialized;
         if (flags == null || imageIndex < 0 || imageIndex >= flags.length) {
-            // Generation and array disagree, which the construction makes impossible; count it and let the
-            // present continue rather than clearing an image on a guess. The count reaches describe().
+            // Generation and array disagree, which the construction makes impossible; count it rather than
+            // marking an image on a guess. The count reaches describe().
             this.imageInitializationAnomalies++;
             if (this.imageInitializationAnomalies <= MAX_IMAGE_INIT_LOG_LINES) {
                 System.out.println("[Celtium] CELTIUM_SWAPCHAIN_IMAGE_INIT anomaly: image=" + imageIndex
@@ -2702,32 +2778,17 @@ public final class VulkanSwapchain {
             }
             return;
         }
-        if (!initializationNeeded(flags, true, imageIndex)) {
-            return;
+        flags[imageIndex] = true;
+        if (this.imageInitializationFailed != null
+                && imageIndex < this.imageInitializationFailed.length) {
+            this.imageInitializationFailed[imageIndex] = false;
         }
-        try {
-            VkCommandBuffer commands = this.context.beginCommands();
-            recordImageClear(stack, commands, this.images[imageIndex]);
-            this.context.endCommands(commands);
-            if (!this.context.celtium$isUsable()) {
-                recordImageInitializationFailure(imageIndex,
-                        "the context became unusable during the clear submission (device lost)");
-                return;
-            }
-            flags[imageIndex] = true;
-            if (this.imageInitializationFailed != null
-                    && imageIndex < this.imageInitializationFailed.length) {
-                this.imageInitializationFailed[imageIndex] = false;
-            }
-            this.imagesInitializedCount++;
-            System.out.println("[Celtium] CELTIUM_SWAPCHAIN_IMAGE_INIT image=" + imageIndex
-                    + " initialized=" + this.imagesInitializedCount + "/" + flags.length);
-        } catch (RuntimeException | LinkageError error) {
-            recordImageInitializationFailure(imageIndex, String.valueOf(error));
-        }
+        this.imagesInitializedCount++;
+        System.out.println("[Celtium] CELTIUM_SWAPCHAIN_IMAGE_INIT image=" + imageIndex
+                + " initialized=" + this.imagesInitializedCount + "/" + flags.length);
     }
 
-    /** Records a failed one-shot clear: the flag stays unset, the failure is counted and bounded-logged. */
+    /** Records a failed initialization variant: the flag stays unset, the failure is counted and bounded-logged. */
     private void recordImageInitializationFailure(int imageIndex, String reason) {
         this.imageInitializationFailures++;
         boolean[] failed = this.imageInitializationFailed;
@@ -2737,16 +2798,17 @@ public final class VulkanSwapchain {
         if (this.imageInitializationFailures <= MAX_IMAGE_INIT_LOG_LINES) {
             System.out.println("[Celtium] CELTIUM_SWAPCHAIN_IMAGE_INIT failed image=" + imageIndex
                     + " failures=" + this.imageInitializationFailures + ": " + reason
-                    + " (the flag stays unset; the clear is retried at the next acquire of this image)");
+                    + " (the flag stays unset; the variant is retried at the next present of this image)");
         }
     }
 
     /**
-     * Records the one-shot clear of a single image: the per-image cut of the creation-time bulk clear this
-     * replaced, reusing the existing barrier helpers unchanged - UNDEFINED to TRANSFER_DST, clear to opaque
-     * black, TRANSFER_DST to PRESENT_SRC.
+     * Records an opaque-black clear of a single image that is already in TRANSFER_DST - the clear the
+     * initialization variant inserts before its blit (item 515, design B2). The colour is the one the retired
+     * creation-time bulk clear and B1's one-shot clear used. No barrier is recorded here: the caller has just
+     * transitioned the image to TRANSFER_DST, which is the layout the clear requires.
      */
-    private void recordImageClear(MemoryStack stack, VkCommandBuffer commands, long image) {
+    private void recordOpaqueBlackClear(MemoryStack stack, VkCommandBuffer commands, long image) {
         VkClearColorValue color = VkClearColorValue.calloc(stack);
         color.float32(0, 0.0f);
         color.float32(1, 0.0f);
@@ -2754,9 +2816,7 @@ public final class VulkanSwapchain {
         color.float32(3, 1.0f);
         VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack);
         range.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
-        transitionToTransferDst(stack, commands, image);
         vkCmdClearColorImage(commands, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, color, range);
-        transitionToPresent(stack, commands, image);
     }
 
     private void transitionToTransferDst(MemoryStack stack, VkCommandBuffer commands, long image) {
