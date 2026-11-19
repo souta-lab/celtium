@@ -18,7 +18,47 @@ public final class VulkanTextureFault {
     private static int injections;
     private static boolean reported;
 
+    /**
+     * The test override of the two JVM switches, or inactive in every production run.
+     * <p>
+     * The switches are read once at class load because they are JVM arguments, which left the injector with no
+     * seam an offline test could arm - the same gap {@code StageGate.withSwitchedOff} closes for the stage gate.
+     * A test arms the override with {@link #armForTest}, which also resets the counters so the test reads its own
+     * run and no other, and disarms it afterwards; a leaked override would fail uploads in whatever test ran next
+     * in the same JVM, so the tests that arm it do so in a try/finally. Volatile because {@link #shouldFail} reads
+     * it on the hot path without the monitor: one volatile read is the whole cost while no test is armed.
+     */
+    private static volatile boolean testArmed;
+    private static long testFailAt = -1L;
+    private static String testFailSite = "";
+
     private VulkanTextureFault() {
+    }
+
+    /**
+     * Arms the injector for a test, with the same two shapes the JVM switches offer, and resets the counters.
+     * Package-private: production arming is the JVM switches alone.
+     *
+     * @param failAt   fail the n-th upload from now (1-based), or a value {@code <= 0} for no count arm
+     * @param failSite fail the first upload whose label contains this, or empty for no site arm
+     */
+    static synchronized void armForTest(long failAt, String failSite) {
+        testFailAt = failAt;
+        testFailSite = failSite == null ? "" : failSite;
+        requests = 0L;
+        injections = 0;
+        reported = false;
+        testArmed = true;
+    }
+
+    /** Disarms the test override and resets the counters, restoring the JVM switches' (unarmed) behaviour. */
+    static synchronized void disarmForTest() {
+        testArmed = false;
+        testFailAt = -1L;
+        testFailSite = "";
+        requests = 0L;
+        injections = 0;
+        reported = false;
     }
 
     /**
@@ -38,15 +78,17 @@ public final class VulkanTextureFault {
      * @param site a short label identifying the call site, for the substring form and for the log line
      */
     public static boolean shouldFail(String site) {
-        return ARMED && shouldFailArmed(site);
+        return (ARMED || testArmed) && shouldFailArmed(site);
     }
 
     private static synchronized boolean shouldFailArmed(String site) {
+        long failAt = testArmed ? testFailAt : FAIL_AT;
+        String failSite = testArmed ? testFailSite : FAIL_SITE;
         requests++;
         boolean fail = false;
-        if (FAIL_AT > 0 && requests == FAIL_AT) {
+        if (failAt > 0 && requests == failAt) {
             fail = true;
-        } else if (!FAIL_SITE.isEmpty() && injections == 0 && site != null && site.contains(FAIL_SITE)) {
+        } else if (!failSite.isEmpty() && injections == 0 && site != null && site.contains(failSite)) {
             fail = true;
         }
         if (fail) {

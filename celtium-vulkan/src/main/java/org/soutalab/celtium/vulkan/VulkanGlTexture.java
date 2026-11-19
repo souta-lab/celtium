@@ -977,6 +977,18 @@ public final class VulkanGlTexture {
     }
 
     /**
+     * An instance with no device objects, for tests of the upload entries' refusal decisions.
+     * <p>
+     * Only the decisions that precede any device work are reachable on such an instance - above all the
+     * texture-fault refusal at the head of {@link #uploadFromGlTexture} and {@link #uploadFromImage}, which is
+     * the seam item 432 pins. Any path that gets past those decisions needs a live device and fails here, which
+     * is itself the observable difference between "the entry refused" and "the entry proceeded".
+     */
+    static VulkanGlTexture uncreatedForTest() {
+        return new VulkanGlTexture(null);
+    }
+
+    /**
      * Creates an empty image of the given size, its device local memory, an image view and a sampler.
      * <p>
      * The image starts out in {@code VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL} with undefined contents, so it can be
@@ -1491,6 +1503,16 @@ public final class VulkanGlTexture {
             org.soutalab.celtium.vulkan.CrashBreadcrumbs.note(
                     org.soutalab.celtium.vulkan.CrashBreadcrumbs.TEXTURE_UPLOAD, glTextureId,
                     ((long) this.width << 32) | (this.height & 0xffffffffL));
+        }
+        if (VulkanTextureFault.shouldFail("mirror-gl:" + glTextureId)) {
+            // Item 432: the fault injector is consulted at this whole-image entry as well as at the immediate
+            // path's white-texture substitution, so an upload failure can be exercised on the mirror itself.
+            // The skip is total and honest: nothing is read, hashed or copied, no cache or serial moves, and the
+            // mirror keeps exactly the content fact it had - no content when it never held any - rather than
+            // presenting old pixels as the upload that just failed. The refusal is not remembered either: the
+            // next ask retries the upload, which is the per-entry failure shape the stage-gate decision records
+            // (see the item 432 record: no Stage is added for texture uploads).
+            return;
         }
         long celtium$uploadStart = System.nanoTime();
         final int celtium$uploadGlId = glTextureId;
@@ -2368,6 +2390,15 @@ public final class VulkanGlTexture {
     public boolean uploadFromImage(int pixelWidth, int pixelHeight, java.nio.ByteBuffer rgba) {
         requireOwned("a whole-image upload");
         requireAlive();
+        if (VulkanTextureFault.shouldFail("mirror-image:" + this.encodeLabel)) {
+            // Item 432: the announced whole-image entry (and with it uploadFromNamedImage, which delegates
+            // here) consults the fault injector before anything is validated, hashed or copied. The answer is
+            // the same false a hash skip gives, so the registry counts the upload as skipped and does not mark
+            // the texture fully initialized - and because neither the pixel hash nor the upload serial moved,
+            // nothing presents the previous content as this upload's result and the next ask retries. The
+            // refusal itself is not remembered (see uploadFromGlTexture's note).
+            return false;
+        }
         // The hash and the copy read the same slice: the declared extent must fit the buffer's remaining bytes from
         // its current position, which is where MemoryUtil.memAddress starts (audit N08). Validated before the hash, so
         // a short buffer is refused by name instead of hashing past its end and copying native bytes nothing owns.
