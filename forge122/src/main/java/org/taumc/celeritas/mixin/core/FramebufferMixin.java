@@ -165,7 +165,7 @@ public abstract class FramebufferMixin {
                 net.minecraft.client.shader.Framebuffer game = mc.getFramebuffer();
                 if (game != null) {
                     ((org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) backend).celtium$noteGameFramebuffer(
-                            System.identityHashCode(game), game.framebufferTexture);
+                            System.identityHashCode(game), game.framebufferTexture, game.depthBuffer);
                 }
             }
             // The GL name under the identity, for a readback that only has the name: the game binds the framebuffer by

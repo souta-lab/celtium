@@ -48,11 +48,29 @@ public class VintageRenderSectionManager extends RenderSectionManager {
         super(configuration, () -> new VintageChunkBuildContext(world, configuration), ChunkRenderer::new, renderDistance, commandList, minSection, maxSection, CeleritasVintage.options().performance.chunkBuilderThreads, hasShadowPass);
         this.world = world;
         this.sectionCache = new ClonedChunkSectionCache(world);
+        if (celtium$shadowPassReports < 8) {
+            celtium$shadowPassReports++;
+            // The construction-time value and its two sources, so a fixture leg can tell "the gate is still shut"
+            // from "the gate opened" at the first manager a run builds, without waiting for a shadow frame
+            // (item 409 diagnosis, leg requirements: the failure this fixes was invisible to every frame census
+            // because it happened here, at object construction).
+            System.out.println("[Celtium] CELTIUM_SECTION_MANAGER hasShadowPass=" + hasShadowPass
+                    + " requested=" + TerrainPipelineConfig.isShadowPassRequested()
+                    + " shadersEnabled=" + org.embeddedt.embeddium.impl.render.ShaderModBridge.areShadersEnabled());
+        }
     }
 
-    /** {@return whether shadow terrain pass support is requested from the core pipeline config (default false)}. */
+    /** Bounded report counter for the construction-time shadow decision. */
+    private static int celtium$shadowPassReports;
+
+    /**
+     * {@return whether a section manager built now gets a shadow terrain pass}: the core pipeline config's effective
+     * decision (explicit request, or a shader pack active through the shader bridge). See
+     * {@link TerrainPipelineConfig#isShadowPassEnabled()} for why the bridge, not the Phase 0 program provider, is
+     * the runtime source.
+     */
     public static boolean resolveShadowPassEnabled() {
-        return TerrainPipelineConfig.isShadowPassRequested();
+        return TerrainPipelineConfig.isShadowPassEnabled();
     }
 
     public static VintageRenderSectionManager create(ChunkVertexType vertexType, WorldClient world, int renderDistance, CommandList commandList) {

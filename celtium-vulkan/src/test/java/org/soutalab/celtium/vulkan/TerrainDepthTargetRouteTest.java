@@ -15,9 +15,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The defect it guards against: an Iris shadow pass' terrain was drawn into the frame image while the shadow
  * framebuffer's pair borrowed the shared depth image that the pre-translucent depth copy reads, so the copy was served
  * from an image the shadow pass never wrote ({@code SHADOW-NATIVE-DESIGN} §6, legs 14/15/18). The route that closes it
- * must be reachable for exactly one state - a non-main identity whose pair exists at the depth texture's extent and
- * borrows its shared depth image - and unreachable for every other one, because two of those other states are measured
- * regressions: main-target passes belong to the frame image, and identity 0 is the window.
+ * must be reachable for exactly the measured states - a non-main identity, over a depth texture that is not the game
+ * framebuffer's own, whose pair exists at the depth texture's extent and borrows its shared depth image, with one
+ * colour target (the depth-source framebuffer) or two (the shadow program's framebuffer, the state item 419's
+ * predicate revision admits) - and unreachable for every other one, because several of those other states are measured
+ * regressions: main-target passes belong to the frame image, identity 0 is the window, and a deferred pipeline's
+ * gbuffer framebuffers over the main depth texture are the main scene wearing the routed shape (item 408, defect 1).
  * <p>
  * What this proves and what it does not: it pins the decision table, including the two claims the item's design review
  * states as its safety argument - that the switch being off is off (the first condition, so the default build records
@@ -28,16 +31,24 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class TerrainDepthTargetRouteTest {
 
     /** The measured state: the shadow framebuffer's pair, 2048x2048, borrowing its depth texture's image. */
+    private static boolean routed(boolean enabled, boolean currentIsMain, boolean depthIsMainDepth, long identity,
+            boolean pairExists, int pairWidth, int pairHeight, int depthWidth, int depthHeight, boolean depthShared,
+            int colors) {
+        return VulkanTerrainGpuBackend.celtium$routeTerrainToDepthTarget(enabled, currentIsMain, depthIsMainDepth,
+                identity, pairExists, pairWidth, pairHeight, depthWidth, depthHeight, depthShared, colors);
+    }
+
+    /** The pre-419 call shape: every state these tests modelled before item 419 is over a non-main depth texture. */
     private static boolean routed(boolean enabled, boolean currentIsMain, long identity, boolean pairExists,
             int pairWidth, int pairHeight, int depthWidth, int depthHeight, boolean depthShared, int colors) {
-        return VulkanTerrainGpuBackend.celtium$routeTerrainToDepthTarget(enabled, currentIsMain, identity,
-                pairExists, pairWidth, pairHeight, depthWidth, depthHeight, depthShared, colors);
+        return routed(enabled, currentIsMain, false, identity, pairExists, pairWidth, pairHeight, depthWidth,
+                depthHeight, depthShared, colors);
     }
 
     private static final long SHADOW_IDENTITY = 0x2f16b5c4L;
 
     @Test
-    void theMeasuredShadowStateIsTheOnlyStateThatRoutes() {
+    void theMeasuredShadowStateRoutes() {
         assertTrue(routed(true, false, SHADOW_IDENTITY, true, 2048, 2048, 2048, 2048, true, 1),
                 "a non-main identity whose pair borrows its depth texture's image at the same extent is the route");
     }
@@ -48,7 +59,7 @@ class TerrainDepthTargetRouteTest {
         // lookups, the barriers or the census, because the only call site asks this function after the switch check and
         // this answer is false. A regression here would route the shadow pass in every build.
         assertFalse(routed(false, false, SHADOW_IDENTITY, true, 2048, 2048, 2048, 2048, true, 1));
-        assertEquals("disabled", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(false, false, SHADOW_IDENTITY,
+        assertEquals("disabled", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(false, false, false, SHADOW_IDENTITY,
                 true, 2048, 2048, 2048, 2048, true, 1));
     }
 
@@ -57,12 +68,12 @@ class TerrainDepthTargetRouteTest {
         // Main: the game's own framebuffer. Its terrain must stay in the frame image, which is what the whole renderer
         // is built around.
         assertFalse(routed(true, true, 0x1L, true, 2048, 2048, 2048, 2048, true, 1));
-        assertEquals("main", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, true, 0x1L, true, 2048, 2048,
+        assertEquals("main", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, true, false, 0x1L, true, 2048, 2048,
                 2048, 2048, true, 1));
         // Identity 0: GL name 0 is the window (see the routing note in recordImmediateOnlyPass); its draws already
         // land in the frame image and there is no framebuffer to route for.
         assertFalse(routed(true, false, 0L, true, 2048, 2048, 2048, 2048, true, 1));
-        assertEquals("window", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, 0L, true, 2048, 2048,
+        assertEquals("window", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, false, 0L, true, 2048, 2048,
                 2048, 2048, true, 1));
     }
 
@@ -71,17 +82,49 @@ class TerrainDepthTargetRouteTest {
         // Item 333's registration creates the pair; a pass that arrives before it (or after the pair was retired by a
         // depth-texture reallocation) has nothing to draw into. R9 of the design review: counted, not silent.
         assertFalse(routed(true, false, SHADOW_IDENTITY, false, 0, 0, 2048, 2048, true, 0));
-        assertEquals("no-pair", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, SHADOW_IDENTITY, false,
+        assertEquals("no-pair", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, false, SHADOW_IDENTITY, false,
                 0, 0, 2048, 2048, true, 0));
     }
 
     @Test
-    void aMultiTargetPairIsRefusedByName() {
-        // Render-pass compatibility compares the attachment count, so the frame pass (one colour target) cannot attach
-        // a pair holding two. The design review's R5: a named refusal here rather than a pass that would be invalid.
-        assertFalse(routed(true, false, SHADOW_IDENTITY, true, 2048, 2048, 2048, 2048, true, 2));
-        assertEquals("mrt", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, SHADOW_IDENTITY, true,
+    void theShadowProgramPairsSecondColourIsTheMainCaseNotARefusal() {
+        // Item 419's predicate revision (from item 408, defect 2's second blocker): the framebuffer bound while a
+        // shadow pass draws is the shadow program's, and its pair holds two colour images. The design review's
+        // condition 7 assumed one, so the pre-419 table refused this state as "mrt" and the shadow terrain could not
+        // reach the decision point even with the gate open. The frame pass attaches colour slot 0 and the depth -
+        // all a terrain program writes - so two routes, and the refusal table answers null for it.
+        assertTrue(routed(true, false, SHADOW_IDENTITY, true, 2048, 2048, 2048, 2048, true, 2));
+        assertNull(VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, false, SHADOW_IDENTITY, true,
                 2048, 2048, 2048, 2048, true, 2));
+    }
+
+    @Test
+    void aPairWithThreeColourTargetsIsRefusedByName() {
+        // What remains of the design review's R5: no measured framebuffer carries three colour targets, and the
+        // frame pass still attaches one, so the refusal stays - named, not a silent fallback.
+        assertFalse(routed(true, false, SHADOW_IDENTITY, true, 2048, 2048, 2048, 2048, true, 3));
+        assertEquals("mrt", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, false, SHADOW_IDENTITY, true,
+                2048, 2048, 2048, 2048, true, 3));
+        // A pair with no colour target at all is not a draw target either.
+        assertFalse(routed(true, false, SHADOW_IDENTITY, true, 2048, 2048, 2048, 2048, true, 0));
+        assertEquals("mrt", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, false, SHADOW_IDENTITY, true,
+                2048, 2048, 2048, 2048, true, 0));
+    }
+
+    @Test
+    void theMainDepthTextureIsRefusedByName() {
+        // Item 408, defect 1, the leg 20 state: a deferred pipeline's gbuffer framebuffer at the window's size -
+        // pair present, depth shared, extents matching, one colour target - over the game framebuffer's own depth
+        // texture. Every pre-419 condition passed, twelve main passes routed, and the presented frame lost the main
+        // scene's terrain. The shape cannot separate it from the shadow family; the depth texture's owner can.
+        assertFalse(routed(true, false, true, SHADOW_IDENTITY, true, 1280, 720, 1280, 720, true, 1));
+        assertEquals("main-depth", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, true,
+                SHADOW_IDENTITY, true, 1280, 720, 1280, 720, true, 1));
+        // The two-colour form of the same family is refused by the same condition (it is asked before the colour
+        // count), not admitted by the shadow program's main case.
+        assertFalse(routed(true, false, true, SHADOW_IDENTITY, true, 1280, 720, 1280, 720, true, 2));
+        assertEquals("main-depth", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, true,
+                SHADOW_IDENTITY, true, 1280, 720, 1280, 720, true, 2));
     }
 
     @Test
@@ -90,7 +133,7 @@ class TerrainDepthTargetRouteTest {
         // depth texture. A pair with its own private depth writes an image nothing copies from or samples, and routing
         // it would move the terrain out of the frame image for no measurement.
         assertFalse(routed(true, false, SHADOW_IDENTITY, true, 2048, 2048, 2048, 2048, false, 1));
-        assertEquals("not-shared", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, SHADOW_IDENTITY,
+        assertEquals("not-shared", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, false, SHADOW_IDENTITY,
                 true, 2048, 2048, 2048, 2048, false, 1));
     }
 
@@ -101,11 +144,11 @@ class TerrainDepthTargetRouteTest {
         // all. A pair at any other size is a different framebuffer, and the framebuffer cache would build a handle at
         // the wrong extent (VUID-VkFramebufferCreateInfo-flags-04533/04534, the 256x256 pair's own history).
         assertFalse(routed(true, false, SHADOW_IDENTITY, true, 1280, 720, 2048, 2048, true, 1));
-        assertEquals("extent", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, SHADOW_IDENTITY, true,
+        assertEquals("extent", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, false, SHADOW_IDENTITY, true,
                 1280, 720, 2048, 2048, true, 1));
         // A depth texture whose level 0 was never recorded has no extent to compare; that is not a match by default.
         assertFalse(routed(true, false, SHADOW_IDENTITY, true, 2048, 2048, 0, 0, true, 1));
-        assertEquals("extent", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, SHADOW_IDENTITY, true,
+        assertEquals("extent", VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, false, SHADOW_IDENTITY, true,
                 2048, 2048, 0, 0, true, 1));
     }
 
@@ -113,7 +156,7 @@ class TerrainDepthTargetRouteTest {
     void theRefusalTableAnswersOnlyNullForTheRoutedState() {
         // The census line and this predicate share one table, so the only state that answers true must be the only one
         // that answers null. This is the check that the two cannot drift apart.
-        assertNull(VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, SHADOW_IDENTITY, true,
+        assertNull(VulkanTerrainGpuBackend.celtium$depthTargetRefusal(true, false, false, SHADOW_IDENTITY, true,
                 2048, 2048, 2048, 2048, true, 1));
     }
 
