@@ -6183,13 +6183,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /**
-     * Records which identity the game's own framebuffer field names, and its colour attachment.
+     * Records which identity the game's own framebuffer field names, and its colour and depth attachments.
      * <p>
-     * Called by {@code FramebufferMixin} on every framebuffer bind, with {@code mc.framebuffer}'s identity and colour
-     * texture name. That is what makes the splash's pass route to the frame image: the identity the game's own field
-     * names is main even before it is adopted, and the routing rule is keyed on the identity.
+     * Called by {@code FramebufferMixin} on every framebuffer bind, with {@code mc.framebuffer}'s identity, colour
+     * texture name and depth texture name, each read from the framebuffer object itself at that moment. That is what
+     * makes the splash's pass route to the frame image: the identity the game's own field names is main even before
+     * it is adopted, and the routing rule is keyed on the identity. The depth name is the same fact for the depth
+     * route's main-depth refusal (item 419): a deferred pipeline builds its targets over this one depth texture, and
+     * the value read here is the value such a pipeline reads when it builds them, because both read the object's
+     * current field and this report is refreshed on every bind while pipeline construction is rare.
      */
-    public void celtium$noteGameFramebuffer(long identity, int colorTexture) {
+    public void celtium$noteGameFramebuffer(long identity, int colorTexture, int depthTexture) {
         if (identity == 0L) {
             return;
         }
@@ -6199,10 +6203,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             this.mainFramebufferColorNames.add(colorTexture);
         }
         this.gameFramebufferColorTexture = colorTexture;
+        this.gameFramebufferDepthTexture = depthTexture;
     }
 
     /** The game framebuffer's colour texture as of its latest bind; 0 until one is reported. */
     private int gameFramebufferColorTexture;
+
+    /** The game framebuffer's depth texture as of its latest bind; 0 until one is reported. */
+    private int gameFramebufferDepthTexture;
 
     /**
      * {@return the game framebuffer's identity when a raw framebuffer's colour attachment is that framebuffer's current
@@ -15384,14 +15392,14 @@ this.frameBufferOpen = false;
      * already has in hand (switch, current target, pair, depth texture) and nothing else - no lookups happen here, so
      * the decision cannot race a registry mutation between two of its own conditions. {@code false} is the answer for
      * every state but the measured one, which is also the second half of "the main path is unchanged": off is off at
-     * the switch, and on is still off for main, identity 0, a pair-less identity, a non-shared depth, an extent
-     * mismatch and a multi-target pair.
+     * the switch, and on is still off for main, the main depth texture, identity 0, a pair-less identity, a
+     * non-shared depth, an extent mismatch and a pair with three or more colour targets.
      */
-    static boolean celtium$routeTerrainToDepthTarget(boolean enabled, boolean currentIsMain, long identity,
-            boolean pairExists, int pairWidth, int pairHeight, int depthWidth, int depthHeight,
+    static boolean celtium$routeTerrainToDepthTarget(boolean enabled, boolean currentIsMain, boolean depthIsMainDepth,
+            long identity, boolean pairExists, int pairWidth, int pairHeight, int depthWidth, int depthHeight,
             boolean depthShared, int pairColorCount) {
-        return celtium$depthTargetRefusal(enabled, currentIsMain, identity, pairExists, pairWidth, pairHeight,
-                depthWidth, depthHeight, depthShared, pairColorCount) == null;
+        return celtium$depthTargetRefusal(enabled, currentIsMain, depthIsMainDepth, identity, pairExists, pairWidth,
+                pairHeight, depthWidth, depthHeight, depthShared, pairColorCount) == null;
     }
 
     /**
@@ -15402,11 +15410,21 @@ this.frameBufferOpen = false;
      * <ol>
      *   <li>{@code enabled} - the lab switch; off in the default build by design (see {@link #TERRAIN_TO_DEPTH_TARGET}).</li>
      *   <li>{@code !currentIsMain} - a main-target pass belongs to the frame image and to no pair.</li>
+     *   <li>{@code !depthIsMainDepth} - the depth texture is not the game framebuffer's own. A deferred pipeline
+     *       attaches the main depth texture to every one of its gbuffer framebuffers, so those framebuffers present
+     *       exactly the routed shape (a pair, a shared depth, matching extents) at the window's size; without this
+     *       condition the main scene's terrain is what gets routed, and the presented frame loses it (item 408,
+     *       defect 1: leg 20 routed twelve main passes and presented went one colour). {@code currentIsMain} cannot
+     *       catch them: under a deferred pipeline the main scene itself arrives under raw framebuffer identities.</li>
      *   <li>{@code identity != 0} - GL name 0 is the window; its draws already land in the frame image.</li>
      *   <li>{@code pairExists} - the pair is item 333's registration's work; without one the pass stays on the frame.</li>
-     *   <li>{@code pairColorCount == 1} - the frame pass attaches one colour target, and render-pass compatibility
-     *       compares the attachment count, so a multi-target pair needs a different pass (named refusal, not a
-     *       silent fallback; {@code ModProgramMrtRefusalTest} is the neighbouring rule).</li>
+     *   <li>{@code pairColorCount} is 1 or 2 - the frame pass attaches the pair's colour slot 0 and its depth, which
+     *       is all a terrain program writes. Two is the measured main case, not an extension: the framebuffer bound
+     *       while a shadow pass draws is the shadow program's, whose pair holds two colour images (the design
+     *       review's condition 7 assumed one, and leg 20's silence followed from that - item 408, defect 2's second
+     *       blocker). The second image is left unwritten, exactly as a GL program with one output leaves draw
+     *       buffer 1 alone. Three or more has no measured case and stays a named refusal, not a silent fallback
+     *       ({@code ModProgramMrtRefusalTest} is the neighbouring rule).</li>
      *   <li>{@code depthShared} - the pair must be rendering into the shared depth image for the depth texture: that
      *       image is the GL-framebuffer's depth storage, and it is the whole point of the route.</li>
      *   <li>{@code pair extent == depth extent} - a Vulkan framebuffer's attachments share one extent, which is the
@@ -15415,8 +15433,8 @@ this.frameBufferOpen = false;
      * The extents compared are the <b>pair's</b> and the depth texture's, never the window's: the shadow pair is
      * 2048x2048 while the window is not, and that difference is the reason the older route cannot reach it.
      */
-    static String celtium$depthTargetRefusal(boolean enabled, boolean currentIsMain, long identity,
-            boolean pairExists, int pairWidth, int pairHeight, int depthWidth, int depthHeight,
+    static String celtium$depthTargetRefusal(boolean enabled, boolean currentIsMain, boolean depthIsMainDepth,
+            long identity, boolean pairExists, int pairWidth, int pairHeight, int depthWidth, int depthHeight,
             boolean depthShared, int pairColorCount) {
         if (!enabled) {
             return "disabled";
@@ -15424,13 +15442,16 @@ this.frameBufferOpen = false;
         if (currentIsMain) {
             return "main";
         }
+        if (depthIsMainDepth) {
+            return "main-depth";
+        }
         if (identity == 0L) {
             return "window";
         }
         if (!pairExists) {
             return "no-pair";
         }
-        if (pairColorCount != 1) {
+        if (pairColorCount != 1 && pairColorCount != 2) {
             return "mrt";
         }
         if (!depthShared) {
@@ -15505,8 +15526,15 @@ this.frameBufferOpen = false;
         int depthHeight = depthRecord == null ? 0 : depthRecord[2];
         boolean shared = owner != null && depthKey != 0L && owner.chainPairUsesSharedDepth(identity, depthKey);
         int colors = owner == null ? 0 : owner.chainPairColorCount(identity);
+        // The main-depth fact (item 419, defect 1 of item 408): the depth texture the game framebuffer itself owns,
+        // as FramebufferMixin reports it from the game's own framebuffer object on every bind. A deferred pipeline
+        // attaches that one texture to all of its gbuffer framebuffers, which is what made them indistinguishable
+        // from the shadow family by shape alone.
+        boolean depthIsMainDepth = depthRecord != null && this.gameFramebufferDepthTexture != 0
+                && depthRecord[0] == this.gameFramebufferDepthTexture;
         String refusal = celtium$depthTargetRefusal(TERRAIN_TO_DEPTH_TARGET, this.targetRegistry.currentIsMain(),
-                identity, pairExists, pairWidth, pairHeight, depthWidth, depthHeight, shared, colors);
+                depthIsMainDepth, identity, pairExists, pairWidth, pairHeight, depthWidth, depthHeight, shared,
+                colors);
         if (refusal != null) {
             // Named, not silent: "the pass stayed on the frame image" and "the pair had no room for it" look the same
             // in every other line this run prints.
@@ -15515,6 +15543,7 @@ this.frameBufferOpen = false;
                 System.out.println("[Celtium] CELTIUM_TERRAIN_DEPTH_TARGET_REFUSED reason=" + refusal
                         + " pass=" + passName + " identity=0x" + Long.toHexString(identity)
                         + " pair=" + pairWidth + "x" + pairHeight + " depth=" + depthWidth + "x" + depthHeight
+                        + " depthTexture=" + (depthRecord == null ? 0 : depthRecord[0])
                         + " colors=" + colors + " frame=" + this.frameId);
             }
             return null;
