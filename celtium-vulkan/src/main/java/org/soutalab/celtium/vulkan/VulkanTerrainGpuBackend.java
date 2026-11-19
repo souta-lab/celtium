@@ -3199,6 +3199,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int terrainDepthTargetLogs;
     private int terrainDepthTargetDrawLogs;
     private int terrainDepthTargetRefusalLogs;
+    /** Bounded counters for the item 419 defect-1 pair census: the noted game depth and the judgment that reads it. */
+    private int depthNoteLogs;
+    private int depthJudgeLogs;
+    private int depthJudgeLastNoted = Integer.MIN_VALUE;
     private int pairWindowPreserveDepthLogs;
     private int sharedDepthClearRefusalLogs;
     /** The open group is a mod program's draw: nothing else may merge into it, and it into nothing. */
@@ -6197,6 +6201,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (identity == 0L) {
             return;
         }
+        int previousDepth = this.gameFramebufferDepthTexture;
         this.gameFramebufferIdentity = identity;
         this.framebufferIdentityIsMain.put(identity, true);
         if (colorTexture != 0) {
@@ -6204,6 +6209,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         this.gameFramebufferColorTexture = colorTexture;
         this.gameFramebufferDepthTexture = depthTexture;
+        // Item 419, defect 1: the noted depth is one half of the pair the main-depth refusal compares, and no
+        // other line in the build prints it, so a refusal that never fires leaves no trace of the value it was
+        // comparing against. Print on change only - adoption rewrites the game framebuffer's depthBuffer field
+        // and a resize regenerates it, so the changes are exactly the moments the value can move - bounded, and
+        // with the receiving instance, so a note that lands on a different backend than the one judging routes
+        // is visible as exactly that when set against CELTIUM_DEPTH_JUDGE.
+        if (depthTexture != previousDepth && this.depthNoteLogs < 32) {
+            this.depthNoteLogs++;
+            System.out.println("[Celtium] CELTIUM_DEPTH_NOTE backend=0x"
+                    + Integer.toHexString(System.identityHashCode(this))
+                    + " game=0x" + Long.toHexString(identity)
+                    + " color=" + colorTexture + " depth=" + depthTexture + " prevDepth=" + previousDepth
+                    + " frame=" + this.frameId);
+        }
     }
 
     /** The game framebuffer's colour texture as of its latest bind; 0 until one is reported. */
@@ -15535,6 +15554,26 @@ this.frameBufferOpen = false;
         String refusal = celtium$depthTargetRefusal(TERRAIN_TO_DEPTH_TARGET, this.targetRegistry.currentIsMain(),
                 depthIsMainDepth, identity, pairExists, pairWidth, pairHeight, depthWidth, depthHeight, shared,
                 colors);
+        // Item 419, defect 1: the other half of the pair. The refusal census names the outcome but neither of
+        // the two values compared, so a main-depth candidate that routes anyway leaves no trace of why. Print
+        // the pair - the candidate's recorded depth texture against the noted game depth - with the judging
+        // instance and the verdict: the first candidates, and any candidate judged after the noted value moved
+        // (adoption and resizes move it mid-run), bounded overall.
+        if (depthRecord != null) {
+            boolean notedMoved = this.gameFramebufferDepthTexture != this.depthJudgeLastNoted;
+            if ((this.depthJudgeLogs < 64 || notedMoved) && this.depthJudgeLogs < 128) {
+                this.depthJudgeLogs++;
+                this.depthJudgeLastNoted = this.gameFramebufferDepthTexture;
+                System.out.println("[Celtium] CELTIUM_DEPTH_JUDGE backend=0x"
+                        + Integer.toHexString(System.identityHashCode(this))
+                        + " pass=" + passName + " identity=0x" + Long.toHexString(identity)
+                        + " record0=" + depthRecord[0] + " via=" + depthRecord[3]
+                        + " noted=" + this.gameFramebufferDepthTexture
+                        + " mainDepth=" + depthIsMainDepth
+                        + " refusal=" + (refusal == null ? "route" : refusal)
+                        + " frame=" + this.frameId);
+            }
+        }
         if (refusal != null) {
             // Named, not silent: "the pass stayed on the frame image" and "the pair had no room for it" look the same
             // in every other line this run prints.
