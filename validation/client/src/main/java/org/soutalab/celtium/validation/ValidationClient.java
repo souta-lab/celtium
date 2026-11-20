@@ -3887,6 +3887,56 @@ public final class ValidationClient {
                 report.addProperty("entitySpawnOnGround", Boolean.valueOf(
                         Math.abs(spawnSurface - mc.player.posY) <= 1.0D));
             }
+            if (worldTicks >= 60 && !celtium$effectPairSpawned
+                    && HarnessConfig.bool("entityEffectPair", false)) {
+                celtium$effectPairSpawned = true;
+                // The entity-effect scene's two carriers (item 358, D15), placed once and never respawned: a
+                // probe that respawns every tick keeps the capture's settle from ever arriving (the hurtI1/hurtI2
+                // timeouts), so the pair is placed at the cohort's tick and only its state is ever touched again.
+                // F (left, bare) carries the hurt flash; G (right) carries the armour glint. G wears its
+                // chestplate from the start and is spawned UNenchanted: the glint A/B and the hold flags toggle
+                // only the stack's ench tag, so the armour's own pixels are the same in every frame and the
+                // difference between frames is the glint's two passes and nothing else. Both stand at the pair
+                // distance, which is part of the calibration key (see celtium$REFERENCE_ENTITIES_ENTITY): at
+                // 4 m a carrier is about a third of the 720p frame's height, big enough for the checkers'
+                // masks and small enough to keep both carriers and the background in one frame.
+                double dz = -1.0D * celtium$ENTITY_PAIR_DISTANCE;
+                net.minecraft.entity.monster.EntityZombie flashCarrier =
+                        new net.minecraft.entity.monster.EntityZombie(mc.world);
+                celtium$spawnEntity(mc, flashCarrier, -1.0D, dz);
+                flashCarrier.setNoGravity(true);
+                flashCarrier.motionX = 0.0D;
+                flashCarrier.motionY = 0.0D;
+                flashCarrier.motionZ = 0.0D;
+                flashCarrier.hurtTime = 0;
+                flashCarrier.maxHurtTime = 10;
+                celtium$effectPairF = flashCarrier;
+                net.minecraft.entity.monster.EntityZombie glintCarrier =
+                        new net.minecraft.entity.monster.EntityZombie(mc.world);
+                net.minecraft.item.ItemStack chestplate = new net.minecraft.item.ItemStack(
+                        net.minecraft.init.Items.DIAMOND_CHESTPLATE);
+                glintCarrier.setItemStackToSlot(net.minecraft.inventory.EntityEquipmentSlot.CHEST, chestplate);
+                celtium$spawnEntity(mc, glintCarrier, 1.0D, dz);
+                glintCarrier.setNoGravity(true);
+                glintCarrier.motionX = 0.0D;
+                glintCarrier.motionY = 0.0D;
+                glintCarrier.motionZ = 0.0D;
+                celtium$effectPairG = glintCarrier;
+                report.addProperty("effectPairDistance", Integer.valueOf(celtium$ENTITY_PAIR_DISTANCE));
+                String pairF = flashCarrier.posX + "," + flashCarrier.posY + "," + flashCarrier.posZ;
+                String pairG = glintCarrier.posX + "," + glintCarrier.posY + "," + glintCarrier.posZ;
+                report.addProperty("effectPairF", pairF);
+                report.addProperty("effectPairG", pairG);
+                int pairSurface = mc.world.getHeight(new net.minecraft.util.math.BlockPos(
+                        (int) Math.floor(flashCarrier.posX), 0, (int) Math.floor(flashCarrier.posZ))).getY();
+                report.addProperty("effectPairOnGround", Boolean.valueOf(
+                        Math.abs(pairSurface - flashCarrier.posY) <= 1.0D
+                                && Math.abs(pairSurface - glintCarrier.posY) <= 1.0D));
+                report.addProperty("effectPairGEnchantedAtSpawn",
+                        Boolean.valueOf(chestplate.isItemEnchanted()));
+                System.out.println("[Celtium] CELTIUM_EFFECT_PAIR_SPAWNED tick=" + worldTicks
+                        + " f=" + pairF + " g=" + pairG);
+            }
             if (worldTicks >= 60 && !celtium$losWallPlaced && LOS_WALL) {
                 celtium$losWallPlaced = true;
                 // Placed with the cohort, on the same tick and the same anchor, so the wall and the
@@ -4136,6 +4186,18 @@ public final class ValidationClient {
                 }
             }
         }
+        // The effect pair's hold forms, for the cross-run and reference arms: the flash held on carrier F and
+        // the glint held on carrier G, re-asserted every tick because hurtTime decays on its own and a held
+        // state that is only set once is a state that quietly turns itself off before the capture. These are
+        // the flags the calibration token carries (entityHurtHold / entityGlintHold): unlike the A/B windows
+        // below they change the captured frame itself.
+        if (HarnessConfig.bool("entityHurtHold", false) && celtium$effectPairF != null) {
+            celtium$effectPairF.hurtTime = 10;
+            celtium$effectPairF.maxHurtTime = 10;
+        }
+        if (HarnessConfig.bool("entityGlintHold", false)) {
+            celtium$setPairGlint(true);
+        }
         // The glow outline: the glowing tag routes every kept mob through the entityOutline framebuffer and its
         // silhouette composite, the same post-process shape the spectator effects take.
         if (HarnessConfig.bool("glowEntities", false) && worldTicks >= 150 && worldTicks <= 205) {
@@ -4207,6 +4269,26 @@ public final class ValidationClient {
         }
         if (signTextAbTick > 0 && worldTicks == signTextAbTick && this.celtium$signTextStep < 0) {
             this.celtium$signTextStep = 0;
+        }
+        // The effect pair's within-run A/B windows, armed here and stepped from the render tick (see
+        // renderTick): off / on / off over three consecutive frames per effect, glint first and flash second
+        // in the leg that runs both, so the flash window's frames can borrow the glint window's mask as the
+        // armour's region and the two measurements stay independent. Arming hides the HUD and clears the
+        // particles for the window, for the sign-text attempt's measured reason: the first whole-frame
+        // comparison was mostly the HUD's text and the world's particles. The windows are placed after the
+        // capture (ticks 460/470 against a capture deadline of 400) and the leg holds the run open to tick
+        // 560, because finish() ends the handlers the frames are stepped from.
+        int entityGlintAbTick = HarnessConfig.integer("entityGlintAbTick", -1);
+        if (entityGlintAbTick > 0 && worldTicks == entityGlintAbTick && this.celtium$glintAbStep < 0) {
+            this.celtium$glintAbStep = 0;
+            mc.gameSettings.hideGUI = true;
+            mc.effectRenderer.clearEffects(mc.world);
+        }
+        int entityHurtAbTick = HarnessConfig.integer("entityHurtAbTick", -1);
+        if (entityHurtAbTick > 0 && worldTicks == entityHurtAbTick && this.celtium$hurtAbStep < 0) {
+            this.celtium$hurtAbStep = 0;
+            mc.gameSettings.hideGUI = true;
+            mc.effectRenderer.clearEffects(mc.world);
         }
         // The flicker pair, armed at a world tick instead of at a present count.
         // <p>
@@ -4439,25 +4521,60 @@ public final class ValidationClient {
     public void renderTick(TickEvent.RenderTickEvent event) {
         if (!enabled || finished) return;
         if (event.phase != TickEvent.Phase.START) return;
-        if (this.celtium$signTextStep < 0 || this.celtium$signTextStep > 3) return;
+        boolean signActive = this.celtium$signTextStep >= 0 && this.celtium$signTextStep <= 3;
+        boolean hurtActive = this.celtium$hurtAbStep >= 0 && this.celtium$hurtAbStep <= 3;
+        boolean glintActive = this.celtium$glintAbStep >= 0 && this.celtium$glintAbStep <= 3;
+        if (!signActive && !hurtActive && !glintActive) return;
         Minecraft mc = Minecraft.getMinecraft();
         if (mc.world == null || mc.player == null) return;
-        int step = this.celtium$signTextStep++;
-        if (step == 3) {
-            // The HUD comes back on the frame *after* the last dump: restoring it in the same render tick put the
-            // HUD into the third frame (measured on leg r28c, whose "off" frame carried the FPS and biome lines).
-            mc.gameSettings.hideGUI = !HarnessConfig.bool("keepGui", true);
-            return;
+        if (signActive) {
+            int step = this.celtium$signTextStep++;
+            if (step == 3) {
+                // The HUD comes back on the frame *after* the last dump: restoring it in the same render tick put
+                // the HUD into the third frame (measured on leg r28c, whose "off" frame carried the FPS and
+                // biome lines).
+                mc.gameSettings.hideGUI = !HarnessConfig.bool("keepGui", true);
+            } else {
+                boolean on = step == 0;
+                if (!celtium$signTextPresent(mc)) {
+                    celtium$placeSignTextScene(mc);
+                }
+                int lines = celtium$setSignText(mc, on);
+                report.addProperty("signTextAb" + (char) ('a' + step),
+                        worldTicks + " on=" + on + " lines=" + lines + " block=" + celtium$signTextBlock(mc)
+                                + " renderStep=" + step);
+                celtium$requestPresentedDump(mc, "signtext-" + (char) ('a' + step));
+            }
         }
-        boolean on = step == 0;
-        if (!celtium$signTextPresent(mc)) {
-            celtium$placeSignTextScene(mc);
+        // The effect pair's A/B windows, stepped here for the sign-text reason: a render tick is exactly one
+        // frame, and the state is assigned on every step - off, on, off - so each dumped frame carries the
+        // state its step names (see celtium$setPairFlash). The fourth step restores the HUD on the frame after
+        // the last dump, as the sign-text window does. The two windows never overlap in a leg (glint at tick
+        // 460, flash at 470), and each is stepped independently so either can run alone.
+        if (hurtActive) {
+            int step = this.celtium$hurtAbStep++;
+            if (step == 3) {
+                mc.gameSettings.hideGUI = !HarnessConfig.bool("keepGui", true);
+            } else {
+                boolean on = step == 1;
+                int hurtTime = celtium$setPairFlash(on);
+                report.addProperty("entityHurtAb" + (char) ('a' + step),
+                        worldTicks + " on=" + on + " hurtTime=" + hurtTime + " renderStep=" + step);
+                celtium$requestPresentedDump(mc, "hurt-" + (char) ('a' + step));
+            }
         }
-        int lines = celtium$setSignText(mc, on);
-        report.addProperty("signTextAb" + (char) ('a' + step),
-                worldTicks + " on=" + on + " lines=" + lines + " block=" + celtium$signTextBlock(mc)
-                        + " renderStep=" + step);
-        celtium$requestPresentedDump(mc, "signtext-" + (char) ('a' + step));
+        if (glintActive) {
+            int step = this.celtium$glintAbStep++;
+            if (step == 3) {
+                mc.gameSettings.hideGUI = !HarnessConfig.bool("keepGui", true);
+            } else {
+                boolean on = step == 1;
+                boolean enchanted = celtium$setPairGlint(on);
+                report.addProperty("entityGlintAb" + (char) ('a' + step),
+                        worldTicks + " on=" + on + " isItemEnchanted=" + enchanted + " renderStep=" + step);
+                celtium$requestPresentedDump(mc, "glint-" + (char) ('a' + step));
+            }
+        }
     }
 
     @SubscribeEvent
@@ -5299,10 +5416,67 @@ public final class ValidationClient {
         return changed;
     }
 
+    /**
+     * Sets the flash carrier's hurt state for one A/B frame and returns the {@code hurtTime} now on it.
+     * <p>
+     * An explicit assignment per frame, in both directions: {@code hurtTime} decays once per tick, so a state
+     * set once at the window's first tick would still read as on in the third frame, and the triple would be
+     * on/on/on with the outer frames measuring nothing (item 358 readiness, P3 - the same failure the
+     * tick-driven {@code glowAbTick} shape has, whose on/off toggles inside one frame's tick batch). The
+     * render tick is the only place a per-frame assignment means the frame it names.
+     */
+    private int celtium$setPairFlash(boolean on) {
+        if (celtium$effectPairF == null) {
+            return -1;
+        }
+        celtium$effectPairF.hurtTime = on ? 10 : 0;
+        celtium$effectPairF.maxHurtTime = 10;
+        return celtium$effectPairF.hurtTime;
+    }
+
+    /**
+     * Sets the glint carrier's enchantment for one A/B frame - the {@code ench} tag on its chestplate, and
+     * nothing else - and returns whether the stack now reads as enchanted.
+     * <p>
+     * The tag is the whole switch: {@code ItemStack.isItemEnchanted()} is what {@code LayerArmorBase} asks
+     * before drawing the glint's two texture-matrix passes, and the carrier wears the same chestplate in every
+     * frame, so toggling the tag toggles the glint and only the glint. Removing the tag rather than swapping
+     * the stack keeps the armour's own pixels identical across the triple, which is what lets the checker's
+     * skin-invariance test mean anything.
+     */
+    private boolean celtium$setPairGlint(boolean on) {
+        if (celtium$effectPairG == null) {
+            return false;
+        }
+        net.minecraft.item.ItemStack stack = celtium$effectPairG.getItemStackFromSlot(
+                net.minecraft.inventory.EntityEquipmentSlot.CHEST);
+        if (stack == null || stack.isEmpty()) {
+            return false;
+        }
+        if (on) {
+            if (!stack.isItemEnchanted()) {
+                stack.addEnchantment(net.minecraft.init.Enchantments.UNBREAKING, 1);
+            }
+        } else if (stack.hasTagCompound()) {
+            stack.getTagCompound().removeTag("ench");
+        }
+        return stack.isItemEnchanted();
+    }
+
     /** The sign the sign-text scene placed, or null when it was never placed. */
     private net.minecraft.util.math.BlockPos celtium$signTextPos;
     /** The sign-text A/B's next render-tick step, or -1 when the scene is not armed. */
     private int celtium$signTextStep = -1;
+    /** Whether the entity-effect carriers have been placed in this run. */
+    private boolean celtium$effectPairSpawned;
+    /** The entity-effect scene's flash carrier (F): a bare zombie, or null when the pair was never placed. */
+    private net.minecraft.entity.monster.EntityZombie celtium$effectPairF;
+    /** The entity-effect scene's glint carrier (G): a zombie in a diamond chestplate, or null as above. */
+    private net.minecraft.entity.monster.EntityZombie celtium$effectPairG;
+    /** The hurt-flash A/B's next render-tick step, or -1 when the window is not armed. */
+    private int celtium$hurtAbStep = -1;
+    /** The enchant-glint A/B's next render-tick step, or -1 when the window is not armed. */
+    private int celtium$glintAbStep = -1;
 
     /**
      * Places the sign the sign-text afterimage is measured on: in the air on the camera's own look ray, facing it,
