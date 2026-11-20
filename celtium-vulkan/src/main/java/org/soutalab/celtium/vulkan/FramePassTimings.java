@@ -125,7 +125,18 @@ public final class FramePassTimings {
             // its end owns it. `animBatchFlush` is the deferred regions' recording, `animBatchBegin` the command
             // buffer's acquisition inside it, `animBatchCmd` the end-and-file call, and `animInvalidate` the
             // per-sprite invalidation the upload hook issues beside the announcement.
-            "animBatchFlush", "animBatchBegin", "animBatchCmd", "animInvalidate"};
+            "animBatchFlush", "animBatchBegin", "animBatchCmd", "animInvalidate",
+            // Item 407: the client tick's second split (TickSplit2). The tickTop2 names wrap disjoint call sites
+            // inside Minecraft.runTick and their union is what the per-tick residual subtracts; the tickWorld /
+            // tickLvlRenderer children (tickEnt, tickTileEnt, tickParticles, tickChunks, tickDrain) are reported,
+            // never subtracted - the same rule as the other INSIDE names. Present/display are deliberately absent:
+            // they live in runGameLoop, outside the tick, and GameLoopTiming already names them there. tickSched
+            // and tickFixture are named but deliberately unhooked (see TickTimings): the scheduled-executables
+            // drain runs in runGameLoop, not inside the tick, and the validation client's tick hook may only
+            // reach this table reflectively, so both stay at calls=0 as the "not separated" signal.
+            "tickSched", "tickNet", "tickInput", "tickGameMode", "tickSound", "tickGuiTick", "tickFml",
+            "tickWorld", "tickLvlRenderer", "tickFixture",
+            "tickEnt", "tickTileEnt", "tickParticles", "tickChunks", "tickDrain"};
 
     private static final int CAPACITY = 512;
 

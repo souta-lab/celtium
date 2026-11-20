@@ -23,19 +23,73 @@ import java.util.Arrays;
  * <p>
  * The window is the fixture's warm window by default ({@code [400, 600)} ticks after the world loads), because that
  * is the interval the KPI judges; a tick outside it is not recorded, so the world-load wave cannot dilute the
- * percentiles. Off unless {@code -Dceltium.vulkan.tickTimings=true}, the same rule the other repeating instruments
+ * percentiles. Off unless the harness asks for it ({@code tickTimings=true} in the harness file, the form the
+ * retired {@code -Dceltium.vulkan.tickTimings=true} now takes), the same rule the other repeating instruments
  * follow: a bracket that runs per sprite per tick is not free.
+ * <p>
+ * TickSplit2 (item 407) extends this split because the legacy residual could not be attributed: {@code tickOther}
+ * was a difference of percentiles (the total's p50 minus the top brackets' p50s), not a percentile of per-tick
+ * residuals, and a top bracket whose p50 fell under the 5 us print threshold was never subtracted at all. With
+ * {@code tickSplit2=true} in the harness file, the tick gains the {@code tickTop2} brackets (disjoint call sites
+ * inside {@code runTick}, hooked by the tick-split mixins), a per-tick residual filed beside the total
+ * ({@code total - union(tickTop2)}, the union taken by {@link PassTimingCoverage} rather than a sum), and a
+ * second report line, {@code CELTIUM_TICK_SPLIT2}, which prints every top bracket with its calls per tick and
+ * no print threshold on the subtraction side. The legacy line is printed exactly as before whenever the legacy
+ * switch is on. Two names stay deliberately unhooked, so their zero call counts are the "not separated" signal
+ * rather than a silent gap: {@code tickSched} (the scheduled-executables drain runs in {@code runGameLoop},
+ * outside the tick this class measures) and {@code tickFixture} (the validation client's tick hook may only
+ * reach the celtium-vulkan classes reflectively, so it cannot bracket itself directly; its work rides inside
+ * the FML dispatch that {@code tickFml} does measure).
+ * <p>
+ * {@code tickTimingsCpu=true} switches this class's clock to the client thread's CPU time, the
+ * {@link FramePassTimings} {@code passSplitCpu} precedent carried to the tick: the wall-minus-cpu difference of
+ * the same leg shape is the upper bound on time the tick spent not working (GC pauses, preemption).
  */
 public final class TickTimings {
 
     private static final boolean ENABLED = HarnessConfig.bool("tickTimings", false);
+    /** TickSplit2 (item 407): independent of the legacy switch, so a leg can take either split alone. */
+    private static final boolean SPLIT2 = HarnessConfig.bool("tickSplit2", false);
+    /**
+     * The tick clock's CPU form (item 407, layer 3). Resolved once, like {@link FramePassTimings}' clock switch:
+     * a property lookup per bracket is exactly the tax that class's history records.
+     */
+    private static final boolean CPU_CLOCK_TICK = HarnessConfig.bool("tickTimingsCpu", false);
+    private static final java.lang.management.ThreadMXBean THREAD_BEAN =
+            java.lang.management.ManagementFactory.getThreadMXBean();
+    private static final boolean THREAD_CPU_SUPPORTED = THREAD_BEAN.isCurrentThreadCpuTimeSupported();
     private static final int FROM = HarnessConfig.integer("tickTimingsFrom", 400);
     private static final int TO = HarnessConfig.integer("tickTimingsTo", 600);
     private static final int CAPACITY = Math.max(64, TO - FROM + 8);
 
-    /** {@return whether the tick split is switched on}. */
+    /** {@return whether either tick split is switched on}. */
     public static boolean enabled() {
-        return ENABLED;
+        return ENABLED || SPLIT2;
+    }
+
+    /** {@return whether TickSplit2 (the per-tick residual and the tickTop2 brackets) is switched on}. */
+    public static boolean split2Enabled() {
+        return SPLIT2;
+    }
+
+    /** {@return whether the tick clock reads CPU time instead of wall time}. */
+    public static boolean cpuClock() {
+        return CPU_CLOCK_TICK && THREAD_CPU_SUPPORTED;
+    }
+
+    /** The timestamp the tick brackets compare, in nanoseconds under the selected clock. */
+    private static long now() {
+        return CPU_CLOCK_TICK && THREAD_CPU_SUPPORTED ? THREAD_BEAN.getCurrentThreadCpuTime() : System.nanoTime();
+    }
+
+    /**
+     * {@return the per-tick residual: what is left of one tick after the covered span is taken out}.
+     * <p>
+     * Clamped at zero, because a covered span read on a coarser clock can overtake the total it was taken from;
+     * a negative residual would be an artefact of the clocks, not a tick that happened.
+     */
+    static long residualFromCovered(long total, long covered) {
+        return Math.max(0L, total - covered);
     }
 
     /** Whether a tick is being measured right now; {@link FramePassTimings} routes its brackets here while it is. */
@@ -67,6 +121,18 @@ public final class TickTimings {
     private static long[] calls;
     /** The tick's own top-level brackets, whose union the residual subtracts. */
     private static int[] tickTop;
+    /** TickSplit2's top-level brackets: the legacy three plus the runTick call sites, mutually disjoint. */
+    private static int[] tickTop2;
+    /** TickSplit2's reported-only children, in print order. */
+    private static int[] tickChildren2;
+    /** Per-tick TickSplit2 residual ({@code total - union(tickTop2)}), filed beside {@link #totals}. */
+    private static long[] residuals2;
+    /** Coverage slot per bracket column for {@link #tickTop2}, or -1 for a bracket the union does not subtract. */
+    private static int[] top2Slot;
+    /** Whether a bracket column is a TickSplit2 name, gated off while {@link #SPLIT2} is off. */
+    private static boolean[] split2Column;
+    /** The tickTop2 union, tracked live from the brackets' outermost opens and closes. */
+    private static PassTimingCoverage coverage2;
 
     private TickTimings() {
     }
@@ -90,6 +156,56 @@ public final class TickTimings {
                 FramePassTimings.indexOfName("dynUpload"),
                 FramePassTimings.indexOfName("lightCache"),
         };
+        // TickSplit2's top set: the legacy three (their call sites are inside runTick too) plus the disjoint
+        // runTick call sites the tick-split mixins bracket. tickSched and tickFixture are members so the report
+        // prints them - with calls=0, the declared "not separated" state - but no hook ever opens them, so they
+        // contribute nothing to the union. tickWorld accumulates two call sites (World.updateEntities and
+        // WorldClient.tick); the children below sit inside those two spans.
+        tickTop2 = new int[] {
+                FramePassTimings.indexOfName("anim"),
+                FramePassTimings.indexOfName("dynUpload"),
+                FramePassTimings.indexOfName("lightCache"),
+                TickSplit2Index.TICK_SCHED,
+                TickSplit2Index.TICK_NET,
+                TickSplit2Index.TICK_INPUT,
+                TickSplit2Index.TICK_GAME_MODE,
+                TickSplit2Index.TICK_SOUND,
+                TickSplit2Index.TICK_GUI_TICK,
+                TickSplit2Index.TICK_FML,
+                TickSplit2Index.TICK_WORLD,
+                TickSplit2Index.TICK_LVL_RENDERER,
+                TickSplit2Index.TICK_FIXTURE,
+        };
+        tickChildren2 = new int[] {
+                TickSplit2Index.TICK_ENT,
+                TickSplit2Index.TICK_TILE_ENT,
+                TickSplit2Index.TICK_PARTICLES,
+                TickSplit2Index.TICK_CHUNKS,
+                TickSplit2Index.TICK_DRAIN,
+        };
+        residuals2 = new long[CAPACITY];
+        top2Slot = new int[columns];
+        Arrays.fill(top2Slot, -1);
+        for (int slot = 0; slot < tickTop2.length; slot++) {
+            top2Slot[tickTop2[slot]] = slot;
+        }
+        split2Column = new boolean[columns];
+        for (int top : tickTop2) {
+            // The legacy three are not gated: they are the legacy split's own brackets.
+            if (top != tickTop[0] && top != tickTop[1] && top != tickTop[2]) {
+                split2Column[top] = true;
+            }
+        }
+        for (int child : tickChildren2) {
+            split2Column[child] = true;
+        }
+        coverage2 = new PassTimingCoverage(tickTop2.length);
+    }
+
+    /** {@return TickSplit2's top-level bracket indices}, for the unit test that pins their disjointness. */
+    static int[] tickTop2Indices() {
+        ensure();
+        return tickTop2.clone();
     }
 
     /**
@@ -99,7 +215,7 @@ public final class TickTimings {
      *                 window's tick numbers mean the same thing the fixture's {@code worldTicks} mean
      */
     public static void beginTick(boolean hasWorld) {
-        if (!ENABLED) {
+        if (!ENABLED && !SPLIT2) {
             return;
         }
         if (!hasWorld) {
@@ -113,23 +229,32 @@ public final class TickTimings {
         }
         ensure();
         open = true;
-        tickStart = System.nanoTime();
+        tickStart = now();
         Arrays.fill(current, 0L);
         Arrays.fill(starts, 0L);
         Arrays.fill(depth, 0);
+        if (SPLIT2) {
+            coverage2.reset();
+        }
     }
 
     /** Closes the tick's bracket and files the row; prints the report when the window ends. */
     public static void endTick() {
-        if (!ENABLED || !open) {
+        if ((!ENABLED && !SPLIT2) || !open) {
             return;
         }
         open = false;
-        long total = System.nanoTime() - tickStart;
+        long tickEnd = now();
+        long total = tickEnd - tickStart;
         if (recorded < CAPACITY) {
             totals[recorded] = total;
             for (int i = 0; i < current.length; i++) {
                 sums[i][recorded] = current[i];
+            }
+            if (SPLIT2) {
+                // The union is read at the tick's own end, so a top bracket still open here is clipped to the
+                // tick instead of leaking into the next one (the coverage class's coveredNanos contract).
+                residuals2[recorded] = residualFromCovered(total, coverage2.coveredNanos(tickEnd));
             }
             recorded++;
         }
@@ -144,9 +269,15 @@ public final class TickTimings {
         if (!open || index < 0) {
             return;
         }
+        if (!SPLIT2 && split2Column[index]) {
+            return;
+        }
         calls[index]++;
         if (depth[index]++ == 0) {
-            starts[index] = System.nanoTime();
+            starts[index] = now();
+            if (SPLIT2 && top2Slot[index] >= 0) {
+                coverage2.begin(top2Slot[index], starts[index]);
+            }
         }
     }
 
@@ -156,8 +287,12 @@ public final class TickTimings {
             return;
         }
         if (--depth[index] == 0) {
-            current[index] += System.nanoTime() - starts[index];
+            long ended = now();
+            current[index] += ended - starts[index];
             starts[index] = 0L;
+            if (SPLIT2 && top2Slot[index] >= 0) {
+                coverage2.end(top2Slot[index], ended);
+            }
         }
     }
 
@@ -171,35 +306,89 @@ public final class TickTimings {
      */
     private static void report() {
         if (recorded == 0) {
-            System.out.println("[Celtium] CELTIUM_TICK_SPLIT ticks=0 window=[" + FROM + "," + TO
-                    + ") (the instrument did not record; enabled=" + ENABLED + ")");
+            if (ENABLED) {
+                System.out.println("[Celtium] CELTIUM_TICK_SPLIT ticks=0 window=[" + FROM + "," + TO
+                        + ") (the instrument did not record; enabled=" + ENABLED + ")");
+            }
+            if (SPLIT2) {
+                System.out.println("[Celtium] CELTIUM_TICK_SPLIT2 ticks=0 window=[" + FROM + "," + TO
+                        + ") (the instrument did not record; split2=" + SPLIT2 + ")");
+            }
             return;
         }
         long[] total = Arrays.copyOf(totals, recorded);
         Arrays.sort(total);
         long totalP50 = total[recorded / 2] / 1000L;
         long totalP95 = total[Math.min(recorded - 1, recorded * 95 / 100)] / 1000L;
-        StringBuilder line = new StringBuilder("[Celtium] CELTIUM_TICK_SPLIT ticks=").append(recorded)
-                .append(" window=[").append(FROM).append(',').append(TO).append(") tick[p50=").append(totalP50)
-                .append(" p95=").append(totalP95).append("] (us; p50/p95/calls-per-tick, brackets with p50 >= 5)");
         long named = 0L;
-        for (int i = 0; i < current.length; i++) {
-            long[] values = Arrays.copyOf(sums[i], recorded);
-            Arrays.sort(values);
-            long p50 = values[recorded / 2] / 1000L;
-            long p95 = values[Math.min(recorded - 1, recorded * 95 / 100)] / 1000L;
-            if (p50 < 5L) {
-                continue;
+        if (ENABLED) {
+            StringBuilder line = new StringBuilder("[Celtium] CELTIUM_TICK_SPLIT ticks=").append(recorded)
+                    .append(" window=[").append(FROM).append(',').append(TO).append(") tick[p50=").append(totalP50)
+                    .append(" p95=").append(totalP95).append("] (us; p50/p95/calls-per-tick, brackets with p50 >= 5)");
+            for (int i = 0; i < current.length; i++) {
+                long[] values = Arrays.copyOf(sums[i], recorded);
+                Arrays.sort(values);
+                long p50 = values[recorded / 2] / 1000L;
+                long p95 = values[Math.min(recorded - 1, recorded * 95 / 100)] / 1000L;
+                if (p50 < 5L) {
+                    continue;
+                }
+                line.append(' ').append(FramePassTimings.nameOf(i)).append('=').append(p50).append('/').append(p95)
+                        .append('/').append(calls[i] / Math.max(1, recorded));
+                for (int top : tickTop) {
+                    if (top == i) {
+                        named += p50;
+                    }
+                }
             }
-            line.append(' ').append(FramePassTimings.nameOf(i)).append('=').append(p50).append('/').append(p95)
-                    .append('/').append(calls[i] / Math.max(1, recorded));
-            for (int top : tickTop) {
-                if (top == i) {
-                    named += p50;
+            line.append(" tickOther=").append(Math.max(0L, totalP50 - named));
+            System.out.println(line);
+        } else {
+            // The SPLIT2 line carries the legacy residual for the attribution bars, computed by the legacy
+            // rule (a difference of percentiles over the brackets the print threshold lets through).
+            for (int i = 0; i < current.length; i++) {
+                long[] values = Arrays.copyOf(sums[i], recorded);
+                Arrays.sort(values);
+                long p50 = values[recorded / 2] / 1000L;
+                if (p50 < 5L) {
+                    continue;
+                }
+                for (int top : tickTop) {
+                    if (top == i) {
+                        named += p50;
+                    }
                 }
             }
         }
-        line.append(" tickOther=").append(Math.max(0L, totalP50 - named));
-        System.out.println(line);
+        if (SPLIT2) {
+            long[] residual = Arrays.copyOf(residuals2, recorded);
+            Arrays.sort(residual);
+            long residualP50 = residual[recorded / 2] / 1000L;
+            long residualP95 = residual[Math.min(recorded - 1, recorded * 95 / 100)] / 1000L;
+            StringBuilder line = new StringBuilder("[Celtium] CELTIUM_TICK_SPLIT2 ticks=").append(recorded)
+                    .append(" window=[").append(FROM).append(',').append(TO).append(") clock=")
+                    .append(cpuClock() ? "cpu" : "wall")
+                    .append(" tick[p50=").append(totalP50).append(" p95=").append(totalP95)
+                    .append("] (us; p50/p95/calls-per-tick, every tickTop2 bracket, no print threshold)");
+            for (int top : tickTop2) {
+                appendBracket(line, top);
+            }
+            for (int child : tickChildren2) {
+                appendBracket(line, child);
+            }
+            line.append(" tickOther=").append(Math.max(0L, totalP50 - named))
+                    .append(" tickOther2[p50=").append(residualP50).append(" p95=").append(residualP95).append(']');
+            System.out.println(line);
+        }
+    }
+
+    /** Appends one bracket's {@code name=p50/p95/calls-per-tick} to a TickSplit2 report line. */
+    private static void appendBracket(StringBuilder line, int index) {
+        long[] values = Arrays.copyOf(sums[index], recorded);
+        Arrays.sort(values);
+        long p50 = values[recorded / 2] / 1000L;
+        long p95 = values[Math.min(recorded - 1, recorded * 95 / 100)] / 1000L;
+        line.append(' ').append(FramePassTimings.nameOf(index)).append('=').append(p50).append('/').append(p95)
+                .append('/').append(calls[index] / Math.max(1, recorded));
     }
 }

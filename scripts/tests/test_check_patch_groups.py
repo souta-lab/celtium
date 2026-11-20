@@ -207,7 +207,7 @@ class PatchGroupTableTests(unittest.TestCase):
     def test_repository_table_matches_the_mixin_tree(self):
         self.assertEqual(groups.check(), [])
         _, summary = groups.analyze()
-        self.assertEqual(len(summary["discovered"]), 87)
+        self.assertEqual(len(summary["discovered"]), 92)
         self.assertEqual(sorted(summary["collisions"]),
                          ["RenderItemMixin", "TextureAtlasSpriteMixin", "TextureUtilMixin"])
         self.assertEqual(summary["shadow"], ["core.GLAllocationMixin", "core.SplashProgressMixin"])

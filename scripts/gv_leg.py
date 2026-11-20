@@ -145,6 +145,8 @@ HARNESS_KEYS = {
     "celtium.vulkan.tickTimings": "tickTimings",
     "celtium.vulkan.tickTimingsFrom": "tickTimingsFrom",
     "celtium.vulkan.tickTimingsTo": "tickTimingsTo",
+    "celtium.vulkan.tickSplit2": "tickSplit2",
+    "celtium.vulkan.tickTimingsCpu": "tickTimingsCpu",
     "celtium.vulkan.dumpTextures": "dumpTextures",
     "celtium.vulkan.dumpTexturesEvery": "dumpTexturesEvery",
     "celtium.vulkan.failImmediateSubmits": "failImmediateSubmits",
