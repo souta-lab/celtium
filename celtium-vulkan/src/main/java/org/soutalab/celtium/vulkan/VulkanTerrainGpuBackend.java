@@ -2,6 +2,8 @@ package org.soutalab.celtium.vulkan;
 
 import it.unimi.dsi.fastutil.objects.Object2LongMap;
 import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
+import it.unimi.dsi.fastutil.objects.Reference2ObjectMap;
+import it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceMap;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
 import org.soutalab.celtium.harness.HarnessConfig;
@@ -838,6 +840,38 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private static final int FRAME_TIMESTAMP_SLOT = (TIMESTAMP_SLOTS / 2) - 2;
     private long timestampPool;
+
+    /**
+     * The pipeline-statistics instrument's queries per frame slot (item 359). Eight is headroom, not an
+     * invariant: a frame records three passes by default, four with the cutout split, and the shadow view
+     * records through the same loop - so the count is not derived from {@link #MAX_UNIFORM_PASSES}, which
+     * bounds uniform blocks, not passes. A pass that finds no free query is counted in
+     * {@link #statisticsDroppedPasses}, never silently skipped.
+     */
+    private static final int STATS_PER_SLOT = 8;
+    /** The statistics pool: a query type of its own, so it cannot share the timestamp pool. */
+    private long statisticsPool;
+    /** Queries written per frame slot in that slot's current recording, and the bitmask of those already read. */
+    private final int[] statisticsSlotCounts = new int[FRAME_SLOTS];
+    private final int[] statisticsSlotConsumed = new int[FRAME_SLOTS];
+    /** Per-slot, per-query snapshots taken at record time: the pass, its logical draws, sections and charge. */
+    private final TerrainRenderPass[][] statisticsSlotPasses = new TerrainRenderPass[FRAME_SLOTS][STATS_PER_SLOT];
+    private final long[][] statisticsSlotDraws = new long[FRAME_SLOTS][STATS_PER_SLOT];
+    private final long[][] statisticsSlotSections = new long[FRAME_SLOTS][STATS_PER_SLOT];
+    private final long[][] statisticsSlotCharges = new long[FRAME_SLOTS][STATS_PER_SLOT];
+    /** The open query's accumulated unsorted budget charge, summed as its batches are charged. */
+    private long statisticsChargeAccum;
+    /** Window (since the last printed line) and cumulative totals, per pass; see TerrainStatisticsReport. */
+    private final Reference2ObjectMap<TerrainRenderPass, long[]> statisticsWindowTotals =
+            new Reference2ObjectOpenHashMap<>();
+    private final Reference2ObjectMap<TerrainRenderPass, long[]> statisticsTotals =
+            new Reference2ObjectOpenHashMap<>();
+    private long statisticsWindowStartFrame = -1L;
+    private long statisticsLastPrintFrame = -1L;
+    private long statisticsSamples;
+    private long statisticsDroppedPasses;
+    private long statisticsDroppedSamples;
+    private long statisticsReadFailures;
     /** The immediate window pass's last measured GPU time, in nanoseconds. */
     private long immediatePassGpuNanos;
     private boolean immediatePassTimed;
@@ -1421,7 +1455,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
 
         org.soutalab.celtium.vulkan.FramePassTimings.end("terrainEnsure");
-        boolean useBlockFaceCulling = !pass.isSorted();
+        // Item 359's diagnostic control arm: forceNoTerrainCulling builds every batch as one run per section
+        // (the assembler's no-culling path) while the pipeline's hardware back-face culling stays on, so the
+        // arm prices the facing buckets without changing the picture. Default off; production never sets it.
+        boolean useBlockFaceCulling = !pass.isSorted() && !TerrainStatisticsReport.forceNoCulling();
         this.terrainStatistics.setLastDrawCommands(0);
         this.terrainStatistics.setLastSectionsDrawn(0);
         this.frameIndex++;
@@ -14719,6 +14756,10 @@ this.frameBufferOpen = false;
                 this.mirrorRefreshes++;
             }
         }
+        // Item 359: the statistics read stands outside updateTimingsBody on purpose - that body's early
+        // return (no timestamp pool, or no pass timed this frame) must not be able to starve this read, or a
+        // timestamp-less device would report a silent instrument, which reads as "nothing was drawn".
+        readPipelineStatistics();
         updateTimingsBody();
     }
 
@@ -14876,6 +14917,133 @@ this.frameBufferOpen = false;
         }
         this.timestampPasses.clear();
         this.timestampSlots = 0;
+    }
+
+    /**
+     * Opens the statistics query that brackets one pass's section draw loop (item 359).
+     *
+     * @return the query's index within the frame slot, or -1 when the instrument is not collecting - the
+     *         pool is absent or the report switch is off - or when the slot's queries are exhausted, which
+     *         is counted rather than silent
+     */
+    private int beginTerrainStatistics(TerrainRenderPass pass) {
+        if (this.statisticsPool == 0L || !TerrainStatisticsReport.enabled() || this.commandBuffer == null) {
+            return -1;
+        }
+        int index = this.statisticsSlotCounts[this.frameSlot];
+        if (index >= STATS_PER_SLOT) {
+            this.statisticsDroppedPasses++;
+            return -1;
+        }
+        vkCmdBeginQuery(this.commandBuffer, this.statisticsPool, (this.frameSlot * STATS_PER_SLOT) + index, 0);
+        this.statisticsSlotPasses[this.frameSlot][index] = pass;
+        this.statisticsChargeAccum = 0L;
+        return index;
+    }
+
+    /** Adds one charged batch to the open query's unsorted charge - the V4 identity's CPU side. */
+    private void noteTerrainStatisticsCharge(int query, long chargeVertices, boolean sortedPass) {
+        if (query >= 0 && !sortedPass) {
+            this.statisticsChargeAccum += chargeVertices;
+        }
+    }
+
+    /**
+     * Closes the pass's statistics query and snapshots the CPU-side counts the report reads beside the GPU
+     * counters: the pass's logical draws and sections (the existing per-pass counters, reset at the head of
+     * every pass) and its accumulated unsorted budget charge.
+     */
+    private void endTerrainStatistics(int query, TerrainRenderPass pass) {
+        if (query < 0) {
+            return;
+        }
+        vkCmdEndQuery(this.commandBuffer, this.statisticsPool, (this.frameSlot * STATS_PER_SLOT) + query);
+        this.statisticsSlotDraws[this.frameSlot][query] = this.terrainStatistics.lastDrawCommands();
+        this.statisticsSlotSections[this.frameSlot][query] = this.terrainStatistics.lastSectionsDrawn();
+        this.statisticsSlotCharges[this.frameSlot][query] = pass.isSorted() ? 0L : this.statisticsChargeAccum;
+        this.statisticsSlotCounts[this.frameSlot] = query + 1;
+    }
+
+    /**
+     * Reads back whatever statistics samples have landed, at the frame boundary. Non-blocking like the
+     * timestamp read: a query whose availability long is still 0 stays unread for a later frame, and a slot
+     * that is reset while some of its queries were never read counts them as dropped samples - the three
+     * counters the summary prints exist so a silent instrument is never read as an empty scene.
+     */
+    private void readPipelineStatistics() {
+        if (this.statisticsPool == 0L) {
+            return;
+        }
+        for (int slot = 0; slot < FRAME_SLOTS; slot++) {
+            int count = this.statisticsSlotCounts[slot];
+            if (count == 0) {
+                continue;
+            }
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                LongBuffer data = stack.mallocLong(count * TerrainStatisticsReport.RESULT_LONGS_PER_QUERY);
+                int result = vkGetQueryPoolResults(this.context.device(), this.statisticsPool,
+                        slot * STATS_PER_SLOT, count, data, TerrainStatisticsReport.RESULT_STRIDE_BYTES,
+                        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+                if (result != VK_SUCCESS && result != VK_NOT_READY) {
+                    this.statisticsReadFailures++;
+                    continue;
+                }
+                for (int q = 0; q < count; q++) {
+                    if ((this.statisticsSlotConsumed[slot] & (1 << q)) != 0) {
+                        continue;
+                    }
+                    long[] values = TerrainStatisticsReport.decode(data, q);
+                    if (values == null) {
+                        continue;
+                    }
+                    this.statisticsSlotConsumed[slot] |= (1 << q);
+                    accumulateStatistics(slot, q, values);
+                }
+            }
+        }
+        if (this.frameId != this.statisticsLastPrintFrame && !this.statisticsWindowTotals.isEmpty()) {
+            long frames = this.statisticsWindowStartFrame < 0L ? 0L : this.frameId - this.statisticsWindowStartFrame;
+            if (TerrainStatisticsReport.printWindowIfDue(this.frameId, frames, this.statisticsWindowTotals)) {
+                this.statisticsWindowTotals.clear();
+                this.statisticsWindowStartFrame = -1L;
+                this.statisticsLastPrintFrame = this.frameId;
+            }
+        }
+    }
+
+    /** Folds one landed sample into the window and cumulative totals, beside its record-time snapshots. */
+    private void accumulateStatistics(int slot, int query, long[] values) {
+        TerrainRenderPass pass = this.statisticsSlotPasses[slot][query];
+        if (pass == null) {
+            return;
+        }
+        long[] window = this.statisticsWindowTotals.computeIfAbsent(pass, k -> new long[TerrainStatisticsReport.VALUES]);
+        long[] totals = this.statisticsTotals.computeIfAbsent(pass, k -> new long[TerrainStatisticsReport.VALUES]);
+        for (int i = 0; i < TerrainStatisticsReport.COUNTERS; i++) {
+            window[i] += values[i];
+            totals[i] += values[i];
+        }
+        window[TerrainStatisticsReport.DRAWS] += this.statisticsSlotDraws[slot][query];
+        totals[TerrainStatisticsReport.DRAWS] += this.statisticsSlotDraws[slot][query];
+        window[TerrainStatisticsReport.SECTIONS] += this.statisticsSlotSections[slot][query];
+        totals[TerrainStatisticsReport.SECTIONS] += this.statisticsSlotSections[slot][query];
+        window[TerrainStatisticsReport.BUDGET_CHARGE] += this.statisticsSlotCharges[slot][query];
+        totals[TerrainStatisticsReport.BUDGET_CHARGE] += this.statisticsSlotCharges[slot][query];
+        this.statisticsSamples++;
+        if (this.statisticsWindowStartFrame < 0L) {
+            this.statisticsWindowStartFrame = this.frameId;
+        }
+    }
+
+    /** The summary's statistics block; printed even when the instrument cannot run, with the reason. */
+    String terrainStatisticsSummary() {
+        if (this.statisticsPool == 0L) {
+            String reason = !this.context.pipelineStatisticsQuerySupported() ? "device"
+                    : TerrainStatisticsReport.forceDisabled() ? "disabled" : "unavailable";
+            return TerrainStatisticsReport.formatSummary(false, reason, 0L, 0L, 0L, 0L, this.statisticsTotals);
+        }
+        return TerrainStatisticsReport.formatSummary(true, "", this.statisticsSamples, this.statisticsDroppedPasses,
+                this.statisticsDroppedSamples, this.statisticsReadFailures, this.statisticsTotals);
     }
 
     @Override
@@ -16008,6 +16176,9 @@ this.frameBufferOpen = false;
             org.soutalab.celtium.vulkan.FramePassTimings.end("recordPrepare");
         }
 
+        // Item 359: the statistics query brackets exactly this loop - the pre-terrain groups before it, and
+        // the immediate tail and UI quads after it, are not terrain geometry and stay outside the count.
+        int statisticsQuery = beginTerrainStatistics(pass);
         Iterator<ChunkRenderList> iterator = renderLists.iterator(pass.isReverseOrder());
         // The pass and its culling flag are the same for the shadow pass and the terrain pass (a sorted shadow pass
         // culls no faces either), so the view the caller is drawing has to be in the key too. Keyed without it, the
@@ -16091,6 +16262,7 @@ this.frameBufferOpen = false;
                 this.terrainBudget.noteDroppedBatch(chargeVertices, batch.size());
                 continue;
             }
+            noteTerrainStatisticsCharge(statisticsQuery, chargeVertices, pass.isSorted());
 
             if (this.readbackSlots < 8) {
                 // One slot per pass, so the readback covers the batch each pass actually draws rather than only the
@@ -16266,6 +16438,7 @@ this.frameBufferOpen = false;
             }
             org.soutalab.celtium.vulkan.FramePassTimings.end("recDraw");
         }
+        endTerrainStatistics(statisticsQuery, pass);
 
         if (this.currentImmediateMesh != null || !this.immediateGroups.isEmpty()) {
             // The terrain pass's tail: everything still pending is drawn inside this pass, after the sections, so it
@@ -20344,6 +20517,23 @@ this.frameBufferOpen = false;
                 record("the queue cannot record timestamps, so pass timing is disabled; the backend registers anyway");
             }
 
+            // Item 359: the pipeline-statistics pool, judged independently of the timestamps - a queue can
+            // lack one and offer the other. Statistics are an instrument, never a precondition: a failed
+            // creation is recorded and the backend registers anyway, and the summary says supported=false.
+            if (this.context.pipelineStatisticsQuerySupported() && !TerrainStatisticsReport.forceDisabled()) {
+                org.lwjgl.vulkan.VkQueryPoolCreateInfo statisticsPoolInfo =
+                        org.lwjgl.vulkan.VkQueryPoolCreateInfo.calloc(stack).sType$Default()
+                                .queryType(VK_QUERY_TYPE_PIPELINE_STATISTICS)
+                                .queryCount(FRAME_SLOTS * STATS_PER_SLOT)
+                                .pipelineStatistics(TerrainStatisticsReport.STATISTICS_MASK);
+                LongBuffer statisticsHandle = stack.mallocLong(1);
+                if (vkCreateQueryPool(this.context.device(), statisticsPoolInfo, null, statisticsHandle) == VK_SUCCESS) {
+                    this.statisticsPool = statisticsHandle.get(0);
+                } else {
+                    record("the pipeline statistics query pool could not be created, so terrain statistics are disabled; the backend registers anyway");
+                }
+            }
+
             if (REFERENCE_RENDER) {
                 // A reference render: the mod loads, the bootstrap completes and the fixture can query the device, but the
                 // backend never registers - so no pass, no capture and no mixin takes anything, and OpenGL draws the whole
@@ -20364,6 +20554,10 @@ this.frameBufferOpen = false;
         if (this.timestampPool != 0) {
             vkDestroyQueryPool(this.context.device(), this.timestampPool, null);
             this.timestampPool = 0;
+        }
+        if (this.statisticsPool != 0) {
+            vkDestroyQueryPool(this.context.device(), this.statisticsPool, null);
+            this.statisticsPool = 0;
         }
         for (int slot = 0; slot < FRAME_SLOTS; slot++) {
             if (this.slotFences[slot] != 0) {
@@ -20490,6 +20684,21 @@ this.frameBufferOpen = false;
                             FRAME_TIMESTAMP_SLOT * 2);
                     this.frameEndTimestampWritten = false;
                 }
+            }
+            if (this.statisticsPool != 0) {
+                // This slot's fence has completed above, so none of its queries are in flight. Queries the
+                // readback never consumed are dropped samples, counted before the reset discards them.
+                int written = this.statisticsSlotCounts[this.frameSlot];
+                if (written > 0) {
+                    int unread = written - Integer.bitCount(this.statisticsSlotConsumed[this.frameSlot]);
+                    if (unread > 0) {
+                        this.statisticsDroppedSamples += unread;
+                    }
+                }
+                vkCmdResetQueryPool(this.commandBuffer, this.statisticsPool,
+                        this.frameSlot * STATS_PER_SLOT, STATS_PER_SLOT);
+                this.statisticsSlotCounts[this.frameSlot] = 0;
+                this.statisticsSlotConsumed[this.frameSlot] = 0;
             }
         }
         // The indirect packet pages are slot-owned: the slot's prior fence already completed above (or it never

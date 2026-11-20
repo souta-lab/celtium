@@ -518,6 +518,11 @@ final class BackendDiagnostics {
                 + " terrainBudgetDeferred=" + b.terrainBudget.totalDeferredRebuilds()
                 + " terrainBudgetReused=" + b.terrainBudget.totalReusedSnapshots()
                 + " terrainBudgetForced=" + b.terrainBudget.totalForcedFirstBuilds()
+                // Item 359 (C4): the budget's drawn totals - the identity check's CPU side - were accumulated
+                // and never printed, so a healthy run (no drops, no budget line) had no V4 material at all.
+                + " terrainBudgetDrawnVertices=" + b.terrainBudget.totalDrawnVertices()
+                + " terrainBudgetDrawnDraws=" + b.terrainBudget.totalDrawnDraws()
+                + " " + b.terrainStatisticsSummary()
                 // task-51's prerequisite: the upload path's queue drain and volume, on the line the fixture actually
                 // reports. VulkanContext.bootstrapQueueWaits is incremented by b.beginCommands()'s vkQueueWaitIdle and
                 // was printed only by CELTIUM_WAIT_CENSUS from VulkanContext.delete(), which appears in no run at all -

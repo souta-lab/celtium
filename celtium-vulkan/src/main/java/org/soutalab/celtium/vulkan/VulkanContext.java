@@ -2682,6 +2682,8 @@ public final class VulkanContext {
 
     /** Whether multiDrawIndirect was reported by the device and therefore enabled at creation. */
     private boolean multiDrawIndirectSupported;
+    /** Whether pipelineStatisticsQuery was reported by the device and therefore enabled at creation. */
+    private boolean pipelineStatisticsQuerySupported;
     private boolean storageImageReadWithoutFormatSupported;
     private boolean storageImageWriteWithoutFormatSupported;
     /** Whether drawIndirectFirstInstance was reported by the device and therefore enabled at creation. */
@@ -2692,6 +2694,11 @@ public final class VulkanContext {
     /** {@return whether the device was created with {@code multiDrawIndirect} enabled}. */
     public boolean multiDrawIndirectEnabled() {
         return this.multiDrawIndirectSupported;
+    }
+
+    /** {@return whether the device was created with {@code pipelineStatisticsQuery} enabled}. */
+    public boolean pipelineStatisticsQuerySupported() {
+        return this.pipelineStatisticsQuerySupported;
     }
 
     /** Both Vulkan formatless storage-image capabilities were queried and enabled at logical-device creation. */
@@ -3039,10 +3046,12 @@ public final class VulkanContext {
             this.drawIndirectFirstInstanceSupported = supportedFeatures.drawIndirectFirstInstance();
             this.storageImageReadWithoutFormatSupported = supportedFeatures.shaderStorageImageReadWithoutFormat();
             this.storageImageWriteWithoutFormatSupported = supportedFeatures.shaderStorageImageWriteWithoutFormat();
+            this.pipelineStatisticsQuerySupported = supportedFeatures.pipelineStatisticsQuery();
             enabledFeatures.multiDrawIndirect(this.multiDrawIndirectSupported);
             enabledFeatures.drawIndirectFirstInstance(this.drawIndirectFirstInstanceSupported);
             enabledFeatures.shaderStorageImageReadWithoutFormat(this.storageImageReadWithoutFormatSupported);
             enabledFeatures.shaderStorageImageWriteWithoutFormat(this.storageImageWriteWithoutFormatSupported);
+            enabledFeatures.pipelineStatisticsQuery(this.pipelineStatisticsQuerySupported);
             org.lwjgl.vulkan.VkPhysicalDeviceProperties deviceProperties =
                     org.lwjgl.vulkan.VkPhysicalDeviceProperties.calloc(stack);
             vkGetPhysicalDeviceProperties(this.physicalDevice, deviceProperties);
@@ -3154,7 +3163,8 @@ public final class VulkanContext {
             System.out.println("[Celtium] CELTIUM_DEVICE_FEATURES shaderDrawParameters="
                     + this.shaderDrawParametersSupported + " multiDrawIndirect=" + this.multiDrawIndirectSupported
                     + " maxDrawIndirectCount=" + this.maxDrawIndirectCount
-                    + " textureArray=" + this.textureArraySupported);
+                    + " textureArray=" + this.textureArraySupported
+                    + " pipelineStatisticsQuery=" + this.pipelineStatisticsQuerySupported);
         }
     }
 
