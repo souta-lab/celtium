@@ -34,6 +34,13 @@ val modEmbedDependencies = configurations.create("modEmbedDependencies") {
     isCanBeConsumed = false
     attributes { attribute(ModUtils.DEOBFUSCATOR_TRANSFORMED, true) }
 }
+// The one :common artifact the validation client jar draws its harness reader from (see the
+// validationJar task): the same modJar the mod itself embeds, filtered there to the harness package.
+val validationHarnessEmbed = configurations.create("validationHarnessEmbed") {
+    isCanBeResolved = true
+    isCanBeConsumed = false
+    attributes { attribute(ModUtils.DEOBFUSCATOR_TRANSFORMED, true) }
+}
 
 val celeritasLwjglVersion = "3.3.3"
 
@@ -134,6 +141,9 @@ dependencies {
         isTransitive = false
     }
     modEmbedDependencies(project(":common", configuration = "modJar")) {
+        isTransitive = false
+    }
+    validationHarnessEmbed(project(":common", configuration = "modJar")) {
         isTransitive = false
     }
     modEmbedDependencies("org.joml:joml:1.10.5")
@@ -285,6 +295,18 @@ tasks.named<JavaCompile>(validation.compileJavaTaskName) {
 }
 val validationJar = tasks.register<Jar>("validationJar") {
     from(validation.output)
+    // HarnessConfig (org.soutalab.celtium.harness, in :common) is the harness's one configuration
+    // reader, and ValidationClient's static init touches it before anything else. It normally reaches
+    // the game through the mod jar's embedded copy of :common, so a leg whose renderer slot holds a
+    // different renderer (item 341's Celeritas reference arm) died with NoClassDefFoundError during
+    // "Initializing game" - the fixture had silently become renderer-dependent. Ship the harness
+    // package in this jar as well: the class is self-contained (JDK types only), and when both jars
+    // are present the class loader takes either copy - both are compiled from the same source in the
+    // same build, so the second copy cannot disagree with the first.
+    from({ zipTree(validationHarnessEmbed.singleFile) }) {
+        include("org/soutalab/celtium/harness/**")
+    }
+    dependsOn(validationHarnessEmbed)
     // Keep the proof inside the mod classloader, alongside the GL bindings
     // initialized by Cleanroom. Do not add this jar to the application classpath.
     providers.gradleProperty("celtium_validation_interop_jar").orNull?.let {
