@@ -28,28 +28,57 @@ class GrayAlphaImageTest {
         return page;
     }
 
+    /** Vanilla's font pages are white glyphs with an alpha ramp: the exact case, and it must be bit-identical. */
     @Test
-    void blitMatchesDrawImageOnATransparentArgbCanvas() {
+    void whiteGlyphPagesMatchDrawImageExactly() {
         int dim = 32;
         BufferedImage gray = GrayAlphaImage.create(dim * 2, dim);
         BufferedImage argb = new BufferedImage(dim * 2, dim, BufferedImage.TYPE_INT_ARGB);
         Graphics g = argb.getGraphics();
         for (int i = 0; i < 2; i++) {
             BufferedImage page = neutralPage(dim, 7 + i);
+            for (int y = 0; y < dim; y++) {
+                for (int x = 0; x < dim; x++) {
+                    page.setRGB(x, y, (page.getRGB(x, y) & 0xFF000000) | 0xFFFFFF);
+                }
+            }
             assertTrue(GrayAlphaImage.blit(gray, page, i * dim, 0));
             g.drawImage(page, i * dim, 0, null);
         }
         g.dispose();
-        int[] want = argb.getRGB(0, 0, dim * 2, dim, null, 0, dim * 2);
-        int[] got = gray.getRGB(0, 0, dim * 2, dim, null, 0, dim * 2);
-        int off = 0;
-        for (int i = 0; i < want.length; i++) {
-            if (want[i] != got[i]) {
-                off++;
+        assertArrayEquals(argb.getRGB(0, 0, dim * 2, dim, null, 0, dim * 2),
+                gray.getRGB(0, 0, dim * 2, dim, null, 0, dim * 2));
+    }
+
+    /**
+     * Arbitrary gray levels under partial alpha: AWT's SrcOver blit rounds the colour through alpha, the copy keeps
+     * the stored byte. Alpha is exact and colour differs by at most 1 level; the copy is the source's own pixel.
+     */
+    @Test
+    void arbitraryGrayDiffersFromDrawImageByRoundingOnly() {
+        int dim = 32;
+        BufferedImage gray = GrayAlphaImage.create(dim, dim);
+        BufferedImage argb = new BufferedImage(dim, dim, BufferedImage.TYPE_INT_ARGB);
+        BufferedImage page = neutralPage(dim, 11);
+        assertTrue(GrayAlphaImage.blit(gray, page, 0, 0));
+        Graphics g = argb.getGraphics();
+        g.drawImage(page, 0, 0, null);
+        g.dispose();
+        int maxColor = 0;
+        for (int y = 0; y < dim; y++) {
+            for (int x = 0; x < dim; x++) {
+                int want = argb.getRGB(x, y);
+                int got = gray.getRGB(x, y);
+                assertEquals(want >>> 24, got >>> 24, "alpha at " + x + "," + y);
+                maxColor = Math.max(maxColor, Math.abs((want & 0xFF) - (got & 0xFF)));
+                assertEquals(got & 0xFF, (got >> 8) & 0xFF);
+                assertEquals(got & 0xFF, (got >> 16) & 0xFF);
+                if (want >>> 24 != 0) {
+                    assertEquals(page.getRGB(x, y), got, "the copy keeps the source texel at " + x + "," + y);
+                }
             }
         }
-        assertEquals(0, off, "pixels differing from the ARGB path");
-        assertEquals(want[5], gray.getRGB(5, 0));
+        assertTrue(maxColor <= 1, "max colour deviation " + maxColor);
     }
 
     @Test
