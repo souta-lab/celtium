@@ -4183,8 +4183,7 @@ public final class ValidationClient {
                 // option defaults off, so an untouched run reports "disabled".
                 if (!celtium$idleCapReported) {
                     celtium$idleCapReported = true;
-                    report.addProperty("idleCap",
-                            org.soutalab.celtium.vulkan.CeltiumFramePacing.idleCapStatus());
+                    report.addProperty("idleCap", celtium$idleCapStatus());
                 }
                 // The cloud setting, for the same reason the time is pinned: the user's complaint names clouds, and no
                 // run of this fixture could contain a cloud pixel because nothing set the game's own cloud option. The
@@ -8206,6 +8205,21 @@ public final class ValidationClient {
                     : "probe: the stub class is present but reports no installation";
         } catch (RuntimeException | LinkageError absent) {
             return "probe: the stub class could not be reached from this caller (" + absent + ")";
+        }
+    }
+
+    /**
+     * The idle frame cap status (item 388), read through the same guard as the GL-less probe
+     * above: the renderer's classes are not on the classpath in every configuration this
+     * fixture runs in - the Celeritas reference arm runs it with a different terrain mod in
+     * the renderer slot - so a missing class reports itself instead of ending the run. With
+     * the renderer present the value is exactly what the pacing class reports.
+     */
+    private static String celtium$idleCapStatus() {
+        try {
+            return org.soutalab.celtium.vulkan.CeltiumFramePacing.idleCapStatus();
+        } catch (RuntimeException | LinkageError absent) {
+            return "unavailable: the frame pacing class could not be reached from this caller (" + absent + ")";
         }
     }
 
