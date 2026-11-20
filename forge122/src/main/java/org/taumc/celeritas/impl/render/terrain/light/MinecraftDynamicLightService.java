@@ -11,8 +11,10 @@ import net.minecraft.init.Blocks;
 import net.minecraft.init.Items;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
+import net.minecraft.world.World;
 import org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightAccumulator;
 import org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService;
+import org.taumc.celeritas.impl.CeltiumLightCache;
 
 /**
  * The Minecraft-backed {@link DynamicLightService}: every frame it walks the loaded entities and
@@ -30,7 +32,10 @@ import org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService;
  * (eye height &times; 0.75; a dropped item 0.2).
  * <p>
  * {@code -Dceltium.dynamicLights=false} turns the gather off entirely - the terrain then shades
- * exactly as vanilla does, which is also the A/B control the fixture proof leg uses.
+ * exactly as vanilla does, which is also the A/B control the fixture proof leg uses. The same
+ * switch governs the CPU mirror (item 430): the gather's surviving sources are kept as a
+ * world-space snapshot that {@link CeltiumLightCache} raises entity, particle and held-item
+ * brightness from, so an empty gather - disabled, or no world - mirrors nothing.
  */
 public final class MinecraftDynamicLightService implements DynamicLightService {
 
@@ -41,17 +46,48 @@ public final class MinecraftDynamicLightService implements DynamicLightService {
 
     private final DynamicLightAccumulator accumulator = new DynamicLightAccumulator();
 
+    /**
+     * The last gather's surviving sources in world space (xyz + level per source), with the world
+     * they were gathered in. Written by {@link #gatherLights} on the client main thread and read
+     * by {@link CeltiumLightCache} on the same thread; the world identity is part of the snapshot
+     * so one world's sources can never raise another world's answers after a world switch.
+     */
+    private final float[] snapshot = new float[DynamicLightService.MAX_LIGHTS * 4];
+    private int snapshotCount;
+    private WorldClient snapshotWorld;
+
     private MinecraftDynamicLightService() {
+    }
+
+    /**
+     * Copies the last gather's world-space sources into {@code out} and returns how many there
+     * are - or 0 when the snapshot belongs to a different world than {@code world} (or to no
+     * gather at all), so a stale snapshot raises nothing.
+     */
+    public static int snapshotSources(World world, float[] out) {
+        MinecraftDynamicLightService service = INSTANCE;
+        if (service.snapshotWorld == null || service.snapshotWorld != world) {
+            return 0;
+        }
+        System.arraycopy(service.snapshot, 0, out, 0, service.snapshotCount * 4);
+        return service.snapshotCount;
+    }
+
+    private void clearSnapshot() {
+        this.snapshotCount = 0;
+        this.snapshotWorld = null;
     }
 
     @Override
     public int gatherLights(float[] out, double cameraX, double cameraY, double cameraZ) {
         if (!ENABLED) {
+            clearSnapshot();
             return 0;
         }
         Minecraft minecraft = Minecraft.getMinecraft();
         WorldClient world = minecraft.world;
         if (world == null) {
+            clearSnapshot();
             return 0;
         }
         float partialTicks = minecraft.getRenderPartialTicks();
@@ -67,7 +103,10 @@ public final class MinecraftDynamicLightService implements DynamicLightService {
             double lift = entity instanceof EntityItem ? 0.2D : entity.getEyeHeight() * 0.75D;
             this.accumulator.offer(x, y + lift, z, (float) level);
         }
-        return this.accumulator.finish(out);
+        int count = this.accumulator.finish(out);
+        this.snapshotCount = this.accumulator.copyWorldSources(this.snapshot);
+        this.snapshotWorld = world;
+        return count;
     }
 
     /** {@return the light level a single entity contributes as a source, or 0 when it is not one}. */

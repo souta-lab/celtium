@@ -157,14 +157,14 @@
 
 | キー | 読み取りAPI | 位置 |
 |---|---|---|
-| `celtium.dynamicLights` | `System.getProperty` | [MinecraftDynamicLightService.java:40](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/light/MinecraftDynamicLightService.java#L40>) |
+| `celtium.dynamicLights` | `System.getProperty` | [MinecraftDynamicLightService.java:45](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/light/MinecraftDynamicLightService.java#L45>) |
 
 <a id="group-celtium-entityLightCache"></a>
 ## `celtium.entityLightCache.*`
 
 | キー | 読み取りAPI | 位置 |
 |---|---|---|
-| `celtium.entityLightCache` | `System.getProperty` | [CeltiumLightCache.java:51](<../forge122/src/main/java/org/taumc/celeritas/impl/CeltiumLightCache.java#L51>) |
+| `celtium.entityLightCache` | `System.getProperty` | [CeltiumLightCache.java:65](<../forge122/src/main/java/org/taumc/celeritas/impl/CeltiumLightCache.java#L65>) |
 
 <a id="group-celtium-f3"></a>
 ## `celtium.f3.*`

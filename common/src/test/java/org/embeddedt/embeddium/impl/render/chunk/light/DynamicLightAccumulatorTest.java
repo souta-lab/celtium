@@ -85,6 +85,29 @@ class DynamicLightAccumulatorTest {
     }
 
     @Test
+    void worldSourcesKeepWorldCoordinatesAndTheSameSelection() {
+        // The CPU mirror (item 430) measures distances in world space, so the snapshot it reads
+        // must carry the offered positions unrebased - unlike finish, which rebases to the camera.
+        DynamicLightAccumulator accumulator = new DynamicLightAccumulator();
+        accumulator.begin(100.0D, 64.0D, -50.0D);
+        accumulator.offer(102.5D, 65.0D, -47.5D, 14.0F);
+        accumulator.offer(400.0D, 64.0D, -50.0D, 15.0F);
+
+        float[] world = new float[DynamicLightService.MAX_LIGHTS * 4];
+        int count = accumulator.copyWorldSources(world);
+        assertEquals(1, count);
+        assertEquals(102.5F, world[0]);
+        assertEquals(65.0F, world[1]);
+        assertEquals(-47.5F, world[2]);
+        assertEquals(14.0F, world[3]);
+
+        // Same gather, both views: the count and the selection agree with finish.
+        float[] relative = gather(accumulator);
+        assertEquals(count, accumulator.count());
+        assertEquals(2.5F, relative[0]);
+    }
+
+    @Test
     void beginDiscardsThePreviousGather() {
         DynamicLightAccumulator accumulator = new DynamicLightAccumulator();
         accumulator.begin(0.0D, 0.0D, 0.0D);

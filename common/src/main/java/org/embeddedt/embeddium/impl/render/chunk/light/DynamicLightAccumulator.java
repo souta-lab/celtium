@@ -84,6 +84,22 @@ public final class DynamicLightAccumulator {
         return this.count;
     }
 
+    /**
+     * Writes the surviving sources into {@code out} as world-space vec4s (x, y, z, level) and
+     * returns how many were written - the same selection {@link #finish} converts to
+     * camera-relative coordinates, kept in the frame the CPU mirror (item 430) measures its
+     * distances in.
+     */
+    public int copyWorldSources(float[] out) {
+        for (int i = 0; i < this.count; i++) {
+            out[i * 4] = (float) this.world[i * 3];
+            out[i * 4 + 1] = (float) this.world[i * 3 + 1];
+            out[i * 4 + 2] = (float) this.world[i * 3 + 2];
+            out[i * 4 + 3] = this.levels[i];
+        }
+        return this.count;
+    }
+
     /** {@return how many sources the current gather holds so far}. */
     public int count() {
         return this.count;

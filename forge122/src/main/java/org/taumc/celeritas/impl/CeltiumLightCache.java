@@ -7,6 +7,9 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.world.World;
 
+import org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService;
+import org.taumc.celeritas.impl.render.terrain.light.MinecraftDynamicLightService;
+
 /**
  * Per-world-tick cache for the light lookups the render side repeats every frame.
  * <p>
@@ -41,6 +44,17 @@ import net.minecraft.world.World;
  * (and the brightness entry); every lookup then takes the vanilla body unchanged. Before item 378
  * the same property was the escape that restored the vanilla entity/particle methods by standing
  * their HEAD cancels down; with the cancels gone it governs the funnel only.
+ * <p>
+ * The dynamic-light mirror (item 430, the item 326 follow-up) rides on the funnel's answers: the
+ * maps keep holding the vanilla answer only, and the block component of the value handed back is
+ * raised at answer time by the current frame's gathered sources - the same {@code level -
+ * distance} maximum the terrain shader applies, measured at the queried block's centre. Raising
+ * at answer time (never in the stored entry) is what keeps a per-frame quantity out of a
+ * per-tick cache. The raise is max-only and lives inside the funnel gate, so a call that carries
+ * a {@code lightValue} floor - the shape an addon like Celeritas Dynamic Lights feeds its own
+ * contribution through - is answered by the vanilla body and never raised twice; an addon that
+ * max-raises the returned value composes as a maximum of maxima, as on the terrain side.
+ * {@code -Dceltium.dynamicLights=false} empties the gather and with it the mirror.
  */
 public final class CeltiumLightCache {
 
@@ -95,6 +109,12 @@ public final class CeltiumLightCache {
      * off-thread caller on a client world falls back to a fresh position and leaves these maps untouched.
      */
     private static final BlockPos.MutableBlockPos MISS_POS = new BlockPos.MutableBlockPos();
+
+    /**
+     * Scratch for the dynamic-light mirror's per-call snapshot copy (world-space xyz + level per
+     * source). Only ever touched inside the funnel, which is gated to the client main thread.
+     */
+    private static final float[] MIRROR_SOURCES = new float[DynamicLightService.MAX_LIGHTS * 4];
 
     static {
         COMBINED.defaultReturnValue(ABSENT);
@@ -156,15 +176,55 @@ public final class CeltiumLightCache {
             rollTick(world);
             long key = pack(pos.getX(), pos.getY(), pos.getZ());
             long cached = untag(COMBINED.getAndMoveToLast(key));
+            int value;
             if (cached != ABSENT) {
-                return (int) cached;
+                value = (int) cached;
+            } else {
+                value = vanillaBody.getAsInt();
+                putCombined(key, value);
             }
-            int value = vanillaBody.getAsInt();
-            putCombined(key, value);
-            return value;
+            int sources = MinecraftDynamicLightService.snapshotSources(world, MIRROR_SOURCES);
+            return sources == 0 ? value
+                    : raiseCombinedLight(value, pos.getX(), pos.getY(), pos.getZ(),
+                            MIRROR_SOURCES, sources);
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("lightCache");
         }
+    }
+
+    /**
+     * The dynamic-light mirror's raise (item 430), kept pure and free of Minecraft types so the
+     * rule itself is unit-testable: the block component of a combined-light value ({@code sky <<
+     * 20 | block << 4}, the vanilla packing) is raised to the strongest gathered source's
+     * contribution at the block's centre - per source {@code level - distance}, the maximum over
+     * sources, exactly the terrain shader's rule. The combined format carries integer levels, so
+     * the contribution is floored: the mirror never shows a block brighter than the terrain raise
+     * at the same centre. The raise is a maximum, never an addition and never a lowering; every
+     * bit outside the block component is returned untouched.
+     */
+    static int raiseCombinedLight(int combined, int x, int y, int z, float[] sources, int count) {
+        int block = (combined >> 4) & 0xF;
+        double centreX = x + 0.5D;
+        double centreY = y + 0.5D;
+        double centreZ = z + 0.5D;
+        double best = 0.0D;
+        for (int i = 0; i < count; i++) {
+            double dx = sources[i * 4] - centreX;
+            double dy = sources[i * 4 + 1] - centreY;
+            double dz = sources[i * 4 + 2] - centreZ;
+            double contribution = sources[i * 4 + 3] - Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (contribution > best) {
+                best = contribution;
+            }
+        }
+        int raised = (int) Math.floor(best);
+        if (raised <= block) {
+            return combined;
+        }
+        if (raised > 15) {
+            raised = 15;
+        }
+        return (combined & ~0xF0) | (raised << 4);
     }
 
     /**
