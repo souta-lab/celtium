@@ -89,6 +89,7 @@ class ModGlslTranslatorTest {
             ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, THREE_MATRIX_FRAGMENT);
             assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
             assertEquals(192, result.uniformBlockSize());
+            assertFalse(result.uniformsViaBuffer());
             assertTrue(result.fragment().contains("layout(push_constant, std140) uniform CeltiumModUniforms"));
             // Accepted is not the same as compilable: the point of raising the ceiling is that shaderc now gets to see
             // the block, so the stage is compiled here rather than only counted.
@@ -203,36 +204,74 @@ class ModGlslTranslatorTest {
     }
 
     @Test
-    void refusesABlockAboveTheSelectedDevicesLimitNamingBothNumbers() {
+    void lowersABlockAboveTheSelectedDevicesLimitThroughTheUniformBuffer() {
         ModPushConstantLimit.noteDevice(256);
         try {
-            // Five mat4: 320 bytes, above this device's 256 and above the 128-byte minimum too, so the refusal is the
-            // device's own limit and not the fallback - and it must name both numbers.
+            // Five mat4: 320 bytes, above this device's 256. The limit is a property of the push route, not of
+            // the block, so the program lowers with the block as a uniform buffer at the set's first free
+            // binding (no samplers or images here, so binding 0) instead of being refused - the shape
+            // Demonica's 480/496-byte deferred programs and 1568-byte gbuffers programs need.
             String vertex = """
                     #version 120
                     uniform mat4 a, b, c, d, e;
-                    void main() { gl_Position = vec4(0.0); }
+                    void main() { gl_Position = a * vec4(0.0); }
                     """;
             ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex,
                     "void main() { gl_FragColor = vec4(1.0); }");
-            assertFalse(result.ok());
-            assertTrue(result.failure().contains("320"), result.failure());
-            assertTrue(result.failure().contains("256"), result.failure());
-            assertTrue(result.failure().contains("maxPushConstantsSize"), result.failure());
+            assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+            assertEquals(320, result.uniformBlockSize());
+            assertTrue(result.uniformsViaBuffer());
+            assertTrue(result.vertex().contains(
+                    "layout(set = 0, binding = 0, std140) uniform CeltiumModUniforms"), result.vertex());
+            assertFalse(result.vertex().contains("push_constant"), result.vertex());
+            assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+            assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
         } finally {
             ModPushConstantLimit.forgetDeviceForTest();
         }
     }
 
     @Test
-    void keepsTheGuaranteedMinimumWhileNoDeviceIsSelected() {
+    void namesTheUniformBufferBindingAfterTheSamplersAndImages() {
+        ModPushConstantLimit.noteDevice(256);
+        try {
+            // One sampler: the block's binding is 1, the index the pipeline's descriptor layout declares after
+            // the sampler bindings. The two sides must agree or the set binds the block where the shader reads
+            // a texture.
+            String fragment = """
+                    #version 120
+                    uniform sampler2D tex;
+                    uniform mat4 a, b, c, d, e;
+                    void main() { gl_FragColor = texture2D(tex, vec2(0.0)) + a[0] + b[0] + c[0] + d[0] + e[0]; }
+                    """;
+            ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, fragment);
+            assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+            assertEquals(320, result.uniformBlockSize());
+            assertTrue(result.uniformsViaBuffer());
+            assertEquals(1, result.samplers().size());
+            assertTrue(result.fragment().contains(
+                    "layout(set = 0, binding = 1, std140) uniform CeltiumModUniforms"), result.fragment());
+            assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+            assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+        } finally {
+            ModPushConstantLimit.forgetDeviceForTest();
+        }
+    }
+
+    @Test
+    void routesByTheGuaranteedMinimumWhileNoDeviceIsSelected() {
         ModPushConstantLimit.forgetDeviceForTest();
         assertEquals(128, ModPushConstantLimit.limit());
         assertTrue(ModPushConstantLimit.source().contains("no device selected"), ModPushConstantLimit.source());
+        // The threshold still selects the route before a device is selected - a 192-byte block takes the
+        // buffer route, which any device can carry, rather than being refused until selection happens.
         ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, THREE_MATRIX_FRAGMENT);
-        assertFalse(result.ok(), "a 192-byte block must still be refused before a device is selected");
-        assertTrue(result.failure().contains("192"), result.failure());
-        assertTrue(result.failure().contains("128"), result.failure());
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertEquals(192, result.uniformBlockSize());
+        assertTrue(result.uniformsViaBuffer());
+        assertTrue(result.fragment().contains(
+                "layout(set = 0, binding = 0, std140) uniform CeltiumModUniforms"), result.fragment());
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
     }
 
     @Test

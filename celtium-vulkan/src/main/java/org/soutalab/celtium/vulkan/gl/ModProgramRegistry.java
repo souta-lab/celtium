@@ -163,7 +163,7 @@ public final class ModProgramRegistry {
         }
         p.lowered = fragment == null
                 ? new ModGlslTranslator.Result(null, null, List.of(), List.of(), 0, List.of(), List.of(), List.of(), 0,
-                        "no fragment stage attached (" + p.shaders.size() + " shaders)")
+                        false, "no fragment stage attached (" + p.shaders.size() + " shaders)")
                 : ModGlslTranslator.translate(vertex, fragment);
         p.nameByLocation.clear();
         p.cachedPackedUniforms = null;
@@ -211,7 +211,8 @@ public final class ModProgramRegistry {
                         : " compileFailure=" + p.compileFailure)
                 + (p.lowered.ok()
                         ? " lowered=true samplers=" + p.lowered.samplers().size() + " images=" + p.lowered.images().size() + " uniformBytes="
-                                + p.lowered.uniformBlockSize() + " vertex=" + (vertex == null ? "fixed-function" : "own")
+                                + p.lowered.uniformBlockSize() + " route=" + (p.lowered.uniformsViaBuffer() ? "ubo" : "push")
+                                + " vertex=" + (vertex == null ? "fixed-function" : "own")
                         : " lowered=false reason=" + p.lowered.failure()));
         return p;
     }

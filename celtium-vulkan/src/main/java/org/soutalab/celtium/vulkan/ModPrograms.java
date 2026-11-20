@@ -241,8 +241,8 @@ final class ModPrograms {
             return celtium$modFailure(programId, "the pass draws into the game's framebuffer and "
                     + "-Dceltium.vulkan.modProgramsToMain=false refuses that");
         }
-        long set = pipeline.samplersAndImages(textures, imageTextures);
-        if (samplerCount + imageCount > 0 && set == 0L) {
+        long set = pipeline.samplersAndImages(textures, imageTextures, program, b.frameId);
+        if ((samplerCount + imageCount > 0 || pipeline.uniformsViaBuffer()) && set == 0L) {
             return celtium$modFailure(programId, "no descriptor set could be allocated");
         }
         String label = null;

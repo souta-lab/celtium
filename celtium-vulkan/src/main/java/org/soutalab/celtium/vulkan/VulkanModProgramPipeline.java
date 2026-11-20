@@ -20,10 +20,11 @@ import static org.lwjgl.vulkan.VK10.*;
  * The batch a mod draws with its program bound used to be refused, because the immediate path's own shaders cannot
  * reproduce it (GTCEu's bloom passes are the measured case). This pipeline draws the same batch, in the same group
  * machinery, with the program's SPIR-V: the render state (render pass, blend, depth, cull) is copied from the variant
- * the path would have used for the batch, so the only difference is the shaders, their push-constant block (the
- * program's std140 uniforms, at most the device's {@code maxPushConstantsSize}, which
- * {@link org.soutalab.celtium.vulkan.gl.ModPushConstantLimit} records at selection and the lowering checks) and their
- * sampler set.
+ * the path would have used for the batch, so the only difference is the shaders, their uniform block (the program's
+ * std140 uniforms: push constants while the block fits the device's {@code maxPushConstantsSize}, which
+ * {@link org.soutalab.celtium.vulkan.gl.ModPushConstantLimit} records at selection and the lowering checks, and a
+ * uniform buffer at the set's last binding - fed from a slot of this pipeline's uniform ring - when it does not)
+ * and their sampler set.
  * <p>
  * Vertex inputs follow GL's aliasing of generic attribute 0 with the conventional vertex position: a known position
  * name or an unnumbered first attribute takes the position, a texture coordinate attribute the format's UV element
@@ -114,6 +115,18 @@ public final class VulkanModProgramPipeline {
     private final List<ModGlslTranslator.ImageBinding> images;
     private final int imageCount;
     private final int pushBytes;
+    /** Whether the program's uniform block travels through {@link #uniformBuffer} instead of push constants. */
+    private final boolean uniformsViaBuffer;
+    /** The uniform block's byte size on the buffer route; 0 on the push route. */
+    private final int uniformBlockBytes;
+    /** Slots of {@link #uniformBuffer} the descriptor sets can name; the post chain's ring depth. */
+    private static final int UNIFORM_RING_SLOTS = 32;
+    private VulkanUniformBuffer uniformBuffer;
+    private int uniformStride;
+    private int uniformCursor;
+    private long uniformEpoch = Long.MIN_VALUE;
+    private int uniformClaimsThisEpoch;
+    private final Map<Long, Integer> uniformSlotsByVersion = new HashMap<>();
     /** Whether the pass blends (its render state as built); the readback instrument looks for the blend-off copy. */
     boolean blends;
     private long setLayout = VK_NULL_HANDLE;
@@ -136,14 +149,17 @@ public final class VulkanModProgramPipeline {
 
     private VulkanModProgramPipeline(VulkanContext context, List<ModGlslTranslator.Attribute> attributes,
                                      List<ModGlslTranslator.SamplerBinding> samplers,
-                                     List<ModGlslTranslator.ImageBinding> images, int pushBytes) {
+                                     List<ModGlslTranslator.ImageBinding> images, int pushBytes,
+                                     boolean uniformsViaBuffer) {
         this.context = context;
         this.attributes = attributes;
         this.samplers = samplers;
         this.samplerCount = samplers.size();
         this.images = images;
         this.imageCount = images.size();
-        this.pushBytes = pushBytes;
+        this.uniformsViaBuffer = uniformsViaBuffer;
+        this.uniformBlockBytes = uniformsViaBuffer ? pushBytes : 0;
+        this.pushBytes = uniformsViaBuffer ? 0 : pushBytes;
         this.scratchViews = this.samplerCount > 0 ? new long[this.samplerCount] : EMPTY_LONG;
         this.scratchSamplers = this.samplerCount > 0 ? new long[this.samplerCount] : EMPTY_LONG;
         this.scratchLayouts = this.samplerCount > 0 ? new int[this.samplerCount] : EMPTY_INT;
@@ -209,7 +225,7 @@ public final class VulkanModProgramPipeline {
                                                   int formatId, VulkanImmediateTexturePipeline like) {
         ModGlslTranslator.Result lowered = program.lowered();
         VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, lowered.attributes(), lowered.samplers(),
-                lowered.images(), lowered.uniformBlockSize());
+                lowered.images(), lowered.uniformBlockSize(), lowered.uniformsViaBuffer());
         if (!lowered.images().isEmpty() && !context.celtium$storageImagesWithoutFormat()) {
             throw new IllegalStateException("storage images without format qualifiers are not supported by this device "
                     + "(shaderStorageImageRead/WriteWithoutFormat=false)");
@@ -238,7 +254,7 @@ public final class VulkanModProgramPipeline {
                                                   long renderPass, int colorAttachments) {
         ModGlslTranslator.Result lowered = program.lowered();
         VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, lowered.attributes(), lowered.samplers(),
-                lowered.images(), lowered.uniformBlockSize());
+                lowered.images(), lowered.uniformBlockSize(), lowered.uniformsViaBuffer());
         if (!lowered.images().isEmpty() && !context.celtium$storageImagesWithoutFormat()) {
             throw new IllegalStateException("storage images without format qualifiers are not supported by this device "
                     + "(shaderStorageImageRead/WriteWithoutFormat=false)");
@@ -282,7 +298,7 @@ public final class VulkanModProgramPipeline {
             bindings.add(new ModGlslTranslator.SamplerBinding("input" + i, "sampler2D", i));
         }
         VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, attrs,
-                java.util.Collections.unmodifiableList(bindings), List.of(), Math.max(0, pushBytes));
+                java.util.Collections.unmodifiableList(bindings), List.of(), Math.max(0, pushBytes), false);
         try {
             built.createLayouts();
             built.createPipeline(vertexSpirv, fragmentSpirv, VulkanImmediateFormats.POSITION_TEX, renderPass, cull,
@@ -308,7 +324,8 @@ public final class VulkanModProgramPipeline {
     private void createLayouts() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer handle = stack.mallocLong(1);
-            VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(this.samplerCount + this.imageCount, stack);
+            VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(
+                    this.samplerCount + this.imageCount + (this.uniformsViaBuffer ? 1 : 0), stack);
             for (int i = 0; i < this.samplerCount; i++) {
                 bindings.get(i).binding(i).descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                         .descriptorCount(1).stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT);
@@ -317,6 +334,15 @@ public final class VulkanModProgramPipeline {
                 bindings.get(this.samplerCount + i).binding(this.samplerCount + i)
                         .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE).descriptorCount(1)
                         .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT);
+            }
+            if (this.uniformsViaBuffer) {
+                // The binding the lowering named for the block: after every sampler and storage image. Both
+                // stages read the block (the fixed-function matrices live in the vertex stage), as the push
+                // range it replaces did.
+                bindings.get(this.samplerCount + this.imageCount)
+                        .binding(this.samplerCount + this.imageCount)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(1)
+                        .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT);
             }
             VkDescriptorSetLayoutCreateInfo setInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack).sType$Default()
                     .pBindings(bindings);
@@ -336,21 +362,46 @@ public final class VulkanModProgramPipeline {
                     "vkCreatePipelineLayout(mod program)");
             this.pipelineLayout = handle.get(0);
 
-            if (this.samplerCount + this.imageCount > 0) {
+            if (this.samplerCount + this.imageCount > 0 || this.uniformsViaBuffer) {
                 VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc((this.samplerCount > 0 ? 1 : 0)
-                        + (this.imageCount > 0 ? 1 : 0), stack);
+                        + (this.imageCount > 0 ? 1 : 0) + (this.uniformsViaBuffer ? 1 : 0), stack);
                 int sizeIndex = 0;
                 if (this.samplerCount > 0) sizes.get(sizeIndex++).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                         .descriptorCount(MAX_SETS * this.samplerCount);
-                if (this.imageCount > 0) sizes.get(sizeIndex).type(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                if (this.imageCount > 0) sizes.get(sizeIndex++).type(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
                         .descriptorCount(MAX_SETS * this.imageCount);
+                if (this.uniformsViaBuffer) sizes.get(sizeIndex).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                        .descriptorCount(MAX_SETS);
                 VkDescriptorPoolCreateInfo poolInfo = VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
                         .maxSets(MAX_SETS).pPoolSizes(sizes);
                 check(vkCreateDescriptorPool(this.context.device(), poolInfo, null, handle),
                         "vkCreateDescriptorPool(mod program)");
                 this.descriptorPool = handle.get(0);
             }
+            if (this.uniformsViaBuffer) {
+                // Fixed at the ring's full size: the buffer handle is baked into descriptor sets, so it is
+                // never grown or replaced the way the terrain's own uniform buffer is.
+                this.uniformStride = uniformStride(this.context, this.uniformBlockBytes);
+                this.uniformBuffer = new VulkanUniformBuffer(this.context,
+                        (long) this.uniformStride * UNIFORM_RING_SLOTS);
+            }
         }
+    }
+
+    /**
+     * {@return the ring stride for a block of {@code blockBytes}}: the block size rounded up to the device's
+     * uniform offset alignment, floored at 256 - the same floor {@link VulkanUniformBuffer} aligns its own
+     * sizes to.
+     */
+    private static int uniformStride(VulkanContext context, int blockBytes) {
+        long alignment = 256;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkPhysicalDeviceProperties properties = VkPhysicalDeviceProperties.calloc(stack);
+            vkGetPhysicalDeviceProperties(context.physicalDevice(), properties);
+            alignment = Math.max(256, properties.limits().minUniformBufferOffsetAlignment());
+        }
+        long mask = alignment - 1;
+        return (int) ((blockBytes + mask) & ~mask);
     }
 
     private void createPipeline(byte[] vertexSpirv, byte[] fragmentSpirv, int formatId, long renderPass, int cull,
@@ -474,12 +525,18 @@ public final class VulkanModProgramPipeline {
     }
 
     public long samplerSet(VulkanGlTexture[] textures) {
-        return samplersAndImages(textures, EMPTY_IMAGES);
+        return samplersAndImages(textures, EMPTY_IMAGES, null, 0L);
     }
 
-    /** Builds the one descriptor set from sampler bindings followed by storage-image bindings. */
-    public long samplersAndImages(VulkanGlTexture[] textures, VulkanGlTexture[] imageTextures) {
-        if (this.samplerCount + this.imageCount == 0) {
+    /**
+     * Builds the one descriptor set from sampler bindings followed by storage-image bindings - and, on the
+     * uniform-buffer route, the block's binding, which names the ring slot {@code program}'s current uniform
+     * values were staged into for {@code epoch} (the caller's frame counter). 0 when no set could be allocated
+     * or the epoch claimed every ring slot, which the caller refuses as a missing draw.
+     */
+    public long samplersAndImages(VulkanGlTexture[] textures, VulkanGlTexture[] imageTextures,
+                                  ModProgramRegistry.Program program, long epoch) {
+        if (this.samplerCount + this.imageCount == 0 && !this.uniformsViaBuffer) {
             return 0L;
         }
         long hash = 0x9E3779B97F4A7C15L;
@@ -506,7 +563,60 @@ public final class VulkanModProgramPipeline {
         if (hash == 0L) {
             hash = 1L;
         }
-        return allocateOrReuseDescriptorSet(hash, views, samplers, layouts, imageViews);
+        if (!this.uniformsViaBuffer) {
+            return allocateOrReuseDescriptorSet(hash, views, samplers, layouts, imageViews, -1);
+        }
+        if (program == null) {
+            return 0L;
+        }
+        int slot = uniformSlot(program, epoch);
+        if (slot < 0) {
+            return 0L;
+        }
+        hash = mix64(hash ^ (slot + 1L) * 0x9E3779B97F4A7C15L) ^ mix64(this.uniformBuffer.buffer());
+        if (hash == 0L) {
+            hash = 1L;
+        }
+        return allocateOrReuseDescriptorSet(hash, views, samplers, layouts, imageViews, slot);
+    }
+
+    /**
+     * {@return the uniform ring slot holding this program's current uniform values}, staging them on their
+     * first use in this epoch, or -1 when this epoch has already claimed every slot.
+     * <p>
+     * The epoch is the caller's frame counter: a new epoch forgets the version-to-slot map, because the values
+     * a version named last frame are not the values it names now - the map exists so a program drawn by several
+     * passes in one frame is written once, not because its bytes survive the frame. A claimed slot is written
+     * before any set naming it is bound, and the ring does not hand it out again until it comes back around -
+     * {@link #UNIFORM_RING_SLOTS} claims later, far beyond the frames in flight - which is the same lifetime
+     * argument as the post chain's descriptor ring. Claims past the ring depth inside one epoch are refused
+     * rather than overwriting a block a pending draw still reads.
+     */
+    private int uniformSlot(ModProgramRegistry.Program program, long epoch) {
+        if (epoch != this.uniformEpoch) {
+            this.uniformEpoch = epoch;
+            this.uniformSlotsByVersion.clear();
+            this.uniformClaimsThisEpoch = 0;
+        }
+        long version = program.uniformVersion();
+        Integer staged = this.uniformSlotsByVersion.get(version);
+        if (staged != null) {
+            return staged;
+        }
+        if (this.uniformClaimsThisEpoch >= UNIFORM_RING_SLOTS) {
+            return -1;
+        }
+        int slot = this.uniformCursor;
+        this.uniformCursor = (this.uniformCursor + 1) % UNIFORM_RING_SLOTS;
+        ByteBuffer packed = packUniforms(program);
+        ByteBuffer source = packed.duplicate();
+        source.position(0).limit(this.uniformBlockBytes);
+        ByteBuffer target = this.uniformBuffer.mapped().duplicate();
+        target.position(slot * this.uniformStride).limit(slot * this.uniformStride + this.uniformBlockBytes);
+        target.put(source);
+        this.uniformSlotsByVersion.put(version, slot);
+        this.uniformClaimsThisEpoch++;
+        return slot;
     }
 
     /** Allocates or reuses a descriptor set binding explicit image views, samplers and layouts. */
@@ -526,11 +636,11 @@ public final class VulkanModProgramPipeline {
         if (hash == 0L) {
             hash = 1L;
         }
-        return allocateOrReuseDescriptorSet(hash, views, samplers, layouts, EMPTY_LONG);
+        return allocateOrReuseDescriptorSet(hash, views, samplers, layouts, EMPTY_LONG, -1);
     }
 
     private long allocateOrReuseDescriptorSet(long key, long[] views, long[] samplers, int[] layouts,
-                                              long[] imageViews) {
+                                              long[] imageViews, int uniformSlot) {
         if (key == this.lastSamplerKey && this.lastSamplerSet != 0L) {
             return this.lastSamplerSet;
         }
@@ -552,7 +662,8 @@ public final class VulkanModProgramPipeline {
             }
             long set = handle.get(0);
             VkDescriptorImageInfo.Buffer imageInfos = VkDescriptorImageInfo.calloc(this.samplerCount + this.imageCount, stack);
-            VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(this.samplerCount + this.imageCount, stack);
+            VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(
+                    this.samplerCount + this.imageCount + (uniformSlot >= 0 ? 1 : 0), stack);
             for (int i = 0; i < this.samplerCount; i++) {
                 imageInfos.get(i).imageLayout(layouts[i]).imageView(views[i]).sampler(samplers[i]);
                 writes.get(i).sType$Default().dstSet(set).dstBinding(i)
@@ -565,6 +676,16 @@ public final class VulkanModProgramPipeline {
                 writes.get(index).sType$Default().dstSet(set).dstBinding(index)
                         .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE).descriptorCount(1)
                         .pImageInfo(VkDescriptorImageInfo.create(imageInfos.address(index), 1));
+            }
+            if (uniformSlot >= 0) {
+                VkDescriptorBufferInfo.Buffer bufferInfo = VkDescriptorBufferInfo.calloc(1, stack)
+                        .buffer(this.uniformBuffer.buffer())
+                        .offset((long) uniformSlot * this.uniformStride)
+                        .range(this.uniformBlockBytes);
+                writes.get(this.samplerCount + this.imageCount).sType$Default().dstSet(set)
+                        .dstBinding(this.samplerCount + this.imageCount)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(1)
+                        .pBufferInfo(bufferInfo);
             }
             vkUpdateDescriptorSets(this.context.device(), writes, null);
             this.setsByKey.put(key, set);
@@ -692,6 +813,11 @@ public final class VulkanModProgramPipeline {
         return this.samplerCount;
     }
 
+    /** {@return whether this pipeline's uniform block travels through the uniform ring} */
+    public boolean uniformsViaBuffer() {
+        return this.uniformsViaBuffer;
+    }
+
     public List<ModGlslTranslator.SamplerBinding> samplers() {
         return this.samplers;
     }
@@ -699,6 +825,10 @@ public final class VulkanModProgramPipeline {
     /** Destroys the Vulkan objects; the caller retires it after the frames that used it completed. */
     public void delete() {
         VkDevice device = this.context.device();
+        if (this.uniformBuffer != null) {
+            this.uniformBuffer.delete();
+            this.uniformBuffer = null;
+        }
         if (this.pipeline != VK_NULL_HANDLE) {
             vkDestroyPipeline(device, this.pipeline, null);
             this.pipeline = VK_NULL_HANDLE;

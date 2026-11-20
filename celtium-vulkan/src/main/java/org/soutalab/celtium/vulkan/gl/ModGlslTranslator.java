@@ -28,9 +28,12 @@ import java.util.regex.Pattern;
  * already carries is kept - the mod's own vertex setup binds by it - and one stage's number binds the other; a
  * declaration with no number is given the next free location, so no user input/output reaches shaderc without
  * one (SPIR-V refuses it otherwise). Interpolation qualifiers ({@code flat} and peers) are carried through.</li>
- * <li>Every non-sampler {@code uniform} -> one std140 push-constant block, at most the selected device's
- * {@code maxPushConstantsSize} ({@link ModPushConstantLimit}), with the byte offset of each member, so the values
- * {@code glUniform*} recorded can be packed. Samplers -> combined image samplers at set 0, bindings 0..n-1.</li>
+ * <li>Every non-sampler {@code uniform} -> one std140 block, with the byte offset of each member, so the values
+ * {@code glUniform*} recorded can be packed. The block travels as push constants while it fits the selected
+ * device's {@code maxPushConstantsSize} ({@link ModPushConstantLimit}), and as a uniform buffer at set 0's
+ * binding after the samplers and images when it does not - the limit is a property of the push route, not of
+ * the block, so a program above it is lowered, not refused. Samplers -> combined image samplers at set 0,
+ * bindings 0..n-1.</li>
  * <li>{@code gl_FragColor}/{@code gl_FragData[0]} -> an output at location 0; {@code gl_FragData[n]} -> an output
  * at location n, up to {@link #MAX_FRAG_OUTPUTS} draw buffers; {@code texture2D}, {@code texture2DLod}
  * -> {@code texture}, {@code textureLod}.</li>
@@ -59,7 +62,7 @@ public final class ModGlslTranslator {
     /** The lowered program, or why it could not be lowered. */
     public record Result(String vertex, String fragment, List<Attribute> attributes, List<UniformMember> uniforms,
                          int uniformBlockSize, List<SamplerBinding> samplers, List<ImageBinding> images, List<String> varyings,
-                         int fragOutputCount, String failure) {
+                         int fragOutputCount, boolean uniformsViaBuffer, String failure) {
         public boolean ok() {
             return this.failure == null;
         }
@@ -141,7 +144,8 @@ public final class ModGlslTranslator {
         try {
             return translateOrThrow(vertexSource, fragmentSource);
         } catch (IllegalArgumentException outside) {
-            return new Result(null, null, List.of(), List.of(), 0, List.of(), List.of(), List.of(), 0, outside.getMessage());
+            return new Result(null, null, List.of(), List.of(), 0, List.of(), List.of(), List.of(), 0, false,
+                    outside.getMessage());
         }
     }
 
@@ -252,11 +256,15 @@ public final class ModGlslTranslator {
             offset += layout[1];
         }
         int blockSize = align(offset, 16);
-        int pushLimit = ModPushConstantLimit.limit();
-        if (blockSize > pushLimit) {
-            throw new IllegalArgumentException("uniform block of " + blockSize + " bytes exceeds the " + pushLimit
-                    + "-byte push-constant limit (" + ModPushConstantLimit.source() + ")");
-        }
+        // The block travels as push constants while it fits, and as a uniform buffer when it does not: the limit
+        // is a property of the push route, not of the block, so a program above it (Demonica's deferred passes
+        // carry 480/496 bytes, its gbuffers programs 1568) is lowered, not refused - the pipeline gives the
+        // buffer route a descriptor binding after the samplers and images and a slot of its uniform ring, the
+        // shape VulkanPostChain's own oversized programs already take. The threshold is the number
+        // ModPushConstantLimit records (the device's limit, or the guaranteed minimum before selection), so a
+        // program linked before selection takes the buffer route above 128 bytes: always valid, because the
+        // buffer route does not depend on the push limit at all.
+        boolean uniformsViaBuffer = blockSize > ModPushConstantLimit.limit();
         List<ImageBinding> images = new ArrayList<>();
         for (Declaration d : uniforms.values()) {
             if (List.of("image2D", "iimage2D", "uimage2D").contains(d.type)) {
@@ -293,7 +301,13 @@ public final class ModGlslTranslator {
 
         StringBuilder common = new StringBuilder();
         if (!members.isEmpty()) {
-            common.append("layout(push_constant, std140) uniform CeltiumModUniforms {\n");
+            if (uniformsViaBuffer) {
+                // The binding after every sampler and storage image: the pipeline declares the same index.
+                common.append("layout(set = 0, binding = ").append(samplers.size() + images.size())
+                        .append(", std140) uniform CeltiumModUniforms {\n");
+            } else {
+                common.append("layout(push_constant, std140) uniform CeltiumModUniforms {\n");
+            }
             for (UniformMember m : members) {
                 common.append("    ").append(m.type).append(' ').append(glslName(m.name))
                         .append(m.arrayLength > 0 ? "[" + m.arrayLength + "]" : "").append(";\n");
@@ -420,7 +434,7 @@ public final class ModGlslTranslator {
         return new Result(vs.toString(), fs.toString(), Collections.unmodifiableList(attributes),
                 Collections.unmodifiableList(members), blockSize, Collections.unmodifiableList(samplers),
                 Collections.unmodifiableList(images),
-                Collections.unmodifiableList(varyings), fragOutputCount, null);
+                Collections.unmodifiableList(varyings), fragOutputCount, uniformsViaBuffer, null);
     }
 
     /**
