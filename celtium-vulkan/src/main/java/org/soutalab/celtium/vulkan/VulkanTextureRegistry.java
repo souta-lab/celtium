@@ -968,6 +968,20 @@ public final class VulkanTextureRegistry {
             out.position(0).limit(w * h * 4);
             return out;
         }
+        if (GrayAlphaImage.isGrayAlpha(image) && GrayAlphaImage.isPlain(image)) {
+            // Item 523 (361-D): the font atlas is announced as neutral gray + alpha (2 B/px held instead of 4). Its
+            // colour model defines gray as the sRGB value of all three channels, so this is the ARGB conversion
+            // without the 69 MiB int[] that getRGB would build.
+            byte[] data = GrayAlphaImage.data(image);
+            long address = org.lwjgl.system.MemoryUtil.memAddress(out);
+            for (int pixel = 0, at = 0, n = w * h; pixel < n; pixel++, at += 2) {
+                int g = data[at] & 0xFF;
+                int a = data[at + 1] & 0xFF;
+                org.lwjgl.system.MemoryUtil.memPutInt(address + pixel * 4L, g | (g << 8) | (g << 16) | (a << 24));
+            }
+            out.position(0).limit(w * h * 4);
+            return out;
+        }
         if (dataBuffer instanceof java.awt.image.DataBufferInt intBuffer
                 && (image.getType() == java.awt.image.BufferedImage.TYPE_INT_ARGB
                         || image.getType() == java.awt.image.BufferedImage.TYPE_INT_ARGB_PRE)
