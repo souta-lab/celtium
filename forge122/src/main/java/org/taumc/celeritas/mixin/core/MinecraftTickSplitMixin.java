@@ -186,14 +186,17 @@ public abstract class MinecraftTickSplitMixin {
 
     // Forge's patch calls both of these inside runTick (pre at the head, post at the tail); the validation
     // client's own tick work rides inside this dispatch, which is why tickFml is also where most of the
-    // fixture's in-tick tax is visible.
+    // fixture's in-tick tax is visible. The handlers take the FMLCommonHandler receiver like every other
+    // redirect in this class: a handler without it has descriptor ()V where the target invoke requires
+    // (FMLCommonHandler;)V, which Mixin rejects with InvalidInjectionException at apply time - require = 0
+    // does not cover a signature mismatch, so the game does not launch.
     @Redirect(method = "runTick",
             at = @At(value = "INVOKE",
                     target = "Lnet/minecraftforge/fml/common/FMLCommonHandler;onPreClientTick()V"), require = 0)
-    private static void celtium$tickFmlPre() {
+    private void celtium$tickFmlPre(net.minecraftforge.fml.common.FMLCommonHandler handler) {
         TickTimings.begin(TickSplit2Index.TICK_FML);
         try {
-            net.minecraftforge.fml.common.FMLCommonHandler.instance().onPreClientTick();
+            handler.onPreClientTick();
         } finally {
             TickTimings.end(TickSplit2Index.TICK_FML);
         }
@@ -202,10 +205,10 @@ public abstract class MinecraftTickSplitMixin {
     @Redirect(method = "runTick",
             at = @At(value = "INVOKE",
                     target = "Lnet/minecraftforge/fml/common/FMLCommonHandler;onPostClientTick()V"), require = 0)
-    private static void celtium$tickFmlPost() {
+    private void celtium$tickFmlPost(net.minecraftforge.fml.common.FMLCommonHandler handler) {
         TickTimings.begin(TickSplit2Index.TICK_FML);
         try {
-            net.minecraftforge.fml.common.FMLCommonHandler.instance().onPostClientTick();
+            handler.onPostClientTick();
         } finally {
             TickTimings.end(TickSplit2Index.TICK_FML);
         }
