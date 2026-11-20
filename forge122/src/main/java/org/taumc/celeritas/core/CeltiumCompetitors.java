@@ -4,7 +4,8 @@ package org.taumc.celeritas.core;
  * Mods that replace a part of the renderer Celtium owns, detected by a class only their jar carries, and refused at
  * coremod setup with a message that names them. The Phosphor entry is the one exception to the first sentence: it
  * replaces no renderer path, but its startup injection crashes whenever Celtium is present (measured, item 439), so
- * it is refused here, with a pointer to its maintained fork, instead of surfacing as a Mixin crash.
+ * it is refused here, with a pointer to the lighting engine the README recommends, instead of surfacing as a
+ * Mixin crash.
  * <p>
  * Each entry is a measured conflict, not a guess. Without this the failure surfaced somewhere unrelated: Custom Loading
  * Screen's transformer threw a NullPointerException inside {@code SplashProgress} during game init (E2E-E v1.87.3, leg
@@ -53,11 +54,12 @@ final class CeltiumCompetitors {
             // mixin sharing the Chunk target. Marker is Phosphor's coremod plugin class, verified in
             // phosphor-forge-mc1.12.2-0.2.7-universal.jar (sha256 4ddfdeca...) and absent from the maintained
             // fork Hesperus (leg 439b, passed), whose plugin class is renamed PhosphorFMLPlugin - so the fork
-            // the refusal message recommends is not itself refused.
+            // is not itself refused. The message recommends Pulsar, the lighting engine the README's Install
+            // section names ("Use Pulsar Lighting Engine, not Alfheim (unsupported)").
             {"me/jellysquid/mods/phosphor/core/PhosphorFMLLoadingPlugin.class", "Phosphor (phosphorlighting)",
                     "the light-propagation internals of Chunk, and it crashes at startup whenever Celtium is"
-                            + " present. Phosphor is unmaintained; use its maintained successor fork Hesperus"
-                            + " instead - see docs/mod-compatibility.md"},
+                            + " present. Phosphor is unmaintained; use Pulsar Lighting Engine instead"
+                            + " - see docs/mod-compatibility.md"},
     };
 
     private CeltiumCompetitors() {
