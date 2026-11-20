@@ -14,6 +14,7 @@ import org.embeddedt.embeddium.impl.render.chunk.lists.ChunkRenderList;
 import org.embeddedt.embeddium.impl.render.chunk.lists.SortedRenderLists;
 import org.embeddedt.embeddium.impl.render.chunk.map.ChunkTracker;
 import org.embeddedt.embeddium.impl.render.chunk.map.ChunkTrackerHolder;
+import org.embeddedt.embeddium.impl.render.chunk.occlusion.BeVisibilityProbe;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.embeddedt.embeddium.impl.render.viewport.CameraTransform;
 import org.embeddedt.embeddium.impl.render.viewport.Viewport;
@@ -368,7 +369,12 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
                     continue;
                 }
 
-                count += this.renderSectionBlockEntities(renderSection, blockEntities, true, renderContext);
+                int drawn = this.renderSectionBlockEntities(renderSection, blockEntities, true, renderContext);
+                count += drawn;
+                if (BeVisibilityProbe.CENSUS_ENABLED) {
+                    BeVisibilityProbe.censusSection(false, renderSection.getChunkX(), renderSection.getChunkY(),
+                            renderSection.getChunkZ(), drawn);
+                }
             }
         }
 
@@ -390,13 +396,23 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
                 continue;
             }
 
-            count += this.renderSectionBlockEntities(renderSection, blockEntities, false, renderContext);
+            int drawn = this.renderSectionBlockEntities(renderSection, blockEntities, false, renderContext);
+            count += drawn;
+            if (BeVisibilityProbe.CENSUS_ENABLED) {
+                BeVisibilityProbe.censusSection(true, renderSection.getChunkX(), renderSection.getChunkY(),
+                        renderSection.getChunkZ(), drawn);
+            }
         }
 
         return count;
     }
 
     public int renderBlockEntities(BLOCKENTITY_RENDER_CONTEXT renderContext) {
+        // Item 386 census pickup: this return value is what RenderGlobalMixin's BE call site discards, so
+        // the per-section counts are taken here, where both paths' sections are in hand.
+        if (BeVisibilityProbe.CENSUS_ENABLED) {
+            BeVisibilityProbe.censusBegin();
+        }
         int count = 0;
         count += this.renderCulledBlockEntities(renderContext);
         count += this.renderGlobalBlockEntities(renderContext);

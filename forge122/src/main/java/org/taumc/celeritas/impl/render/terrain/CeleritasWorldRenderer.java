@@ -12,6 +12,7 @@ import net.minecraft.util.math.AxisAlignedBB;
 import net.minecraftforge.client.MinecraftForgeClient;
 import org.embeddedt.embeddium.impl.gl.device.CommandList;
 import org.embeddedt.embeddium.impl.render.chunk.ChunkRenderMatrices;
+import org.embeddedt.embeddium.impl.render.chunk.occlusion.BeVisibilityProbe;
 import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkMeshFormats;
 import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkVertexType;
 import org.embeddedt.embeddium.impl.render.terrain.SimpleWorldRenderer;
@@ -288,8 +289,91 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
         }
     }
 
+    /**
+     * Item 386 LOS dry-run driver: walks this frame's visible sections nearest first and, per
+     * section, queries the render boxes of its culled-path block entities before drawing the
+     * section's occluders into the probe - the production search's test-then-draw discipline,
+     * which the probe's coverage-only buffer requires (see {@code BeVisibilityProbe}). A
+     * block-entity section with no geometry joins the walk too, so its entities are still
+     * queried at their own distance. Global-path block entities are never queried - they sit
+     * on the never-cull list by construction. The probe counts its answers and discards them;
+     * drawing below is untouched.
+     */
+    private void celtium$runBeLosProbe() {
+        var viewport = this.getLastViewport();
+        if (viewport == null || this.renderSectionManager == null || this.renderSectionManager.isInShadowPass()) {
+            return;
+        }
+        var camChunk = viewport.getChunkCoord();
+        var visible = new java.util.ArrayList<org.embeddedt.embeddium.impl.render.chunk.RenderSection>();
+        var seen = new java.util.HashSet<org.embeddedt.embeddium.impl.render.chunk.RenderSection>();
+        var culledBySection = new java.util.HashMap<org.embeddedt.embeddium.impl.render.chunk.RenderSection,
+                java.util.List<?>>();
+
+        var renderLists = this.renderSectionManager.getRenderLists();
+        var listIterator = renderLists.iterator();
+        while (listIterator.hasNext()) {
+            var renderList = listIterator.next();
+            var sectionIterator = renderList.sectionsWithGeometryIterator();
+            if (sectionIterator == null) {
+                continue;
+            }
+            while (sectionIterator.hasNext()) {
+                var section = renderList.getRegion().getSection(sectionIterator.nextByteAsInt());
+                if (section != null && seen.add(section)) {
+                    visible.add(section);
+                }
+            }
+        }
+        listIterator = renderLists.iterator();
+        while (listIterator.hasNext()) {
+            var renderList = listIterator.next();
+            var sectionIterator = renderList.sectionsWithEntitiesIterator();
+            if (sectionIterator == null) {
+                continue;
+            }
+            while (sectionIterator.hasNext()) {
+                var section = renderList.getRegion().getSection(sectionIterator.nextByteAsInt());
+                if (section == null) {
+                    continue;
+                }
+                var context = section.getBuiltContext();
+                if (!(context instanceof org.embeddedt.embeddium.impl.render.chunk.data.MinecraftBuiltRenderSectionData<?, ?> mcData)) {
+                    continue;
+                }
+                if (!mcData.culledBlockEntities.isEmpty()) {
+                    culledBySection.put(section, mcData.culledBlockEntities);
+                    if (seen.add(section)) {
+                        visible.add(section);
+                    }
+                }
+            }
+        }
+        visible.sort((a, b) -> {
+            int adx = a.getChunkX() - camChunk.x(), ady = a.getChunkY() - camChunk.y(), adz = a.getChunkZ() - camChunk.z();
+            int bdx = b.getChunkX() - camChunk.x(), bdy = b.getChunkY() - camChunk.y(), bdz = b.getChunkZ() - camChunk.z();
+            return Integer.compare((adx * adx) + (ady * ady) + (adz * adz), (bdx * bdx) + (bdy * bdy) + (bdz * bdz));
+        });
+
+        BeVisibilityProbe.losBeginFrame(viewport, this.renderDistance * 16.0f);
+        for (var section : visible) {
+            var culled = culledBySection.get(section);
+            if (culled != null) {
+                for (Object blockEntity : culled) {
+                    AxisAlignedBB box = ((TileEntity) blockEntity).getRenderBoundingBox();
+                    BeVisibilityProbe.losQueryBlockEntity(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
+                }
+            }
+            BeVisibilityProbe.losDrawOccluderSection(section);
+        }
+        BeVisibilityProbe.losEndFrame();
+    }
+
     @Override
     public int renderBlockEntities(TileEntityRenderContext tileEntityRenderContext) {
+        if (BeVisibilityProbe.losEnabled()) {
+            celtium$runBeLosProbe();
+        }
         int pass = MinecraftForgeClient.getRenderPass();
         TileEntityRendererDispatcher.instance.preDrawBatch();
         org.taumc.celeritas.impl.render.producer.EndPortalProducer.begin();

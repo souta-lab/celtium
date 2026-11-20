@@ -2339,6 +2339,29 @@ public final class ValidationClient {
     private boolean celtium$flyingSet;
     private boolean celtium$entitiesSpawned;
     private boolean celtium$dynamicLightSpawned;
+    /**
+     * Item 386's LOS wall ({@code -Dceltium.validation.losWall=true}): one stone wall between the
+     * camera and the keepEntities cohort, so the LOS dry-run probe has a positive control. The cell
+     * ranges are arguments with defaults, not part of the flag's meaning - they are a measurement
+     * condition the projection check may correct without touching any threshold. X/Z are offsets
+     * from the player's floored position (with the standard pose at (0.5, 12, 0.5) the defaults are
+     * exactly the plan's cells x {-1..+3}, z {-2, -1}); Y is absolute. The Y band starts at 8, not
+     * the plan's paper 10: the probePixel confirmation measured the cohort's feet at y=8
+     * ({@code entitySpawnSurfaceY=8}, onGround=false), so a wall stopping at 10 would leave the
+     * cohort's lower half unoccluded.
+     */
+    private static final boolean LOS_WALL = Boolean.getBoolean("celtium.validation.losWall");
+    private static final int LOS_WALL_MIN_X = Integer.getInteger("celtium.validation.losWallMinX", -1).intValue();
+    private static final int LOS_WALL_MAX_X = Integer.getInteger("celtium.validation.losWallMaxX", 3).intValue();
+    private static final int LOS_WALL_MIN_Z = Integer.getInteger("celtium.validation.losWallMinZ", -2).intValue();
+    private static final int LOS_WALL_MAX_Z = Integer.getInteger("celtium.validation.losWallMaxZ", -1).intValue();
+    private static final int LOS_WALL_MIN_Y = Integer.getInteger("celtium.validation.losWallMinY", 8).intValue();
+    private static final int LOS_WALL_MAX_Y = Integer.getInteger("celtium.validation.losWallMaxY", 14).intValue();
+    /** Tick at which the wall is returned to air in the same leg; 0 keeps it for the whole run. */
+    private static final int LOS_WALL_REMOVE_AT_TICK =
+            Integer.getInteger("celtium.validation.losWallRemoveAtTick", 0).intValue();
+    private boolean celtium$losWallPlaced;
+    private boolean celtium$losWallRemoved;
     /** Whether the shadow stage has been built this run. */
     private boolean celtium$shadowStageBuilt;
     /**
@@ -3793,6 +3816,79 @@ public final class ValidationClient {
                 report.addProperty("entitySpawnPoseY", Double.valueOf(mc.player.posY));
                 report.addProperty("entitySpawnOnGround", Boolean.valueOf(
                         Math.abs(spawnSurface - mc.player.posY) <= 1.0D));
+            }
+            if (worldTicks >= 60 && !celtium$losWallPlaced && LOS_WALL) {
+                celtium$losWallPlaced = true;
+                // Placed with the cohort, on the same tick and the same anchor, so the wall and the
+                // cohort it occludes are always one scene. With the defaults this is 5 x 2 x 7 = 70
+                // blocks; none of its cells touches the cohort's own blocks (chest/sign at z=-6/-7,
+                // the selection stone at z=-3 - the wall stops at z=-1).
+                int px = (int) Math.floor(mc.player.posX), pz = (int) Math.floor(mc.player.posZ);
+                int placed = 0;
+                for (int cx = LOS_WALL_MIN_X; cx <= LOS_WALL_MAX_X; cx++) {
+                    for (int cz = LOS_WALL_MIN_Z; cz <= LOS_WALL_MAX_Z; cz++) {
+                        for (int cy = LOS_WALL_MIN_Y; cy <= LOS_WALL_MAX_Y; cy++) {
+                            if (mc.world.setBlockState(new net.minecraft.util.math.BlockPos(px + cx, cy, pz + cz),
+                                    net.minecraft.init.Blocks.STONE.getDefaultState(), 3)) {
+                                placed++;
+                            }
+                        }
+                    }
+                }
+                report.addProperty("losWallPlaced", Integer.valueOf(placed));
+                report.addProperty("losWallCells", "x[" + (px + LOS_WALL_MIN_X) + ".." + (px + LOS_WALL_MAX_X)
+                        + "] z[" + (pz + LOS_WALL_MIN_Z) + ".." + (pz + LOS_WALL_MAX_Z)
+                        + "] y[" + LOS_WALL_MIN_Y + ".." + LOS_WALL_MAX_Y + "]");
+                System.out.println("[Celtium] CELTIUM_LOS_WALL placed=" + placed + " tick=" + worldTicks);
+            }
+            if (celtium$losWallPlaced && !celtium$losWallRemoved && LOS_WALL_REMOVE_AT_TICK > 0
+                    && worldTicks >= LOS_WALL_REMOVE_AT_TICK) {
+                celtium$losWallRemoved = true;
+                // The break leg: the same cells back to air at the named tick, so what the wall hid
+                // must return inside one leg, in front of the presented dump watching the window.
+                int px = (int) Math.floor(mc.player.posX), pz = (int) Math.floor(mc.player.posZ);
+                int removed = 0;
+                for (int cx = LOS_WALL_MIN_X; cx <= LOS_WALL_MAX_X; cx++) {
+                    for (int cz = LOS_WALL_MIN_Z; cz <= LOS_WALL_MAX_Z; cz++) {
+                        for (int cy = LOS_WALL_MIN_Y; cy <= LOS_WALL_MAX_Y; cy++) {
+                            if (mc.world.setBlockState(new net.minecraft.util.math.BlockPos(px + cx, cy, pz + cz),
+                                    net.minecraft.init.Blocks.AIR.getDefaultState(), 3)) {
+                                removed++;
+                            }
+                        }
+                    }
+                }
+                report.addProperty("losWallRemoved", Integer.valueOf(removed));
+                System.out.println("[Celtium] CELTIUM_LOS_WALL removed=" + removed + " tick=" + worldTicks);
+            }
+            // Item 386's renderer-side instruments, read reflectively for the same reason as the pass
+            // timings: the fixture must load on a leg whose jar carries no renderer classes. The
+            // values are the instruments' latest-frame snapshots, overwritten every tick so the
+            // report holds the frame the run ended on.
+            if (Boolean.getBoolean("celtium.validation.beCensus")) {
+                Object sections = celtium$beInstrumentValue("censusSections");
+                if (sections != null) {
+                    report.addProperty("beCensusSections", (Number) sections);
+                    report.addProperty("beCensusDrawn", (Number) celtium$beInstrumentValue("censusDrawn"));
+                    report.addProperty("beCensusGlobal", (Number) celtium$beInstrumentValue("censusGlobal"));
+                    report.addProperty("beCensusCulled", (Number) celtium$beInstrumentValue("censusCulled"));
+                    report.addProperty("beCensusTopSections",
+                            String.valueOf(celtium$beInstrumentValue("censusTopSections")));
+                }
+            }
+            if ("dryRun".equals(System.getProperty("celtium.vulkan.beLos"))) {
+                Object tested = celtium$beInstrumentValue("losTested");
+                if (tested != null) {
+                    report.addProperty("beLosTested", (Number) tested);
+                    report.addProperty("beLosHidden", (Number) celtium$beInstrumentValue("losHidden"));
+                    report.addProperty("beLosSkippedSpan", (Number) celtium$beInstrumentValue("losSkippedSpan"));
+                    report.addProperty("beLosSkippedDist", (Number) celtium$beInstrumentValue("losSkippedDist"));
+                    report.addProperty("beLosOccluderSections",
+                            (Number) celtium$beInstrumentValue("losOccluderSections"));
+                    report.addProperty("beLosQueryNanos", (Number) celtium$beInstrumentValue("losQueryNanos"));
+                    report.addProperty("beLosOccluderNanos",
+                            (Number) celtium$beInstrumentValue("losOccluderNanos"));
+                }
             }
             if (worldTicks >= 60 && !celtium$dynamicLightSpawned
                     && HarnessConfig.bool("dynamicLightItem", false)) {
@@ -5782,6 +5878,45 @@ public final class ValidationClient {
      */
     private static java.lang.reflect.Method celtium$passSummaryMethod;
     private static boolean celtium$passSummaryResolved;
+
+    /** Resolved accessors of item 386's {@code BeVisibilityProbe}, by method name; empty when absent. */
+    private static final java.util.Map<String, java.lang.reflect.Method> celtium$beInstrumentMethods =
+            new java.util.HashMap<String, java.lang.reflect.Method>();
+    private static boolean celtium$beInstrumentsResolved;
+
+    /**
+     * One of item 386's instrument readings (a {@code Number} or the top-sections {@code String}),
+     * or null when the renderer classes are not on this leg's classpath. Resolved once, like the
+     * pass summary above: the census and the LOS probe live in the renderer's common module, and a
+     * baseline leg ships without them.
+     */
+    private static Object celtium$beInstrumentValue(String method) {
+        if (!celtium$beInstrumentsResolved) {
+            celtium$beInstrumentsResolved = true;
+            try {
+                Class<?> probe = Class.forName(
+                        "org.embeddedt.embeddium.impl.render.chunk.occlusion.BeVisibilityProbe");
+                for (String name : new String[] {"censusSections", "censusDrawn", "censusGlobal", "censusCulled",
+                        "censusTopSections", "losTested", "losHidden", "losSkippedSpan", "losSkippedDist",
+                        "losOccluderSections", "losQueryNanos", "losOccluderNanos"}) {
+                    java.lang.reflect.Method accessor = probe.getDeclaredMethod(name);
+                    accessor.setAccessible(true);
+                    celtium$beInstrumentMethods.put(name, accessor);
+                }
+            } catch (Throwable absent) {
+                celtium$beInstrumentMethods.clear();
+            }
+        }
+        java.lang.reflect.Method accessor = celtium$beInstrumentMethods.get(method);
+        if (accessor == null) {
+            return null;
+        }
+        try {
+            return accessor.invoke(null);
+        } catch (Throwable error) {
+            return null;
+        }
+    }
     private static String celtium$rendererPassSummary() {
         if (!celtium$passSummaryResolved) {
             celtium$passSummaryResolved = true;
