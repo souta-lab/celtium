@@ -1280,6 +1280,25 @@ public final class VulkanGlTexture {
     }
 
     /**
+     * Records the transition that hands a foreign image back to a caller-named layout, if it is not already there.
+     * <p>
+     * The general form of {@link #ensureGeneralLayout}: a colour image's owner attaches it in {@code GENERAL},
+     * but a depth image's owner attaches it in {@code DEPTH_STENCIL_ATTACHMENT_OPTIMAL} - a layout
+     * {@code GENERAL} cannot stand in for, because the owner's own records (the shared depth store, the pair's
+     * barrier sources) are written in the owner's vocabulary. The caller decides the destination (the published
+     * walk decides it in {@code PostChainBridge.celtium$publishedHandBackLayout}); this method only records it,
+     * with the depth aspect and accesses when the wrapper stands for a depth image, exactly as the two-layout
+     * handshake's other transitions do.
+     *
+     * @param commandBuffer the command buffer the hand-back is recorded into
+     * @param handBackLayout the layout the image's owner next attaches (or otherwise uses) it in
+     */
+    public void ensureHandBackLayout(VkCommandBuffer commandBuffer, int handBackLayout) {
+        requireForeign("ensureHandBackLayout");
+        transitionForeignLayout(commandBuffer, handBackLayout);
+    }
+
+    /**
      * {@return the layout this image is in as far as accepted submissions go}, shared with every other wrapper of the
      * same image; {@code UNDEFINED} for an owned mirror, whose layouts this class keeps per level instead.
      * <p>

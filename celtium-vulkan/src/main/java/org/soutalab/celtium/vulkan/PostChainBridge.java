@@ -735,6 +735,35 @@ b.frameBufferOpen = false;
         return false;
     }
 
+    /**
+     * {@return the layout the published-name walk moves one name's image to, and the layout it reports to the
+     * image's owner afterwards}.
+     * <p>
+     * One decision for both the transition and the report, so the two cannot disagree: the walk records a barrier
+     * to this value and then reports this value (read back as the wrapper's recorded destination). The sampling
+     * side ({@code general == false}) is {@code SHADER_READ_ONLY_OPTIMAL} for every published image - the layout
+     * the sampling descriptors declare. The attach side differs by kind: a colour image's owner attaches it in
+     * {@code GENERAL}, the layout its pass declares, but a depth image's owner attaches it in its own layout
+     * ({@code ownerLayout}, normally {@code DEPTH_STENCIL_ATTACHMENT_OPTIMAL}) - {@code GENERAL} is a value the
+     * depth owner's records never use, and handing a depth image back there left the owner's store record naming
+     * a layout the next draw's descriptor did not declare (item 537 wall (c): the two
+     * {@code VUID-vkCmdDraw-None-09600} on the published depth image).
+     * <p>
+     * Static and package-private so the rule is testable without a device, like
+     * {@link #celtium$attachHandBackNeeded}: a green test here pins the decision table, not a recorded barrier.
+     *
+     * @param depth       {@code true} when the published name stands for a depth image (it carries a depth key)
+     * @param general     {@code true} for the attach-side hand-back, {@code false} for the sampling side
+     * @param ownerLayout the layout the depth image's owner attaches it in; ignored for colour names and on the
+     *                    sampling side
+     */
+    static int celtium$publishedHandBackLayout(boolean depth, boolean general, int ownerLayout) {
+        if (!general) {
+            return org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        }
+        return depth ? ownerLayout : org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
+    }
+
     /** {@return the stale-name scan's runs and memo hits, as {@code runs/skips}}. */
     String celtium$syncScanSummary() {
         return this.syncScanRuns + "/" + this.syncScanSkips;
@@ -875,8 +904,17 @@ b.frameBufferOpen = false;
                     continue;
                 }
             }
+            // A depth publication is decided apart from the colour names (item 537 wall (c)): its owner's
+            // vocabulary has no GENERAL in it, so the hand-back target comes from the same decision the report
+            // below uses, with the owner's own attachment layout as the depth answer.
+            long depthKey = this.cachedDepthKeys[cachedIndex];
             if (general) {
-                entryValue.ensureGeneralLayout(b.commandBuffer);
+                if (depthKey != 0L) {
+                    entryValue.ensureHandBackLayout(b.commandBuffer, celtium$publishedHandBackLayout(true, true,
+                            GllessFrameTarget.DEPTH_RENDER_LAYOUT));
+                } else {
+                    entryValue.ensureGeneralLayout(b.commandBuffer);
+                }
             } else if (pairImageName) {
                 // The pair is never moved out of the layout its pass declares, so its sampling transition is not
                 // served. Counted, so "the transition was skipped" is a measurement; and the pair's own record follows,
@@ -894,9 +932,8 @@ b.frameBufferOpen = false;
             // makes the pair's actual layout readable next to the GENERAL its pass declares and the layout the
             // descriptor was written with - the three values VUID-vkCmdDraw-None-09600 compares.
             if (pairOwner != null && publishedImageIdentity != Long.MIN_VALUE) {
-                notePairColorLayout(pairOwner, publishedImageIdentity, publishedImageHandleValue, general
-                        ? org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL
-                        : org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                notePairColorLayout(pairOwner, publishedImageIdentity, publishedImageHandleValue,
+                        celtium$publishedHandBackLayout(false, general, 0));
                 celtium$reportPairLayout(general ? "hand-back" : "sampling");
             }
             // A depth publication's layout record is the shared depth store, not a pair, so the wrapper's move is
@@ -905,11 +942,12 @@ b.frameBufferOpen = false;
             // keep naming the attachment layout while the image sits in the read layout the sampling side left it
             // in, and the next acquire would name a source layout the image is not in. This is the report
             // SHADOW-NATIVE-DESIGN section 3.4 requires of the publication.
-            long depthKey = this.cachedDepthKeys[cachedIndex];
+            // The reported value is the destination the wrapper's recording actually leaves the image in, read
+            // back from the wrapper - not a value synthesised from `general`. The two agreed for colour, but for
+            // depth the binary synthesis wrote GENERAL on the hand-back side: a layout the depth owner never
+            // uses, over an image the hand-back above moved to the owner's attachment layout (item 537 wall (c)).
             if (depthKey != 0L && pairOwner != null) {
-                pairOwner.noteSharedDepthLayout(depthKey, general
-                        ? org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL
-                        : org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                pairOwner.noteSharedDepthLayout(depthKey, entryValue.foreignLayoutIn(b.commandBuffer));
             }
         }
     }
