@@ -205,6 +205,21 @@ public final class ModProgramRegistry {
                 }
             }
         }
+        // The sampler and image names are the identity a leg can key on: program ids shift from run to run, while
+        // the names say which pass a program serves (a deferred program samples the shadow textures, a composite
+        // program the colour targets) - the distinction the 43/45/46/49 identification question turned on, which
+        // the id-and-size line could not answer (offer-path diagnosis section 7, 2026-11-20).
+        String names = "";
+        if (p.lowered.ok()) {
+            StringBuilder listed = new StringBuilder();
+            for (ModGlslTranslator.SamplerBinding sampler : p.lowered.samplers()) {
+                listed.append(listed.length() == 0 ? "" : ",").append(sampler.name());
+            }
+            for (ModGlslTranslator.ImageBinding image : p.lowered.images()) {
+                listed.append(listed.length() == 0 ? "" : ",").append("img:").append(image.name());
+            }
+            names = listed.toString();
+        }
         System.out.println("[Celtium] CELTIUM_MOD_PROGRAM_LINKED program=" + program
                 + " compiled=" + p.compiled()
                 + (p.compiled() ? " spirvBytes=" + (p.vertexSpirv.length + p.fragmentSpirv.length)
@@ -213,6 +228,7 @@ public final class ModProgramRegistry {
                         ? " lowered=true samplers=" + p.lowered.samplers().size() + " images=" + p.lowered.images().size() + " uniformBytes="
                                 + p.lowered.uniformBlockSize() + " route=" + (p.lowered.uniformsViaBuffer() ? "ubo" : "push")
                                 + " vertex=" + (vertex == null ? "fixed-function" : "own")
+                                + " names=[" + names + "]"
                         : " lowered=false reason=" + p.lowered.failure()));
         return p;
     }

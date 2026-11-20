@@ -1396,11 +1396,9 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$vertexAttribIPointer(index, size, type, stride, pointer);
     }
 
-    /** Attribute-array enables for index 0, recorded as the position attribute's enable. */
+    /** Attribute-array enables, recorded per attribute in the bound VAO; index 0 also feeds the position enable. */
     public static void glEnableVertexAttribArray(int index, boolean enabled) {
-        if (index == 0) {
-            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clientState(0x8622, enabled);
-        }
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$vertexAttribEnabled(index, enabled);
     }
 
     /** Sets the client vertex-array pointer, as {@code glVertexPointer(size, type, stride, pointer)} does. */

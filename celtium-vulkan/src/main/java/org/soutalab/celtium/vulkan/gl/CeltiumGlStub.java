@@ -2256,29 +2256,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return;
         }
-        // Attribute pointers belong to the VAO: save the current record under the outgoing name and load the incoming
-        // one, so a mod that sets its pointer once and rebinds its VAO draws from that pointer and not from whatever
-        // the last unbind-free draw left behind.
-        // Name 0 is the default VAO and keeps its own record too: skipping it lost the pointer a caller had set on
-        // VAO 0 when it bound another VAO and came back.
-        stub.vaoRecords.put(stub.boundVertexArray, new long[] {stub.vertexPointerSize, stub.vertexPointerType,
-                stub.vertexPointerStride, stub.vertexPointerOffset, stub.vertexPointerNormalized ? 1L : 0L,
-                stub.vertexPointerInteger ? 1L : 0L});
+        // Attribute state belongs to the VAO: the per-attribute records live in the VAO's own array, written in
+        // place while the VAO is bound, and binding swaps which array is live - so a mod that sets its attributes
+        // once and rebinds its VAO draws from its own state and not from whatever the last draw left behind.
+        // Name 0 is the default VAO and keeps its own records too: skipping it lost the pointer a caller had set
+        // on VAO 0 when it bound another VAO and came back.
         stub.boundVertexArray = array;
-        long[] record = stub.vaoRecords.get(array);
-        if (record == null) {
-            // A fresh VAO starts with GL's default attribute: size 4, float, no stride, null pointer, unnormalized.
-            record = new long[] {4L, 0x1406L, 0L, 0L, 0L, 0L};
-            stub.vaoRecords.put(array, record);
-        }
-        if (record != null) {
-            stub.vertexPointerSize = (int) record[0];
-            stub.vertexPointerType = (int) record[1];
-            stub.vertexPointerStride = (int) record[2];
-            stub.vertexPointerOffset = record[3];
-            stub.vertexPointerNormalized = record[4] != 0L;
-            stub.vertexPointerInteger = record[5] != 0L;
-        }
+        stub.currentAttribs = stub.attribsFor(array);
+        stub.celtium$noteAttribZero();
     }
 
     /** {@code glPointSize} from the transformer's route: recorded for the query, since points are not rasterized. */
@@ -2850,6 +2835,15 @@ public final class CeltiumGlStub implements FunctionProvider {
         stub.enables[0x8074] = (byte) saved[4];
         stub.vertexPointerNormalized = saved.length > 5 && saved[5] != 0L;
         stub.vertexPointerInteger = saved.length > 6 && saved[6] != 0L;
+        // The restored pointer is attribute 0's record too; the two views of it must not drift apart.
+        VaoAttrib attrib = stub.boundAttribs()[0];
+        attrib.size = stub.vertexPointerSize;
+        attrib.type = stub.vertexPointerType;
+        attrib.stride = stub.vertexPointerStride;
+        attrib.offset = stub.vertexPointerOffset;
+        attrib.normalized = stub.vertexPointerNormalized;
+        attrib.integer = stub.vertexPointerInteger;
+        attrib.pointerSet = true;
     }
 
     /** Bounded legacy client-attribute stack. */
@@ -2866,34 +2860,124 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]> renderbufferDims =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]>();
 
-    /** Per-VAO attribute records, keyed by the VAO name; the client pointer fields hold the bound one. */
-    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<long[]> vaoRecords =
-            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<long[]>();
+    /** The generic vertex attributes one VAO record carries; GL guarantees at least sixteen. */
+    private static final int MAX_VERTEX_ATTRIBS = 16;
 
-    /** {@code glVertexAttribIPointer} for index 0: recorded like the float form; the decode refuses integer types. */
+    /**
+     * One generic vertex attribute's recorded state: its enable, its pointer, and the array buffer the pointer was
+     * set against. GL keeps all three per attribute inside the VAO. The stub used to keep a single pointer record
+     * for attribute 0 alone - no enables, no buffer, and no record at all for the other attributes - which is why a
+     * VAO-carried draw decoded from whichever attribute had been set last and from enables some other draw had left
+     * behind: Demonica's full-screen quad (three attributes set once at setup, its VBO unbound again before the
+     * draw) was refused on every frame for exactly that (offer-path diagnosis, 2026-11-20).
+     */
+    static final class VaoAttrib {
+        boolean enabled;
+        boolean pointerSet;
+        boolean normalized;
+        boolean integer;
+        /** GL's default attribute: size 4, float, tightly packed, null pointer, no buffer. */
+        int size = 4;
+        int type = 0x1406; // GL_FLOAT
+        int stride;
+        long offset;
+        int buffer;
+    }
+
+    /** Per-VAO generic attribute records, keyed by the VAO name; {@link #currentAttribs} is the bound VAO's array. */
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<VaoAttrib[]> vaoAttribRecords =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<VaoAttrib[]>();
+
+    /** The bound VAO's attribute records; null until first use, when {@link #boundAttribs()} binds it. */
+    private VaoAttrib[] currentAttribs;
+
+    private VaoAttrib[] attribsFor(int vao) {
+        VaoAttrib[] attribs = this.vaoAttribRecords.get(vao);
+        if (attribs == null) {
+            attribs = new VaoAttrib[MAX_VERTEX_ATTRIBS];
+            for (int i = 0; i < attribs.length; i++) {
+                attribs[i] = new VaoAttrib();
+            }
+            this.vaoAttribRecords.put(vao, attribs);
+        }
+        return attribs;
+    }
+
+    /** {@return the bound VAO's attribute records}, creating the VAO's array on first use. */
+    private VaoAttrib[] boundAttribs() {
+        if (this.currentAttribs == null) {
+            this.currentAttribs = attribsFor(this.boundVertexArray);
+        }
+        return this.currentAttribs;
+    }
+
+    /** Copies attribute 0's record into the legacy single-pointer fields the client-array paths read. */
+    private void celtium$noteAttribZero() {
+        VaoAttrib position = boundAttribs()[0];
+        this.vertexPointerSize = position.size;
+        this.vertexPointerType = position.type;
+        this.vertexPointerStride = position.stride;
+        this.vertexPointerOffset = position.offset;
+        this.vertexPointerNormalized = position.normalized;
+        this.vertexPointerInteger = position.integer;
+    }
+
+    /** {@code glVertexAttribIPointer}: recorded per attribute like the float form; the decode refuses integer types. */
     public static void celtium$vertexAttribIPointer(int index, int size, int type, int stride, long pointer) {
         CeltiumGlStub stub = installed;
-        if (stub != null && index == 0) {
-            stub.vertexPointerSize = size;
-            stub.vertexPointerType = type;
-            stub.vertexPointerStride = stride;
-            stub.vertexPointerOffset = pointer;
-            stub.vertexPointerNormalized = false;
-            stub.vertexPointerInteger = true;
+        if (stub != null && index >= 0 && index < MAX_VERTEX_ATTRIBS) {
+            VaoAttrib attrib = stub.boundAttribs()[index];
+            attrib.size = size;
+            attrib.type = type;
+            attrib.stride = stride;
+            attrib.offset = pointer;
+            attrib.normalized = false;
+            attrib.integer = true;
+            attrib.pointerSet = true;
+            // The pointer is an offset into the array buffer bound at this moment; that association is VAO state
+            // and has to be captured here, because the caller unbinds the buffer again before drawing.
+            attrib.buffer = NativeGeometryBuffer.boundId();
+            if (index == 0) {
+                stub.celtium$noteAttribZero();
+            }
         }
     }
 
-    /** @code glVertexAttribPointer} for index 0: the generic spelling of the position pointer. */
+    /** @code glVertexAttribPointer}: recorded per attribute in the bound VAO; index 0 is the position pointer. */
     public static void celtium$vertexAttribPointer(int index, int size, int type, boolean normalized, int stride,
             long pointer) {
         CeltiumGlStub stub = installed;
-        if (stub != null && index == 0) {
-            stub.vertexPointerSize = size;
-            stub.vertexPointerType = type;
-            stub.vertexPointerStride = stride;
-            stub.vertexPointerOffset = pointer;
-            stub.vertexPointerNormalized = normalized;
-            stub.vertexPointerInteger = false;
+        if (stub != null && index >= 0 && index < MAX_VERTEX_ATTRIBS) {
+            VaoAttrib attrib = stub.boundAttribs()[index];
+            attrib.size = size;
+            attrib.type = type;
+            attrib.stride = stride;
+            attrib.offset = pointer;
+            attrib.normalized = normalized;
+            attrib.integer = false;
+            attrib.pointerSet = true;
+            attrib.buffer = NativeGeometryBuffer.boundId();
+            if (index == 0) {
+                stub.celtium$noteAttribZero();
+            }
+        }
+    }
+
+    /**
+     * {@code glEnableVertexAttribArray}/{@code glDisableVertexAttribArray} from the transformer's route: the
+     * enable is VAO state, kept per attribute. Index 0 also feeds the capability record the draw path has always
+     * read for the position attribute, so the two spellings of that one fact cannot drift apart.
+     */
+    public static void celtium$vertexAttribEnabled(int index, boolean enabled) {
+        CeltiumGlStub stub = installed;
+        if (stub == null) {
+            return;
+        }
+        if (index >= 0 && index < MAX_VERTEX_ATTRIBS) {
+            stub.boundAttribs()[index].enabled = enabled;
+        }
+        if (index == 0) {
+            stub.setCapability(0x8622, enabled);
         }
     }
 
@@ -2912,6 +2996,16 @@ public final class CeltiumGlStub implements FunctionProvider {
             // The legacy pointer is a float, unnormalized attribute: both generic flags reset with it.
             stub.vertexPointerNormalized = false;
             stub.vertexPointerInteger = false;
+            // The same fact in the VAO's per-attribute record, so a VAO swap cannot resurrect an older pointer.
+            VaoAttrib attrib = stub.boundAttribs()[0];
+            attrib.size = size;
+            attrib.type = type;
+            attrib.stride = stride;
+            attrib.offset = pointer;
+            attrib.normalized = false;
+            attrib.integer = false;
+            attrib.pointerSet = true;
+            attrib.buffer = NativeGeometryBuffer.boundId();
         }
     }
 
@@ -4243,25 +4337,47 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
-    /** {@code glGetVertexAttribfv/dv}: the same attribute-0 answer in the caller's numeric width. */
+    /**
+     * One recorded attribute answer, shared by the three widths of the {@code glGetVertexAttrib*} family. The
+     * record is the bound VAO's own, per attribute: before the records existed these queries answered attribute 0
+     * from the client-array fields and every other index with zero, so a caller asking after its own VAO setup
+     * (the full-screen quad's renderer among them) was told its attributes did not exist.
+     */
+    private int celtium$vertexAttribAnswer(int index, int pname) {
+        if (index < 0 || index >= MAX_VERTEX_ATTRIBS) {
+            return 0;
+        }
+        VaoAttrib attrib = boundAttribs()[index];
+        switch (pname) {
+            case 0x8622: // GL_VERTEX_ATTRIB_ARRAY_ENABLED
+                // Attribute 0 keeps its two legacy spellings as well: the client-array enable and the capability
+                // record the enable route writes are the same fact in older dress.
+                return attrib.enabled || (index == 0 && (this.enables[0x8074] != 0 || this.enables[0x8622] != 0))
+                        ? 1 : 0;
+            case 0x8623: // GL_VERTEX_ATTRIB_ARRAY_SIZE
+                return attrib.size;
+            case 0x8624: // GL_VERTEX_ATTRIB_ARRAY_STRIDE
+                return attrib.stride;
+            case 0x8625: // GL_VERTEX_ATTRIB_ARRAY_TYPE
+                return attrib.type;
+            case 0x889F: // GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING - the array buffer the pointer is an offset into
+                return attrib.buffer;
+            case 0x886A: // GL_VERTEX_ATTRIB_ARRAY_NORMALIZED
+                return attrib.normalized ? 1 : 0;
+            case 0x88FD: // GL_VERTEX_ATTRIB_ARRAY_INTEGER
+                return attrib.integer ? 1 : 0;
+            default:
+                return 0;
+        }
+    }
+
+    /** {@code glGetVertexAttribfv/dv}: the recorded attribute answer in the caller's numeric width. */
     public static void celtium$getVertexAttribFloats(int index, int pname, long out, boolean asDouble) {
         CeltiumGlStub stub = installed;
         if (stub == null || out == 0L) {
             return;
         }
-        int value = 0;
-        if (index == 0) {
-            switch (pname) {
-                case 0x8622: value = stub.enables[0x8074] != 0 ? 1 : 0; break;
-                case 0x8623: value = stub.vertexPointerSize; break;
-                case 0x8624: value = stub.vertexPointerStride; break;
-                case 0x8625: value = stub.vertexPointerType; break;
-                case 0x889F: value = NativeGeometryBuffer.boundId(); break;
-                case 0x886A: value = stub.vertexPointerNormalized ? 1 : 0; break;
-                case 0x88FD: value = stub.vertexPointerInteger ? 1 : 0; break;
-                default: break;
-            }
-        }
+        int value = stub.celtium$vertexAttribAnswer(index, pname);
         if (asDouble) {
             org.lwjgl.system.MemoryUtil.memPutDouble(out, value);
         } else {
@@ -4269,51 +4385,24 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
-    /** {@code glGetVertexAttribPointerv} for attribute 0: the recorded pointer or buffer offset. */
+    /** {@code glGetVertexAttribPointerv}: the recorded pointer or buffer offset of the named attribute. */
     public static void celtium$getVertexAttribPointer(int index, int pname, long out) {
         CeltiumGlStub stub = installed;
         if (stub == null || out == 0L) {
             return;
         }
-        long value = index == 0 && pname == 0x8645 ? stub.vertexPointerOffset : 0L; // GL_VERTEX_ATTRIB_ARRAY_POINTER
+        long value = pname == 0x8645 && index >= 0 && index < MAX_VERTEX_ATTRIBS // GL_VERTEX_ATTRIB_ARRAY_POINTER
+                ? stub.boundAttribs()[index].offset : 0L;
         org.lwjgl.system.MemoryUtil.memPutLong(out, value);
     }
 
-    /** {@code glGetVertexAttribiv} for attribute 0, answered from the client-array record. */
+    /** {@code glGetVertexAttribiv}, answered from the bound VAO's per-attribute record. */
     public static void celtium$getVertexAttribiv(int index, int pname, long out) {
         CeltiumGlStub stub = installed;
         if (stub == null || out == 0L) {
             return;
         }
-        int value = 0;
-        if (index == 0) {
-            switch (pname) {
-                case 0x8622: // GL_VERTEX_ATTRIB_ARRAY_ENABLED - the client vertex-array enable
-                    value = stub.enables[0x8074] != 0 ? 1 : 0; // GL_VERTEX_ARRAY
-                    break;
-                case 0x8623: // GL_VERTEX_ATTRIB_ARRAY_SIZE
-                    value = stub.vertexPointerSize;
-                    break;
-                case 0x8624: // GL_VERTEX_ATTRIB_ARRAY_STRIDE
-                    value = stub.vertexPointerStride;
-                    break;
-                case 0x8625: // GL_VERTEX_ATTRIB_ARRAY_TYPE
-                    value = stub.vertexPointerType;
-                    break;
-                case 0x889F: // GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING - the array buffer the pointer is an offset into
-                    value = NativeGeometryBuffer.boundId();
-                    break;
-                case 0x886A: // GL_VERTEX_ATTRIB_ARRAY_NORMALIZED
-                    value = stub.vertexPointerNormalized ? 1 : 0;
-                    break;
-                case 0x88FD: // GL_VERTEX_ATTRIB_ARRAY_INTEGER
-                    value = stub.vertexPointerInteger ? 1 : 0;
-                    break;
-                default:
-                    break;
-            }
-        }
-        org.lwjgl.system.MemoryUtil.memPutInt(out, value);
+        org.lwjgl.system.MemoryUtil.memPutInt(out, stub.celtium$vertexAttribAnswer(index, pname));
     }
 
     /** {@code glGetBooleani_v}: one GLboolean byte, the width GL writes for this query. */
@@ -6193,6 +6282,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return 0L;
             case SEM_BIND_VERTEX_ARRAY:
                 this.boundVertexArray = (int) c[0];
+                // The same swap the transformer's route performs: the VAO's own attribute records become live.
+                this.currentAttribs = attribsFor(this.boundVertexArray);
+                celtium$noteAttribZero();
                 return 0L;
             case SEM_VERTEX_POINTER:
                 // GL keeps one client vertex-array pointer; the last glVertexPointer wins, exactly as it does in a
@@ -6202,6 +6294,15 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.vertexPointerType = (int) c[1];
                 this.vertexPointerStride = (int) c[2];
                 this.vertexPointerOffset = c[3];
+                VaoAttrib pointerAttrib = boundAttribs()[0];
+                pointerAttrib.size = (int) c[0];
+                pointerAttrib.type = (int) c[1];
+                pointerAttrib.stride = (int) c[2];
+                pointerAttrib.offset = c[3];
+                pointerAttrib.normalized = false;
+                pointerAttrib.integer = false;
+                pointerAttrib.pointerSet = true;
+                pointerAttrib.buffer = NativeGeometryBuffer.boundId();
                 // Bounded, and only while the layout census has room: the recorded tuple has to be attributable to a
                 // call site, because a stride that does not match the sources' glVertexPointer(3, GL_FLOAT, 12, 0)
                 // is either a call this class mis-reads or a caller nobody has looked at yet, and those two need
@@ -6931,9 +7032,11 @@ public final class CeltiumGlStub implements FunctionProvider {
                 int name = memGetInt(names + (long) i * 4L);
                 this.liveNames.remove(name);
                 if (vertexArrays) {
-                    this.vaoRecords.remove(name);
+                    this.vaoAttribRecords.remove(name);
                     if (this.boundVertexArray == name) {
                         this.boundVertexArray = 0;
+                        // The deleted VAO's records go with it; the default VAO's array is re-read on next use.
+                        this.currentAttribs = null;
                     }
                 }
                 if (renderbuffers) {
@@ -10467,6 +10570,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         int buffer = boundName;
         ByteBuffer storage = nativeBuffer != null ? nativeBuffer.compatibilityView()
                 : buffer == 0 ? null : this.bufferStore.get(buffer);
+        // A VAO-carried draw names its vertex buffer through attribute 0's record, not through the binding the
+        // setup left behind: the full-screen quad's renderer binds its VBO only while it sets the pointers and
+        // unbinds it again before the draw, so the live binding at draw time is 0 and the pointer read as client
+        // memory. The record is the only place the association survives (offer-path diagnosis, 2026-11-20).
+        VaoAttrib[] attribs = boundAttribs();
+        VaoAttrib position = attribs[0];
+        if (position.pointerSet && position.buffer != 0 && position.buffer != boundName) {
+            nativeBuffer = NativeGeometryBuffer.find(position.buffer);
+            buffer = position.buffer;
+            storage = nativeBuffer != null ? nativeBuffer.compatibilityView() : this.bufferStore.get(buffer);
+        }
         // No array buffer bound means the pointer glVertexPointer was handed is a **client address**, not an offset
         // into GL-owned storage: the vertices are process memory the game wrote, and under a stub there is no GL object
         // to mirror them from. That is the main menu, the loading screen and every GUI-only frame - measured in the
@@ -10481,15 +10595,21 @@ public final class CeltiumGlStub implements FunctionProvider {
         this.drawClientMemory = clientMemory;
         this.texColorRepackArmed = false;
         long offset = this.vertexPointerOffset;
+        // A stride of 0 is GL's tightly-packed spelling: the attribute's own size in floats, not a stride of zero.
+        int pointerStride = this.vertexPointerStride != 0 ? this.vertexPointerStride
+                : this.vertexPointerType == GL_FLOAT ? this.vertexPointerSize * 4 : this.vertexPointerStride;
         long end = 0L;
         long asked = 0L;
         int formatId = 0;
         String reason = null;
         if (storage == null && !clientMemory) {
             reason = "the bound array buffer " + buffer + " has no mirrored storage";
-        } else if (this.enables[GL_VERTEX_ARRAY] == 0 && this.enables[0x8622] == 0) {
+        } else if (this.enables[GL_VERTEX_ARRAY] == 0 && this.enables[0x8622] == 0 && !position.enabled) {
             // Core code enables attribute 0 instead of the legacy GL_VERTEX_ARRAY bit; both describe the same position
-            // attribute the decode reads, so either enable makes this draw describable.
+            // attribute the decode reads, so either enable makes this draw describable. The third spelling is the
+            // VAO's own per-attribute enable, which is the only one a VAO setup leaves behind - the two global bits
+            // hold whatever the last client-state caller set, and reading them for a VAO draw refused the
+            // full-screen quad on every frame.
             reason = "GL_VERTEX_ARRAY / attribute 0 is not enabled, so no vertex pointer describes this draw";
         } else if (mode != GL_QUADS && mode != 4 && mode != 6 && mode != 5 && mode != 8 && mode != 9
                 && mode != 1 && mode != 2 && mode != 3) {
@@ -10508,7 +10628,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             long storageBase = (clientMemory || storage == null) ? 0L : memAddress(storage, 0);
             int storageCapacity = (clientMemory || storage == null) ? 0
                     : (nativeBuffer != null ? storage.capacity() : this.logicalSizeOf(buffer, storage.capacity()));
-            formatId = celtium$drawArrayFormat(this.vertexPointerStride, celtium$otherArrayMask(), count, first,
+            formatId = celtium$drawArrayFormat(pointerStride,
+                    celtium$otherArrayMask() | celtium$genericArrayMask(attribs), count, first,
                     clientMemory, storageBase, storageCapacity, layoutRefusal);
             reason = layoutRefusal[0];
             if (reason == null && clientMemory && offset == 0L) {
@@ -10519,7 +10640,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             reason = "first=" + first + " and pointer offset=" + offset + " must not be negative";
         }
         if (reason == null) {
-            asked = (long) first * this.vertexPointerStride + (long) count * this.vertexPointerStride;
+            asked = (long) first * pointerStride + (long) count * pointerStride;
             if (clientMemory) {
                 // Two bounds are available for a client pointer, and they are not equal in strength.
                 //
@@ -10571,11 +10692,11 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         long address = 0L;
         if (reason == null) {
-            int stride = this.vertexPointerStride;
+            int stride = pointerStride;
             address = (clientMemory ? offset : memAddress(storage, 0) + offset) + (long) first * stride;
             int decodedStride = formatId == FORMAT_POSITION_TEX_COLOR && this.texColorRepackArmed ? 24
-                    : this.vertexPointerStride == 32 && formatId == 9 ? 24
-                    : this.vertexPointerStride == 32 && formatId == 8 ? 28 : this.vertexPointerStride;
+                    : pointerStride == 32 && formatId == 9 ? 24
+                    : pointerStride == 32 && formatId == 8 ? 28 : pointerStride;
             if (compile) {
                 long bytes = (long) count * decodedStride;
                 if (bytes > MAX_LIST_PAYLOAD_BYTES) {
@@ -10583,7 +10704,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     DRAWARRAY_REFUSED.incrementAndGet();
                     return;
                 }
-                ByteBuffer snapshot = celtium$copyClientVerticesForDraw(address, count, this.vertexPointerStride, formatId);
+                ByteBuffer snapshot = celtium$copyClientVerticesForDraw(address, count, pointerStride, formatId);
                 NativeGeometryBuffer geometry = new NativeGeometryBuffer();
                 try {
                     geometry.upload(snapshot, decodedStride, formatId);
@@ -10594,7 +10715,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 if (this.openListGeometry == null) this.openListGeometry = new ArrayList<NativeGeometryBuffer>();
                 this.openListGeometry.add(geometry);
                 long litId = 0L;
-                if (hasItemTwin(this.vertexPointerStride, formatId)) {
+                if (hasItemTwin(pointerStride, formatId)) {
                     ByteBuffer litSnapshot = copyClientVerticesAsItem(address, count, formatId);
                     NativeGeometryBuffer lit = new NativeGeometryBuffer();
                     try {
@@ -10648,10 +10769,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                     // client-memory path the menu and the loading screen use is stride 16 (POSITION_COLOR, id 1), and
                     // Forge's cloud VBO is stride 24 (POSITION_TEX_COLOR, id 2) - both carry attributes the format-7
                     // shader would read as the next vertex's position.
-                    boolean asItem = hasItemTwin(this.vertexPointerStride, formatId) && lightingOn(backend);
+                    boolean asItem = hasItemTwin(pointerStride, formatId) && lightingOn(backend);
                     ByteBuffer packed = asItem ? copyClientVerticesAsItem(address, count, formatId)
-                            : decodedStride == this.vertexPointerStride ? null
-                            : celtium$copyClientVerticesForDraw(address, count, this.vertexPointerStride, formatId);
+                            : decodedStride == pointerStride ? null
+                            : celtium$copyClientVerticesForDraw(address, count, pointerStride, formatId);
                     try {
                         taken = backend.submitImmediateBatch(null, asItem ? ITEM_STRIDE : decodedStride,
                                 asItem ? ITEM_FORMAT : formatId,
@@ -10676,7 +10797,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                         // look the same in the frame and are different findings.
                         StringBuilder vertices = new StringBuilder();
                         for (int i = 0; i < 4 && i < count; i++) {
-                            long at = address + (long) i * this.vertexPointerStride;
+                            long at = address + (long) i * stride;
                             vertices.append(i == 0 ? "" : " ").append('(')
                                     .append(celtium$round3(MemoryUtil.memGetFloat(at))).append(',')
                                     .append(celtium$round3(MemoryUtil.memGetFloat(at + 4))).append(',')
@@ -10688,7 +10809,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                         // the same offsets the layout table gives (POSITION_TEX_COLOR: pos 0..11, uv 12..19, colour 20..23).
                         StringBuilder uvs = new StringBuilder();
                         for (int i = 0; i < 4 && i < count; i++) {
-                            long at = address + (long) i * this.vertexPointerStride;
+                            long at = address + (long) i * stride;
                             uvs.append(i == 0 ? "" : " ").append('(')
                                     .append(celtium$round3(MemoryUtil.memGetFloat(at + 12))).append(',')
                                     .append(celtium$round3(MemoryUtil.memGetFloat(at + 16))).append(')');
@@ -10702,9 +10823,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                         // arm (texture 35 forced to opaque white) is pixel-identical to the magenta-poison arm, which
                         // is why the question is now the colour and the blend rather than the texture.
                         StringBuilder colours = new StringBuilder();
-                        int colourOffset = this.vertexPointerStride >= 24 ? 20 : 16;
+                        int colourOffset = stride >= 24 ? 20 : 16;
                         for (int i = 0; i < 4 && i < count; i++) {
-                            long at = address + (long) i * this.vertexPointerStride + colourOffset;
+                            long at = address + (long) i * stride + colourOffset;
                             colours.append(i == 0 ? "" : " ").append(String.format("%02x%02x%02x%02x",
                                     MemoryUtil.memGetByte(at + 0), MemoryUtil.memGetByte(at + 1),
                                     MemoryUtil.memGetByte(at + 2), MemoryUtil.memGetByte(at + 3)));
@@ -10716,26 +10837,26 @@ public final class CeltiumGlStub implements FunctionProvider {
                         // (52,180 of 65,536 texels are alpha 1). This is the number that separates those two.
                         StringBuilder tailUv = new StringBuilder("none");
                         if (count > 4) {
-                            long at = address + (long) (count - 1) * this.vertexPointerStride;
+                            long at = address + (long) (count - 1) * stride;
                             tailUv.setLength(0);
                             tailUv.append('(').append(celtium$round3(MemoryUtil.memGetFloat(at + 12))).append(',')
                                     .append(celtium$round3(MemoryUtil.memGetFloat(at + 16))).append(')');
                         }
                         System.out.println("[Celtium] CELTIUM_DRAWARRAY_LAYOUT first=" + first + " count=" + count
                                 + " uvLast=" + tailUv
-                                + " stride=" + this.vertexPointerStride + " format=" + formatId + " mode=" + mode
+                                + " stride=" + stride + " format=" + formatId + " mode=" + mode
                                 + " col0..col3=[" + colours + "]"
                                 + " uv0..uv3=[" + uvs + "]"
                                 + " buffer=" + buffer + " clientMemory=" + clientMemory + " pointerOffset=" + offset
                                 + " pointerSize=" + this.vertexPointerSize + " pointerType=0x"
                                 + Integer.toHexString(this.vertexPointerType) + " pointerStride="
-                                + this.vertexPointerStride + " otherArrays=" + celtium$otherArrayNames()
+                                + stride + " otherArrays=" + celtium$otherArrayNames()
                                 + " v0..v3=[" + vertices + "] "
                                 + celtium$mirroredMatrices(backend)
                                 + " texture2dEnabled=" + (this.enables[GL_TEXTURE_2D] != 0)
                                 + " site=[" + celtium$callSite(10) + "]");
                         drawArrayFirst = "mode=" + mode + " first=" + first + " count=" + count + " stride="
-                                + this.vertexPointerStride + " format=" + formatId + " buffer=" + buffer
+                                + stride + " format=" + formatId + " buffer=" + buffer
                                 + " pointerOffset=" + offset + " address=0x" + Long.toHexString(address);
                     }
                     celtium$reportDrawArrays();
@@ -10824,6 +10945,23 @@ public final class CeltiumGlStub implements FunctionProvider {
             mask |= 4;
         }
         return mask;
+    }
+
+    /**
+     * The layout mask a VAO's generic attributes add, in {@link #celtium$otherArrayMask()}'s numbering: an enabled
+     * float attribute past position is a texture-coordinate set for layout purposes. The full-screen quad carries
+     * two of them (both reading the same bytes at offset 12), and the layout table's stride-20 row is the
+     * position-plus-texture form - without this bit the tuple read as "no other array" and the row never matched.
+     * Only float attributes count: any other type's bytes are not the floats the layouts describe.
+     */
+    private static int celtium$genericArrayMask(VaoAttrib[] attribs) {
+        for (int i = 1; i < attribs.length; i++) {
+            VaoAttrib attrib = attribs[i];
+            if (attrib.enabled && attrib.pointerSet && attrib.type == GL_FLOAT) {
+                return 4;
+            }
+        }
+        return 0;
     }
 
     /** The same mask as text, for the refusal and layout lines. */
