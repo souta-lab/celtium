@@ -208,6 +208,15 @@ public final class VulkanSwapchain {
         return value == null ? null : Boolean.valueOf(!"false".equalsIgnoreCase(value));
     }
 
+    /**
+     * Item 393's measurement knob: the preferred swapchain image count from the
+     * {@code celtium.vulkan.swapchainImages} property, clamped to 1..4; unset, it is exactly the shipped three.
+     * The surface's own min/max still bound the result inside {@link SwapchainCreateArguments#select}.
+     */
+    private static int desiredImageCount() {
+        return Math.max(1, Math.min(4, Integer.getInteger("celtium.vulkan.swapchainImages", 3).intValue()));
+    }
+
     /** {@return whether this swapchain was built for a different VSync request than the current one}. */
     public boolean presentModeStale() {
         return this.builtForRequestRevision != VSYNC_REQUEST_REVISION.get();
@@ -2535,7 +2544,8 @@ public final class VulkanSwapchain {
             surfaceOfferValues.maxExtentHeight = capabilities.maxImageExtent().height();
             surfaceOfferValues.formats = offeredFormats;
             SwapchainCreateArguments.Result choice =
-                    SwapchainCreateArguments.select(surfaceOfferValues, requestedWidth, requestedHeight, 3);
+                    SwapchainCreateArguments.select(surfaceOfferValues, requestedWidth, requestedHeight,
+                            desiredImageCount());
             if (choice.refusal != null) {
                 reasons.add(choice.refusal + " (surface offered formats " + availableFormats + ")");
                 return false;

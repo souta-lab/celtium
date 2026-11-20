@@ -33,8 +33,16 @@ public final class FrameSubmissionScheduler {
      * recording into it waits only when that submission has not completed, so fewer slots turn into waits and more
      * slots hold more fences and command buffers for no gain. The frames-in-flight policy this number is one half of
      * is stated once in docs/development.md (フレームの先行深度).
+     * <p>
+     * The count is read from the {@code celtium.vulkan.frameSlots} property (item 393's measurement knob, clamped to
+     * 1..4); unset, it is exactly the shipped four, and nothing in the shipping configuration sets it.
      */
-    public static final int FRAME_SLOTS = 4;
+    public static final int FRAME_SLOTS = clampSlots(Integer.getInteger("celtium.vulkan.frameSlots", 4).intValue());
+
+    /** Item 393's measurement knob: clamps the requested slot count to 1..4 (above 4 only fences and buffers grow). */
+    private static int clampSlots(int requested) {
+        return Math.max(1, Math.min(4, requested));
+    }
 
     /** Something that owns an allocation it can release once the submission that reads it has completed. */
     public interface Retirable {
