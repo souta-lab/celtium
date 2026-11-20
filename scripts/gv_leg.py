@@ -99,6 +99,16 @@ E2E_PACKS = {
         "staged": lambda root: root / ".celtium-work/modpack-po3/staged/mods",
         "exclude": [],
     },
+    # Supersymmetry 0.2.0.2 (Cleanroom 0.7.14 + relauncher, 188 mods): the Cleanroom 0.7 migration changes are
+    # applied in the staged directory (.celtium-work/modpack-susy/SUBSTITUTIONS.md). The instance is a dedicated
+    # clone with an empty minecraft/mods: the pack jars arrive from `staged` at leg time, exactly as e2ee does it,
+    # and modpack-reverify.sh writes saves/celtium-gen into this instance - so it must never be the instance the
+    # KPI world legs run on (ITEM362-PLAN-2026-11-18.md §5.2).
+    "susy": {
+        "instance": lambda root: Path.home() / ".local/share/PrismLauncher/instances/celtium-susy-0.2.0.2",
+        "staged": lambda root: root / ".celtium-work/modpack-susy/staged/mods",
+        "exclude": [],
+    },
 }
 
 

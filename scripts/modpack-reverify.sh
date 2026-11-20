@@ -3,7 +3,7 @@
 #
 # Usage: scripts/modpack-reverify.sh STAGE_DIR PACK [PACK...]
 #   STAGE_DIR  a staged Celtium build (.gv-verify/jars/<tag>, with build-provenance.json)
-#   PACK       an E2E_PACKS preset in scripts/gv_leg.py (sf4, atm3, rlcraft, sevtech, nomi, po3, e2ee)
+#   PACK       an E2E_PACKS preset in scripts/gv_leg.py (e2e, e2ee, sf4, atm3, rlcraft, sevtech, nomi, po3, susy)
 #
 # Per pack: one generation leg (Celtium, AMD) writes the world, which is copied into the pack instance as
 # saves/celtium-gen; then Celtium on AMD, Celtium on Intel and Celeritas 2.5.0-dev (AMD) all load that same save, so

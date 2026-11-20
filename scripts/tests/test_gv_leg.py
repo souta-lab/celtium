@@ -384,6 +384,14 @@ class LegRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(runner.LegError, "CELTIUM_E2E_PACK"):
             self.plan(mode="e2e")
 
+    def test_every_preset_names_its_three_parts(self):
+        # A typo'd key is not a cosmetic defect: `exclude` misspelt makes gv_leg raise KeyError at plan time,
+        # while `staged` misspelt silently reads a different .celtium-work directory. Pin the key set of every
+        # preset so a new pack cannot drift from the three-part shape (ITEM362-PLAN-2026-11-18.md §4.3).
+        for name, pack in runner.E2E_PACKS.items():
+            with self.subTest(preset=name):
+                self.assertEqual(set(pack), {"instance", "staged", "exclude"})
+
     def test_e2e_replaced_renderers_are_excluded_from_both_pack_inputs(self):
         from prism_validation import copy_pack_into_game_dir
         staged = self.root / ".celtium-work/modpack-p0/e2e-staged/mods"
