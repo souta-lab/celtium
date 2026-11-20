@@ -6402,6 +6402,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         TargetFormatCensus.Resolution formatResolution = celtium$resolvePairFormat(identity, color, colorCount);
         TargetFormatClass pairClass = formatResolution.chosen();
         long[] previous = this.rawRegisteredTargets.get(framebuffer);
+        // One line per colour-attachment change to a different name on the same framebuffer (item 365, M-C):
+        // the C7 hypothesis rests on this swap happening, and the plain census can only show it by pairing
+        // two lines by hand. The identities are printed under the current switch setting, on both sides.
+        if (previous != null && previous[0] != 0 && color != 0 && previous[0] != color
+                && this.rawAttachSwapLogs < Integer.getInteger("celtium.rawAttachSwapLogLimit", 32).intValue()) {
+            this.rawAttachSwapLogs++;
+            System.out.println("[Celtium] CELTIUM_RAW_ATTACH_SWAP framebuffer=" + framebuffer
+                    + " from=" + previous[0] + " to=" + color
+                    + " fromIdentity=0x" + Long.toHexString(RenderTargetRegistry.rawTargetIdentity(framebuffer, (int) previous[0]))
+                    + " toIdentity=0x" + Long.toHexString(RenderTargetRegistry.rawTargetIdentity(framebuffer, color))
+                    + " extent=" + (colorExtent == null ? -1 : colorExtent[0]) + "x" + (colorExtent == null ? -1 : colorExtent[1]));
+        }
         boolean tupleChanged = previous == null || previous.length != 8 || previous[0] != color
                 || previous[1] != depth
                 || previous[2] != (colorExtent == null ? 0 : colorExtent[0])
@@ -6542,6 +6554,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int rawBindGameLogs;
     /** Bounded CELTIUM_RAW_BIND_REGISTER lines: proof a raw bind latched its identity as the current target. */
     private int rawBindRegisterLogs;
+    /** Bounded CELTIUM_RAW_ATTACH_SWAP lines (item 365 census). */
+    private int rawAttachSwapLogs;
 
     public void celtium$rawFramebufferDeleted(int framebuffer, int colorTexture) {
         if (framebuffer == 0 || this.gpuStalled || this.context.celtium$isDeviceLost()) return;

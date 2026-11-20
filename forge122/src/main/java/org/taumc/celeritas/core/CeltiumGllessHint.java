@@ -1453,7 +1453,7 @@ public final class CeltiumGllessHint {
         // Bounded census of raw attachments: which framebuffer took which colour texture, and the identity its draws
         // will use. Xaero's radar icons move one framebuffer between its own texture and the icon atlas, and the
         // near-player icons are still missing with the texture identity on (xaero-radar-icons evidence).
-        if (RAW_ATTACH_LOGS < 64 && attachment == 0x8CE0) {
+        if (RAW_ATTACH_LOGS < RAW_ATTACH_LOG_LIMIT && attachment == 0x8CE0) {
             RAW_ATTACH_LOGS++;
             System.out.println("[Celtium] CELTIUM_RAW_ATTACH framebuffer=" + rawDrawFramebuffer + " texture=" + texture
                     + " level=" + level + " vanillaDepth=" + vanillaFramebufferDepth + " identity=0x"
@@ -1474,6 +1474,13 @@ public final class CeltiumGllessHint {
 
     /** CELTIUM_RAW_ATTACH lines printed so far. */
     private static int RAW_ATTACH_LOGS;
+
+    /**
+     * The RAW_ATTACH print bound, raised by a census leg (item 365, M-C) whose question is exactly whether
+     * an attachment change happened somewhere in a large pack: at the default 64 the census can be spent
+     * before the mod under study runs, and a truncated census cannot answer "it did not happen".
+     */
+    private static final int RAW_ATTACH_LOG_LIMIT = Integer.getInteger("celtium.rawAttachLogLimit", 64);
 
     /** The draw framebuffer the last raw bind named; 0 is the default framebuffer. */
     private static int rawDrawFramebuffer;

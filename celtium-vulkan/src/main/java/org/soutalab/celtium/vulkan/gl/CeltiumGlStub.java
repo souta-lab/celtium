@@ -8269,7 +8269,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (isDepthAttachment(attachment)) {
             updateDepthAttachment(this.framebufferDepthTextures, this.depthTextureFramebuffers,
                     framebuffer, attachment, texture);
-            if (texture != 0 && framebufferDepthAttachmentLogs < 8) {
+            if (texture != 0 && framebufferDepthAttachmentLogs < RAW_FBO_LOG_LIMIT) {
                 framebufferDepthAttachmentLogs++;
                 System.out.println("[Celtium] CELTIUM_RAW_FBO_DEPTH framebuffer=" + framebuffer
                         + " depthTexture=" + texture
@@ -8303,7 +8303,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             vulkan.celtium$rawAttachmentChanged(framebuffer);
         }
         if (texture == 0) return;
-        if (framebufferAttachmentLogs < 8) {
+        if (framebufferAttachmentLogs < RAW_FBO_LOG_LIMIT) {
             framebufferAttachmentLogs++;
             System.out.println("[Celtium] CELTIUM_RAW_FBO framebuffer=" + framebuffer + " slot=" + slot
                     + " colorTexture=" + texture
@@ -8317,6 +8317,12 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Bounded companion to {@link #framebufferAttachmentLogs} for the depth record. */
     private static int framebufferDepthAttachmentLogs;
+
+    /**
+     * The RAW_FBO / RAW_FBO_DEPTH print bound, raised by a census leg (item 365, M-C) that must be able to
+     * prove the census was not truncated; the default keeps the shipped flood bound unchanged.
+     */
+    private static final int RAW_FBO_LOG_LIMIT = Integer.getInteger("celtium.rawFboLogLimit", 8);
 
     /**
      * One shared pair for every extent answer. The only caller reads width and height immediately and keeps neither;
