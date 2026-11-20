@@ -11,6 +11,7 @@ import java.nio.LongBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -180,6 +181,19 @@ public final class VulkanPostChain {
     private long frameTargetGeneration;
     /** Recordings refused because the frame target moved while they were being made. */
     private final long renderPass;
+    /**
+     * The render passes for the non-default format classes (QUEUE 395, D18-B), created on first use: a chain
+     * whose targets live in a class the default pass does not declare needs a pass that declares that class's
+     * format, because a framebuffer may only attach an image whose format the pass names. The default class
+     * always resolves to {@link #renderPass} and never enters this map, so a renderer that only ever runs
+     * 8-bit chains creates nothing here.
+     */
+    private final Map<RenderTargetRegistry.TargetFormatClass, Long> renderPassVariants =
+            new EnumMap<>(RenderTargetRegistry.TargetFormatClass.class);
+    /** Chains refused before recording because this device cannot use the chain's format class at all. */
+    private int formatRefusals;
+    /** One-shot: the first format refusal, printed with the class and the device's answer. */
+    private boolean formatRefusalReported;
     private final long setLayout;
     private final long descriptorPool;
     private final long sampler;
@@ -423,27 +437,8 @@ public final class VulkanPostChain {
                 maxPush = MAX_PUSH_CONSTANTS_OVERRIDE;
             }
 
-            // One colour attachment, kept in GENERAL like every other image this renderer owns; each pass writes
-            // every pixel of its target, so the load op is dont-care rather than a clear.
-            VkAttachmentDescription.Buffer attachment = VkAttachmentDescription.calloc(1, stack);
-            attachment.get(0).format(VK_FORMAT_R8G8B8A8_UNORM)
-                    .samples(VK_SAMPLE_COUNT_1_BIT)
-                    .loadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE)
-                    .storeOp(VK_ATTACHMENT_STORE_OP_STORE)
-                    .stencilLoadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE)
-                    .stencilStoreOp(VK_ATTACHMENT_STORE_OP_DONT_CARE)
-                    .initialLayout(VK_IMAGE_LAYOUT_GENERAL)
-                    .finalLayout(VK_IMAGE_LAYOUT_GENERAL);
-            VkAttachmentReference.Buffer colorRef = VkAttachmentReference.calloc(1, stack);
-            colorRef.get(0).attachment(0).layout(VK_IMAGE_LAYOUT_GENERAL);
-            VkSubpassDescription.Buffer subpass = VkSubpassDescription.calloc(1, stack);
-            subpass.get(0).pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS)
-                    .colorAttachmentCount(1).pColorAttachments(colorRef);
-            VkRenderPassCreateInfo passInfo = VkRenderPassCreateInfo.calloc(stack).sType$Default()
-                    .pAttachments(attachment).pSubpasses(subpass);
             LongBuffer handle = stack.mallocLong(1);
-            check(vkCreateRenderPass(device, passInfo, null, handle), "vkCreateRenderPass(post chain)");
-            renderPass = handle.get(0);
+            renderPass = createRenderPass(device, VK_FORMAT_R8G8B8A8_UNORM);
 
             VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(3, stack);
             bindings.get(0).binding(0).descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
@@ -563,6 +558,99 @@ public final class VulkanPostChain {
     }
 
     /**
+     * {@return a render pass with this chain's one colour attachment in {@code vkFormat}}: kept in GENERAL like
+     * every other image this renderer owns, and each pass writes every pixel of its target, so the load op is
+     * dont-care rather than a clear. The format is the only thing that varies between the default pass and a
+     * format-class variant (QUEUE 395): everything else about the passes is the same shape, so a target's
+     * framebuffer and the pipeline that writes it are chosen by the same key - the class.
+     */
+    private static long createRenderPass(VkDevice device, int vkFormat) {
+        try (MemoryStack stack = stackPush()) {
+            VkAttachmentDescription.Buffer attachment = VkAttachmentDescription.calloc(1, stack);
+            attachment.get(0).format(vkFormat)
+                    .samples(VK_SAMPLE_COUNT_1_BIT)
+                    .loadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE)
+                    .storeOp(VK_ATTACHMENT_STORE_OP_STORE)
+                    .stencilLoadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE)
+                    .stencilStoreOp(VK_ATTACHMENT_STORE_OP_DONT_CARE)
+                    .initialLayout(VK_IMAGE_LAYOUT_GENERAL)
+                    .finalLayout(VK_IMAGE_LAYOUT_GENERAL);
+            VkAttachmentReference.Buffer colorRef = VkAttachmentReference.calloc(1, stack);
+            colorRef.get(0).attachment(0).layout(VK_IMAGE_LAYOUT_GENERAL);
+            VkSubpassDescription.Buffer subpass = VkSubpassDescription.calloc(1, stack);
+            subpass.get(0).pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS)
+                    .colorAttachmentCount(1).pColorAttachments(colorRef);
+            VkRenderPassCreateInfo passInfo = VkRenderPassCreateInfo.calloc(stack).sType$Default()
+                    .pAttachments(attachment).pSubpasses(subpass);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreateRenderPass(device, passInfo, null, handle), "vkCreateRenderPass(post chain)");
+            return handle.get(0);
+        }
+    }
+
+    /**
+     * {@return the render pass a target of {@code formatClass} is attached through}: the default pass for the
+     * default class, a variant created on first use for any other colour class. A depth class names no colour
+     * attachment a chain pass could write, so it is refused here rather than resolved to a pass that would
+     * attach a depth image as colour.
+     */
+    private long renderPassFor(RenderTargetRegistry.TargetFormatClass formatClass) {
+        if (formatClass == null || formatClass == RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM) {
+            return this.renderPass;
+        }
+        if (formatClass.isDepth()) {
+            throw new IllegalArgumentException("post chain targets are colour images; " + formatClass
+                    + " is a depth class");
+        }
+        Long variant = this.renderPassVariants.get(formatClass);
+        if (variant == null) {
+            variant = Long.valueOf(createRenderPass(this.context.device(), formatClass.vkFormat()));
+            this.renderPassVariants.put(formatClass, variant);
+            trace("renderPassVariant formatClass=" + formatClass + " vkFormat=" + formatClass.vkFormat()
+                    + " renderPass=0x" + hex(variant.longValue()));
+        }
+        return variant.longValue();
+    }
+
+    /**
+     * {@return the format class a pass writes in}: the shared frame image when the pass writes the group's main
+     * framebuffer - that image is the delivered frame, 8-bit by construction (QUEUE 404 rule R1) - and the
+     * chain's own class otherwise. A chain whose class was never resolved runs in the default class, which is
+     * the behaviour every chain had before format selection existed.
+     */
+    static RenderTargetRegistry.TargetFormatClass celtium$outFormatClass(boolean outIsMain,
+            RenderTargetRegistry.TargetFormatClass chainFormatClass) {
+        if (outIsMain || chainFormatClass == null) {
+            return RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM;
+        }
+        return chainFormatClass;
+    }
+
+    /**
+     * {@return the pipeline cache key for a program in a format class}: the program's own name for the default
+     * class, so every cache entry an 8-bit chain built keeps its meaning, and a separated key for any other
+     * class - two classes must never share a pipeline, because a pipeline is created against one class's
+     * render pass and only that pass's framebuffers may be begun with it.
+     */
+    static String celtium$programKey(String program, RenderTargetRegistry.TargetFormatClass formatClass) {
+        if (formatClass == null || formatClass == RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM) {
+            return program;
+        }
+        return program + "@" + formatClass.name();
+    }
+
+    /**
+     * {@return whether a target must be rebuilt for a pass}: a size change already rebuilds (the retired image
+     * may still be named by a recorded buffer, so the replacement is a new image, never a resize), and a format
+     * class change is the same shape of change - the image's format is fixed at creation, so nothing short of a
+     * new image answers it (QUEUE 404 rule R3, stated for pairs; the chain's own targets follow it too).
+     */
+    static boolean celtium$targetRebuildNeeded(boolean sizeMatches,
+            RenderTargetRegistry.TargetFormatClass existing, RenderTargetRegistry.TargetFormatClass wanted) {
+        return !sizeMatches || existing != wanted;
+    }
+
+    /**
      * {@return the largest block the uniform-buffer shader variants declare, in bytes}.
      * <p>
      * Read from the variants' own SPIR-V at creation, so the ring's size, its slots' stride and the descriptor range
@@ -610,12 +698,30 @@ public final class VulkanPostChain {
      * {@link #programRefusals} with its reason and answered "no", which leaves the caller its GL chain and, under the
      * GL-less window, the named refusal it has today.
      */
-    public boolean supportsAll(List<Pass> passes) {
+    public boolean supportsAll(List<Pass> passes, RenderTargetRegistry.TargetFormatClass chainFormatClass) {
         if (passes.isEmpty()) {
             return false;
         }
+        RenderTargetRegistry.TargetFormatClass chainClass = chainFormatClass == null
+                ? RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM : chainFormatClass;
+        // The chain's class is a preflight question like the programs are: a class this device cannot attach,
+        // blend and sample refuses the whole chain here, where the caller's answer is to keep the GL chain,
+        // rather than at target creation inside the recording, where nothing honest remains. A depth class is
+        // not a chain colour class at all.
+        if (chainClass.isDepth() || (chainClass != RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM
+                && !VulkanColorFormat.usable(this.context.physicalDevice(), chainClass))) {
+            this.formatRefusals++;
+            if (!this.formatRefusalReported) {
+                this.formatRefusalReported = true;
+                System.out.println("[Celtium] CELTIUM_POSTCHAIN FORMAT_REFUSED formatClass=" + chainClass
+                        + " device=" + this.context.deviceName()
+                        + " (the chain keeps its GL path; the class is not attachable, blendable and"
+                        + " sampleable on this device, or it is a depth class)");
+            }
+            return false;
+        }
         for (Pass pass : passes) {
-            Program program = programFor(pass);
+            Program program = programFor(pass, celtium$outFormatClass(pass.outIsMain, chainClass));
             if (program == null) {
                 return false;
             }
@@ -630,33 +736,36 @@ public final class VulkanPostChain {
     }
 
     /**
-     * {@return the pipeline this pass's program runs through, or null when no route can carry its block}; never
-     * throws, and caches both the pipelines and the refusals, so a program that cannot run is diagnosed once per
-     * chain lifetime rather than once per frame.
+     * {@return the pipeline this pass's program runs through in the pass's output format class, or null when no
+     * route can carry its block}; never throws, and caches both the pipelines and the refusals, so a program
+     * that cannot run is diagnosed once per chain lifetime rather than once per frame. Pipelines are cached per
+     * (program, class): a pipeline is created against one class's render pass, so a program that runs in two
+     * classes holds two pipelines, one per pass it may be begun in (QUEUE 395).
      */
-    private Program programFor(Pass pass) {
+    private Program programFor(Pass pass, RenderTargetRegistry.TargetFormatClass outFormatClass) {
         if (pass == null || pass.program == null || PROGRAMS.get(pass.program) == null || pass.pushBytes <= 0) {
             return null;
         }
-        Program cached = this.programs.get(pass.program);
+        String key = celtium$programKey(pass.program, outFormatClass);
+        Program cached = this.programs.get(key);
         if (cached != null) {
             return cached;
         }
-        if (this.programRefusals.get(pass.program) != null) {
+        if (this.programRefusals.get(key) != null) {
             return null;
         }
         boolean uniformBlock = pass.pushBytes > this.maxPushConstants;
         if (uniformBlock && !UBO_PROGRAMS.contains(pass.program)) {
             // No shader variant declares this program's block as a uniform buffer, and inventing one here would mean
             // writing the block at offsets nothing declares. The caller keeps the refusal it has today.
-            this.programRefusals.put(pass.program, "no uniform-buffer shader variant for " + pass.program
+            this.programRefusals.put(key, "no uniform-buffer shader variant for " + pass.program
                     + " (block " + pass.pushBytes + "B > maxPushConstantsSize " + this.maxPushConstants + "B)");
             return null;
         }
         if (uniformBlock) {
             this.uboRequests++;
             if (this.uniformBlocks == null) {
-                this.programRefusals.put(pass.program, this.uniformRouteRefusal);
+                this.programRefusals.put(key, this.uniformRouteRefusal);
                 if (!this.uboRouteReported) {
                     this.uboRouteReported = true;
                     System.out.println("[Celtium] CELTIUM_POSTCHAIN UBO_REFUSED program=" + pass.program
@@ -668,13 +777,14 @@ public final class VulkanPostChain {
         }
         try {
             String[] modules = PROGRAMS.get(pass.program);
-            Program program = Program.create(this.context, this.renderPass, this.setLayout, uniformBlock,
-                    modules[0], modules[1], pass.pushBytes, this.uniformBlockBytes);
-            this.programs.put(pass.program, program);
+            Program program = Program.create(this.context, renderPassFor(outFormatClass), this.setLayout,
+                    uniformBlock, modules[0], modules[1], pass.pushBytes, this.uniformBlockBytes);
+            this.programs.put(key, program);
             if (uniformBlock) {
                 this.uboPrograms.add(pass.program);
             }
             trace("ROUTE program=" + pass.program + " route=" + (uniformBlock ? "uniformBuffer" : "pushConstants")
+                    + " formatClass=" + outFormatClass
                     + " packedBytes=" + pass.pushBytes + " blockBytes=" + program.blockBytes
                     + " pushRange=" + program.pushRange + " maxPush=" + this.maxPushConstants
                     + " members=" + program.blockMembers.size()
@@ -685,7 +795,7 @@ public final class VulkanPostChain {
             }
             return program;
         } catch (RuntimeException | LinkageError error) {
-            this.programRefusals.put(pass.program, String.valueOf(error));
+            this.programRefusals.put(key, String.valueOf(error));
             if (uniformBlock) {
                 this.uboRouteReported = true;
                 System.out.println("[Celtium] CELTIUM_POSTCHAIN UBO_REFUSED program=" + pass.program
@@ -806,8 +916,15 @@ public final class VulkanPostChain {
      * <p>
      * The identity is the chain's own key - the {@code identityHashCode} of the framebuffer object, the same value the
      * passes carry - so a value outside the int range can never match a pass and is rejected here.
+     * <p>
+     * The image's format class travels with the adoption (QUEUE 395): a pass that writes this target attaches it
+     * through that class's render pass, and a pass that samples it reads the image as it is - the class is the
+     * caller's declaration of what the image holds, checked against nothing here because the image is not this
+     * class's to inspect. Re-adopting the same image under a different class is a replacement, not a no-op: the
+     * framebuffer a writing pass builds for it belongs to the class's pass.
      */
-    public void adoptTarget(long identity, long image, long view, int width, int height) {
+    public void adoptTarget(long identity, long image, long view, int width, int height,
+            RenderTargetRegistry.TargetFormatClass formatClass) {
         int key = adoptedKey(identity);
         if (image == VK_NULL_HANDLE || view == VK_NULL_HANDLE) {
             throw new IllegalArgumentException("adopted post chain target " + identity
@@ -817,12 +934,17 @@ public final class VulkanPostChain {
             throw new IllegalArgumentException("adopted post chain target " + identity + " needs a size, got "
                     + width + "x" + height);
         }
+        if (formatClass == null) {
+            throw new IllegalArgumentException("adopted post chain target " + identity
+                    + " needs the image's format class");
+        }
         Target existing = this.targets.get(key);
         if (existing != null && !existing.owned && existing.image == image && existing.view == view
-                && existing.width == width && existing.height == height) {
+                && existing.width == width && existing.height == height
+                && existing.formatClass == formatClass) {
             return;
         }
-        Target adopted = Target.adopt(key, width, height, image, view);
+        Target adopted = Target.adopt(key, width, height, image, view, formatClass);
         Target previous = this.targets.put(key, adopted);
         if (previous != null) {
             // Whatever this identity resolved to before may already be recorded in a buffer still in flight.
@@ -830,7 +952,7 @@ public final class VulkanPostChain {
         }
         this.adoptions++;
         trace("adopt identity=" + adopted.identity + " image=0x" + hex(image) + " view=0x" + hex(view) + " "
-                + width + "x" + height + " replaced="
+                + width + "x" + height + " formatClass=" + formatClass + " replaced="
                 + (previous == null ? "none" : (previous.owned ? "owned" : "adopted") + "(image=0x"
                         + hex(previous.image) + ",initialized=" + previous.initialized + ")")
                 + " - the caller declares this image live in GENERAL, so no UNDEFINED -> GENERAL move is recorded"
@@ -876,12 +998,20 @@ public final class VulkanPostChain {
      * therefore leaves them uninitialized, and the next recording carries their barriers again instead of sampling an
      * image that is still {@code UNDEFINED}.
      *
+     * The chain runs in {@code chainFormatClass} (QUEUE 395, D18-B): the class the chain's own framebuffer was
+     * allocated in, resolved by the caller from the frame target. Every chain target this recording allocates
+     * or attaches is created in that class and begun through that class's render pass, except a pass that
+     * writes the group's main framebuffer, which writes the shared frame image and stays in the default class.
+     * A caller with no class to declare passes the default class and gets the behaviour every chain had before
+     * format selection existed.
+     *
      * @return the recording's token, to be passed to {@link #commitPasses(int)} once - and only once - the submission
      *     that carried it has been accepted by the queue
      */
-    public int recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes) {
+    public int recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes,
+            RenderTargetRegistry.TargetFormatClass chainFormatClass) {
         try {
-            return celtium$recordPasses(commandBuffer, passes);
+            return celtium$recordPasses(commandBuffer, passes, chainFormatClass);
         } catch (RuntimeException | Error failure) {
             // B11, second finding: a recording that throws after it has taken ring slots never returned them, because
             // the ring's accounting is reset at the start of a recording rather than at the end. The slots go back
@@ -910,7 +1040,10 @@ public final class VulkanPostChain {
         this.ringSlotsReclaimedOnAbandon += taken;
     }
 
-    private int celtium$recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes) {
+    private int celtium$recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes,
+            RenderTargetRegistry.TargetFormatClass chainFormatClass) {
+        RenderTargetRegistry.TargetFormatClass chainClass = chainFormatClass == null
+                ? RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM : chainFormatClass;
         long recordedUnder = this.frameTargetGeneration;
         String unsupplied = unsuppliedInput(passes);
         if (unsupplied != null) {
@@ -964,7 +1097,9 @@ public final class VulkanPostChain {
         this.lastRecordedOutputs.clear();
         int passIndex = 0;
         for (Pass pass : passes) {
-            Program program = programFor(pass);
+            RenderTargetRegistry.TargetFormatClass outFormatClass =
+                    celtium$outFormatClass(pass.outIsMain, chainClass);
+            Program program = programFor(pass, outFormatClass);
             String refusal = program == null ? "no pipeline this device can carry its block on"
                     : blockRefusal(pass, program);
             if (refusal != null) {
@@ -975,12 +1110,12 @@ public final class VulkanPostChain {
                 throw new IllegalStateException("post chain program without a pipeline: " + pass.program
                         + " (" + refusal + ")");
             }
-            Target inTarget = pass.inIsMain ? null : target(pass.inFbId, pass.inW, pass.inH);
+            Target inTarget = pass.inIsMain ? null : target(pass.inFbId, pass.inW, pass.inH, chainClass);
             long inView = inTarget != null ? inTarget.view : this.frameTarget.colorView();
             long inImage = inTarget != null ? inTarget.image : this.frameTarget.colorImage();
             // auxFbIds[0] == 0 marks the group's main framebuffer; the same resolution as intarget applies.
             Target auxTarget = pass.auxFbIds.length > 0 && pass.auxFbIds[0] != 0
-                    ? target(pass.auxFbIds[0], pass.auxW[0], pass.auxH[0]) : null;
+                    ? target(pass.auxFbIds[0], pass.auxW[0], pass.auxH[0], chainClass) : null;
             boolean auxIsMain = pass.auxFbIds.length > 0 && pass.auxFbIds[0] == 0;
             long auxView;
             if (auxTarget != null) {
@@ -993,11 +1128,14 @@ public final class VulkanPostChain {
             if (auxIsMain) {
                 shaderReadBarrier(commandBuffer, this.frameTarget.colorImage());
             }
-            Target outTarget = pass.outIsMain ? null : target(pass.outFbId, pass.outW, pass.outH);
-            // An adopted target has no framebuffer until a pass writes it; that is where its view gets one.
+            Target outTarget = pass.outIsMain ? null : target(pass.outFbId, pass.outW, pass.outH, chainClass);
+            // An adopted target has no framebuffer until a pass writes it; that is where its view gets one. The
+            // framebuffer is built against the target's own class's pass: an owned target was created in the
+            // chain's class, an adopted one carries the class its image was adopted under, and the two agree
+            // because the adoption and the chain class are both read off the same pair.
             long outFramebuffer = pass.outIsMain
                     ? mainFramebuffer(pass.outW, pass.outH)
-                    : outTarget.framebuffer(this.context, this.renderPass);
+                    : outTarget.framebuffer(this.context, renderPassFor(outTarget.formatClass));
             // Where this pass's result can be read back, for the chain-time dump. Main is reported as image 0: the
             // caller already holds the frame image and its view, and handing out a second handle to the same image
             // would let a reader believe it is a different one. The label is the reading aid; the pass index is what
@@ -1049,7 +1187,7 @@ public final class VulkanPostChain {
             int outH = pass.outH;
             try (MemoryStack stack = stackPush()) {
                 VkRenderPassBeginInfo begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
-                        .renderPass(this.renderPass).framebuffer(outFramebuffer)
+                        .renderPass(renderPassFor(outFormatClass)).framebuffer(outFramebuffer)
                         .renderArea(VkRect2D.calloc(stack)
                                 .offset(it -> it.x(0).y(0))
                                 .extent(it -> it.width(outW).height(outH)));
@@ -1474,6 +1612,8 @@ public final class VulkanPostChain {
                 + ", postBlockLayoutRefusals=" + this.blockLayoutRefusals
                 + ", postRunsOnStandIn=" + this.runsOnAllocatedStandIn
                 + ", postRefusedUnsuppliedInput=" + this.refusedInputs
+                + ", postFormatRefusals=" + this.formatRefusals
+                + ", postFormatVariants=" + this.renderPassVariants.size()
                 + ", postUnsuppliedInputPreflights=" + this.preflightRefusals
                 + ", postStandInRefusals=" + this.standInRefusals
                 + ", postRecordingInitBarriers=" + this.initBarriers + ", postRecordingCommits=" + this.commits
@@ -1529,18 +1669,23 @@ public final class VulkanPostChain {
     }
 
     /**
-     * {@return the chain target for a framebuffer identity}, allocated on first use or the image the caller adopted
-     * for that identity. An allocated target whose size changed is replaced; an adopted one whose size disagrees with
-     * the pass is refused by message - the caller's image is not this class's to resize, and sampling the wrong one
-     * silently is exactly what the refusal is for.
+     * {@return the chain target for a framebuffer identity in the chain's format class}, allocated on first use
+     * or the image the caller adopted for that identity. An allocated target whose size or format class changed
+     * is replaced - an image's format is fixed at creation, so a class change is a resize in every way that
+     * matters; an adopted one whose size or class disagrees with the pass is refused by message - the caller's
+     * image is not this class's to resize or re-read, and sampling the wrong one silently is exactly what the
+     * refusal is for.
      */
-    private Target target(int fbId, int width, int height) {
+    private Target target(int fbId, int width, int height,
+            RenderTargetRegistry.TargetFormatClass formatClass) {
         int key = fbId;
         Target target = this.targets.get(key);
-        if (target != null && (target.width != width || target.height != height)) {
+        if (target != null && celtium$targetRebuildNeeded(target.width == width && target.height == height,
+                target.formatClass, formatClass)) {
             if (!target.owned) {
                 throw new IllegalStateException("adopted post chain target " + fbId + " is " + target.width + "x"
-                        + target.height + ", the pass asks for " + width + "x" + height);
+                        + target.height + " in " + target.formatClass + ", the pass asks for " + width + "x"
+                        + height + " in " + formatClass);
             }
             // Retired, not freed here: a command buffer this chain recorded before the resize may still name the old
             // image and view, and destroying them in place is the use-after-free RADV reports as a GPUVM fault (the
@@ -1553,10 +1698,11 @@ public final class VulkanPostChain {
             target = null;
         }
         if (target == null) {
-            target = Target.create(key, this.context, this.renderPass, width, height);
+            target = Target.create(key, this.context, renderPassFor(formatClass), width, height, formatClass);
             this.targets.put(key, target);
             trace("created identity=" + target.identity + " image=0x" + hex(target.image) + " view=0x"
                     + hex(target.view) + " framebuffer=0x" + hex(target.fb) + " " + width + "x" + height
+                    + " formatClass=" + target.formatClass + " allocationBytes=" + target.allocationBytes
                     + " owned=true (UNDEFINED until a pass records its barrier)");
         }
         return target;
@@ -1728,6 +1874,10 @@ public final class VulkanPostChain {
         vkDestroyDescriptorPool(device, this.descriptorPool, null);
         vkDestroyDescriptorSetLayout(device, this.setLayout, null);
         vkDestroyRenderPass(device, this.renderPass, null);
+        for (Long variant : this.renderPassVariants.values()) {
+            vkDestroyRenderPass(device, variant.longValue(), null);
+        }
+        this.renderPassVariants.clear();
         if (this.uniformBlocks != null) {
             // After the wait above and after every set that named it is gone with the pool.
             this.uniformBlocks.delete();
@@ -1768,8 +1918,22 @@ public final class VulkanPostChain {
         /** 0 until a pass writes an adopted target; an allocated target is given one at creation. */
         long fb;
         final boolean owned;
+        /**
+         * The format class this target's image was created (or adopted) in: the image's format is fixed at
+         * creation, so the class decides both the render pass its framebuffer belongs to and whether a later
+         * pass asking for another class must replace it (QUEUE 395).
+         */
+        final RenderTargetRegistry.TargetFormatClass formatClass;
+        /**
+         * The bytes the driver asked for this target's image, from {@code vkGetImageMemoryRequirements} at
+         * creation - measured, not computed from the extent, so a leg comparing two classes reads the driver's
+         * own number for both. Zero for an adopted target: its memory is the caller's allocation, counted where
+         * the caller allocated it, not here.
+         */
+        final long allocationBytes;
 
-        Target(int identity, int width, int height, long image, long memory, long view, long fb, boolean owned) {
+        Target(int identity, int width, int height, long image, long memory, long view, long fb, boolean owned,
+                RenderTargetRegistry.TargetFormatClass formatClass, long allocationBytes) {
             this.identity = identity;
             this.width = width;
             this.height = height;
@@ -1778,6 +1942,8 @@ public final class VulkanPostChain {
             this.view = view;
             this.fb = fb;
             this.owned = owned;
+            this.formatClass = formatClass;
+            this.allocationBytes = allocationBytes;
         }
 
         /**
@@ -1791,8 +1957,9 @@ public final class VulkanPostChain {
         int barriersRecorded;
 
         /** {@return the adopted view of an image the caller owns}, with nothing but the view handed over. */
-        static Target adopt(int identity, int width, int height, long image, long view) {
-            Target adopted = new Target(identity, width, height, image, 0L, view, 0L, false);
+        static Target adopt(int identity, int width, int height, long image, long view,
+                RenderTargetRegistry.TargetFormatClass formatClass) {
+            Target adopted = new Target(identity, width, height, image, 0L, view, 0L, false, formatClass, 0L);
             // The caller's image is already in GENERAL and already holds what the passes must read - the silhouette,
             // for the outline chain - so the one-time UNDEFINED -> GENERAL move is skipped: it discards content, and
             // that content is the whole reason the image is adopted. The caller establishes that layout itself, in the
@@ -1802,9 +1969,13 @@ public final class VulkanPostChain {
             return adopted;
         }
 
-        static Target create(int identity, VulkanContext context, long renderPass, int width, int height) {
+        static Target create(int identity, VulkanContext context, long renderPass, int width, int height,
+                RenderTargetRegistry.TargetFormatClass formatClass) {
             if (width <= 0 || height <= 0) {
                 throw new IllegalArgumentException("chain target needs a size, got " + width + "x" + height);
+            }
+            if (formatClass == null || formatClass.isDepth()) {
+                throw new IllegalArgumentException("chain target needs a colour format class, got " + formatClass);
             }
             VkDevice device = context.device();
             long image = 0L, memory = 0L, view = 0L, fb = 0L;
@@ -1812,7 +1983,7 @@ public final class VulkanPostChain {
             try (MemoryStack stack = stackPush()) {
                 LongBuffer handle = stack.mallocLong(1);
                 VkImageCreateInfo imageInfo = VkImageCreateInfo.calloc(stack).sType$Default()
-                        .imageType(VK_IMAGE_TYPE_2D).format(VK_FORMAT_R8G8B8A8_UNORM)
+                        .imageType(VK_IMAGE_TYPE_2D).format(formatClass.vkFormat())
                         .mipLevels(1).arrayLayers(1).samples(VK_SAMPLE_COUNT_1_BIT)
                         .tiling(VK_IMAGE_TILING_OPTIMAL)
                         .usage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
@@ -1832,7 +2003,7 @@ public final class VulkanPostChain {
                 memory = handle.get(0);
                 check(vkBindImageMemory(device, image, memory, 0), "vkBindImageMemory(post chain)");
                 VkImageViewCreateInfo viewInfo = VkImageViewCreateInfo.calloc(stack).sType$Default()
-                        .image(image).viewType(VK_IMAGE_VIEW_TYPE_2D).format(VK_FORMAT_R8G8B8A8_UNORM);
+                        .image(image).viewType(VK_IMAGE_VIEW_TYPE_2D).format(formatClass.vkFormat());
                 viewInfo.subresourceRange(it -> it.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(0)
                         .levelCount(1).baseArrayLayer(0).layerCount(1));
                 check(vkCreateImageView(device, viewInfo, null, handle), "vkCreateImageView(post chain)");
@@ -1842,7 +2013,8 @@ public final class VulkanPostChain {
                         .renderPass(renderPass).pAttachments(attachments).width(width).height(height).layers(1);
                 check(vkCreateFramebuffer(device, fbInfo, null, handle), "vkCreateFramebuffer(post)");
                 fb = handle.get(0);
-                Target result = new Target(identity, width, height, image, memory, view, fb, true);
+                Target result = new Target(identity, width, height, image, memory, view, fb, true, formatClass,
+                        requirements.size());
                 published = true;
                 return result;
             } finally {

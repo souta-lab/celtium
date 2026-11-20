@@ -49,7 +49,8 @@ final class PostChainBridge {
             b.record("post chain executor creation failed: " + b.describe(error));
             return false;
         }
-        if (!b.postChain.supportsAll(passes)) {
+        RenderTargetRegistry.TargetFormatClass chainFormatClass = celtium$chainFormatClass(passes);
+        if (!b.postChain.supportsAll(passes, chainFormatClass)) {
             StringBuilder reason = new StringBuilder("post chain refused:");
             for (VulkanPostChain.Pass pass : passes) {
                 reason.append(' ').append(pass.program).append('(').append(pass.pushBytes).append("B)");
@@ -93,7 +94,7 @@ final class PostChainBridge {
             // The same hand-back for every other published name: the chain is about to attach the pair image, which
             // declares GENERAL, and the sampling side left it in SHADER_READ_ONLY.
             celtium$transitionPublishedFrameTextures(true);
-            int chainRecording = b.postChain.recordPasses(b.commandBuffer, passes);
+            int chainRecording = b.postChain.recordPasses(b.commandBuffer, passes, chainFormatClass);
             // The chain records into *this* command buffer and sets its own viewport and scissor
             // (`VulkanPostChain.recordPasses` -> vkCmdSetViewport/vkCmdSetScissor at VulkanPostChain.java:965/968).
             // The dedup trackers describe what this stream last set, so a writer that does not go through them makes
@@ -203,24 +204,40 @@ b.frameBufferOpen = false;
             // let the preflight accept an input the frame cannot supply, which is the N04 stand-in failure.
             return false;
         }
-        if (glless.chainPairFormatClass(chainIdentity)
-                != RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM) {
-            // The post chain's pass is 8-bit (QUEUE 404, rule R10): adopting a non-default pair's view into
-            // it would attach an image to a pass of a different format. Not declaring the adoption lets the
-            // preflight refuse and the game's own GL chain draw, as with any undeclared input; item 395
-            // (the chain's own format selection) is where this refusal is replaced.
-            b.chainAdoptionFormatRefusals++;
-            return false;
-        }
         try {
+            // The pair's class travels with the adoption (QUEUE 395): the chain runs in the class the pair was
+            // allocated in, so the adopted image is attached through that class's render pass. Before format
+            // selection this site refused any non-default pair (QUEUE 404, rule R10) - the refusal is gone
+            // because the mismatch it guarded against no longer exists.
             b.postChain.adoptTarget(identity, glless.chainPairColorImage(chainIdentity), glless.chainPairColorView(chainIdentity),
-                    first.groupMainW, first.groupMainH);
+                    first.groupMainW, first.groupMainH, glless.chainPairFormatClass(chainIdentity));
             b.chainAdoptionDeclarations++;
             return true;
         } catch (RuntimeException | LinkageError error) {
             b.record("post chain input adoption could not be declared: " + b.describe(error));
             return false;
         }
+    }
+
+    /**
+     * {@return the format class this chain runs in} (QUEUE 395, D18-B): the class the chain pair for the group's
+     * own framebuffer was allocated in. The pair's class is the game's own statement of what the chain's targets
+     * must hold - a mod that asked GL for a 16F framebuffer to run a bloom chain in gets a chain whose targets
+     * are 16F, and the chain's output lands back in that same pair. A chain whose group main is the game's main
+     * framebuffer, or that has no GL-less pair behind it, runs in the default class: the shipped 8-bit behaviour,
+     * unchanged.
+     */
+    private RenderTargetRegistry.TargetFormatClass celtium$chainFormatClass(
+            java.util.List<VulkanPostChain.Pass> passes) {
+        GllessFrameTarget glless = b.offTargetTarget();
+        if (glless == null || passes.isEmpty()) {
+            return RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM;
+        }
+        int identity = passes.get(0).groupMainFbId;
+        if (identity == 0 || identity == (int) b.targetRegistry.mainIdentity()) {
+            return RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM;
+        }
+        return glless.chainPairFormatClass(identity);
     }
 
     /**
@@ -371,19 +388,9 @@ b.frameBufferOpen = false;
                     + " (asked for " + width + "x" + height + ", identity " + chainIdentity + ")");
             return;
         }
-        if (glless.chainPairFormatClass(chainIdentity)
-                != RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM) {
-            // Rule R10 (QUEUE 404): the chain writes the adopted image through its 8-bit pass, so a pair
-            // allocated in another format class cannot be adopted - the view's format and the pass' would
-            // disagree. Refusing leaves the game's own GL chain in charge (the N04 rule), and item 395
-            // replaces this refusal with matching the chain's format to the pair's.
-            b.chainAdoptionsRefused++;
-            b.chainAdoptionFormatRefusals++;
-            b.record("post chain adoption refused: the chain image's format class is "
-                    + glless.chainPairFormatClass(chainIdentity)
-                    + ", not the chain pass' RGBA8_UNORM (identity " + chainIdentity + ")");
-            return;
-        }
+        // The pair's class is no refusal here (QUEUE 395 replaced the rule R10 refusal QUEUE 404 left): the
+        // chain runs in the pair's class, so the adopted image is attached through a pass that declares its
+        // format. The class travels with the adoption below.
         // Before anything in this submission clears, attaches or samples the image: the previous frame's composite
         // may have left it in SHADER_READ_ONLY, and both the clear and the chain declare GENERAL.
         celtium$syncPublishedChainOutput(chainIdentity, glless.chainPairColorImage(chainIdentity));
@@ -405,7 +412,8 @@ b.frameBufferOpen = false;
             b.celtium$noteChainPairClear("sync-published-chain-output");
         }
         b.postChain.adoptTarget(identity, glless.chainPairColorImage(chainIdentity),
-                glless.chainPairColorView(chainIdentity), width, height);
+                glless.chainPairColorView(chainIdentity), width, height,
+                glless.chainPairFormatClass(chainIdentity));
         b.chainAdoptions++;
         reportChainInputState(identity, reported, glless);
         // CELTIUM-OUTLINE-COMPOSITE: the chain's output IS this image, and the game composites it by binding the
