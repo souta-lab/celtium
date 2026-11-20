@@ -555,7 +555,19 @@ public final class ValidationClient {
          * {@code ModularUIGui}, a {@code GuiScreen} that draws its widgets through the vanilla GUI path plus its own
          * {@code Stencil} clipping - a producer the video settings screen does not exercise.
          */
-        GREGTECH("gregtech", false, true, true);
+        GREGTECH("gregtech", false, true, true),
+        /**
+         * The entity-effect scene (item 358, D15): the fixture's own flat world at the terrain pose, holding only
+         * the two effect carriers {@code entityEffectPair} places - carrier F, a bare zombie the hurt flash is
+         * measured on, and carrier G, a zombie in an enchanted diamond chestplate the glint is measured on. The
+         * scene exists so the two vanilla GL-state effects (the hurt flash's texture-env interpolate and the
+         * armour glint's texture-matrix passes) can be measured in presented images of one run, against floors
+         * measured on a reference run of this same scene: no other scene's floors describe a picture whose
+         * content is two mobs. Uncalibrated until the reference run {@code d15-entity-ref-off0} (Celeritas GL arm,
+         * {@code entityEffectPair} only) has been measured and its numbers written into
+         * {@link #celtium$entityGate()}; see that method for the margin rule the floors will follow.
+         */
+        ENTITY("entities", false, false);
 
         final String name;
         /** Whether this scene drives a GUI screen and takes a second capture with it open. */
@@ -1451,6 +1463,8 @@ public final class ValidationClient {
                 return celtium$videoSettingsGate();
             case GREGTECH:
                 return celtium$gregtechGate();
+            case ENTITY:
+                return celtium$entityGate();
             case END:
             case OTHER_DIMENSION:
                 return celtium$uncalibratedGate(scene);
@@ -1770,6 +1784,41 @@ public final class ValidationClient {
     }
 
     /**
+     * The entity-effect scene's floors (item 358, D15).
+     * <p>
+     * Not yet measured: the reference run this gate's floors come from is {@code d15-entity-ref-off0} (Celeritas
+     * 2.5.0-dev GL arm, {@code scene=entities} with {@code entityEffectPair=true} and no hold flags, at the terrain
+     * pose, guiScale=3, {@code keepGui=false}), and until that run exists this gate is the uncalibrated shape - no
+     * floors enforced, the run's verdict {@code UNCALIBRATED_PRESENTED_IMAGE} - rather than another scene's numbers
+     * applied to a picture of two mobs. The uncalibrated reference run is itself the source: its report's
+     * {@code distinctColours} / {@code nonBackgroundFraction} / {@code verticalBands} / {@code blackFraction} are
+     * written here, the scene's {@code calibrated} flag flips to {@code true}, and the same reference run is then
+     * re-run to show it passes its own floors.
+     * <p>
+     * The margin rule is fixed before the numbers exist, in the GregTech gate's shape:
+     * {@code nonBackgroundFraction} floor = 50% of the measured value, {@code verticalBands} floor = 39% of the
+     * measured value, {@code blackFraction} ceiling = the measured value + 0.05, and
+     * {@code distinctColours} keeps the shared {@link #PRESENTED_DISTINCT_COLOUR_FLOOR}. Fixing the rule first is
+     * what keeps the floors a gate rather than a copy of the run that produced them.
+     */
+    private static SceneGate celtium$entityGate() {
+        String runs = "none yet: the reference run d15-entity-ref-off0 (Celeritas 2.5.0-dev GL arm,"
+                + " scene=entities, entityEffectPair=true, no hold flags, camera x=0.5 y=12.0 z=0.5 yaw=180"
+                + " pitch=20, 1280x720, guiScale=3, keepGui=false) has not been measured; it is taken uncalibrated"
+                + " (exit 2 is the correct verdict for it) and its numbers are written into this gate";
+        String numbers = "none measured for this scene yet";
+        String margin = "fixed before measurement, in the GregTech gate's shape: nonBackgroundFraction floor"
+                + " = 50% of the measured value, verticalBands floor = 39% of the measured value, blackFraction"
+                + " ceiling = the measured value + 0.05, distinctColours keeps the shared floor of 16";
+        String reference = "not calibrated, scene entities: " + runs + ". No floor of any other scene is applied"
+                + " here. The picture is held to the smoke test, its identity, the frame binding and the camera"
+                + " pose only; the effect parity itself is measured by the within-run A/B triples and the two"
+                + " cpu-contract checkers (hurt-flash-check, enchant-glint-check), not by this gate.";
+        return new SceneGate(PRESENTED_DISTINCT_COLOUR_FLOOR, 0.0D, 0, 1.0D, 0.0D, 0.0D, 0, 0.0D, reference, runs,
+                numbers, margin, false);
+    }
+
+    /**
      * A scene with no measured reference: no floors are enforced, and the report says so in words.
      * <p>
      * It must not pass silently either, which is what {@code UNCALIBRATED_PRESENTED_IMAGE} is for: the picture is
@@ -1890,7 +1939,8 @@ public final class ValidationClient {
         key.append(" stack=").append(celtium$DEFAULT_WORLD_LAYERS.equals(referenceStack) ? "default" : referenceStack);
         key.append(" blockSweep=").append(celtium$REFERENCE_BLOCK_SWEEP);
         key.append(" allBlocks=").append(celtium$REFERENCE_ALL_BLOCKS);
-        key.append(" entities=").append(celtium$REFERENCE_ENTITIES);
+        key.append(" entities=").append(scene == Scene.ENTITY
+                ? celtium$REFERENCE_ENTITIES_ENTITY : celtium$REFERENCE_ENTITIES);
         key.append(" screen=").append(celtium$REFERENCE_SCREEN);
         key.append(" guiScale=").append(celtium$REFERENCE_GUI_SCALE);
         return key.toString();
@@ -1902,6 +1952,20 @@ public final class ValidationClient {
     private static final boolean celtium$REFERENCE_ALL_BLOCKS = false;
     /** The entity variant the measured references ran with: none of the glow/keep/capture flags. */
     private static final String celtium$REFERENCE_ENTITIES = "none";
+    /**
+     * The entity variant the entity-effect scene's reference ran with: the carrier pair, at the pair distance.
+     * <p>
+     * Scene-specific because the token is what a scene's floors were measured under, and the other scenes'
+     * references were measured with no entity flags at all: writing the pair into the shared constant would
+     * uncalibrate every other scene against its own reference. The distance rides in the token
+     * ({@code entityEffectPair@4}) so moving the carriers - which changes the picture, the masks and every
+     * checker floor derived from them - changes the key and uncalibrates the scene mechanically, instead of
+     * leaving floors measured at one distance judging a picture taken at another.
+     */
+    private static final String celtium$REFERENCE_ENTITIES_ENTITY =
+            "entityEffectPair@" + celtium$ENTITY_PAIR_DISTANCE;
+    /** How far ahead of the pose the entity-effect carriers stand, in blocks: part of the calibration key. */
+    private static final int celtium$ENTITY_PAIR_DISTANCE = 4;
     /** The screen variant the measured references ran with: no screen was open. */
     private static final String celtium$REFERENCE_SCREEN = "none";
 
@@ -1911,13 +1975,19 @@ public final class ValidationClient {
         String[] flags = {"keepEntities", "captureEntities",
                 "glowEntities", "spawnEntities",
                 "rendererlessEntities", "spawnEntitiesAfterTransfer",
-                "modelGlint"};
+                "modelGlint", "entityEffectPair", "entityHurtHold", "entityGlintHold"};
         for (String flag : flags) {
             if (HarnessConfig.bool(flag, false)) {
                 if (variant.length() > 0) {
                     variant.append('+');
                 }
-                variant.append(flag);
+                // The pair's distance is part of the token (see celtium$REFERENCE_ENTITIES_ENTITY): the flags
+                // that only schedule the within-run A/B windows (entityHurtAbTick / entityGlintAbTick) are
+                // deliberately NOT in this list. The windows run after the capture, so they do not change the
+                // captured frame the floors judge; putting them in the token would make the A/B run's key differ
+                // from its own reference's key forever, and the leg could never report PASSED.
+                variant.append("entityEffectPair".equals(flag)
+                        ? "entityEffectPair@" + celtium$ENTITY_PAIR_DISTANCE : flag);
             }
         }
         return variant.length() == 0 ? "none" : variant.toString();
@@ -4048,6 +4118,7 @@ public final class ValidationClient {
             }
             if (worldTicks >= 150 && !HarnessConfig.bool("interop", false)
                     && !HarnessConfig.bool("keepEntities", false)
+                    && !HarnessConfig.bool("entityEffectPair", false)
                     && !HarnessConfig.bool("dynamicLightItem", false)) {
                 // Terrain-only comparison: mob spawning is not seed-deterministic between runs, so remove every
                 // non-player entity and particle well before the capture. Entity and TESR behaviour stays on the
@@ -7585,8 +7656,26 @@ public final class ValidationClient {
                 // before this removal) and "has none" (the screenshot, taken after), the screenshot has to hold the
                 // same live frame the presented image does. What is measured here is the renderer, so the removal that
                 // only exists to make the terrain comparison deterministic is skipped on request.
-                if (HarnessConfig.bool("captureEntities", false)) {
-                    report.addProperty("captureEntitiesKept", true);
+                // entityEffectPair exempts the carriers for the same reason, and it is the exemption this
+                // branch originally missed: the tick-150 sweep above is not the only removal, and a pair kept
+                // from that sweep but removed here left the capture photographing an empty scene after a
+                // bounded 40-frame wait (item 358 readiness, P1). The report names which flag kept them, so
+                // a leg can tell "kept by the entity-comparison flag" from "kept by the effect scene".
+                if (HarnessConfig.bool("captureEntities", false)
+                        || HarnessConfig.bool("entityEffectPair", false)) {
+                    StringBuilder keepReason = new StringBuilder();
+                    if (HarnessConfig.bool("captureEntities", false)) {
+                        report.addProperty("captureEntitiesKept", true);
+                        keepReason.append("captureEntities");
+                    }
+                    if (HarnessConfig.bool("entityEffectPair", false)) {
+                        report.addProperty("effectPairKept", true);
+                        if (keepReason.length() > 0) {
+                            keepReason.append('+');
+                        }
+                        keepReason.append("entityEffectPair");
+                    }
+                    report.addProperty("captureEntityKeepReason", keepReason.toString());
                     // What the crosshair actually hits at capture time: the selection box only draws when this is a
                     // block, so recording it settles whether the outline was supposed to be in the frame at all.
                     if (mc.objectMouseOver != null) {
