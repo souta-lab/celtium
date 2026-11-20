@@ -18694,7 +18694,8 @@ this.frameBufferOpen = false;
             // The frame image as the blit is about to read it, in the present that serves it: the boundary probe reads
             // the same image one frame later, and a difference between the two is the frame's own draws landing after
             // the present rather than before it.
-            if (SKY_FRAME_PROBE >= 0L && this.skyPresentProbeLines < SKY_FRAME_PROBE_LIMIT
+            if (SKY_FRAME_PROBE >= 0L && this.frameId >= SKY_FRAME_PROBE
+                    && this.skyPresentProbeLines < SKY_FRAME_PROBE_LIMIT
                     && this.frameTarget.colorImage() != 0L) {
                 this.skyPresentProbeLines++;
                 int[] presentFramePixels = celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,
@@ -20742,6 +20743,12 @@ this.frameBufferOpen = false;
                     // draw still reports the matrices it would have been drawn with - and the missing "drawn=1"
                     // suffix is then the answer to "was it drawn".
                     this.skyGroupStateThisFrame = "target=" + (group.target == target)
+                            // ITEM 383: "target=" is only "this group belongs to this flush"; the captured identity
+                            // and the main identity are what say WHERE it went (R5).
+                            + " tgt=0x" + Long.toHexString(group.target)
+                            + " flush=0x" + Long.toHexString(target)
+                            + " main=0x" + Long.toHexString(this.targetRegistry.mainIdentity())
+                            + " isMain=" + this.targetRegistry.currentIsMain()
                             + " batches=" + group.batches
                             + " proj=" + celtium$round3(group.projection[0]) + ","
                             + celtium$round3(group.projection[5]) + ","
