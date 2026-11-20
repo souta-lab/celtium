@@ -321,6 +321,15 @@ tasks.named<JavaCompile>("compileTestJava") {
         languageVersion = JavaLanguageVersion.of(21)
     }
 }
+// The test classes are release 21 like the main ones, but a Test task launches on the
+// project toolchain (Java 8, kept for RFG) unless told otherwise - an 8 JVM cannot load
+// class file 65.0 and the suite dies before running a single test. Launch the tests on
+// the same 21 the compiler targets, the way the compile tasks above already pin it.
+tasks.named<Test>("test") {
+    javaLauncher.set(javaToolchains.launcherFor {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    })
+}
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
 }
