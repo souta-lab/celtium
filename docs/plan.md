@@ -52,10 +52,10 @@ r14 で既定 on にして解消**（拒否 0、chain が描く）が、halo は
    **Nomi の画像は r14 以降の jar で撮り直す**（21,885 拒否は 0 になり chain が描くので r126 の数値は変更前）。
 4. **Xaero radar の entity icon**: 描かれるか未確認（entity の居る scene が必要、ハーネスファイルの `keepEntities=true`）。
 5. **巨大クラス分割の継続**と効果の無い実験 switch の削除（挙動不変、CPU テストで確認）。
-6. **影**: 影 target 着地（419）と §3.4 出版は実装済み。暗転は消費側の push-constant 上限の lowering 拒否で UBO 項目待ち。（397 の view キーは `SHADOW_VIEW` 未到達の仮配線 — 項目406）深度ストア・native depth copy・
-   `glBlitFramebuffer` 深度経路と、影パス読み込みの native 提供（0.2.5-rc2、served ≥8・refused 0）は着地済み。
-   shaderpack 対応は 0.2.4/0.2.5 のとおり本体 native 実装で進んでおり、別 addon jar の
-   成果物はまだ無い。製品版 Demonica jar の QuarantineGuard は利用者側の制約として残る。
+6. **影**: 影 target 着地（419）と §3.4 出版は実装済み。暗転は未成立。UBO 経路は実装済み（lowering 拒否は解消）。行使は deferred program の申し出が来る leg 待ち。（397 `SHADOW_VIEW` は未到達の仮配線、項目406）深度ストア・native depth copy・
+   `glBlitFramebuffer` 深度経路と影パス読み込みの native 提供は着地済み（0.2.5-rc2、served ≥8・refused 0）。
+   shaderpack 対応は本体 native 実装で進行中で、別 addon jar の
+   成果物はまだ無い。製品版 Demonica jar の QuarantineGuard は利用者側制約で残る。
 
 ## 棄却済み（再入条件が無い限り再開しない）
 
