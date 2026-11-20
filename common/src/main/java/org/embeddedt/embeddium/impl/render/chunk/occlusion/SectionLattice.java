@@ -154,6 +154,10 @@ public final class SectionLattice {
     long[] visibleCells = new long[0];
     int visibleCount;
 
+    // Test seam (item 426): the thread that most recently ran ensureWindowCovers. The shadow pass's window
+    // update must run on the search thread, inside the submitted search task; tests read this to pin that.
+    private volatile @Nullable Thread lastEnsureWindowCoversThread;
+
     // The complete world height plus one sentinel cell at each vertical edge.
     private final int worldDimY;
     // True when dimY is smaller than worldDimY, so Y slides with the camera like X/Z; otherwise baseY stays at the
@@ -493,11 +497,17 @@ public final class SectionLattice {
      * retained and only the newly exposed band is resolved through the
      * authoritative section map.
      *
-     * <p>Call this on the render thread before dispatching a search. The
-     * asynchronous search must not observe allocation, rebasing, attachment,
-     * detachment, or metadata updates while it is running.
+     * <p>This must not overlap a running search, which must not observe
+     * allocation, rebasing, attachment, detachment, or metadata updates.
+     * The two call sites each satisfy this differently: the terrain pass calls
+     * this on the render thread before dispatching, when the previous frame's
+     * searches have all been joined, while the shadow pass calls it inside its
+     * submitted search task, where the single search thread's submission order
+     * guarantees the terrain search has already finished executing.
      */
     public void ensureWindowCovers(Vector3ic cameraSectionPos, float searchDistance) {
+        this.lastEnsureWindowCoversThread = Thread.currentThread();
+
         int radius = MathUtil.mojfloor(searchDistance / 16.0f);
         int neededDimXZ = 2 * (radius + SLACK) + 3;
         int oldBaseX = this.baseX, oldBaseY = this.baseY, oldBaseZ = this.baseZ;
@@ -579,6 +589,11 @@ public final class SectionLattice {
                 useOcclusionCulling, allowFrustumClamping, this.shadowCuller != null, frame);
 
         return this.snapshot(this.visitState, this.mainSnapshotBuffers);
+    }
+
+    /** The thread that most recently ran {@link #ensureWindowCovers}, or {@code null} before the first call. */
+    public @Nullable Thread lastEnsureWindowCoversThread() {
+        return this.lastEnsureWindowCoversThread;
     }
 
     public String rasterBufferSize() {
