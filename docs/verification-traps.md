@@ -637,3 +637,23 @@ forge122 の mixin プラグインで、設計は ITEM356-DESIGN-2026-11-18.md �
 - 隔離の証明は「落とした → 台帳に1行 → 次回起動で名指し skip（`CELTIUM_PATCH_SKIPPED`）→
   台帳行を消すと再び落ちる → 戻すと正常」の4起動で取る（項目402）。途中の起動だけで
   「働いた」と書かない。
+
+## entity を残す免除は2箇所ある／較正キーに A/B フラグを入れると leg が永久に未較正になる／A/B の off は毎フレーム代入で作る（項目358 readiness、2026-11-18 特定）
+
+- 症状: entity 場面の leg で、mob が capture に写らない／A/B の3フレームが全部 on になる／
+  `sceneCalibrationKeyMatches=false` のまま `UNCALIBRATED`（exit 2）から抜けられない。
+- 実例（コード上の確定事項、項目358 readiness §0 の P1–P3）:
+  (1) 非プレイヤー entity の削除は tick 150 の一括削除だけではない。capture 本体にもう1箇所あり
+  （`captureEntities` が無いと削除＋40フレーム延期の末に「空の場面」を撮る）。`keepEntities` 側だけ
+  免除してもう1箇所を漏らすと、場面は空になる。免除は両方に入れ、report の
+  `captureEntityKeepReason` でどちらで残したか分かる形にする。
+  (2) 較正キーの entity token に、capture より後に走る A/B の tick フラグ（`entityHurtAbTick` 等）まで
+  入れると、run 側キーと定数側の参照キーが永久に一致しない。token に入れるのは「captured frame を
+  変えるフラグ」だけ（`entityEffectPair` と hold 系）。入れる/入れないの判断はフラグ追加のたびに
+  「このフラグは capture の絵を変えるか」で行う。
+  (3) `hurtTime` は tick で減衰する。窓の最初に1回立てただけでは off フレームが作れず、tick 駆動の
+  トグルは1フレーム内の tick バッチで往復する（`glowAbTick` 型の失敗）。A/B の状態は render tick で
+  step ごとに代入し直す（`signTextAbTick` 型）。
+- 規約: entity を残す新フラグを足したら、削除側の全箇所を grep して免除を揃える。較正キーに
+  フラグを足す前に、その leg の期待 verdict 表（どの arm が PASSED でどれが INCONCLUSIVE か）を
+  先に書く。A/B は render tick 駆動＋毎フレーム代入が既定形。
