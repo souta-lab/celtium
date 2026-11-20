@@ -153,6 +153,9 @@ public class CeleritasVintageMixinPlugin implements IMixinConfigPlugin {
         // CeltiumGllessWindowTransformer and the stub from this plugin's onLoad, and the cohort leg passes with
         // openGl.vendor="Celtium" without either of them.
         List<String> discovered = new ArrayList<>(possibleMixinClasses);
+        // ITEM439-E1 DIAGNOSTIC ONLY (not for landing): exclude the Chunk membership mixin from discovery so a
+        // Phosphor co-residence leg can bisect whether this mixin's presence is the crash trigger.
+        discovered.remove("core.terrain.ChunkEntityMembershipMixin");
         List<String> registered = discovered;
         PatchLedger ledger;
         try {
