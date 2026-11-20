@@ -84,6 +84,9 @@ final class ModPrograms {
     private static final VulkanGlTexture[] EMPTY_TEXTURES = new VulkanGlTexture[0];
     final it.unimi.dsi.fastutil.ints.IntOpenHashSet modProgramReported =
             new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
+    /** Texture names whose depth-attach probe line has been printed: one line per name, ever (item 537 wall (b2)). */
+    final it.unimi.dsi.fastutil.ints.IntOpenHashSet modSamplerDepthProbed =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     private org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program lastModProgram;
     private int lastModFormatId = -1;
     private Object lastModLike;
@@ -175,6 +178,7 @@ final class ModPrograms {
             int name = b.immediateState.boundTextureName(unit);
             VulkanGlTexture texture = name > 0 ? celtium$modSamplerTexture(name) : null;
             if (texture == null || texture.view() == 0L) {
+                celtium$probeSamplerDepthAttach(programId, sampler.name(), unit, name);
                 return celtium$modFailure(programId, "sampler " + sampler.name() + " (unit " + unit + ", texture "
                         + name + ") has no native image");
             }
@@ -534,6 +538,35 @@ final class ModPrograms {
                     + this.modReadbackLabels.get(i) + " centre=(" + r + "," + g + "," + b + "," + a + ")");
         }
         this.modReadbackFrame = -1L;
+    }
+
+    /**
+     * {@return whether this is the first sampler refusal for {@code name}, so its depth-attach probe line is
+     * printed}: one line per texture name, bounded, so the probe answers once and never becomes per-frame noise.
+     * Static and pure so the claim rule is pinned without a device.
+     */
+    static boolean celtium$claimSamplerDepthProbe(it.unimi.dsi.fastutil.ints.IntOpenHashSet probed, int name) {
+        return name > 0 && probed.size() < 16 && probed.add(name);
+    }
+
+    /**
+     * Item 537 wall (b2): the first time a sampler is refused for having no native image, print what the stub's
+     * raw framebuffer record says about that texture name - the framebuffer it is attached to as a depth
+     * attachment, or 0 when no framebuffer attaches it. That one value separates the two cases the Tier 1 leg
+     * could not: a nonzero framebuffer means the attachment exists and only its backend depth record never
+     * arrived (branch i); 0 means the name is an independent depth texture no framebuffer attaches, which the
+     * section 3.4 publication route cannot reach (branch ii). The probe reads a stub census map on a refusal
+     * path that already returns without drawing, once per name, so it costs nothing on any drawn frame.
+     */
+    void celtium$probeSamplerDepthAttach(int programId, String samplerName, int unit, int name) {
+        if (!celtium$claimSamplerDepthProbe(this.modSamplerDepthProbed, name)) {
+            return;
+        }
+        int depthFramebuffer = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                .celtium$framebufferForDepthTexture(name);
+        System.out.println("[Celtium] CELTIUM_MOD_SAMPLER_DEPTH_ATTACH program=" + programId
+                + " sampler=" + samplerName + " unit=" + unit + " texture=" + name
+                + " framebuffer=0x" + Integer.toHexString(depthFramebuffer));
     }
 
     PreparedImmediate celtium$modFailure(int programId, String reason) {

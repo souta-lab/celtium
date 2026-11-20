@@ -7191,6 +7191,26 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /**
+     * {@return the refusal reason for a depth publication whose shared depth store entry is incomplete}:
+     * {@code depth-layout-unrecorded} when image, view and extent are all present and only the layout record
+     * is still {@code VK_IMAGE_LAYOUT_UNDEFINED}, {@code depth-not-in-store} for every other incompleteness.
+     * <p>
+     * The layout-only case is a first-prepare race, not a missing image (item 537 wall (b1)): the store entry
+     * exists before the pair that draws into the image first declares a layout through the borrowed pair's
+     * setter, so a prepare that tries to publish in between is refused on the honest UNDEFINED record - and
+     * publishing with an UNDEFINED declared layout is refused by the share itself, by design. Measured in the
+     * Tier 1 leg: refused with layout=0, then published two seconds later with layout=3 once the owner had
+     * declared it. Naming the case apart keeps that self-healing transient from reading as the standing
+     * refusal in a leg's log. The publication decision is unchanged: both reasons refuse, and the next prepare
+     * retries. Static and pure so the split is pinned without a device.
+     */
+    static String celtium$depthPublishRefusalReason(long image, long view, int[] extent, int layout) {
+        boolean layoutOnly = image != 0L && view != 0L && extent != null
+                && layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
+        return layoutOnly ? "depth-layout-unrecorded" : "depth-not-in-store";
+    }
+
+    /**
      * Publishes a framebuffer's depth texture name over the shared depth image that stands for it - the depth
      * twin of {@link #celtium$publishFramebufferColorTexture}, and the sampling publication
      * SHADOW-NATIVE-DESIGN section 3.4 names as the missing half of shadow support.
@@ -7239,7 +7259,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             if (this.fboPublishRefusalLogs < 16) {
                 this.fboPublishRefusalLogs++;
                 System.out.println("[Celtium] CELTIUM_FBO_PUBLISH_REFUSED name=" + glTextureName
-                        + " reason=depth-not-in-store identity=0x" + Long.toHexString(identity)
+                        + " reason=" + celtium$depthPublishRefusalReason(image, view, extent, layout)
+                        + " identity=0x" + Long.toHexString(identity)
                         + " key=0x" + Long.toHexString(depthKey)
                         + " image=0x" + Long.toHexString(image) + " view=0x" + Long.toHexString(view)
                         + " extent=" + (extent == null ? "none" : extent[0] + "x" + extent[1])
