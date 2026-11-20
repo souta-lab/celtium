@@ -11,8 +11,12 @@ import org.lwjgl.sdl.SDLVideo;
  * stands down there: sleeping on top of FIFO would only add a refresh interval of latency.
  * <p>
  * The call site matters. It used to run at the top of the present, i.e. before the frame was handed to the compositor,
- * which pushed every frame back by the sleep. The game's fps-limit hook runs right after {@code Display.update} - which
- * is after the swap - so the cap sleeps after the frame is out rather than in front of it.
+ * which pushed every frame back by the sleep. The call runs right after {@code updateDisplay} inside the game loop -
+ * which is after the swap - so the cap sleeps after the frame is out rather than in front of it. It originally rode
+ * the game's own {@code Display.sync} call at the loop's tail, but vanilla only makes that call below the frame-limit
+ * option's maximum, so at the "max" setting the sleep - and with it the idle cap - never happened (item 388's
+ * acceptance defect, measured in the item 522 legs); the loop-side call after {@code updateDisplay} is reached on
+ * every frame at every setting.
  * <p>
  * In a world the cap is the player's own frame limit: pacing every capped run to the display's refresh instead
  * ignored the setting - a 120 fps limit ran at 60 on a 60 Hz display (Intel world leg, framerate 120: 16.56 ms
@@ -151,8 +155,9 @@ public final class CeltiumFramePacing {
     }
 
     /**
-     * Sleeps to {@code targetFps} when it is positive, to the display's refresh interval otherwise, when nothing else
-     * paces the loop.
+     * Sleeps to {@code targetFps} when it is positive, to the display's refresh interval when it is 0, when nothing
+     * else paces the loop. A negative target is the player's "max" limit - no target at all: the call then sleeps
+     * only while an idle cap is engaged, and otherwise leaves the loop exactly as unpaced as the game left it.
      */
     public static void pace(int targetFps) {
         if (!ENABLED || fifoPacing) {
@@ -162,9 +167,15 @@ public final class CeltiumFramePacing {
             int cap = activeCapFps();
             if (cap > 0) {
                 // min(player target, cap); a target of 0 asks for the refresh interval, which the cap
-                // replaces outright - it is a ceiling, and the refresh rate is above any sane cap.
+                // replaces outright - it is a ceiling, and the refresh rate is above any sane cap. A negative
+                // target (the "max" limit) is no target at all, so the cap becomes the target outright.
                 targetFps = targetFps > 0 ? Math.min(targetFps, cap) : cap;
             }
+        }
+        if (targetFps < 0) {
+            // No player target and no idle cap engaged: no sleep, and the schedule below is left untouched,
+            // so a cap that engages later starts from the same clean state a first capped frame has always had.
+            return;
         }
         if (!refreshQueried) {
             refreshQueried = true;

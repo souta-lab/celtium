@@ -203,20 +203,59 @@ public class MinecraftMixin {
             // measures 9 ms a frame in the 1080p menu - a slot it believes is 33 ms - so the native path presents when
             // the frame is done and the present mode decides when that reaches the screen.
             if (GL_LESS_SYNC_SKIPPED) {
-                // Stands in for the game's limiter, at the same point in the loop: after the frame has been presented,
-                // so the sleep is behind the frame rather than in front of it.
-                // The idle cap's settings ride along every frame (item 388): default off, and the pacing class
-                // applies min(frame limit, cap) only while the window is unfocused or input has gone quiet.
-                org.embeddedt.embeddium.impl.gui.SodiumGameOptions.PerformanceSettings celtium$perf =
-                        CeleritasVintage.options().performance;
-                org.soutalab.celtium.vulkan.CeltiumFramePacing.setIdleCapConfig(
-                        celtium$perf.useIdleFrameCap, celtium$perf.unfocusedFrameLimit,
-                        celtium$perf.idleFrameLimit, celtium$perf.idleDelaySeconds);
-                org.soutalab.celtium.vulkan.CeltiumFramePacing.pace(
-                        ((Minecraft) (Object) this).world != null ? fps : 0);
+                // The stand-in sleep no longer lives here: vanilla reaches this call only below the limit
+                // option's maximum (isFramerateLimitBelowMax), so at the "max" setting this redirect never
+                // fires and a sleep placed here never happens - the pacing call moved to
+                // celtium$paceAfterDisplayUpdate, which every frame passes through. Only the timing bracket
+                // and the restored-sync escape hatch below remain at this call site.
                 return;
             }
             org.lwjgl.opengl.Display.sync(fps);
+        } finally {
+            GameLoopTiming.syncEnded();
+        }
+    }
+
+    /**
+     * The frame-pacing stand-in, actuated once per game loop right after {@code updateDisplay} - the point every
+     * frame passes through once it has been presented, at every frame-limit setting. It used to ride the
+     * {@code Display.sync} redirect above, but that call site is conditional in vanilla: {@code runGameLoop} calls
+     * {@code Display.sync} only when {@code isFramerateLimitBelowMax()} (the limit against
+     * {@code Options.FRAMERATE_LIMIT}'s maximum, 260 - verified in the vanilla class and in Cleanroom
+     * 0.7.14-alpha's binary patch of it, which leaves both the call and the guard untouched). At the player's
+     * "max" setting the redirect therefore never fired: the baseline limiter did not sleep there (long-standing),
+     * and the idle cap (item 388) pushed its settings only on menu frames, so it announced itself in the report
+     * yet never engaged in a world - measured in the item 522 acceptance legs, where the cap held ~30 fps at
+     * limits 30 and 120 and did nothing at 260.
+     * <p>
+     * The target mirrors what the sync call would have been handed: in a world, the player's own limit - or -1
+     * at the maximum, where the game leaves the loop unpaced and only an engaged idle cap may slow it; out of a
+     * world, 0, the refresh-rate target the menus have always paced to. The idle cap's settings are pushed here
+     * every frame instead (item 388): default off, and the pacing class applies min(frame limit, cap) only while
+     * the window is unfocused or input has gone quiet, so an option change is honoured on the next frame wherever
+     * the loop is. The sleep sits inside the same timing bracket the sync call used, so the fps-sync instrument
+     * keeps measuring the loop's pacing sleep wherever it happens. With
+     * {@code -Dceltium.vulkan.displaySync=true} the game's own sync is restored by the redirect above and this
+     * hook stands down, so the two never pace the same frame.
+     */
+    @Inject(method = "runGameLoop",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/Minecraft;updateDisplay()V",
+                    shift = At.Shift.AFTER), require = 0)
+    private void celtium$paceAfterDisplayUpdate(CallbackInfo ci) {
+        if (!GL_LESS_SYNC_SKIPPED) {
+            return;
+        }
+        Minecraft mc = (Minecraft) (Object) this;
+        org.embeddedt.embeddium.impl.gui.SodiumGameOptions.PerformanceSettings celtium$perf =
+                CeleritasVintage.options().performance;
+        org.soutalab.celtium.vulkan.CeltiumFramePacing.setIdleCapConfig(
+                celtium$perf.useIdleFrameCap, celtium$perf.unfocusedFrameLimit,
+                celtium$perf.idleFrameLimit, celtium$perf.idleDelaySeconds);
+        GameLoopTiming.syncStarted();
+        try {
+            org.soutalab.celtium.vulkan.CeltiumFramePacing.pace(mc.world != null
+                    ? (mc.isFramerateLimitBelowMax() ? mc.getLimitFramerate() : -1)
+                    : 0);
         } finally {
             GameLoopTiming.syncEnded();
         }

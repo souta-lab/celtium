@@ -383,7 +383,7 @@ public final class GameLoopTiming {
         blitInsideLoop += System.nanoTime() - started;
     }
 
-    /** Called at the head of the fps-limit {@code Display.sync}. */
+    /** Called at the head of the loop's fps-limit sleep: the game's {@code Display.sync}, or celtium's stand-in pace after {@code updateDisplay} on frames the sync call is not reached. */
     public static void syncStarted() {
         openSyncNanos = openLoopNanos != 0L ? System.nanoTime() : 0L;
     }
