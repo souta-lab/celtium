@@ -29,6 +29,13 @@ import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
  * <p>
  * What this cannot prove: that a drawn frame looks right. It pins the naming contract, the offsets, and the refusals
  * that must stay - "this layout has no such field", the sibling of the honest >256-byte boundary.
+ * <p>
+ * The Iris cases below are the same wall in a second vocabulary: Demonica's programs arrive with the names Iris's
+ * {@code AttributeTransformer} injects at fixed locations ({@code iris_Vertex} at 0, {@code iris_Color} at 1,
+ * {@code iris_MultiTexCoord0} at 2, {@code iris_MultiTexCoord1} at 3, {@code iris_Normal} at 4), because the
+ * lowering keeps a mod's own names. Tier 1 of the Demonica series measured every fullscreen-quad program refused
+ * at the backend with {@code attribute iris_MultiTexCoord0 has no source in format 6} - again nothing missing from
+ * the batch, only from the gate's vocabulary.
  */
 class ModProgramAttributeSourceTest {
 
@@ -177,6 +184,97 @@ class ModProgramAttributeSourceTest {
         assertEquals(VulkanModProgramPipeline.Source.COLOR,
                 VulkanModProgramPipeline.source(new ModGlslTranslator.Attribute("celtium_Color", "vec4", 2),
                         VulkanImmediateFormats.POSITION_TEX_COLOR));
+    }
+
+    /**
+     * The interface Iris's {@code AttributeTransformer} injects for a fullscreen-quad program: the renames of
+     * {@code gl_Vertex}, {@code gl_MultiTexCoord0} and {@code gl_MultiTexCoord1} at their fixed locations.
+     */
+    private static final String IRIS_VERTEX = """
+            #version 330 core
+            layout(location = 0) in vec4 iris_Vertex;
+            layout(location = 2) in vec4 iris_MultiTexCoord0;
+            layout(location = 3) in vec4 iris_MultiTexCoord1;
+            out vec4 v_TexCoord0;
+            void main() {
+                gl_Position = iris_Vertex;
+                v_TexCoord0 = iris_MultiTexCoord0 + iris_MultiTexCoord1;
+            }
+            """;
+
+    private static final String IRIS_FRAGMENT = """
+            #version 330 core
+            in vec4 v_TexCoord0;
+            uniform sampler2D u_Sampler0;
+            out vec4 fragColor;
+            void main() {
+                fragColor = texture(u_Sampler0, v_TexCoord0.st);
+            }
+            """;
+
+    private static List<ModGlslTranslator.Attribute> irisAttributes() {
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(IRIS_VERTEX, IRIS_FRAGMENT);
+        assertNull(result.failure(), () -> "unexpected lowering failure: " + result.failure());
+        return result.attributes();
+    }
+
+    @Test
+    void theIrisTransformersNamesReadTheTexLayout() {
+        List<ModGlslTranslator.Attribute> attributes = irisAttributes();
+        // The locations are the transformer's own fixed injection points.
+        assertEquals(List.of(new ModGlslTranslator.Attribute("iris_Vertex", "vec4", 0),
+                new ModGlslTranslator.Attribute("iris_MultiTexCoord0", "vec4", 2),
+                new ModGlslTranslator.Attribute("iris_MultiTexCoord1", "vec4", 3)), attributes);
+        // Tier 1's refusal: format 6 carries the UV at offset 12, so all three names must read a field of it.
+        assertNull(VulkanModProgramPipeline.unsupportedAttributes(attributes,
+                VulkanImmediateFormats.POSITION_TEX));
+        assertEquals(VulkanModProgramPipeline.Source.POSITION,
+                VulkanModProgramPipeline.source(attributes.get(0), VulkanImmediateFormats.POSITION_TEX));
+        assertEquals(VulkanModProgramPipeline.Source.TEXCOORD,
+                VulkanModProgramPipeline.source(attributes.get(1), VulkanImmediateFormats.POSITION_TEX));
+        // The quad path folds the second coordinate's attribute (also offset 12) onto the one UV, so it reads
+        // the same field on this layout.
+        assertEquals(VulkanModProgramPipeline.Source.TEXCOORD,
+                VulkanModProgramPipeline.source(attributes.get(2), VulkanImmediateFormats.POSITION_TEX));
+        // Without the second coordinate, the same names also serve the colour layout, whose UV is the same field.
+        assertNull(VulkanModProgramPipeline.unsupportedAttributes(attributes.subList(0, 2),
+                VulkanImmediateFormats.POSITION_TEX_COLOR));
+        assertEquals(VulkanModProgramPipeline.Source.TEXCOORD,
+                VulkanModProgramPipeline.source(attributes.get(1), VulkanImmediateFormats.POSITION_TEX_COLOR));
+    }
+
+    @Test
+    void theIrisSecondTexCoordIsRefusedByTheTexColorLayout() {
+        // Format 2 has no second UV field at all - the ground on which a_TexCoord1 stays refused above - so the
+        // fold that POSITION_TEX permits must not leak into it.
+        List<ModGlslTranslator.Attribute> attributes = irisAttributes();
+        assertNull(VulkanModProgramPipeline.source(attributes.get(2),
+                VulkanImmediateFormats.POSITION_TEX_COLOR));
+        assertEquals("attribute iris_MultiTexCoord1 has no source in format "
+                        + VulkanImmediateFormats.POSITION_TEX_COLOR,
+                VulkanModProgramPipeline.unsupportedAttributes(attributes,
+                        VulkanImmediateFormats.POSITION_TEX_COLOR));
+    }
+
+    @Test
+    void theIrisColourAndNormalKeepTheirAnswers() {
+        // iris_Color is gl_Color renamed: it reads the colour field where a layout carries one, and stays refused
+        // where none does. Serving a colour value no field carries is the constant-attribute question, which this
+        // gate does not answer.
+        ModGlslTranslator.Attribute irisColor = new ModGlslTranslator.Attribute("iris_Color", "vec4", 1);
+        assertEquals(VulkanModProgramPipeline.Source.COLOR,
+                VulkanModProgramPipeline.source(irisColor, VulkanImmediateFormats.POSITION_TEX_COLOR));
+        assertNull(VulkanModProgramPipeline.source(irisColor, VulkanImmediateFormats.POSITION_TEX));
+        assertEquals("attribute iris_Color has no source in format " + VulkanImmediateFormats.POSITION_TEX,
+                VulkanModProgramPipeline.unsupportedAttributes(List.of(irisColor),
+                        VulkanImmediateFormats.POSITION_TEX));
+        // Neither layout carries a normal field, so iris_Normal stays refused on both.
+        ModGlslTranslator.Attribute irisNormal = new ModGlslTranslator.Attribute("iris_Normal", "vec3", 4);
+        assertNull(VulkanModProgramPipeline.source(irisNormal, VulkanImmediateFormats.POSITION_TEX));
+        assertNull(VulkanModProgramPipeline.source(irisNormal, VulkanImmediateFormats.POSITION_TEX_COLOR));
+        assertEquals("attribute iris_Normal has no source in format " + VulkanImmediateFormats.POSITION_TEX,
+                VulkanModProgramPipeline.unsupportedAttributes(List.of(irisNormal),
+                        VulkanImmediateFormats.POSITION_TEX));
     }
 
     @Test

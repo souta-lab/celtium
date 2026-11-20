@@ -32,8 +32,8 @@ import static org.lwjgl.vulkan.VK10.*;
  * the location belongs to the program (a {@code #version 120} program's declaration order, GLSM's
  * {@code VertexFormatElement.Usage} numbers) while the batch's field order belongs to the uploader - the vocabularies
  * {@link #source} knows are the lowering's own {@code celtium_Vertex}/{@code celtium_MultiTexCoord0}/
- * {@code celtium_Color} and the GLSL 330 fixed-function generator's {@code a_Color}/{@code a_TexCoord0}. Any other
- * attribute is refused with a reason, naming the attribute.
+ * {@code celtium_Color}, the GLSL 330 fixed-function generator's {@code a_Color}/{@code a_TexCoord0} and Iris's
+ * {@code iris_*} renames of the same builtins. Any other attribute is refused with a reason, naming the attribute.
  * <p>
  * One instance per (program, layout, render state); {@link Draw} is the per-batch half (uniform bytes and sampler set)
  * that a group carries as its prepared pipeline.
@@ -63,23 +63,34 @@ public final class VulkanModProgramPipeline {
 
     /**
      * The texture-coordinate names: the lowering's own (a legacy {@code gl_MultiTexCoord0} comes back as
-     * {@code celtium_MultiTexCoord0}) and the GLSL 330 fixed-function generator's {@code a_TexCoord0}, which is a
-     * {@code vec4} reading the batch's two UV floats - Vulkan fills the missing components with (0, 0, 0, 1), the same
-     * values GL supplies, which is what the generator's {@code coord.st / q} division needs.
+     * {@code celtium_MultiTexCoord0}), the GLSL 330 fixed-function generator's {@code a_TexCoord0} and Iris's
+     * {@code iris_MultiTexCoord0} (its transformer renames {@code gl_MultiTexCoord0} and injects it at location 2),
+     * each a {@code vec4} reading the batch's two UV floats - Vulkan fills the missing components with (0, 0, 0, 1),
+     * the same values GL supplies, which is what the generator's {@code coord.st / q} division needs.
+     * {@code iris_MultiTexCoord1} is not in this set: it is handled in {@link #source} because only one layout
+     * may answer it (see there).
      */
     private static final java.util.Set<String> TEXCOORD_NAMES =
-            java.util.Set.of("celtium_MultiTexCoord0", "a_TexCoord0");
+            java.util.Set.of("celtium_MultiTexCoord0", "a_TexCoord0", "iris_MultiTexCoord0");
 
     /**
      * The position names: the lowering's {@code celtium_Vertex}, which is {@code gl_Vertex} - and {@code ftransform()},
      * which expands to a use of it, so a legacy program that both declares its own attributes and calls
      * {@code ftransform()} has this one at a nonzero location. It was refused as "no source" for that reason and only
-     * that reason. The three-float format fills its {@code vec4}'s w with 1, as GL's vertex position had.
+     * that reason. Iris's {@code iris_Vertex} is the same rename made by its transformer (injected at location 0, so
+     * the location-0 fallback already answered it; naming it here drops that reliance). The three-float format fills
+     * its {@code vec4}'s w with 1, as GL's vertex position had.
      */
-    private static final java.util.Set<String> POSITION_NAMES = java.util.Set.of("celtium_Vertex");
+    private static final java.util.Set<String> POSITION_NAMES = java.util.Set.of("celtium_Vertex", "iris_Vertex");
 
-    /** The colour names: the lowering's {@code celtium_Color} and the fixed-function generator's {@code a_Color}. */
-    private static final java.util.Set<String> COLOR_NAMES = java.util.Set.of("celtium_Color", "a_Color");
+    /**
+     * The colour names: the lowering's {@code celtium_Color}, the fixed-function generator's {@code a_Color} and
+     * Iris's {@code iris_Color} (its transformer renames {@code gl_Color}, injected at location 1 in the patch shapes
+     * that declare it). As with the other colour names it only resolves on the colour layout; on the colourless
+     * layout it stays refused - a program that needs a colour value no batch field carries is the separate
+     * constant-attribute question, not a name this gate can answer.
+     */
+    private static final java.util.Set<String> COLOR_NAMES = java.util.Set.of("celtium_Color", "a_Color", "iris_Color");
 
     /** The per-batch part a group draws: the pipeline, the packed uniforms and the sampler set. */
     public static final class Draw {
@@ -209,6 +220,15 @@ public final class VulkanModProgramPipeline {
     static Source source(ModGlslTranslator.Attribute attribute, int formatId) {
         if (POSITION_NAMES.contains(attribute.name())) {
             return Source.POSITION;
+        }
+        if ("iris_MultiTexCoord1".equals(attribute.name())) {
+            // Iris's second texture coordinate (injected at location 3). The fullscreen-quad path folds its two
+            // attributes at offset 12 onto the one UV the batch carries, and POSITION_TEX is that path's layout, so
+            // the name reads TEXCOORD there. POSITION_TEX_COLOR has no second UV field at all - the same ground on
+            // which the fixed-function generator's a_TexCoord1 stays refused - so it is refused there rather than
+            // answered with the first UV. Terrain programs, whose second coordinate is a light map, do not come
+            // through this gate (they travel the Celeritas channel), so the fold cannot leak into them.
+            return formatId == VulkanImmediateFormats.POSITION_TEX ? Source.TEXCOORD : null;
         }
         if (TEXCOORD_NAMES.contains(attribute.name())) {
             return Source.TEXCOORD;
