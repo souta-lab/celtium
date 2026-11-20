@@ -507,6 +507,10 @@ final class BackendDiagnostics {
                 // world-resize leg). Both the retries and the timeouts are reported so the two are told apart.
                 + " idleWaitTimeouts=" + b.submissionStatistics.idleWaitTimeouts() + " idleWaitRetries=" + b.submissionStatistics.idleWaitRetries()
                 + " terrainPasses=" + b.terrainStatistics.terrainPasses() + " immediateOnlyPasses=" + b.terrainStatistics.immediateOnlyPasses()
+                // Item 384: terrain passes drawn into the bound mod framebuffer's chain pair
+                // (terrainToBoundTarget) - the routing half of the bloom-halo split belongs in
+                // this summary, the one the fixture reads, not only in b.diagnostics().
+                + " terrainPassesToBoundTarget=" + b.terrainPassesToBoundTarget()
                 + " worldPassBoundaryFlushes=" + b.terrainStatistics.worldPassBoundaryFlushes()
                 // Item 328 (V-03): the terrain frame budget's cumulative account - what the per-frame caps
                 // dropped and what the rebuild discipline deferred or reused - so a leg that hit either says

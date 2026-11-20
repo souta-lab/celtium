@@ -3222,6 +3222,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private static final boolean TERRAIN_TO_BOUND_TARGET = Boolean.getBoolean("celtium.vulkan.terrainToBoundTarget");
     private long terrainPassesToBoundTarget;
+
+    /** Item 384: read by BackendDiagnostics so the count reaches the summary line a leg actually surfaces. */
+    long terrainPassesToBoundTarget() {
+        return this.terrainPassesToBoundTarget;
+    }
     /**
      * {@code -Dceltium.vulkan.terrainToDepthTarget=true}: draw a terrain pass into the bound framebuffer's chain pair
      * when that pair renders into the <em>shared depth image</em> the framebuffer's depth texture owns (item 332).
