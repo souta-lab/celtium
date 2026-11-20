@@ -369,6 +369,14 @@ public final class VulkanContext {
     private static final class SharedBatch {
         private long fence;
         private int pending;
+        /** The creating context's serial for this batch (item 529, instrument I3). */
+        private long serial;
+        /** {@code System.nanoTime()} of the successful queue submission; 0 while the batch is unsubmitted (I4). */
+        private long submittedNanos;
+        /** The batch's composition at submission: frame-slot entries, plain deferred entries, semaphore carriers (I3). */
+        private int frameEntries;
+        private int deferredEntries;
+        private int semaphoreEntries;
     }
 
     /**
@@ -380,6 +388,8 @@ public final class VulkanContext {
     private final java.util.ArrayList<DeferredSubmit> pendingBatchedSubmits = new java.util.ArrayList<DeferredSubmit>();
     private final java.util.ArrayList<DeferredSubmit> flushBatchScratch = new java.util.ArrayList<DeferredSubmit>();
     private SharedBatch pendingBatch;
+    /** Serial of the most recent batch this context created; the next takes the next value (item 529, I3). */
+    private long batchSerialSequence;
     /** Batched deferred submits are unconditional: every deferred submit joins the batch. */
     /** Lab switch: {@code -Dceltium.vulkan.pollUploadsAlways=true} polls in flushUploads even with nothing to copy. */
     static final boolean POLL_UPLOADS_ALWAYS = Boolean.getBoolean("celtium.vulkan.pollUploadsAlways");
@@ -500,6 +510,17 @@ public final class VulkanContext {
     private long uploadSkippedDeletedDestinations;
     private long stagingCapacityBytes;
 
+    /**
+     * Context generations across the process: {@link #create(String)} takes the next value for each context it
+     * makes (item 529, instrument I6). The crash breadcrumb ring is static and outlives a renderer reload, so
+     * the records a context leaves carry its generation - without it, a reload's new context would read the old
+     * one's operations as its own.
+     */
+    private static final java.util.concurrent.atomic.AtomicLong CONTEXT_GENERATIONS =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** This context's generation, from {@link #CONTEXT_GENERATIONS}; 0 until {@link #create(String)} assigns it. */
+    private long generation;
+
     private VulkanContext() {
     }
 
@@ -564,6 +585,7 @@ public final class VulkanContext {
             System.out.println("[Celtium] proceeding with no OpenGL identity: no device matching and no interop bridge");
         }
         VulkanContext context = new VulkanContext();
+        context.generation = CONTEXT_GENERATIONS.incrementAndGet();
         try {
             context.initialize(applicationName, openGl);
         } catch (RuntimeException | LinkageError error) {
@@ -1268,6 +1290,7 @@ public final class VulkanContext {
         if (this.pendingBatch == null) {
             this.pendingBatch = new SharedBatch();
             this.pendingBatch.fence = celtium$borrowDeferredFence();
+            this.pendingBatch.serial = ++this.batchSerialSequence;
         }
         return this.pendingBatch;
     }
@@ -1433,6 +1456,31 @@ public final class VulkanContext {
         batchedFlushCalls++;
         this.batchedFlushes++;
         this.batchedSubmissions += entries.size();
+        // Item 529, instruments I3/I4: the batch's identity, composition and submission time are recorded here,
+        // the one point every batch passes on its way to the queue - the game thread's flush and the presenter
+        // worker alike. The composition scan reads fields the submit loop just read, once per flush rather than
+        // once per entry's hot path, and the ring note is four array writes; the submission time is what a later
+        // loss measures the fence's outstanding time from.
+        batch.submittedNanos = System.nanoTime();
+        int frameEntries = 0;
+        int semaphoreEntries = 0;
+        for (DeferredSubmit entry : entries) {
+            if (entry.frameSlot >= 0) {
+                frameEntries++;
+            }
+            if ((entry.waitSemaphores != null && entry.waitSemaphores.length > 0)
+                    || (entry.signalSemaphores != null && entry.signalSemaphores.length > 0)) {
+                semaphoreEntries++;
+            }
+        }
+        batch.frameEntries = frameEntries;
+        batch.deferredEntries = entries.size() - frameEntries;
+        batch.semaphoreEntries = semaphoreEntries;
+        if (CrashBreadcrumbs.enabled()) {
+            CrashBreadcrumbs.note3(CrashBreadcrumbs.BATCH_SUBMIT,
+                    (this.generation << 32) | (batch.serial & 0xffffffffL), batch.fence,
+                    CrashBreadcrumbs.packBatchComposition(entries.size(), frameEntries, semaphoreEntries));
+        }
         return null;
     }
 
@@ -1751,12 +1799,38 @@ public final class VulkanContext {
     }
 
     private IllegalStateException celtium$lostDevice(String operation) {
-        CrashBreadcrumbs.dump(operation);
+        // Item 529, instruments I6/I7: the dump's context section names this context's generation and carries
+        // the deferred counters and the submit trail - both existed already and reached no loss report, so a
+        // loss log could not say what the queue had been doing in the seconds before the detection.
+        CrashBreadcrumbs.dump(operation, "context generation=" + this.generation
+                + "\n" + celtium$describeDeferred().trim()
+                + "\n" + SubmitTrail.describe());
         this.usable = false;
         this.deviceLost = true;
         return new IllegalStateException("CELTIUM_VULKAN_DEVICE_LOST at " + operation
                 + ": stop all GPU operations. Driver objects/fences are held for process teardown; "
                 + "a new Vulkan instance in this process cannot recover this device.");
+    }
+
+    /**
+     * The attribution a fatal wait adds to its trigger (item 529, instruments I3/I4/I5): how long the wait
+     * itself ran, which batch the fence belonged to, and how long that batch had been outstanding. The pair is
+     * what separates "the queue died during this wait" from "the queue was already dead when the wait began" -
+     * a long outstanding time with a short wait puts the loss before the detection, not inside it. Formatted
+     * only on the loss path; a wait that succeeds pays nothing for it.
+     */
+    private String celtium$batchAttribution(DeferredSubmit entry, long waitedNanos) {
+        StringBuilder attribution = new StringBuilder(80);
+        attribution.append(" waitedMs=").append(waitedNanos / 1_000_000L);
+        SharedBatch batch = entry.batch;
+        if (batch != null) {
+            attribution.append(" batch=g").append(this.generation).append(':').append(batch.serial);
+            if (batch.submittedNanos != 0L) {
+                attribution.append(" outstandingMs=")
+                        .append((System.nanoTime() - batch.submittedNanos) / 1_000_000L);
+            }
+        }
+        return attribution.toString();
     }
 
     /** The bounded wait itself, on one tracked entry; only an actually signaled fence is recycled. */
@@ -1780,7 +1854,8 @@ public final class VulkanContext {
             // DO NOT call reclaimDeferred: it issues vkResetFences, the exact
             // native call in Neeyo's hs_err_pid24484.log crash stack. Keep all
             // handles untouched and stop the renderer.
-            throw celtium$lostDevice("vkWaitForFences(deferred " + reason + ")");
+            throw celtium$lostDevice("vkWaitForFences(deferred " + reason + ")"
+                    + celtium$batchAttribution(entry, waitedNanos));
         }
         if (canReclaimDeferred(waited)) {
             this.deferredSubmits.remove(entry);

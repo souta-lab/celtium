@@ -974,6 +974,17 @@ public final class VulkanGlTexture {
     private static final java.util.concurrent.atomic.AtomicLong SHARED_GENERATIONS =
             new java.util.concurrent.atomic.AtomicLong();
 
+    /**
+     * Instance serials for every mirror this process creates, from one counter (item 529, instrument I1).
+     * The GL name a staging wait is charged to is the last fill's, and a mirror that has never been filled
+     * reports -1 - both reported loss sessions waited on a texture the record could not identify for exactly
+     * that reason. The serial is assigned at construction and never changes, so a fence record and a later
+     * wait always name the same mirror, filled or not.
+     */
+    private static final java.util.concurrent.atomic.AtomicLong INSTANCE_SERIALS =
+            new java.util.concurrent.atomic.AtomicLong();
+    private final long instanceSerial = INSTANCE_SERIALS.incrementAndGet();
+
     private int width;
     private int height;
     private long image;
@@ -2033,6 +2044,7 @@ public final class VulkanGlTexture {
             // is what the next staging write awaits before reusing the buffer the copy reads from.
             if (!this.patchBatching) {
                 this.outstandingUploadFence = context.celtium$submitDeferred(commandBuffer, 0L);
+                noteDeferredFence(org.soutalab.celtium.vulkan.CrashBreadcrumbs.DEFERRED_UPLOAD_PATCHED_LEVELS);
             }
         }
         }
@@ -3179,6 +3191,7 @@ public final class VulkanGlTexture {
             // nothing reads staging here: delete() may not destroy the image while this submission still names it,
             // and the newest tracked fence is what the await uses - queue order makes it stand for the earlier ones.
             this.outstandingUploadFence = context.celtium$submitDeferred(commandBuffer, 0L);
+            noteDeferredFence(org.soutalab.celtium.vulkan.CrashBreadcrumbs.DEFERRED_TRANSITION);
         }
     }
 
@@ -3873,6 +3886,7 @@ public final class VulkanGlTexture {
                     barrier);
         } finally {
             this.outstandingUploadFence = context.celtium$submitDeferred(commandBuffer, 0L);
+            noteDeferredFence(org.soutalab.celtium.vulkan.CrashBreadcrumbs.DEFERRED_UPLOAD_LEVEL);
         }
         setLevelLayout(level, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         recordWholeImageWrite();
@@ -4087,6 +4101,7 @@ public final class VulkanGlTexture {
             // context's helper never keeps an open command buffer around. Deferred: tracked, not waited - the fence
             // is what the next staging write awaits, since this copy reads the staging buffer.
             this.outstandingUploadFence = context.celtium$submitDeferred(commandBuffer, 0L);
+            noteDeferredFence(org.soutalab.celtium.vulkan.CrashBreadcrumbs.DEFERRED_UPLOAD_IMAGE);
         }
         // The blit path uses currentLayout as its next oldLayout. Keep it in step with the tail barrier;
         // the per-level ledger alone does not update this field.
@@ -4486,14 +4501,28 @@ public final class VulkanGlTexture {
                 if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
                     // The texture-to-fence binding a later staging wait is charged to: TEXTURE_UPLOAD records the
                     // upload itself, but the submit that carries it - and the fence awaitOutstandingUpload will
-                    // wait on - was recorded nowhere (item 414, hole 6's recording half).
-                    org.soutalab.celtium.vulkan.CrashBreadcrumbs.note(
+                    // wait on - was recorded nowhere (item 414, hole 6's recording half). Item 529: the instance
+                    // serial joins it, so the mirror is identifiable even before its first fill names it.
+                    org.soutalab.celtium.vulkan.CrashBreadcrumbs.note3(
                             org.soutalab.celtium.vulkan.CrashBreadcrumbs.DEFERRED_UPLOAD, glTextureName(),
-                            this.outstandingUploadFence);
+                            this.outstandingUploadFence, this.instanceSerial);
                 }
             } finally {
                 org.soutalab.celtium.vulkan.FramePassTimings.end("animBatchCmd");
             }
+        }
+    }
+
+    /**
+     * Records which submit this texture's outstanding fence came from (item 529, instrument I2): the kind
+     * names the assignment site, because every staging wait is charged as "texture staging reuse" even when
+     * the fence it waits on belongs to a transition that never read staging. Numbers only, like every ring
+     * note: the GL name, the fence, and this mirror's instance serial.
+     */
+    private void noteDeferredFence(int kind) {
+        if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
+            org.soutalab.celtium.vulkan.CrashBreadcrumbs.note3(kind, glTextureName(),
+                    this.outstandingUploadFence, this.instanceSerial);
         }
     }
 
@@ -4505,9 +4534,11 @@ public final class VulkanGlTexture {
             // The reason names the owner (item 414, hole 6): it is the only text the wait's failure paths print,
             // and the measured detection #2 - a staging-reuse wait reporting DEVICE_LOST - left no record of
             // which texture's upload, or which fence, it had been waiting on. The GL name is this mirror's last
-            // upload's (-1 before any fill, which is itself the answer for a fresh mirror).
+            // upload's (-1 before any fill, which is itself the answer for a fresh mirror); item 529's instance
+            // serial names the mirror even then, which is the case both reported losses actually hit.
             context.celtium$awaitDeferredSubmit(fence,
-                    "texture staging reuse gl=" + glTextureName() + " fence=0x" + Long.toHexString(fence));
+                    "texture staging reuse gl=" + glTextureName() + " serial=" + this.instanceSerial
+                            + " fence=0x" + Long.toHexString(fence));
         }
     }
 

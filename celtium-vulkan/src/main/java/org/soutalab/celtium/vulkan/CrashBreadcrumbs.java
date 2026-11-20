@@ -53,6 +53,34 @@ public final class CrashBreadcrumbs {
     public static final int RAW_FBO = 15;
     /** A texture's deferred upload was submitted: the texture's GL name and the fence that stands for the submit. */
     public static final int DEFERRED_UPLOAD = 16;
+    /**
+     * A texture's patched-levels upload was submitted: the texture's GL name, the fence, and the texture's
+     * instance serial. One code per fence-assignment site (item 529, instrument I2): every staging wait is
+     * charged as "texture staging reuse", so without the site the record cannot say which submit the waited-on
+     * fence actually came from.
+     */
+    public static final int DEFERRED_UPLOAD_PATCHED_LEVELS = 17;
+    /** A texture's layout transition was submitted - it reads no staging: GL name, fence, and instance serial. */
+    public static final int DEFERRED_TRANSITION = 18;
+    /** A texture's single-level upload was submitted: GL name, fence, and instance serial. */
+    public static final int DEFERRED_UPLOAD_LEVEL = 19;
+    /** A texture's level copy with its mip chain was submitted: GL name, fence, and instance serial. */
+    public static final int DEFERRED_UPLOAD_IMAGE = 20;
+    /**
+     * A deferred batch was submitted to the queue: the context generation and the batch serial packed into the
+     * first number, the batch's shared fence, and the composition packed into the third by
+     * {@link #packBatchComposition} (item 529, instrument I3).
+     */
+    public static final int BATCH_SUBMIT = 21;
+
+    /**
+     * Packs a batch's composition for a {@link #BATCH_SUBMIT} note: the entry total, the frame-slot entries and
+     * the semaphore-carrying entries, 21 bits each - a batch is bounded by what one flush gathers, far below
+     * the field width.
+     */
+    public static long packBatchComposition(int total, int frameEntries, int semaphoreEntries) {
+        return (total & 0x1fffffL) | ((frameEntries & 0x1fffffL) << 21) | ((semaphoreEntries & 0x1fffffL) << 42);
+    }
 
     private CrashBreadcrumbs() {
     }
@@ -94,6 +122,15 @@ public final class CrashBreadcrumbs {
 
     /** Prints the ring once, oldest first, naming each operation; the first device loss is the one that matters. */
     public static void dump(String trigger) {
+        dump(trigger, null);
+    }
+
+    /**
+     * The same dump with a context section the caller composes (item 529, instruments I6/I7): the losing
+     * context's generation and whatever state lines it hands over, printed ahead of the operations so the ring
+     * is read against them. This class still knows no context - it prints the lines it is given, verbatim.
+     */
+    public static void dump(String trigger, String contextReport) {
         if (!ENABLED || dumped) {
             return;
         }
@@ -107,6 +144,12 @@ public final class CrashBreadcrumbs {
         report.append("A device loss cannot be recovered in this process: the renderer stops issuing work and the\n");
         report.append("window keeps showing whatever was last presented (the tester's black screen). These are the\n");
         report.append("renderer operations recorded before the loss, oldest first.\n\n");
+        if (contextReport != null) {
+            for (String line : contextReport.split("\n")) {
+                System.out.println("[Celtium] CELTIUM_CRASH_CONTEXT " + line);
+            }
+            report.append("Context at the loss:\n").append(contextReport).append("\n\n");
+        }
         for (int i = 0; i < count; i++) {
             int index = Math.floorMod(cursor - count + i, CAPACITY);
             String line = describe(CODES[index], FIRST[index], SECOND[index], THIRD[index]);
@@ -160,7 +203,29 @@ public final class CrashBreadcrumbs {
             case RAW_FBO:
                 return "raw-fbo identity=0x" + Long.toHexString(first) + " color=" + second + " depth=" + third;
             case DEFERRED_UPLOAD:
-                return "deferred-upload texture=" + first + " fence=0x" + Long.toHexString(second);
+                return "deferred-upload texture=" + first + " fence=0x" + Long.toHexString(second)
+                        + " serial=" + third;
+            case DEFERRED_UPLOAD_PATCHED_LEVELS:
+                return "deferred-upload-patched-levels texture=" + first + " fence=0x" + Long.toHexString(second)
+                        + " serial=" + third;
+            case DEFERRED_TRANSITION:
+                return "deferred-transition texture=" + first + " fence=0x" + Long.toHexString(second)
+                        + " serial=" + third;
+            case DEFERRED_UPLOAD_LEVEL:
+                return "deferred-upload-level texture=" + first + " fence=0x" + Long.toHexString(second)
+                        + " serial=" + third;
+            case DEFERRED_UPLOAD_IMAGE:
+                return "deferred-upload-image texture=" + first + " fence=0x" + Long.toHexString(second)
+                        + " serial=" + third;
+            case BATCH_SUBMIT: {
+                long total = third & 0x1fffffL;
+                long frameEntries = (third >>> 21) & 0x1fffffL;
+                long semaphoreEntries = (third >>> 42) & 0x1fffffL;
+                return "batch-submit gen=" + (first >>> 32) + " batch=" + (first & 0xffffffffL)
+                        + " fence=0x" + Long.toHexString(second)
+                        + " entries=" + total + " frame=" + frameEntries + " deferred=" + (total - frameEntries)
+                        + " semaphoreSets=" + semaphoreEntries;
+            }
             case FRAME_CACHE_HIT:
             case FRAME_CACHE_MISS:
                 return (code == FRAME_CACHE_HIT ? "frame-cache hit framebuffer=0x" : "frame-cache miss framebuffer=0x")
