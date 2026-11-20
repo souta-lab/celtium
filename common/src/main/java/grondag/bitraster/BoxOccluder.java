@@ -1133,6 +1133,61 @@ public abstract class BoxOccluder {
 		return partiallyClearTests[outcome].apply(x0, y0, z0, x1, y1, z1);
 	}
 
+	private final long[] coverageScratch = new long[2];
+
+	/**
+	 * The share of this box's projected silhouette the buffer already covers, in permille
+	 * (0..1000), counted over the same pixel set {@link #isBoxVisibleFromPerspective} judges -
+	 * so 1000 means the polygon test would call the box hidden. Returns -1 when there is no
+	 * silhouette to count over: the camera inside the box on every axis, or a projection that
+	 * prepares as outside or too small. The fallback face tests that judge such boxes have no
+	 * single pixel set, so their coverage is honestly unmeasured rather than approximated.
+	 */
+	protected final int boxCoverageFromPerspective(int packedBox, int fuzz) {
+		final int x0 = PackedBox.x0(packedBox) - fuzz;
+		final int y0 = PackedBox.y0(packedBox) - fuzz;
+		final int z0 = PackedBox.z0(packedBox) - fuzz;
+		final int x1 = PackedBox.x1(packedBox) + fuzz;
+		final int y1 = PackedBox.y1(packedBox) + fuzz;
+		final int z1 = PackedBox.z1(packedBox) + fuzz;
+
+		final int offsetX = this.offsetX;
+		final int offsetY = this.offsetY;
+		final int offsetZ = this.offsetZ;
+
+		int outcome = 0;
+
+		if (offsetY < -(y1 << CAMERA_PRECISION_BITS)) {
+			outcome |= UP;
+		} else if (offsetY > -(y0 << CAMERA_PRECISION_BITS)) {
+			outcome |= DOWN;
+		}
+
+		if (offsetX < -(x1 << CAMERA_PRECISION_BITS)) {
+			outcome |= EAST;
+		} else if (offsetX > -(x0 << CAMERA_PRECISION_BITS)) {
+			outcome |= WEST;
+		}
+
+		if (offsetZ < -(z1 << CAMERA_PRECISION_BITS)) {
+			outcome |= SOUTH;
+		} else if (offsetZ > -(z0 << CAMERA_PRECISION_BITS)) {
+			outcome |= NORTH;
+		}
+
+		final int[] silhouette = SILHOUETTES[outcome];
+
+		if (silhouette != null && raster.setupBoxVertices(silhouette, x0, y0, z0, x1, y1, z1)) {
+			raster.polygonCoverage(silhouette, silhouette.length, coverageScratch);
+
+			if (coverageScratch[1] > 0) {
+				return (int) ((coverageScratch[0] * 1000L) / coverageScratch[1]);
+			}
+		}
+
+		return -1;
+	}
+
 	/**
 	 * Cheap sufficient test: the centre of a convex box projects inside the box's silhouette, so a clear pixel
 	 * there proves the box visible with one transform. False only means the full test is still needed.

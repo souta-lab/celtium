@@ -38,6 +38,15 @@ public final class RasterOccluder extends BoxOccluder {
         return isBoxVisibleFromPerspective(packedBox, fuzz);
     }
 
+    /**
+     * How much of this box's projection the buffer already covers, in permille (0..1000),
+     * or -1 when the box has no measurable silhouette. Measurement only; see
+     * {@link BoxOccluder#boxCoverageFromPerspective}.
+     */
+    public int boxCoveragePermille(int packedBox, int fuzz) {
+        return boxCoverageFromPerspective(packedBox, fuzz);
+    }
+
     @Override
     public void occludeBox(int packedBox) {
         occludeFromPerspective(packedBox);

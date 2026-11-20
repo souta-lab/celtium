@@ -1721,6 +1721,48 @@ public abstract class AbstractRasterizer {
 		return isQuadPartiallyClear();
 	}
 
+	/**
+	 * Counts the pixels of the given polygon's projection and how many of them the buffer already
+	 * covers, over exactly the pixel set {@link #isPolygonPartiallyClear} judges: same dilation,
+	 * same band spans, same per-tile coverage masks. The boolean test early-outs on the first
+	 * clear pixel; this walks every tile of the bounds instead, so a caller can say how much of
+	 * a box is covered, not only whether any of it shows. Writes {covered, total} into
+	 * {@code out}; a polygon that prepares as outside or too small leaves both at zero.
+	 */
+	final void polygonCoverage(int[] vertices, int count, long[] out) {
+		out[0] = 0;
+		out[1] = 0;
+		dilate = true;
+
+		if (preparePolygonNoClip(vertices, count) == BOUNDS_OUTSIDE_OR_TOO_SMALL) {
+			return;
+		}
+
+		dilateBounds();
+
+		final int minTileX = minPixelX >> TILE_AXIS_SHIFT;
+		final int maxTileX = maxPixelX >> TILE_AXIS_SHIFT;
+		final int minTileY = minPixelY >> TILE_AXIS_SHIFT;
+		final int maxTileY = maxPixelY >> TILE_AXIS_SHIFT;
+		final long[] tiles = this.tiles;
+
+		for (int tileY = minTileY; tileY <= maxTileY; tileY++) {
+			populateBand(tileY);
+			final int rowBase = tileY * tileWidth;
+
+			for (int tileX = minTileX; tileX <= maxTileX; tileX++) {
+				final long mask = computeTileCoverage(tileX);
+
+				if (mask == 0L) {
+					continue;
+				}
+
+				out[1] += Long.bitCount(mask);
+				out[0] += Long.bitCount(tiles[rowBase + tileX] & mask);
+			}
+		}
+	}
+
 	/** Bounding rectangles of at most this many tiles are checked for full coverage before any edge setup. */
 	private static final int COVERED_BOX_MAX_TILES = 16;
 

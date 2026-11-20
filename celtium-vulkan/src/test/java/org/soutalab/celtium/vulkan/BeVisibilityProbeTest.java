@@ -89,6 +89,24 @@ class BeVisibilityProbeTest {
     }
 
     @Test
+    void coverageStaysSilentWhileItsSwitchIsOff() {
+        // The test JVM carries no celtium-harness.properties, so beLosCoverage is off:
+        // the probe judges exactly as before and every coverage reading stays at zero.
+        beginFrame();
+        BeVisibilityProbe.losDrawOccluderSection(0, 0, 0, wallData());
+        BeVisibilityProbe.losQueryBlockEntity(6, 6, -10, 10, 10, -6);
+        assertEquals(1, BeVisibilityProbe.losHidden());
+        assertEquals(0, BeVisibilityProbe.losCoverageFull());
+        assertEquals(0, BeVisibilityProbe.losCoverageNear());
+        assertEquals(0, BeVisibilityProbe.losCoverageMid());
+        assertEquals(0, BeVisibilityProbe.losCoverageLow());
+        assertEquals(0, BeVisibilityProbe.losCoverageNone());
+        assertEquals(0, BeVisibilityProbe.losCoverageUnmeasured());
+        assertEquals("none", BeVisibilityProbe.losCoverageWorst());
+        BeVisibilityProbe.losEndFrame();
+    }
+
+    @Test
     void censusSnapshotCountsBothPathsAndNamesTheFullestSections() {
         BeVisibilityProbe.censusBegin();
         BeVisibilityProbe.censusSection(false, 1, 2, 3, 4);

@@ -38,6 +38,21 @@ import java.util.function.Consumer;
  * fields and would silently judge a different box; a box no part of which lies inside the
  * probe's tested distance is {@code skippedDist}.
  *
+ * <p>Coverage (harness key {@code beLosCoverage=true}, default off, meaningful only with
+ * {@code beLos=dryRun}) extends the probe from "hidden or not" to "how much of each judged
+ * box the drawn coverage actually claims" - the question a dry run that hides nothing
+ * leaves behind: were the boxes barely missed, or never close? For every tested section
+ * clip of a box it measures the share of the clip's projected silhouette the buffer already
+ * covered, over the same pixels the visibility test judges, and keeps the minimum over the
+ * box's clips: the least-covered clip is the one that decides hidden, so an average would
+ * hide exactly the shortfall being looked for. The frame snapshot bands the judged boxes
+ * by that minimum and names the five worst, each with the section whose clip fell
+ * shortest. A box no tested clip of which has a measurable silhouette (the camera inside
+ * it) counts as unmeasured rather than being guessed at. Enabling coverage also makes the
+ * query walk every clip of a box instead of stopping at the first visible one; the
+ * tested/hidden counts are unchanged, and the query-nanos reading then includes the
+ * counting.
+ *
  * <p>Both instruments keep a latest-frame snapshot in statics, which the validation fixture
  * reads reflectively when it writes its report - the same hand-off {@code FramePassTimings}
  * uses, so a leg without these classes on its classpath still loads. Harness reads sit in
@@ -164,6 +179,29 @@ public final class BeVisibilityProbe {
     private static int losReports;
     private static String losLastLine;
 
+    // ---------------------------------------------------------------- LOS coverage
+
+    /** The coverage switch, read once. Only consulted while the LOS probe judges a box. */
+    public static final boolean COVERAGE_ENABLED = HarnessConfig.bool("beLosCoverage", false);
+
+    private static int losCoverageFull;
+    private static int losCoverageNear;
+    private static int losCoverageMid;
+    private static int losCoverageLow;
+    private static int losCoverageNone;
+    private static int losCoverageUnmeasured;
+    private static final List<int[]> losCoverageWorstEntries = new ArrayList<>();
+
+    private static void resetCoverage() {
+        losCoverageFull = 0;
+        losCoverageNear = 0;
+        losCoverageMid = 0;
+        losCoverageLow = 0;
+        losCoverageNone = 0;
+        losCoverageUnmeasured = 0;
+        losCoverageWorstEntries.clear();
+    }
+
     private static RasterOccluder losRaster() {
         if (losRaster == null) {
             losRaster = new RasterOccluder();
@@ -184,6 +222,7 @@ public final class BeVisibilityProbe {
         losOccluderSections = 0;
         losQueryNanos = 0;
         losOccluderNanos = 0;
+        resetCoverage();
         losFrameActive = viewport != null && viewport.getVpMatrix() != null;
         if (!losFrameActive) {
             return;
@@ -211,6 +250,7 @@ public final class BeVisibilityProbe {
         losOccluderSections = 0;
         losQueryNanos = 0;
         losOccluderNanos = 0;
+        resetCoverage();
         losCamBlockX = (int) Math.floor(cameraX);
         losCamBlockY = (int) Math.floor(cameraY);
         losCamBlockZ = (int) Math.floor(cameraZ);
@@ -281,11 +321,18 @@ public final class BeVisibilityProbe {
             int by1 = Math.max(by0, (int) Math.ceil(maxY) - 1);
             int bz1 = Math.max(bz0, (int) Math.ceil(maxZ) - 1);
 
+            // With coverage on, every clip is walked even after one reports the box visible:
+            // the box's coverage is its least-covered clip, which the short-circuit would miss.
+            final boolean coverage = COVERAGE_ENABLED;
             boolean anyTested = false;
             boolean visible = false;
-            for (int sx = bx0 >> 4; sx <= (bx1 >> 4) && !visible; sx++) {
-                for (int sy = by0 >> 4; sy <= (by1 >> 4) && !visible; sy++) {
-                    for (int sz = bz0 >> 4; sz <= (bz1 >> 4) && !visible; sz++) {
+            int worstPermille = Integer.MAX_VALUE;
+            int worstSectionX = 0;
+            int worstSectionY = 0;
+            int worstSectionZ = 0;
+            for (int sx = bx0 >> 4; sx <= (bx1 >> 4) && (!visible || coverage); sx++) {
+                for (int sy = by0 >> 4; sy <= (by1 >> 4) && (!visible || coverage); sy++) {
+                    for (int sz = bz0 >> 4; sz <= (bz1 >> 4) && (!visible || coverage); sz++) {
                         int originX = sx << 4;
                         int originY = sy << 4;
                         int originZ = sz << 4;
@@ -317,6 +364,15 @@ public final class BeVisibilityProbe {
                         if (raster.isBoxVisible(packed, 1)) {
                             visible = true;
                         }
+                        if (coverage) {
+                            int permille = raster.boxCoveragePermille(packed, 1);
+                            if (permille >= 0 && permille < worstPermille) {
+                                worstPermille = permille;
+                                worstSectionX = originX;
+                                worstSectionY = originY;
+                                worstSectionZ = originZ;
+                            }
+                        }
                     }
                 }
             }
@@ -328,6 +384,25 @@ public final class BeVisibilityProbe {
             losTested++;
             if (!visible) {
                 losHidden++;
+            }
+            if (coverage) {
+                if (worstPermille == Integer.MAX_VALUE) {
+                    losCoverageUnmeasured++;
+                } else if (worstPermille >= 1000) {
+                    losCoverageFull++;
+                } else {
+                    if (worstPermille >= 900) {
+                        losCoverageNear++;
+                    } else if (worstPermille >= 500) {
+                        losCoverageMid++;
+                    } else if (worstPermille >= 1) {
+                        losCoverageLow++;
+                    } else {
+                        losCoverageNone++;
+                    }
+                    losCoverageWorstEntries.add(new int[] { bx0, by0, bz0, worstPermille,
+                            worstSectionX, worstSectionY, worstSectionZ });
+                }
             }
         } finally {
             losQueryNanos += System.nanoTime() - t0;
@@ -387,5 +462,59 @@ public final class BeVisibilityProbe {
     /** Nanoseconds spent drawing occluder boxes on the latest probe frame. */
     public static long losOccluderNanos() {
         return losOccluderNanos;
+    }
+
+    /** Judged block entities whose least-covered clip was fully covered on the latest frame. */
+    public static int losCoverageFull() {
+        return losCoverageFull;
+    }
+
+    /** Judged block entities whose least-covered clip was 900-999 permille covered. */
+    public static int losCoverageNear() {
+        return losCoverageNear;
+    }
+
+    /** Judged block entities whose least-covered clip was 500-899 permille covered. */
+    public static int losCoverageMid() {
+        return losCoverageMid;
+    }
+
+    /** Judged block entities whose least-covered clip was 1-499 permille covered. */
+    public static int losCoverageLow() {
+        return losCoverageLow;
+    }
+
+    /** Judged block entities whose least-covered clip had no coverage at all. */
+    public static int losCoverageNone() {
+        return losCoverageNone;
+    }
+
+    /** Judged block entities no tested clip of which had a measurable silhouette. */
+    public static int losCoverageUnmeasured() {
+        return losCoverageUnmeasured;
+    }
+
+    /**
+     * The five least-covered judged block entities of the latest probe frame as
+     * {@code bx,by,bz=permille@sx,sy,sz} pairs - the box's minimum corner, its least-covered
+     * clip's coverage, and that clip's section origin - or {@code "none"}.
+     */
+    public static String losCoverageWorst() {
+        if (losCoverageWorstEntries.isEmpty()) {
+            return "none";
+        }
+        var sorted = new ArrayList<>(losCoverageWorstEntries);
+        sorted.sort((a, b) -> Integer.compare(a[3], b[3]));
+        var out = new StringBuilder();
+        for (int i = 0; i < Math.min(5, sorted.size()); i++) {
+            int[] e = sorted.get(i);
+            if (i > 0) {
+                out.append(',');
+            }
+            out.append(e[0]).append(',').append(e[1]).append(',').append(e[2])
+                    .append('=').append(e[3])
+                    .append('@').append(e[4]).append(',').append(e[5]).append(',').append(e[6]);
+        }
+        return out.toString();
     }
 }

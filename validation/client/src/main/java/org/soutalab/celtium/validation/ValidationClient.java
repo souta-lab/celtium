@@ -3888,6 +3888,24 @@ public final class ValidationClient {
                     report.addProperty("beLosQueryNanos", (Number) celtium$beInstrumentValue("losQueryNanos"));
                     report.addProperty("beLosOccluderNanos",
                             (Number) celtium$beInstrumentValue("losOccluderNanos"));
+                    if (HarnessConfig.bool("beLosCoverage", false)) {
+                        Object full = celtium$beInstrumentValue("losCoverageFull");
+                        if (full != null) {
+                            report.addProperty("beLosCoverageFull", (Number) full);
+                            report.addProperty("beLosCoverageNear",
+                                    (Number) celtium$beInstrumentValue("losCoverageNear"));
+                            report.addProperty("beLosCoverageMid",
+                                    (Number) celtium$beInstrumentValue("losCoverageMid"));
+                            report.addProperty("beLosCoverageLow",
+                                    (Number) celtium$beInstrumentValue("losCoverageLow"));
+                            report.addProperty("beLosCoverageNone",
+                                    (Number) celtium$beInstrumentValue("losCoverageNone"));
+                            report.addProperty("beLosCoverageUnmeasured",
+                                    (Number) celtium$beInstrumentValue("losCoverageUnmeasured"));
+                            report.addProperty("beLosCoverageWorst",
+                                    String.valueOf(celtium$beInstrumentValue("losCoverageWorst")));
+                        }
+                    }
                 }
             }
             if (HarnessConfig.bool("occluderBoxStats", false)) {
@@ -5914,7 +5932,9 @@ public final class ValidationClient {
                         "org.embeddedt.embeddium.impl.render.chunk.occlusion.BeVisibilityProbe");
                 for (String name : new String[] {"censusSections", "censusDrawn", "censusGlobal", "censusCulled",
                         "censusTopSections", "losTested", "losHidden", "losSkippedSpan", "losSkippedDist",
-                        "losOccluderSections", "losQueryNanos", "losOccluderNanos"}) {
+                        "losOccluderSections", "losQueryNanos", "losOccluderNanos",
+                        "losCoverageFull", "losCoverageNear", "losCoverageMid", "losCoverageLow",
+                        "losCoverageNone", "losCoverageUnmeasured", "losCoverageWorst"}) {
                     java.lang.reflect.Method accessor = probe.getDeclaredMethod(name);
                     accessor.setAccessible(true);
                     celtium$beInstrumentMethods.put(name, accessor);
