@@ -2,7 +2,9 @@ package org.taumc.celeritas.core;
 
 /**
  * Mods that replace a part of the renderer Celtium owns, detected by a class only their jar carries, and refused at
- * coremod setup with a message that names them.
+ * coremod setup with a message that names them. The Phosphor entry is the one exception to the first sentence: it
+ * replaces no renderer path, but its startup injection crashes whenever Celtium is present (measured, item 439), so
+ * it is refused here, with a pointer to its maintained fork, instead of surfacing as a Mixin crash.
  * <p>
  * Each entry is a measured conflict, not a guess. Without this the failure surfaced somewhere unrelated: Custom Loading
  * Screen's transformer threw a NullPointerException inside {@code SplashProgress} during game init (E2E-E v1.87.3, leg
@@ -44,6 +46,18 @@ final class CeltiumCompetitors {
             // Relictium: a Vintagium fork. Its 1.2.0 mcmod.info carries modid "vintagium" again, but the jar's own
             // @Mod class is unique to Relictium; verified in relictium-1.2.0.jar (Modrinth, sha256 2a2d91da...).
             {"io/themade4/relictium/Relictium.class", "Relictium (relictium)", "the terrain renderer"},
+            // Phosphor: a measured startup crash, not a renderer replacement (item 439, 2026-11-20). Its sliced
+            // @ModifyVariable on Chunk.setBlockState finds no target whenever Celtium is present and the launch
+            // aborts with an InjectionError (leg 439a). An E1 build with Celtium's only Chunk mixin removed
+            // entirely crashed identically, so the trigger is Celtium's presence at config/plugin level, not a
+            // mixin sharing the Chunk target. Marker is Phosphor's coremod plugin class, verified in
+            // phosphor-forge-mc1.12.2-0.2.7-universal.jar (sha256 4ddfdeca...) and absent from the maintained
+            // fork Hesperus (leg 439b, passed), whose plugin class is renamed PhosphorFMLPlugin - so the fork
+            // the refusal message recommends is not itself refused.
+            {"me/jellysquid/mods/phosphor/core/PhosphorFMLLoadingPlugin.class", "Phosphor (phosphorlighting)",
+                    "the light-propagation internals of Chunk, and it crashes at startup whenever Celtium is"
+                            + " present. Phosphor is unmaintained; use its maintained successor fork Hesperus"
+                            + " instead - see docs/mod-compatibility.md"},
     };
 
     private CeltiumCompetitors() {
