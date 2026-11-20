@@ -26,11 +26,16 @@ def main():
     assert 'method = "setLoadingProgress(I)V"' in hook
     assert '@At(value = "INVOKE"' in hook and 'target = "Lnet/minecraft/client/Minecraft;updateDisplay()V"' in hook
     assert 'shift =' not in hook, "request must precede the producer's present, not follow it"
-    assert 'Boolean.getBoolean("celtium.validation.dumpLoadingProgress")' in hook
+    assert 'HarnessConfig.bool("dumpLoadingProgress", false)' in hook
     assert '.getMethod("requestLoadingProgressDump", int.class, String.class, String.class)' in hook
     body = method(source, "private boolean celtium$resizeLoadingFrame(") + "\n" + method(source, "public static void requestLoadingProgressDump(")
     code = r'''
 import java.util.*;
+class HarnessConfig {
+    static final Map<String,String> VALUES = new HashMap<>();
+    static boolean bool(String key, boolean fallback) { String v = VALUES.get(key); return v == null ? fallback : Boolean.parseBoolean(v); }
+    static void set(String key, String value) { VALUES.put(key, value); }
+}
 class ValidationClient {
     static class JsonObject {
         final Map<String,Object> data = new LinkedHashMap<>();
@@ -66,20 +71,20 @@ class ValidationClient {
     static void check(boolean yes,String label) { if (!yes) throw new AssertionError(label); }
     static void capture() { requestLoadingProgressDump(-1,"Loading level","Preparing spawn area"); }
     public static void main(String[] args) {
-        System.setProperty("celtium.validation.dumpLoadingProgress","true");
-        System.setProperty("celtium.validation.dumpPresentedImage","true");
+        HarnessConfig.set("dumpLoadingProgress","true");
+        HarnessConfig.set("dumpPresentedImage","true");
         capture(); // absent fixture
         instance = new ValidationClient();
         capture(); check(instance.requests==0,"disabled fixture captured");
         instance.enabled = true;
         capture(); check(instance.requests==0,"pre-launch frame captured");
         instance.launched = true;
-        System.setProperty("celtium.validation.dumpLoadingProgress","false");
+        HarnessConfig.set("dumpLoadingProgress","false");
         capture(); check(instance.requests==0,"disabled producer capture ran");
-        System.setProperty("celtium.validation.dumpLoadingProgress","true");
-        System.setProperty("celtium.validation.dumpPresentedImage","false");
+        HarnessConfig.set("dumpLoadingProgress","true");
+        HarnessConfig.set("dumpPresentedImage","false");
         capture(); check(instance.requests==0,"disabled image capture ran");
-        System.setProperty("celtium.validation.dumpPresentedImage","true");
+        HarnessConfig.set("dumpPresentedImage","true");
         instance.finished = true;
         capture(); check(instance.requests==0,"finished fixture captured");
         instance.finished = false;
@@ -104,7 +109,7 @@ class ValidationClient {
         check(controlled.data.get("guiScaleFactor").equals(3)
               && controlled.data.get("glfwFramebufferSize").equals("1280x720"),"loading environment absent");
         check(instance.resizeCalls==0,"default capture resized a window");
-        System.setProperty("celtium.validation.resizeDuringLoading","true");
+        HarnessConfig.set("resizeDuringLoading","true");
         ValidationClient policy = new ValidationClient();
         policy.celtium$controlledLoadingProbe = true;
         check(!policy.celtium$resizeLoadingFrame("Loading world"),"controlled frame triggered native resize");
