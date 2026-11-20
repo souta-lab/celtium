@@ -2,7 +2,7 @@
 
 生成: `python3 scripts/instrument-index.py`。手で編集しない。
 
-システムプロパティの読み取りキー **347 個**／文字列内マーカー **542 個**。
+システムプロパティの読み取りキー **347 個**／文字列内マーカー **544 個**。
 機能設定・故障注入も含む。すべてが計測用スイッチという意味ではない。
 
 名前を検索してリンク先の実装を読む。既定値・有効条件・出力上限は推測で掲載しない。
@@ -331,7 +331,7 @@
 |---|---|---|
 | `celtium.terrain.asyncOcclusion` | `System.getProperty` | [VintageRenderSectionManager.java:85](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/VintageRenderSectionManager.java#L85>) |
 | `celtium.terrain.brightnessDiagnostics` | `Boolean.getBoolean` | [VintageBlockRenderer.java:52](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/compile/pipeline/VintageBlockRenderer.java#L52>) |
-| `celtium.terrain.forceCompactFormat` | `Boolean.getBoolean` | [CeleritasWorldRenderer.java:330](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer.java#L330>) |
+| `celtium.terrain.forceCompactFormat` | `Boolean.getBoolean` | [CeleritasWorldRenderer.java:414](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer.java#L414>) |
 | `celtium.terrain.noShade` | `Boolean.getBoolean` | [VintageDiffuseProvider.java:18](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/compile/light/VintageDiffuseProvider.java#L18>) |
 
 <a id="group-celtium-validation"></a>
@@ -604,7 +604,7 @@
 | `CELTIUM_ADOPT_PROBE` | [FramebufferMixin.java:215](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/FramebufferMixin.java#L215>) |
 | `CELTIUM_ALLOCATION_EXPERIMENT` | [VulkanContext.java:2333](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2333>) |
 | `CELTIUM_ALLOCATION_FAULT` | [VulkanAllocationFault.java:46](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanAllocationFault.java#L46>), [VulkanAllocationFault.java:60](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanAllocationFault.java#L60>) |
-| `CELTIUM_ALL_BLOCKS` | [ValidationClient.java:3921](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L3921>) |
+| `CELTIUM_ALL_BLOCKS` | [ValidationClient.java:4017](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4017>) |
 | `CELTIUM_ANIM` | [VulkanTerrainGpuBackend.java:5146](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L5146>) |
 | `CELTIUM_ANIMATION_BATCH_FAILURE` | [TextureAtlasMixin.java:110](<../forge122/src/main/java/org/taumc/celeritas/mixin/features/textures/TextureAtlasMixin.java#L110>) |
 | `CELTIUM_ANIM_ANNOUNCE` | [VulkanTerrainGpuBackend.java:4822](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L4822>) |
@@ -621,12 +621,13 @@
 | `CELTIUM_BATCH_CACHE` | [BatchCacheCensus.java:116](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/data/BatchCacheCensus.java#L116>) |
 | `CELTIUM_BATCH_SITE` | [VulkanTerrainGpuBackend.java:8372](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L8372>) |
 | `CELTIUM_BATCH_VIEWS` | [BatchCacheCensus.java:83](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/data/BatchCacheCensus.java#L83>), [BatchCacheCensus.java:86](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/data/BatchCacheCensus.java#L86>) |
+| `CELTIUM_BE_LOS` | [BeVisibilityProbe.java:139](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/occlusion/BeVisibilityProbe.java#L139>), [BeVisibilityProbe.java:346](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/occlusion/BeVisibilityProbe.java#L346>) |
 | `CELTIUM_BIND_ENTRY` | [VulkanTerrainGpuBackend.java:7210](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L7210>) |
 | `CELTIUM_BIND_PENDING` | [VulkanTerrainGpuBackend.java:7223](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L7223>) |
 | `CELTIUM_BLEND_CENSUS` | [CeltiumGlStub.java:1404](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L1404>) |
 | `CELTIUM_BLIT_DEPTH` | [CeltiumGlStub.java:10083](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L10083>) |
 | `CELTIUM_BLOCKLAYER` | [RenderGlobalMixin.java:250](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/terrain/RenderGlobalMixin.java#L250>) |
-| `CELTIUM_BLOCK_AREA` | [SimpleWorldRenderer.java:520](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L520>) |
+| `CELTIUM_BLOCK_AREA` | [SimpleWorldRenderer.java:536](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L536>) |
 | `CELTIUM_BOUNDARY_SLOW` | [VulkanTerrainGpuBackend.java:11247](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L11247>) |
 | `CELTIUM_BOUNDARY_SPLIT` | [VulkanTerrainGpuBackend.java:11287](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L11287>) |
 | `CELTIUM_BOX_PRE` | [VulkanTerrainGpuBackend.java:11858](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L11858>) |
@@ -640,9 +641,9 @@
 | `CELTIUM_CANCEL_STATE` | [GlStateManagerMixin.java:74](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java#L74>) |
 | `CELTIUM_CAPS_PROBE` | [CeltiumGllessHint.java:61](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L61>), [CeltiumGllessHint.java:76](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L76>) |
 | `CELTIUM_CAPTURED_UPLOAD` | [VulkanGlTexture.java:1473](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L1473>) |
-| `CELTIUM_CAPTURE_ENTITY_HOLD` | [ValidationClient.java:7413](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L7413>) |
+| `CELTIUM_CAPTURE_ENTITY_HOLD` | [ValidationClient.java:7548](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L7548>) |
 | `CELTIUM_CAPTURE_MISS` | [VulkanGlTexture.java:1494](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L1494>) |
-| `CELTIUM_CAPTURE_TRACE` | [ValidationClient.java:6158](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L6158>) |
+| `CELTIUM_CAPTURE_TRACE` | [ValidationClient.java:6293](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L6293>) |
 | `CELTIUM_CHAIN_CLEAR` | [VulkanTerrainGpuBackend.java:3885](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L3885>) |
 | `CELTIUM_CHAIN_FRAME_DUMP` | [PostChainBridge.java:1123](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java#L1123>), [VulkanTerrainGpuBackend.java:19278](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L19278>), [VulkanTerrainGpuBackend.java:19308](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L19308>) |
 | `CELTIUM_CHAIN_INPUT_BATCHES` | [PostChainBridge.java:241](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java#L241>) |
@@ -652,17 +653,17 @@
 | `CELTIUM_CHAIN_SKIP` | [ShaderGroupMixin.java:179](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/ShaderGroupMixin.java#L179>) |
 | `CELTIUM_CHANGE_DIM` | [EntityPlayerMPMixin.java:32](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/EntityPlayerMPMixin.java#L32>) |
 | `CELTIUM_CHUNK_ADD` | [ClientChunkManagerMixin.java:81](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/terrain/ClientChunkManagerMixin.java#L81>) |
-| `CELTIUM_CHURN` | [ValidationClient.java:12572](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L12572>) |
+| `CELTIUM_CHURN` | [ValidationClient.java:12707](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L12707>) |
 | `CELTIUM_CLEANUP_RETIRED` | [VulkanContext.java:3779](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L3779>) |
 | `CELTIUM_CLEAR_LATCH` | [VulkanTerrainGpuBackend.java:16635](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L16635>) |
 | `CELTIUM_CLIENT_ARRAY` | [CeltiumGlStub.java:11417](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L11417>) |
 | `CELTIUM_CLIENT_ARRAY_REPACK` | [CeltiumGlStub.java:11098](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L11098>) |
-| `CELTIUM_CLIENT_CHUNKS` | [ValidationClient.java:4870](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4870>) |
+| `CELTIUM_CLIENT_CHUNKS` | [ValidationClient.java:4966](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4966>) |
 | `CELTIUM_CLOUD_CALL` | [CloudDrawProbeMixin.java:66](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/CloudDrawProbeMixin.java#L66>) |
 | `CELTIUM_CLOUD_CELLS` | [ForgeCloudCellsMixin.java:163](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/ForgeCloudCellsMixin.java#L163>), [ForgeCloudCellsMixin.java:233](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/ForgeCloudCellsMixin.java#L233>) |
 | `CELTIUM_CLOUD_FANCY` | [CloudDrawProbeMixin.java:121](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/CloudDrawProbeMixin.java#L121>) |
 | `CELTIUM_CLOUD_UPLOADER` | [CloudDrawProbeMixin.java:103](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/CloudDrawProbeMixin.java#L103>) |
-| `CELTIUM_COMMAND_BUFFER_TARGETS` | [ValidationClient.java:3148](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L3148>) |
+| `CELTIUM_COMMAND_BUFFER_TARGETS` | [ValidationClient.java:3171](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L3171>) |
 | `CELTIUM_COMPACTED_BATCH` | [WorldVertexBufferUploaderMixin.java:374](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/WorldVertexBufferUploaderMixin.java#L374>) |
 | `CELTIUM_COMPOSITE_LAYOUT_REFUSED` | [WorldVertexBufferUploaderMixin.java:439](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/WorldVertexBufferUploaderMixin.java#L439>) |
 | `CELTIUM_COMPOSITE_REFUSED` | [NativeFramebufferCompositor.java:88](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeFramebufferCompositor.java#L88>), [WorldVertexBufferUploaderMixin.java:482](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/WorldVertexBufferUploaderMixin.java#L482>) |
@@ -695,15 +696,15 @@
 | `CELTIUM_DEVICE_DESCRIPTOR_LIMITS` | [VulkanContext.java:3062](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L3062>) |
 | `CELTIUM_DEVICE_FEATURES` | [VulkanContext.java:3154](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L3154>) |
 | `CELTIUM_DEVICE_LOST` | [VulkanTerrainGpuBackend.java:22033](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L22033>) |
-| `CELTIUM_DIM_ARRIVED` | [ValidationClient.java:4586](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4586>) |
-| `CELTIUM_DIM_BACK_ARRIVED` | [ValidationClient.java:4603](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4603>) |
-| `CELTIUM_DIM_CHANGE` | [ValidationClient.java:4683](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4683>) |
-| `CELTIUM_DIM_GATE` | [ValidationClient.java:7319](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L7319>) |
-| `CELTIUM_DIM_GATE_WAIT` | [ValidationClient.java:7313](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L7313>) |
-| `CELTIUM_DIM_LEFT` | [ValidationClient.java:4694](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4694>) |
-| `CELTIUM_DIM_PLACEMENT` | [ValidationClient.java:8444](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8444>) |
-| `CELTIUM_DIM_PORTAL_ESCAPE` | [ValidationClient.java:4749](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4749>) |
-| `CELTIUM_DIM_TRACE` | [ValidationClient.java:4705](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4705>), [ValidationClient.java:8040](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8040>) |
+| `CELTIUM_DIM_ARRIVED` | [ValidationClient.java:4682](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4682>) |
+| `CELTIUM_DIM_BACK_ARRIVED` | [ValidationClient.java:4699](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4699>) |
+| `CELTIUM_DIM_CHANGE` | [ValidationClient.java:4779](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4779>) |
+| `CELTIUM_DIM_GATE` | [ValidationClient.java:7454](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L7454>) |
+| `CELTIUM_DIM_GATE_WAIT` | [ValidationClient.java:7448](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L7448>) |
+| `CELTIUM_DIM_LEFT` | [ValidationClient.java:4790](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4790>) |
+| `CELTIUM_DIM_PLACEMENT` | [ValidationClient.java:8579](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8579>) |
+| `CELTIUM_DIM_PORTAL_ESCAPE` | [ValidationClient.java:4845](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4845>) |
+| `CELTIUM_DIM_TRACE` | [ValidationClient.java:4801](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4801>), [ValidationClient.java:8175](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8175>) |
 | `CELTIUM_DIRECT_SUPPLY` | [VulkanTerrainGpuBackend.java:5012](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L5012>) |
 | `CELTIUM_DISPLAYLIST_COMPILED` | [DisplayListLegacyScreen.java:540](<../validation/client/src/main/java/org/soutalab/celtium/validation/DisplayListLegacyScreen.java#L540>) |
 | `CELTIUM_DISPLAY_LIST` | [VulkanDisplayListCensus.java:411](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanDisplayListCensus.java#L411>) |
@@ -727,12 +728,12 @@
 | `CELTIUM_DRAW_STATE` | [VulkanTerrainGpuBackend.java:21670](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L21670>) |
 | `CELTIUM_DRIVER_INFO` | [VulkanContext.java:2907](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2907>) |
 | `CELTIUM_DUMP_WRITE` | [VulkanSwapchain.java:492](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L492>) |
-| `CELTIUM_DYNAMIC_LIGHT_ITEM_SPAWNED` | [ValidationClient.java:3827](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L3827>) |
+| `CELTIUM_DYNAMIC_LIGHT_ITEM_SPAWNED` | [ValidationClient.java:3923](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L3923>) |
 | `CELTIUM_EMPTY` | [VintageRenderSectionManager.java:156](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/VintageRenderSectionManager.java#L156>) |
 | `CELTIUM_EMPTY_UPLOAD` | [WorldVertexBufferUploaderMixin.java:172](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/WorldVertexBufferUploaderMixin.java#L172>) |
-| `CELTIUM_ENTITIES_SPAWNED` | [ValidationClient.java:3785](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L3785>) |
-| `CELTIUM_ENTITIES_SPAWNED_AFTER_TRANSFER` | [ValidationClient.java:4642](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4642>) |
-| `CELTIUM_ENTITIES_SPAWN_DEFERRED` | [ValidationClient.java:4652](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4652>) |
+| `CELTIUM_ENTITIES_SPAWNED` | [ValidationClient.java:3808](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L3808>) |
+| `CELTIUM_ENTITIES_SPAWNED_AFTER_TRANSFER` | [ValidationClient.java:4738](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4738>) |
+| `CELTIUM_ENTITIES_SPAWN_DEFERRED` | [ValidationClient.java:4748](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4748>) |
 | `CELTIUM_ENTITY_CACHE_MISMATCH` | [EntityGatherCensus.java:91](<../forge122/src/main/java/org/taumc/celeritas/impl/render/entity/EntityGatherCensus.java#L91>) |
 | `CELTIUM_ENTITY_GATHER` | [EntityGatherCensus.java:97](<../forge122/src/main/java/org/taumc/celeritas/impl/render/entity/EntityGatherCensus.java#L97>) |
 | `CELTIUM_ENTITY_INDEX_MISMATCH` | [EntityGatherCensus.java:60](<../forge122/src/main/java/org/taumc/celeritas/impl/render/entity/EntityGatherCensus.java#L60>) |
@@ -749,8 +750,8 @@
 | `CELTIUM_FBO_TARGET_ENSURED` | [VulkanTerrainGpuBackend.java:7061](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L7061>) |
 | `CELTIUM_FBO_TEXTURE_PUBLISHED` | [VulkanTerrainGpuBackend.java:7122](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L7122>), [VulkanTerrainGpuBackend.java:7167](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L7167>) |
 | `CELTIUM_FENCE_TIMEOUT` | [VulkanTerrainGpuBackend.java:22025](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L22025>) |
-| `CELTIUM_FIXTURE_FRAME` | [ValidationClient.java:6858](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L6858>), [ValidationClient.java:6872](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L6872>) |
-| `CELTIUM_FIXTURE_TICK` | [ValidationClient.java:4306](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4306>) |
+| `CELTIUM_FIXTURE_FRAME` | [ValidationClient.java:6993](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L6993>), [ValidationClient.java:7007](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L7007>) |
+| `CELTIUM_FIXTURE_TICK` | [ValidationClient.java:4402](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4402>) |
 | `CELTIUM_FLICKER` | [VulkanSwapchain.java:1596](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L1596>) |
 | `CELTIUM_FLICKER_ARMED` | [VulkanSwapchain.java:1556](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L1556>) |
 | `CELTIUM_FLUSH_REASONS` | [VulkanTerrainGpuBackend.java:10674](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L10674>) |
@@ -805,7 +806,7 @@
 | `CELTIUM_GL_SURFACE` | [CeltiumGllessNativeTransformer.java:703](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessNativeTransformer.java#L703>) |
 | `CELTIUM_GL_SURFACE_DRAWING` | [CeltiumGllessNativeTransformer.java:733](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessNativeTransformer.java#L733>) |
 | `CELTIUM_GPU_VERTEX` | [VulkanTerrainGpuBackend.java:22461](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L22461>) |
-| `CELTIUM_GREGTECH_STAGE` | [ValidationClient.java:13083](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L13083>) |
+| `CELTIUM_GREGTECH_STAGE` | [ValidationClient.java:13218](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L13218>) |
 | `CELTIUM_GROUPS` | [VulkanTerrainGpuBackend.java:5099](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L5099>) |
 | `CELTIUM_GROUP_BOUNDS` | [BackendDiagnostics.java:1249](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L1249>) |
 | `CELTIUM_GROUP_CLOSE` | [VulkanTerrainGpuBackend.java:14212](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L14212>) |
@@ -814,14 +815,14 @@
 | `CELTIUM_GROUP_DETAIL` | [BackendDiagnostics.java:744](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L744>) |
 | `CELTIUM_GROUP_SCISSOR` | [VulkanTerrainGpuBackend.java:21591](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L21591>) |
 | `CELTIUM_GROUP_VIEWPORT` | [VulkanTerrainGpuBackend.java:21631](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L21631>) |
-| `CELTIUM_GUI_CLICK_FAILED` | [ValidationClient.java:10001](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L10001>) |
+| `CELTIUM_GUI_CLICK_FAILED` | [ValidationClient.java:10136](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L10136>) |
 | `CELTIUM_GVC_A4_PROBE` | [GvcA4Probe.java:38](<../validation/client/src/main/java/org/soutalab/celtium/validation/GvcA4Probe.java#L38>), [GvcA4Probe.java:41](<../validation/client/src/main/java/org/soutalab/celtium/validation/GvcA4Probe.java#L41>) |
 | `CELTIUM_HINT_DISPLAY_LISTS` | [CeltiumGllessHint.java:1214](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L1214>) |
 | `CELTIUM_HINT_MATRIXMODE` | [CeltiumGllessHint.java:1607](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L1607>) |
 | `CELTIUM_HINT_MULTMATRIX` | [CeltiumGllessHint.java:1635](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L1635>) |
 | `CELTIUM_HUD_GROUP` | [VulkanTerrainGpuBackend.java:6714](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L6714>) |
-| `CELTIUM_HURT_SPAWNED` | [ValidationClient.java:3856](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L3856>) |
-| `CELTIUM_ICONIFY` | [ValidationClient.java:4860](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4860>) |
+| `CELTIUM_HURT_SPAWNED` | [ValidationClient.java:3952](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L3952>) |
+| `CELTIUM_ICONIFY` | [ValidationClient.java:4956](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4956>) |
 | `CELTIUM_IDLE_CAP` | [CeltiumFramePacing.java:74](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumFramePacing.java#L74>) |
 | `CELTIUM_IMAGE_BIND` | [CeltiumGlStub.java:7270](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L7270>) |
 | `CELTIUM_IMAGE_RELEASED` | [VulkanGlTexture.java:2912](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L2912>) |
@@ -839,7 +840,7 @@
 | `CELTIUM_JOIN` | [NetHandlerJoinProbeMixin.java:31](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/NetHandlerJoinProbeMixin.java#L31>), [NetHandlerJoinProbeMixin.java:39](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/NetHandlerJoinProbeMixin.java#L39>) |
 | `CELTIUM_LARGE_MIRROR_REMOVED` | [VulkanTextureRegistry.java:2398](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTextureRegistry.java#L2398>) |
 | `CELTIUM_LARGE_WINDOWS` | [BackendDiagnostics.java:778](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L778>) |
-| `CELTIUM_LAYER_GEOMETRY` | [CeleritasWorldRenderer.java:248](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer.java#L248>), [CeleritasWorldRenderer.java:251](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer.java#L251>) |
+| `CELTIUM_LAYER_GEOMETRY` | [CeleritasWorldRenderer.java:249](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer.java#L249>), [CeleritasWorldRenderer.java:252](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer.java#L252>) |
 | `CELTIUM_LAYOUT_TRACE` | [VulkanGlTexture.java:4205](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L4205>), [VulkanGlTexture.java:4208](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L4208>), [VulkanGlTexture.java:4210](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L4210>) |
 | `CELTIUM_LEGACY_IMMEDIATE` | [CeltiumGlStub.java:3344](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L3344>) |
 | `CELTIUM_LEGACY_LIST_REPLAY_REFUSED` | [CeltiumGlStub.java:3451](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L3451>) |
@@ -860,10 +861,11 @@
 | `CELTIUM_LIST_INPUT` | [RenderSectionManager.java:521](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L521>) |
 | `CELTIUM_LIST_SIZE` | [RenderSectionManager.java:779](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L779>) |
 | `CELTIUM_LIT_FOG_SKIPPED` | [VulkanTerrainGpuBackend.java:4581](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L4581>) |
-| `CELTIUM_LOADING_PROGRESS_CAPTURE` | [LoadingScreenRendererMixin.java:61](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/LoadingScreenRendererMixin.java#L61>), [ValidationClient.java:9112](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9112>) |
+| `CELTIUM_LOADING_PROGRESS_CAPTURE` | [LoadingScreenRendererMixin.java:61](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/LoadingScreenRendererMixin.java#L61>), [ValidationClient.java:9247](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9247>) |
 | `CELTIUM_LOADING_SCREEN` | [CeltiumLoadingProgress.java:111](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumLoadingProgress.java#L111>), [CeltiumLoadingProgress.java:135](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumLoadingProgress.java#L135>) |
 | `CELTIUM_LOG_LIMIT` | [CeltiumLogLimiter.java:129](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumLogLimiter.java#L129>) |
-| `CELTIUM_MACHINE_GUI` | [ValidationClient.java:9834](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9834>), [ValidationClient.java:9844](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9844>), [ValidationClient.java:9850](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9850>) |
+| `CELTIUM_LOS_WALL` | [ValidationClient.java:3842](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L3842>), [ValidationClient.java:3862](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L3862>) |
+| `CELTIUM_MACHINE_GUI` | [ValidationClient.java:9969](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9969>), [ValidationClient.java:9979](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9979>), [ValidationClient.java:9985](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9985>) |
 | `CELTIUM_MAIN_CLEAR` | [CeltiumGlStub.java:4485](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L4485>) |
 | `CELTIUM_MAP_RANGE_REFUSED` | [CeltiumGlStub.java:9560](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L9560>) |
 | `CELTIUM_MARK_CALLER` | [RenderGlobalMixin.java:336](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/terrain/RenderGlobalMixin.java#L336>) |
@@ -872,7 +874,7 @@
 | `CELTIUM_MATRIX_NATIVE` | [CeltiumGllessHint.java:1076](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L1076>) |
 | `CELTIUM_MATRIX_TRACE` | [VulkanTerrainGpuBackend.java:5640](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L5640>) |
 | `CELTIUM_MENU_GROUP` | [VulkanTerrainGpuBackend.java:20803](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L20803>) |
-| `CELTIUM_MENU_REGION_GATE` | [ValidationClient.java:12010](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L12010>) |
+| `CELTIUM_MENU_REGION_GATE` | [ValidationClient.java:12145](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L12145>) |
 | `CELTIUM_MERGE_CENSUS` | [VulkanTerrainGpuBackend.java:21407](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L21407>) |
 | `CELTIUM_MIRROR` | [VulkanGlTexture.java:1674](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L1674>) |
 | `CELTIUM_MIRROR_COVERAGE` | [VulkanGlTexture.java:1986](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L1986>) |
@@ -892,7 +894,7 @@
 | `CELTIUM_MODEL_BUILD` | [ModelGeometryCache.java:439](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelGeometryCache.java#L439>) |
 | `CELTIUM_MODEL_ENQ` | [ModelReplay.java:341](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L341>) |
 | `CELTIUM_MODEL_ENTRY` | [ModelReplay.java:45](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L45>) |
-| `CELTIUM_MODEL_FOG_TEST` | [ValidationClient.java:6843](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L6843>) |
+| `CELTIUM_MODEL_FOG_TEST` | [ValidationClient.java:6978](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L6978>) |
 | `CELTIUM_MODEL_GROUPS` | [CeltiumModelBatchGroups.java:94](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumModelBatchGroups.java#L94>) |
 | `CELTIUM_MODEL_INSTANCES` | [ModelReplay.java:488](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L488>), [ModelReplay.java:525](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L525>) |
 | `CELTIUM_MODEL_LAYER` | [ModelReplay.java:240](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModelReplay.java#L240>) |
@@ -923,7 +925,7 @@
 | `CELTIUM_MOD_READBACK` | [ModPrograms.java:453](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L453>) |
 | `CELTIUM_MOD_READBACK_PROBE` | [ModPrograms.java:398](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/ModPrograms.java#L398>) |
 | `CELTIUM_MOD_SHADERC` | [ModProgramRegistry.java:194](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/ModProgramRegistry.java#L194>) |
-| `CELTIUM_MOUSEOVER` | [ValidationClient.java:12772](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L12772>) |
+| `CELTIUM_MOUSEOVER` | [ValidationClient.java:12907](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L12907>) |
 | `CELTIUM_MULT_MATRIX` | [CeltiumGlStub.java:6843](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L6843>) |
 | `CELTIUM_NATIVE_DEVICE` | [VulkanContext.java:2635](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2635>), [TerrainBackendSelection.java:41](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/backend/TerrainBackendSelection.java#L41>) |
 | `CELTIUM_NATIVE_GL_SURFACE` | [RenderSectionManager.java:200](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L200>) |
@@ -957,7 +959,7 @@
 | `CELTIUM_PATCH_TABLE` | [PatchLedger.java:305](<../celtium-vulkan/src/main/java/org/soutalab/celtium/patch/PatchLedger.java#L305>), [CeleritasVintageMixinPlugin.java:167](<../forge122/src/main/java/org/taumc/celeritas/mixin/CeleritasVintageMixinPlugin.java#L167>), [CeleritasVintageMixinPlugin.java:174](<../forge122/src/main/java/org/taumc/celeritas/mixin/CeleritasVintageMixinPlugin.java#L174>), [CeleritasVintageMixinPlugin.java:220](<../forge122/src/main/java/org/taumc/celeritas/mixin/CeleritasVintageMixinPlugin.java#L220>) |
 | `CELTIUM_PBO_REFUSED` | [CeltiumGlStub.java:9172](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L9172>), [CeltiumGlStub.java:10151](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L10151>) |
 | `CELTIUM_PBO_UPLOAD` | [CeltiumGlStub.java:8981](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L8981>) |
-| `CELTIUM_PICTURE_IDENTITY` | [ValidationClient.java:9231](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9231>), [ValidationClient.java:9375](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9375>) |
+| `CELTIUM_PICTURE_IDENTITY` | [ValidationClient.java:9366](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9366>), [ValidationClient.java:9510](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9510>) |
 | `CELTIUM_PIPELINE_CACHE` | [VulkanContext.java:2370](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2370>), [VulkanContext.java:2389](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2389>), [VulkanContext.java:2425](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2425>) |
 | `CELTIUM_PIPELINE_CREATE` | [CeltiumLogLimiter.java:38](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumLogLimiter.java#L38>), [VulkanContext.java:2212](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2212>) |
 | `CELTIUM_PIPELINE_DESTROYED_WHILE_RECORDING` | [VulkanContext.java:3692](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L3692>) |
@@ -966,14 +968,14 @@
 | `CELTIUM_POSITION_NORMAL_REFUSED` | [WorldVertexBufferUploaderMixin.java:456](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/WorldVertexBufferUploaderMixin.java#L456>) |
 | `CELTIUM_POSITION_REFUSED` | [WorldVertexBufferUploaderMixin.java:446](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/WorldVertexBufferUploaderMixin.java#L446>) |
 | `CELTIUM_POSTCHAIN` | [PostChainBridge.java:315](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PostChainBridge.java#L315>), [VulkanPostChain.java:408](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanPostChain.java#L408>), [VulkanPostChain.java:420](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanPostChain.java#L420>), [VulkanPostChain.java:541](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanPostChain.java#L541>), [VulkanPostChain.java:545](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanPostChain.java#L545>), [VulkanPostChain.java:662](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanPostChain.java#L662>), [VulkanPostChain.java:691](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanPostChain.java#L691>), [VulkanPostChain.java:695](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanPostChain.java#L695>), [VulkanPostChain.java:1247](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanPostChain.java#L1247>), [VulkanPostChain.java:1252](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanPostChain.java#L1252>) |
-| `CELTIUM_POSTPROCESS` | [ValidationClient.java:6411](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L6411>) |
+| `CELTIUM_POSTPROCESS` | [ValidationClient.java:6546](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L6546>) |
 | `CELTIUM_POST_ADOPT_REFUSED` | [VulkanPostChain.java:1358](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanPostChain.java#L1358>) |
 | `CELTIUM_POST_BLOCK_REFUSED` | [VulkanPostChain.java:785](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanPostChain.java#L785>) |
 | `CELTIUM_POST_REFUSED_UNSUPPLIED_INPUT` | [VulkanPostChain.java:924](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanPostChain.java#L924>) |
 | `CELTIUM_PRESENT` | [VulkanTerrainGpuBackend.java:18434](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L18434>) |
 | `CELTIUM_PRESENTED_DUMP_HELD` | [VulkanTerrainGpuBackend.java:16807](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L16807>) |
-| `CELTIUM_PRESENTED_IMAGE` | [ValidationClient.java:11434](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L11434>) |
-| `CELTIUM_PRESENT_COUNTER_RESTART` | [ValidationClient.java:4979](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4979>) |
+| `CELTIUM_PRESENTED_IMAGE` | [ValidationClient.java:11569](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L11569>) |
+| `CELTIUM_PRESENT_COUNTER_RESTART` | [ValidationClient.java:5075](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L5075>) |
 | `CELTIUM_PRESENT_INTERVAL` | [FrameBudgetTimings.java:219](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameBudgetTimings.java#L219>) |
 | `CELTIUM_PRESENT_INTERVAL_SUMMARY` | [FrameBudgetTimings.java:311](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameBudgetTimings.java#L311>) |
 | `CELTIUM_PRESENT_MODE` | [VulkanSwapchain.java:2521](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java#L2521>) |
@@ -1008,17 +1010,17 @@
 | `CELTIUM_REFUSALS_BY_FORMAT` | [WorldVertexBufferUploaderMixin.java:246](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/WorldVertexBufferUploaderMixin.java#L246>) |
 | `CELTIUM_REGISTRY_TEXTURE` | [VulkanImmediateTexturePipeline.java:743](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateTexturePipeline.java#L743>) |
 | `CELTIUM_RENDERENTITIES` | [RenderGlobalMixin.java:399](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/terrain/RenderGlobalMixin.java#L399>) |
-| `CELTIUM_RENDERERLESS_ENTITY_SPAWNED` | [ValidationClient.java:3884](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L3884>) |
-| `CELTIUM_RENDERLIST` | [CeleritasWorldRenderer.java:192](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer.java#L192>) |
+| `CELTIUM_RENDERERLESS_ENTITY_SPAWNED` | [ValidationClient.java:3980](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L3980>) |
+| `CELTIUM_RENDERLIST` | [CeleritasWorldRenderer.java:193](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer.java#L193>) |
 | `CELTIUM_RENDER_LAYER` | [RenderSectionManager.java:647](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L647>) |
 | `CELTIUM_REPLACE_DROP` | [VulkanTerrainGpuBackend.java:11438](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L11438>) |
-| `CELTIUM_RESIZE` | [ValidationClient.java:8546](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8546>) |
-| `CELTIUM_RESIZE_COMPOSITOR` | [ValidationClient.java:8693](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8693>), [ValidationClient.java:8694](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8694>) |
-| `CELTIUM_RESIZE_FAILED` | [ValidationClient.java:8635](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8635>), [ValidationClient.java:8669](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8669>) |
-| `CELTIUM_RESIZE_OBSERVED` | [ValidationClient.java:8796](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8796>) |
-| `CELTIUM_RESIZE_REQUEST` | [ValidationClient.java:8696](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8696>), [ValidationClient.java:8698](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8698>) |
-| `CELTIUM_RESOURCE_RELOAD` | [ValidationClient.java:4832](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4832>) |
-| `CELTIUM_RESOURCE_RELOAD_FAILED` | [ValidationClient.java:4837](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4837>) |
+| `CELTIUM_RESIZE` | [ValidationClient.java:8681](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8681>) |
+| `CELTIUM_RESIZE_COMPOSITOR` | [ValidationClient.java:8828](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8828>), [ValidationClient.java:8829](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8829>) |
+| `CELTIUM_RESIZE_FAILED` | [ValidationClient.java:8770](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8770>), [ValidationClient.java:8804](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8804>) |
+| `CELTIUM_RESIZE_OBSERVED` | [ValidationClient.java:8931](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8931>) |
+| `CELTIUM_RESIZE_REQUEST` | [ValidationClient.java:8831](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8831>), [ValidationClient.java:8833](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8833>) |
+| `CELTIUM_RESOURCE_RELOAD` | [ValidationClient.java:4928](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4928>) |
+| `CELTIUM_RESOURCE_RELOAD_FAILED` | [ValidationClient.java:4933](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4933>) |
 | `CELTIUM_RETAINED_CENSUS` | [FrameStatsReport.java:196](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameStatsReport.java#L196>) |
 | `CELTIUM_SAMPLER` | [VulkanGlTexture.java:3001](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L3001>) |
 | `CELTIUM_SAMPLER_FILTER` | [VulkanGlTexture.java:2630](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L2630>) |
@@ -1031,7 +1033,7 @@
 | `CELTIUM_SHADER_MODULE` | [SpirvShaders.java:171](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/SpirvShaders.java#L171>) |
 | `CELTIUM_SHADER_PROGRAM_REFUSED` | [VulkanTerrainGpuBackend.java:9612](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L9612>) |
 | `CELTIUM_SHADER_PROGRAM_REFUSED_SITE` | [VulkanTerrainGpuBackend.java:9624](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L9624>) |
-| `CELTIUM_SHADOW_STAGE` | [ValidationClient.java:12818](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L12818>) |
+| `CELTIUM_SHADOW_STAGE` | [ValidationClient.java:12953](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L12953>) |
 | `CELTIUM_SHARED_DEPTH` | [VulkanTerrainGpuBackend.java:13332](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L13332>) |
 | `CELTIUM_SHARED_DEPTH_CLEAR_REFUSED` | [VulkanTerrainGpuBackend.java:15696](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L15696>) |
 | `CELTIUM_SHARED_LAYOUT` | [VulkanGlTexture.java:1267](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L1267>), [VulkanGlTexture.java:1302](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L1302>) |
@@ -1051,7 +1053,7 @@
 | `CELTIUM_SLOT_WAIT` | [VulkanTerrainGpuBackend.java:20311](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L20311>) |
 | `CELTIUM_SPLASH_FLIP` | [VulkanTerrainGpuBackend.java:11646](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L11646>) |
 | `CELTIUM_SPLASH_HANDLES` | [VulkanTerrainGpuBackend.java:11759](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L11759>), [VulkanTerrainGpuBackend.java:11764](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L11764>) |
-| `CELTIUM_SPLASH_HOOK` | [MinecraftMixin.java:294](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L294>), [MinecraftMixin.java:312](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L312>), [MinecraftMixin.java:328](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L328>), [MinecraftMixin.java:332](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L332>), [ValidationClient.java:9020](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9020>) |
+| `CELTIUM_SPLASH_HOOK` | [MinecraftMixin.java:294](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L294>), [MinecraftMixin.java:312](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L312>), [MinecraftMixin.java:328](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L328>), [MinecraftMixin.java:332](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L332>), [ValidationClient.java:9155](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L9155>) |
 | `CELTIUM_SPLASH_PAIRPOST` | [VulkanTerrainGpuBackend.java:11672](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L11672>) |
 | `CELTIUM_SPLASH_PROBE` | [VulkanTerrainGpuBackend.java:11826](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L11826>) |
 | `CELTIUM_SRC` | [VulkanGlTexture.java:3257](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L3257>), [VulkanGlTexture.java:3374](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L3374>) |
@@ -1094,7 +1096,7 @@
 | `CELTIUM_TEX_PARAM_QUERY` | [CeltiumGlStub.java:9963](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java#L9963>) |
 | `CELTIUM_TEX_VERTICES` | [BackendDiagnostics.java:725](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L725>) |
 | `CELTIUM_TICK_SPLIT` | [TickTimings.java:174](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TickTimings.java#L174>), [TickTimings.java:182](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TickTimings.java#L182>) |
-| `CELTIUM_TRACKER` | [CeleritasWorldRenderer.java:136](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer.java#L136>), [CeleritasWorldRenderer.java:150](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer.java#L150>) |
+| `CELTIUM_TRACKER` | [CeleritasWorldRenderer.java:137](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer.java#L137>), [CeleritasWorldRenderer.java:151](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer.java#L151>) |
 | `CELTIUM_TRANSFORM_CENSUS` | [CeltiumGllessHint.java:1216](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java#L1216>) |
 | `CELTIUM_UNIT_BIND` | [VulkanGlState.java:917](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlState.java#L917>) |
 | `CELTIUM_UNIT_SWITCH` | [VulkanGlState.java:1059](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlState.java#L1059>) |
@@ -1116,7 +1118,7 @@
 | `CELTIUM_VISIBLE` | [OcclusionCuller.java:281](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/occlusion/OcclusionCuller.java#L281>) |
 | `CELTIUM_VULKAN_DEVICE_LOST` | [VulkanContext.java:1460](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L1460>), [VulkanContext.java:1757](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L1757>), [VulkanContext.java:2041](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2041>), [VulkanContext.java:2083](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2083>) |
 | `CELTIUM_WAIT_CENSUS` | [VulkanContext.java:2046](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2046>), [VulkanContext.java:2072](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L2072>) |
-| `CELTIUM_WARM_WINDOW` | [ValidationClient.java:4290](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4290>), [ValidationClient.java:4294](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4294>) |
+| `CELTIUM_WARM_WINDOW` | [ValidationClient.java:4386](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4386>), [ValidationClient.java:4390](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L4390>) |
 | `CELTIUM_WINDOW` | [CeltiumWindow.java:69](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumWindow.java#L69>), [CeltiumWindow.java:118](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumWindow.java#L118>), [CeltiumWindow.java:125](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CeltiumWindow.java#L125>) |
 | `CELTIUM_WINDOW_CENSUS` | [BackendDiagnostics.java:760](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L760>) |
 | `CELTIUM_WINDOW_DESCRIPTORS` | [BackendDiagnostics.java:999](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L999>) |
@@ -1128,7 +1130,7 @@
 | `CELTIUM_WINDOW_PIPELINES` | [BackendDiagnostics.java:1035](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L1035>) |
 | `CELTIUM_WINDOW_RENDERER` | [MinecraftMixin.java:529](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L529>), [MinecraftMixin.java:535](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L535>), [MinecraftMixin.java:555](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/MinecraftMixin.java#L555>) |
 | `CELTIUM_WINDOW_SITE` | [VulkanTerrainGpuBackend.java:18171](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L18171>) |
-| `CELTIUM_WINDOW_SIZE_CHANGED` | [ValidationClient.java:8759](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8759>) |
+| `CELTIUM_WINDOW_SIZE_CHANGED` | [ValidationClient.java:8894](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8894>) |
 | `CELTIUM_WINDOW_SPLIT` | [VulkanTerrainGpuBackend.java:7946](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L7946>) |
 | `CELTIUM_WINDOW_STATE` | [BackendDiagnostics.java:1067](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L1067>) |
 | `CELTIUM_WINDOW_TEXMATRIX` | [BackendDiagnostics.java:977](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L977>) |
@@ -1136,8 +1138,8 @@
 | `CELTIUM_WINDOW_VERTEX_ALPHA` | [BackendDiagnostics.java:962](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L962>) |
 | `CELTIUM_WINDOW_VERTICES` | [BackendDiagnostics.java:958](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/BackendDiagnostics.java#L958>) |
 | `CELTIUM_WORLD_ENTRY` | [CeltiumWorldEntryWatch.java:34](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumWorldEntryWatch.java#L34>) |
-| `CELTIUM_WORLD_LOAD` | [RenderSectionManager.java:177](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L177>), [RenderSectionManager.java:179](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L179>), [RenderSectionManager.java:183](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L183>), [RenderSectionManager.java:185](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L185>), [RenderSectionManager.java:191](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L191>), [RenderSectionManager.java:194](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L194>), [SimpleWorldRenderer.java:47](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L47>), [SimpleWorldRenderer.java:50](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L50>), [SimpleWorldRenderer.java:68](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L68>), [SimpleWorldRenderer.java:70](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L70>), [SimpleWorldRenderer.java:72](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L72>), [SimpleWorldRenderer.java:74](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L74>), [SimpleWorldRenderer.java:288](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L288>), [SimpleWorldRenderer.java:294](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L294>), [SimpleWorldRenderer.java:297](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L297>), [SimpleWorldRenderer.java:300](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L300>), [SimpleWorldRenderer.java:307](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L307>), [SimpleWorldRenderer.java:314](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L314>) |
+| `CELTIUM_WORLD_LOAD` | [RenderSectionManager.java:177](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L177>), [RenderSectionManager.java:179](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L179>), [RenderSectionManager.java:183](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L183>), [RenderSectionManager.java:185](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L185>), [RenderSectionManager.java:191](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L191>), [RenderSectionManager.java:194](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L194>), [SimpleWorldRenderer.java:48](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L48>), [SimpleWorldRenderer.java:51](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L51>), [SimpleWorldRenderer.java:69](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L69>), [SimpleWorldRenderer.java:71](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L71>), [SimpleWorldRenderer.java:73](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L73>), [SimpleWorldRenderer.java:75](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L75>), [SimpleWorldRenderer.java:289](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L289>), [SimpleWorldRenderer.java:295](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L295>), [SimpleWorldRenderer.java:298](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L298>), [SimpleWorldRenderer.java:301](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L301>), [SimpleWorldRenderer.java:308](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L308>), [SimpleWorldRenderer.java:315](<../common/src/main/java/org/embeddedt/embeddium/impl/render/terrain/SimpleWorldRenderer.java#L315>) |
 | `CELTIUM_WORLD_MATRIX` | [VulkanTerrainGpuBackend.java:4505](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L4505>) |
-| `CELTIUM_WORLD_START` | [ValidationClient.java:8520](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8520>) |
+| `CELTIUM_WORLD_START` | [ValidationClient.java:8655](<../validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java#L8655>) |
 | `CELTIUM_ZERO_HANDLE` | [VulkanGlTexture.java:2462](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanGlTexture.java#L2462>) |
 | `CELTIUM_ZERO_VIEW_REFUSAL` | [VulkanImmediateItemPipeline.java:506](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateItemPipeline.java#L506>), [VulkanImmediateTexturePipeline.java:792](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanImmediateTexturePipeline.java#L792>) |

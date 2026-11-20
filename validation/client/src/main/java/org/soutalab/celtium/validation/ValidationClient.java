@@ -2340,7 +2340,7 @@ public final class ValidationClient {
     private boolean celtium$entitiesSpawned;
     private boolean celtium$dynamicLightSpawned;
     /**
-     * Item 386's LOS wall ({@code -Dceltium.validation.losWall=true}): one stone wall between the
+     * Item 386's LOS wall (harness key {@code losWall=true}): one stone wall between the
      * camera and the keepEntities cohort, so the LOS dry-run probe has a positive control. The cell
      * ranges are arguments with defaults, not part of the flag's meaning - they are a measurement
      * condition the projection check may correct without touching any threshold. X/Z are offsets
@@ -2350,16 +2350,16 @@ public final class ValidationClient {
      * ({@code entitySpawnSurfaceY=8}, onGround=false), so a wall stopping at 10 would leave the
      * cohort's lower half unoccluded.
      */
-    private static final boolean LOS_WALL = Boolean.getBoolean("celtium.validation.losWall");
-    private static final int LOS_WALL_MIN_X = Integer.getInteger("celtium.validation.losWallMinX", -1).intValue();
-    private static final int LOS_WALL_MAX_X = Integer.getInteger("celtium.validation.losWallMaxX", 3).intValue();
-    private static final int LOS_WALL_MIN_Z = Integer.getInteger("celtium.validation.losWallMinZ", -2).intValue();
-    private static final int LOS_WALL_MAX_Z = Integer.getInteger("celtium.validation.losWallMaxZ", -1).intValue();
-    private static final int LOS_WALL_MIN_Y = Integer.getInteger("celtium.validation.losWallMinY", 8).intValue();
-    private static final int LOS_WALL_MAX_Y = Integer.getInteger("celtium.validation.losWallMaxY", 14).intValue();
+    private static final boolean LOS_WALL = HarnessConfig.bool("losWall", false);
+    private static final int LOS_WALL_MIN_X = HarnessConfig.integer("losWallMinX", -1);
+    private static final int LOS_WALL_MAX_X = HarnessConfig.integer("losWallMaxX", 3);
+    private static final int LOS_WALL_MIN_Z = HarnessConfig.integer("losWallMinZ", -2);
+    private static final int LOS_WALL_MAX_Z = HarnessConfig.integer("losWallMaxZ", -1);
+    private static final int LOS_WALL_MIN_Y = HarnessConfig.integer("losWallMinY", 8);
+    private static final int LOS_WALL_MAX_Y = HarnessConfig.integer("losWallMaxY", 14);
     /** Tick at which the wall is returned to air in the same leg; 0 keeps it for the whole run. */
     private static final int LOS_WALL_REMOVE_AT_TICK =
-            Integer.getInteger("celtium.validation.losWallRemoveAtTick", 0).intValue();
+            HarnessConfig.integer("losWallRemoveAtTick", 0);
     private boolean celtium$losWallPlaced;
     private boolean celtium$losWallRemoved;
     /** Whether the shadow stage has been built this run. */
@@ -3865,7 +3865,7 @@ public final class ValidationClient {
             // timings: the fixture must load on a leg whose jar carries no renderer classes. The
             // values are the instruments' latest-frame snapshots, overwritten every tick so the
             // report holds the frame the run ended on.
-            if (Boolean.getBoolean("celtium.validation.beCensus")) {
+            if (HarnessConfig.bool("beCensus", false)) {
                 Object sections = celtium$beInstrumentValue("censusSections");
                 if (sections != null) {
                     report.addProperty("beCensusSections", (Number) sections);
@@ -3876,7 +3876,7 @@ public final class ValidationClient {
                             String.valueOf(celtium$beInstrumentValue("censusTopSections")));
                 }
             }
-            if ("dryRun".equals(System.getProperty("celtium.vulkan.beLos"))) {
+            if ("dryRun".equals(HarnessConfig.string("beLos", "off"))) {
                 Object tested = celtium$beInstrumentValue("losTested");
                 if (tested != null) {
                     report.addProperty("beLosTested", (Number) tested);

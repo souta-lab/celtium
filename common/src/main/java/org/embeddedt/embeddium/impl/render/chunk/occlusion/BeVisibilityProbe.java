@@ -4,6 +4,7 @@ import grondag.bitraster.Matrix4L;
 import grondag.bitraster.PackedBox;
 import org.embeddedt.embeddium.impl.render.chunk.RenderSection;
 import org.embeddedt.embeddium.impl.render.viewport.Viewport;
+import org.soutalab.celtium.harness.HarnessConfig;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -13,14 +14,14 @@ import java.util.function.Consumer;
  * Item 386's two frame instruments: the block-entity census and the LOS dry-run probe.
  * Both are measurement only - neither changes what is drawn.
  *
- * <p>The census ({@code -Dceltium.validation.beCensus=true}) counts what
+ * <p>The census (harness key {@code beCensus=true}) counts what
  * {@code SimpleWorldRenderer.renderBlockEntities} actually drew on its latest call: how many
  * sections contributed, how many block entities came through the visibility-tested (culled)
  * path, how many through the untested global path, and the five fullest sections. That count
  * is the denominator the entity-cost work was missing - the per-block-entity price of the
  * {@code entBlockEntities} bracket is its microseconds divided by this census.
  *
- * <p>The LOS probe ({@code -Dceltium.vulkan.beLos=off|dryRun}, default off) answers, for every
+ * <p>The LOS probe (harness key {@code beLos=off|dryRun}, default off) answers, for every
  * block entity the culled path is about to draw, whether a software rasterizer holding the
  * visible sections' occluder boxes would call its render box hidden. It keeps its own
  * {@link RasterOccluder} and follows the production search's own discipline, because the
@@ -39,8 +40,8 @@ import java.util.function.Consumer;
  *
  * <p>Both instruments keep a latest-frame snapshot in statics, which the validation fixture
  * reads reflectively when it writes its report - the same hand-off {@code FramePassTimings}
- * uses, so a leg without these classes on its classpath still loads. Property reads sit in
- * this one class so a later flag consolidation has a single site to move.
+ * uses, so a leg without these classes on its classpath still loads. Harness reads sit in
+ * this one class, behind {@code HarnessConfig} like every other instrument's.
  */
 public final class BeVisibilityProbe {
     private BeVisibilityProbe() {
@@ -49,7 +50,7 @@ public final class BeVisibilityProbe {
     // ---------------------------------------------------------------- census
 
     /** The census switch, read once. Off costs one static-final check at the draw sites. */
-    public static final boolean CENSUS_ENABLED = Boolean.getBoolean("celtium.validation.beCensus");
+    public static final boolean CENSUS_ENABLED = HarnessConfig.bool("beCensus", false);
 
     private static int censusSections;
     private static int censusCulledSections;
@@ -130,7 +131,7 @@ public final class BeVisibilityProbe {
     private static final int LOS_MODE = parseLosMode();
 
     private static int parseLosMode() {
-        String raw = System.getProperty("celtium.vulkan.beLos", "off");
+        String raw = HarnessConfig.string("beLos", "off");
         int mode = "dryRun".equals(raw) ? LOS_DRY_RUN : LOS_OFF;
         if (!"off".equals(raw)) {
             // One line, so a leg log says which mode it actually ran - an unrecognised value is off,
