@@ -81,7 +81,10 @@ class InstrumentIndexTests(unittest.TestCase):
 
     def test_real_index_contains_controls_and_markers_not_translation_keys(self):
         props, markers = index.collect()
-        self.assertIn("celtium.vulkan.presentedDumpEvery", props)
+        self.assertIn("celtium.vulkan.paceToRefresh", props)
+        # presentedDumpEvery moved into the harness file in the 2026-11-20 consolidation: neither its
+        # renderer-side -D form nor the never-implemented validation-side name is a property read now.
+        self.assertNotIn("celtium.vulkan.presentedDumpEvery", props)
         self.assertNotIn("celtium.validation.presentedDumpEvery", props)
         self.assertNotIn("celeritas.options.chunk_fade_in_duration.name", props)
         self.assertIn("CELTIUM_NATIVE_DEVICE", markers)

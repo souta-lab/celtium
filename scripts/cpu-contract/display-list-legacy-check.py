@@ -6,7 +6,7 @@ in this pack actually uses".
 
 ## What this checks
 
-`-Dceltium.validation.screen=displaylist` opens `DisplayListLegacyScreen`, which compiles three `GL_COMPILE` display
+The harness file's `screen=displaylist` opens `DisplayListLegacyScreen`, which compiles three `GL_COMPILE` display
 lists out of immediate-mode geometry and draws them with `glCallList` under a `glPushMatrix`/`glTranslatef`:
 
 * **the outer list** - a filled `GL_QUADS` square compiled after green was set *outside* it, so the list carries no
@@ -89,7 +89,7 @@ which is the cull-back picture, and requires that reading to be rejected.
 
 The same fixture runs under Celeritas (real OpenGL) through `CELTIUM_LEG_REFERENCE_RENDERER`, which is what settles the
 rule without an argument about the specification: that arm's picture comes from the game's own screenshot
-(`-Dceltium.validation.screenshotAtTick=120`), because a GL arm has no presented-image dump. `--picture` reads such a
+(the harness file's `screenshotAtTick=120`), because a GL arm has no presented-image dump. `--picture` reads such a
 single picture and asks the parity-free form of the same question: one band is the call-time colour and the other is
 the list's own colour. Which band is which is not asserted there - the two squares swap slots every frame, and a still
 screenshot carries whichever parity the tick landed on.

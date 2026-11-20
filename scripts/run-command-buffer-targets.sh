@@ -12,17 +12,21 @@ export VK_LAYER_PATH="$PWD/.celtium-work/gpu-tools/extracted/usr/share/vulkan/ex
 export VK_LAYER_VALIDATE_SYNC=1
 export LD_LIBRARY_PATH="$PWD/.celtium-work/gpu-tools/extracted/usr/lib/x86_64-linux-gnu"
 mkdir -p .celtium-work/sol-command-buffer
+harness=.celtium-work/sol-command-buffer/$name-harness.properties
+printf '%s\n' \
+  'vulkanValidation=true' \
+  'expectVulkan=true' \
+  'expectVulkanTerrain=true' \
+  'commandBufferTargets=true' \
+  "failImmediateSubmits=${3:-0}" \
+  > "$harness"
 python3 scripts/prism_validation.py /home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.6.13-alpha \
   --output ".celtium-work/sol-command-buffer/$name-lock.json" \
   --game-dir ".celtium-work/runtime/$name" \
   --mod build-1122/build/libs/2.5.12-celtium.0.1.0-dev.1/celtium-forge-mc1.12.2-2.5.12-celtium.0.1.0-dev.1.jar \
   --mod forge122/build/libs/celtium-validation-client-2.5.12-celtium.0.1.0-dev.1.jar \
   --library .celtium-work/runtime/celtium-headless-interop/test-libraries/lwjgl-vulkan-3.4.1.jar \
-  --jvm-arg=-Dceltium.vulkan.validation=true \
-  --jvm-arg=-Dceltium.validation.expectVulkan=true \
-  --jvm-arg=-Dceltium.validation.expectVulkanTerrain=true \
-  --jvm-arg=-Dceltium.validation.commandBufferTargets=true \
-  --jvm-arg="-Dceltium.vulkan.failImmediateSubmits=${3:-0}" \
+  --harness-file "$harness" \
   --run --validate --duration "$duration" --headless --force-x11 --render-node "$node" --require-gpu "$gpu"
 python3 - "$name" <<'PY'
 import json, sys

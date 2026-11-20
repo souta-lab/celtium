@@ -326,7 +326,11 @@ class LegRunnerTests(unittest.TestCase):
             result = self.execute(extras=extras, gpu="intel")
         self.assertTrue(result["accepted"], result)
         argv = json.loads((self.root / ".gv-verify/run-test/argv.json").read_text())
-        self.assertEqual(argv["jvmArgs"][-3:], extras)
+        self.assertEqual(argv["jvmArgs"][-2:], extras[1:])
+        # The harness key in the extras is not a JVM argument any more: it was translated into the
+        # harness file the runner seeded, with its value carried whole.
+        harness = (self.root / ".gv-verify/test-harness.properties").read_text()
+        self.assertIn("screen=hello world * [literal]", harness)
         self.assertEqual(argv["DRI_PRIME"], "pci-0000_00_02_0!")
         self.assertIsNone(argv["MESA_VK_DEVICE_SELECT"])
         self.assertIsNone(argv["PYTHONPATH"])
@@ -351,11 +355,14 @@ class LegRunnerTests(unittest.TestCase):
                 self.plan(extras=[extra])
         # The one control that may be turned off: the validation layer is the correctness arm's switch, and the
         # shipping configuration runs without it - measured at 6.6 ms of an 11.0 ms frame on the standard scene, so
-        # a performance arm has to be able to say so. The plan keeps the two numbers apart.
-        for extra in ("-Dceltium.vulkan.validation=false", "-Dceltium.vulkan.presentReadback=false"):
+        # a performance arm has to be able to say so. The plan keeps the two numbers apart: the opt-out is
+        # recorded as a harness-file entry, not as a JVM argument the consolidated code no longer reads.
+        for extra, entry in (("-Dceltium.vulkan.validation=false", "vulkanValidation=false"),
+                             ("-Dceltium.vulkan.presentReadback=false", "presentReadback=false")):
             with self.subTest(extra=extra):
                 plan = self.plan(extras=[extra])
-                self.assertEqual(plan.command.count(f"--jvm-arg={extra}"), 1)
+                self.assertNotIn(f"--jvm-arg={extra}", plan.command)
+                self.assertIn(entry, plan.harness_properties)
         with self.assertRaisesRegex(runner.LegError, "celtium.vulkan.presentedDumpEvery"):
             self.plan(extras=["-Dceltium.validation.presentedDumpEvery=0"])
 

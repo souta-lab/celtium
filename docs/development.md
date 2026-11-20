@@ -218,7 +218,7 @@ bootstrapの綴りは `deviceUuid` で、UUID照合は成立していなかっ�
 
 **profileを取るleg（JFR）はdumpを切る**。picture dumpは1枚あたり~340ms（1280x720の**GPU sync＋per-pixel変換＋PNG**）かかり、
 1 legで13枚≈4.2秒＝client threadサンプルの**15%**を占めます（`readBackBlock`が最大のleafになる）。
-これはレンダラのworkではなく証拠作成のコストなので、**JFR/profileのlegは `-Dceltium.validation.dumpPresentedImage=false` で走らせ、
+これはレンダラのworkではなく証拠作成のコストなので、**JFR/profileのlegはハーネスファイルに `dumpPresentedImage=false` を書いて走らせ、
 そのlegの`presentedImageVerdict`がFAILEDなのは想定どおり**と扱います。KPI/性能比較のlegはdumpを残してよい
 （比較は**arm別中央値**で行い、数十枚のspikeは中央値を動かさない。平均は動くので使わない）。
 
@@ -241,7 +241,7 @@ python3 .celtium-work/jfr-top.py .celtium-work/<leg>.jfr "Client thread" 1 40
 読み違えません。
 
 **warm窓だけをasync-profilerで取る**（2026-11-05、4回の空振りから）: 素の `world` legはtick 400前に終わるので、KPIと同じ
-`-Dceltium.validation.warmFromTick=400 -Dceltium.validation.warmToTick=600 -Dceltium.validation.holdUntilTick=620` を付ける。
+ハーネスファイルに `warmFromTick=400`・`warmToTick=600`・`holdUntilTick=620` を書く（gv-leg経由なら旧来の `-D` 形で渡しても翻訳される）。
 fixtureが `CELTIUM_WARM_WINDOW begin/end` を出すので、beginの行を待ってから `asprof -e itimer -i 1ms -d 10` を当てる
 （`perf_event_paranoid=2` では `-e cpu` は空）。対象は**run dirをcwdに持つjavaのうちRSS最大**（relauncherが起こすJava 25の子。
 Java 8の親や短命のhelperを拾うと空か `Process exited`）。実体は `scripts/warm-profile.sh LEG STAGE [gpu] [flags]`（参照側は `CELTIUM_LEG_REFERENCE_RENDERER`）。
@@ -256,11 +256,11 @@ warm窓（tick 400–600）のKPIを取るにはさらに長い`duration`が要�
 
 ### loadingを観測する場合
 
-- `-Dceltium.validation.dumpLoadingProgress=true`はworld起動を要求した後、実際の`LoadingScreenRenderer`のswap直前で最大8回captureを要求する。
+- ハーネスファイルの `dumpLoadingProgress=true` はworld起動を要求した後、実際の`LoadingScreenRenderer`のswap直前で最大8回captureを要求する。
   `loading-progress-N`のproducer値と`pictureIdentity_loading-progress-N`のPNG・frame束縛・completionErrorを読む。要求だけで欠測を成功にしない。
-- `-Dceltium.validation.probeLoadingProgress=true`を併用すると、world起動の直前に**制御された50%バー**も描く。
+- `probeLoadingProgress=true` を併用すると、world起動の直前に**制御された50%バー**も描く。
   `controlledProbe=true`の画像は自然なworld生成の数値進捗ではない。通常の起動は`progress=-1`でバーを要求しない。
-- 前述captureを有効にして`-Dceltium.validation.resizeDuringLoading=true`を併用すると、自然な非空タイトルの最初のframeを対照として残し、2回目に一度だけresizeを要求する。
+- 前述captureを有効にして `resizeDuringLoading=true` を併用すると、自然な非空タイトルの最初のframeを対照として残し、2回目に一度だけresizeを要求する。
   サイズとcompositorへの要求は既存の`resizeTo` / `resizeViaCompositor`を使う。MC・GLFWサイズ、GUI scale、loadingScreenのidentity、実PNGを合わせて読む。
   成功した最終terrain画像だけで、途中のloading画像やresize過渡frameまで成功にしない。
 - `dumpPresentedWorldLoadTick`は旧来の起動後client-tick sample。同期的world起動の内部はそのhandlerから観測できない。
@@ -284,9 +284,13 @@ CELTIUM_KPI_JARS=.gv-verify/jars/<tag> CELTIUM_KPI_REFERENCE=<celeritas.jar> \
 provenance/sha不一致、`warmSampleCount<50`、`worldTicksAtEnd<600`、両armのscene/camera/解像度/雲/pacing差、
 3ペア未満、Celtium専用flag（`--`以降）、fps上限・vsync。終了コードは 0=NOT_SLOWER / 1=SLOWER / 2=NO_SPEED_VERDICT。
 
-周期presented dumpを止めるキーは **`-Dceltium.vulkan.presentedDumpEvery=0`**。
-`celtium.validation.presentedDumpEvery`は実装されていない。旧`gv-notax-*`のeffective argsにもこの誤指定がある。
-さらにframeDumpDir経由のdumpは別経路なので、必要なら **`-Dceltium.vulkan.frameDumpEvery=0`** も使う。
+**テスト系フラグは2026-11-20に単一化された**: 起動面は `-Dceltium.validation=true` のみ。細かいノブは
+ゲームディレクトリの `celtium-harness.properties` を `HarnessConfig` が読む（gv-leg の extra は旧 `-D` 形でも
+書け、翻訳されてファイルに入る。prism_validation.py には `--harness-file` がある）。
+
+周期presented dumpを止めるキーは **ハーネスファイルの `presentedDumpEvery=0`**。
+`celtium.validation.presentedDumpEvery`は（旧体系でも）実装されていない。旧`gv-notax-*`のeffective argsにもこの誤指定がある。
+さらにframeDumpDir経由のdumpは別経路なので、必要なら **`frameDumpEvery=0`** も書く。
 それでもfixtureの要求capture、presentReadback、validation、計器、world生成などの負荷が残る。**「全fixture税を除去」とは呼ばない**。
 
 - **2つのビルドを比べるときは制御armを使う**（2026-10-21 追加）。`CELTIUM_KPI_CONTROL_JARS=<固定ビルドのstage>` を渡すと、各repetitionが **candidate → celeritas → control** の順（偶数repは逆順）で走り、`medianControlRatio` が**同一arm・同一窓**の比として出る。参照armとの比は「Celeritasからどれだけ離れているか」を答えるが、**マシンドリフトは相殺しない**（別レンダラなので負荷応答が違う）。ビルド同士の優劣は control 比で判定する。control側のfixtureは再ビルドでbytesが変わるため同一性は要求せず、**窓の契約（warmFrom/To・サンプル数・完走）**で検証し、差は `inputs.controlFixtureDiffers` に記録する。
@@ -371,7 +375,7 @@ python3 scripts/gv-prune.py --apply
 
 ## 影の視覚受入と構図（round 210の知見）
 
-qmagnetの標準view（壁面支配・yaw180/pitch10）では、**太陽の影が画面内の面に落ちにくい**ため、通常描画のスクリーンショットで影を明瞭に示せない（実測: 地形の9.46%は実際にshadowedだが、その大半は画面外/自己影）。構図を変えるには `-Dceltium.validation.cameraX/Y/Z/Yaw/Pitch` が使えるが、**画像gateは基準pose専用**のため、poseを変えたlegは `INCONCLUSIVE`（判定不能）になる — つまり「見せるための構図」と「受入のgate」は両立しない。
+qmagnetの標準view（壁面支配・yaw180/pitch10）では、**太陽の影が画面内の面に落ちにくい**ため、通常描画のスクリーンショットで影を明瞭に示せない（実測: 地形の9.46%は実際にshadowedだが、その大半は画面外/自己影）。構図を変えるにはハーネスファイルの `cameraX/Y/Z/Yaw/Pitch` が使えるが、**画像gateは基準pose専用**のため、poseを変えたlegは `INCONCLUSIVE`（判定不能）になる — つまり「見せるための構図」と「受入のgate」は両立しない。
 
 そのため影の**機能有効性**は次の2点で示す:
 1. **デバッグパレット**（係数を色で出力）で可視地形のうち何%がshadowedか（実測 9.46%、light設定により16.4%）

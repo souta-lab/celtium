@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.harness.HarnessConfig;
+
 import java.util.Arrays;
 
 /**
@@ -693,8 +695,8 @@ public final class FramePassTimings {
                 // thread. The paired KPI runs with both off, so a split taken with either on describes a different
                 // frame - rounds 42-46 read one as the KPI's shape and spent five rounds on the bracket it inflated.
                 .append(" conditions[validation=")
-                .append(Boolean.getBoolean("celtium.vulkan.validation") ? "on" : "off")
-                .append(" readback=").append(Boolean.getBoolean("celtium.vulkan.presentReadback") ? "on" : "off")
+                .append(HarnessConfig.bool("vulkanValidation", true) ? "on" : "off")
+                .append(" readback=").append(HarnessConfig.bool("presentReadback", true) ? "on" : "off")
                 .append(']');
         text.append(" frame[p50=").append(ms(percentile(frameTotals, n, 0.50)))
                 .append(" p95=").append(ms(percentile(frameTotals, n, 0.95)))

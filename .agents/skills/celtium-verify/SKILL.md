@@ -24,7 +24,7 @@ description: Celtiumの実機検証・性能測定・画像比較で、artifact�
 3. wrapperのresult、runtime lock、process/fixture JSON、native device行、実提示PNGを合わせて読む。
    **exit 0 / fixture PASSED / validation cleanのどれか1つだけでは受入ではない**。未較正は判定不能でexit 2。
 4. AMDとIntelの証拠を別々に読む。A/Bは固定条件と交絡を明示し、別JARの条件一致runを不当に禁止しない。
-5. 性能の周期dump停止キーは **`-Dceltium.vulkan.presentedDumpEvery=0`**。
+5. 性能の周期dump停止キーは **ハーネスファイルの `presentedDumpEvery=0`**。
    それでも要求capture・frameDumpDir・readback・validation等が残る。「全fixture税除去」と言わない。
 6. 自分のjobを回収/停止して終了を確認する。他人のjava/lockを消さない。
    pruneは既定dry-runで、provenanceと別原本のhashが揃った依存JARだけ。logs/world/config/画像は証拠として保持する。

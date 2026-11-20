@@ -5,7 +5,7 @@ Owner: **world-pass text fidelity**. Unit: "the reported afterimage is measured 
 
 ## What this checks
 
-`-Dceltium.validation.signTextAbTick=T` places a standing sign on the ground four blocks in front of the pinned
+The harness file's `signTextAbTick=T` places a standing sign on the ground four blocks in front of the pinned
 camera, writes four lines of text into its tile entity, and then draws three consecutive frames:
 
 | stage | tick | text |

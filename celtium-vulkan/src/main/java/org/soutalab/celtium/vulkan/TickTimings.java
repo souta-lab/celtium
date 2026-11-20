@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.harness.HarnessConfig;
+
 import java.util.Arrays;
 
 /**
@@ -26,9 +28,9 @@ import java.util.Arrays;
  */
 public final class TickTimings {
 
-    private static final boolean ENABLED = Boolean.getBoolean("celtium.vulkan.tickTimings");
-    private static final int FROM = Integer.getInteger("celtium.vulkan.tickTimingsFrom", 400).intValue();
-    private static final int TO = Integer.getInteger("celtium.vulkan.tickTimingsTo", 600).intValue();
+    private static final boolean ENABLED = HarnessConfig.bool("tickTimings", false);
+    private static final int FROM = HarnessConfig.integer("tickTimingsFrom", 400);
+    private static final int TO = HarnessConfig.integer("tickTimingsTo", 600);
     private static final int CAPACITY = Math.max(64, TO - FROM + 8);
 
     /** {@return whether the tick split is switched on}. */

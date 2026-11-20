@@ -58,7 +58,7 @@
 
 **訂正**: 旧手順の`celtium.validation.presentedDumpEvery=0`は存在しないキーだった。旧`gv-notax-*`のeffective argsにも誤指定があり、p50 34.2msを「dump税除去後」とする説明は撤回する。生の観測値まで偽だったという意味ではない。
 
-**規約**: 周期dump停止は **`-Dceltium.vulkan.presentedDumpEvery=0`**、frameDumpDir経路は別の **`-Dceltium.vulkan.frameDumpEvery=0`**。要求capture/readback/validation等はなお残る。全frame intervalとrender bracketの測定区間を揃え、外側を自動的に「mods/fixture由来」と帰属させない。手順は [development.md](<development.md>)。
+**規約**: 周期dump停止は **ハーネスファイルの `presentedDumpEvery=0`**、frameDumpDir経路は別の **`frameDumpEvery=0`**。要求capture/readback/validation等はなお残る。全frame intervalとrender bracketの測定区間を揃え、外側を自動的に「mods/fixture由来」と帰属させない。手順は [development.md](<development.md>)。
 
 ---
 
@@ -179,8 +179,8 @@ GL照会（`glGetFloatv(GL_MODELVIEW_MATRIX)` 等）自体が **ミラー（Vulk
 
 ## KPIの数値と同じ土俵で leg を走らせずに比べる（2026-10-24）
 
-KPI harness は計測用に次の3つを**明示的に切る**（`scripts/gv_kpi.py:206-210`）:
-`-Dceltium.vulkan.validation=false`・`-Dceltium.vulkan.presentReadback=false`・`-Dceltium.vulkan.presentedDumpEvery=0`。
+KPI harness は計測用に次の3つを**明示的に切る**（`scripts/gv_kpi.py` の common/window リスト。gv_leg がハーネスファイルへ翻訳する）:
+`vulkanValidation=false`・`presentReadback=false`・`presentedDumpEvery=0`。
 素の `gv-leg.sh` はこれらを切らないので、**同じJARでも frame が数倍違う**。実測（同JAR `fa32e6e9…`, AMD, world）:
 
 | 走らせ方 | warm p50 | upload submit wait |
@@ -332,7 +332,7 @@ vanilla 風 widget で測られており、pack の画面にはそのまま使�
 
 ## menu の presented dump は「要求した」だけでは撮れない（2026-11-02 実測）
 
-**症状**: `-Dceltium.validation.dumpPresentedMenuTick=20 -Dceltium.validation.menuHoldTicks=40` の leg が
+**症状**: ハーネスファイルに `dumpPresentedMenuTick=20`・`menuHoldTicks=40` を書いた leg が
 `menuHeldTicks=40` を報告するのに `celtium-presented-menu-*.png` も `menuDumpClientTick` も無い。
 
 **原因は3つ重なっていた**。(1) 要求条件が `mc.currentScreen instanceof GuiMainMenu` で、受け入れ instance の

@@ -2,6 +2,7 @@ package org.taumc.celeritas.mixin.core.terrain;
 
 import com.llamalad7.mixinextras.sugar.Local;
 import net.minecraft.client.Minecraft;
+import org.soutalab.celtium.harness.HarnessConfig;
 import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.multiplayer.WorldClient;
 import net.minecraft.client.renderer.*;
@@ -310,11 +311,11 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
     }
 
     /**
-     * {@code -Dceltium.debug.markTrace=true}: how often sections are marked for rebuild, per five seconds. Enigmatica 2
+     * The harness's {@code markTrace=true}: how often sections are marked for rebuild, per five seconds. Enigmatica 2
      * Expert keeps ~240 sections pending for a whole run while builds flow; this says whether something re-marks them.
      */
     @Unique
-    private static final boolean celtium$MARK_TRACE = Boolean.getBoolean("celtium.debug.markTrace");
+    private static final boolean celtium$MARK_TRACE = HarnessConfig.bool("markTrace", false);
     @Unique
     private static long celtium$markWindowStart;
     @Unique

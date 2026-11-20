@@ -5,6 +5,7 @@ import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.texture.ITextureObject;
 import net.minecraft.client.renderer.texture.TextureMap;
 import org.lwjgl.opengl.GL11;
+import org.soutalab.celtium.harness.HarnessConfig;
 import org.soutalab.celtium.vulkan.VulkanDynamicMesh;
 import org.soutalab.celtium.vulkan.VulkanModelQuadCapture;
 
@@ -26,14 +27,13 @@ import org.soutalab.celtium.vulkan.VulkanModelQuadCapture;
  *   <li>the last step deletes the list again, so the run ends with the probe's own buffers released rather than
  *       leaving the scene carrying them.</li>
  * </ul>
- * Off unless asked for: {@code -Dceltium.validation.modelLifecycle=steps} drives the cases and
- * {@code -Dceltium.validation.modelLifecycle=state} only prints the counters periodically, which is what a reload or
+ * Off unless asked for: the harness file's {@code modelLifecycle=steps} drives the cases and
+ * {@code modelLifecycle=state} only prints the counters periodically, which is what a reload or
  * world-switch run uses to compare the live buffer count before and after.
  */
 public final class ModelListLifecycleProbe {
 
-    private static final String PROPERTY = "celtium.validation.modelLifecycle";
-    private static final String MODE = System.getProperty(PROPERTY, "off");
+    private static final String MODE = HarnessConfig.string("modelLifecycle", "off");
     /** {@code steps} drives the cases; {@code state} prints the state only; anything else is off. */
     private static final boolean STEPS = "steps".equalsIgnoreCase(MODE) || "true".equalsIgnoreCase(MODE);
     private static final boolean ENABLED = STEPS || "state".equalsIgnoreCase(MODE);

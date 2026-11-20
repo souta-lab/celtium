@@ -1,6 +1,7 @@
 package org.embeddedt.embeddium.impl.render.terrain;
 
 import lombok.Getter;
+import org.soutalab.celtium.harness.HarnessConfig;
 import org.embeddedt.embeddium.impl.common.util.NativeBuffer;
 import org.embeddedt.embeddium.impl.gl.device.CommandList;
 import org.embeddedt.embeddium.impl.gl.device.RenderDevice;
@@ -480,7 +481,7 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
      * {@link #scheduleRebuildForBlockArea} - and that method is called ~8.6 thousand times per frame while vanilla
      * drains its light-update queue, so the property lookup alone was a measurable part of the storm's cost.
      */
-    private static final boolean BUILD_FLOW_LOG = Boolean.getBoolean("celtium.debug.buildFlow");
+    private static final boolean BUILD_FLOW_LOG = HarnessConfig.bool("buildFlow", false);
 
     public void scheduleRebuildForBlockArea(int minX, int minY, int minZ, int maxX, int maxY, int maxZ, boolean important) {
         // Who calls this twelve thousand times a frame in a still scene? The stack names the caller instead of the

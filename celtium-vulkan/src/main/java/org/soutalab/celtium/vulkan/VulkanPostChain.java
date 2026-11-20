@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.harness.HarnessConfig;
+
 import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -269,7 +271,7 @@ public final class VulkanPostChain {
      */
     private static final int FAIL_FIRST_USE_RECORDINGS =
             Integer.getInteger("celtium.vulkan.postChainFailFirstUse", 0).intValue();
-    private static final boolean INJECTION_ALLOWED = Boolean.getBoolean("celtium.vulkan.validation");
+    private static final boolean INJECTION_ALLOWED = HarnessConfig.bool("vulkanValidation", true);
     private int injectedFirstUseFailures;
 
     /**

@@ -6,7 +6,7 @@ drawn when entities glow"). That sentence cannot fail: a white pixel near a mob 
 chain drew it, whether the mob's own texture has a bright edge, or whether a cloud happens to sit behind it. This
 checker turns it into a measurement with a control.
 
-The fixture's ``-Dceltium.validation.glowAbTick=T`` tags every non-player entity glowing at tick ``T+1`` and clears the
+The harness file's ``glowAbTick=T`` tags every non-player entity glowing at tick ``T+1`` and clears the
 tag at ``T`` and ``T+2``, dumping the frame each tick draws (stages ``glow-a``, ``glow-b``, ``glow-c``). The camera is
 pinned and the stack is static, so the only thing that differs between the three frames is the tag. The outline is
 drawn in the entity's team colour, which for a teamless mob is white, so the measurement is:

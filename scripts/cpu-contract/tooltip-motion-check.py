@@ -5,7 +5,7 @@ Owner: **font/GUI fidelity**. Unit: "the reported tooltip afterimage is measured
 
 ## What this checks
 
-`-Dceltium.validation.screen=tooltipmotion` opens `TooltipMotionScreen`, which draws an opaque black panel and then a
+The harness file's `screen=tooltipmotion` opens `TooltipMotionScreen`, which draws an opaque black panel and then a
 real vanilla tooltip (the same `GuiScreen.drawHoveringText` -> Forge `GuiUtils` path the reported defect was seen on)
 at one of two positions, alternating every frame. The screen asks for four consecutive frames itself, so both
 parities and both arms are in the set whatever frame the leg's own screenshot catches.

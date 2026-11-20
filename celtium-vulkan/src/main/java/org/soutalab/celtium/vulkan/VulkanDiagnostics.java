@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.harness.HarnessConfig;
+
 /**
  * One gate for the repeating diagnostic lines the renderer writes to stdout.
  * <p>
@@ -30,7 +32,7 @@ public final class VulkanDiagnostics {
      */
     private static final boolean ENABLED =
             Boolean.getBoolean(PROPERTY)
-                    || Boolean.getBoolean("celtium.vulkan.validation");
+                    || HarnessConfig.bool("vulkanValidation", true);
 
     private VulkanDiagnostics() {
     }

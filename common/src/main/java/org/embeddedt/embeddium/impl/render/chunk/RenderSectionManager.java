@@ -1,5 +1,6 @@
 package org.embeddedt.embeddium.impl.render.chunk;
 
+import org.soutalab.celtium.harness.HarnessConfig;
 import it.unimi.dsi.fastutil.longs.Long2ReferenceMap;
 import it.unimi.dsi.fastutil.longs.Long2ReferenceOpenHashMap;
 import it.unimi.dsi.fastutil.objects.*;
@@ -66,7 +67,7 @@ public abstract class RenderSectionManager {
     protected static final boolean CONTINUOUSLY_REMESH_WORLD = false;
 
     /** Whether to print the build-flow line, which says who fills the queues and how fast they drain. */
-    private static final boolean BUILD_FLOW_LOG = Boolean.getBoolean("celtium.debug.buildFlow");
+    private static final boolean BUILD_FLOW_LOG = HarnessConfig.bool("buildFlow", false);
     /**
      * History for {@code celtium$queueMeshUpdates} never queueing pending sections the visibility search did not
      * reach: the search already queues the visible ones, nearest first (upstream behaviour); the extra producer that

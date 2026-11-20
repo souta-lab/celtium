@@ -6,7 +6,7 @@ code".
 
 ## What this checks
 
-`-Dceltium.validation.flickerArmTick=T` hides the HUD, clears the world's particles and sets
+The harness file's `flickerArmTick=T` hides the HUD, clears the world's particles and sets
 `-Dceltium.debug.flickerArm=true` at world tick `T`. The swapchain (`-Dceltium.debug.flickerSample`) then reads back
 the next two presented frames and compares them, and (`-Dceltium.debug.flickerDump`) writes them as
 `celtium-flicker-prev.png` and `celtium-flicker-cur.png` in the run directory.

@@ -122,6 +122,45 @@ class Plan:
     manifest: dict
     reference_renderer: bool = False
     jfr: dict | None = None
+    harness_file: Path | None = None
+    harness_properties: str = ""
+
+
+# The harness keys whose -D form the 2026-11-20 flag consolidation retired: the validation client's
+# whole namespace, the renderer's harness switches, and the two debug traces the gate legs use. A leg
+# names them in the harness file instead (HarnessConfig reads celtium-harness.properties from the game
+# directory). Every other -D - the renderer's diagnostic long tail, the patch switches, the bench
+# harness's own namespace - still goes to the JVM as an argument, unchanged.
+HARNESS_KEYS = {
+    "celtium.vulkan.validation": "vulkanValidation",
+    "celtium.vulkan.presentReadback": "presentReadback",
+    "celtium.vulkan.presentedDumpEvery": "presentedDumpEvery",
+    "celtium.vulkan.frameBudget": "frameBudget",
+    "celtium.vulkan.frameBudgetFrames": "frameBudgetFrames",
+    "celtium.vulkan.frameBudgetLines": "frameBudgetLines",
+    "celtium.vulkan.presentInterval": "presentInterval",
+    "celtium.vulkan.frameDumpDir": "frameDumpDir",
+    "celtium.vulkan.frameDumpEvery": "frameDumpEvery",
+    "celtium.vulkan.frameDumpCount": "frameDumpCount",
+    "celtium.vulkan.tickTimings": "tickTimings",
+    "celtium.vulkan.tickTimingsFrom": "tickTimingsFrom",
+    "celtium.vulkan.tickTimingsTo": "tickTimingsTo",
+    "celtium.vulkan.dumpTextures": "dumpTextures",
+    "celtium.vulkan.dumpTexturesEvery": "dumpTexturesEvery",
+    "celtium.vulkan.failImmediateSubmits": "failImmediateSubmits",
+    "celtium.debug.buildFlow": "buildFlow",
+    "celtium.debug.markTrace": "markTrace",
+}
+
+
+def harness_short_key(key: str) -> str | None:
+    """The harness-file key for a -D argument name, or None if the argument is not a harness key."""
+    name = key[2:] if key.startswith("-D") else key
+    if name == "celtium.validation":
+        return None  # The master switch itself stays a JVM argument.
+    if name.startswith("celtium.validation."):
+        return name[len("celtium.validation."):]
+    return HARNESS_KEYS.get(name)
 
 
 def sha256(path: Path) -> str:
@@ -283,6 +322,8 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
         raise LegError("unknown mode or GPU")
     # Parsed before any artifact is reserved, so a malformed profile request fails the leg before it costs a run.
     jfr = jfr_spec()
+    harness_entries: dict[str, str] = {}
+    kept_extras: list[str] = []
     for arg in extras:
         # -XX: is part of the allowlist because profiling needs it: a JFR recording is started with
         # -XX:StartFlightRecording=..., and attributing sub-microsecond work with homemade brackets stopped working
@@ -295,20 +336,28 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
                            f"argument: {arg!r}")
         key, _, value = arg.partition("=")
         if key == "-Dceltium.validation.presentedDumpEvery":
-            raise LegError("unknown celtium.validation.presentedDumpEvery; use -Dceltium.vulkan.presentedDumpEvery=0")
-        if key in ("-Dceltium.vulkan.validation", "-Dceltium.vulkan.presentReadback") and value.lower() == "false":
-            # The two opt-outs, and both are measurement switches rather than modes.
-            # -Dceltium.vulkan.validation: the correctness arms keep the layer on (that is where the VUID evidence
-            # comes from) while the shipping configuration has it off; measured on the standard scene it costs 6.6 ms
-            # of an 11.0 ms frame.
-            # -Dceltium.vulkan.presentReadback: the runner's default reads the presented image back on every present
-            # (the picture check), which JFR put 16% of the client thread's samples inside - a GPU sync
-            # and a full 1280x720 readback per frame. A performance arm turns both off and checks its picture through
-            # the requested dump instead; the numbers from such a leg have to be labelled as the shipping arm.
-            pass
-        elif key in ("-Dceltium.vulkan.validation", "-Dceltium.validation",
-                     "-Dceltium.vulkan.presentReadback", "-Dceltium.validation.dumpPresentedImage") and value.lower() != "true":
-            raise LegError(f"this native acceptance runner requires {key}=true")
+            raise LegError("unknown celtium.validation.presentedDumpEvery; use presentedDumpEvery=0 in the harness "
+                           "file (the cadence is the renderer-side key, formerly -Dceltium.vulkan.presentedDumpEvery)")
+        if key == "-Dceltium.validation" and value.lower() != "true":
+            raise LegError("this native acceptance runner requires -Dceltium.validation=true")
+        short = harness_short_key(key)
+        if short is not None:
+            # A harness key named the old way is translated into the harness file the runner seeds, and
+            # is not passed to the JVM: since the consolidation the -D form is inert, and keeping it in
+            # the argument list would record a control the run never felt. The two measurement opt-outs
+            # live here too, as file entries: vulkanValidation=false (the correctness arms keep the layer
+            # on - that is where the VUID evidence comes from - while the shipping configuration has it
+            # off; measured on the standard scene it costs 6.6 ms of an 11.0 ms frame) and
+            # presentReadback=false (the profile's readback is a GPU sync and a full 1280x720 readback
+            # per present, 16% of the client thread's samples in JFR). A performance arm turns both off
+            # and checks its picture through the requested dump instead; the numbers from such a leg have
+            # to be labelled as the shipping arm.
+            if short == "dumpPresentedImage" and value.lower() != "true":
+                raise LegError("this native acceptance runner requires the presented dump "
+                               "(dumpPresentedImage=true in the harness profile)")
+            harness_entries[short] = value
+            continue
+        kept_extras.append(arg)
     root = require_dir(root or Path(os.environ.get("CELTIUM_ROOT", Path(__file__).resolve().parent.parent)))
     gv = root / ".gv-verify"
     if gv.is_symlink():
@@ -436,17 +485,21 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
     # The real-world mode drives the fixture's own world scene, which names its map, its spawn pose and its render
     # distance; every other mode keeps the flat acceptance scene.
     scene = "world" if mode == "world" else "terrain"
+    # The standard leg's harness settings are the HarnessConfig profile; the file this runner seeds
+    # names only what is this leg's own - the scene it drives and where its frame dumps land - plus any
+    # harness keys its extra arguments named (an extra naming one wins over the mode's own scene). The
+    # launch surface is the one master switch.
+    harness_entries = {"scene": scene, "frameDumpDir": str(paths["game"] / "framedump"), **harness_entries}
+    harness_properties = "".join(f"{name}={value}\n" for name, value in harness_entries.items())
+    harness_file = gv / f"{leg}-harness.properties"
     jvm_args = (["-Xmx5g"] if mode in ("e2e", "recipe") else []) + [
-        "-Dceltium.vulkan.presentReadback=true", "-Dfml.readTimeout=120",
-        "-Dceltium.vulkan.validation=true", "-Dceltium.validation=true",
-        f"-Dceltium.validation.scene={scene}",
-        "-Dceltium.validation.keepGui=true", "-Dceltium.validation.minWorldFrames=5",
-        "-Dceltium.validation.pinSections=64", "-Dceltium.validation.screenshotAtTick=200",
-        "-Dceltium.validation.dumpPresentedImage=true", f"-Dceltium.vulkan.frameDumpDir={paths['game'] / 'framedump'}",
-        *extras,
+        "-Dfml.readTimeout=120",
+        "-Dceltium.validation=true",
+        *kept_extras,
     ]
     command = [sys.executable, "-B", "-E", str(harness), str(instance), "--output", str(paths["runtimeLock"]),
-               "--game-dir", str(paths["game"]), "--library", str(library), "--slot-wait", str(SLOT_WAIT)]
+               "--game-dir", str(paths["game"]), "--library", str(library), "--slot-wait", str(SLOT_WAIT),
+               "--harness-file", str(harness_file)]
     # A different drawable size, for asking whether a frame is bound by the GPU or by the render thread: the calibration
     # is 1280x720, so this is for legs that measure rather than accept, and unset keeps the calibrated size.
     window_size = os.environ.get("CELTIUM_LEG_WINDOW_SIZE", "").strip()
@@ -488,11 +541,11 @@ def make_plan(leg: str, jar_dir: Path, mode: str, gpu: str, duration: int,
                 "sourceInstance": str(instance), "isolatedGameDirectory": str(paths["game"]),
                 "artifacts": artifacts, "dependencies": dependencies, "git": git_state(root),
                 "instanceModExclusions": instance_exclusions, "copyPackDirs": supplemental,
-                "jvmArgs": jvm_args, "command": command, "jfrAttach": jfr,
+                "jvmArgs": jvm_args, "harnessProperties": harness_entries, "command": command, "jfrAttach": jfr,
                 "deviceEnvironment": {key: environment.get(key) for key in
                                       ("DRI_PRIME", "MESA_VK_DEVICE_SELECT", "SDL_VIDEODRIVER")}}
     return Plan(root, leg, mode, gpu, duration, paths, renderer, fixture, required_gpu, command, environment, manifest,
-                bool(reference_renderer), jfr)
+                bool(reference_renderer), jfr, harness_file, harness_properties)
 
 
 def json_object(path: Path) -> dict:
@@ -810,6 +863,9 @@ def execute(plan: Plan, *, timeout: float | None = None, terminate_grace: float 
             if key != "output" and os.path.lexists(path):
                 raise LegError(f"artifact appeared while reserving the leg: {path}")
         write_json_new(plan.paths["manifest"], plan.manifest)
+        if plan.harness_file is not None:
+            with plan.harness_file.open("x", encoding="utf-8") as stream:
+                stream.write(plan.harness_properties)
         try:
             for signum in (signal.SIGINT, signal.SIGTERM):
                 old_handlers[signum] = signal.signal(signum, cancel)

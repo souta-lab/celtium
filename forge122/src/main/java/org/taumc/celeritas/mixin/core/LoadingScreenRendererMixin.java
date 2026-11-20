@@ -1,6 +1,7 @@
 package org.taumc.celeritas.mixin.core;
 
 import net.minecraft.client.LoadingScreenRenderer;
+import org.soutalab.celtium.harness.HarnessConfig;
 import org.taumc.celeritas.interfaces.LoadingProgressState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -42,7 +43,7 @@ public abstract class LoadingScreenRendererMixin implements LoadingProgressState
 
     /** Read once: this runs on every loading-progress update. */
     private static final boolean celtium$DUMP_LOADING_PROGRESS =
-            Boolean.getBoolean("celtium.validation.dumpLoadingProgress");
+            HarnessConfig.bool("dumpLoadingProgress", false);
 
     @Inject(method = "setLoadingProgress(I)V", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/Minecraft;updateDisplay()V"), require = 0)

@@ -1,5 +1,6 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.harness.HarnessConfig;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWNativeWayland;
 import org.lwjgl.glfw.GLFWNativeX11;
@@ -277,8 +278,8 @@ public final class VulkanSwapchain {
     private long asyncPresents;
     private long asyncPresentFailures;
     private float lastPresentedMean = -1.0f;
-    /** {@code -Dceltium.vulkan.presentReadback=true} reads the presented image back and records its mean. */
-    private static final boolean PRESENT_READBACK = Boolean.getBoolean("celtium.vulkan.presentReadback");
+    /** The harness's {@code presentReadback} reads the presented image back and records its mean. */
+    private static final boolean PRESENT_READBACK = HarnessConfig.bool("presentReadback", true);
     /** {@code -Dceltium.debug.flickerSample=true}: compare two consecutive presented frames for temporal flicker. */
     private static final boolean FLICKER_SAMPLE = Boolean.getBoolean("celtium.debug.flickerSample");
     private int[] flickerPrevious;

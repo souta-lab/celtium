@@ -5,7 +5,7 @@ Owner: **menu fidelity**. Unit: "the title screen's background/banner is drawn".
 
 ## The contract this checks
 
-Legs that ask for the title screen's presented frame (`-Dceltium.validation.dumpPresentedMenuTick`) are judged by
+Legs that ask for the title screen's presented frame (the harness file's `dumpPresentedMenuTick`) are judged by
 `ValidationClient#celtium$gateMenuStage` on one band of the 1280x720 picture: the top strip where the pack's
 background and banner sit, x in [0.03, 0.97], y in [0.05, 0.31]. Two numbers are measured there - mean luma, and the
 share of pixels whose luma is above the black threshold (8) - and the floors are:

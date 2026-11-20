@@ -42,7 +42,7 @@
 - A/Bは対照・固定条件・交絡を明示する。同一run内対照を優先するが、別JARの比較には条件を揃えた別runを使ってよい。
   雲・panorama位相・tooltip・world生成の差を修正効果としない。poisonは **AARRGGBB**、実際のdumpで適用を確認する。
 - 性能ではcapture/readback/validation等の計測負荷とレンダーブラケットを分ける。
-  周期dump停止は **`-Dceltium.vulkan.presentedDumpEvery=0`**（validation名前空間ではない）。これだけで全fixture税が消えたとは言わない。
+  周期dump停止は **ハーネスファイルの `presentedDumpEvery=0`**（validation名前空間のキーではない）。これだけで全fixture税が消えたとは言わない。
 - ゲームは同時に1つ。正典 [prism_validation.py](<scripts/prism_validation.py>) のworktree共通game-slotを使う。
   `runClient`は探索用で、Cleanroom実instanceの受入を代用しない。既存runを上書き/削除して再検証しない。
 

@@ -4,6 +4,7 @@ import it.unimi.dsi.fastutil.objects.Object2LongMap;
 import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceMap;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
+import org.soutalab.celtium.harness.HarnessConfig;
 import org.embeddedt.embeddium.impl.render.chunk.ChunkRenderMatrices;
 import org.embeddedt.embeddium.impl.render.chunk.RenderPassConfiguration;
 import org.embeddedt.embeddium.impl.render.chunk.RenderSectionManager;
@@ -710,7 +711,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
 
     /** Restricted to the small validation scene, so retry is exercised after a real batch was accepted. */
     public void injectImmediateSubmitFailure(int count) {
-        if (!Boolean.getBoolean("celtium.validation.commandBufferTargets") || count < 0 || count > 1)
+        if (!HarnessConfig.bool("commandBufferTargets", false) || count < 0 || count > 1)
             throw new IllegalArgumentException("submit failure injection requires the target acceptance fixture");
         this.failImmediateSubmits = count;
     }
@@ -3014,13 +3015,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     static final boolean FRAME_STATS = Boolean.getBoolean("celtium.vulkan.frameStats");
     /** Read once: these are consulted on frame and loading paths, not at startup only. */
     private static final boolean HANDOFF_TIMINGS = Boolean.getBoolean("celtium.vulkan.handoffTimings");
-    private static final String FRAME_DUMP_DIR = System.getProperty("celtium.vulkan.frameDumpDir");
+    private static final String FRAME_DUMP_DIR = HarnessConfig.path("frameDumpDir");
     private static final boolean DUMP_LOADING_PROGRESS =
-            Boolean.getBoolean("celtium.validation.dumpLoadingProgress");
+            HarnessConfig.bool("dumpLoadingProgress", false);
     /** On/off probes and the frame-dump cadence: consulted on present paths, so resolved once rather than per frame. */
     private static final boolean MIRROR_DUMP_ON = System.getProperty("celtium.vulkan.mirrorDump") != null;
-    private static final int FRAME_DUMP_EVERY = Integer.getInteger("celtium.vulkan.frameDumpEvery", 60).intValue();
-    private static final int FRAME_DUMP_COUNT = Integer.getInteger("celtium.vulkan.frameDumpCount", 0).intValue();
+    private static final int FRAME_DUMP_EVERY = HarnessConfig.integer("frameDumpEvery", 60);
+    private static final int FRAME_DUMP_COUNT = HarnessConfig.integer("frameDumpCount", 0);
     private static final String MIRROR_DUMP_SPEC = System.getProperty("celtium.mirrorDump");
     private static final boolean SWAPCHAIN_PROBE = Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY);
     int frameIntervalCount;
@@ -3543,7 +3544,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final boolean GAME_CLEAR_LATCH =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.gameClearLatch", "true"));
     private static final int PRESENTED_DUMP_EVERY =
-            Integer.getInteger("celtium.vulkan.presentedDumpEvery", 40).intValue();
+            HarnessConfig.integer("presentedDumpEvery", 40);
     static final boolean CHAIN_FRAME_DUMP = Boolean.getBoolean("celtium.vulkan.chainFrameDump");
     /**
      * {@code -Dceltium.debug.dumpPairsAtPresent=N}: at present N, write every chain pair (each mod or vanilla

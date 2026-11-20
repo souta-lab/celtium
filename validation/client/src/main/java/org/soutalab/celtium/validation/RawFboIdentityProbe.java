@@ -1,5 +1,7 @@
 package org.soutalab.celtium.validation;
 
+import org.soutalab.celtium.harness.HarnessConfig;
+
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Map;
@@ -132,7 +134,7 @@ final class RawFboIdentityProbe {
             } finally {
                 org.lwjgl.system.MemoryUtil.memFree(buffer);
             }
-            if (Boolean.getBoolean("celtium.validation.opaqueCopyProbe")) {
+            if (HarnessConfig.bool("opaqueCopyProbe", false)) {
                 verifyOpaqueCopy(backend, copyService, target, identity, drawnImage);
             }
             // Bloom chains can keep more than eight targets alive at once. Creating a new one must not

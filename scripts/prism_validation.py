@@ -561,6 +561,8 @@ def main():
     parser.add_argument("--mod", type=Path, action="append", default=[])
     parser.add_argument("--exclude-instance-mod", action="append", default=[],
                         help="Glob of instance mods not to copy into the test game dir (e.g. 'StorageDrawers-*'); the instance itself is untouched")
+    parser.add_argument("--harness-file", type=Path,
+                        help="Copy this celtium-harness.properties into the isolated game directory")
     parser.add_argument("--seed-options", type=Path, action="append", default=[],
                         help="Copy this file into the isolated game directory as options.txt (repeatable; last wins)."
                              " It is how a launch condition the game reads from options - fullscreen, GUI scale,"
@@ -611,6 +613,8 @@ def main():
         parser.error(str(error))
     if args.copy_pack_dir and not args.game_dir:
         parser.error("--copy-pack-dir requires an isolated --game-dir")
+    if args.harness_file and not args.game_dir:
+        parser.error("--harness-file requires an isolated --game-dir")
     if args.validate and not args.run:
         parser.error("--validate requires --run")
     if args.headless and (not args.run or not args.render_node):
@@ -678,6 +682,13 @@ def main():
     supplemental = copy_pack_into_game_dir(source_game, game, args.copy_pack_dir, ignored_mods)
     if supplemental:
         report["supplementalPackDirs"] = supplemental
+    # The harness configuration file, seeded after the pack copy so the caller's file wins over any
+    # the instance carried: HarnessConfig reads it from the game directory the JVM starts in.
+    if args.harness_file:
+        if not args.harness_file.is_file():
+            parser.error(f"--harness-file does not exist: {args.harness_file}")
+        shutil.copyfile(args.harness_file, game / "celtium-harness.properties")
+        print(f"Seeded {game / 'celtium-harness.properties'} from {args.harness_file}")
     # After the profile is copied: the copy already carries the instance's own saves/, so seeding first made the copy
     # fail on an existing directory (measured, first in-world Supersymmetry attempt).
     for save in args.seed_save:

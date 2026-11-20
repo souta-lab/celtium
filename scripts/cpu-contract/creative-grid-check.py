@@ -6,8 +6,8 @@ picture, not eyeballed".
 
 ## What this checks
 
-`-Dceltium.validation.screen=creative -Dceltium.validation.creativeTab=<index>` opens the real
-`GuiContainerCreative`, selects a tab through the screen's own `setCurrentCreativeTab`, and keeps it open through the
+The harness file's `screen=creative` and `creativeTab=<index>` open the real
+`GuiContainerCreative`, select a tab through the screen's own `setCurrentCreativeTab`, and keep it open through the
 capture. The report then carries two facts that have to agree:
 
 * `creativeGridFilled` - how many of the container's slots hold a stack (a container fact), and

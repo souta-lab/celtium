@@ -29,16 +29,16 @@ final class ValidationSupport {
 
     /**
      * Adds the validation layer and the debug-utils messenger to the instance create info. Only reached when
-     * {@link VulkanContext#VALIDATION_PROPERTY} is set, so a normal run enables no layer and no instance extension at all.
+     * the harness asked for the layer, so a normal run enables no layer and no instance extension at all.
      */
     static VkDebugUtilsMessengerCreateInfoEXT enable(VulkanContext context, MemoryStack stack,
             VkInstanceCreateInfo createInfo) {
         if (!VulkanContext.instanceExtensionNames(stack).contains(EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME)) {
-            throw new IllegalStateException("Validation was requested with -D" + VulkanContext.VALIDATION_PROPERTY + "=true, but the"
+            throw new IllegalStateException("Validation was requested by the harness (vulkanValidation=true), but the"
                     + " loader does not offer " + EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME + ".");
         }
         if (!VulkanContext.instanceLayerNames(stack).contains(VulkanContext.VALIDATION_LAYER_NAME)) {
-            throw new IllegalStateException("Validation was requested with -D" + VulkanContext.VALIDATION_PROPERTY + "=true, but the"
+            throw new IllegalStateException("Validation was requested by the harness (vulkanValidation=true), but the"
                     + " layer " + VulkanContext.VALIDATION_LAYER_NAME + " is not installed.");
         }
         createInfo.ppEnabledLayerNames(stack.pointers(stack.UTF8(VulkanContext.VALIDATION_LAYER_NAME)));

@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.harness.HarnessConfig;
+
 import java.util.Arrays;
 import java.util.Locale;
 
@@ -36,7 +38,8 @@ import java.util.Locale;
  * submitted outside them, so a frame can be GPU-bound with a small {@code gpu} number. None of these numbers is a
  * performance claim about a release: they say where a measured run's time went, on that run's driver and scene.
  * <p>
- * Off unless {@code -Dceltium.vulkan.frameBudget=true}, the same rule the other repeating instruments follow: the
+ * Off unless the harness asks for it ({@code frameBudget=true} in the harness file), the same rule the other
+ * repeating instruments follow: the
  * acceptance fixtures pay for the instruments that judge them, and a normal run must not. Asking for it also opens
  * the window timestamp path (see {@code timeImmediatePass}), because the {@code gpu} column is what separates "the
  * GPU is the limiter" from "the GPU is idle and the CPU is the limiter" - and a report that cannot say which is the
@@ -48,28 +51,28 @@ import java.util.Locale;
  */
 public final class FrameBudgetTimings {
 
-    /** {@code -Dceltium.vulkan.frameBudget=true}: measure and print the per-frame split. */
-    private static final boolean ENABLED = Boolean.getBoolean("celtium.vulkan.frameBudget");
+    /** The harness's {@code frameBudget=true}: measure and print the per-frame split. */
+    private static final boolean ENABLED = HarnessConfig.bool("frameBudget", false);
 
     /**
-     * {@code -Dceltium.vulkan.frameBudgetFrames=60}: frames per printed line.
+     * The harness's {@code frameBudgetFrames} (default 60): frames per printed line.
      * <p>
      * A line per frame is unreadable and a line per second is what a tester can correlate with a visible stutter;
      * 60 frames is that second on a healthy session and six seconds on the reported 10 FPS, which is still short
      * enough to bracket a spike.
      */
     private static final int REPORT_EVERY_FRAMES =
-            Math.max(1, Integer.getInteger("celtium.vulkan.frameBudgetFrames", 60).intValue());
+            Math.max(1, HarnessConfig.integer("frameBudgetFrames", 60));
 
     /**
-     * {@code -Dceltium.vulkan.frameBudgetLines=120}: how many periodic lines a run may print.
+     * The harness's {@code frameBudgetLines} (default 120): how many periodic lines a run may print.
      * <p>
      * Bounded on purpose: a two-hour session must not turn a diagnostic into the log's own performance problem,
      * and the teardown summary carries the session's totals after the last line. The cap is a line count, not a
      * byte count, so its cost is predictable.
      */
     private static final int MAX_LINES =
-            Math.max(1, Integer.getInteger("celtium.vulkan.frameBudgetLines", 120).intValue());
+            Math.max(1, HarnessConfig.integer("frameBudgetLines", 120));
 
     /** Ring capacity: the samples each printed line and the teardown summary are computed over. */
     private static final int CAPACITY = 512;
@@ -183,11 +186,11 @@ public final class FrameBudgetTimings {
      * Whether the present cadence is measured. It is cheap enough to ask for on its own: the world-frame sample costs
      * four clock reads and a timestamp query per window, while the cadence costs one clock read per present. A leg
      * that only needs the frame period (the menu, or a renderer comparison where the split's own tax would change the
-     * number it is trying to measure) turns this on with {@code -Dceltium.vulkan.presentInterval=true} and pays
+     * number it is trying to measure) turns this on with the harness's {@code presentInterval=true} and pays
      * nothing for the split.
      */
     private static final boolean PRESENT_INTERVAL = ENABLED
-            || Boolean.getBoolean("celtium.vulkan.presentInterval");
+            || HarnessConfig.bool("presentInterval", false);
 
     /**
      * Marks one presented frame: the cadence where no frame boundary runs.

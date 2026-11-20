@@ -10,7 +10,7 @@ Usage:
     vanilla_stage_compare.py <gl-less.png> <bridge.png> [--label NAME] [--write-crops DIR]
 
 Both images must be 1280x720. The GL-less picture is the presented dump
-(-Dceltium.vulkan.presentReadback=true -Dceltium.validation.dumpPresentedImage=true); the bridge
+(the harness file's `presentReadback=true` and `dumpPresentedImage=true`); the bridge
 picture is the game's own screenshot, which is that configuration's picture of the window. Both
 legs must be at the same scene, pose and tick - the fixture's camera overrides now apply before
 the frame (2849c1ec8), and the tick-scheduled scene steps are "at or after" (890817893), so this

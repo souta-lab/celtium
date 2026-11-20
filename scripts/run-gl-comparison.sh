@@ -20,18 +20,28 @@ export VK_LAYER_PATH="$PWD/.celtium-work/gpu-tools/extracted/usr/share/vulkan/ex
 export VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT
 export LD_LIBRARY_PATH="$PWD/.celtium-work/gpu-tools/extracted/usr/lib/x86_64-linux-gnu"
 
+harness_glref=.celtium-work/p32-glref-$suffix-harness.properties
+printf '%s\n' 'weather=true' 'particles=true' > "$harness_glref"
+
 python3 scripts/prism_validation.py /home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.6.13-alpha \
   --output ".celtium-work/p32-glref-$suffix-lock.json" --game-dir ".celtium-work/runtime/p32-glref-$suffix" \
   --mod "$reference" --mod "$fixture" --library "$bindings" \
-  --jvm-arg=-Dceltium.validation.weather=true --jvm-arg=-Dceltium.validation.particles=true \
+  --harness-file "$harness_glref" \
   --run --validate --duration 150 --headless --force-x11 --render-node "$node" --require-gpu "$gpu"
+
+harness_celtium=.celtium-work/p32-celtium-$suffix-harness.properties
+printf '%s\n' \
+  'vulkanValidation=true' \
+  'expectVulkan=true' \
+  'expectVulkanTerrain=true' \
+  'weather=true' \
+  'particles=true' \
+  > "$harness_celtium"
 
 python3 scripts/prism_validation.py /home/s0u7a/.local/share/PrismLauncher/instances/cleanroom-0.6.13-alpha \
   --output ".celtium-work/p32-celtium-$suffix-lock.json" --game-dir ".celtium-work/runtime/p32-celtium-$suffix" \
   --mod "$candidate" --mod "$fixture" --library "$bindings" \
-  --jvm-arg=-Dceltium.vulkan.validation=true --jvm-arg=-Dceltium.validation.expectVulkan=true \
-  --jvm-arg=-Dceltium.validation.expectVulkanTerrain=true \
-  --jvm-arg=-Dceltium.validation.weather=true --jvm-arg=-Dceltium.validation.particles=true \
+  --harness-file "$harness_celtium" \
   --run --validate --duration 150 --headless --force-x11 --render-node "$node" --require-gpu "$gpu"
 
 python3 scripts/compare_validation.py \

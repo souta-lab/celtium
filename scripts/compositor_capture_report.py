@@ -10,7 +10,7 @@ and answers the two questions the capture exists for:
     the swapchain image is cleared to magenta (1,0,1), so any capture that is uniformly magenta can only have
     come from that present path.
   * Which presented frame is it? The renderer can dump the presented image it just handed over, numbered by
-    its own presented-frame counter (`-Dceltium.vulkan.frameDumpDir`, files `frame-<presentedFrame>.png`). This
+    its own presented-frame counter (the harness file's `frameDumpDir`, files `frame-<presentedFrame>.png`). This
     compares each numbered capture against those numbered frames by pixel content and by time, and reports the
     pairing it found rather than asserting one.
 

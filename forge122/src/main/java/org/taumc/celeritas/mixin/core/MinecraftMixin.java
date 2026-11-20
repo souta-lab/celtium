@@ -2,6 +2,7 @@ package org.taumc.celeritas.mixin.core;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.LoadingScreenRenderer;
+import org.soutalab.celtium.harness.HarnessConfig;
 import org.objectweb.asm.Opcodes;
 import org.taumc.celeritas.impl.profile.GameLoopTiming;
 import org.taumc.celeritas.interfaces.LoadingProgressState;
@@ -304,7 +305,7 @@ public class MinecraftMixin {
     }
 
     /** Read once: this hook runs per splash frame, and the fixture switch cannot change mid-run. */
-    private static final boolean celtium$VALIDATION = Boolean.getBoolean("celtium.validation");
+    private static final boolean celtium$VALIDATION = HarnessConfig.enabled();
 
     @Inject(method = "drawSplashScreen", at = @At("HEAD"), require = 0)
     private void celtium$dumpLoadingFrame(CallbackInfo ci) {

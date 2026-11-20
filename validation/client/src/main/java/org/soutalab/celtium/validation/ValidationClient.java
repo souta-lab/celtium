@@ -1,5 +1,7 @@
 package org.soutalab.celtium.validation;
 
+import org.soutalab.celtium.harness.HarnessConfig;
+
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -72,7 +74,7 @@ public final class ValidationClient {
      * field the GUI Scale option writes. The value is named in the report as {@code guiScaleForced}, so a leg never
      * has to infer which scale it ran at.
      */
-    private static final int FORCED_GUI_SCALE = Integer.getInteger("celtium.validation.guiScale", 0).intValue();
+    private static final int FORCED_GUI_SCALE = HarnessConfig.integer("guiScale", 0);
     /** Reported once, so a leg names the scale it actually ran at. */
     private boolean celtium$guiScaleForcedReported;
     private boolean celtium$guiScaleRestoredReported;
@@ -80,10 +82,10 @@ public final class ValidationClient {
     private boolean celtium$idleCapReported;
     /** The tick at which the forced GUI scale is set back to the vanilla default, 0 disables the restore. */
     private static final int GUI_SCALE_RESTORE_AT_TICK =
-            Integer.getInteger("celtium.validation.guiScaleRestoreAtTick", 0).intValue();
+            HarnessConfig.integer("guiScaleRestoreAtTick", 0);
 
     private static final long PINNED_WORLD_TIME =
-            Long.getLong("celtium.validation.worldTime", 6000L).longValue();
+            HarnessConfig.longValue("worldTime", 6000L);
 
     /**
      * MCP field names followed by the SRG names Forge uses at runtime. Vanilla regenerates the lightmap with a
@@ -132,9 +134,6 @@ public final class ValidationClient {
     /** The extent the menu floors were measured at; another size is reported and not judged. */
     private static final int MENU_FLOOR_WIDTH = 1280;
     private static final int MENU_FLOOR_HEIGHT = 720;
-
-    /** The scene this run drives; {@code -Dceltium.validation.scene=<name>}. */
-    private static final String SCENE_PROPERTY = "celtium.validation.scene";
 
     /** The identity sidecar a picture carries: the same path plus this suffix. */
     private static final String IDENTITY_SUFFIX = ".identity.json";
@@ -200,9 +199,9 @@ public final class ValidationClient {
     }
     /** Opt-in moving-view replay after the fixed capture, so a stationary KPI cannot hide view-dependent stalls. */
     private final float celtium$cameraSweepRate = Float.parseFloat(
-            System.getProperty("celtium.validation.cameraSweepDegreesPerSecond", "0"));
+            HarnessConfig.string("cameraSweepDegreesPerSecond", "0"));
     private final int celtium$cameraSweepFromTick =
-            Integer.getInteger("celtium.validation.cameraSweepFromTick", 400).intValue();
+            HarnessConfig.integer("cameraSweepFromTick", 400);
     private int celtium$cameraSweepFrames;
     private float celtium$cameraSweepLastYaw;
     /**
@@ -210,9 +209,9 @@ public final class ValidationClient {
      * way walking into unseen terrain does - the case a fixed or turning camera never exercises.
      */
     private final double celtium$flightSpeed = Double.parseDouble(
-            System.getProperty("celtium.validation.flightBlocksPerSecond", "0"));
+            HarnessConfig.string("flightBlocksPerSecond", "0"));
     private final int celtium$flightFromTick =
-            Integer.getInteger("celtium.validation.flightFromTick", 400).intValue();
+            HarnessConfig.integer("flightFromTick", 400);
     private int celtium$flightFrames;
     private double celtium$flightLastX;
     private int celtium$flightServerTick = -1;
@@ -301,16 +300,16 @@ public final class ValidationClient {
      * amount of built geometry. A leg that never reaches it falls back to the deadline and says so.
      */
     private static final String CAPTURE_CONDITION =
-            System.getProperty("celtium.validation.captureCondition", "tick").trim().toLowerCase(java.util.Locale.ROOT);
+            HarnessConfig.string("captureCondition", "tick").trim().toLowerCase(java.util.Locale.ROOT);
     /** Consecutive frames the listed-section count must hold still before {@code built} captures. */
     private static final int CAPTURE_STABLE_FRAMES =
-            Integer.getInteger("celtium.validation.captureStableFrames", 30).intValue();
+            HarnessConfig.integer("captureStableFrames", 30);
     /**
      * {@code -Dceltium.validation.pinSections=<n>}: hold the capture until the listed-section count has been the same
      * for {@link #PIN_SECTIONS_STABLE_FRAMES} consecutive frames and is at or below {@code n}. 0 disables it.
      */
     private static final int PIN_SECTIONS =
-            Integer.getInteger("celtium.validation.pinSections", 0).intValue();
+            HarnessConfig.integer("pinSections", 64, 0);
     /**
      * The absolute world clock the capture waits for, in total world ticks, or 0 to disable.
      * <p>
@@ -322,10 +321,10 @@ public final class ValidationClient {
      * it; an absolute target does not. Default 0 keeps every existing leg and calibration key where it is.
      */
     private static final long CAPTURE_AT_TOTAL_WORLD_TIME =
-            Long.getLong("celtium.validation.captureAtTotalWorldTime", 0L).longValue();
+            HarnessConfig.longValue("captureAtTotalWorldTime", 0L);
     /** How many consecutive frames the section count must hold before a pinned capture fires. */
     private static final int PIN_SECTIONS_STABLE_FRAMES =
-            Integer.getInteger("celtium.validation.pinSectionsStableFrames", 20).intValue();
+            HarnessConfig.integer("pinSectionsStableFrames", 20);
     /** The count seen on the previous frame, and how many frames it has now held. */
     private int celtium$pinnedSectionsSeen = -1;
     private int celtium$pinnedSectionsStableFrames;
@@ -335,11 +334,11 @@ public final class ValidationClient {
     private int celtium$captureTraceLines;
     /** {@code -Dceltium.validation.captureTrace=true}: report the capture gate's inputs every 100 ticks. */
     private static final boolean CAPTURE_TRACE =
-            Boolean.getBoolean("celtium.validation.captureTrace");
+            HarnessConfig.bool("captureTrace", false);
 
     /** The listed-section count {@code sections} waits for; 0 disables that condition. */
     private static final int CAPTURE_SECTIONS =
-            Integer.getInteger("celtium.validation.captureSections", 0).intValue();
+            HarnessConfig.integer("captureSections", 0);
 
     /**
      * Pending chunk rebuilds (the debug line's {@code P1}) the capture frame may still have outstanding.
@@ -351,7 +350,7 @@ public final class ValidationClient {
      * therefore not reaching the same world: the count says how many sections exist, not whether any of them
      * are still being rebuilt. The capture condition gains this clause so the two runs can be compared.
      */
-    private static final int CAPTURE_MAX_P1 = Integer.getInteger("celtium.validation.captureMaxP1", 0);
+    private static final int CAPTURE_MAX_P1 = HarnessConfig.integer("captureMaxP1", 0);
     /**
      * How many finished chunk build results the capture tolerates, or -1 to ignore the field.
      * <p>
@@ -362,10 +361,10 @@ public final class ValidationClient {
      * every existing leg and calibration key where it is.
      */
     private static final int CAPTURE_MAX_HELD_BUILDS =
-            Integer.getInteger("celtium.validation.captureMaxHeldBuilds", -1).intValue();
+            HarnessConfig.integer("captureMaxHeldBuilds", -1);
     /** The tick at which {@code built} and {@code sections} give up waiting and capture anyway. */
     private static final int CAPTURE_DEADLINE_TICK =
-            Integer.getInteger("celtium.validation.captureDeadlineTick", 400).intValue();
+            HarnessConfig.integer("captureDeadlineTick", 400);
     /**
      * World frames that must have been rendered before any condition may fire; 0 disables the floor.
      * <p>
@@ -374,7 +373,7 @@ public final class ValidationClient {
      * 32; this floor is the knob that equalises the opportunity count.
      */
     private static final int CAPTURE_MIN_WORLD_FRAMES =
-            Integer.getInteger("celtium.validation.captureMinWorldFrames", 0).intValue();
+            HarnessConfig.integer("captureMinWorldFrames", 0);
     private int celtium$captureStableFrames;
     private int celtium$captureLastListed = -1;
     private String celtium$captureConditionFired = "tick";
@@ -799,17 +798,17 @@ public final class ValidationClient {
     private boolean celtium$exitHookInstalled;
 
     /** Dimension travel: which dimension to move to and at which world tick (both from properties, 0 disables). */
-    private final int celtium$dimensionAtTick = Integer.getInteger("celtium.validation.dimensionAtTick", 0).intValue();
-    private final int celtium$dimension = Integer.getInteger("celtium.validation.dimension", -1).intValue();
+    private final int celtium$dimensionAtTick = HarnessConfig.integer("dimensionAtTick", 0);
+    private final int celtium$dimension = HarnessConfig.integer("dimension", -1);
     /**
      * The optional second half of a round trip: at this world tick the same server transfer sends the player back to
      * the dimension {@code dimensionReturn} names (the Overworld by default), reusing every rule the outbound leg
      * measured - teleporter, settle placement, portal cooldown, client position push and chunk-reload notice.
      */
     private final int celtium$dimensionBackAtTick =
-            Integer.getInteger("celtium.validation.dimensionBackAtTick", 0).intValue();
+            HarnessConfig.integer("dimensionBackAtTick", 0);
     private final int celtium$dimensionReturn =
-            Integer.getInteger("celtium.validation.dimensionReturn", 0).intValue();
+            HarnessConfig.integer("dimensionReturn", 0);
     private boolean celtium$changedDimensionBack;
     private int celtium$arrivedBackAtTick = -1;
     private int celtium$arrivedBackFrames = -1;
@@ -876,14 +875,14 @@ public final class ValidationClient {
      * run at ~206 without it, so a held run is how steady-state intervals are sampled at all. Failure and watchdog
      * exits call {@link #finish} directly - a broken leg never idles to the hold tick.
      */
-    private final int celtium$holdUntilTick = Integer.getInteger("celtium.validation.holdUntilTick", 0).intValue();
+    private final int celtium$holdUntilTick = HarnessConfig.integer("holdUntilTick", 0);
     /**
      * {@code -Dceltium.validation.churnInterval}: every N world ticks a block a few metres ahead of the player is
      * toggled between dirt and stone. A block change marks its render section dirty, so the held window stops
      * measuring a world that never rebuilds and starts showing what a section rebuild costs inside a frame -
      * the anatomy the steady-state legs cannot attribute because nothing in them ever changes.
      */
-    private final int celtium$churnInterval = Integer.getInteger("celtium.validation.churnInterval", 0).intValue();
+    private final int celtium$churnInterval = HarnessConfig.integer("churnInterval", 0);
     private int celtium$churnToggles;
     private net.minecraft.util.math.BlockPos celtium$churnPos;
     /** The world-frame count at the capture, so the presented-frame comparison names the window it is about. */
@@ -935,14 +934,14 @@ public final class ValidationClient {
      * them, before the capture means anything. A capture taken while the download-terrain screen is up is a loading
      * frame, not the new dimension; the default is low enough to be a floor rather than a budget.
      */
-    private final int celtium$minDimensionFrames = Integer.getInteger("celtium.validation.minDimensionFrames", 10).intValue();
+    private final int celtium$minDimensionFrames = HarnessConfig.integer("minDimensionFrames", 10);
     /**
      * How long the capture may wait for those frames. The transfer is asynchronous - the server sends the dimension
      * change, then the client downloads the new world's chunks - so the exact frame at which the scene exists is not
      * known in advance. The wait is for the acceptance's own preconditions and is bounded; a client that has left the
      * target dimension again is not waited for at all.
      */
-    private final int celtium$dimensionWaitUntilTick = Integer.getInteger("celtium.validation.dimensionWaitUntilTick", 240).intValue();
+    private final int celtium$dimensionWaitUntilTick = HarnessConfig.integer("dimensionWaitUntilTick", 240);
     /**
      * How many world frames after the arrival in the target dimension the capture has to come, so that a scene whose
      * renderer has not finished meshing is reported as such instead of failing the picture gate.
@@ -957,7 +956,7 @@ public final class ValidationClient {
      * <p>
      * Zero (the default) keeps the previous behaviour, so no existing calibration key changes.
      */
-    private final int celtium$dimensionSettleFrames = Integer.getInteger("celtium.validation.dimensionSettleFrames", 0).intValue();
+    private final int celtium$dimensionSettleFrames = HarnessConfig.integer("dimensionSettleFrames", 0);
 
     // ---------------------------------------------------------------------------------------------------------------
     // Window resize transition (task-28). The harness cannot resize the window - it only sets the initial size - so
@@ -990,7 +989,7 @@ public final class ValidationClient {
      * renderGlobal.loadRenderers) and reusing the name would have made two instruments share one key.
      */
     private final int celtium$resourceReloadAtTick =
-            Integer.getInteger("celtium.validation.resourceReloadAtTick", 0).intValue();
+            HarnessConfig.integer("resourceReloadAtTick", 0);
     private boolean celtium$resourceReloadRequested;
     /**
      * The world tick to iconify the window at, and whether that has been done.
@@ -1009,11 +1008,11 @@ public final class ValidationClient {
      * <p>
      * Off unless -Dceltium.validation.iconifyAtTick is set.
      */
-    private final int celtium$iconifyAtTick = Integer.getInteger("celtium.validation.iconifyAtTick", 0).intValue();
+    private final int celtium$iconifyAtTick = HarnessConfig.integer("iconifyAtTick", 0);
     private boolean celtium$iconifyRequested;
     private long celtium$resourceReloadElapsedMillis = -1L;
-    private final int celtium$resizeAtTick = Integer.getInteger("celtium.validation.resizeAtTick", 0).intValue();
-    private final String celtium$resizeTo = System.getProperty("celtium.validation.resizeTo", "1024x640");
+    private final int celtium$resizeAtTick = HarnessConfig.integer("resizeAtTick", 0);
+    private final String celtium$resizeTo = HarnessConfig.string("resizeTo", "1024x640");
     /**
      * A sequence of resizes instead of one: {@code -Dceltium.validation.resizeSchedule=400:1024x640,440:800x600,480:1280x720}
      * fires each request at its world tick through the same path {@link #celtium$resizeAtTick} uses (the compositor
@@ -1028,7 +1027,7 @@ public final class ValidationClient {
      * Resize while the title screen is up, before the fixture launches its world, and hold the menu for
      * {@link #celtium$resizeMenuHoldTicks} ticks so those frames are drawn at the new size.
      */
-    private final boolean celtium$resizeDuringMenu = Boolean.getBoolean("celtium.validation.resizeDuringMenu");
+    private final boolean celtium$resizeDuringMenu = HarnessConfig.bool("resizeDuringMenu", false);
     /**
      * Also ask the compositor to change the size of the output the window is on.
      * <p>
@@ -1039,9 +1038,9 @@ public final class ValidationClient {
      * when the window edge is dragged. Off by default: it is a property of this headless rig, not of the renderer.
      */
     private final boolean celtium$resizeViaCompositor =
-            Boolean.getBoolean("celtium.validation.resizeViaCompositor");
+            HarnessConfig.bool("resizeViaCompositor", false);
     /** The sway output the window is on; {@code HEADLESS-1} is the name the headless recipe declares. */
-    private final String celtium$resizeOutput = System.getProperty("celtium.validation.resizeOutput", "HEADLESS-1");
+    private final String celtium$resizeOutput = HarnessConfig.string("resizeOutput", "HEADLESS-1");
     /**
      * Client ticks since the fixture started, and the tick at which to dump a menu frame.
      * <p>
@@ -1060,7 +1059,7 @@ public final class ValidationClient {
      */
     @SubscribeEvent
     public void celtium$drawJaProbe(net.minecraftforge.client.event.GuiScreenEvent.DrawScreenEvent.Post event) {
-        if (!Boolean.getBoolean("celtium.validation.jaProbe")) {
+        if (!HarnessConfig.bool("jaProbe", false)) {
             return;
         }
         Minecraft mc = Minecraft.getMinecraft();
@@ -1073,7 +1072,7 @@ public final class ValidationClient {
         mc.fontRenderer.drawString("オプション 設定 言語 終了 世界を生成", 20, 70, 0xFFFFFF);
     }
     private final int celtium$menuDumpTick =
-            Integer.getInteger("celtium.validation.dumpPresentedMenuTick", 0).intValue();
+            HarnessConfig.integer("dumpPresentedMenuTick", 0);
     private boolean celtium$menuDumpRequested;
     /**
      * Client ticks after the world launch to dump a frame at, and whether that dump has been requested.
@@ -1083,7 +1082,7 @@ public final class ValidationClient {
      * use dumpLoadingProgress and LoadingScreenRendererMixin; this old switch remains for report compatibility.
      */
     private final int celtium$worldLoadDumpTick =
-            Integer.getInteger("celtium.validation.dumpPresentedWorldLoadTick", 0).intValue();
+            HarnessConfig.integer("dumpPresentedWorldLoadTick", 0);
     private boolean celtium$worldLoadDumpRequested;
     private int celtium$loadingProgressCaptures;
     private boolean celtium$controlledLoadingProbe;
@@ -1109,7 +1108,7 @@ public final class ValidationClient {
      * same {@code return} that keeps the world from launching, for a property-driven number of ticks.
      */
     private final int celtium$menuHoldTicks =
-            Integer.getInteger("celtium.validation.menuHoldTicks", 0).intValue();
+            HarnessConfig.integer("menuHoldTicks", 0);
     private int celtium$menuHeldTicks;
     /**
      * Client ticks the title screen may be held while the menu dump it requested waits for its present,
@@ -1121,12 +1120,12 @@ public final class ValidationClient {
      * fixture whose menu never presents would hold the world launch for the whole leg.
      */
     private final int celtium$menuCaptureTicks =
-            Integer.getInteger("celtium.validation.menuCaptureTicks", 60).intValue();
+            HarnessConfig.integer("menuCaptureTicks", 60);
     private int celtium$menuCaptureHeldTicks;
     /** Whether the menu-capture wait is over, either because the picture completed or because it was abandoned. */
     private boolean celtium$menuCaptureFinished;
     private final int celtium$resizeMenuHoldTicks =
-            Integer.getInteger("celtium.validation.resizeMenuHoldTicks", 40).intValue();
+            HarnessConfig.integer("resizeMenuHoldTicks", 40);
     private boolean celtium$resizeRequested;
     private int celtium$resizeRequestedAtTick = -1;
     private int celtium$resizeMenuHeldTicks;
@@ -1147,7 +1146,7 @@ public final class ValidationClient {
     // ---------------------------------------------------------------------------------------------------------------
 
     /** Identifies this run's files: a game directory is reused between runs, so a stale file is a real hazard. */
-    private final String celtium$runId = System.getProperty("celtium.validation.runId",
+    private final String celtium$runId = HarnessConfig.string("runId",
             "run-" + Long.toHexString(System.nanoTime()) + "-" + Long.toHexString(System.identityHashCode(Thread.currentThread())));
     /** The scene this run drives; resolved once, and an unknown name is a failed run rather than a silent default. */
     private final Scene celtium$scene = celtium$resolveScene();
@@ -1161,7 +1160,7 @@ public final class ValidationClient {
     /** Resolved once so a bad value fails the run with its text rather than throwing on a render tick. */
     private final String celtium$sceneError = celtium$sceneResolutionError;
     /** The tick the server teleport is scheduled at: after the world exists, early enough to be settled by the capture. */
-    private final int celtium$poseTick = Integer.getInteger("celtium.validation.cameraSetTick", 25).intValue();
+    private final int celtium$poseTick = HarnessConfig.integer("cameraSetTick", 25);
     /** Set when the renderer's view entity was not the player and had to be moved to the pose as well. */
     private String celtium$poseViewEntity = "none";
     private int celtium$poseViewEntityTicks;
@@ -1248,11 +1247,11 @@ public final class ValidationClient {
     private int celtium$guiSettingsAtTick = -1;
     private int celtium$guiSettingsAtFrames = -1;
     /** Ticks to let the screen lay out between it being open and its capture. */
-    private final int celtium$guiLayoutTicks = Integer.getInteger("celtium.validation.guiLayoutTicks", 8).intValue();
+    private final int celtium$guiLayoutTicks = HarnessConfig.integer("guiLayoutTicks", 8);
     /** Frames that must have been drawn with the screen open before its picture means anything. */
-    private final int celtium$guiMinFrames = Integer.getInteger("celtium.validation.guiMinFrames", 3).intValue();
+    private final int celtium$guiMinFrames = HarnessConfig.integer("guiMinFrames", 3);
     /** Bounded wait for the screen to become a GuiVideoSettings after the click. */
-    private final int celtium$guiWaitTicks = Integer.getInteger("celtium.validation.guiWaitTicks", 20).intValue();
+    private final int celtium$guiWaitTicks = HarnessConfig.integer("guiWaitTicks", 20);
 
     /**
      * {@code -Dceltium.validation.frameViewportHeight=<n>} shrinks the GUI frame viewport to {@code n} logical pixels
@@ -1270,7 +1269,7 @@ public final class ValidationClient {
      * after) is what separates them. A non-zero value then makes the clip happen by construction.
      */
     private final int celtium$frameViewportHeight =
-            Integer.getInteger("celtium.validation.frameViewportHeight", 0).intValue();
+            HarnessConfig.integer("frameViewportHeight", 0);
     /** Whether the frame's natural geometry has been read into the report - once, before any shrink. */
     private boolean celtium$frameViewportReported;
     /**
@@ -1292,7 +1291,7 @@ public final class ValidationClient {
      * the overworld one, and the report says so.
      */
     private static Scene celtium$resolveScene() {
-        String wanted = System.getProperty(SCENE_PROPERTY, "").trim();
+        String wanted = HarnessConfig.string("scene", "terrain", "").trim();
         Scene named = null;
         if (!wanted.isEmpty()) {
             for (Scene scene : Scene.values()) {
@@ -1326,8 +1325,8 @@ public final class ValidationClient {
 
     /** The scene a dimension transfer lands in, or the terrain scene when the run stays where it starts. */
     private static Scene celtium$dimensionScene() {
-        int dimension = Integer.getInteger("celtium.validation.dimension", 0).intValue();
-        int atTick = Integer.getInteger("celtium.validation.dimensionAtTick", 0).intValue();
+        int dimension = HarnessConfig.integer("dimension", 0);
+        int atTick = HarnessConfig.integer("dimensionAtTick", 0);
         if (atTick <= 0 || dimension == 0) {
             return Scene.TERRAIN;
         }
@@ -1386,16 +1385,16 @@ public final class ValidationClient {
     }
 
     /**
-     * The camera pose for a scene: the scene's default, overridden field by field by
-     * {@code -Dceltium.validation.cameraX} and friends.
+     * The camera pose for a scene: the scene's default, overridden field by field by the harness file's
+     * {@code cameraX} and friends.
      */
     private static CameraPose celtium$resolvePose(Scene scene) {
         CameraPose base = celtium$referencePose(scene);
-        double x = Double.parseDouble(System.getProperty("celtium.validation.cameraX", Double.toString(base.x)));
-        double y = Double.parseDouble(System.getProperty("celtium.validation.cameraY", Double.toString(base.y)));
-        double z = Double.parseDouble(System.getProperty("celtium.validation.cameraZ", Double.toString(base.z)));
-        float yaw = Float.parseFloat(System.getProperty("celtium.validation.cameraYaw", Float.toString(base.yaw)));
-        float pitch = Float.parseFloat(System.getProperty("celtium.validation.cameraPitch", Float.toString(base.pitch)));
+        double x = HarnessConfig.doubleValue("cameraX", base.x);
+        double y = HarnessConfig.doubleValue("cameraY", base.y);
+        double z = HarnessConfig.doubleValue("cameraZ", base.z);
+        float yaw = (float) HarnessConfig.doubleValue("cameraYaw", base.yaw);
+        float pitch = (float) HarnessConfig.doubleValue("cameraPitch", base.pitch);
         return new CameraPose(x, y, z, yaw, pitch);
     }
 
@@ -1418,26 +1417,20 @@ public final class ValidationClient {
      */
     private static SceneGate celtium$resolveGate(Scene scene) {
         SceneGate measured = celtium$measuredGate(scene);
-        int minDistinctColours = Integer.getInteger("celtium.validation.gate.minDistinctColours",
-                PRESENTED_DISTINCT_COLOUR_FLOOR).intValue();
-        double minNonBackground = Double.parseDouble(System.getProperty(
-                "celtium.validation.gate.minNonBackgroundFraction",
-                Double.toString(measured.minNonBackgroundFraction)));
-        int minBands = Integer.getInteger("celtium.validation.gate.minVerticalBands",
-                measured.minVerticalBands).intValue();
-        double maxBlack = Double.parseDouble(System.getProperty("celtium.validation.gate.maxBlackFraction",
-                Double.toString(measured.maxBlackFraction)));
-        double minPanelChanged = Double.parseDouble(System.getProperty(
-                "celtium.validation.gate.minPanelChangedFraction",
-                Double.toString(measured.minPanelChangedFraction)));
-        double minPanelStrong = Double.parseDouble(System.getProperty(
-                "celtium.validation.gate.minPanelStrongFraction",
-                Double.toString(measured.minPanelStrongFraction)));
-        int minPanelColours = Integer.getInteger("celtium.validation.gate.minPanelDistinctColours",
-                measured.minPanelDistinctColours).intValue();
-        double minPanelRowAmplitude = Double.parseDouble(System.getProperty(
-                "celtium.validation.gate.minPanelRowAmplitude",
-                Double.toString(measured.minPanelRowAmplitude)));
+        int minDistinctColours = HarnessConfig.integer("gate.minDistinctColours",
+                PRESENTED_DISTINCT_COLOUR_FLOOR);
+        double minNonBackground = HarnessConfig.doubleValue(
+                "gate.minNonBackgroundFraction", measured.minNonBackgroundFraction);
+        int minBands = HarnessConfig.integer("gate.minVerticalBands", measured.minVerticalBands);
+        double maxBlack = HarnessConfig.doubleValue("gate.maxBlackFraction", measured.maxBlackFraction);
+        double minPanelChanged = HarnessConfig.doubleValue(
+                "gate.minPanelChangedFraction", measured.minPanelChangedFraction);
+        double minPanelStrong = HarnessConfig.doubleValue(
+                "gate.minPanelStrongFraction", measured.minPanelStrongFraction);
+        int minPanelColours = HarnessConfig.integer("gate.minPanelDistinctColours",
+                measured.minPanelDistinctColours);
+        double minPanelRowAmplitude = HarnessConfig.doubleValue(
+                "gate.minPanelRowAmplitude", measured.minPanelRowAmplitude);
         // The GUI stage's floors are carried through: rebuilding the gate with the 13-argument constructor dropped
         // them, so a scene that had just been given per-stage floors was still judged by its world frame's - the
         // override path was the last place the provenance fix could be lost (found by the first verification run,
@@ -1812,21 +1805,21 @@ public final class ValidationClient {
      * than failed: the key differs, so no floor of that scene describes that picture.
      */
     private static String celtium$calibrationKey(Scene scene, CameraPose pose, int guiScale) {
-        String stack = System.getProperty("celtium.validation.worldLayers", celtium$sceneWorldLayers(scene));
-        int sweep = Integer.getInteger("celtium.validation.blockSweep", 0).intValue();
+        String stack = HarnessConfig.string("worldLayers", celtium$sceneWorldLayers(scene));
+        int sweep = HarnessConfig.integer("blockSweep", 0);
         StringBuilder key = new StringBuilder();
         key.append("scene=").append(scene.name);
         key.append(" pose=").append(pose.describe());
         key.append(" stack=").append(celtium$DEFAULT_WORLD_LAYERS.equals(stack) ? "default" : stack);
         key.append(" blockSweep=").append(sweep);
-        key.append(" allBlocks=").append(Boolean.getBoolean("celtium.validation.allBlocks"));
+        key.append(" allBlocks=").append(HarnessConfig.bool("allBlocks", false));
         key.append(" entities=").append(celtium$entityVariant());
         key.append(" screen=").append(celtium$screenVariant());
         key.append(" guiScale=").append(guiScale > 0 ? Integer.toString(guiScale) : "unreadable");
         if (MODEL_FOG_END > 0.0f) key.append(" testFogEnd=").append(MODEL_FOG_END);
-        if (Boolean.getBoolean("celtium.validation.gvcA4Probe")) key.append(" gvcA4Probe=true");
-        if (!System.getProperty("celtium.validation.entityType", "").isEmpty())
-            key.append(" entityType=").append(System.getProperty("celtium.validation.entityType"));
+        if (HarnessConfig.bool("gvcA4Probe", false)) key.append(" gvcA4Probe=true");
+        if (!HarnessConfig.string("entityType", "").isEmpty())
+            key.append(" entityType=").append(HarnessConfig.string("entityType", null));
         return key.toString();
     }
 
@@ -1846,23 +1839,23 @@ public final class ValidationClient {
         // not this owner, so a leg with celtium.validation.screen=mainmenu|resourcepacks|creative reported the plain
         // terrain key and its floors were applied to a screen. The value names the request rather than the class that
         // opened, because the request is what the run asked for and what a future reference would be measured under.
-        String named = System.getProperty("celtium.validation.screen", "");
+        String named = HarnessConfig.string("screen", "");
         if (!named.isEmpty()) {
             variant.append("named:").append(named.toLowerCase(java.util.Locale.ROOT));
         }
-        if (Boolean.getBoolean("celtium.validation.jeiScreen")) {
+        if (HarnessConfig.bool("jeiScreen", false)) {
             if (variant.length() > 0) {
                 variant.append('+');
             }
             variant.append("jei");
         }
-        if (Boolean.getBoolean("celtium.validation.jeiRecipe")) {
+        if (HarnessConfig.bool("jeiRecipe", false)) {
             if (variant.length() > 0) {
                 variant.append('+');
             }
             variant.append("recipe");
         }
-        if (Boolean.getBoolean("celtium.validation.keepInventoryScreen")) {
+        if (HarnessConfig.bool("keepInventoryScreen", false)) {
             if (variant.length() > 0) {
                 variant.append('+');
             }
@@ -1915,16 +1908,16 @@ public final class ValidationClient {
     /** The entity flags that change the frame, as one token: the measured references were taken with none of them. */
     private static String celtium$entityVariant() {
         StringBuilder variant = new StringBuilder();
-        String[] flags = {"celtium.validation.keepEntities", "celtium.validation.captureEntities",
-                "celtium.validation.glowEntities", "celtium.validation.spawnEntities",
-                "celtium.validation.rendererlessEntities", "celtium.validation.spawnEntitiesAfterTransfer",
-                "celtium.validation.modelGlint"};
+        String[] flags = {"keepEntities", "captureEntities",
+                "glowEntities", "spawnEntities",
+                "rendererlessEntities", "spawnEntitiesAfterTransfer",
+                "modelGlint"};
         for (String flag : flags) {
-            if (Boolean.getBoolean(flag)) {
+            if (HarnessConfig.bool(flag, false)) {
                 if (variant.length() > 0) {
                     variant.append('+');
                 }
-                variant.append(flag.substring(flag.lastIndexOf('.') + 1));
+                variant.append(flag);
             }
         }
         return variant.length() == 0 ? "none" : variant.toString();
@@ -1963,8 +1956,8 @@ public final class ValidationClient {
      * instance's {@code saves/} tree into the leg's game dir, and this names which folder inside it to load - the
      * real-world fixture the flat world cannot stand in for.
      */
-    private final String celtium$saveSlot = System.getProperty("celtium.validation.saveSlot");
-    private final String celtium$worldLayers = System.getProperty("celtium.validation.worldLayers",
+    private final String celtium$saveSlot = HarnessConfig.string("saveSlot", null);
+    private final String celtium$worldLayers = HarnessConfig.string("worldLayers",
             celtium$sceneWorldLayers(celtium$scene));
     private boolean celtium$rejoinPending;
     private boolean commandsRun;
@@ -2013,7 +2006,7 @@ public final class ValidationClient {
     private int celtium$sweepFramesAtStart = -1;
 
     private void celtium$blockSweep(Minecraft mc) {
-        int wanted = Integer.getInteger("celtium.validation.blockSweep", 0).intValue();
+        int wanted = HarnessConfig.integer("blockSweep", 0);
         if (wanted <= 0 || mc.world == null) {
             return;
         }
@@ -2027,7 +2020,7 @@ public final class ValidationClient {
             // Coverage is split across runs by design: one run places a bounded number of blocks, so the rest of the
             // registry is reached by starting later (-Dceltium.validation.blockSweepFrom=<registry index>). Together the
             // counters say which slice a run covered.
-            celtium$sweepFrom = Math.min(Math.max(0, Integer.getInteger("celtium.validation.blockSweepFrom", 0).intValue()),
+            celtium$sweepFrom = Math.min(Math.max(0, HarnessConfig.integer("blockSweepFrom", 0)),
                     celtium$sweepBlocks.size());
             celtium$sweepTotal = Math.min(wanted, celtium$sweepBlocks.size() - celtium$sweepFrom);
             report.addProperty("blockSweepFrom", Integer.valueOf(celtium$sweepFrom));
@@ -2039,14 +2032,14 @@ public final class ValidationClient {
         // Intel: filling a layer dirties enough chunks that the terrain rebuilds stop the frame loop keeping up. The
         // fixture is therefore split into small sweeps - a bounded number of blocks, spaced out - and the counters say
         // how far each one got.
-        int everyTicks = Math.max(1, Integer.getInteger("celtium.validation.blockSweepEvery", 4).intValue());
+        int everyTicks = Math.max(1, HarnessConfig.integer("blockSweepEvery", 4));
         if (worldTicks % everyTicks != 0) {
             return;
         }
         // How many blocks per tick. Placement measured at ~0.15-0.4 ms each (placeMillis=31 for 200 blocks), so the
         // count is not what makes a run slow - the neighbour updates were, and those are off now. Two per tick is the
         // default so that the whole 254-block registry fits inside the fixture's tick budget.
-        int perTick = Math.max(1, Integer.getInteger("celtium.validation.blockSweepPerTick", 2).intValue());
+        int perTick = Math.max(1, HarnessConfig.integer("blockSweepPerTick", 2));
         for (int n = 0; n < perTick && celtium$sweepIndex < celtium$sweepTotal; n++, celtium$sweepIndex++) {
             net.minecraft.block.Block block = celtium$sweepBlocks.get(celtium$sweepFrom + celtium$sweepIndex);
             int gx = celtium$sweepIndex % 16;
@@ -2390,11 +2383,11 @@ public final class ValidationClient {
     private boolean flickerFieldsResolved;
     private boolean flickerPinned;
     private boolean reloadDone;
-    private final boolean drawTestQuad = Boolean.getBoolean("celtium.validation.drawTestQuad");
+    private final boolean drawTestQuad = HarnessConfig.bool("drawTestQuad", false);
     private int testQuadFrames;
-    private final boolean drawBlockQuad = Boolean.getBoolean("celtium.validation.drawBlockQuad");
+    private final boolean drawBlockQuad = HarnessConfig.bool("drawBlockQuad", false);
     private int blockQuadFrames;
-    private final boolean commandBufferTargets = Boolean.getBoolean("celtium.validation.commandBufferTargets");
+    private final boolean commandBufferTargets = HarnessConfig.bool("commandBufferTargets", false);
     private boolean commandBufferTargetsAttempted;
     private boolean commandBufferTargetsPassed;
     private Framebuffer commandBufferSecondary;
@@ -2435,7 +2428,7 @@ public final class ValidationClient {
     public void onRenderWorldLastForTargets(net.minecraftforge.client.event.RenderWorldLastEvent event) {
         // Its own switch, default off, because as written it does not merely test the renderer: it fails the run and
         // suppresses the capture, so it is a reproduction to be fixed rather than a fixture to be run in the normal suite.
-        if (!Boolean.getBoolean("celtium.validation.drawTestTargets")) {
+        if (!HarnessConfig.bool("drawTestTargets", false)) {
             return;
         }
         net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getMinecraft();
@@ -2462,7 +2455,7 @@ public final class ValidationClient {
 
     /** Draw two independently uploaded regions of an allocated texture larger than the capture budget. */
     private void celtium$drawSparseTexture(net.minecraftforge.client.event.RenderGameOverlayEvent.Post event) {
-        if (!Boolean.getBoolean("celtium.validation.sparseTexture") || worldTicks < 150
+        if (!HarnessConfig.bool("sparseTexture", false) || worldTicks < 150
                 || event.getType() != net.minecraftforge.client.event.RenderGameOverlayEvent.ElementType.ALL) {
             return;
         }
@@ -2498,7 +2491,7 @@ public final class ValidationClient {
         // keys on, and this scene never issues one, which is why that path has been inert in every measurement so far. Called
         // once, behind its own flag, so the present can be exercised rather than described.
         if (!celtium$compositeBlit && worldTicks >= 185
-                && Boolean.getBoolean("celtium.validation.compositeBlit")) {
+                && HarnessConfig.bool("compositeBlit", false)) {
             celtium$compositeBlit = true;
             net.minecraft.client.shader.Framebuffer framebuffer = Minecraft.getMinecraft().getFramebuffer();
             framebuffer.framebufferRender(framebuffer.framebufferWidth, framebuffer.framebufferHeight);
@@ -2509,7 +2502,7 @@ public final class ValidationClient {
         // rather than inferring it. Recorded as an observation with its numbers: it does not prove which path put the pixels
         // on the screen, and the game's own screenshot helper reads its FBO rather than this.
         if (!celtium$screenReadback && worldTicks >= 186
-                && Boolean.getBoolean("celtium.validation.screenReadback")) {
+                && HarnessConfig.bool("screenReadback", false)) {
             celtium$screenReadback = true;
             net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getMinecraft();
             int width = client.displayWidth;
@@ -2563,7 +2556,7 @@ public final class ValidationClient {
         // group, so the second batch's indices must carry the base vertex or it re-draws the first batch's geometry;
         // then one batch large enough to cross the vertex/index arena capacity, so the first quads must survive the
         // growth. Three probe points are reported so the image check can read the presented frame rather than guess.
-        if (Boolean.getBoolean("celtium.validation.drawMergedQuads")
+        if (HarnessConfig.bool("drawMergedQuads", false)
                 && event.getType() == net.minecraftforge.client.event.RenderGameOverlayEvent.ElementType.ALL
                 && worldTicks >= 150 && worldTicks <= 205) {
             int width = event.getResolution().getScaledWidth();
@@ -2598,7 +2591,7 @@ public final class ValidationClient {
             // vertex, so 22000 quads (~1.06 MB) cross the 1 MiB vertex arena and the index arena alike. The first quad
             // occupies a fixed tile; if the growth dropped what it already held, that tile shows background.
             net.minecraft.client.renderer.GlStateManager.color(0.0F, 0.0F, 1.0F, 1.0F);
-            int grown = Integer.getInteger("celtium.validation.mergedQuadCount", 22000).intValue();
+            int grown = HarnessConfig.integer("mergedQuadCount", 22000);
             buffer.begin(org.lwjgl.opengl.GL11.GL_QUADS,
                     net.minecraft.client.renderer.vertex.DefaultVertexFormats.POSITION);
             int columns = 64;
@@ -2631,7 +2624,7 @@ public final class ValidationClient {
             report.addProperty("mergedQuadProbeGreen", celtium$probeGreenX + "," + celtium$probeGreenY);
             report.addProperty("mergedQuadProbeFirst", celtium$probeFirstX + "," + celtium$probeFirstY);
         }
-        if (!Boolean.getBoolean("celtium.validation.drawTest")
+        if (!HarnessConfig.bool("drawTest", false)
                 || event.getType() != net.minecraftforge.client.event.RenderGameOverlayEvent.ElementType.ALL) {
             return;
         }
@@ -2687,7 +2680,7 @@ public final class ValidationClient {
         }
         report.addProperty("drawTestRedReadback", Integer.toHexString(redSeen));
         report.addProperty("drawTestBlueReadback", Integer.toHexString(blueSeen));
-        if (Boolean.getBoolean("celtium.validation.stateProbes")) {
+        if (HarnessConfig.bool("stateProbes", false)) {
             celtium$stateProbes(client, width, height);
         }
         net.minecraft.client.renderer.GlStateManager.enableDepth();
@@ -2754,7 +2747,7 @@ public final class ValidationClient {
         report.addProperty("stateProbeClipRects", "green " + clipTop + "-" + clipMid + " under the left half, yellow "
                 + clipMid + "-" + clipBottom + " under the right half");
         report.addProperty("stateProbesDrawn", true);
-        if (Boolean.getBoolean("celtium.validation.texEnvProbe")) {
+        if (HarnessConfig.bool("texEnvProbe", false)) {
             celtium$texEnvProbe();
         }
     }
@@ -2874,7 +2867,7 @@ public final class ValidationClient {
             GlStateManager.clear(0);
             long[] before = commandBufferCounters(backend, counters);
             result.add("before", commandBufferCounterJson(before));
-            int injected = Integer.getInteger("celtium.vulkan.failImmediateSubmits", 0).intValue();
+            int injected = HarnessConfig.integer("failImmediateSubmits", 0);
             if (injected > 0) backend.getClass().getMethod("injectImmediateSubmitFailure", int.class)
                     .invoke(backend, Integer.valueOf(injected));
             if (before[4] != 0) throw new IllegalStateException("Unrelated immediate batches remained pending before fixture");
@@ -2993,7 +2986,7 @@ public final class ValidationClient {
             }
             boolean pixelsPassed = blueWrong == 0 && yellowWrong == 0 && redWrong == 0 && greenWrong == 0
                     && mainBackgroundWrong == 0 && secondaryBackgroundWrong == 0;
-            boolean retryRequired = Integer.getInteger("celtium.vulkan.failImmediateSubmits", 0).intValue() > 0;
+            boolean retryRequired = HarnessConfig.integer("failImmediateSubmits", 0) > 0;
             // An injected failure may fire in an earlier native window; report both total and fixture-local retries.
             boolean retryPassed = !retryRequired || delta[9] == 1;
             result.addProperty("retryRequired", retryRequired);
@@ -3466,10 +3459,10 @@ public final class ValidationClient {
         // init. Without this the hook would silently do nothing and read as "no loading frame", which is exactly the
         // "a missing counter is not a missing draw" trap.
         instance = this;
-        enabled = Boolean.getBoolean("celtium.validation");
+        enabled = HarnessConfig.enabled();
         // The compact vertex format packs the same data into 24 bytes per vertex instead of 32; the fixture can
         // switch it on before the terrain renderer is created so both encodings can be compared from one scene.
-        if (enabled && Boolean.getBoolean("celtium.validation.compactVertexFormat")) {
+        if (enabled && HarnessConfig.bool("compactVertexFormat", false)) {
             try {
                 Class<?> mod = Class.forName("org.taumc.celeritas.CeleritasVintage");
                 Object options = mod.getMethod("options").invoke(null);
@@ -3481,14 +3474,14 @@ public final class ValidationClient {
             }
         }
         if (enabled) MinecraftForge.EVENT_BUS.register(this);
-        if (enabled && Boolean.getBoolean("celtium.validation.cameraEventProbe")) {
+        if (enabled && HarnessConfig.bool("cameraEventProbe", false)) {
             MinecraftForge.EVENT_BUS.register(new CameraEventProbe());
         }
-        if (enabled && Boolean.getBoolean("celtium.validation.rawFboIdentityProbe")) {
+        if (enabled && HarnessConfig.bool("rawFboIdentityProbe", false)) {
             rawFboIdentityProbe = new RawFboIdentityProbe();
             MinecraftForge.EVENT_BUS.register(rawFboIdentityProbe);
         }
-        if (enabled && Boolean.getBoolean("celtium.validation.gvcA4Probe"))
+        if (enabled && HarnessConfig.bool("gvcA4Probe", false))
             MinecraftForge.EVENT_BUS.register(new GvcA4Probe());
     }
 
@@ -3685,7 +3678,7 @@ public final class ValidationClient {
                 }
             }
             if (worldTicks >= 60 && !celtium$shadowStageBuilt
-                    && Boolean.getBoolean("celtium.validation.shadowStage")) {
+                    && HarnessConfig.bool("shadowStage", false)) {
                 celtium$shadowStageBuilt = true;
                 celtium$buildShadowStage(mc);
             }
@@ -3727,9 +3720,9 @@ public final class ValidationClient {
                 report.addProperty("gregtechStageBloomAllowed", celtium$gregtechBloomAllowed);
                 report.addProperty("gregtechStageBloomImageShader", celtium$gregtechBloomImageShader);
             }
-            if (worldTicks >= 60 && !celtium$entitiesSpawned && Boolean.getBoolean("celtium.validation.keepEntities")) {
+            if (worldTicks >= 60 && !celtium$entitiesSpawned && HarnessConfig.bool("keepEntities", false)) {
                 celtium$entitiesSpawned = true;
-                String extraEntity = System.getProperty("celtium.validation.entityType", "");
+                String extraEntity = HarnessConfig.string("entityType", "");
                 if (!extraEntity.isEmpty()) {
                     net.minecraft.entity.Entity entity = net.minecraft.entity.EntityList.createEntityByIDFromName(
                             new net.minecraft.util.ResourceLocation(extraEntity), mc.world);
@@ -3752,7 +3745,7 @@ public final class ValidationClient {
                 celtium$spawnEntity(mc, new net.minecraft.entity.monster.EntityCreeper(mc.world), -2.0D, -8.0D);
                 net.minecraft.entity.monster.EntityZombie zombie = new net.minecraft.entity.monster.EntityZombie(mc.world);
                 // A positive control for vanilla LayerArmorBase's unlit model glint, without renderer hooks.
-                if (Boolean.getBoolean("celtium.validation.modelGlint")) {
+                if (HarnessConfig.bool("modelGlint", false)) {
                     net.minecraft.item.ItemStack armor = new net.minecraft.item.ItemStack(net.minecraft.init.Items.DIAMOND_CHESTPLATE);
                     armor.addEnchantment(net.minecraft.init.Enchantments.UNBREAKING, 1);
                     zombie.setItemStackToSlot(net.minecraft.inventory.EntityEquipmentSlot.CHEST, armor);
@@ -3771,7 +3764,7 @@ public final class ValidationClient {
                 mc.world.setBlockState(new net.minecraft.util.math.BlockPos(px + 1, gy, pz - 7),
                         net.minecraft.init.Blocks.STANDING_SIGN.getDefaultState(), 3);
                 net.minecraft.item.ItemStack droppedStack = new net.minecraft.item.ItemStack(net.minecraft.init.Items.APPLE);
-                if (Boolean.getBoolean("celtium.validation.enchantItem")) {
+                if (HarnessConfig.bool("enchantItem", false)) {
                     // An enchantment makes the item's glint pass draw: two texture-matrix-modulated passes over the
                     // same model, which is the state the texture-matrix work exists for.
                     droppedStack.addEnchantment(net.minecraft.init.Enchantments.SHARPNESS, 1);
@@ -3802,7 +3795,7 @@ public final class ValidationClient {
                         Math.abs(spawnSurface - mc.player.posY) <= 1.0D));
             }
             if (worldTicks >= 60 && !celtium$dynamicLightSpawned
-                    && Boolean.getBoolean("celtium.validation.dynamicLightItem")) {
+                    && HarnessConfig.bool("dynamicLightItem", false)) {
                 celtium$dynamicLightSpawned = true;
                 // The item-326 proof source: one dropped torch, nothing else. A torch block's item
                 // is a shading-time dynamic light source (its stack light is the block's own light
@@ -3835,7 +3828,7 @@ public final class ValidationClient {
                         + " pos=" + dropped.posX + "," + dropped.posY + "," + dropped.posZ);
             }
             if (worldTicks >= 60 && (!celtium$hurtSpawned || celtium$hurtSlime != null && celtium$hurtSlime.isDead)
-                    && Boolean.getBoolean("celtium.validation.hurtEntity")) {
+                    && HarnessConfig.bool("hurtEntity", false)) {
                 boolean respawn = celtium$hurtSpawned;
                 celtium$hurtSpawned = true;
                 // A zombie pinned mid-frame and kept permanently "just hit": RenderLivingBase.setBrightness drives
@@ -3870,7 +3863,7 @@ public final class ValidationClient {
                 celtium$hurtSlime.hurtTime = 9;
             }
             if (worldTicks >= 60 && !celtium$rendererlessSpawned
-                    && Boolean.getBoolean("celtium.validation.rendererlessEntities")) {
+                    && HarnessConfig.bool("rendererlessEntities", false)) {
                 celtium$rendererlessSpawned = true;
                 // The renderer-less entity: a bare Entity, for which RenderManager.getEntityRenderObject returns the
                 // fallback RenderEntity registered against Entity.class, whose doRender is a single call to
@@ -3893,7 +3886,7 @@ public final class ValidationClient {
                         + " box=" + rendererless.getEntityBoundingBox()
                         + " nonPlayer=" + countNonPlayerEntities(mc));
             }
-            if (worldTicks >= 60 && !celtium$wallBuilt && Boolean.getBoolean("celtium.validation.allBlocks")) {
+            if (worldTicks >= 60 && !celtium$wallBuilt && HarnessConfig.bool("allBlocks", false)) {
                 celtium$wallBuilt = true;
                 // The registry sweep: one of every registered block, laid out as a wall the camera sees whole, so
                 // the comparison exercises every block model the terrain passes can draw rather than the handful a
@@ -3927,9 +3920,9 @@ public final class ValidationClient {
                 }
                 System.out.println("[Celtium] CELTIUM_ALL_BLOCKS placed=" + placed + " tried=" + index);
             }
-            if (worldTicks >= 150 && !Boolean.getBoolean("celtium.validation.interop")
-                    && !Boolean.getBoolean("celtium.validation.keepEntities")
-                    && !Boolean.getBoolean("celtium.validation.dynamicLightItem")) {
+            if (worldTicks >= 150 && !HarnessConfig.bool("interop", false)
+                    && !HarnessConfig.bool("keepEntities", false)
+                    && !HarnessConfig.bool("dynamicLightItem", false)) {
                 // Terrain-only comparison: mob spawning is not seed-deterministic between runs, so remove every
                 // non-player entity and particle well before the capture. Entity and TESR behaviour stays on the
                 // existing GL path and is deliberately outside what this comparison measures - unless keepEntities asks
@@ -3938,7 +3931,7 @@ public final class ValidationClient {
             }
             // The hurt flash: keeping hurtTime non-zero on the kept mobs makes their second model pass run under the
         // texture-env interpolate the flash is drawn through, which is the state the coverage check wants exercised.
-        if (Boolean.getBoolean("celtium.validation.hurtEntities") && worldTicks >= 150 && worldTicks <= 205) {
+        if (HarnessConfig.bool("hurtEntities", false) && worldTicks >= 150 && worldTicks <= 205) {
             for (Object obj : mc.world.loadedEntityList) {
                 if (obj instanceof net.minecraft.entity.EntityLivingBase && obj != mc.player) {
                     ((net.minecraft.entity.EntityLivingBase) obj).hurtTime = 10;
@@ -3948,7 +3941,7 @@ public final class ValidationClient {
         }
         // The glow outline: the glowing tag routes every kept mob through the entityOutline framebuffer and its
         // silhouette composite, the same post-process shape the spectator effects take.
-        if (Boolean.getBoolean("celtium.validation.glowEntities") && worldTicks >= 150 && worldTicks <= 205) {
+        if (HarnessConfig.bool("glowEntities", false) && worldTicks >= 150 && worldTicks <= 205) {
             for (Object obj : mc.world.loadedEntityList) {
                 if (obj instanceof net.minecraft.entity.Entity && obj != mc.player) {
                     ((net.minecraft.entity.Entity) obj).setGlowing(true);
@@ -3967,7 +3960,7 @@ public final class ValidationClient {
         // <p>
         // It replaces {@code glowEntities} rather than combining with it: that switch re-sets the tag every tick of
         // its window, so a frame-scheduled toggle inside the window would be overwritten before the frame drew.
-        int glowAbTick = Integer.getInteger("celtium.validation.glowAbTick", -1).intValue();
+        int glowAbTick = HarnessConfig.integer("glowAbTick", -1);
         if (glowAbTick > 0 && worldTicks >= glowAbTick && worldTicks <= glowAbTick + 2) {
             int step = worldTicks - glowAbTick;
             boolean on = step == 1;
@@ -3994,7 +3987,7 @@ public final class ValidationClient {
         // measured the HUD instead. The HUD is hidden and the particles cleared for the window for the same reason:
         // the first attempt compared whole frames and the HUD's own text and the world's particles were most of the
         // difference, which is a scene that cannot answer the question.
-        int signTextAbTick = Integer.getInteger("celtium.validation.signTextAbTick", -1).intValue();
+        int signTextAbTick = HarnessConfig.integer("signTextAbTick", -1);
         if (signTextAbTick > 0 && worldTicks >= signTextAbTick - 40 && worldTicks <= signTextAbTick + 4) {
             // The camera is turned up at the sky for the whole window, and held there every tick because the pose is
             // re-applied every tick. The reason is the measurement, not the look: the flat stack the scene stands on
@@ -4032,7 +4025,7 @@ public final class ValidationClient {
         // The scene is set up here rather than in the swapchain because only the fixture knows the tick: the HUD is
         // hidden, the world's particles are cleared, and the camera is left at the pose the run pinned (the flat stack
         // is under it, so the frame holds terrain and sky and nothing that moves).
-        int flickerArmTick = Integer.getInteger("celtium.validation.flickerArmTick", -1).intValue();
+        int flickerArmTick = HarnessConfig.integer("flickerArmTick", -1);
         if (flickerArmTick > 0 && worldTicks == flickerArmTick) {
             mc.gameSettings.hideGUI = true;
             mc.effectRenderer.clearEffects(mc.world);
@@ -4048,7 +4041,7 @@ public final class ValidationClient {
                     + " yaw=" + mc.player.rotationYaw + " pitch=" + mc.player.rotationPitch);
             report.addProperty("flickerArmThirdPerson", Integer.valueOf(mc.gameSettings.thirdPersonView));
         }
-        if (worldTicks >= 20 && !Boolean.getBoolean("celtium.validation.interop")) {
+        if (worldTicks >= 20 && !HarnessConfig.bool("interop", false)) {
                 // `updateRenderer` has already run for this tick, so zeroing the flicker here affects the lightmap
                 // that the next render builds, and pinning the world time keeps the sun angle identical.
                 flickerPinned = pinLightmapFlicker(mc);
@@ -4089,7 +4082,7 @@ public final class ValidationClient {
                 // run of this fixture could contain a cloud pixel because nothing set the game's own cloud option. The
                 // default is -1 = "leave the game's value alone", so every existing leg and calibration key is
                 // bit-for-bit unchanged; the value the run used is reported either way.
-                int cloudOption = Integer.getInteger("celtium.validation.renderClouds", -1).intValue();
+                int cloudOption = HarnessConfig.integer("renderClouds", -1);
                 if (cloudOption >= 0 && cloudOption <= 2) {
                     // 1.12.2's field is `clouds` (int 0/1/2); `renderClouds` is only the options.txt key and the
                     // translation key, which is what the first version of this edit mistook it for.
@@ -4099,14 +4092,14 @@ public final class ValidationClient {
                 // pair needs the overlay really on, and the F3 key cannot be synthesised honestly - so the run sets
                 // the game's own field and the report says it was enabled through the field. Default = leave the
                 // game's value alone, so no existing leg or calibration key moves.
-                String debugOption = System.getProperty("celtium.validation.showDebugInfo", "");
+                String debugOption = HarnessConfig.string("showDebugInfo", "");
                 if (!debugOption.isEmpty()) {
                     mc.gameSettings.showDebugInfo = Boolean.parseBoolean(debugOption);
                 }
                 // Rebuilding every chunk mesh once, after the world time is pinned, answers a question the frame alone
                 // cannot: if the terrain brightens, the light level was baked into the per-vertex colour when the mesh was
                 // built and is never refreshed while that mesh lives, rather than the light map texture being wrong.
-                int reloadAtTick = Integer.getInteger("celtium.validation.reloadAtTick", 0).intValue();
+                int reloadAtTick = HarnessConfig.integer("reloadAtTick", 0);
                 if (reloadAtTick > 0 && worldTicks == reloadAtTick && !reloadDone) {
                     reloadDone = true;
                     mc.renderGlobal.loadRenderers();
@@ -4152,7 +4145,7 @@ public final class ValidationClient {
      * @return whether the world launch must wait this tick
      */
     private boolean celtium$holdTitleScreenForCapture(Minecraft mc) {
-        if (this.celtium$menuCaptureFinished || !Boolean.getBoolean("celtium.validation.dumpPresentedImage")
+        if (this.celtium$menuCaptureFinished || !HarnessConfig.bool("dumpPresentedImage", true)
                 || this.celtium$menuDumpTick <= 0 || worldTicks != 0 || launched) {
             return false;
         }
@@ -4257,7 +4250,7 @@ public final class ValidationClient {
         if (step == 3) {
             // The HUD comes back on the frame *after* the last dump: restoring it in the same render tick put the
             // HUD into the third frame (measured on leg r28c, whose "off" frame carried the FPS and biome lines).
-            mc.gameSettings.hideGUI = !Boolean.getBoolean("celtium.validation.keepGui");
+            mc.gameSettings.hideGUI = !HarnessConfig.bool("keepGui", true);
             return;
         }
         boolean on = step == 0;
@@ -4323,7 +4316,7 @@ public final class ValidationClient {
         // The unicode font surface: every string routes through renderUnicodeChar, which a locale like ja_jp selects
         // automatically - and which every isolated leg so far has skipped, because the fresh game dir launches in
         // en_us. The flag reproduces `forceUnicodeFont` (same setUnicodeFlag call Minecraft makes at init).
-        if (!unicodeFontApplied && Boolean.getBoolean("celtium.validation.unicodeFont") && mc.fontRenderer != null) {
+        if (!unicodeFontApplied && HarnessConfig.bool("unicodeFont", false) && mc.fontRenderer != null) {
             unicodeFontApplied = true;
             mc.fontRenderer.setUnicodeFlag(true);
             report.addProperty("unicodeFontApplied", Boolean.TRUE);
@@ -4341,7 +4334,7 @@ public final class ValidationClient {
         // there, and the leg's only "menu" picture was the first world frame - measured on r11-menu, whose report has
         // menuHeldTicks=40, 41 screen dismissals and no menuDumpClientTick at all. The hold below is what keeps the
         // screen up until a present has actually written the request.
-        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage") && !celtium$menuDumpRequested
+        if (HarnessConfig.bool("dumpPresentedImage", true) && !celtium$menuDumpRequested
                 && celtium$menuDumpTick > 0 && worldTicks == 0 && celtium$clientTicks >= celtium$menuDumpTick
                 && mc.currentScreen != null) {
             celtium$menuDumpRequested = true;
@@ -4368,7 +4361,7 @@ public final class ValidationClient {
         }
         // Legacy post-launch sample. This handler resumes after the synchronous server-start loop;
         // launched/loadingScreen != null do not establish that LoadingScreenRenderer is drawing now.
-        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage") && !celtium$worldLoadDumpRequested
+        if (HarnessConfig.bool("dumpPresentedImage", true) && !celtium$worldLoadDumpRequested
                 && celtium$worldLoadDumpTick > 0 && launched
                 && celtium$clientTicks >= celtium$worldLoadDumpTick) {
             celtium$worldLoadDumpRequested = true;
@@ -4452,14 +4445,14 @@ public final class ValidationClient {
                 // third of that. The override keeps every existing leg identical (default 8) while letting a leg run
                 // at the radius the report came from.
                 int renderDistance = Math.max(2, Math.min(32,
-                        Integer.getInteger("celtium.validation.renderDistance",
-                                celtium$scene == Scene.WORLD_MAP ? 18 : 8).intValue()));
+                        HarnessConfig.integer("renderDistance",
+                                celtium$scene == Scene.WORLD_MAP ? 18 : 8)));
                 mc.gameSettings.renderDistanceChunks = renderDistance;
                 report.addProperty("renderDistanceUsed", Integer.valueOf(renderDistance));
                 // Unlimited-ish so the two backends can be compared on throughput, not on the frame limiter.
                 // -Dceltium.validation.framerate: a capped run separates "the tick is slower" from "the tick is slowed
                 // by the frames around it" - at a cap both renderers draw the same number of frames per tick.
-                mc.gameSettings.limitFramerate = Integer.getInteger("celtium.validation.framerate", 260).intValue();
+                mc.gameSettings.limitFramerate = HarnessConfig.integer("framerate", 260);
                 // The tutorial toast covers the top right of every capture - where a minimap sits - in both arms alike;
                 // it is not part of what an image comparison is about.
                 mc.gameSettings.tutorialStep = net.minecraft.client.tutorial.TutorialSteps.NONE;
@@ -4491,14 +4484,14 @@ public final class ValidationClient {
                 // -Dceltium.validation.worldType=default: generated terrain (caves, oceans, overhangs) from the same
                 // fixed seed, for the visibility questions a flat world cannot ask - a turn that briefly showed caves
                 // through the surface was reported on generated terrain only.
-                boolean generated = "default".equalsIgnoreCase(System.getProperty("celtium.validation.worldType"));
+                boolean generated = "default".equalsIgnoreCase(HarnessConfig.string("worldType", null));
                 WorldSettings settings = new WorldSettings(12345678L, GameType.CREATIVE, false, false,
                         generated ? WorldType.DEFAULT : WorldType.FLAT);
                 // The extra layers exercise the cutout (leaves) and translucent (glass) terrain passes, not just SOLID.
                 if (!generated) {
                     settings.setGeneratorOptions(celtium$worldLayers);
                 }
-                if (Boolean.getBoolean("celtium.validation.probeLoadingProgress")) {
+                if (HarnessConfig.bool("probeLoadingProgress", false)) {
                     // Controlled API case, not a claim that native world generation supplies a numeric bar.
                     // displayLoadingString resets the producer's throttle, so the following numeric frame is drawn.
                     celtium$controlledLoadingProbe = true;
@@ -4638,8 +4631,8 @@ public final class ValidationClient {
             // atomic (checked before the first entity, so a retry cannot leave half a set behind).
             if (celtium$dimensionAtTick > 0 && celtium$arrivedAtTick >= 0 && !celtium$entitiesSpawnedAfterTransfer
                     && mc.player != null && mc.world != null && mc.player.dimension == celtium$dimension
-                    && Boolean.getBoolean("celtium.validation.keepEntities")
-                    && Boolean.getBoolean("celtium.validation.spawnEntitiesAfterTransfer")) {
+                    && HarnessConfig.bool("keepEntities", false)
+                    && HarnessConfig.bool("spawnEntitiesAfterTransfer", false)) {
                 if (celtium$atScenePose(mc) && celtium$transferSpawnChunksLoaded(mc)) {
                     celtium$entitiesSpawnedAfterTransfer = true;
                     celtium$spawnPinnedEntity(mc, new net.minecraft.entity.monster.EntityCreeper(mc.world), -2.0D, -8.0D);
@@ -4760,7 +4753,7 @@ public final class ValidationClient {
                     mc.player.setPositionAndUpdate(celtium$safeX, celtium$safeY, celtium$safeZ);
                 }
             }
-            if (Boolean.getBoolean("celtium.validation.worldSwitch") && worldTicks >= 100 && !celtium$leftWorld) {
+            if (HarnessConfig.bool("worldSwitch", false) && worldTicks >= 100 && !celtium$leftWorld) {
                 celtium$leftWorld = true;
                 report.addProperty("leftWorldAtTick", worldTicks);
                 // The same three calls GuiIngame's "Save and Quit to Title" makes, in the same order. The previous
@@ -4772,7 +4765,7 @@ public final class ValidationClient {
                 celtium$rejoinPending = true;
             }
             if (celtium$rejoinPending && mc.world == null && celtium$isTitleScreen(mc.currentScreen)) {
-                int holdTicks = Integer.getInteger("celtium.validation.worldSwitchMenuHoldTicks", 0).intValue();
+                int holdTicks = HarnessConfig.integer("worldSwitchMenuHoldTicks", 0);
                 if (celtium$worldSwitchMenuTicks++ < holdTicks) {
                     if (!celtium$worldSwitchMenuDumpRequested
                             && celtium$worldSwitchMenuTicks >= Math.max(2, holdTicks / 2)) {
@@ -5311,7 +5304,7 @@ public final class ValidationClient {
      * context; without them the run must still report a reason and keep rendering with OpenGL.
      */
     private void checkVulkanBootstrap(Minecraft mc, Path logDirectory) {
-        boolean expected = Boolean.getBoolean("celtium.validation.expectVulkan");
+        boolean expected = HarnessConfig.bool("expectVulkan", false);
         boolean registered = report.get("celtiumCommandRegistered").getAsBoolean();
         if (!registered) {
             report.addProperty("vulkanBootstrapStatus", "unavailable: the Celtium command is not registered");
@@ -5687,11 +5680,11 @@ public final class ValidationClient {
      * per tick) - a {@code System.getProperty} plus a parse inside the interval being measured, paid by both arms and
      * by every frame of the window the KPI reads. A JVM argument cannot change mid-run, so the lookup belongs here.
      */
-    private static final int WARM_FROM_TICK = Integer.getInteger("celtium.validation.warmFromTick", 400);
-    private static final int WARM_TO_TICK = Integer.getInteger("celtium.validation.warmToTick", 600);
+    private static final int WARM_FROM_TICK = HarnessConfig.integer("warmFromTick", 400);
+    private static final int WARM_TO_TICK = HarnessConfig.integer("warmToTick", 600);
     /** Resolved once: a property lookup per frame is a cost the measured frame pays for its own instrument. */
     private static final double WARM_SPIKE_MS =
-            Double.parseDouble(System.getProperty("celtium.validation.warmSpikeMs", "16.7"));
+            Double.parseDouble(HarnessConfig.string("warmSpikeMs", "16.7"));
 
     private void celtium$recordWarmSpike(double intervalMs, long uploadThisFrameMillis) {
         if (intervalMs < WARM_SPIKE_MS || worldTicks < WARM_FROM_TICK || worldTicks >= WARM_TO_TICK) {
@@ -5882,7 +5875,7 @@ public final class ValidationClient {
      * 'tick-sections-deadline (listed 45 of 0)' with the clause already in the tree).
      */
     private boolean celtium$jeiSettled() {
-        return !Boolean.getBoolean("celtium.validation.jeiScreen") || this.celtium$jeiSearchAfter;
+        return !HarnessConfig.bool("jeiScreen", false) || this.celtium$jeiSearchAfter;
     }
 
     /**
@@ -6318,7 +6311,7 @@ public final class ValidationClient {
      * two arms of an image comparison can be asked what a differing pixel shows and what light it should carry.
      */
     private void celtium$probePixel(Minecraft mc) {
-        String spec = System.getProperty("celtium.validation.probePixel", "");
+        String spec = HarnessConfig.string("probePixel", "");
         if (spec.isEmpty() || celtium$pixelProbed || worldTicks < 200 || mc.world == null) {
             return;
         }
@@ -6388,7 +6381,7 @@ public final class ValidationClient {
 
     private void celtium$frameScriptedActions(Minecraft mc) {
         celtium$probePixel(mc);
-        if (worldTicks >= 100 && !celtium$reloaded && Boolean.getBoolean("celtium.validation.reload")) {
+        if (worldTicks >= 100 && !celtium$reloaded && HarnessConfig.bool("reload", false)) {
             celtium$reloaded = true;
             // Resource reload, the way F3+T does it: every chunk renderer is rebuilt and every texture is re-stitched.
             // The plan lists reload as unported until it has been seen to work, and the texture half is what exercises
@@ -6397,7 +6390,7 @@ public final class ValidationClient {
             mc.getTextureManager().onResourceManagerReload(mc.getResourceManager());
             report.addProperty("reloadedAtTick", worldTicks);
         }
-        if (worldTicks >= 26 && !celtium$postprocess && Boolean.getBoolean("celtium.validation.postprocess")) {
+        if (worldTicks >= 26 && !celtium$postprocess && HarnessConfig.bool("postprocess", false)) {
             // The postprocess inventory: in 1.12.2 that is the shader group behind the "super secret settings", reached through
             // this method on the entity renderer. Called reflectively, and by name list, because it is private and because the
             // check is whether the shader path draws cleanly through the Vulkan path - not whether the name is what I think.
@@ -6417,7 +6410,7 @@ public final class ValidationClient {
             // what it matched, goes to stdout where nothing can take it away.
             System.out.println("[Celtium] CELTIUM_POSTPROCESS tick=" + worldTicks + " result=" + result);
         }
-        String held = System.getProperty("celtium.validation.heldItem");
+        String held = HarnessConfig.string("heldItem", null);
         if (worldTicks >= 30 && !celtium$heldItemSet && held != null && !held.isEmpty() && !"none".equals(held)) {
             celtium$heldItemSet = true;
             // A held item is the lit ITEM-format path at its largest: the first-person renderer draws it through
@@ -6473,7 +6466,7 @@ public final class ValidationClient {
         // language, resource-pack, creative-inventory and world-selection screens. The fixture could open only the
         // options screen, so three legs read lineBatchesNarrowed=0 and the counter could not be accepted in principle.
         // This opens one of them by name, defaulting to nothing so no existing leg or calibration key moves.
-        String screenRequest = System.getProperty("celtium.validation.screen", "");
+        String screenRequest = HarnessConfig.string("screen", "");
         if (worldTicks >= 30 && !celtium$namedScreenOpened && !screenRequest.isEmpty()) {
             celtium$namedScreenOpened = true;
             try {
@@ -6555,7 +6548,7 @@ public final class ValidationClient {
                     // existing leg or calibration key moves.
                     celtium$namedScreenScrollTicks = worldTicks;
                     celtium$namedScreenScrollBy =
-                            Integer.getInteger("celtium.validation.scrollList", 0).intValue();
+                            HarnessConfig.integer("scrollList", 0);
                 } else {
                     report.addProperty("namedScreenOpened", "unknown request: " + screenRequest);
                 }
@@ -6573,7 +6566,7 @@ public final class ValidationClient {
         if (celtium$creativeScreen != null && worldTicks >= 32 && !celtium$creativeTabApplied) {
             celtium$creativeTabApplied = true;
             net.minecraft.client.gui.inventory.GuiContainerCreative screen = celtium$creativeScreen;
-            int tabIndex = Integer.getInteger("celtium.validation.creativeTab", -1).intValue();
+            int tabIndex = HarnessConfig.integer("creativeTab", -1);
             int tabCount = net.minecraft.creativetab.CreativeTabs.CREATIVE_TAB_ARRAY.length;
             report.addProperty("creativeTabCount", Integer.valueOf(tabCount));
             if (tabIndex >= 0) {
@@ -6695,7 +6688,7 @@ public final class ValidationClient {
                 report.addProperty("listScroll", "failed: " + error);
             }
         }
-        if (worldTicks >= 30 && !celtium$jeiScreen && Boolean.getBoolean("celtium.validation.jeiScreen")) {
+        if (worldTicks >= 30 && !celtium$jeiScreen && HarnessConfig.bool("jeiScreen", false)) {
             // Opens the player's inventory so that a mod with an overlay - JEI - draws into it. This is the interaction the
             // plan named as unestablished: JEI loading proves the mod, opening a screen proves that its own rendering goes
             // through the renderer under test. Closed again before the capture so the saved frame stays the normal scene.
@@ -6716,7 +6709,7 @@ public final class ValidationClient {
         // filter's own frame has been drawn. Measured: typing at 33 reached `GuiContainerCreative.keyTyped` but not the
         // mod's search field (`keyboardFocus=false filterText=""`), which is why the read-back exists and why the write
         // moved after the recipe screen's own open.
-        String jeiSearch = System.getProperty("celtium.validation.jeiSearch", "");
+        String jeiSearch = HarnessConfig.string("jeiSearch", "");
         if (!jeiSearch.isEmpty()) {
             if (worldTicks >= 31 && !celtium$jeiSearchBefore && mc.currentScreen != null) {
                 celtium$jeiSearchBefore = true;
@@ -6764,7 +6757,7 @@ public final class ValidationClient {
         // mod offers for another mod to set it - `IIngredientFilter.setFilterText`, the same shape as the
         // `IRecipesGui.showCategories` call the recipe knob already uses to open the mod's own screen - and the artifact
         // names that path beside the state it produced, so an API drive is never read as a keystroke.
-        String jeiFilterText = System.getProperty("celtium.validation.jeiFilterText", "");
+        String jeiFilterText = HarnessConfig.string("jeiFilterText", "");
         if (!jeiFilterText.isEmpty() && worldTicks >= 41 && !celtium$jeiFilterSet && mc.currentScreen != null) {
             celtium$jeiFilterSet = true;
             report.addProperty("jeiFilterTextPath", "IIngredientFilter.setFilterText, the mod's public API"
@@ -6775,7 +6768,7 @@ public final class ValidationClient {
             report.addProperty("jeiFilterStateAfter", celtium$jeiSetFilterText(jeiFilterText));
             report.addProperty("jeiFilterSetAtTick", Integer.valueOf(worldTicks));
         }
-        if (worldTicks >= 34 && !celtium$jeiRecipe && Boolean.getBoolean("celtium.validation.jeiRecipe")) {
+        if (worldTicks >= 34 && !celtium$jeiRecipe && HarnessConfig.bool("jeiRecipe", false)) {
             // The mod's own heavier screen, opened through its public plugin API rather than by simulating input. Guarded
             // behind its own flag because it needs JEI present and compiled in.
             //
@@ -6804,7 +6797,7 @@ public final class ValidationClient {
         // inventory/JEI bridge pair to compare: in a bridge run the GL screenshot is that configuration's picture, and
         // it was never taken while the screen was open. The tick is a property because the window is the fixture's,
         // not the renderer's, and this is the one capture whose purpose is a comparison across the two legs.
-        int screenshotAtTick = Integer.getInteger("celtium.validation.screenshotAtTick", -1).intValue();
+        int screenshotAtTick = HarnessConfig.integer("screenshotAtTick", 200, -1);
         if (screenshotAtTick > 0 && worldTicks >= screenshotAtTick && !celtium$tickScreenshotTaken) {
             celtium$tickScreenshotTaken = true;
             if (celtium$glLessInstalled()) {
@@ -6822,7 +6815,7 @@ public final class ValidationClient {
                     mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName());
         }
         if (worldTicks >= 190 && celtium$jeiScreen && !celtium$jeiClosed && mc.currentScreen != null
-                && !Boolean.getBoolean("celtium.validation.keepInventoryScreen")) {
+                && !HarnessConfig.bool("keepInventoryScreen", false)) {
             celtium$jeiClosed = true;
             // Closed before the capture by default, so the saved frame stays the normal scene. The screen is a fixture
             // window - open at 30, closed at 190 - and every capture happens at 200 or later, which is why the font work
@@ -6835,7 +6828,7 @@ public final class ValidationClient {
 
 
     /** Controlled fog for comparing lit model shading with the GL reference; never part of a calibrated scene. */
-    private static final float MODEL_FOG_END = Float.parseFloat(System.getProperty("celtium.validation.testFogEnd", "-1"));
+    private static final float MODEL_FOG_END = Float.parseFloat(HarnessConfig.string("testFogEnd", "-1"));
     private boolean modelFogReported;
 
     @SubscribeEvent(priority = net.minecraftforge.fml.common.eventhandler.EventPriority.LOWEST)
@@ -6879,7 +6872,7 @@ public final class ValidationClient {
             System.out.println("[Celtium] CELTIUM_FIXTURE_FRAME phase=END first clientTicks=" + celtium$clientTicks);
         }
         Minecraft mc = Minecraft.getMinecraft();
-        if (Boolean.getBoolean("celtium.validation.menuFrameStats")) {
+        if (HarnessConfig.bool("menuFrameStats", false)) {
             long menuNow = System.nanoTime();
             if (mc.world == null && mc.currentScreen instanceof GuiMainMenu) {
                 if (this.previousMenuFrame != 0 && this.celtium$menuHeldTicks >= 20
@@ -6943,7 +6936,7 @@ public final class ValidationClient {
         long uploadThisFrameMillis = celtium$sampleUploadWait();
         if (previousFrame != 0) {
             double intervalMs = (now - previousFrame) / 1_000_000.0;
-            if (intervalMs >= Integer.getInteger("celtium.validation.slowFrameMs", 50).intValue()) {
+            if (intervalMs >= HarnessConfig.integer("slowFrameMs", 50)) {
                 celtium$recordSlowFrame(intervalMs, uploadThisFrameMillis);
             }
             celtium$recordWarmSpike(intervalMs, uploadThisFrameMillis);
@@ -6955,14 +6948,14 @@ public final class ValidationClient {
         // A scene whose world time advances between runs is not the same scene: two runs of one jar had identical
         // pose, dimension and entity count and differed on 16% of their pixels, and the only value that differed was
         // totalWorldTime (219 against 229). Hold the clock so the captured frame is comparable at all.
-        if (!celtium$worldTimeHeld && Boolean.getBoolean("celtium.validation.fixedWorldTime") && mc.world != null) {
+        if (!celtium$worldTimeHeld && HarnessConfig.bool("fixedWorldTime", false) && mc.world != null) {
             celtium$worldTimeHeld = true;
             mc.world.getGameRules().setOrCreateGameRule("doDaylightCycle", "false");
             mc.world.getWorldInfo().setWorldTime(6000L);
             mc.world.setTotalWorldTime(6000L);
             System.out.println("celtium validation: world time held at 6000 for a comparable capture");
         }
-        if (worldTicks >= 100 && !celtium$resized && Boolean.getBoolean("celtium.validation.resize")) {
+        if (worldTicks >= 100 && !celtium$resized && HarnessConfig.bool("resize", false)) {
             celtium$resized = true;
             // Resize the window mid-run: the renderer has to survive the framebuffer changing size, which the plan lists
             // as unported until it has been seen to work. The saved screenshot's own dimensions are the evidence that
@@ -6977,7 +6970,7 @@ public final class ValidationClient {
             // behaviour every earlier resize run recorded.
             int resizeWidth = 1024;
             int resizeHeight = 640;
-            String resizeTo = System.getProperty("celtium.validation.resizeTo", "");
+            String resizeTo = HarnessConfig.string("resizeTo", "");
             if (resizeTo.indexOf('x') > 0) {
                 String[] parts = resizeTo.split("x");
                 try {
@@ -6991,7 +6984,7 @@ public final class ValidationClient {
             report.addProperty("resizedAtTick", worldTicks);
             report.addProperty("resizedTo", resizeWidth + "x" + resizeHeight);
         }
-        if (worldTicks >= 150 && !celtium$weatherShown && Boolean.getBoolean("celtium.validation.weather")) {
+        if (worldTicks >= 150 && !celtium$weatherShown && HarnessConfig.bool("weather", false)) {
             celtium$weatherShown = true;
             // Rain, saturated well before the capture so its strength has stopped changing: the renderer interpolates
             // rain strength between ticks, and a value still ramping would make two runs differ for reasons that are not
@@ -7048,8 +7041,8 @@ public final class ValidationClient {
         // The early dump, kept as a diagnostic only. It used to share the capture's path, which is how a run could end
         // with the verdict judging a file an earlier or later request had written: this one goes to its own per-run
         // path, carries its own identity, and is never what the verdict reads.
-        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage") && !celtium$presentedDumpRequested
-                && worldTicks >= Integer.getInteger("celtium.validation.dumpPresentedTick", 20).intValue()) {
+        if (HarnessConfig.bool("dumpPresentedImage", true) && !celtium$presentedDumpRequested
+                && worldTicks >= HarnessConfig.integer("dumpPresentedTick", 20)) {
             celtium$presentedDumpRequested = true;
             celtium$requestPresentedDump(mc, "early");
         }
@@ -7058,7 +7051,7 @@ public final class ValidationClient {
             // (shaders/post/creeper.json, spider.json, invert.json) through EntityRenderer.loadEntityShader. The public
             // isShaderActive() is recorded beside it, because a run that passes says nothing about whether the shader
             // was ever active - the postprocess switch taught that.
-            String which = System.getProperty("celtium.validation.spectator", "");
+            String which = HarnessConfig.string("spectator", "");
             if (!which.isEmpty()) {
                 celtium$spectator = true;
                 // Java 8 source level in this module: an if/else chain rather than a switch expression.
@@ -7100,21 +7093,21 @@ public final class ValidationClient {
         // helper below names the mouse-over block's state in the report and, when the block path would not draw it,
         // registers the nearest drawable neighbour instead - through RenderGlobal's own method, the same call
         // NetHandlerPlayClient makes when the server reports break progress.
-        if (Boolean.getBoolean("celtium.validation.breakBlock") && mc.renderGlobal != null && worldTicks >= 150
+        if (HarnessConfig.bool("breakBlock", false) && mc.renderGlobal != null && worldTicks >= 150
                 && worldTicks <= 200) {
             net.minecraft.util.math.BlockPos target = celtium$breakTarget(mc);
             if (target != null) {
                 // The control: place the subject but register no progress, so one run's frame has the block without the
                 // overlay and the next has it with. A picture difference between the two is then the overlay's doing and
                 // nothing else's.
-                if (!Boolean.getBoolean("celtium.validation.breakSubjectOnly")) {
+                if (!HarnessConfig.bool("breakSubjectOnly", false)) {
                     mc.renderGlobal.sendBlockBreakProgress(1, target, 5);
                     celtium$breakProgressCalls++;
                 }
                 celtium$breakSubjectPos = target;
             }
         }
-        if (worldTicks >= 199 && Boolean.getBoolean("celtium.validation.breakBlock")) {
+        if (worldTicks >= 199 && HarnessConfig.bool("breakBlock", false)) {
             report.addProperty("breakTarget", String.valueOf(
                     mc.objectMouseOver == null ? "no target" : mc.objectMouseOver.getBlockPos()));
             report.addProperty("breakSubject", celtium$breakSubjectPos == null ? "none"
@@ -7123,14 +7116,14 @@ public final class ValidationClient {
             report.addProperty("breakSubjectDrawable", Boolean.valueOf(celtium$breakSubjectDrawable));
             report.addProperty("breakProgressCalls", Integer.valueOf(celtium$breakProgressCalls));
         }
-        if (worldTicks >= 199 && Boolean.getBoolean("celtium.validation.weather")) {
+        if (worldTicks >= 199 && HarnessConfig.bool("weather", false)) {
             // Read at capture time, not when the rain was requested: the client's rain strength ramps in over ticks, so
             // the value recorded at tick 150 was still 0.000 and said nothing about whether rain was on screen.
             report.addProperty("weatherAtCapture", "raining=" + mc.world.getWorldInfo().isRaining()
                     + " rainStrength=" + String.format(java.util.Locale.ROOT, "%.3f", Float.valueOf(mc.world.getRainStrength(0.0f)))
                     + " rainingStrength=" + String.format(java.util.Locale.ROOT, "%.3f", Float.valueOf(mc.world.rainingStrength)));
         }
-        if (worldTicks >= 197 && !celtium$particlesSpawned && Boolean.getBoolean("celtium.validation.particles")) {
+        if (worldTicks >= 197 && !celtium$particlesSpawned && HarnessConfig.bool("particles", false)) {
             celtium$particlesSpawned = true;
             // Particles with no motion, one tick before the capture. A still particle has prev == current, so the
             // partial-tick interpolation that made the hand and the player model unusable as comparison subjects gives
@@ -7148,7 +7141,7 @@ public final class ValidationClient {
             report.addProperty("particlesSpawned", 24);
         }
         if (worldTicks >= 197 && !celtium$glyphParticlesSpawned
-                && Boolean.getBoolean("celtium.validation.glyphParticles")) {
+                && HarnessConfig.bool("glyphParticles", false)) {
             celtium$glyphParticlesSpawned = true;
             // The enchanting table's letter glyphs, spawned directly because the fixture's world cannot spawn them:
             // BlockEnchantmentTable.randomDisplayTick needs a BOOKSHELF within +-2/0..1 of the table (the Cleanroom
@@ -7180,8 +7173,8 @@ public final class ValidationClient {
                     "24 ENCHANTMENT_TABLE: 12 at z=-2.0/-2.6 and 12 at z=+2.0/+1.4, x=-3.0+1.2*(i%6),"
                             + " y=12.2/12.8, sprite indices 225..250 from ParticleEnchantmentTable");
         }
-        if (worldTicks >= 190 && !celtium$hudHidden && !Boolean.getBoolean("celtium.validation.interop")
-                && !Boolean.getBoolean("celtium.validation.drawTest")) {
+        if (worldTicks >= 190 && !celtium$hudHidden && !HarnessConfig.bool("interop", false)
+                && !HarnessConfig.bool("drawTest", false)) {
             celtium$hudHidden = true;
             // Hide the HUD a few ticks before the capture so the saved PNG is the rendered scene only. A stock
             // Celeritas run and a Celtium run of the same seed can then be compared pixel by pixel, without
@@ -7189,13 +7182,13 @@ public final class ValidationClient {
             // Hidden so a stock Celeritas run and a Celtium run can be compared on terrain alone. Keeping it makes the
             // same comparison cover the GUI, the font and the HUD, which are Tessellator content like everything else
             // the immediate path serves - and which the hidden-GUI frames therefore said nothing about.
-            mc.gameSettings.hideGUI = !Boolean.getBoolean("celtium.validation.keepGui");
-            if (Boolean.getBoolean("celtium.validation.keepGui")) {
+            mc.gameSettings.hideGUI = !HarnessConfig.bool("keepGui", true);
+            if (HarnessConfig.bool("keepGui", true)) {
                 // The GUI-visible comparison has a run-to-run noise floor because the first-person item animates: the
                 // frame a run captures sits at a different partial tick each time, so the arm and the equipped progress
                 // differ between otherwise identical runs. Freezing the animation phases makes the comparison measure
                 // the renderer rather than the phase, which is what a like-for-like image comparison needs.
-                if (Boolean.getBoolean("celtium.validation.thirdPerson")) {
+                if (HarnessConfig.bool("thirdPerson", false)) {
                     // Third person removes the first-person hand entirely. That hand is drawn by GL - ItemRenderer uses
                     // POSITION_TEX, which the acceptance mask does not take - and its position moves with the frame's
                     // partial tick, which measured as a term of about 3.6 that no renderer difference could be read
@@ -7207,7 +7200,7 @@ public final class ValidationClient {
                 mc.player.swingProgress = 0.0f;
                 mc.player.prevRenderArmPitch = mc.player.renderArmPitch = 0.0f;
                 mc.player.prevRenderArmYaw = mc.player.renderArmYaw = 0.0f;
-                if (Boolean.getBoolean("celtium.validation.emptyHand")) {
+                if (HarnessConfig.bool("emptyHand", false)) {
                     // Separates "the held item is drawn differently" from "the held item's drawing changes what is drawn
                     // around it": with nothing in hand the item renderer does nothing, so a difference that survives is
                     // not the item's own geometry.
@@ -7368,7 +7361,7 @@ public final class ValidationClient {
             return;
         }
         try {
-            if (Boolean.getBoolean("celtium.validation.rawFboIdentityProbe")) {
+            if (HarnessConfig.bool("rawFboIdentityProbe", false)) {
                 boolean attempted = rawFboIdentityProbe != null && rawFboIdentityProbe.attempted();
                 boolean passed = attempted && rawFboIdentityProbe.passed();
                 report.addProperty("rawFboIdentityProbeAttempted", attempted);
@@ -7381,7 +7374,7 @@ public final class ValidationClient {
                 throw new IllegalStateException("Required commandBufferTargets fixture "
                         + (commandBufferTargetsAttempted ? "failed: " + report.get("commandBufferTargets") : "never exercised"));
             }
-            if (!Boolean.getBoolean("celtium.validation.interop")) {
+            if (!HarnessConfig.bool("interop", false)) {
                 // The frame that was just drawn may still contain an entity the client tick did not see. Drop it and
                 // capture on the next frame, so the saved scene contains terrain and the sky only.
                 // captureEntities keeps the live scene instead: for the entity comparison to measure the native
@@ -7389,7 +7382,7 @@ public final class ValidationClient {
                 // before this removal) and "has none" (the screenshot, taken after), the screenshot has to hold the
                 // same live frame the presented image does. What is measured here is the renderer, so the removal that
                 // only exists to make the terrain comparison deterministic is skipped on request.
-                if (Boolean.getBoolean("celtium.validation.captureEntities")) {
+                if (HarnessConfig.bool("captureEntities", false)) {
                     report.addProperty("captureEntitiesKept", true);
                     // What the crosshair actually hits at capture time: the selection box only draws when this is a
                     // block, so recording it settles whether the outline was supposed to be in the frame at all.
@@ -7443,9 +7436,9 @@ public final class ValidationClient {
                 report.addProperty("lightmapFlickerPinned", flickerPinned);
                 report.addProperty("pinnedWorldTime", PINNED_WORLD_TIME);
                 report.addProperty("worldTimeAtCapture", mc.world.getWorldTime());
-                report.addProperty("renderCloudsRequested", Integer.getInteger("celtium.validation.renderClouds", -1));
+                report.addProperty("renderCloudsRequested", HarnessConfig.integer("renderClouds", -1));
                 report.addProperty("showDebugInfoRequested",
-                        System.getProperty("celtium.validation.showDebugInfo", "unset"));
+                        HarnessConfig.string("showDebugInfo", "unset"));
                 report.addProperty("showDebugInfoAtCapture", Boolean.valueOf(mc.gameSettings.showDebugInfo));
                 report.addProperty("showDebugInfoSource",
                         "set through GameSettings.showDebugInfo (the F3 key cannot be synthesised honestly)");
@@ -7462,7 +7455,7 @@ public final class ValidationClient {
                 // video settings scene, the screenshot taken with the screen open) rather than "the file at a path".
                 celtium$takeWorldStageEvidence(mc);
             }
-            if (Boolean.getBoolean("celtium.validation.interop")) {
+            if (HarnessConfig.bool("interop", false)) {
                 if (!interopRun) {
                     if (celtium$glLessInstalled()) {
                         celtium$requestPresentedDump(mc, "validation");
@@ -7488,7 +7481,7 @@ public final class ValidationClient {
                                 int.class, String.class, boolean.class).invoke(null, fboAtInterop, colorAtInterop,
                                 depthAtInterop, target.framebufferWidth, target.framebufferHeight,
                                 mc.gameDir.toPath().resolve("logs").toString(),
-                                Boolean.getBoolean("celtium.validation.vulkanLayer"));
+                                HarnessConfig.bool("vulkanLayer", false));
                         JsonObject interop = JsonParser.parseString(json).getAsJsonObject();
                         report.add("interop", interop);
                         if (!"ROUNDTRIP_PASSED".equals(interop.get("status").getAsString()))
@@ -7512,16 +7505,16 @@ public final class ValidationClient {
                 report.addProperty("normalWorldFramesAfterInterop", worldFrames - framesAtInterop);
                 ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation-post-interop.png", mc.displayWidth, mc.displayHeight, target);
             }
-            String dumpDirectory = System.getProperty("celtium.vulkan.dumpTextures");
+            String dumpDirectory = HarnessConfig.string("dumpTextures", null);
             if (dumpDirectory != null && !dumpDirectory.isEmpty()) {
                 dumpLiveLightmap(mc, dumpDirectory);
                 dumpLiveAtlas(mc, dumpDirectory);
             }
-            if (worldFrames < Integer.getInteger("celtium.validation.minWorldFrames", 100).intValue() || !report.has("framebuffer")) {
+            if (worldFrames < HarnessConfig.integer("minWorldFrames", 5, 100) || !report.has("framebuffer")) {
                 // The count is in the message on purpose: the threshold is the acceptance, and a run that misses it must say
                 // by how much rather than leaving the next attempt to guess whether it was close or nowhere near.
                 throw new IllegalStateException("Too few world rendering frames for startup validation: worldFrames="
-                        + worldFrames + " (threshold " + Integer.getInteger("celtium.validation.minWorldFrames", 100).intValue()
+                        + worldFrames + " (threshold " + HarnessConfig.integer("minWorldFrames", 5, 100)
                         + "), worldTicks=" + worldTicks);
             }
             if (report.get("celtiumCommandRegistered").getAsBoolean()) {
@@ -7553,7 +7546,7 @@ public final class ValidationClient {
             }
             // The vanilla reference: the same fixture with no terrain mod installed still captures the same frame, which
             // is the ground truth the mod's own colours are judged against. Only the capture matters in that mode.
-            if (Boolean.getBoolean("celtium.validation.vanillaReference")) {
+            if (HarnessConfig.bool("vanillaReference", false)) {
                 celtium$logFrameSample(mc);
                 ScreenShotHelper.saveScreenshot(mc.gameDir, "celtium-validation.png", mc.displayWidth,
                         mc.displayHeight, mc.getFramebuffer());
@@ -7577,7 +7570,7 @@ public final class ValidationClient {
             // The device bootstrap can succeed while the *terrain* backend still falls back to OpenGL (for example
             // when the validation layer is requested but not installed), so a run that claims to exercise Vulkan
             // terrain checks the live backend here, where it has been recorded.
-            if (Boolean.getBoolean("celtium.validation.expectVulkanTerrain")) {
+            if (HarnessConfig.bool("expectVulkanTerrain", false)) {
                 String live = report.get("terrainBackendDescription").getAsString();
                 if (!live.startsWith("vulkan")) {
                     throw new IllegalStateException("Vulkan terrain was expected but the live backend is: " + live);
@@ -7659,7 +7652,7 @@ public final class ValidationClient {
                 report.addProperty("guiStageStartedAtFrames", Integer.valueOf(worldFrames));
                 return;
             }
-            if (celtium$glLessInstalled() && !Boolean.getBoolean("celtium.validation.presentedImageAtCapture")) {
+            if (celtium$glLessInstalled() && !HarnessConfig.bool("presentedImageAtCapture", false)) {
                 // The screenshot and the report properties are taken; only the picture verdict is left, and it is
                 // taken on the first frame whose requested dump has been written and observed.
                 celtium$presentedVerdictPendingAtTick = worldTicks;
@@ -7827,7 +7820,7 @@ public final class ValidationClient {
      * with a warmed benchmark.
      */
     private void celtium$reportFrameIntervals() {
-        if (Boolean.getBoolean("celtium.validation.menuFrameStats")) {
+        if (HarnessConfig.bool("menuFrameStats", false)) {
             Collections.sort(this.menuFrameIntervals);
             report.addProperty("menuFrameIntervalFromHoldTick", 20);
             report.addProperty("menuFrameIntervalToHoldTick", 70);
@@ -7853,8 +7846,8 @@ public final class ValidationClient {
         report.addProperty("frameIntervalP95Ms", frameIntervals.isEmpty() ? -1.0D : percentile(0.95));
         report.addProperty("frameIntervalP99Ms", frameIntervals.isEmpty() ? -1.0D : percentile(0.99));
         Collections.sort(warmFrameIntervals);
-        report.addProperty("frameIntervalWarmFromTick", Integer.getInteger("celtium.validation.warmFromTick", 400));
-        report.addProperty("frameIntervalWarmToTick", Integer.getInteger("celtium.validation.warmToTick", 600));
+        report.addProperty("frameIntervalWarmFromTick", HarnessConfig.integer("warmFromTick", 400));
+        report.addProperty("frameIntervalWarmToTick", HarnessConfig.integer("warmToTick", 600));
         report.addProperty("frameIntervalWarmSampleCount", warmFrameIntervals.size());
         report.addProperty("frameIntervalWarmP50Ms", percentile(warmFrameIntervals, 0.50));
         report.addProperty("frameIntervalWarmP95Ms", percentile(warmFrameIntervals, 0.95));
@@ -7891,8 +7884,8 @@ public final class ValidationClient {
         celtium$reportSpikes(report, "frameIntervalCold", frameIntervals);
         report.addProperty("frameIntervalWindows",
                 "cold=worldTicks 120..200 (the chunk-build window; the unqualified frameIntervalP50Ms fields are this"
-                        + " one) warm=worldTicks " + Integer.getInteger("celtium.validation.warmFromTick", 400) + ".."
-                        + Integer.getInteger("celtium.validation.warmToTick", 600)
+                        + " one) warm=worldTicks " + HarnessConfig.integer("warmFromTick", 400) + ".."
+                        + HarnessConfig.integer("warmToTick", 600)
                         + " (post-startup tick window; tick number alone does not establish idle chunk loading)");
         net.minecraft.client.settings.GameSettings timingSettings = Minecraft.getMinecraft().gameSettings;
         report.addProperty("framerateLimitSetting", timingSettings.limitFramerate);
@@ -7902,7 +7895,7 @@ public final class ValidationClient {
                 + "; cold and post-startup windows are separate, neither is an isolated renderer CPU/GPU timer");
         // The spike capture was collected but never written: a counter that is built and then not reported is the same
         // defect as one that is never built, and the p95/p99 pair is what the user's complaint is measured against.
-        report.addProperty("slowFrameThresholdMs", Integer.getInteger("celtium.validation.slowFrameMs", 50));
+        report.addProperty("slowFrameThresholdMs", HarnessConfig.integer("slowFrameMs", 50));
         report.addProperty("slowFrameCount", celtium$slowFrames.size());
         report.addProperty("warmSpikeThresholdMs", WARM_SPIKE_MS);
         report.addProperty("warmSpikeCount", celtium$warmSpikes.size());
@@ -7935,8 +7928,8 @@ public final class ValidationClient {
                         + " absent, which is not the same as zero");
         report.addProperty("uploadWaitWindows",
                 "cold=worldTicks 120..200, warm=worldTicks "
-                        + Integer.getInteger("celtium.validation.warmFromTick", 400) + ".."
-                        + Integer.getInteger("celtium.validation.warmToTick", 600)
+                        + HarnessConfig.integer("warmFromTick", 400) + ".."
+                        + HarnessConfig.integer("warmToTick", 600)
                         + "; ...Frames is how many render ticks the window's differences were summed over");
         report.addProperty("uploadSubmitWaitMillisColdWindow", celtium$uploadColdSubmitWaitMillis);
         report.addProperty("uploadSubmitWaitsColdWindow", celtium$uploadColdSubmitWaits);
@@ -8816,7 +8809,7 @@ public final class ValidationClient {
      * serialize with the final state at finish time.
      */
     private com.google.gson.JsonArray celtium$parseResizeSchedule() {
-        String spec = System.getProperty("celtium.validation.resizeSchedule", "");
+        String spec = HarnessConfig.string("resizeSchedule", "");
         if (spec.trim().isEmpty()) {
             return null;
         }
@@ -9026,8 +9019,8 @@ public final class ValidationClient {
         // return, so "no line at all" (mixin not applied) and "instanceSet=false" (ordering) cannot be confused.
         System.out.println("[Celtium] CELTIUM_SPLASH_HOOK fixture instanceSet=" + (instance != null)
                 + " alreadyRequested=" + celtium$loadingDumpRequested
-                + " dumpEnabled=" + Boolean.getBoolean("celtium.validation.dumpPresentedImage"));
-        if (celtium$loadingDumpRequested || !Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+                + " dumpEnabled=" + HarnessConfig.bool("dumpPresentedImage", true));
+        if (celtium$loadingDumpRequested || !HarnessConfig.bool("dumpPresentedImage", true)) {
             return;
         }
         try {
@@ -9056,7 +9049,7 @@ public final class ValidationClient {
     public static void requestModLoadingDump() {
         ValidationClient active = instance;
         if (celtium$modLoadingDumpRequested || active == null
-                || !Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+                || !HarnessConfig.bool("dumpPresentedImage", true)) {
             return;
         }
         try {
@@ -9074,7 +9067,7 @@ public final class ValidationClient {
 
     /** Keep one non-empty native title as the pre-resize control; attempt the transition exactly once. */
     private boolean celtium$resizeLoadingFrame(String title) {
-        if (!Boolean.getBoolean("celtium.validation.resizeDuringLoading") || celtium$controlledLoadingProbe
+        if (!HarnessConfig.bool("resizeDuringLoading", false) || celtium$controlledLoadingProbe
                 || celtium$resizeRequested || title == null || title.isEmpty()) {
             return false;
         }
@@ -9085,8 +9078,8 @@ public final class ValidationClient {
     public static void requestLoadingProgressDump(int progress, String title, String message) {
         ValidationClient active = instance;
         if (active == null || !active.enabled || !active.launched || active.finished || active.celtium$loadingProgressCaptures >= 8
-                || !Boolean.getBoolean("celtium.validation.dumpLoadingProgress")
-                || !Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+                || !HarnessConfig.bool("dumpLoadingProgress", false)
+                || !HarnessConfig.bool("dumpPresentedImage", true)) {
             return;
         }
         Minecraft mc = Minecraft.getMinecraft();
@@ -9467,7 +9460,7 @@ public final class ValidationClient {
      * that says whether it still does.
      */
     private void celtium$captureGameScreenshot(Minecraft mc) {
-        if (!Boolean.getBoolean("celtium.validation.gameScreenshot")) {
+        if (!HarnessConfig.bool("gameScreenshot", false)) {
             return;
         }
         try {
@@ -9516,7 +9509,7 @@ public final class ValidationClient {
         // Recorded at the capture, beside the frame it describes: see celtium$recordDarkRegionProbe.
         celtium$recordDarkRegionProbe(mc);
         celtium$captureGameScreenshot(mc);
-        if (!Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+        if (!HarnessConfig.bool("dumpPresentedImage", true)) {
             if (celtium$glLessInstalled()) {
                 report.addProperty("pictureEvidenceProblem", "GL-less without -Dceltium.vulkan.presentReadback and"
                         + " -Dceltium.validation.dumpPresentedImage: the game's own screenshot is black by construction"
@@ -9916,7 +9909,7 @@ public final class ValidationClient {
         report.addProperty("guiLayoutFrames", Integer.valueOf(layoutFrames));
         report.addProperty("machineGuiResult", celtium$machineGuiResult);
         celtium$captureGlScreenshot(mc, "celtium-validation.png", "gui");
-        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+        if (HarnessConfig.bool("dumpPresentedImage", true)) {
             celtium$requestPresentedDump(mc, "gui");
         }
         if (celtium$glLessInstalled()) {
@@ -10114,7 +10107,7 @@ public final class ValidationClient {
         // that was asked for - which is how "VSYNC has no row" was recorded while the dump below listed ENABLE_VSYNC.
         // The fallback is still pressed (the chain needs a press) but it says so, and the requested token is quoted
         // beside it so the next reader can tell a missing row from a missing match.
-        String celtium$vsRequested = System.getProperty("celtium.validation.videoSettingsOption", "");
+        String celtium$vsRequested = HarnessConfig.string("videoSettingsOption", "");
         boolean celtium$vsFellBack = !celtium$vsRequested.isEmpty()
                 && !celtium$vsRequested.equals(celtium$vsOption)
                 && celtium$vsMatchedLabel == null;
@@ -10129,7 +10122,7 @@ public final class ValidationClient {
         }
         report.addProperty("videoSettingsOptionBefore", celtium$vsBefore);
         report.addProperty("videoSettingsOptionButton", button.getClass().getName());
-        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+        if (HarnessConfig.bool("dumpPresentedImage", true)) {
             celtium$vsPictureBefore = celtium$requestPresentedDump(mc, "vs-before");
         }
         int[] box = celtium$vsPressBox(button);
@@ -10212,7 +10205,7 @@ public final class ValidationClient {
 
     /** Step 2: dump the frame the change produced, then reopen the screen through the game's own button path. */
     private boolean celtium$vsAfterDumpAndReopen(Minecraft mc) throws Exception {
-        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+        if (HarnessConfig.bool("dumpPresentedImage", true)) {
             celtium$vsPictureAfter = celtium$requestPresentedDump(mc, "vs-after");
         }
         celtium$vsOpenCapturedScreen(mc);
@@ -10408,7 +10401,7 @@ public final class ValidationClient {
         // effect is not in the picture but in the present policy (task-56): pressing it must rebuild the swapchain
         // with the mode the option asks for, which is the player's path and not a property that flips the policy at
         // startup. Empty keeps the old preferred list, so every existing run is unchanged.
-        String requested = System.getProperty("celtium.validation.videoSettingsOption", "");
+        String requested = HarnessConfig.string("videoSettingsOption", "");
         // The Celeritas screen's rows are a plain List of Sodium-style Options: they have no `getListEntry` and no
         // `enumOptions`, so the loop below breaks on its first iteration and this method returned nothing while
         // `videoSettingsRowNames` listed 34 real rows ("no option button could be located in the screen's row list").
@@ -11051,7 +11044,7 @@ public final class ValidationClient {
         // (the screen is already drawn); under GL-less it is the black-by-construction file and the presented dump is
         // the picture.
         celtium$captureGlScreenshot(mc, "celtium-validation.png", "gui");
-        if (Boolean.getBoolean("celtium.validation.dumpPresentedImage")) {
+        if (HarnessConfig.bool("dumpPresentedImage", true)) {
             celtium$requestPresentedDump(mc, "gui");
         }
         if (celtium$glLessInstalled()) {
@@ -11479,15 +11472,15 @@ public final class ValidationClient {
 
     /** The scene's variant as words: the world stack and the coverage flags that decide what the picture contains. */
     private static String celtium$sceneVariantDescription() {
-        String stack = System.getProperty("celtium.validation.worldLayers", celtium$DEFAULT_WORLD_LAYERS);
-        int sweep = Integer.getInteger("celtium.validation.blockSweep", 0).intValue();
-        int sweepFrom = Integer.getInteger("celtium.validation.blockSweepFrom", 0).intValue();
+        String stack = HarnessConfig.string("worldLayers", celtium$DEFAULT_WORLD_LAYERS);
+        int sweep = HarnessConfig.integer("blockSweep", 0);
+        int sweepFrom = HarnessConfig.integer("blockSweepFrom", 0);
         StringBuilder variant = new StringBuilder();
         variant.append(celtium$DEFAULT_WORLD_LAYERS.equals(stack) ? "default flat stack" : "worldLayers=" + stack);
         if (sweep > 0) {
             variant.append(", blockSweep=").append(sweep).append(" from registry index ").append(sweepFrom);
         }
-        if (Boolean.getBoolean("celtium.validation.allBlocks")) {
+        if (HarnessConfig.bool("allBlocks", false)) {
             variant.append(", allBlocks wall");
         }
         if (!"none".equals(celtium$entityVariant())) {
@@ -11505,8 +11498,8 @@ public final class ValidationClient {
 
     /** The scene's dimension as words, so a failure names the world the picture is of, not only the scene's name. */
     private static String celtium$sceneDimension() {
-        int dimension = Integer.getInteger("celtium.validation.dimension", 0).intValue();
-        int atTick = Integer.getInteger("celtium.validation.dimensionAtTick", 0).intValue();
+        int dimension = HarnessConfig.integer("dimension", 0);
+        int atTick = HarnessConfig.integer("dimensionAtTick", 0);
         if (atTick <= 0 || dimension == 0) {
             return "overworld (dimension 0), no transfer requested";
         }
@@ -11609,7 +11602,7 @@ public final class ValidationClient {
         // (the note at the resize site records the GLFW attempt that never reached the window), so the dump carries the
         // surface's size and the framebuffer carries another. That is a limitation of the harness, not a defect in the
         // frame, so the size comparison is recorded as uncalibrated rather than raised as a failure.
-        if (Boolean.getBoolean("celtium.validation.resize")) {
+        if (HarnessConfig.bool("resize", false)) {
             report.addProperty("pictureSizeUncalibrated_" + where.replace(' ', '_').replace('=', '_'),
                     "the window is not resizable on this harness, so the dump's size and the framebuffer's size differ"
                             + " by construction: dump " + identity.get("width").getAsString() + "x"
@@ -12752,13 +12745,13 @@ public final class ValidationClient {
                 });
             }
         }
-        if (Boolean.getBoolean("celtium.validation.allBlocks") && mc.player != null) {
+        if (HarnessConfig.bool("allBlocks", false) && mc.player != null) {
             // The block wall is tall enough that the default downward pitch cuts its top rows off; level view plus a
             // little tilt keeps all of it inside the frame at the wall's distance.
             mc.player.rotationPitch = -14.0F;
             mc.player.prevRotationPitch = -14.0F;
         }
-        if (Boolean.getBoolean("celtium.validation.lookDown") && mc.player != null) {
+        if (HarnessConfig.bool("lookDown", false) && mc.player != null) {
             mc.player.rotationPitch = 75.0F;
             mc.player.prevRotationPitch = 75.0F;
             // The block-selection outline is only drawn while the HUD is shown: drawSelectionBox is skipped when the

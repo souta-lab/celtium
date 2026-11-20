@@ -34,14 +34,14 @@ menu 境界の破棄（defect 5、43–1,314 batch/pack）・fixture の present
 r14 で既定 on にして解消**（拒否 0、chain が描く）が、halo は bloom layer の geometry 待ちで、**Nomi の画像は撮り直しが必要**。
 再検証は `scripts/modpack-reverify.sh`。
 
-**KPI leg は `-Dceltium.validation.guiScale=3` を共有flagで渡す**（2026-11-07 実測。渡さないと calibration key が合わず fixture が leg を拒否する）。
+**KPI leg はハーネスファイルの `guiScale=3` を共有設定で渡す**（2026-11-07 実測。渡さないと calibration key が合わず fixture が leg を拒否する）。
 
 ## 次の作業（優先順）
 
 1. **FPS: まず現 main の paired KPI を取り直す**（最後の KPI は r14、2026-11-07）。r14 は bloom chain を描く正直な
    比較で `NOT_MET`（AMD 1.099/1.056/1.113、Intel 1.204/1.084/1.080）。0.2.4 の +12.0/+12.3 %（PR #421）は
    celtium 自身の前後比較で Celeritas との比ではないので、判定には使えない。`scripts/gv-kpi.sh` を両 GPU で
-   `-Dceltium.validation.guiScale=3` を共有 flag にして回し、`goalCondition` を更新する。r14 の内訳
+   `guiScale=3` を共有設定にして回し、`goalCondition` を更新する。r14 の内訳
    （window 5.0→19.6/frame、15 window × ~36us）は再計測で取り直す。
    tick frame 側の残り（`animBatchFlush` 66us・`animMirror` 30us・`dyn*` 28us）は第2群。
 2. **bloom の halo**: bloom layer の terrain geometry が通常 build されない（`CELTIUM_LAYER_GEOMETRY layer=Bloom ...
@@ -50,7 +50,7 @@ r14 で既定 on にして解消**（拒否 0、chain が描く）が、halo は
 3. **残る Celtium 欠陥**: defect 10（ATM3 の上空）・defect 5（menu 境界の破棄）・defect 6。defect 6 は fixture 側の
    修正が着地し（`559f979`、window/skip 帰属）、**受入 leg（RLCraft AMD の再実行）が残る**。
    **Nomi の画像は r14 以降の jar で撮り直す**（21,885 拒否は 0 になり chain が描くので r126 の数値は変更前）。
-4. **Xaero radar の entity icon**: 描かれるか未確認（entity の居る scene が必要、`-Dceltium.validation.keepEntities=true`）。
+4. **Xaero radar の entity icon**: 描かれるか未確認（entity の居る scene が必要、ハーネスファイルの `keepEntities=true`）。
 5. **巨大クラス分割の継続**と効果の無い実験 switch の削除（挙動不変、CPU テストで確認）。
 6. **影**: 影パスの draw を影 target の chain pair に載せるのが残差（項目332）。（397 の view キーは `SHADOW_VIEW` 未到達の仮配線 — 項目406）深度ストア・native depth copy・
    `glBlitFramebuffer` 深度経路と、影パス読み込みの native 提供（0.2.5-rc2、served ≥8・refused 0）は着地済み。

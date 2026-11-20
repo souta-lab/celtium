@@ -1,6 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
 import org.lwjgl.PointerBuffer;
+import org.soutalab.celtium.harness.HarnessConfig;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.*;
@@ -136,8 +137,8 @@ public final class VulkanGlTexture {
      */
     private static final String MIRROR_DUMP_DIR = System.getProperty("celtium.vulkan.mirrorDump");
     /** The upload-time texture dump, read per upload before this change; both answer the same on every call. */
-    private static final String TEXTURE_DUMP_DIR = System.getProperty("celtium.vulkan.dumpTextures");
-    private static final boolean TEXTURE_DUMP_EVERY = Boolean.getBoolean("celtium.vulkan.dumpTexturesEvery");
+    private static final String TEXTURE_DUMP_DIR = HarnessConfig.string("dumpTextures", null);
+    private static final boolean TEXTURE_DUMP_EVERY = HarnessConfig.bool("dumpTexturesEvery", false);
     /** GL names to dump; empty means every texture, which a per-frame light map would flood. */
     private static final String MIRROR_DUMP_IDS = System.getProperty("celtium.vulkan.mirrorDumpIds", "");
     /** Parsed once: it was split on every dumped upload because the property is a comma list. */

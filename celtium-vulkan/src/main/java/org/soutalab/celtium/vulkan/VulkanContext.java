@@ -1,6 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
 import org.lwjgl.PointerBuffer;
+import org.soutalab.celtium.harness.HarnessConfig;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.EXTDebugUtils;
@@ -75,19 +76,13 @@ import static org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceProperties2;
  */
 public final class VulkanContext {
     /**
-     * System property that switches the Khronos validation layer and the debug-utils messenger on. Off by default so
-     * a shipped installation never needs the layer to be installed.
-     */
-    public static final String VALIDATION_PROPERTY = "celtium.vulkan.validation";
-
-    /**
      * Enables the S2 swapchain probe: a surface and swapchain are created for the game window and one image is
      * cleared and presented, which is the evidence that the presentation path works. Off by default because GL still
      * presents the window in the hybrid build.
      */
     public static final String SWAPCHAIN_PROPERTY = "celtium.vulkan.swapchainProbe";
-    /** Startup constants read from the property map once: every use site then pays no lookup. */
-    private static final boolean VALIDATION_REQUESTED = Boolean.getBoolean(VALIDATION_PROPERTY);
+    /** Startup constants read once: every use site then pays no lookup. */
+    private static final boolean VALIDATION_REQUESTED = HarnessConfig.bool("vulkanValidation", true);
     private static final boolean SWAPCHAIN_REQUESTED = Boolean.getBoolean(SWAPCHAIN_PROPERTY);
     private static final boolean PRESENT_FROM_COMPOSITE =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
