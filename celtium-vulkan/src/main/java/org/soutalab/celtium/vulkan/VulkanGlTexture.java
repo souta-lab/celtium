@@ -314,6 +314,22 @@ public final class VulkanGlTexture {
     private boolean nearestMinFilter;
     /** Whether the recorded wrap parameters were consulted once; see {@link #confirmWrapFromRecord}. */
     private boolean wrapConfirmed;
+    /**
+     * The aspect a foreign wrapper's layout barriers name: colour for every published frame image, depth for a
+     * published shadow depth image (the sampling-publication gap, SHADOW-NATIVE-DESIGN section 3.4). A colour
+     * barrier recorded over a depth image is a validation error, and a depth image's uses - depth attachment
+     * writes and fragment-shader reads - are not the uses the colour masks name, so the transition picks its
+     * masks by this aspect.
+     */
+    private int foreignAspect = VK_IMAGE_ASPECT_COLOR_BIT;
+    /**
+     * Whether this wrapper's sampler compares against a reference value (hardware shadow filtering), taken from
+     * the source GL texture's recorded {@code GL_TEXTURE_COMPARE_MODE} at publication. Only a depth wrapper is
+     * ever created with this set.
+     */
+    private boolean samplerCompareEnable;
+    /** The comparison the sampler applies when {@link #samplerCompareEnable} is set. */
+    private int samplerCompareOp = VK_COMPARE_OP_NEVER;
 
     /** Hash of the last uploaded level 0, so an unchanged texture skips the copy (and its queue drain). */
     private long lastPixelHash;
@@ -471,6 +487,17 @@ public final class VulkanGlTexture {
             | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
     private static final int WORKING_ACCESS = VK_ACCESS_TRANSFER_WRITE_BIT
             | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+
+    /**
+     * The depth twin of {@link #WORKING_STAGES} / {@link #WORKING_ACCESS}: a published depth image is written by
+     * the shadow pass's depth attachment (the fragment-tests stages) and read by deferred fragment shaders, so
+     * those are the stages and accesses its handshake names. Kept apart from the colour set because validation
+     * checks each access flag against the stages named (VUID-VkImageMemoryBarrier-srcAccessMask-02815).
+     */
+    private static final int DEPTH_WORKING_STAGES = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+            | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    private static final int DEPTH_WORKING_ACCESS = VK_ACCESS_SHADER_READ_BIT
+            | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
     /** Layout handshakes recorded and skipped for shared images, so a run says whether the caller's calls arrived. */
     private static long foreignLayoutTransitions;
@@ -1088,6 +1115,45 @@ public final class VulkanGlTexture {
      */
     public static VulkanGlTexture shareExternal(VulkanContext context, long image, long view, int width, int height,
             int declaredLayout) {
+        // Linear and clamp-to-edge, the state a game framebuffer texture is created with: the composite is a
+        // full-screen quad whose texture coordinates span 0..1 exactly, so filtering and wrapping only matter at the
+        // edges - and there clamping is what the reference does.
+        return shareExternalInternal(context, image, view, width, height, declaredLayout,
+                VK_IMAGE_ASPECT_COLOR_BIT, false, false, false, false, false, VK_COMPARE_OP_NEVER);
+    }
+
+    /**
+     * {@return a wrapper standing for a depth image owned by the caller} - the depth twin of
+     * {@link #shareExternal}, for the sampling publication of a shadow map (SHADOW-NATIVE-DESIGN section 3.4).
+     * <p>
+     * The image is one of the frame target's shared depth images. The wrapper owns only its sampler, as the colour
+     * one does, but its layout barriers name the depth aspect and the depth accesses, and its sampler is built from
+     * the source GL texture's recorded parameters - the filters and wraps the mod set on it and, when its compare
+     * mode is {@code GL_COMPARE_REF_TO_TEXTURE}, a comparison applying its recorded compare function. The declared
+     * layout is the shared depth store's record for the image; the store stays the layout record the owner's next
+     * attachment acquire reads, and the caller reports this wrapper's transitions back into it.
+     *
+     * @param nearestFilter    whether magnification is NEAREST, from the texture's recorded {@code GL_TEXTURE_MAG_FILTER}
+     * @param nearestMinFilter whether minification is NEAREST, from the texture's recorded {@code GL_TEXTURE_MIN_FILTER}
+     * @param wrapRepeatU      whether the U wrap repeats, from the texture's recorded {@code GL_TEXTURE_WRAP_S}
+     * @param wrapRepeatV      whether the V wrap repeats, from the texture's recorded {@code GL_TEXTURE_WRAP_T}
+     * @param compareEnable    whether the sampler compares, from the texture's recorded {@code GL_TEXTURE_COMPARE_MODE}
+     * @param compareOp        the comparison to apply, from the texture's recorded {@code GL_TEXTURE_COMPARE_FUNC}
+     * @return the wrapper; drop it with {@link #delete()}, which releases the sampler and touches nothing of the image
+     * @throws IllegalArgumentException under the same conditions as {@link #shareExternal}
+     */
+    public static VulkanGlTexture shareExternalDepth(VulkanContext context, long image, long view, int width,
+            int height, int declaredLayout, boolean nearestFilter, boolean nearestMinFilter,
+            boolean wrapRepeatU, boolean wrapRepeatV, boolean compareEnable, int compareOp) {
+        return shareExternalInternal(context, image, view, width, height, declaredLayout,
+                VK_IMAGE_ASPECT_DEPTH_BIT, nearestFilter, nearestMinFilter, wrapRepeatU, wrapRepeatV,
+                compareEnable, compareOp);
+    }
+
+    /** The one foreign-wrapper construction both factories share; only the aspect and the sampler spec differ. */
+    private static VulkanGlTexture shareExternalInternal(VulkanContext context, long image, long view, int width,
+            int height, int declaredLayout, int aspect, boolean nearestFilter, boolean nearestMinFilter,
+            boolean wrapRepeatU, boolean wrapRepeatV, boolean compareEnable, int compareOp) {
         if (context == null) {
             throw new NullPointerException("context");
         }
@@ -1121,12 +1187,13 @@ public final class VulkanGlTexture {
         result.foreignState = declareForeignImage(image, declaredLayout);
         result.fullContentArrived = true;
         result.generation = SHARED_GENERATIONS.incrementAndGet();
-        // Linear and clamp-to-edge, the state a game framebuffer texture is created with: the composite is a
-        // full-screen quad whose texture coordinates span 0..1 exactly, so filtering and wrapping only matter at the
-        // edges - and there clamping is what the reference does.
-        result.nearestFilter = false;
-        result.wrapRepeatU = false;
-        result.wrapRepeatV = false;
+        result.foreignAspect = aspect;
+        result.nearestFilter = nearestFilter;
+        result.nearestMinFilter = nearestMinFilter;
+        result.wrapRepeatU = wrapRepeatU;
+        result.wrapRepeatV = wrapRepeatV;
+        result.samplerCompareEnable = compareEnable;
+        result.samplerCompareOp = compareOp;
         try {
             result.createSampler();
         } catch (RuntimeException | LinkageError error) {
@@ -1152,6 +1219,11 @@ public final class VulkanGlTexture {
     /** {@return whether the image is owned by the caller of {@link #shareExternal} rather than by this wrapper}. */
     public boolean isExternal() {
         return !this.ownsImage;
+    }
+
+    /** {@return whether this wrapper stands for a foreign depth image} (see {@link #shareExternalDepth}). */
+    public boolean isDepthExternal() {
+        return !this.ownsImage && this.foreignAspect == VK_IMAGE_ASPECT_DEPTH_BIT;
     }
 
     /**
@@ -1272,10 +1344,13 @@ public final class VulkanGlTexture {
             return;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            boolean depth = this.foreignAspect == VK_IMAGE_ASPECT_DEPTH_BIT;
+            int stages = depth ? DEPTH_WORKING_STAGES : WORKING_STAGES;
+            int access = depth ? DEPTH_WORKING_ACCESS : WORKING_ACCESS;
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
             barrier.get(0).sType$Default()
-                    .srcAccessMask(WORKING_ACCESS)
-                    .dstAccessMask(WORKING_ACCESS)
+                    .srcAccessMask(access)
+                    .dstAccessMask(access)
                     .oldLayout(oldLayout)
                     .newLayout(newLayout)
                     .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
@@ -1283,8 +1358,9 @@ public final class VulkanGlTexture {
                     .image(this.image);
             // One level, one layer: the off-target image has no chain, and a range that named levels the view does
             // not cover would be the same class of error the mirror's own layout bookkeeping was written to avoid.
-            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
-            vkCmdPipelineBarrier(commandBuffer, WORKING_STAGES, WORKING_STAGES, 0, null, null, barrier);
+            // The aspect is the wrapper's own: a colour barrier over a depth image (or the reverse) is invalid.
+            barrier.get(0).subresourceRange().set(this.foreignAspect, 0, 1, 0, 1);
+            vkCmdPipelineBarrier(commandBuffer, stages, stages, 0, null, null, barrier);
         }
         // The barrier is in the command buffer now, so the transition is pending: it becomes fact when this command
         // buffer's submission is accepted, and it is dropped if the recording is abandoned. Nothing was written to the
@@ -2956,8 +3032,13 @@ public final class VulkanGlTexture {
                     // Ignored while anisotropy is disabled, but set to the neutral value so the struct never
                     // contains the zero that calloc leaves behind.
                     .maxAnisotropy(1.0f)
-                    .compareEnable(false)
-                    .compareOp(VK_COMPARE_OP_NEVER)
+                    // Comparison is a property of the source texture, not of the wrapper kind: it stays off for
+                    // every mirror and colour publication, and a published depth wrapper carries the recorded
+                    // GL_TEXTURE_COMPARE_MODE / GL_TEXTURE_COMPARE_FUNC of the shadow texture it stands for -
+                    // a deferred program that samples it with a shadow sampler needs the comparison in the
+                    // VkSampler itself, or the comparison the GL side promised silently does not happen.
+                    .compareEnable(this.samplerCompareEnable)
+                    .compareOp(this.samplerCompareOp)
                     .minLod(0.0f)
                     // Measured law, five configurations against the same GL reference: 1.0 gives 0.21-0.28%; the full
                     // chain's highest level (8 or 9) gives 8.77-8.82%; four levels give 7.37%; 0.0 gives 13.51% both with a

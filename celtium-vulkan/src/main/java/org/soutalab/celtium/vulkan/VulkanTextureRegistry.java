@@ -462,6 +462,124 @@ public final class VulkanTextureRegistry {
         return shared;
     }
 
+    /** Bounded census for depth publications, so a run says the shadow names were published without a line per name. */
+    private int externalDepthLogs;
+
+    /**
+     * Publishes a depth image under a GL texture name - the depth twin of {@link #publishExternalImage}, for a
+     * framebuffer's shadow map (SHADOW-NATIVE-DESIGN section 3.4).
+     * <p>
+     * The image and view are the frame target's shared depth image and its depth view; the wrapper built for them
+     * names the depth aspect in its barriers and carries a sampler built from the texture's recorded GL
+     * parameters: its filters, its wraps and - when the mod set {@code GL_TEXTURE_COMPARE_MODE} to
+     * {@code GL_COMPARE_REF_TO_TEXTURE} on it, as Iris does for hardware shadow filtering - a comparison applying
+     * its recorded {@code GL_TEXTURE_COMPARE_FUNC}. The declared layout is the shared depth store's record for
+     * the image, not a constant: a depth image rests in the attachment layout after its pass and in a read layout
+     * after a copy, and the wrapper's first transition has to name the true one.
+     *
+     * @param declaredLayout the layout the owner last recorded for the image in the shared depth store
+     * @return the wrapper, or null when the publication was refused (an incomplete image, an undeclared layout,
+     *         or a wrapper that could not be built)
+     */
+    public VulkanGlTexture publishExternalDepthImage(int glTextureId, long image, long view, int width, int height,
+            int declaredLayout) {
+        if (glTextureId == 0 || image == 0L || view == 0L || width <= 0 || height <= 0
+                || declaredLayout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED) {
+            this.failureCount++;
+            this.lastFailure = "an external depth image for GL texture " + glTextureId + " (image=0x"
+                    + Long.toHexString(image) + " view=0x" + Long.toHexString(view) + " " + width + "x" + height
+                    + " layout=" + declaredLayout + ") is incomplete";
+            this.rejectPatch("external depth image for GL texture " + glTextureId + " was not published: "
+                    + (glTextureId == 0 ? "no GL name to publish it under"
+                            : image == 0L || view == 0L ? "no image or view handle"
+                                    : declaredLayout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED
+                                            ? "the shared depth store has no layout record for it"
+                                            : "no usable size"));
+            return null;
+        }
+        VulkanGlTexture existing = this.externalImages.get(glTextureId);
+        if (existing != null && existing.isDepthExternal() && existing.standsFor(image, view, width, height)) {
+            this.externalRepublishes++;
+            return existing;
+        }
+        if (existing != null) {
+            this.externalImages.remove(glTextureId);
+            retireExternal(glTextureId, existing, "GL texture " + glTextureId + " was published with new handles");
+        }
+        Entry superseded = this.entries.remove(glTextureId);
+        celtium$noteLargeRemoval(glTextureId, superseded, "superseded by a published depth image");
+        celtium$dropMemoFor(glTextureId);
+        if (superseded != null) {
+            final VulkanGlTexture retiredMirror = superseded.texture;
+            VulkanRetireQueue.retire(new Runnable() {
+                @Override
+                public void run() {
+                    retiredMirror.delete();
+                }
+            });
+            this.externalSupersededMirrors++;
+        }
+        boolean compareEnable = textureParameter(glTextureId,
+                org.lwjgl.opengl.GL14.GL_TEXTURE_COMPARE_MODE)
+                == org.lwjgl.opengl.GL30.GL_COMPARE_REF_TO_TEXTURE;
+        int compareOp = vkCompareOpForGl(textureParameter(glTextureId,
+                org.lwjgl.opengl.GL14.GL_TEXTURE_COMPARE_FUNC));
+        int minFilter = textureParameter(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_MIN_FILTER);
+        boolean nearestMin = minFilter == org.lwjgl.opengl.GL11.GL_NEAREST
+                || minFilter == org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_NEAREST
+                || minFilter == org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_LINEAR;
+        VulkanGlTexture shared;
+        try {
+            shared = VulkanGlTexture.shareExternalDepth(this.context, image, view, width, height, declaredLayout,
+                    nearestFilterOf(glTextureId), nearestMin,
+                    textureParameter(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_S)
+                            == org.lwjgl.opengl.GL11.GL_REPEAT,
+                    textureParameter(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_T)
+                            == org.lwjgl.opengl.GL11.GL_REPEAT,
+                    compareEnable, compareOp);
+        } catch (RuntimeException | LinkageError error) {
+            this.failureCount++;
+            this.lastFailure = "external depth image for GL texture " + glTextureId + ": " + error;
+            this.rejectPatch("external depth image for GL texture " + glTextureId + " could not be published: "
+                    + error);
+            return null;
+        }
+        this.externalImages.put(glTextureId, shared);
+        this.mutations++;
+        celtium$dropMemoFor(glTextureId);
+        this.fullyInitialized.add(glTextureId);
+        this.staleIds.remove(glTextureId);
+        this.externalPublished++;
+        if (this.externalDepthLogs < 8) {
+            this.externalDepthLogs++;
+            System.out.println("[Celtium] CELTIUM_EXTERNAL_DEPTH_IMAGE published glTexture=" + glTextureId
+                    + " image=0x" + Long.toHexString(image) + " view=0x" + Long.toHexString(view)
+                    + " size=" + width + "x" + height + " layout=" + declaredLayout
+                    + " compare=" + compareEnable + " compareOp=" + compareOp
+                    + " (the sampler carries the texture's recorded GL parameters; the image and view are the"
+                    + " shared depth store's)");
+        }
+        return shared;
+    }
+
+    /**
+     * {@return the Vulkan comparison for a recorded GL compare function}. The unrecorded answer is 0, which is
+     * not a GL function value: GL's own default is {@code GL_LEQUAL}, and it is also the answer for a recorded
+     * {@code GL_LEQUAL}, so the default branch is both.
+     */
+    private static int vkCompareOpForGl(int glFunc) {
+        switch (glFunc) {
+            case org.lwjgl.opengl.GL11.GL_NEVER: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_NEVER;
+            case org.lwjgl.opengl.GL11.GL_LESS: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS;
+            case org.lwjgl.opengl.GL11.GL_EQUAL: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_EQUAL;
+            case org.lwjgl.opengl.GL11.GL_GREATER: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_GREATER;
+            case org.lwjgl.opengl.GL11.GL_NOTEQUAL: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_NOT_EQUAL;
+            case org.lwjgl.opengl.GL11.GL_GEQUAL: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_GREATER_OR_EQUAL;
+            case org.lwjgl.opengl.GL11.GL_ALWAYS: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_ALWAYS;
+            default: return org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL;
+        }
+    }
+
     /**
      * Drops a published image, without touching the image.
      * <p>

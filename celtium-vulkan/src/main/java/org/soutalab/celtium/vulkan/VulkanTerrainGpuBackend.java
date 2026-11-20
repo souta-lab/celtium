@@ -429,6 +429,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap publishedFrameImages =
             new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
 
+    /**
+     * The shared depth store key each depth-published GL name stands for, beside {@link #publishedFrameImages}.
+     * <p>
+     * A depth publication's layout record lives in the frame target's shared depth store, not in a pair, so the
+     * transition walk needs the key to report the wrapper's moves back into the store - the report the owner's
+     * next attachment acquire reads its source layout from (SHADOW-NATIVE-DESIGN section 3.4). Colour names are
+     * absent here; presence in this map is what makes a published name a depth publication.
+     */
+    final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap publishedFrameDepthKeys =
+            new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap();
+
     /** The published GL names, formatted like the boxed key set it replaced so log readers see the same text. */
     private String publishedFrameNames() {
         return java.util.Arrays.toString(this.publishedFrameImages.keySet().toIntArray());
@@ -2173,6 +2184,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int framebufferCensusLogs;
     /** Bounded CELTIUM_FBO_PUBLISH_REFUSED lines: which exit a framebuffer colour-texture publication took, and why. */
     private int fboPublishRefusalLogs;
+    /** Bounded CELTIUM_FBO_DEPTH_PUBLISHED lines: which depth names the sampling publication reached. */
+    private int fboDepthPublishLogs;
     private int fboTargetEnsureLogs;
     /**
      * The identity of {@code Minecraft.framebuffer}, as the game's own field reports it on every bind.
@@ -6590,6 +6603,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.publishedTextures.forgetDepthTexture(texture);
         this.mainFramebufferColorNames.remove(texture);
         if (texture != 0 && !this.gpuStalled && this.context != null && !this.context.celtium$isDeviceLost()) {
+            if (this.publishedFrameDepthKeys.containsKey(texture)) {
+                // The depth publication over the store entry forgotten below dies with it: the wrapper would
+                // otherwise keep naming an image the store no longer holds, under a name a recycled depth
+                // texture could inherit - the same inheritance the record forget above exists to prevent.
+                this.celtium$registry().unpublishExternalImage(texture);
+                this.publishedTextures.removePublished(texture);
+                this.publishedFrameImages.remove(texture);
+                this.publishedFrameDepthKeys.remove(texture);
+            }
             long depthKey = RenderTargetRegistry.rawColorTextureIdentity(texture);
             GllessFrameTarget target = offTargetTarget();
             if (target != null) {
@@ -7129,6 +7151,94 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // do), and the two that ignore the answer are the window head and the group open - so the lookup here was a
         // full registry resolution (memo miss included, 931 ns on the accept census) per published window, for an
         // answer nobody read. The window head is 2.8 us and this was a third of it.
+        return true;
+    }
+
+    /**
+     * Publishes a framebuffer's depth texture name over the shared depth image that stands for it - the depth
+     * twin of {@link #celtium$publishFramebufferColorTexture}, and the sampling publication
+     * SHADOW-NATIVE-DESIGN section 3.4 names as the missing half of shadow support.
+     * <p>
+     * A mod program sampling a shadow map (a deferred or composite program sampling shadowtex0 / shadowtex1)
+     * resolves the name through here: the image is the one the native shadow pass drew into and the native depth
+     * copy serves from, held in the frame target's shared depth store under the same key the copy uses. Without
+     * this publication the name fell through to the registry's mirror of the GL texture - an image nothing ever
+     * writes - so the shadow map was rendered, routed and copied, and never sampled.
+     * <p>
+     * The store's layout record is the declared layout the wrapper is built with. It is the same record the
+     * owner's next attachment acquire reads for its barrier's source layout, and the transition walk reports the
+     * wrapper's moves back into it, so the record and the image never part company.
+     *
+     * @return whether the name resolves to the shared depth image now
+     */
+    boolean celtium$publishFramebufferDepthTexture(int glTextureName) {
+        long identity = this.publishedTextures.identityForDepthTexture(glTextureName);
+        if (identity == Long.MIN_VALUE) {
+            return false;
+        }
+        GllessFrameTarget target = offTargetTarget();
+        if (target == null) {
+            if (this.fboPublishRefusalLogs < 16) {
+                this.fboPublishRefusalLogs++;
+                System.out.println("[Celtium] CELTIUM_FBO_PUBLISH_REFUSED name=" + glTextureName
+                        + " reason=depth-offtarget-null identity=0x" + Long.toHexString(identity));
+            }
+            return false;
+        }
+        long depthKey = RenderTargetRegistry.rawColorTextureIdentity(glTextureName);
+        long image = target.sharedDepthImage(depthKey);
+        if (image == 0L) {
+            // The depth copy's late registration, for the same case: a framebuffer whose pair has not borrowed
+            // the shared depth yet registers here, and the store is re-read before the refusal stands.
+            int fbo = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                    .celtium$framebufferForDepthTexture(glTextureName);
+            if (fbo != 0) celtium$registerRawFramebuffer(fbo, false);
+            image = target.sharedDepthImage(depthKey);
+        }
+        long view = target.sharedDepthView(depthKey);
+        int[] extent = target.sharedDepthExtent(depthKey);
+        int layout = target.sharedDepthLayout(depthKey);
+        if (image == 0L || view == 0L || extent == null
+                || layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED) {
+            if (this.fboPublishRefusalLogs < 16) {
+                this.fboPublishRefusalLogs++;
+                System.out.println("[Celtium] CELTIUM_FBO_PUBLISH_REFUSED name=" + glTextureName
+                        + " reason=depth-not-in-store identity=0x" + Long.toHexString(identity)
+                        + " key=0x" + Long.toHexString(depthKey)
+                        + " image=0x" + Long.toHexString(image) + " view=0x" + Long.toHexString(view)
+                        + " extent=" + (extent == null ? "none" : extent[0] + "x" + extent[1])
+                        + " layout=" + layout);
+            }
+            return false;
+        }
+        int levelWidth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(
+                glTextureName, 0, 0x1000);
+        int levelHeight = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(
+                glTextureName, 0, 0x1001);
+        if ((levelWidth > 0 && levelWidth != extent[0]) || (levelHeight > 0 && levelHeight != extent[1])) {
+            // The colour publication's size rule, for the same reason: a reused GL name must not be taken for a
+            // deleted framebuffer's depth attachment.
+            if (this.fboPublishRefusalLogs < 16) {
+                this.fboPublishRefusalLogs++;
+                System.out.println("[Celtium] CELTIUM_FBO_PUBLISH_REFUSED name=" + glTextureName
+                        + " reason=depth-size identity=0x" + Long.toHexString(identity)
+                        + " store=" + extent[0] + "x" + extent[1]
+                        + " level0=" + levelWidth + "x" + levelHeight);
+            }
+            return false;
+        }
+        this.postChainBridge.celtium$publishFrameDepthTexture(glTextureName, image, view, extent[0], extent[1],
+                layout, depthKey);
+        if (this.publishedTextures.published(glTextureName) == null) {
+            return false;
+        }
+        if (this.fboDepthPublishLogs < 8) {
+            this.fboDepthPublishLogs++;
+            System.out.println("[Celtium] CELTIUM_FBO_DEPTH_PUBLISHED name=" + glTextureName
+                    + " identity=0x" + Long.toHexString(identity) + " key=0x" + Long.toHexString(depthKey)
+                    + " image=0x" + Long.toHexString(image) + " size=" + extent[0] + "x" + extent[1]
+                    + " layout=" + layout);
+        }
         return true;
     }
 

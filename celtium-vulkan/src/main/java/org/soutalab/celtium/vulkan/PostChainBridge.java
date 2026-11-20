@@ -483,6 +483,40 @@ b.frameBufferOpen = false;
         }
     }
 
+    /**
+     * The depth twin of {@link #celtium$publishFrameTexture}: one GL depth texture name over the shared depth
+     * image that stands for it (SHADOW-NATIVE-DESIGN section 3.4).
+     * <p>
+     * The name's store key is recorded beside the publication ({@code publishedFrameDepthKeys}), because the
+     * shared depth store - not a pair - holds this image's layout record, and the transition walk reports the
+     * wrapper's moves back into it. No pair identity is recorded: the pair owner map names colour images only,
+     * and the stale-name prune reads the store for depth names instead.
+     */
+    void celtium$publishFrameDepthTexture(int glTextureName, long image, long view, int width, int height,
+            int declaredLayout, long depthKey) {
+        if (glTextureName == 0 || image == 0L || view == 0L || depthKey == 0L || width <= 0 || height <= 0) {
+            return;
+        }
+        VulkanGlTexture current = b.publishedTextures.published(glTextureName);
+        if (current != null && current.isDepthExternal()
+                && b.publishedFrameImages.get(glTextureName) == image
+                && b.publishedFrameDepthKeys.get(glTextureName) == depthKey) {
+            return;
+        }
+        if (current != null) {
+            b.celtium$registry().unpublishExternalImage(glTextureName);
+        }
+        VulkanGlTexture published = b.celtium$registry().publishExternalDepthImage(glTextureName, image, view,
+                width, height, declaredLayout);
+        if (published == null) {
+            return;
+        }
+        b.publishedTextures.putPublished(glTextureName, published);
+        b.publishedFrameImages.put(glTextureName, image);
+        b.publishedFrameDepthKeys.put(glTextureName, depthKey);
+        b.publishedTextures.noteCreated();
+    }
+
     /** Drop wrappers for a deleted target before its owner retires the image and view. */
     void celtium$forgetPublishedTarget(long identity) {
         it.unimi.dsi.fastutil.objects.ObjectIterator<it.unimi.dsi.fastutil.ints.Int2LongMap.Entry> it =
@@ -502,6 +536,21 @@ b.frameBufferOpen = false;
             b.publishedChainTexture = 0;
             b.publishedChainImage = 0L;
             b.publishedChainIdentity = 0L;
+        }
+        // Depth publications record no pair identity, so they are matched through the depth record instead -
+        // which the caller still holds at this point (it clears the identity's depth binding after this
+        // returns). A name whose depth texture belongs to the forgotten identity is unpublished with the
+        // colour names, before the shared depth store entry it stands for is retired.
+        it.unimi.dsi.fastutil.objects.ObjectIterator<it.unimi.dsi.fastutil.ints.Int2LongMap.Entry> depthIt =
+                b.publishedFrameDepthKeys.int2LongEntrySet().fastIterator();
+        while (depthIt.hasNext()) {
+            it.unimi.dsi.fastutil.ints.Int2LongMap.Entry entry = depthIt.next();
+            int name = entry.getIntKey();
+            if (b.publishedTextures.identityForDepthTexture(name) != identity) continue;
+            b.celtium$registry().unpublishExternalImage(name);
+            b.publishedTextures.removePublished(name);
+            b.publishedFrameImages.remove(name);
+            depthIt.remove();
         }
     }
 
@@ -597,6 +646,13 @@ b.frameBufferOpen = false;
     private long[] cachedPairIdentities = new long[0];
 
     /**
+     * The shared depth store key each cached name stands for, 0 for a colour name, resolved with the rest of the
+     * cache: the walk reports a depth wrapper's layout moves into the store under this key, and resolving it per
+     * window would be the same per-name lookup the pair-identity cache exists to avoid.
+     */
+    private long[] cachedDepthKeys = new long[0];
+
+    /**
      * The pair generation each identity's stale-name scan last completed for, and the publication version it saw.
      * <p>
      * The scan re-points names whose image died with a recreated pair, so it can only find one when that identity's
@@ -683,6 +739,7 @@ b.frameBufferOpen = false;
         this.cachedWrappers = new VulkanGlTexture[size];
         this.cachedImages = new long[size];
         this.cachedPairIdentities = new long[size];
+        this.cachedDepthKeys = new long[size];
         for (int i = 0; i < size; i++) {
             int name = b.publishedTextures.publishedKeyAt(i);
             VulkanGlTexture wrapper = b.publishedTextures.publishedValueAt(i);
@@ -692,6 +749,7 @@ b.frameBufferOpen = false;
             this.cachedImages[i] = image;
             this.cachedPairIdentities[i] = pairOwner == null || image == 0L
                     ? Long.MIN_VALUE : pairOwner.chainPairIdentityForImage(image);
+            this.cachedDepthKeys[i] = b.publishedFrameDepthKeys.get(name);
         }
     }
 
@@ -833,6 +891,18 @@ b.frameBufferOpen = false;
                         : org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
                 celtium$reportPairLayout(general ? "hand-back" : "sampling");
             }
+            // A depth publication's layout record is the shared depth store, not a pair, so the wrapper's move is
+            // reported into it under the name's key: the owner's next attachment acquire reads the store for its
+            // barrier's source layout, and the native depth copy reads it too. Without the report the store would
+            // keep naming the attachment layout while the image sits in the read layout the sampling side left it
+            // in, and the next acquire would name a source layout the image is not in. This is the report
+            // SHADOW-NATIVE-DESIGN section 3.4 requires of the publication.
+            long depthKey = this.cachedDepthKeys[cachedIndex];
+            if (depthKey != 0L && pairOwner != null) {
+                pairOwner.noteSharedDepthLayout(depthKey, general
+                        ? org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL
+                        : org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            }
         }
     }
 
@@ -940,8 +1010,14 @@ b.frameBufferOpen = false;
             int name = b.publishedTextures.publishedKeyAt(idx);
             long image = b.publishedFrameImages.get(name);
             long owner = b.publishedFrameImageIdentities.get(name);
+            long depthKey = b.publishedFrameDepthKeys.get(name);
             long live;
-            if (owner != Long.MIN_VALUE) {
+            if (depthKey != 0L) {
+                // A depth publication stands for the shared depth store's image for its key, not a pair's colour
+                // image: the store is its liveness record, and a recreated store entry re-points the name the
+                // same way a recreated pair re-points a colour name.
+                live = offTarget.sharedDepthImage(depthKey);
+            } else if (owner != Long.MIN_VALUE) {
                 live = offTarget.chainPairColorImage(owner);
             } else if (image != 0L && (image == b.frameTarget.colorImage()
                     || image == offTarget.offTargetColorImage())) {
@@ -953,8 +1029,19 @@ b.frameBufferOpen = false;
                 continue;
             }
             if (live != 0L) {
-                VulkanGlTexture republished = b.celtium$registry().publishExternalImage(name, live,
-                        offTarget.chainPairColorView(owner), b.targetWidth, b.targetHeight);
+                VulkanGlTexture republished;
+                if (depthKey != 0L) {
+                    long liveView = offTarget.sharedDepthView(depthKey);
+                    int[] liveExtent = offTarget.sharedDepthExtent(depthKey);
+                    int liveLayout = offTarget.sharedDepthLayout(depthKey);
+                    republished = liveView == 0L || liveExtent == null
+                            || liveLayout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED ? null
+                                    : b.celtium$registry().publishExternalDepthImage(name, live, liveView,
+                                            liveExtent[0], liveExtent[1], liveLayout);
+                } else {
+                    republished = b.celtium$registry().publishExternalImage(name, live,
+                            offTarget.chainPairColorView(owner), b.targetWidth, b.targetHeight);
+                }
                 if (republished != null) {
                     b.publishedTextures.setPublishedValueAt(idx, republished);
                     b.publishedFrameImages.put(name, live);
@@ -965,6 +1052,7 @@ b.frameBufferOpen = false;
             b.celtium$registry().unpublishExternalImage(name);
             b.publishedFrameImages.remove(name);
             b.publishedFrameImageIdentities.remove(name);
+            b.publishedFrameDepthKeys.remove(name);
             b.publishedTextures.noteUnpublished();
             b.publishedTextures.noteStalePruned();
             if (b.publishedTextures.stalePruned() == 1) {

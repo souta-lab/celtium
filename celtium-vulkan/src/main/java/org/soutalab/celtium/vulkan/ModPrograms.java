@@ -307,6 +307,24 @@ final class ModPrograms {
      */
     VulkanGlTexture celtium$modSamplerTexture(int name) {
         VulkanTextureRegistry registry = b.celtium$registry();
+        // Depth first: a name carrying a depth record is a framebuffer's depth attachment (a shadow map), and
+        // the image it must resolve to is the shared depth store's, published by the depth route. The colour
+        // resolution below cannot see that image - it would return the registry's mirror of the GL depth
+        // texture, an image nothing ever writes, which is the sampling-publication gap SHADOW-NATIVE-DESIGN
+        // section 3.4 names. Colour and depth attachments are different GL names, so a name carries at most
+        // one of the two records and the depth record is a safe discriminator.
+        if (b.publishedTextures.identityForDepthTexture(name) != Long.MIN_VALUE) {
+            VulkanGlTexture publishedDepth = b.publishedTextures.published(name);
+            if (publishedDepth != null && b.publishedFrameImages.get(name) != 0L) {
+                return publishedDepth;
+            }
+            if (b.celtium$publishFramebufferDepthTexture(name)) {
+                return registry.get(name);
+            }
+            // Publication refused (the store holds no image for the name yet): fall through to the ordinary
+            // resolution rather than inventing an answer. The refusal is censused at the publish site, and the
+            // next prepare retries.
+        }
         VulkanGlTexture texture = registry.get(name);
         if (texture != null && b.publishedFrameImages.get(name) != 0L) {
             // Already the framebuffer's own image (the wrapper is the published one: r34-gt logged wimg == img for
