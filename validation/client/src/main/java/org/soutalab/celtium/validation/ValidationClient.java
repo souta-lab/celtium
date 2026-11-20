@@ -3890,6 +3890,18 @@ public final class ValidationClient {
                             (Number) celtium$beInstrumentValue("losOccluderNanos"));
                 }
             }
+            if (HarnessConfig.bool("occluderBoxStats", false)) {
+                Object supplySections = celtium$supplyStatValue("occluderBoxSections");
+                if (supplySections != null) {
+                    report.addProperty("occluderBoxSections", (Number) supplySections);
+                    report.addProperty("occluderBoxNull",
+                            (Number) celtium$supplyStatValue("occluderBoxNull"));
+                    report.addProperty("occluderBoxNanosP50",
+                            (Number) celtium$supplyStatValue("occluderBoxNanosP50"));
+                    report.addProperty("occluderBoxNanosP99",
+                            (Number) celtium$supplyStatValue("occluderBoxNanosP99"));
+                }
+            }
             if (worldTicks >= 60 && !celtium$dynamicLightSpawned
                     && HarnessConfig.bool("dynamicLightItem", false)) {
                 celtium$dynamicLightSpawned = true;
@@ -5884,6 +5896,11 @@ public final class ValidationClient {
             new java.util.HashMap<String, java.lang.reflect.Method>();
     private static boolean celtium$beInstrumentsResolved;
 
+    /** Resolved accessors of item 386's {@code OccluderSupplyStats}, by method name; empty when absent. */
+    private static final java.util.Map<String, java.lang.reflect.Method> celtium$supplyStatMethods =
+            new java.util.HashMap<String, java.lang.reflect.Method>();
+    private static boolean celtium$supplyStatsResolved;
+
     /**
      * One of item 386's instrument readings (a {@code Number} or the top-sections {@code String}),
      * or null when the renderer classes are not on this leg's classpath. Resolved once, like the
@@ -5908,6 +5925,38 @@ public final class ValidationClient {
             }
         }
         java.lang.reflect.Method accessor = celtium$beInstrumentMethods.get(method);
+        if (accessor == null) {
+            return null;
+        }
+        try {
+            return accessor.invoke(null);
+        } catch (Throwable error) {
+            return null;
+        }
+    }
+
+    /**
+     * One of item 386's occluder-supply readings ({@code OccluderSupplyStats}), or null when the
+     * renderer classes are not on this leg's classpath. Resolved once, like the probe accessors
+     * above; the stats describe every rebuild since the run started, not a frame snapshot.
+     */
+    private static Object celtium$supplyStatValue(String method) {
+        if (!celtium$supplyStatsResolved) {
+            celtium$supplyStatsResolved = true;
+            try {
+                Class<?> stats = Class.forName(
+                        "org.embeddedt.embeddium.impl.render.chunk.occlusion.OccluderSupplyStats");
+                for (String name : new String[] {"occluderBoxSections", "occluderBoxNull",
+                        "occluderBoxNanosP50", "occluderBoxNanosP99"}) {
+                    java.lang.reflect.Method accessor = stats.getDeclaredMethod(name);
+                    accessor.setAccessible(true);
+                    celtium$supplyStatMethods.put(name, accessor);
+                }
+            } catch (Throwable absent) {
+                celtium$supplyStatMethods.clear();
+            }
+        }
+        java.lang.reflect.Method accessor = celtium$supplyStatMethods.get(method);
         if (accessor == null) {
             return null;
         }

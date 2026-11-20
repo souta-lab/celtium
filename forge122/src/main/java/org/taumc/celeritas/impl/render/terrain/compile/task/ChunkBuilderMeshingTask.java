@@ -28,6 +28,8 @@ import org.embeddedt.embeddium.impl.render.chunk.compile.tasks.ChunkBuilderTask;
 import org.embeddedt.embeddium.impl.render.chunk.data.BuiltSectionMeshParts;
 import org.embeddedt.embeddium.impl.render.chunk.data.MinecraftBuiltRenderSectionData;
 import org.embeddedt.embeddium.impl.render.chunk.occlusion.GraphDirection;
+import org.embeddedt.embeddium.impl.render.chunk.occlusion.OccluderSupplyStats;
+import org.embeddedt.embeddium.impl.render.chunk.occlusion.SectionVisibilityBuilder;
 import org.embeddedt.embeddium.impl.render.chunk.occlusion.VisibilityEncoding;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.embeddedt.embeddium.impl.util.task.CancellationToken;
@@ -73,6 +75,10 @@ public class ChunkBuilderMeshingTask extends ChunkBuilderTask<ChunkBuildOutput> 
         VintageChunkBuildContext buildContext = (VintageChunkBuildContext)context;
         MinecraftBuiltRenderSectionData<TextureAtlasSprite, TileEntity> renderData = new MinecraftBuiltRenderSectionData<>();
         VisGraph occluder = new VisGraph();
+        // Item 386's M1.5 supply: the occluder-box builder is fed alongside the VisGraph below and
+        // drained into renderData.occluderBoxes after the loop. Created lazily on the first non-air
+        // block, so an all-air section keeps null data and pays nothing for the supply.
+        SectionVisibilityBuilder visibilityBuilder = null;
 
         ChunkBuildBuffers buffers = buildContext.buffers;
         buffers.init(renderData, this.render.getSectionIndex());
@@ -113,6 +119,14 @@ public class ChunkBuilderMeshingTask extends ChunkBuilderTask<ChunkBuildOutput> 
                             continue;
                         }
 
+                        if (visibilityBuilder == null) {
+                            visibilityBuilder = new SectionVisibilityBuilder();
+                        }
+                        // The bounds half of the supply covers everything this loop renders; a block
+                        // that ends up emitting no faces only widens the bounds, which is the safe
+                        // direction for a culling test.
+                        visibilityBuilder.markRenderable(x - minX, y - minY, z - minZ);
+
                         if (block.hasTileEntity(blockState)) {
                             TileEntity tileEntity = slice.getTileEntity(blockPos);
                             if (tileEntity != null) {
@@ -144,6 +158,9 @@ public class ChunkBuilderMeshingTask extends ChunkBuilderTask<ChunkBuildOutput> 
 
                         if (blockState.isOpaqueCube()) {
                             occluder.setOpaqueCube(blockPos);
+                            // Same predicate, same block: the occluder geometry's opacity is the
+                            // visibility graph's opacity by construction, not by parallel upkeep.
+                            visibilityBuilder.markOpaque(x - minX, y - minY, z - minZ);
                         }
                     }
                 }
@@ -166,7 +183,22 @@ public class ChunkBuilderMeshingTask extends ChunkBuilderTask<ChunkBuildOutput> 
 
         encodeVisibilityData(occluder, renderData);
 
+        // The supply lands in the same built-data object as the visibility encoding, so a rebuild
+        // replaces both together and the section's metadata (HAS_OCCLUDER_DATA) is recomputed from
+        // the new object - there is no separate invalidation path to keep in step.
+        renderData.occluderBoxes = visibilityBuilder == null ? null : computeOccluderSupply(visibilityBuilder);
+
         return new ChunkBuildOutput(this.render, renderData, meshes, this.buildTime);
+    }
+
+    private static int @org.jetbrains.annotations.Nullable [] computeOccluderSupply(SectionVisibilityBuilder builder) {
+        if (!OccluderSupplyStats.ENABLED) {
+            return builder.computeOccluderBoxes();
+        }
+        long start = System.nanoTime();
+        int[] data = builder.computeOccluderBoxes();
+        OccluderSupplyStats.record(System.nanoTime() - start, data != null);
+        return data;
     }
 
     private ReportedException fillCrashInfo(CrashReport report, IBlockAccess slice, BlockPos pos) {
