@@ -48,6 +48,10 @@ public final class CeltiumFontAtlas {
     private static final boolean ENABLED = Boolean
             .parseBoolean(System.getProperty("celtium.fontAtlas", "true"));
 
+    /** Property switch: {@code =false} keeps the atlas as ARGB (item 523 A/B and rollback). */
+    private static final boolean GRAY_ATLAS = Boolean
+            .parseBoolean(System.getProperty("celtium.fontAtlas.gray", "true"));
+
     /** The unicode page edge length this build measured from the resources (vanilla ships 256). */
     private static int unicodeDim = 256;
 
@@ -161,7 +165,8 @@ public final class CeltiumFontAtlas {
         atlasName = atlasTexture.getGlTextureId();
         System.out.println("[Celtium] font atlas built: " + atlasW + "x" + atlasH
                 + " unicodeDim=" + unicodeDim + " asciiDim=" + asciiDim + " texture=" + atlasName
-                + " imageBytes=" + atlasImageBytes);
+                + " imageBytes=" + atlasImageBytes
+                + " format=" + (org.soutalab.celtium.vulkan.GrayAlphaImage.isGrayAlpha(image) ? "gray+alpha" : "argb"));
         if (MIRROR_FONT_ATLAS) {
             // Reproducing the tester's black screen needs a group that samples this atlas; menus that draw text through
             // the renderer's own font path have none. This hands the exact GL name to the renderer, which mirrors it the
@@ -194,6 +199,66 @@ public final class CeltiumFontAtlas {
         asciiDim = measuredAscii;
         atlasW = 16 * unicodeDim;
         atlasH = 16 * unicodeDim + asciiDim;
+        BufferedImage image = rasteriseGrayAlpha(mc);
+        if (image == null) {
+            image = rasteriseArgb(mc);
+        }
+        atlasImageBytes = (long) image.getColorModel().getPixelSize() / 8 * atlasW * atlasH;
+        // Diagnostics: write the rasterised sheet where a probe asks for it, so "the atlas cell a glyph samples
+        // holds what the resource manager served" is a picture and not an assumption.
+        String dump = ATLAS_DUMP;
+        if (dump != null && !dump.isEmpty()) {
+            try {
+                BufferedImage out = image;
+                if (org.soutalab.celtium.vulkan.GrayAlphaImage.isGrayAlpha(image)) {
+                    // PNG writers do not know the gray+alpha model's sRGB contract; dump the ARGB equivalent.
+                    out = new BufferedImage(atlasW, atlasH, BufferedImage.TYPE_INT_ARGB);
+                    out.setRGB(0, 0, atlasW, atlasH, image.getRGB(0, 0, atlasW, atlasH, null, 0, atlasW), 0, atlasW);
+                }
+                ImageIO.write(out, "png", new java.io.File(dump));
+            } catch (java.io.IOException ignored) {
+            }
+        }
+        builtPackSignature = packSignature(mc);
+        return image;
+    }
+
+    /**
+     * Item 523 (361-D): the atlas as (gray, alpha) bytes - half the heap of ARGB for the same pixels, and what the
+     * announced-image registry keeps resident. Only when every page is {@code unicodeDim} square, the ASCII sheet is
+     * {@code asciiDim} square and every visible texel is neutral (vanilla's white glyphs); anything else returns null
+     * and the caller builds the ARGB image exactly as before, so a coloured or odd-sized pack loses nothing.
+     */
+    private static BufferedImage rasteriseGrayAlpha(Minecraft mc) {
+        if (!GRAY_ATLAS) {
+            return null;
+        }
+        BufferedImage image = org.soutalab.celtium.vulkan.GrayAlphaImage.create(atlasW, atlasH);
+        for (int p = 0; p < 256; p++) {
+            ResourceLocation pageLoc = new ResourceLocation(
+                    String.format("textures/font/unicode_page_%02x.png", p));
+            try (InputStream stream = mc.getResourceManager().getResource(pageLoc).getInputStream()) {
+                BufferedImage page = ImageIO.read(stream);
+                if (page.getWidth() != unicodeDim || page.getHeight() != unicodeDim || !org.soutalab.celtium.vulkan
+                        .GrayAlphaImage.blit(image, page, (p & 15) * unicodeDim, (p >> 4) * unicodeDim)) {
+                    return null;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        try (InputStream stream = mc.getResourceManager()
+                .getResource(new ResourceLocation("textures/font/ascii.png")).getInputStream()) {
+            BufferedImage ascii = ImageIO.read(stream);
+            if (ascii.getWidth() != asciiDim || ascii.getHeight() != asciiDim
+                    || !org.soutalab.celtium.vulkan.GrayAlphaImage.blit(image, ascii, 0, 16 * unicodeDim)) {
+                return null;
+            }
+        } catch (Exception ignored) {
+        }
+        return image;
+    }
+
+    private static BufferedImage rasteriseArgb(Minecraft mc) {
         BufferedImage image = new BufferedImage(atlasW, atlasH, BufferedImage.TYPE_INT_ARGB);
         Graphics g = image.getGraphics();
         for (int p = 0; p < 256; p++) {
@@ -212,17 +277,6 @@ public final class CeltiumFontAtlas {
         } catch (Exception ignored) {
         }
         g.dispose();
-        atlasImageBytes = 4L * atlasW * atlasH;
-        // Diagnostics: write the rasterised sheet where a probe asks for it, so "the atlas cell a glyph samples
-        // holds what the resource manager served" is a picture and not an assumption.
-        String dump = ATLAS_DUMP;
-        if (dump != null && !dump.isEmpty()) {
-            try {
-                ImageIO.write(image, "png", new java.io.File(dump));
-            } catch (java.io.IOException ignored) {
-            }
-        }
-        builtPackSignature = packSignature(mc);
         return image;
     }
 

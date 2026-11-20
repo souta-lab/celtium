@@ -99,4 +99,42 @@ public final class GrayAlphaImage {
         return r.getMinX() == 0 && r.getMinY() == 0 && data(image).length >= 2 * image.getWidth() * image.getHeight()
                 && r.getSampleModel().getWidth() == image.getWidth();
     }
+
+    /**
+     * Copies {@code src} into {@code dst} (made by {@link #create}) at ({@code x}, {@code y}) exactly as drawing it
+     * onto a transparent ARGB image would leave the pixels: a fully transparent texel becomes 0x00000000.
+     *
+     * @return false, leaving {@code dst} partly written, when {@code src} has a non-neutral visible texel or does
+     *         not fit inside {@code dst} at that origin - the caller then builds the ARGB image instead
+     */
+    public static boolean blit(BufferedImage dst, BufferedImage src, int x, int y) {
+        int w = src.getWidth();
+        int h = src.getHeight();
+        if (x < 0 || y < 0 || x + w > dst.getWidth() || y + h > dst.getHeight()) {
+            return false;
+        }
+        byte[] out = data(dst);
+        int stride = dst.getWidth();
+        int[] row = new int[w];
+        for (int j = 0; j < h; j++) {
+            src.getRGB(0, j, w, 1, row, 0, w);
+            int at = 2 * ((y + j) * stride + x);
+            for (int i = 0; i < w; i++, at += 2) {
+                int argb = row[i];
+                int a = argb >>> 24;
+                if (a == 0) {
+                    out[at] = 0;
+                    out[at + 1] = 0;
+                    continue;
+                }
+                int g = argb & 0xFF;
+                if (((argb >> 8) & 0xFF) != g || ((argb >> 16) & 0xFF) != g) {
+                    return false;
+                }
+                out[at] = (byte) g;
+                out[at + 1] = (byte) a;
+            }
+        }
+        return true;
+    }
 }
