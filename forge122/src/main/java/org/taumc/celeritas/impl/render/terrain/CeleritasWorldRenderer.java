@@ -40,15 +40,19 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
     private int celtium$listReportCountdown;
 
     /**
-     * The layers whose geometry has been reported once, by name.
+     * The last reported pass-set signature per layer, by name.
      * <p>
      * A custom layer (GTCEu adds {@code BLOOM} to {@code BlockRenderLayer}) reaches {@code drawChunkLayer} whether or
      * not any section was built for it: the pass exists because the render-pass configuration creates one for every
      * enum constant, and the draw is a no-op when the lists hold no geometry for that pass. The two cases look the
-     * same in a picture - nothing appears - so the first draw of each layer reports whether the lists carry the pass.
+     * same in a picture - nothing appears - so each layer reports whether the lists carry its passes, first at the
+     * report draw and again whenever that answer changes: a single early {@code false} is a snapshot of the regions
+     * uploaded at that moment, not a property of the layer, and the bloom halo's two recorded legs disagreed exactly
+     * there (item 384, from item 343 N3). The layer name is the key because the enum is extended at runtime and a
+     * name is what a log reader can match against the mod.
      */
-    private final java.util.Set<String> celtium$layerGeometryReported = new java.util.HashSet<String>();
-    private long celtium$layerGeometryReportedMask;
+    private final java.util.Map<String, String> celtium$layerGeometrySignatures =
+            new java.util.HashMap<String, String>();
 
     /** Draws seen per layer, so the geometry census waits for a world that has been built rather than the loading screen. */
     private final java.util.Map<String, Integer> celtium$layerDrawCounts =
@@ -201,7 +205,9 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
     }
 
     /**
-     * Reports, once per layer, whether the render lists carry the passes that layer maps to.
+     * Reports whether the render lists carry the passes a layer maps to: first at the report draw, and again
+     * whenever the pass set changes, so the log carries the layer's {@code hasPass} as a time series rather than
+     * one snapshot.
      * <p>
      * {@code SortedRenderLists.hasPass} answers from the regions' own pass sets, which are filled from build results -
      * so a false here means no section was built with geometry for that pass, and a true means the geometry exists and
@@ -209,21 +215,11 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
      * {@code BLOOM}) and a name is what a log reader can match against the mod.
      */
     private void celtium$reportLayerGeometry(BlockRenderLayer renderLayer) {
-        int ordinal = renderLayer.ordinal();
-        if (ordinal >= 0 && ordinal < 64 && (this.celtium$layerGeometryReportedMask & (1L << ordinal)) != 0L) {
-            return;
-        }
         String name = renderLayer.name();
-        if (this.celtium$layerGeometryReported.contains(name)) {
-            if (ordinal >= 0 && ordinal < 64) {
-                this.celtium$layerGeometryReportedMask |= (1L << ordinal);
-            }
-            return;
-        }
         Integer count = this.celtium$layerDrawCounts.get(name);
-        int draws = count == null ? 0 : count.intValue();
-        if (draws < LAYER_GEOMETRY_REPORT_DRAW) {
-            this.celtium$layerDrawCounts.put(name, Integer.valueOf(draws + 1));
+        int draws = (count == null ? 0 : count.intValue()) + 1;
+        this.celtium$layerDrawCounts.put(name, Integer.valueOf(draws));
+        if (draws <= LAYER_GEOMETRY_REPORT_DRAW) {
             return;
         }
         try {
@@ -235,10 +231,6 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
             if (lists.getNumRegions() == 0) {
                 return;
             }
-            this.celtium$layerGeometryReported.add(name);
-            if (ordinal >= 0 && ordinal < 64) {
-                this.celtium$layerGeometryReportedMask |= (1L << ordinal);
-            }
             var passes = manager.getRenderPassConfiguration().vanillaRenderStages().get(renderLayer);
             StringBuilder report = new StringBuilder();
             if (passes != null) {
@@ -246,8 +238,13 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
                     report.append(pass).append('=').append(lists.hasPass(pass)).append(' ');
                 }
             }
+            String signature = report.toString().trim();
+            if (signature.equals(this.celtium$layerGeometrySignatures.get(name))) {
+                return;
+            }
+            this.celtium$layerGeometrySignatures.put(name, signature);
             System.out.println("[Celtium] CELTIUM_LAYER_GEOMETRY layer=" + renderLayer
-                    + " regions=" + lists.getNumRegions() + " passes=[" + report.toString().trim() + "]");
+                    + " draws=" + draws + " regions=" + lists.getNumRegions() + " passes=[" + signature + "]");
         } catch (Throwable error) {
             System.out.println("[Celtium] CELTIUM_LAYER_GEOMETRY unavailable: " + error);
         }

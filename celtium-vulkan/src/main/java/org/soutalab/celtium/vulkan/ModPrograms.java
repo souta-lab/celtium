@@ -372,6 +372,8 @@ final class ModPrograms {
 
     VulkanHostBuffer modReadbackBuffer;
     int modReadbackProbeLines;
+    /** Whether the chain-input patch line has been printed this run. */
+    boolean chainInputPatchReported;
 
     long celtium$firstModGroupTarget() {
         for (int i = 0, n = b.immediateGroups.size(); i < n; i++) {
@@ -455,6 +457,66 @@ final class ModPrograms {
         }
         this.modReadbackLabels = labels;
         this.modReadbackFrame = b.frameId;
+    }
+
+    /**
+     * One line per run, at the first window whose queued mod-program passes sample a chain pair image: the mean
+     * of the pair over the bloom halo's band, read before the pass begins - the pair as the chain's first input
+     * actually sees it.
+     * <p>
+     * The halo's recorded state is "the mask is empty", which has two gates the end-of-frame picture cannot
+     * separate: the terrain pass never routed into the pair (or routed after the chain read it), or the mask was
+     * in the pair and the chain still produced no halo. Reading the pair at the moment the first chain pass is
+     * about to sample it separates them - empty here is routing/timing, non-empty here moves the question to the
+     * chain itself (item 384, from item 343 N3). The band is the one the bloom evidence measures on the presented
+     * image (x 300..560, y 230..265 of the 1280x720 world frame), scaled to the pair's own size; readback rows
+     * count from the bottom (see {@code TextureCopyService.readImageRectangle}), so the band's y is flipped here.
+     */
+    void celtium$reportChainInputPatch(long target) {
+        if (this.chainInputPatchReported) {
+            return;
+        }
+        GllessFrameTarget pairs = b.offTargetTarget();
+        if (pairs == null) {
+            return;
+        }
+        for (int i = 0, n = b.immediateGroups.size(); i < n; i++) {
+            ImmediateGroup group = b.immediateGroups.get(i);
+            if (group.target != target || group.prepared == null
+                    || !(group.prepared.pipeline instanceof VulkanModProgramPipeline.Draw draw)) {
+                continue;
+            }
+            for (VulkanGlTexture input : draw.inputs) {
+                if (input == null || input.image() == 0L) {
+                    continue;
+                }
+                for (Long identity : pairs.chainPairIdentities()) {
+                    if (pairs.chainPairColorImage(identity.longValue()) != input.image()) {
+                        continue;
+                    }
+                    int width = input.width();
+                    int height = input.height();
+                    int size = Math.min((560 - 300) * width / 1280, (265 - 230) * height / 720);
+                    if (size < 4 || width <= 0 || height <= 0) {
+                        return;
+                    }
+                    int x = (300 + 560) / 2 * width / 1280 - size / 2;
+                    int y = height - (230 + 265) / 2 * height / 720 - size / 2;
+                    x = Math.max(0, Math.min(x, width - size));
+                    y = Math.max(0, Math.min(y, height - size));
+                    this.chainInputPatchReported = true;
+                    System.out.println("[Celtium] CELTIUM_CHAIN_INPUT_PATCH frame=" + b.frameId
+                            + " identity=0x" + Long.toHexString(identity.longValue())
+                            + " pairImage=0x" + Long.toHexString(input.image())
+                            + " size=" + width + "x" + height
+                            + " patch=" + x + "," + y + " " + size + "x" + size
+                            + " haloPatch=" + b.postChainBridge.celtium$patchMean(input.image(), x, y, size)
+                            + " program=" + (draw.label == null ? "pass"
+                                    : draw.label.replaceAll(" inputs=.*", "")));
+                    return;
+                }
+            }
+        }
     }
 
     /** Prints the readback once the frame that recorded it is certainly complete. */

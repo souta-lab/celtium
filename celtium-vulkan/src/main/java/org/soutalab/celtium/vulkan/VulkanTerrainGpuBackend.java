@@ -1257,6 +1257,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " shaderProgramRefusals=" + this.immediateStatistics.shaderProgramRefusals()
                 + " shaderProgramRefusedIds=" + this.shaderProgramRefusedIds
                 + " shaderProgramRefusedPrograms=" + programRefusalsText()
+                + " terrainPassesToBoundTarget=" + this.terrainPassesToBoundTarget
                     + " textureRefusals=" + this.textureStats.textureRefusalsBeforeAccept()
                     + " accepted=" + this.immediateStatistics.frameAccepted());
         }
@@ -13815,6 +13816,7 @@ this.frameBufferOpen = false;
         if (ModPrograms.MOD_READBACK && this.modPrograms.modReadbackLabels == null && this.frameId >= 300) {
             this.modPrograms.celtium$recordModInputReadback(windowTarget);
         }
+        this.modPrograms.celtium$reportChainInputPatch(windowTarget);
         if (ModPrograms.MOD_READ_BARRIER && this.modPrograms.celtium$queuedForTargetHasModProgram(windowTarget)) {
             // A mod pass samples framebuffers earlier windows of this frame drew into; they stay in GENERAL, and
             // nothing else makes one pass's colour writes visible to a later pass's fragment reads.
