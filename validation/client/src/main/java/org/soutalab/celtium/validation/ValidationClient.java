@@ -1962,10 +1962,10 @@ public final class ValidationClient {
      * checker floor derived from them - changes the key and uncalibrates the scene mechanically, instead of
      * leaving floors measured at one distance judging a picture taken at another.
      */
-    private static final String celtium$REFERENCE_ENTITIES_ENTITY =
-            "entityEffectPair@" + celtium$ENTITY_PAIR_DISTANCE;
     /** How far ahead of the pose the entity-effect carriers stand, in blocks: part of the calibration key. */
     private static final int celtium$ENTITY_PAIR_DISTANCE = 4;
+    private static final String celtium$REFERENCE_ENTITIES_ENTITY =
+            "entityEffectPair@" + celtium$ENTITY_PAIR_DISTANCE;
     /** The screen variant the measured references ran with: no screen was open. */
     private static final String celtium$REFERENCE_SCREEN = "none";
 
