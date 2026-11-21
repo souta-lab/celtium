@@ -6,8 +6,14 @@ the shared fog block at 128 could not be declared. The fix gives the family its 
 stage reconstructs the eye position from the combined projection. The claim that needs evidence is not "the shader
 changed" but "the picture moved toward the fog colour by the amount the fog curve says, and nothing else moved".
 
-This checker reads the pair of presented dumps the two arms of one flag produced (``-Dceltium.vulkan.litFog=false``
-against the default), and answers four questions with numbers:
+This checker reads a pair of presented dumps - one arm without lit fog, one with it - and answers four questions
+with numbers:
+
+The flag that used to produce the pair no longer exists: ``-Dceltium.vulkan.litFog`` has no reader anywhere in
+the tree, and the lit fog it switched is adopted and permanently on. So the pair must come from the archive
+(runs made while the flag existed) or from two builds (the code change itself as the A/B). Never generate a
+fresh pair by flipping the dead flag: both arms would be the same build, the pictures would be identical, and
+the identical-arms verdict below would be reporting the harness, not the fog (QUEUE 641).
 
 * **how much changed** - the differing-pixel count and the mean |A-B| over the frame;
 * **where** - every changed pixel must satisfy the one-parameter fog model, and the picture's top band (the sky, drawn
@@ -110,7 +116,7 @@ def analyse(before: "Image.Image", after: "Image.Image", fog: tuple[float, float
             total_delta += delta
             if delta <= threshold:
                 continue
-            # The noise picture is the same arm as ``before`` (the flag flipped back), so a pixel it moved is a pixel
+            # The noise picture is the same arm as ``before`` (that arm run again), so a pixel it moved is a pixel
             # the scene moved by itself: compare it with ``before``, not with itself.
             if noise is not None and (abs(noise[i] - br) + abs(noise[i + 1] - bg) + abs(noise[i + 2] - bb)) / 3.0 > threshold:
                 excluded += 1
@@ -186,7 +192,7 @@ def verdict(result: dict, max_residual: float = 2.0, min_weight: float = 0.02,
     """The problems a pair has, or an empty list when it looks like fog on the lit geometry and nothing else."""
     problems: list[str] = []
     if result["changed"] == 0:
-        problems.append("the two arms are identical: the flag changed no pixel, so the fog never reached the picture")
+        problems.append("the two arms are identical: the change under test changed no pixel, so the fog never reached the picture")
         return problems
     if result["skyChanged"] != 0:
         problems.append(f"{result['skyChanged']} pixels changed in the top {result['skyRows']} rows (the sky band, drawn "
@@ -237,8 +243,9 @@ def synthetic_arms(source: "Image.Image", fog: tuple[float, float, float], weigh
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--before", required=True, help="run directory (or picture) of the -Dceltium.vulkan.litFog=false arm")
-    parser.add_argument("--after", required=True, help="run directory (or picture) of the default arm")
+    parser.add_argument("--before", required=True, help="run directory (or picture) of the arm without lit fog "
+                        "(an archived flag-off run, or the build without the change)")
+    parser.add_argument("--after", required=True, help="run directory (or picture) of the arm with lit fog")
     parser.add_argument("--fog", required=True, help="the leg's fog colour, R,G,B (CELTIUM_FOG_STATE colour=...)")
     parser.add_argument("--stage", default="world", help="which presented stage to compare (default: world)")
     parser.add_argument("--sky-fraction", type=float, default=0.15,
@@ -248,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--control", action="store_true",
                         help="run the synthetic positive/negative controls on the --before picture instead")
     parser.add_argument("--noise", default=None,
-                        help="a third dump of the same arm as --before (the flag flipped back): its pixels are the "
+                        help="a third dump of the same arm as --before (that arm run again): its pixels are the "
                              "animation noise floor and are excluded from the fog model")
     args = parser.parse_args(argv)
 
