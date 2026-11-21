@@ -13,7 +13,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * A registration is only honoured while its atlas is the current one. An atlas rebuild deletes the old GL texture
  * and publishes a new name; a page entry left pointing at the dead name must go inert rather than key a run by a
  * texture that no longer holds the atlas, so {@link #remapFor} compares against {@link #currentAtlasTexture},
- * which the game side moves (and {@link #invalidate()} zeroes when a build fails).
+ * which the game side moves (and {@link #invalidate()} zeroes when a build fails). The name comparison alone is
+ * not enough: GL names are recycled, so a later build can publish the very name an earlier build used, and an
+ * entry the earlier build registered for a page the later build does not have would then pass the comparison as
+ * if it described the current atlas. {@link #setCurrentAtlas} therefore drops every registration that does not
+ * name the atlas it installs; the game side registers the new build's pages immediately after moving the gate,
+ * so nothing live is lost.
  * <p>
  * Static because the game side registers from static atlas code that holds no backend instance; the render thread
  * is the only writer in practice, and the map is concurrent so a stray read can never corrupt it.
@@ -29,9 +34,14 @@ public final class FontAtlasRegistry {
     /** The GL name of the atlas registrations currently describe, or 0 when no atlas is live. */
     private static volatile int currentAtlasTexture;
 
-    /** Names {@code atlasTexture} as the atlas the registrations describe. Called on every atlas (re)build. */
+    /**
+     * Names {@code atlasTexture} as the atlas the registrations describe. Called on every atlas (re)build,
+     * before that build's pages are registered. Registrations naming any other atlas are dropped: they belong
+     * to an earlier build, and keeping them would let one resurface if a later build reuses the earlier name.
+     */
     public static void setCurrentAtlas(int atlasTexture) {
         currentAtlasTexture = atlasTexture;
+        BY_PAGE_TEXTURE.values().removeIf(remap -> remap.atlasTexture != atlasTexture);
     }
 
     /** Registers (or replaces) the atlas rectangle for one page texture's GL name. */
