@@ -92,6 +92,10 @@ layout(std140, set = 0, binding = 0) uniform CeltiumSolidUniforms {
     int   u_FragmentDiscardEnabled; // offset 56
     int   u_ChunkFadeEnabled;       // offset 60
     vec4  u_ChunkFadeParams;        // offset 64
+    int   u_SolidTerrain;           // offset 80 (fragment stage only)
+    int   u_ShadowEnabled;          // offset 84 item 537: 1 = this pass samples the shadow map
+    float u_ShadowDarkness;         // offset 88 fraction of sky light a shadowed fragment loses
+    mat4  u_ShadowMatrix;           // offset 96 light space: shadow pass' Vulkan projection x model-view
 } celtium;
 
 layout(set = 0, binding = 1) uniform sampler2D u_LightTex; // The light map texture sampler
@@ -131,6 +135,12 @@ layout(location = 4) out float v_FragDistance;
 // removes any interpolation-rounding ambiguity on the alpha-cutoff comparison.
 layout(location = 5) flat out float v_MaterialMipBias;
 layout(location = 6) flat out float v_MaterialAlphaCutoff;
+// Item 537 terrain shadow: the vertex in the shadow pass' clip space (an orthographic light projection, so w is 1 and
+// linear interpolation is exact), and the colour the vertex has when the sun does not reach it - the same vertex
+// colour lit by the light map with its sky coordinate reduced by u_ShadowDarkness. The fragment picks between v_Color
+// and v_ShadowColor from the shadow map; with u_ShadowEnabled 0 neither is read.
+layout(location = 7) out vec4 v_ShadowPos;
+layout(location = 8) out vec4 v_ShadowColor;
 
 // NOTE: the OpenGL shader declares `invariant gl_Position;` so that the solid and cutout copies of
 // the program stay bit-identical. The keyword is intentionally dropped here: the SPIR-V module
@@ -280,6 +290,14 @@ void main() {
     }
     vec4 lightColor = _sample_lightmap(u_LightTex, lightCoord);
     v_Color = _vert_color * lightColor;
+    if (celtium.u_ShadowEnabled != 0) {
+        v_ShadowPos = celtium.u_ShadowMatrix * vec4(worldPosition, 1.0);
+        vec2 shadowedCoord = vec2(lightCoord.x, lightCoord.y * (1.0 - celtium.u_ShadowDarkness));
+        v_ShadowColor = _vert_color * _sample_lightmap(u_LightTex, shadowedCoord);
+    } else {
+        v_ShadowPos = vec4(0.0);
+        v_ShadowColor = v_Color;
+    }
     v_RdhFactor.rgb *= lightColor.rgb;
 
     int corner = gl_VertexIndex & 3;

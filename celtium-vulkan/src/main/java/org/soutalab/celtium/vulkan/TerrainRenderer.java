@@ -1063,8 +1063,55 @@ public final class TerrainRenderer {
         MemoryUtil.memPutFloat(addr + 76, 0.0f);
         // A/B only: a constant fragment colour that reaches the frame image says the geometry is rasterised.
         MemoryUtil.memPutInt(addr + 80, SOLID_TERRAIN ? 1 : 0);
+        // The terrain shadow lookup (item 537): on only for a pass whose set carries a shadow depth image, with the
+        // light-space matrix that pass' shadow terrain was drawn with. Off writes zero and the shader skips the
+        // lookup, so the default build's terrain is the same picture.
+        MemoryUtil.memPutInt(addr + 84, this.shadowLookupEnabled ? 1 : 0);
+        MemoryUtil.memPutFloat(addr + 88, this.shadowLookupDarkness);
+        if (this.shadowLookupEnabled) {
+            // std140 mat4 at offset 96, column-major (JOML's mCR is column C, row R).
+            org.joml.Matrix4f m = this.shadowLookupMatrix;
+            long base = addr + 96;
+            MemoryUtil.memPutFloat(base, m.m00());
+            MemoryUtil.memPutFloat(base + 4, m.m01());
+            MemoryUtil.memPutFloat(base + 8, m.m02());
+            MemoryUtil.memPutFloat(base + 12, m.m03());
+            MemoryUtil.memPutFloat(base + 16, m.m10());
+            MemoryUtil.memPutFloat(base + 20, m.m11());
+            MemoryUtil.memPutFloat(base + 24, m.m12());
+            MemoryUtil.memPutFloat(base + 28, m.m13());
+            MemoryUtil.memPutFloat(base + 32, m.m20());
+            MemoryUtil.memPutFloat(base + 36, m.m21());
+            MemoryUtil.memPutFloat(base + 40, m.m22());
+            MemoryUtil.memPutFloat(base + 44, m.m23());
+            MemoryUtil.memPutFloat(base + 48, m.m30());
+            MemoryUtil.memPutFloat(base + 52, m.m31());
+            MemoryUtil.memPutFloat(base + 56, m.m32());
+            MemoryUtil.memPutFloat(base + 60, m.m33());
+        }
 
         return offset;
+    }
+
+    /** Whether the pass being recorded samples the shadow map (item 537); set by the backend before the pass. */
+    private boolean shadowLookupEnabled;
+    /** How much of the sky-lit light a shadowed fragment keeps lost (0 = no darkening, 1 = all sky light). */
+    private float shadowLookupDarkness;
+    /** The light-space matrix (Vulkan projection x model-view) the shadow terrain was drawn with this frame. */
+    private final org.joml.Matrix4f shadowLookupMatrix = new org.joml.Matrix4f();
+
+    /**
+     * Arms or disarms the shadow lookup for the next pass' uniform writes. {@code lightSpace} is copied; null
+     * disarms. The backend calls this before every terrain pass, so a pass never inherits the previous one's state.
+     */
+    void setShadowLookup(org.joml.Matrix4fc lightSpace, float darkness) {
+        if (lightSpace == null) {
+            this.shadowLookupEnabled = false;
+            return;
+        }
+        this.shadowLookupEnabled = true;
+        this.shadowLookupDarkness = darkness;
+        this.shadowLookupMatrix.set(lightSpace);
     }
 
     /** Sets the stride of one uniform block, computed from the device's alignment. */
