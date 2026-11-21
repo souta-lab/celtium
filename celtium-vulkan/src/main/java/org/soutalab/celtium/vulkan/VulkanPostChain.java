@@ -201,6 +201,9 @@ public final class VulkanPostChain {
     /** Every chain target, allocated here or adopted from the caller, keyed by the identity the passes carry. */
     private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<Target> targets =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
+    /** Reusable primitive set for {@link #unsuppliedInput}, avoiding a per-frame LinkedHashSet + boxed Integers. */
+    private final it.unimi.dsi.fastutil.ints.IntOpenHashSet producedScratch =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     /**
      * Targets that an adoption or a release replaced. They are freed only in {@link #delete()}, after the device
      * wait: a command buffer that already recorded one may still be in flight.
@@ -1186,18 +1189,20 @@ public final class VulkanPostChain {
             int outW = pass.outW;
             int outH = pass.outH;
             try (MemoryStack stack = stackPush()) {
+                VkRect2D renderArea = VkRect2D.calloc(stack);
+                renderArea.offset().set(0, 0);
+                renderArea.extent().set(outW, outH);
                 VkRenderPassBeginInfo begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
                         .renderPass(renderPassFor(outFormatClass)).framebuffer(outFramebuffer)
-                        .renderArea(VkRect2D.calloc(stack)
-                                .offset(it -> it.x(0).y(0))
-                                .extent(it -> it.width(outW).height(outH)));
+                        .renderArea(renderArea);
                 vkCmdBeginRenderPass(commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
                 vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeline);
                 VkViewport.Buffer viewport = VkViewport.calloc(1, stack);
                 viewport.get(0).x(0).y(0).width(outW).height(outH).minDepth(0.0f).maxDepth(1.0f);
                 vkCmdSetViewport(commandBuffer, 0, viewport);
                 VkRect2D.Buffer scissor = VkRect2D.calloc(1, stack);
-                scissor.get(0).offset(it -> it.x(0).y(0)).extent(it -> it.width(outW).height(outH));
+                scissor.get(0).offset().set(0, 0);
+                scissor.get(0).extent().set(outW, outH);
                 vkCmdSetScissor(commandBuffer, 0, scissor);
                 if (!program.uniformBlock) {
                     // The push route is unchanged: the collector's block goes in whole, as it always has. Its layout
@@ -1421,7 +1426,8 @@ public final class VulkanPostChain {
         if (passes == null || passes.isEmpty()) {
             return "empty pass list";
         }
-        Set<Integer> produced = new LinkedHashSet<>();
+        it.unimi.dsi.fastutil.ints.IntOpenHashSet produced = this.producedScratch;
+        produced.clear();
         for (int index = 0; index < passes.size(); ++index) {
             Pass pass = passes.get(index);
             String refusal = unsuppliedInput(index, pass, produced, pass.inIsMain, pass.inFbId, pass.inW, pass.inH);
@@ -1439,20 +1445,20 @@ public final class VulkanPostChain {
                 }
             }
             if (!pass.outIsMain) {
-                produced.add(Integer.valueOf(pass.outFbId));
+                produced.add(pass.outFbId);
             }
         }
         return null;
     }
 
     /** {@return the refusal for one pass side, or null when this recording or an adoption supplies it}. */
-    private String unsuppliedInput(int index, Pass pass, Set<Integer> produced, boolean isMain, int identity,
-            int width, int height) {
+    private String unsuppliedInput(int index, Pass pass, it.unimi.dsi.fastutil.ints.IntOpenHashSet produced,
+            boolean isMain, int identity, int width, int height) {
         if (isMain) {
             // The group's main framebuffer is the frame image: the one image the executor is handed for free.
             return null;
         }
-        if (produced.contains(Integer.valueOf(identity))) {
+        if (produced.contains(identity)) {
             return null;
         }
         Target target = this.targets.get(identity);

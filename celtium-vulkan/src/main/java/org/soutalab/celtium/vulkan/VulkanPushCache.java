@@ -35,15 +35,11 @@ final class VulkanPushCache {
     private long commandBuffer = -1L;
     /** The pipeline layout whose declared range the cached bytes were pushed through. */
     private long pipelineLayout = -1L;
-    /** The cached bytes, exactly as many as the layout declared. */
-    private byte[] bytes = new byte[0];
-    /** The held duplicate of the caller's push buffer, so the comparison does not allocate one per group. */
-    private java.nio.ByteBuffer dataView;
-
-    /** The buffer {@link #dataView} was duplicated from; the duplicate is only valid for this one. */
-    private java.nio.ByteBuffer dataViewSource;
-
-    /** A read-only view of {@link #bytes} for the bulk comparison, rebuilt when the array is replaced. */
+    /** Reusable backing array sized to the largest block seen (starts at 256B, covering every immediate family). */
+    private byte[] bytes = new byte[256];
+    /** Active byte length in {@link #bytes} for the last remembered push. */
+    private int cachedLength;
+    /** A view of {@link #bytes} for the bulk comparison, rebuilt only if the backing array grows. */
     private java.nio.ByteBuffer cacheBytesView;
 
     /** How many pushes were skipped because the block was unchanged. */
@@ -61,7 +57,7 @@ final class VulkanPushCache {
         // reports is the elision rate of the whole immediate path - and its complement is the number of draw runs an
         // indirect merge would have to emit (a run ends exactly where the block changes).
         if (commandBuffer != this.commandBuffer || pipelineLayout != this.pipelineLayout
-                || length != this.bytes.length || length == 0) {
+                || length != this.cachedLength || length == 0) {
             if (length > 0) {
                 this.issued++;
             }
@@ -85,47 +81,26 @@ final class VulkanPushCache {
     void invalidate() {
         this.commandBuffer = -1L;
         this.pipelineLayout = -1L;
+        this.cachedLength = 0;
     }
 
     /** Remembers the bytes of a push that was issued, so the next identical block can be elided. */
     void remember(long commandBuffer, long pipelineLayout, ByteBuffer data) {
         int length = data.remaining();
-        if (this.bytes.length != length) {
+        if (length > this.bytes.length) {
             this.bytes = new byte[length];
+            this.cacheBytesView = null;
         }
         // Absolute bulk read into the cache array: leaves data's position untouched and allocates no duplicate view.
         data.get(data.position(), this.bytes, 0, length);
+        this.cachedLength = length;
         this.commandBuffer = commandBuffer;
         this.pipelineLayout = pipelineLayout;
     }
 
-    /**
-     * {@return the caller's block as a view over exactly the bytes to compare}.
-     * <p>
-     * A duplicate keeps the caller's buffer untouched; positioned and limited so a bulk comparison sees only the block.
-     */
-    private java.nio.ByteBuffer cacheView(java.nio.ByteBuffer data, int length) {
-        int start = data.position();
-        java.nio.ByteBuffer view = this.dataView;
-        // A duplicate is only reusable for the buffer it was taken from. The immediate path's callers are not required to
-        // hand the same allocation in - the shared cache is used across the texture, item, block and particle pipelines -
-        // and reusing it across buffers meant every later comparison and remember read the first buffer's bytes, so a
-        // changed constant was elided and its update lost (#385). The capacity term is the second half of the same
-        // mistake: a wider block cannot be expressed through a view built from a narrower buffer, which threw
-        // IllegalArgumentException instead of pushing.
-        if (view == null || this.dataViewSource != data || start + length > view.capacity()) {
-            view = data.duplicate();
-            this.dataView = view;
-            this.dataViewSource = data;
-        }
-        view.position(start);
-        view.limit(start + length);
-        return view;
-    }
-
     /** {@return the cached bytes as a buffer over the same range, so the comparison is bulk on both sides}. */
     private java.nio.ByteBuffer cachedBytes(int length) {
-        if (this.cacheBytesView == null || this.cacheBytesView.capacity() != this.bytes.length) {
+        if (this.cacheBytesView == null) {
             this.cacheBytesView = java.nio.ByteBuffer.wrap(this.bytes);
         }
         java.nio.ByteBuffer view = this.cacheBytesView;

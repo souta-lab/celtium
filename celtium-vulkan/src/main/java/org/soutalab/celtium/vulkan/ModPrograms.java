@@ -51,12 +51,12 @@ final class ModPrograms {
      * case of the same fact.
      */
     static final class ModProgramKey {
-        private final byte[] vertex;
-        private final byte[] fragment;
-        private final int formatId;
-        private final Object like;
-        private final long renderPass;
-        private final int colorCount;
+        private byte[] vertex;
+        private byte[] fragment;
+        private int formatId;
+        private Object like;
+        private long renderPass;
+        private int colorCount;
 
         ModProgramKey(byte[] vertex, byte[] fragment, int formatId, Object like, long renderPass, int colorCount) {
             this.vertex = vertex;
@@ -65,6 +65,21 @@ final class ModPrograms {
             this.like = like;
             this.renderPass = renderPass;
             this.colorCount = colorCount;
+        }
+
+        ModProgramKey set(byte[] vertex, byte[] fragment, int formatId, Object like, long renderPass, int colorCount) {
+            this.vertex = vertex;
+            this.fragment = fragment;
+            this.formatId = formatId;
+            this.like = like;
+            this.renderPass = renderPass;
+            this.colorCount = colorCount;
+            return this;
+        }
+
+        ModProgramKey copy() {
+            return new ModProgramKey(this.vertex, this.fragment, this.formatId, this.like,
+                    this.renderPass, this.colorCount);
         }
 
         @Override
@@ -81,6 +96,10 @@ final class ModPrograms {
                     + (int) (this.renderPass ^ (this.renderPass >>> 32))) * 31 + this.colorCount;
         }
     }
+    private final ModProgramKey probeKey = new ModProgramKey(null, null, 0, null, 0L, 0);
+    private VulkanGlTexture[] scratchSamplerTextures = new VulkanGlTexture[8];
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet reportedDrawnFastKeys =
+            new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
     private static final VulkanGlTexture[] EMPTY_TEXTURES = new VulkanGlTexture[0];
     final it.unimi.dsi.fastutil.ints.IntOpenHashSet modProgramReported =
             new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
@@ -148,7 +167,7 @@ final class ModPrograms {
         } else {
             // Keyed by the objects themselves: identity hash codes are not unique, so a key built from them could hand
             // one program's pipeline to another (and, after a world teardown, to a pipeline built like a released one).
-            ModProgramKey key = new ModProgramKey(program.vertexSpirv(), program.fragmentSpirv(), formatId, like,
+            ModProgramKey key = this.probeKey.set(program.vertexSpirv(), program.fragmentSpirv(), formatId, like,
                     targetRenderPass, targetColors);
             pipeline = this.modProgramPipelines.get(key);
             if (pipeline == null) {
@@ -160,7 +179,7 @@ final class ModPrograms {
                 } catch (RuntimeException | LinkageError failure) {
                     return celtium$modFailure(programId, "pipeline: " + failure.getMessage());
                 }
-                this.modProgramPipelines.put(key, pipeline);
+                this.modProgramPipelines.put(key.copy(), pipeline);
             }
             this.lastModProgram = program;
             this.lastModFormatId = formatId;
@@ -170,9 +189,20 @@ final class ModPrograms {
             this.lastModPipeline = pipeline;
         }
         int samplerCount = pipeline.samplerCount();
-        VulkanGlTexture[] textures = samplerCount == 0 ? EMPTY_TEXTURES : new VulkanGlTexture[samplerCount];
-        boolean buildDetail = this.modProgramReported.size() < 64 || MOD_TRACE_FRAMES > 0 || MOD_READBACK;
-        StringBuilder inputs = buildDetail ? new StringBuilder() : null;
+        boolean retainInputs = MOD_READBACK || !this.chainInputPatchReported;
+        VulkanGlTexture[] textures;
+        if (samplerCount == 0) {
+            textures = EMPTY_TEXTURES;
+        } else if (retainInputs) {
+            textures = new VulkanGlTexture[samplerCount];
+        } else {
+            if (this.scratchSamplerTextures.length < samplerCount) {
+                this.scratchSamplerTextures = new VulkanGlTexture[samplerCount];
+            }
+            textures = this.scratchSamplerTextures;
+        }
+        long drawnFastKey = (long) programId * 0x9E3779B97F4A7C15L ^ b.currentFramebufferIdentity;
+        drawnFastKey = Long.rotateLeft(drawnFastKey, 17) ^ System.identityHashCode(like);
         for (int i = 0; i < samplerCount; i++) {
             org.soutalab.celtium.vulkan.gl.ModGlslTranslator.SamplerBinding sampler = pipeline.samplers().get(i);
             int[] unitValue = program.ints(sampler.name());
@@ -196,16 +226,7 @@ final class ModPrograms {
                         + "-Dceltium.vulkan.modProgramsSampleMain=false refuses that");
             }
             textures[i] = texture;
-            if (inputs != null) {
-                inputs.append(' ').append(sampler.name()).append("=unit").append(unit).append(":tex").append(name)
-                        .append(b.mainFramebufferColorNames.contains(name) ? "(main)" : "")
-                        .append(b.publishedFrameImages.get(name) != 0L ? "(fb)" : "")
-                        .append("{fbo=0x").append(Long.toHexString(b.celtium$framebufferIdentityForColorTexture(name)))
-                        .append(" img=0x").append(Long.toHexString(b.publishedFrameImages.get(name)))
-                        .append(" wimg=0x").append(Long.toHexString(texture.image()))
-                        .append(" own=").append(texture.celtium$ownsImage())
-                        .append(" layout=").append(texture.samplingLayout()).append('}');
-            }
+            drawnFastKey = Long.rotateLeft(drawnFastKey ^ ((long) name << 32) ^ texture.key(), 13);
         }
         java.util.List<org.soutalab.celtium.vulkan.gl.ModGlslTranslator.ImageBinding> imageBindings =
                 program.lowered().images();
@@ -231,11 +252,7 @@ final class ModPrograms {
                     return celtium$modFailure(programId, "image " + image.name() + " (unit " + unit + ", texture "
                             + name + ") is a mirrored texture whose layout the storage path cannot transition");
                 imageTextures[i] = texture;
-                if (inputs != null) {
-                    inputs.append(" img ").append(image.name()).append('=').append(unit).append(":tex").append(name)
-                            .append("{wimg=0x").append(Long.toHexString(texture.image())).append(" layout=")
-                            .append(texture.foreignLayout()).append('}');
-                }
+                drawnFastKey = Long.rotateLeft(drawnFastKey ^ ((long) name << 32) ^ texture.key(), 11);
             }
         }
         if (MOD_PROGRAMS_REFUSE_OPAQUE_MAIN && !like.celtium$colorBlend().blend()
@@ -252,20 +269,55 @@ final class ModPrograms {
             return celtium$modFailure(programId, "no descriptor set could be allocated");
         }
         String label = null;
-        if (inputs != null) {
+        boolean needsCensusReport = this.modProgramReported.size() < 64
+                && !this.reportedDrawnFastKeys.contains(drawnFastKey);
+        if (needsCensusReport || MOD_TRACE_FRAMES > 0 || MOD_READBACK) {
+            StringBuilder inputs = new StringBuilder();
+            for (int i = 0; i < samplerCount; i++) {
+                org.soutalab.celtium.vulkan.gl.ModGlslTranslator.SamplerBinding sampler = pipeline.samplers().get(i);
+                int[] unitValue = program.ints(sampler.name());
+                int unit = unitValue == null || unitValue.length == 0 ? 0 : unitValue[0];
+                int name = b.immediateState.boundTextureName(unit);
+                VulkanGlTexture texture = textures[i];
+                inputs.append(' ').append(sampler.name()).append("=unit").append(unit).append(":tex").append(name)
+                        .append(b.mainFramebufferColorNames.contains(name) ? "(main)" : "")
+                        .append(b.publishedFrameImages.get(name) != 0L ? "(fb)" : "")
+                        .append("{fbo=0x").append(Long.toHexString(b.celtium$framebufferIdentityForColorTexture(name)))
+                        .append(" img=0x").append(Long.toHexString(b.publishedFrameImages.get(name)))
+                        .append(" wimg=0x").append(Long.toHexString(texture.image()))
+                        .append(" own=").append(texture.celtium$ownsImage())
+                        .append(" layout=").append(texture.samplingLayout()).append('}');
+            }
+            if (imageCount > 0) {
+                org.soutalab.celtium.vulkan.NativeImageBindings imageLedger =
+                        org.soutalab.celtium.vulkan.NativeImageBindings.current();
+                for (int i = 0; i < imageCount; i++) {
+                    var image = imageBindings.get(i);
+                    int[] unitValue = program.ints(image.name());
+                    int unit = unitValue == null || unitValue.length == 0 ? 0 : unitValue[0];
+                    int name = imageLedger.texture(unit);
+                    VulkanGlTexture texture = imageTextures[i];
+                    inputs.append(" img ").append(image.name()).append('=').append(unit).append(":tex").append(name)
+                            .append("{wimg=0x").append(Long.toHexString(texture.image())).append(" layout=")
+                            .append(texture.foreignLayout()).append('}');
+                }
+            }
             long[] targetColour = b.framebufferColorTexture(b.currentFramebufferIdentity);
             GllessFrameTarget pairOwner = b.offTargetTarget();
             inputs.append(" pairGen=").append(pairOwner == null ? -1L : pairOwner.chainPairGenerationTotal());
             String trimmedInputs = inputs.toString().trim();
-            celtium$reportModProgram(programId, true, "inputs=[" + trimmedInputs + "] target=0x"
-                    + Long.toHexString(b.currentFramebufferIdentity) + " targetColourTex="
-                    + (targetColour == null ? -1 : targetColour[0]) + " targetIsMain="
-                    + (b.currentFramebufferIdentity == b.targetRegistry.mainIdentity())
-                    + " blend=" + like.celtium$colorBlend().blend() + "(" + like.celtium$colorBlend().srcColor() + ","
-                    + like.celtium$colorBlend().dstColor() + "," + like.celtium$colorBlend().srcAlpha() + ","
-                    + like.celtium$colorBlend().dstAlpha() + ") glBlend=" + b.immediateState.blendSrcRgb() + ","
-                    + b.immediateState.blendDstRgb() + " depthTest=" + like.celtium$depthTest()
-                    + " depthWrite=" + like.celtium$depthWrite());
+            if (needsCensusReport) {
+                this.reportedDrawnFastKeys.add(drawnFastKey);
+                celtium$reportModProgram(programId, true, "inputs=[" + trimmedInputs + "] target=0x"
+                        + Long.toHexString(b.currentFramebufferIdentity) + " targetColourTex="
+                        + (targetColour == null ? -1 : targetColour[0]) + " targetIsMain="
+                        + (b.currentFramebufferIdentity == b.targetRegistry.mainIdentity())
+                        + " blend=" + like.celtium$colorBlend().blend() + "(" + like.celtium$colorBlend().srcColor() + ","
+                        + like.celtium$colorBlend().dstColor() + "," + like.celtium$colorBlend().srcAlpha() + ","
+                        + like.celtium$colorBlend().dstAlpha() + ") glBlend=" + b.immediateState.blendSrcRgb() + ","
+                        + b.immediateState.blendDstRgb() + " depthTest=" + like.celtium$depthTest()
+                        + " depthWrite=" + like.celtium$depthWrite());
+            }
             if (MOD_TRACE_FRAMES > 0 || MOD_READBACK) {
                 label = "program=" + programId + " offeredFrame=" + b.frameId
                         + " target=0x" + Long.toHexString(b.currentFramebufferIdentity)
@@ -278,8 +330,9 @@ final class ModPrograms {
                 ? pipeline.constantColorOffset(b.immediateState.colorRed(), b.immediateState.colorGreen(),
                         b.immediateState.colorBlue(), b.immediateState.colorAlpha())
                 : -1L;
+        VulkanGlTexture[] drawInputs = retainInputs ? textures : EMPTY_TEXTURES;
         return new PreparedImmediate(new VulkanModProgramPipeline.Draw(pipeline,
-                VulkanModProgramPipeline.packUniforms(program), set, label, textures, imageTextures, constantOffset),
+                VulkanModProgramPipeline.packUniforms(program), set, label, drawInputs, imageTextures, constantOffset),
                 set, 0L);
     }
 

@@ -174,10 +174,23 @@ public final class CeltiumLightCache {
     private static long funnelMisses;
     private static long funnelPassthrough;
 
+    // Dynamic-side funnel telemetry (item 430): the four counters above describe the combined-light
+    // cache only - a leg reading them cannot tell whether the dynamic snapshot was ever consulted,
+    // ever held a source, or ever changed an answer. These three can: queries counts the gated calls
+    // that reached the snapshot, sourceHits the ones that found a source, raised the ones whose
+    // answer the mirror actually raised.
+    private static long funnelSourceQueries;
+    private static long funnelSourceHits;
+    private static long funnelRaised;
+    private static boolean funnelFirstRaisePrinted;
+
     /** {@return a compact summary of combined-light funnel traffic for diagnostics}. */
     public static String funnelSummary() {
         return "funnelCalls=" + funnelCalls + " funnelHits=" + funnelHits
-                + " funnelMisses=" + funnelMisses + " funnelPassthrough=" + funnelPassthrough;
+                + " funnelMisses=" + funnelMisses + " funnelPassthrough=" + funnelPassthrough
+                + " funnelSourceQueries=" + funnelSourceQueries
+                + " funnelSourceHits=" + funnelSourceHits + " funnelRaised=" + funnelRaised
+                + " " + MinecraftDynamicLightService.diagnosticSummary();
     }
 
     /**
@@ -220,10 +233,23 @@ public final class CeltiumLightCache {
                 value = vanillaBody.getAsInt();
                 putCombined(key, value);
             }
+            funnelSourceQueries++;
             int sources = MinecraftDynamicLightService.snapshotSources(world, MIRROR_SOURCES);
-            return sources == 0 ? value
-                    : raiseCombinedLight(value, pos.getX(), pos.getY(), pos.getZ(),
-                            MIRROR_SOURCES, sources);
+            if (sources == 0) {
+                return value;
+            }
+            funnelSourceHits++;
+            int raised = raiseCombinedLight(value, pos.getX(), pos.getY(), pos.getZ(),
+                    MIRROR_SOURCES, sources);
+            if (raised != value) {
+                funnelRaised++;
+                if (!funnelFirstRaisePrinted) {
+                    funnelFirstRaisePrinted = true;
+                    // In-run, once: a leg reads this without depending on shutdown-time log capture.
+                    System.out.println("[Celtium] CELTIUM_FUNNEL_FIRST_RAISE sources=" + sources);
+                }
+            }
+            return raised;
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("lightCache");
         }

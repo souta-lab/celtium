@@ -189,7 +189,7 @@ public final class VulkanModProgramPipeline {
     private long setLayout = VK_NULL_HANDLE;
     private long pipelineLayout = VK_NULL_HANDLE;
     private long pipeline = VK_NULL_HANDLE;
-    private long descriptorPool = VK_NULL_HANDLE;
+    private final java.util.List<Long> descriptorPools = new java.util.ArrayList<Long>();
     private static final VulkanGlTexture[] EMPTY_IMAGES = new VulkanGlTexture[0];
     private static final long[] EMPTY_LONG = new long[0];
     private static final int[] EMPTY_INT = new int[0];
@@ -212,8 +212,9 @@ public final class VulkanModProgramPipeline {
     private final long[] scratchImageViews;
     private long lastSamplerKey;
     private long lastSamplerSet;
-    /** Sets one pipeline may hold; a program samples a handful of framebuffer textures that rarely change. */
+    /** Sets one pool holds, and max pools a pipeline may grow to (matches VulkanImmediateTexturePipeline). */
     private static final int MAX_SETS = 64;
+    private static final int MAX_POOLS = 64;
 
     private VulkanModProgramPipeline(VulkanContext context, List<ModGlslTranslator.Attribute> attributes,
                                      List<ModGlslTranslator.SamplerBinding> samplers,
@@ -515,20 +516,9 @@ public final class VulkanModProgramPipeline {
             this.pipelineLayout = handle.get(0);
 
             if (this.samplerCount + this.imageCount > 0 || this.uniformsViaBuffer) {
-                VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc((this.samplerCount > 0 ? 1 : 0)
-                        + (this.imageCount > 0 ? 1 : 0) + (this.uniformsViaBuffer ? 1 : 0), stack);
-                int sizeIndex = 0;
-                if (this.samplerCount > 0) sizes.get(sizeIndex++).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                        .descriptorCount(MAX_SETS * this.samplerCount);
-                if (this.imageCount > 0) sizes.get(sizeIndex++).type(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
-                        .descriptorCount(MAX_SETS * this.imageCount);
-                if (this.uniformsViaBuffer) sizes.get(sizeIndex).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                        .descriptorCount(MAX_SETS);
-                VkDescriptorPoolCreateInfo poolInfo = VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
-                        .maxSets(MAX_SETS).pPoolSizes(sizes);
-                check(vkCreateDescriptorPool(this.context.device(), poolInfo, null, handle),
-                        "vkCreateDescriptorPool(mod program)");
-                this.descriptorPool = handle.get(0);
+                if (createDescriptorPool(stack) == VK_NULL_HANDLE) {
+                    throw new IllegalStateException("vkCreateDescriptorPool(mod program) failed");
+                }
             }
             if (this.uniformsViaBuffer) {
                 // Fixed at the ring's full size: the buffer handle is baked into descriptor sets, so it is
@@ -538,6 +528,49 @@ public final class VulkanModProgramPipeline {
                         (long) this.uniformStride * UNIFORM_RING_SLOTS);
             }
         }
+    }
+
+    private long createDescriptorPool(MemoryStack stack) {
+        if (this.descriptorPools.size() >= MAX_POOLS) {
+            return VK_NULL_HANDLE;
+        }
+        VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc((this.samplerCount > 0 ? 1 : 0)
+                + (this.imageCount > 0 ? 1 : 0) + (this.uniformsViaBuffer ? 1 : 0), stack);
+        int sizeIndex = 0;
+        if (this.samplerCount > 0) sizes.get(sizeIndex++).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                .descriptorCount(MAX_SETS * this.samplerCount);
+        if (this.imageCount > 0) sizes.get(sizeIndex++).type(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                .descriptorCount(MAX_SETS * this.imageCount);
+        if (this.uniformsViaBuffer) sizes.get(sizeIndex).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                .descriptorCount(MAX_SETS);
+        VkDescriptorPoolCreateInfo poolInfo = VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
+                .maxSets(MAX_SETS).pPoolSizes(sizes);
+        LongBuffer handle = stack.mallocLong(1);
+        if (vkCreateDescriptorPool(this.context.device(), poolInfo, null, handle) != VK_SUCCESS) {
+            return VK_NULL_HANDLE;
+        }
+        long pool = handle.get(0);
+        this.descriptorPools.add(Long.valueOf(pool));
+        return pool;
+    }
+
+    private long allocateDescriptorSet(MemoryStack stack) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            if (this.descriptorPools.isEmpty()) {
+                return 0L;
+            }
+            long pool = this.descriptorPools.get(this.descriptorPools.size() - 1).longValue();
+            VkDescriptorSetAllocateInfo allocate = VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
+                    .descriptorPool(pool).pSetLayouts(stack.longs(this.setLayout));
+            LongBuffer handle = stack.mallocLong(1);
+            if (vkAllocateDescriptorSets(this.context.device(), allocate, handle) == VK_SUCCESS) {
+                return handle.get(0);
+            }
+            if (createDescriptorPool(stack) == VK_NULL_HANDLE) {
+                break;
+            }
+        }
+        return 0L;
     }
 
     /**
@@ -871,17 +904,14 @@ public final class VulkanModProgramPipeline {
             // this key's answer.
             this.descriptorSetKeyCollisions++;
         }
-        if (cached == 0L && this.setsByKey.size() >= MAX_SETS) {
+        if (cached == 0L && this.setsByKey.size() >= MAX_SETS * MAX_POOLS) {
             return 0L;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkDescriptorSetAllocateInfo allocate = VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
-                    .descriptorPool(this.descriptorPool).pSetLayouts(stack.longs(this.setLayout));
-            LongBuffer handle = stack.mallocLong(1);
-            if (vkAllocateDescriptorSets(this.context.device(), allocate, handle) != VK_SUCCESS) {
+            long set = allocateDescriptorSet(stack);
+            if (set == 0L) {
                 return 0L;
             }
-            long set = handle.get(0);
             VkDescriptorImageInfo.Buffer imageInfos = VkDescriptorImageInfo.calloc(this.samplerCount + this.imageCount, stack);
             VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(
                     this.samplerCount + this.imageCount + (uniformSlot >= 0 ? 1 : 0), stack);
@@ -934,7 +964,7 @@ public final class VulkanModProgramPipeline {
         ByteBuffer block = program.reusablePackedUniformBuffer(Math.max(16, lowered.uniformBlockSize()));
         for (ModGlslTranslator.UniformMember member : lowered.uniforms()) {
             float[] floats = program.floats(member.name());
-            int[] ints = program.ints(member.name());
+            int[] ints = floats == null ? program.ints(member.name()) : null;
             if (floats == null && ints == null) {
                 continue;
             }
@@ -942,8 +972,7 @@ public final class VulkanModProgramPipeline {
             int components = componentsOf(type);
             int columns = columnsOf(type);
             int elements = Math.max(1, member.arrayLength());
-            boolean integerType = type.startsWith("i") || type.startsWith("u")
-                    || type.equals("int") || type.equals("bool");
+            boolean integerType = isIntegerType(type);
             // std140: an array element or a matrix column starts on a 16-byte boundary; a plain vector packs tightly.
             int columnStride = (member.arrayLength() > 0 || columns > 1) ? 16 : components * 4;
             int value = 0;
@@ -990,6 +1019,14 @@ public final class VulkanModProgramPipeline {
         };
     }
 
+    private static boolean isIntegerType(String type) {
+        if (type == null || type.isEmpty()) {
+            return false;
+        }
+        char c = type.charAt(0);
+        return c == 'i' || c == 'u' || c == 'b';
+    }
+
     void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, ByteBuffer uniforms, long samplerSet,
               long[] bindCache) {
         draw(commandBuffer, mesh, uniforms, samplerSet, EMPTY_IMAGES, bindCache);
@@ -1005,23 +1042,28 @@ public final class VulkanModProgramPipeline {
         if (!SKIP_DRAW_CALL) {
             for (VulkanGlTexture image : images) image.ensureGeneralLayout(commandBuffer);
         }
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
-        // The shared caches describe the immediate variants' layouts: after this pipeline they are stale. The next
-        // variant rebinds its pipeline and set, and pushes its block again (push constants do not survive a layout
-        // that is incompatible for them).
-        bindCache[4] = this.pipeline;
-        bindCache[5] = -1L;
-        VulkanPushCache.SHARED.invalidate();
-        if (samplerSet != 0L) {
+        if (bindCache[4] != this.pipeline) {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
+            bindCache[4] = this.pipeline;
+            bindCache[5] = -1L;
+        }
+        if (samplerSet != 0L && bindCache[5] != samplerSet) {
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
                         stack.longs(samplerSet), null);
             }
+            bindCache[5] = samplerSet;
         }
         if (this.pushBytes > 0 && uniforms != null) {
             uniforms.position(0).limit(this.pushBytes);
-            vkCmdPushConstants(commandBuffer, this.pipelineLayout,
-                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, uniforms);
+            if (VulkanPushCache.SHARED.shouldPush(commandBuffer.address(), this.pipelineLayout, uniforms)) {
+                vkCmdPushConstants(commandBuffer, this.pipelineLayout,
+                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, uniforms);
+                VulkanPushCache.SHARED.remember(commandBuffer.address(), this.pipelineLayout, uniforms);
+            }
+        } else {
+            // Layouts without a push range (e.g. UBO route) can disturb push constants for incompatible layouts.
+            VulkanPushCache.SHARED.invalidate();
         }
         if (SKIP_DRAW_CALL) {
             // Lab: every bind of the pass without its pixels, to tell "the pass's pixels are wrong" from "the pass
@@ -1048,38 +1090,57 @@ public final class VulkanModProgramPipeline {
         return this.samplers;
     }
 
-    /** Destroys the Vulkan objects; the caller retires it after the frames that used it completed. */
+    /** Destroys the Vulkan objects; defers cleanup if a command buffer is currently recording. */
     public void delete() {
-        VkDevice device = this.context.device();
-        if (this.uniformBuffer != null) {
-            this.uniformBuffer.delete();
-            this.uniformBuffer = null;
-        }
         if (this.constantRing != null) {
+            // The ring's own delete defers its free while a recording is open (VulkanUniformBuffer.delete).
             this.constantRing.delete();
             this.constantRing = null;
         }
-        if (this.pipeline != VK_NULL_HANDLE) {
-            vkDestroyPipeline(device, this.pipeline, null);
-            this.pipeline = VK_NULL_HANDLE;
-        }
-        if (this.descriptorPool != VK_NULL_HANDLE) {
-            vkDestroyDescriptorPool(device, this.descriptorPool, null);
-            this.descriptorPool = VK_NULL_HANDLE;
-        }
-        if (this.pipelineLayout != VK_NULL_HANDLE) {
-            vkDestroyPipelineLayout(device, this.pipelineLayout, null);
-            this.pipelineLayout = VK_NULL_HANDLE;
-        }
-        if (this.setLayout != VK_NULL_HANDLE) {
-            vkDestroyDescriptorSetLayout(device, this.setLayout, null);
-            this.setLayout = VK_NULL_HANDLE;
-        }
+        VulkanUniformBuffer uniformBufferToDestroy = this.uniformBuffer;
+        long pipelineToDestroy = this.pipeline;
+        java.util.List<Long> poolsToDestroy = new java.util.ArrayList<Long>(this.descriptorPools);
+        long pipelineLayoutToDestroy = this.pipelineLayout;
+        long setLayoutToDestroy = this.setLayout;
+        this.uniformBuffer = null;
+        this.pipeline = VK_NULL_HANDLE;
+        this.descriptorPools.clear();
+        this.pipelineLayout = VK_NULL_HANDLE;
+        this.setLayout = VK_NULL_HANDLE;
         this.setsByKey.clear();
         this.setInputsByKey.clear();
         this.lastSamplerKey = 0L;
         this.lastSamplerSet = 0L;
         this.lastSamplerInputs = null;
+        if (this.context.celtium$recordingOpen()) {
+            this.context.celtium$retireCleanup("modprogram.delete", () -> destroyHandles(
+                    uniformBufferToDestroy, pipelineToDestroy, poolsToDestroy,
+                    pipelineLayoutToDestroy, setLayoutToDestroy));
+            return;
+        }
+        destroyHandles(uniformBufferToDestroy, pipelineToDestroy, poolsToDestroy,
+                pipelineLayoutToDestroy, setLayoutToDestroy);
+    }
+
+    private void destroyHandles(VulkanUniformBuffer uniformBufferToDestroy, long pipelineToDestroy,
+                                java.util.List<Long> poolsToDestroy, long pipelineLayoutToDestroy,
+                                long setLayoutToDestroy) {
+        VkDevice device = this.context.device();
+        if (uniformBufferToDestroy != null) {
+            uniformBufferToDestroy.delete();
+        }
+        if (pipelineToDestroy != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device, pipelineToDestroy, null);
+        }
+        for (int i = 0; i < poolsToDestroy.size(); i++) {
+            vkDestroyDescriptorPool(device, poolsToDestroy.get(i).longValue(), null);
+        }
+        if (pipelineLayoutToDestroy != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(device, pipelineLayoutToDestroy, null);
+        }
+        if (setLayoutToDestroy != VK_NULL_HANDLE) {
+            vkDestroyDescriptorSetLayout(device, setLayoutToDestroy, null);
+        }
     }
 
     private static void check(int result, String what) {

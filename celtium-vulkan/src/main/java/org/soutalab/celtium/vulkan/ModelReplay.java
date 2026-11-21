@@ -152,8 +152,9 @@ final class ModelReplay {
                     // and refusing here made the model invisible rather than merely untextured. One attempt per content
                     // change, so a texture the stub holds no pixels for is not retried every frame.
                     b.celtium$supplyMirrorForModel(boundTextureId);
+                    modelTexture = b.textureRegistry.get(boundTextureId);
                 }
-                if (b.textureRegistry.get(boundTextureId) == null) {
+                if (modelTexture == null) {
                     b.modelDrawRefusals++;
                     b.modelLastRefusal = "texture " + boundTextureId + " is not mirrored";
                     return false;
