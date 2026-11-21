@@ -603,7 +603,7 @@ public final class TerrainRenderer {
         long batchStarted = System.nanoTime();
         long finishedAt = indirectBatchBody(context, commandBuffer, stack, sharedIndexBuffers, resources, batch,
                 sortedPass, primitiveType, batchStarted);
-        if (finishedAt >= 0L) {
+        if (finishedAt != Long.MIN_VALUE) {
             this.indirectBatchNanos += finishedAt - batchStarted;
             return true;
         }
@@ -611,7 +611,7 @@ public final class TerrainRenderer {
         return false;
     }
 
-    /** Returns the final {@code System.nanoTime()} timestamp on success, or {@code -1L} on fallback. */
+    /** Returns the final {@code System.nanoTime()} timestamp on success, or {@code Long.MIN_VALUE} on fallback. */
     private long indirectBatchBody(VulkanContext context, org.lwjgl.vulkan.VkCommandBuffer commandBuffer,
             org.lwjgl.system.MemoryStack stack,
             java.util.Map<org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveType, VulkanBuffer> sharedIndexBuffers,
@@ -622,7 +622,7 @@ public final class TerrainRenderer {
         if (!context.multiDrawIndirectEnabled()) {
             this.terrainIndirectFallbacks++;
             this.lastTerrainIndirectFallback = "the device was not created with multiDrawIndirect";
-            return -1L;
+            return Long.MIN_VALUE;
         }
         // Unsigned, because the limit is a uint32: RADV reports 0xFFFFFFFF ("no small bound"), which reads as -1 as a
         // signed int and is not a negative draw count. Only a true 0 means "not reported", and then the direct path is
@@ -631,11 +631,11 @@ public final class TerrainRenderer {
         if (maxDraws == 0L) {
             this.terrainIndirectFallbacks++;
             this.lastTerrainIndirectFallback = "maxDrawIndirectCount is unknown (0)";
-            return -1L;
+            return Long.MIN_VALUE;
         }
         int size = batch.size();
         if (size <= 0) {
-            return -1L;
+            return Long.MIN_VALUE;
         }
         // BH-02's rule, applied to the whole batch this time: one indirect call binds one index buffer, so a batch whose
         // commands do not all read the same one is drawn directly.
@@ -647,23 +647,23 @@ public final class TerrainRenderer {
             if (!offsetsClean) {
                 this.terrainIndirectFallbacks++;
                 this.lastTerrainIndirectFallback = "unsorted batch with a non-zero index offset (mixed sources)";
-                return -1L;
+                return Long.MIN_VALUE;
             }
         }
         if (regionIndex && resources.indexArena == null) {
             this.terrainIndirectFallbacks++;
             this.lastTerrainIndirectFallback = "sorted batch with no region index arena";
-            return -1L;
+            return Long.MIN_VALUE;
         }
         if (size > Integer.MAX_VALUE / INDIRECT_COMMAND_BYTES) {
             this.terrainIndirectFallbacks++;
             this.lastTerrainIndirectFallback = "the indirect packet byte count exceeds the supported range";
-            return -1L;
+            return Long.MIN_VALUE;
         }
         int needed = size * INDIRECT_COMMAND_BYTES;
         if (!this.reserveIndirectPacketBytes(context, needed)) {
             this.terrainIndirectFallbacks++;
-            return -1L;
+            return Long.MIN_VALUE;
         }
         long afterSetup = System.nanoTime();
         this.indirectSetupNanos += afterSetup - setupStarted;
