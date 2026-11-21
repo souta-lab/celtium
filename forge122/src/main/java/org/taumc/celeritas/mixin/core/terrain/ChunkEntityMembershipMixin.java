@@ -22,7 +22,7 @@ import java.util.Arrays;
  * These original Chunk methods own the entity-map mutation/load boundaries the gather cache observes, and this mixin
  * also holds the per-chunk membership cache the gatherer reads.
  * <p>
- * Two things are maintained here, both keyed by the same four methods:
+ * Two things are maintained here, both keyed by the same methods:
  * <ul>
  *   <li>the per-chunk gathered array ({@link ChunkEntityCache}), rebuilt only when this chunk's membership changed, so
  *       a chunk that did not change costs one array copy instead of sixteen section iterators;</li>
@@ -47,7 +47,15 @@ public abstract class ChunkEntityMembershipMixin implements ChunkEntityCache {
     @Unique private Entity[] celtium$cachedEntities;
     @Unique private int celtium$cachedCount;
 
-    @Inject(method = {"func_76612_a", "func_76608_a", "func_76631_c"}, at = @At("RETURN"))
+    // The membership boundary, by SRG name (mcp_stable/39): addEntity func_76612_a, removeEntity
+    // func_76622_b, removeEntityAtIndex func_76608_a, onLoad func_76631_c. removeEntity delegates to
+    // removeEntityAtIndex, so a removal fires this handler twice; that is harmless because the handler
+    // recomputes the count instead of decrementing one. onLoad is hooked deliberately as the load
+    // boundary: a chunk's lists are what they are when onLoad returns, and the first gather after a
+    // load must not trust a cache built before it. (Until 2026-11-22 this list named func_76631_c
+    // where removeEntity was meant - the mislabel was masked by the delegation and by the accidental
+    // onLoad coverage itself.)
+    @Inject(method = {"func_76612_a", "func_76622_b", "func_76608_a", "func_76631_c"}, at = @At("RETURN"))
     private void celtium$entityMembershipChanged(CallbackInfo info) {
         this.celtium$cacheValid = false;
         int count = 0;
