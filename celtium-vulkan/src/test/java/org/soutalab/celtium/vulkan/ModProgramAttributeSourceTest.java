@@ -282,4 +282,48 @@ class ModProgramAttributeSourceTest {
         assertEquals("batch format 3 is not mapped onto program attributes",
                 VulkanModProgramPipeline.unsupportedAttributes(List.of(), VulkanImmediateFormats.BLOCK));
     }
+
+    @Test
+    void aPositionOnlyProgramReadsThePositionLayout() {
+        // Iris's horizon mesh arrives in POSITION (id 7): twelve bytes of position and nothing else, submitted
+        // every frame. A program whose only attribute is the position reads it - the gate used to refuse the
+        // whole format before any attribute was read, so even this program never drew.
+        List<ModGlslTranslator.Attribute> attributes =
+                List.of(new ModGlslTranslator.Attribute("iris_Vertex", "vec4", 0));
+        assertNull(VulkanModProgramPipeline.unsupportedAttributes(attributes,
+                VulkanImmediateFormats.POSITION));
+        assertEquals(VulkanModProgramPipeline.Source.POSITION,
+                VulkanModProgramPipeline.source(attributes.get(0), VulkanImmediateFormats.POSITION));
+        // The position field (three floats at offset 0) ends exactly at the layout's stride; a fourth float
+        // would be the next vertex.
+        assertEquals(VulkanImmediateTexturePipeline.POSITION_BYTES,
+                VulkanModProgramPipeline.Source.POSITION.offset + 12,
+                "the position field ends at the position-only stride");
+    }
+
+    @Test
+    void thePositionLayoutRefusesFieldsItDoesNotCarry() {
+        // The horizon's own program (Complementary's sky basic) also reads a colour, which GL supplies from the
+        // current generic attribute - the pipeline sets it to the fog colour just before the draw - not from the
+        // batch. Until the constant-attribute question is answered the refusal names the attribute, rather than
+        // the whole format as it did before the layout was mapped.
+        List<ModGlslTranslator.Attribute> skyBasic = List.of(
+                new ModGlslTranslator.Attribute("iris_Vertex", "vec4", 0),
+                new ModGlslTranslator.Attribute("iris_Color", "vec4", 1));
+        assertEquals("attribute iris_Color has no source in format " + VulkanImmediateFormats.POSITION,
+                VulkanModProgramPipeline.unsupportedAttributes(skyBasic, VulkanImmediateFormats.POSITION));
+        // A texture coordinate is refused the same way: offset 12 in a 12-byte vertex is the next vertex's
+        // position, so answering the name with the UV field would read a neighbour's bytes.
+        assertNull(VulkanModProgramPipeline.source(
+                new ModGlslTranslator.Attribute("iris_MultiTexCoord0", "vec4", 2),
+                VulkanImmediateFormats.POSITION));
+        assertEquals("attribute iris_MultiTexCoord0 has no source in format " + VulkanImmediateFormats.POSITION,
+                VulkanModProgramPipeline.unsupportedAttributes(
+                        List.of(new ModGlslTranslator.Attribute("iris_MultiTexCoord0", "vec4", 2)),
+                        VulkanImmediateFormats.POSITION));
+        // The second coordinate stays refused here too (it is answered only by POSITION_TEX's fold).
+        assertNull(VulkanModProgramPipeline.source(
+                new ModGlslTranslator.Attribute("iris_MultiTexCoord1", "vec4", 3),
+                VulkanImmediateFormats.POSITION));
+    }
 }
