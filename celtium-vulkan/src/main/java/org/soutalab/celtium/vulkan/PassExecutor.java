@@ -219,6 +219,14 @@ final class PassExecutor {
         RenderTargetRegistry.NamedTargetState outputState =
                 this.targetRegistry.namedTargetState(pass.spec().outputTarget());
         boolean shouldClear = shouldClearOutput(outputSpec, outputState, frameSerial);
+        int attachmentLayout = output.depth()
+                ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+                : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        // Failure bookkeeping for the catch below: whether the output's transition barrier has been
+        // recorded (its layout note is still owed) and whether the render pass is open
+        // (audit-vulkan-core E1).
+        boolean outputTransitionRecorded = false;
+        boolean passOpen = false;
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             long renderPass = ensureRenderPass(output.vkFormat(), output.depth(), shouldClear);
@@ -252,11 +260,9 @@ final class PassExecutor {
                 }
             }
 
-            int attachmentLayout = output.depth()
-                    ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-                    : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
             transitionImageLayout(commandBuffer, output.image(), output.layout(), attachmentLayout, output.depth(),
                     stack);
+            outputTransitionRecorded = true;
 
             ensureQuadMesh();
             int pushBytes = pass.spec().state().pushBytes();
@@ -282,6 +288,7 @@ final class PassExecutor {
             }
 
             vkCmdBeginRenderPass(commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
+            passOpen = true;
             VkViewport.Buffer viewport = VkViewport.calloc(1, stack);
             viewport.get(0).set(0.0f, 0.0f, output.width(), output.height(), 0.0f, 1.0f);
             vkCmdSetViewport(commandBuffer, 0, viewport);
@@ -299,6 +306,7 @@ final class PassExecutor {
             }
             pipeline.draw(commandBuffer, this.quadMesh, uniforms, samplerSet, activeBindCache);
             vkCmdEndRenderPass(commandBuffer);
+            passOpen = false;
 
             this.targetRegistry.noteNamedTargetLayout(output.name(), attachmentLayout);
             if (shouldClear) {
@@ -308,6 +316,21 @@ final class PassExecutor {
             this.passRegistry.noteExecution();
             return true;
         } catch (RuntimeException | LinkageError failure) {
+            // A failure between begin and end would otherwise leave the frame's command buffer inside
+            // a render pass, poisoning everything recorded into it afterwards (audit-vulkan-core E1).
+            // Close the pass so the buffer stays usable. The output's transition barrier was recorded
+            // before the pass began, so note its layout as the success path does - the registry must
+            // agree with what the recording says.
+            if (passOpen) {
+                try {
+                    vkCmdEndRenderPass(commandBuffer);
+                } catch (RuntimeException | LinkageError ignored) {
+                    // Already in failure handling; a second failure here changes nothing.
+                }
+            }
+            if (outputTransitionRecorded) {
+                this.targetRegistry.noteNamedTargetLayout(output.name(), attachmentLayout);
+            }
             this.passRegistry.noteExecutionRefusal(pass.spec().name(),
                     failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage());
             return false;
