@@ -2904,6 +2904,15 @@ public final class VulkanGlTexture {
             return;
         }
         deleted = true;
+        // A patch batch still open here has submitted nothing the wait below can confirm: its deferred regions
+        // still name this image and slices of this staging ring, and a batch already flushed into its command
+        // buffer names both handles outright. Submit it first, in the shape the other whole-write entries use,
+        // so the copies land on the image they were deferred against and the batch's fence is the one the wait
+        // confirms; afterwards nothing remains that a late endPatchBatch could record or submit against the
+        // handles destroyStaging and destroyImageResources are about to zero (L06-02, the delete() entry).
+        if (this.deferredCount > 0 || this.patchBatch != null) submitPatchBatch();
+        this.patchBatching = false;
+        this.regionDeferring = false;
         // Deferred uploads made the "caller ensures the device is idle" contract enforceable here: a pending copy
         // still names both the image and the staging buffer, and its own fence is the bounded wait that confirms it.
         awaitOutstandingUpload();
