@@ -58,7 +58,7 @@ LEDGER_II = [
      "names": ("setLightmap", "func_77008_a", "func_177105_a", "func_187464_b"),
      "mixin_target": "ItemRenderer", "presence": "none"},
     {"id": "II-6", "doc_token": "markBlocksForUpdate",
-     "names": ("markBlocksForUpdate",), "presence": "overwrite"},
+     "names": ("markBlocksForUpdate", "func_184385_a"), "presence": "overwrite"},
     {"id": "II-7", "doc_token": "World.getCombinedLight",
      "names": ("func_175626_b", "getCombinedLight"), "presence": "funnel"},
 ]
