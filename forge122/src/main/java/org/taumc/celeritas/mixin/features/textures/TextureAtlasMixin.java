@@ -3,8 +3,8 @@ package org.taumc.celeritas.mixin.features.textures;
 import com.llamalad7.mixinextras.sugar.Local;
 import net.minecraft.client.renderer.texture.Stitcher;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.texture.TextureMap;
-import net.minecraft.client.renderer.texture.TextureUtil;
 import org.embeddedt.embeddium.impl.util.collections.quadtree.QuadTree;
 import org.embeddedt.embeddium.impl.util.collections.quadtree.Rect2i;
 import org.spongepowered.asm.mixin.Final;
@@ -137,7 +137,9 @@ public class TextureAtlasMixin implements TextureMapExtension {
             return;
         }
         ci.cancel();
-        TextureUtil.bindTexture(((TextureMap) (Object) this).getGlTextureId());
+        // The body's own bind is TextureUtil.bindTexture, a package-private one-liner over
+        // GlStateManager.bindTexture (decompiled original) - call the public form directly.
+        GlStateManager.bindTexture(((TextureMap) (Object) this).getGlTextureId());
         for (TextureAtlasSprite sprite : this.listAnimatedSprites) {
             celtium$animTotal++;
             if (((SpriteExtension) sprite).celeritas$shouldUpdate()) {
