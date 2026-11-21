@@ -2,7 +2,7 @@
 
 生成: `python3 scripts/instrument-index.py`。手で編集しない。
 
-システムプロパティの読み取りキー **351 個**／文字列内マーカー **552 個**。
+システムプロパティの読み取りキー **351 個**／文字列内マーカー **553 個**。
 機能設定・故障注入も含む。すべてが計測用スイッチという意味ではない。
 
 名前を検索してリンク先の実装を読む。既定値・有効条件・出力上限は推測で掲載しない。
@@ -156,7 +156,7 @@
 
 | キー | 読み取りAPI | 位置 |
 |---|---|---|
-| `celtium.entityLightCache` | `System.getProperty` | [CeltiumLightCache.java:65](<../forge122/src/main/java/org/taumc/celeritas/impl/CeltiumLightCache.java#L65>) |
+| `celtium.entityLightCache` | `System.getProperty` | [CeltiumLightCache.java:67](<../forge122/src/main/java/org/taumc/celeritas/impl/CeltiumLightCache.java#L67>) |
 
 <a id="group-celtium-f3"></a>
 ## `celtium.f3.*`
@@ -788,6 +788,7 @@
 | `CELTIUM_FRAME_TICK_PERCENTILES` | [FramePassTimings.java:280](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FramePassTimings.java#L280>) |
 | `CELTIUM_FRAME_TICK_SPLIT` | [GameLoopTiming.java:188](<../forge122/src/main/java/org/taumc/celeritas/impl/profile/GameLoopTiming.java#L188>) |
 | `CELTIUM_FRAME_TICK_TAIL` | [FramePassTimings.java:341](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FramePassTimings.java#L341>) |
+| `CELTIUM_FUNNEL_SUMMARY` | [CeltiumLightCache.java:195](<../forge122/src/main/java/org/taumc/celeritas/impl/CeltiumLightCache.java#L195>) |
 | `CELTIUM_GAME_CLEAR` | [VulkanTerrainGpuBackend.java:16814](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L16814>) |
 | `CELTIUM_GAME_CLEAR_ROUTE` | [VulkanTerrainGpuBackend.java:16928](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java#L16928>) |
 | `CELTIUM_GET_TEX_IMAGE` | [TextureCopyService.java:1304](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/TextureCopyService.java#L1304>) |

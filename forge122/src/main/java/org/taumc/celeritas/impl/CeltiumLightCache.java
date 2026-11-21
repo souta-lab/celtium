@@ -30,7 +30,9 @@ import org.taumc.celeritas.impl.render.terrain.light.MinecraftDynamicLightServic
  * pass through {@code getCombinedLight}, so it keeps its own entry below.
  * <p>
  * The {@code BlockPos} the original allocates is only ever a key on the hit path, so the key packs
- * the same coordinates by hand ({@link BlockPos#toLong} layout: 25 bits z, 12 bits y, 25 bits x) and
+ * the same coordinates by hand ({@link BlockPos#toLong} layout: 26 bits x at shift 38, 12 bits y
+ * at shift 26, 26 bits z at shift 0 - the fields tile the long exactly, so no two coordinates
+ * share a key) and
  * the object is materialised only on a miss, where the world call needs it anyway. One map per
  * lookup kind; {@code isBlockLoaded} semantics are preserved inside each entry point so an unloaded
  * column still answers 0 exactly as the original would.
@@ -178,6 +180,25 @@ public final class CeltiumLightCache {
                 + " funnelMisses=" + funnelMisses + " funnelPassthrough=" + funnelPassthrough;
     }
 
+    /**
+     * Prints {@link #funnelSummary()} once, when the JVM exits.
+     * <p>
+     * The counters exist so real-game legs can verify the funnel is live (item 430 reads them), but
+     * nothing called this: the traffic accumulated and no surface ever showed it. A shutdown hook is
+     * the one place that runs after the last lookup of every configuration - a run killed by the
+     * harness's timeout included - and it only reads these counters, never the game. The font glyph
+     * capture's summary hook is the same shape, for the same reason.
+     */
+    static {
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(
+                    () -> System.out.println("[Celtium] CELTIUM_FUNNEL_SUMMARY " + funnelSummary()),
+                    "celtium-funnel-summary"));
+        } catch (IllegalStateException | SecurityException ignored) {
+            // A shutdown already in progress, or a security manager: the counters are a diagnostic, not a contract.
+        }
+    }
+
     public static int combinedLightFunnel(World world, BlockPos pos, int lightValue,
             java.util.function.IntSupplier vanillaBody) {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("lightCache");
@@ -309,6 +330,6 @@ public final class CeltiumLightCache {
 
     /** Package-private so the key layout is unit-testable; see the class javadoc for the layout. */
     static long pack(long x, long y, long z) {
-        return (x & 0x3ffffffL) << 37 | (y & 0xfffL) << 25 | (z & 0x3ffffffL);
+        return (x & 0x3ffffffL) << 38 | (y & 0xfffL) << 26 | (z & 0x3ffffffL);
     }
 }
