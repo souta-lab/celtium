@@ -22,7 +22,7 @@ import org.taumc.celeritas.impl.CeltiumLightCache;
 @Mixin(World.class)
 public abstract class WorldCombinedLightMixin {
 
-    @WrapMethod(method = "func_175626_b", require = 0)
+    @WrapMethod(method = { "func_175626_b", "getCombinedLight" }, require = 0)
     private int celtium$combinedLightFunnel(BlockPos pos, int lightValue, Operation<Integer> original) {
         return CeltiumLightCache.combinedLightFunnel((World) (Object) this, pos, lightValue,
                 () -> original.call(pos, lightValue));

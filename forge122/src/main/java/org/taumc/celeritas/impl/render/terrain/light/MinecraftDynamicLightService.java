@@ -41,8 +41,13 @@ public final class MinecraftDynamicLightService implements DynamicLightService {
 
     public static final MinecraftDynamicLightService INSTANCE = new MinecraftDynamicLightService();
 
+    /**
+     * Built-in dynamic light reimplementation is off by default: dynamic lighting belongs to mods such as
+     * Celeritas Dynamic Lights running over Celtium's generalised connection surface (Ledger II). The property key
+     * is preserved for compatibility and opt-in A/B testing ({@code -Dceltium.dynamicLights=true}).
+     */
     private static final boolean ENABLED =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.dynamicLights", "true"));
+            Boolean.parseBoolean(System.getProperty("celtium.dynamicLights", "false"));
 
     private final DynamicLightAccumulator accumulator = new DynamicLightAccumulator();
 

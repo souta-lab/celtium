@@ -166,11 +166,25 @@ public final class CeltiumLightCache {
      * the caller, so the computation is the original method, never a reimplementation and never a
      * recursive call into this funnel.
      */
+    /** Funnel telemetry counters (client main thread only) so real-game legs can verify the funnel is live. */
+    private static long funnelCalls;
+    private static long funnelHits;
+    private static long funnelMisses;
+    private static long funnelPassthrough;
+
+    /** {@return a compact summary of combined-light funnel traffic for diagnostics}. */
+    public static String funnelSummary() {
+        return "funnelCalls=" + funnelCalls + " funnelHits=" + funnelHits
+                + " funnelMisses=" + funnelMisses + " funnelPassthrough=" + funnelPassthrough;
+    }
+
     public static int combinedLightFunnel(World world, BlockPos pos, int lightValue,
             java.util.function.IntSupplier vanillaBody) {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("lightCache");
         try {
+            funnelCalls++;
             if (!funnelApplies(ENABLED, lightValue, world.isRemote, isClientMainThread())) {
+                funnelPassthrough++;
                 return vanillaBody.getAsInt();
             }
             rollTick(world);
@@ -178,8 +192,10 @@ public final class CeltiumLightCache {
             long cached = untag(COMBINED.getAndMoveToLast(key));
             int value;
             if (cached != ABSENT) {
+                funnelHits++;
                 value = (int) cached;
             } else {
+                funnelMisses++;
                 value = vanillaBody.getAsInt();
                 putCombined(key, value);
             }
