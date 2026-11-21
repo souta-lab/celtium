@@ -118,6 +118,69 @@ public final class CrashBreadcrumbs {
         SECOND[index] = second;
         THIRD[index] = third;
         cursor++;
+        if (code == WINDOW_PASS) {
+            celtium$writeThroughWindowPass(first, second, third);
+        }
+    }
+
+    // ---- the window-pass write-through (item 536) ----------------------------------------------------------
+    //
+    // The ring above is only ever read at a device loss, because dump() has no other caller. A native access
+    // violation inside vkCmdBeginRenderPass - the item 536 signature, a guard-page fault in nvoglv64 - kills the
+    // process before any loss is declared, so the ring's record of the fatal window's begin arguments (the pass,
+    // the framebuffer, the extent) dies with it and the crash cannot be told apart from a driver-side fault from
+    // the reporter's files. The latest window-pass tuple is therefore also written through to a one-line file
+    // beside the game, before the begin it describes is recorded: after an AV the file holds the arguments of the
+    // window that was being begun, to be read next to the hs_err.
+    //
+    // A window is begun dozens of times a frame, so the file is not rewritten for every one: it is rewritten when
+    // the tuple changes, and otherwise at most once per interval as a heartbeat carrying the current sequence
+    // number. A crash inside a window whose tuple repeats an earlier one still finds that tuple in the file -
+    // the values are the fatal window's own - and only the sequence number can lag, by less than the interval.
+
+    /** How long an unchanged window-pass tuple may go unrewritten before the heartbeat refresh (nanoseconds). */
+    private static final long WINDOW_PASS_WRITE_INTERVAL_NANOS = 250L * 1000L * 1000L;
+    private static long windowPassSeq;
+    private static boolean windowPassLineWritten;
+    private static long windowPassWrittenFirst;
+    private static long windowPassWrittenSecond;
+    private static long windowPassWrittenThird;
+    private static long windowPassLastWriteNanos;
+    /** Test hook: where the write-through line goes instead of beside the game. */
+    static volatile java.nio.file.Path windowPassFileForTest;
+
+    private static void celtium$writeThroughWindowPass(long renderPass, long framebuffer, long extentPacked) {
+        windowPassSeq++;
+        boolean changed = !windowPassLineWritten
+                || renderPass != windowPassWrittenFirst
+                || framebuffer != windowPassWrittenSecond
+                || extentPacked != windowPassWrittenThird;
+        long now = System.nanoTime();
+        if (!changed && now - windowPassLastWriteNanos < WINDOW_PASS_WRITE_INTERVAL_NANOS) {
+            return;
+        }
+        windowPassLineWritten = true;
+        windowPassWrittenFirst = renderPass;
+        windowPassWrittenSecond = framebuffer;
+        windowPassWrittenThird = extentPacked;
+        windowPassLastWriteNanos = now;
+        try {
+            java.nio.file.Path path = windowPassFileForTest != null
+                    ? windowPassFileForTest
+                    : java.nio.file.Paths.get("celtium-last-window-pass.log");
+            java.nio.file.Files.write(path, windowPassLine(windowPassSeq, renderPass, framebuffer, extentPacked)
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (RuntimeException | java.io.IOException ignored) {
+            // A diagnostic that cannot be written must not change how the pass is recorded.
+        }
+    }
+
+    /** Package-private for the format pin in {@code CrashBreadcrumbsTest}, like {@link #describe}. */
+    static String windowPassLine(long seq, long renderPass, long framebuffer, long extentPacked) {
+        return "celtium last window-pass seq=" + seq
+                + " renderPass=0x" + Long.toHexString(renderPass)
+                + " framebuffer=0x" + Long.toHexString(framebuffer)
+                + " extent=" + (extentPacked >>> 32) + "x" + (extentPacked & 0xffffffffL) + "\n";
     }
 
     /** Prints the ring once, oldest first, naming each operation; the first device loss is the one that matters. */
