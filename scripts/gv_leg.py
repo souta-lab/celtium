@@ -141,6 +141,9 @@ class Plan:
 # names them in the harness file instead (HarnessConfig reads celtium-harness.properties from the game
 # directory). Every other -D - the renderer's diagnostic long tail, the patch switches, the bench
 # harness's own namespace - still goes to the JVM as an argument, unchanged.
+# scripts/tests/test_gv_leg_harness_keys.py pins this table's completeness against the Java readers:
+# a renderer-side HarnessConfig key with no row here keeps its -D as a plain JVM argument that its
+# reader never sees, so the leg's control silently does nothing (bughunt 09-06).
 HARNESS_KEYS = {
     "celtium.vulkan.validation": "vulkanValidation",
     "celtium.vulkan.presentReadback": "presentReadback",
@@ -159,6 +162,12 @@ HARNESS_KEYS = {
     "celtium.vulkan.tickTimingsCpu": "tickTimingsCpu",
     "celtium.vulkan.dumpTextures": "dumpTextures",
     "celtium.vulkan.dumpTexturesEvery": "dumpTexturesEvery",
+    "celtium.vulkan.dumpLoadingProgress": "dumpLoadingProgress",
+    "celtium.vulkan.commandBufferTargets": "commandBufferTargets",
+    "celtium.vulkan.beCensus": "beCensus",
+    "celtium.vulkan.beLos": "beLos",
+    "celtium.vulkan.beLosCoverage": "beLosCoverage",
+    "celtium.vulkan.occluderBoxStats": "occluderBoxStats",
     "celtium.vulkan.failImmediateSubmits": "failImmediateSubmits",
     "celtium.debug.buildFlow": "buildFlow",
     "celtium.debug.markTrace": "markTrace",
