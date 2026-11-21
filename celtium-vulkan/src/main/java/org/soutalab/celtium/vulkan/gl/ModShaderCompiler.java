@@ -162,6 +162,9 @@ public final class ModShaderCompiler {
             }
             long options = 0L;
             long result = 0L;
+            ByteBuffer sourceBytes = null;
+            ByteBuffer fileNameBytes = null;
+            ByteBuffer entryPointBytes = null;
             try {
                 options = org.lwjgl.util.shaderc.Shaderc.shaderc_compile_options_initialize();
                 if (options == 0L) {
@@ -175,10 +178,16 @@ public final class ModShaderCompiler {
                         org.lwjgl.util.shaderc.Shaderc.shaderc_env_version_vulkan_1_2);
                 org.lwjgl.util.shaderc.Shaderc.shaderc_compile_options_set_optimization_level(options,
                         org.lwjgl.util.shaderc.Shaderc.shaderc_optimization_level_performance);
-                result = org.lwjgl.util.shaderc.Shaderc.shaderc_compile_into_spv(compiler, source,
+                // Use native heap allocation instead of LWJGL's CharSequence overload, which encodes onto the
+                // 64 KiB thread-local MemoryStack and throws OutOfMemoryError ("Out of stack space.") on large
+                // shader-pack stages such as ComplementaryReimagined's gbuffers_terrain.fsh.
+                sourceBytes = org.lwjgl.system.MemoryUtil.memUTF8(source, false);
+                fileNameBytes = org.lwjgl.system.MemoryUtil.memUTF8("celtium-mod-program", true);
+                entryPointBytes = org.lwjgl.system.MemoryUtil.memUTF8("main", true);
+                result = org.lwjgl.util.shaderc.Shaderc.shaderc_compile_into_spv(compiler, sourceBytes,
                         vertex ? org.lwjgl.util.shaderc.Shaderc.shaderc_vertex_shader
                                 : org.lwjgl.util.shaderc.Shaderc.shaderc_fragment_shader,
-                        "celtium-mod-program", "main", options);
+                        fileNameBytes, entryPointBytes, options);
                 if (result == 0L) {
                     throw new IllegalStateException("shaderc_compile_into_spv returned null");
                 }
@@ -195,6 +204,15 @@ public final class ModShaderCompiler {
                 bytes.get(spirv);
                 return spirv;
             } finally {
+                if (entryPointBytes != null) {
+                    org.lwjgl.system.MemoryUtil.memFree(entryPointBytes);
+                }
+                if (fileNameBytes != null) {
+                    org.lwjgl.system.MemoryUtil.memFree(fileNameBytes);
+                }
+                if (sourceBytes != null) {
+                    org.lwjgl.system.MemoryUtil.memFree(sourceBytes);
+                }
                 if (result != 0L) {
                     org.lwjgl.util.shaderc.Shaderc.shaderc_result_release(result);
                 }
