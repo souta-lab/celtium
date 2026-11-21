@@ -365,6 +365,14 @@ final class ModPrograms {
                 texture = registry.get(name);
             }
         }
+        if ((texture == null || texture.view() == 0L) && b.celtium$materializeStandaloneTexture(name)) {
+            // Every supply route declined and the name is a standalone texture the game allocated storage
+            // for: GL samples it (content undefined) from that moment, so the mirror is materialized at
+            // its recorded extent instead of refusing the draw. The measured deadlock this breaks is
+            // item 537's centre-depth sampler - the texture's only writer is a copy out of a framebuffer
+            // whose pair only this draw acquires, so refusing here refused the copy as well, forever.
+            texture = registry.get(name);
+        }
         return texture;
     }
 
