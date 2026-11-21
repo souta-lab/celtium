@@ -936,12 +936,12 @@ public final class VulkanDynamicMesh {
         if (this.ownerList > 0) {
             celtium$uncommitted(this);
         }
-        VulkanRetireQueue.retire(this::celtium$awaitSecondWait);
+        VulkanRetireQueue.retire(this.context.device().address(), this::celtium$awaitSecondWait);
     }
 
     /** First drain: the device is idle, so one more frame of references can still be retired safely. */
     private void celtium$awaitSecondWait() {
-        VulkanRetireQueue.retire(this::delete);
+        VulkanRetireQueue.retire(this.context.device().address(), this::delete);
     }
 
     /**

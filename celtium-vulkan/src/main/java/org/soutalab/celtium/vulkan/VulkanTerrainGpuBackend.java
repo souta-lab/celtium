@@ -1141,14 +1141,24 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + " terrainVertexStride=" + this.commonVertexStride);
     }
 
+    /**
+     * The batch factory this backend installs. Held as one instance per backend so {@link #uninstall()} can tell
+     * "the factory currently installed is mine" from "a newer backend has installed its own since" - a fresh
+     * {@code VulkanMultiDrawBatch::new} per call would defeat the comparison (BH10-13).
+     */
+    private final org.embeddedt.embeddium.impl.gl.device.MultiDrawBatchFactory batchFactory =
+            VulkanMultiDrawBatch::new;
+
     /** Records the Vulkan backend in place of the OpenGL one for the batch assembly path. */
     public void install() {
-        BatchAssembler.setBatchFactory(VulkanMultiDrawBatch::new);
+        BatchAssembler.setBatchFactory(this.batchFactory);
     }
 
-    /** Restores the OpenGL batch factory when this backend is torn down. */
+    /** Restores the OpenGL batch factory when this backend is torn down, if its own factory is still installed. */
     private void uninstall() {
-        BatchAssembler.setBatchFactory(org.embeddedt.embeddium.impl.gl.device.DirectMultiDrawBatch::new);
+        if (BatchAssembler.getBatchFactory() == this.batchFactory) {
+            BatchAssembler.setBatchFactory(org.embeddedt.embeddium.impl.gl.device.DirectMultiDrawBatch::new);
+        }
     }
 
     /** Human-readable state for logs and debug overlays; never null. */
@@ -15455,7 +15465,7 @@ this.frameBufferOpen = false;
         // The off-target dedupe set keys on this world's framebuffer identities, which die with the world: cleared
         // here so the set holds one world's pairs rather than every world's (audit F2).
         this.modelOffTargetLogged.clear();
-        int drained = VulkanRetireQueue.flush();
+        int drained = VulkanRetireQueue.flushFor(this.context.device().address());
         if (drained > 0) {
             record("world teardown destroyed " + drained + " retired resources; the window device stays");
         }
@@ -15587,13 +15597,20 @@ this.frameBufferOpen = false;
         // teardown, not as a free without a completed wait (audit N02).
         this.modelGeometry.releaseAll();
         // Teardown: the device has been settled above, so anything still retired can be destroyed now.
-        int drained = VulkanRetireQueue.flush();
+        int drained = VulkanRetireQueue.flushFor(this.context.device().address());
         if (drained > 0) {
             record("teardown destroyed " + drained + " retired resources");
         }
         this.textureCopyService.delete();
         releaseRetiredImmediateGroups();
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(null);
+        // Only the backend that is actually installed may clear the registration: when a second backend exists
+        // (the factory's own scenario, observed with modded RenderGlobals), the newer one is registered by the
+        // time the older one is deleted, and clearing unconditionally would erase the live backend's
+        // registration and leave the mixins with no Vulkan backend at all (BH10-13). uninstall() applies the
+        // same identity rule to the batch factory.
+        if (org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current() == this) {
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(null);
+        }
         uninstall();
         for (TerrainRenderer.RegionResources resources : this.terrain.regionResources()) {
             resources.delete();
@@ -15706,6 +15723,16 @@ this.frameBufferOpen = false;
             this.swapchain.delete();
             this.swapchain = null;
             released++;
+        }
+        // The teardown above queues as it goes: the texture registry's textures, the frame target and the
+        // swapchain hand their handles to the retire queue instead of destroying them in place, and they do so
+        // after this method's own drain near its head. The device was settled at the head of this method and is
+        // still alive here, so this device's share can be destroyed now. Without this last drain those entries
+        // outlive the device: nothing guarantees VulkanContext.delete() runs after this method, and a successor
+        // backend's frame-path drain would otherwise execute them against a destroyed device (L06-01/BH10-09).
+        int drainedLate = VulkanRetireQueue.flushFor(this.context.device().address());
+        if (drainedLate > 0) {
+            record("teardown destroyed " + drainedLate + " resource(s) retired during the teardown itself");
         }
         System.out.println("[Celtium] CELTIUM_TEARDOWN released " + released
                 + " backend resources (immediate mesh, groups, pipeline caches, UI, registry, swapchain)");
@@ -20719,7 +20746,7 @@ this.frameBufferOpen = false;
                 // Nothing is in flight: the same "device genuinely idle" statement the drain used to establish, so
                 // the retire queue may flush here (audit S12) and any off-target copy recorded for the previous
                 // frame has certainly completed.
-                int drained = VulkanRetireQueue.flush();
+                int drained = VulkanRetireQueue.flushFor(this.context.device().address());
                 if (drained > 0) {
                     this.submissionStatistics.addRetiredFlushes(drained);
                 }
@@ -22605,9 +22632,10 @@ this.frameBufferOpen = false;
         if (!celtium$recordingOpen()
                 && this.scheduler.completedSubmitSequence() >= this.scheduler.submitSequence()
                 && this.immediateGroups.isEmpty() && this.currentImmediateMesh == null) {
-            // The retire queue has no per-submission tagging, so it may only flush when nothing is in flight at
-            // all - the same statement the drain used to establish, reached here through the watermark.
-            int drained = VulkanRetireQueue.flush();
+            // The retire queue is drained per device: this device's entries may only flush when nothing of this
+            // device is in flight at all - the same statement the drain used to establish, reached here through
+            // the watermark. Another device's entries wait for that device's own drain (L06-01/BH10-09).
+            int drained = VulkanRetireQueue.flushFor(this.context.device().address());
             if (drained > 0) {
                 this.submissionStatistics.addRetiredFlushes(drained);
             }
@@ -22738,7 +22766,7 @@ this.frameBufferOpen = false;
             VulkanBuffer previous = this.sharedIndexBuffers.put(primitiveType, buffer);
             this.sharedIndexPrimitives.put(primitiveType, capacity);
             if (previous != null) {
-                VulkanRetireQueue.retire(previous::delete);
+                VulkanRetireQueue.retire(this.context.device().address(), previous::delete);
             }
         } finally {
             MemoryUtil.memFree(data);

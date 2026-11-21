@@ -162,7 +162,7 @@ final class VulkanOpaqueCopy {
         }
         Scratch old = this.scratch;
         this.scratch = next;
-        if (old != null) VulkanRetireQueue.retire(() -> destroyScratch(old));
+        if (old != null) VulkanRetireQueue.retire(this.context.device().address(), () -> destroyScratch(old));
     }
 
     /** Source is GENERAL and destination is TRANSFER_DST. Ends with scratch in GENERAL. */

@@ -1692,7 +1692,7 @@ public final class VulkanPostChain {
             // whole device is lost, so the screen goes black). The retire queue drains only after a wait that
             // actually succeeded.
             Target replaced = target;
-            org.soutalab.celtium.vulkan.VulkanRetireQueue.retire(() -> replaced.delete(this.context.device()));
+            org.soutalab.celtium.vulkan.VulkanRetireQueue.retire(this.context.device().address(), () -> replaced.delete(this.context.device()));
             trace("resize identity=" + fbId + " replaced image=0x" + hex(target.image)
                     + " (the replacement starts UNDEFINED and gets its own barrier)");
             target = null;
@@ -1717,7 +1717,7 @@ public final class VulkanPostChain {
                 // framebuffer this frame, and a size change can arrive mid-recording. The validation layer named exactly
                 // this (VkFramebuffer bound to a command buffer that then failed vkEndCommandBuffer).
                 final long retiredMainFramebuffer = this.mainFramebuffer;
-                org.soutalab.celtium.vulkan.VulkanRetireQueue.retire(
+                org.soutalab.celtium.vulkan.VulkanRetireQueue.retire(this.context.device().address(),
                         () -> vkDestroyFramebuffer(this.context.device(), retiredMainFramebuffer, null));
                 this.mainFramebuffer = 0;
             }

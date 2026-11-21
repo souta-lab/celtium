@@ -1733,7 +1733,7 @@ public final class VulkanSwapchain {
             }
             final long retired = this.acquireSemaphores[i];
             this.acquireSemaphores[i] = fresh.get(0);
-            org.soutalab.celtium.vulkan.VulkanRetireQueue.retire(
+            org.soutalab.celtium.vulkan.VulkanRetireQueue.retire(this.context.device().address(),
                     () -> vkDestroySemaphore(this.context.device(), retired, null));
             return;
         }

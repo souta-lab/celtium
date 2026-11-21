@@ -2115,9 +2115,20 @@ public final class VulkanContext {
             // repeating vkDeviceWaitIdle/vkDestroyDevice here risks a second AV.
             System.err.println("[Celtium] CELTIUM_VULKAN_DEVICE_LOST: skipping Vulkan driver cleanup "
                     + "after a fatal native device loss; terminate the Minecraft process.");
+            if (this.device != null) {
+                // The destructions this device still has queued can never run - the device is not to be touched
+                // again - so they are dropped and counted rather than left in the static queue, where a successor
+                // backend's drain would execute them against this dead handle (L06-01/BH10-09).
+                int droppedRetirements = VulkanRetireQueue.dropFor(this.device.address());
+                if (droppedRetirements > 0) {
+                    System.err.println("[Celtium] CELTIUM_VULKAN_DEVICE_LOST: " + droppedRetirements
+                            + " retired destruction(s) of this device were dropped unexecuted");
+                }
+            }
             return;
         }
         if (this.device != null) {
+            final long deviceHandle = this.device.address();
             System.out.println("[Celtium] CELTIUM_WAIT_CENSUS bootstrapQueueWaits=" + bootstrapQueueWaits
                     + " bootstrapQueueWaitMillis=" + bootstrapQueueWaitMillis
                     + " bootstrapQueueWaitWorstMillis=" + bootstrapQueueWaitWorstMillis
@@ -2157,6 +2168,13 @@ public final class VulkanContext {
                 this.usable = false;
                 System.err.println("[Celtium] CELTIUM_VULKAN_DEVICE_LOST: teardown wait reported "
                         + "device loss; skipping further native cleanup.");
+                // Same disposition as the deviceLost entry above: this device's queued destructions are dropped
+                // unexecuted, so no later drain can run them against the dead handle (L06-01/BH10-09).
+                int droppedRetirements = VulkanRetireQueue.dropFor(deviceHandle);
+                if (droppedRetirements > 0) {
+                    System.err.println("[Celtium] CELTIUM_VULKAN_DEVICE_LOST: " + droppedRetirements
+                            + " retired destruction(s) of this device were dropped unexecuted");
+                }
                 return;
             }
             if (releaseQuarantined) {
@@ -2171,6 +2189,16 @@ public final class VulkanContext {
                 // Readback buffers quarantined with them (#364): the same device-wide wait is the point at which the
                 // queue is known to be finished with the copies that were writing into them.
                 releaseQuarantinedReadbackBuffers();
+                // The retire queue's share of this device, drained at the same point and for the same reason: the
+                // wait above confirmed this device is idle, and this is the last moment its queued destructions
+                // can legally run - after vkDestroyDevice below, an entry left queued would be executed by a
+                // successor backend's drain against a dead handle (L06-01/BH10-09). Only this device's entries
+                // are drained; another live device's entries are not this wait's to release.
+                int drainedRetirements = VulkanRetireQueue.flushFor(deviceHandle);
+                if (drainedRetirements > 0) {
+                    System.out.println("[Celtium] CELTIUM_TEARDOWN destroyed " + drainedRetirements
+                            + " retired resource(s) of this device at context delete");
+                }
             }
             // Deferred submissions are under the same rule as the quarantine list: released only when the device
             // confirmed idle, otherwise counted as held. The fence pool itself is destroyed either way - on a
@@ -2189,6 +2217,16 @@ public final class VulkanContext {
             } else {
                 this.deferredHeldAtTeardown = this.deferredSubmits.size();
                 this.deferredSubmits.clear();
+                // The wait did not confirm idle, so this device's queued destructions may not run - and the
+                // device is destroyed below regardless, so they never legally can. They are dropped and counted,
+                // the same disposition as the held deferred submissions above, rather than left in the static
+                // queue for a successor backend's drain to execute against the dead handle (L06-01/BH10-09).
+                int droppedRetirements = VulkanRetireQueue.dropFor(deviceHandle);
+                if (droppedRetirements > 0) {
+                    System.out.println("[Celtium] CELTIUM_TEARDOWN " + droppedRetirements
+                            + " retired destruction(s) of this device were NOT executed (the teardown wait did not"
+                            + " confirm idle) and were dropped; the resources are left to the process teardown");
+                }
             }
             for (Long pooledFence : this.idleDeferredFences) {
                 vkDestroyFence(this.device, pooledFence.longValue(), null);
