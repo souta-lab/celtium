@@ -3090,8 +3090,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final String FRAME_DUMP_DIR = HarnessConfig.path("frameDumpDir");
     private static final boolean DUMP_LOADING_PROGRESS =
             HarnessConfig.bool("dumpLoadingProgress", false);
-    /** On/off probes and the frame-dump cadence: consulted on present paths, so resolved once rather than per frame. */
-    private static final boolean MIRROR_DUMP_ON = System.getProperty("celtium.vulkan.mirrorDump") != null;
+    /**
+     * On/off probes and the frame-dump cadence: consulted on present paths, so resolved once rather
+     * than per frame. The mirror-dump family's one switch is {@code -Dceltium.vulkan.mirrorDump=<dir>}
+     * with the value semantics {@link VulkanGlTexture#mirrorDumpConfigured()} defines (set and
+     * non-empty); this field used to be an existence test on that property, so naming it at all - even
+     * {@code =false}, even empty - turned the splash and box probes' readbacks on while the dumps they
+     * feed wrote nothing (bughunt 09-03). The separate {@code -Dceltium.mirrorDump} key below is not a
+     * switch: it is the probe spec naming which mirrors {@code celtium$mirrorProbe} dumps.
+     */
+    private static final boolean MIRROR_DUMP_ON = VulkanGlTexture.mirrorDumpConfigured();
     private static final int FRAME_DUMP_EVERY = HarnessConfig.integer("frameDumpEvery", 60);
     private static final int FRAME_DUMP_COUNT = HarnessConfig.integer("frameDumpCount", 0);
     private static final String MIRROR_DUMP_SPEC = System.getProperty("celtium.mirrorDump");
