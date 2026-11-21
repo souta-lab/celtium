@@ -3128,6 +3128,10 @@ public final class VulkanGlTexture {
             System.out.println("[Celtium] CELTIUM_MIRROR_RECREATE texel=" + this.encodeLabel + " from=" + this.width
                     + "x" + this.height + " to=" + newWidth + "x" + newHeight + " levels=" + this.mipLevels);
         }
+        // Pending deferred regions name this image, its extent and its staging slices: they are submitted against
+        // it while it still exists, before the destroy below retires it. The same guard in transitionToShaderRead
+        // runs only after the new image has taken this one's place, which is too late for them (L06-02).
+        if (this.deferredCount > 0) submitPatchBatch(); // a deferred animation copy must not land after this write
         destroyImageResources();
         createImageResources(newWidth, newHeight);
         // The new image is in VK_IMAGE_LAYOUT_UNDEFINED for every level, and the next write may be a patch, which only
@@ -4044,6 +4048,7 @@ public final class VulkanGlTexture {
                     + offsetX + "," + offsetY + " does not fit the mirror image of " + this.width + "x" + this.height
                     + " (texel id " + this.encodeLabel + "); refused rather than copying past the image allocation");
         }
+        if (this.deferredCount > 0) submitPatchBatch(); // a deferred animation copy must not land after this write
         ensureStaging(bytes);
         // The staging buffer is host visible and persistently mapped, so the pixels go straight from the readback
         // buffer into device visible memory without an intermediate Java array. The row order is kept as GL
@@ -4056,7 +4061,6 @@ public final class VulkanGlTexture {
             flushStaging();
         }
 
-        if (this.deferredCount > 0) submitPatchBatch(); // a deferred animation copy must not land after this write
         VkCommandBuffer commandBuffer = context.beginCommands();
         celtium$trace("wholeUpload level=" + level + " " + pixelWidth + "x" + pixelHeight, commandBuffer);
         boolean finishedSamplingTransition = false;
