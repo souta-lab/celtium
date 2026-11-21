@@ -52,6 +52,33 @@ class ModProgramRegistryTest {
     }
 
     @Test
+    void aLocationCollisionBetweenTwoNamesIsCounted() {
+        // Locations are 30-bit name hashes, so a colliding pair exists; find one rather than hard-coding it.
+        java.util.Map<Integer, String> byLocation = new java.util.HashMap<>();
+        String first = null;
+        String second = null;
+        for (int i = 0; i < 1_000_000 && second == null; i++) {
+            String name = "u" + i;
+            String other = byLocation.putIfAbsent(ModProgramRegistry.location(name), name);
+            if (other != null) {
+                first = other;
+                second = name;
+            }
+        }
+        org.junit.jupiter.api.Assertions.assertNotNull(second, "a colliding pair has to exist in a million names");
+        ModProgramRegistry.shaderSource(31,
+                "attribute vec2 position;\nvoid main() { gl_Position = vec4(position, 0.0, 1.0); }");
+        ModProgramRegistry.shaderSource(32, "uniform float " + first + "; uniform float " + second + ";\n"
+                + "void main() { gl_FragColor = vec4(" + first + " + " + second + "); }");
+        ModProgramRegistry.attach(9, 31);
+        ModProgramRegistry.attach(9, 32);
+        ModProgramRegistry.Program program = ModProgramRegistry.link(9);
+        assertTrue(program.lowered().ok(), program.lowered().failure());
+        assertTrue(ModProgramRegistry.locationNameCollisions() >= 1,
+                "the second name's mapping replaced the first's at their shared location, and that is counted");
+    }
+
+    @Test
     void aProgramWithoutAFragmentStageSaysSo() {
         ModProgramRegistry.shaderSource(20, "void main() { gl_Position = vec4(0.0); }");
         ModProgramRegistry.attach(7, 20);
