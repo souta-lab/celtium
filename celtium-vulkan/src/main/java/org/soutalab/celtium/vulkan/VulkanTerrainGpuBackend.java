@@ -10955,6 +10955,21 @@ this.frameBufferOpen = false;
     }
 
     /**
+     * {@return whether a failed lazy supply must drop the mirror it just created}.
+     * <p>
+     * The supply creates the registry entry before it reads the capture, and the read can refuse (the capture-miss
+     * for a level no upload ever wrote game pixels into). A mirror that was already there holds real partial state
+     * its owner may still complete, and one the failed upload nevertheless filled is not the failure's to undo; only
+     * the entry this attempt created, still holding no full content, goes back, so the name returns to the
+     * unmirrored state the lookup's deferral describes instead of answering every later lookup with an empty
+     * wrapper. Package-private and static so the rule can be pinned without a device, like
+     * {@link #celtium$supplyMayReplaceWrapper}.
+     */
+    static boolean celtium$supplyFailureDropsMirror(boolean entryPreExisted, boolean mirrorHasFullContent) {
+        return !entryPreExisted && !mirrorHasFullContent;
+    }
+
+    /**
      * {@return a viewport or clip rectangle as {@code x,y wxh}, or {@code none}}.
      * <p>
      * The four numbers are the ones GL and the run both name rectangles by, so a captured clip can be compared with an
@@ -14389,8 +14404,14 @@ this.frameBufferOpen = false;
         }
         int[] size = textureSize(glTextureId);
         if (size[0] > 0 && size[1] > 0) {
+            // Read before imageFor can create the entry: whether this attempt is the one that creates the name's
+            // mirror decides what a failure below may undo. The registry half of the check stays inside the try, so
+            // a caller that reaches here before the registry exists fails exactly as the imageFor below it would.
+            boolean entryPreExisted = existing != null;
+            VulkanGlTexture created = null;
             try {
-                VulkanGlTexture created = this.textureRegistry.imageFor(glTextureId, size[0], size[1], true);
+                entryPreExisted |= this.textureRegistry.hasMirrorEntry(glTextureId);
+                created = this.textureRegistry.imageFor(glTextureId, size[0], size[1], true);
                 created.uploadFromGlTexture(glTextureId, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
                 this.textureRegistry.markFullyInitialized(glTextureId);
                 celtium$noteMirrorCurrent(glTextureId);
@@ -14405,6 +14426,15 @@ this.frameBufferOpen = false;
                 this.lazyMirrorFailures++;
                 this.lazyMirrorSupplyFailures++;
                 this.lastLazyMirrorFailure = glTextureId + ": " + error;
+                if (created != null
+                        && celtium$supplyFailureDropsMirror(entryPreExisted, created.hasFullContent())) {
+                    // The entry this attempt created must not stay behind as an empty mirror: left in place it
+                    // answers every later lookup as a plain hit, the preflight refuses with "no complete native
+                    // image" forever, and the retry above stays gated on a write serial that never moves for a
+                    // name whose content arrives by announcement. Dropping it returns the name to the unmirrored
+                    // state, where the lookup defers and a later announcement or upload fills it as designed.
+                    this.textureRegistry.dropUnfilledMirror(glTextureId, created);
+                }
             }
         }
         return existing != null;

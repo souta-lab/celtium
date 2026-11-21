@@ -755,6 +755,47 @@ public final class VulkanTextureRegistry {
         return texture;
     }
 
+    /** {@return whether this registry already holds a mirror entry for the GL name}. */
+    boolean hasMirrorEntry(int glTextureId) {
+        return this.entries.containsKey(glTextureId);
+    }
+
+    /**
+     * Drops a mirror a lazy supply created and then failed to fill, returning the GL name to the unmirrored state.
+     * <p>
+     * The supply creates the entry before it reads the capture ({@link #imageFor}), and the read can refuse: the
+     * measured case is a level the game allocated with a NULL data pointer, whose captured surface the read rejects
+     * because no upload ever wrote game pixels into it (an item-frame map whose data packet has not arrived yet is
+     * exactly that shape). Leaving the entry behind made the name's answer permanent: every later lookup returned the
+     * empty wrapper as a plain hit, so the preflight refused with "no complete native image" instead of the deferral
+     * the lookup gives a name with no mirror, and the supply's own retry stayed gated on a write serial that never
+     * moves for a name whose content arrives by announcement. The lookup side of this registry refuses to build a
+     * content-less mirror for the same reason - it would hide a later upload - so a failed supply must leave the name
+     * as it found it. The guards keep the drop to exactly that case: the entry must still be the one the supply
+     * created, and it must still hold no full content (an upload that failed after filling is not this method's to
+     * undo, and a pre-existing entry is never passed here - the caller checks {@link #hasMirrorEntry} first). The
+     * image is destroyed through the retire queue, as in {@link #forgetTexture}.
+     *
+     * @return whether an entry was dropped
+     */
+    boolean dropUnfilledMirror(int glTextureId, VulkanGlTexture expected) {
+        Entry entry = this.entries.get((int) glTextureId);
+        if (entry == null || entry.texture != expected || expected.hasFullContent()) {
+            return false;
+        }
+        this.entries.remove((int) glTextureId);
+        this.mutations++;
+        celtium$dropMemoFor(glTextureId);
+        final VulkanGlTexture image = entry.texture;
+        VulkanRetireQueue.retire(this.context.device().address(), new Runnable() {
+            @Override
+            public void run() {
+                image.delete();
+            }
+        });
+        return true;
+    }
+
     /** Creates a renderer-owned texture directly from RGBA bytes, without binding or creating any GL object. */
     public int createTexture2d(int width, int height, boolean nearestFilter, java.nio.ByteBuffer rgba) {
         int id = RenderObjectIds.reserve(1);
