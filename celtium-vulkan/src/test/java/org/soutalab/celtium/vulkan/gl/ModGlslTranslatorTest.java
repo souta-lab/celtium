@@ -442,6 +442,41 @@ class ModGlslTranslatorTest {
         assertNull(result.fragment());
     }
 
+    @Test
+    void lowersStandardGlsl450BuiltinsAndLegacyTextureProjCalls() {
+        String vertex = """
+                #version 120
+                attribute vec3 position;
+                varying vec4 v_proj;
+                varying float v_id;
+                void main() {
+                    v_id = float(gl_VertexID + gl_InstanceID);
+                    v_proj = vec4(position, 1.0);
+                    gl_Position = vec4(position, 1.0);
+                }
+                """;
+        String fragment = """
+                #version 120
+                uniform sampler2D u_tex;
+                varying vec4 v_proj;
+                varying float v_id;
+                void main() {
+                    vec4 sampleCol = texture2DProj(u_tex, v_proj);
+                    gl_FragColor = gl_FrontFacing ? sampleCol : sampleCol * 0.5;
+                    gl_FragDepth = clamp(v_id * 0.001, 0.0, 1.0);
+                }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertTrue(result.ok(), () -> "expected lowering to succeed, got: " + result.failure());
+        assertTrue(result.vertex().contains("gl_VertexIndex"));
+        assertTrue(result.vertex().contains("gl_InstanceIndex"));
+        assertTrue(result.fragment().contains("textureProj("));
+        assertTrue(result.fragment().contains("gl_FrontFacing"));
+        assertTrue(result.fragment().contains("gl_FragDepth"));
+        assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
     /**
      * A mod's real shaders, when a directory of them is named by {@code CELTIUM_MOD_SHADER_DIR}: every {@code *.frag}
      * paired with the directory's single {@code *.vert} (the shape GTCEu's {@code Shaders} uses) must lower and
