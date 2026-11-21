@@ -16849,7 +16849,7 @@ this.frameBufferOpen = false;
                 this.postChainBridge.celtium$transitionPublishedFrameTextures(true, 0L, routedDepthImage, attachedColorImages);
                 celtium$consumeRoutedTargetClear(pairOwner, identity, routedDepthKey);
                 pairOwner.recordChainPairAttachAcquire(identity, routedDepthKey, this.commandBuffer);
-                framebuffer = ensureChainPairFramebuffer(targetRenderPass);
+                framebuffer = ensureChainPairFramebuffer(targetRenderPass, targetColors);
                 if (framebuffer == 0L) {
                     celtium$reportPackTerrainRefused(pass, programId, "no-chain-framebuffer");
                     return false;
@@ -17795,6 +17795,31 @@ this.frameBufferOpen = false;
         GllessFrameTarget glless = offTargetTarget();
         return glless == null ? 0L
                 : framebufferCache().chainPair(renderPass, glless, this.targetWidth, this.targetHeight);
+    }
+
+    /** Whether an ask for this many colour targets must be served by the multi-target cache entry. */
+    static boolean celtium$chainPairMultiTarget(int colorCount) {
+        return colorCount > 1;
+    }
+
+    /**
+     * The current identity's chain-pair framebuffer over {@code colorCount} colour targets, 0 without owned
+     * pairs; see {@link FramebufferCache#chainPairMulti}. A pass built for several colour targets - the pack
+     * terrain path's frame-variant pass declares that many colour attachments plus depth - cannot begin
+     * against the one-colour entry's framebuffer, which declares two attachments whatever the pass says: the
+     * attachment count is part of what the driver checks when the framebuffer is created
+     * (VUID-VkFramebufferCreateInfo-attachmentCount-00876), so a multi-target ask goes to the multi-target
+     * entry, the same split the window path makes. A one-colour ask keeps the legacy entry, and its shape,
+     * exactly.
+     */
+    private long ensureChainPairFramebuffer(long renderPass, int colorCount) {
+        if (!celtium$chainPairMultiTarget(colorCount)) {
+            return ensureChainPairFramebuffer(renderPass);
+        }
+        GllessFrameTarget glless = offTargetTarget();
+        return glless == null ? 0L
+                : framebufferCache().chainPairMulti(renderPass, glless, colorCount, this.targetWidth,
+                        this.targetHeight);
     }
 
     /** Created on first use: the registry it records into is built with the backend's other render-target state. */
