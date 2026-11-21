@@ -9777,11 +9777,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                     // recorded, and the draw-time census reported 3 retained groups a frame against 197 total.
                     if (retained != null) {
                         this.retainedAccept++;
-                    } else if (celtium$preTransformable(formatId, state)) {
+                    } else if (celtium$allowPreTransform(false, modDrawProgram != null,
+                            celtium$preTransformable(formatId, state))) {
                         this.preTransformEligible++;
                     }
                 }
-                this.currentGroupPreTransformed = retained == null && celtium$preTransformable(formatId, state);
+                // Mod programs are arbitrary GLSL vertex shaders (e.g. Iris/Demonica deferred/composite/final
+                // fullscreen quads whose vertex shader reads gl_Vertex directly as [0..1] NDC or consumes
+                // gl_ModelViewMatrix separately): baking glModelView into gl_Vertex and replacing modelView with
+                // identity clips or distorts fullscreen passes whenever glModelView is non-identity axis-aligned or
+                // affine, leaving the frame image untouched at the vanilla clear colour.
+                this.currentGroupPreTransformed = celtium$allowPreTransform(retained != null, modDrawProgram != null,
+                        celtium$preTransformable(formatId, state));
                 if (this.currentGroupPreTransformed) {
                     this.immediateStatistics.notePreTransformedGroups();
                     java.util.Arrays.fill(this.currentGroupModelView, 0.0f);
@@ -16801,6 +16808,7 @@ this.frameBufferOpen = false;
             int passH = this.targetHeight;
             long framebuffer;
             GllessFrameTarget pairOwner = onMain ? null : offTargetTarget();
+            long drawIdentity = identity;
             long routedDepthKey = 0L;
             long routedDepthImage = 0L;
             long[] attachedColorImages = null;
@@ -16829,27 +16837,69 @@ this.frameBufferOpen = false;
                         passH = ch;
                     }
                 }
-                pairOwner.ensureChainPairColors(identity, targetColors, passW, passH, pairClass);
-                for (int s = 1; s < targetColors; s++) {
-                    pairOwner.ensureAndInitializeExtraColor(identity, s, passW, passH, this.commandBuffer);
+                long candidateKey = (depthRecord != null && depthRecord[0] != 0
+                        && depthRecord[1] > 0 && depthRecord[2] > 0)
+                        ? RenderTargetRegistry.rawColorTextureIdentity(depthRecord[0]) : 0L;
+                int color0Tex = colorRecord != null ? (int) colorRecord[0] : 0;
+                if (color0Tex != 0) {
+                    long existingOwner = this.publishedFrameImageIdentities.get(color0Tex);
+                    boolean ownerExists = existingOwner != Long.MIN_VALUE && existingOwner != 0L
+                            && pairOwner.chainPairExists(existingOwner);
+                    boolean ownerSizeMatches = ownerExists
+                            && pairOwner.chainPairWidth(existingOwner) == passW
+                            && pairOwner.chainPairHeight(existingOwner) == passH;
+                    boolean ownerDepthMatches = ownerExists
+                            && (candidateKey == 0L || pairOwner.chainPairUsesSharedDepth(existingOwner, candidateKey));
+                    drawIdentity = celtium$resolvePackTerrainDrawIdentity(identity, existingOwner,
+                            this.targetRegistry.mainIdentity(), this.gameFramebufferIdentity,
+                            ownerExists, ownerSizeMatches, ownerDepthMatches);
+                    if (drawIdentity != identity) {
+                        pairClass = pairOwner.chainPairFormatClass(drawIdentity);
+                        targetRenderPass = frameVariantRenderPass(targetColors, pairClass);
+                    }
                 }
-                if (depthRecord != null && depthRecord[0] != 0 && depthRecord[1] > 0 && depthRecord[2] > 0) {
-                    long candidateKey = RenderTargetRegistry.rawColorTextureIdentity(depthRecord[0]);
-                    if (pairOwner.ensureChainPairSharedDepth(identity, candidateKey, depthRecord[1], depthRecord[2])
-                            && pairOwner.chainPairUsesSharedDepth(identity, candidateKey)) {
+                int pairColors = celtium$packTerrainPairColorCount(targetColors,
+                        pairOwner.chainPairColorCount(drawIdentity));
+                pairOwner.ensureChainPairColors(drawIdentity, pairColors, passW, passH, pairClass);
+                for (int s = 1; s < pairColors; s++) {
+                    pairOwner.ensureAndInitializeExtraColor(drawIdentity, s, passW, passH, this.commandBuffer);
+                }
+                if (candidateKey != 0L) {
+                    if (pairOwner.ensureChainPairSharedDepth(drawIdentity, candidateKey, depthRecord[1], depthRecord[2])
+                            && pairOwner.chainPairUsesSharedDepth(drawIdentity, candidateKey)) {
                         routedDepthKey = candidateKey;
                         routedDepthImage = pairOwner.sharedDepthImage(candidateKey);
                     }
                 }
                 attachedColorImages = new long[targetColors];
-                attachedColorImages[0] = pairOwner.chainPairColorImage(identity);
+                attachedColorImages[0] = pairOwner.chainPairColorImage(drawIdentity);
                 for (int s = 1; s < targetColors; s++) {
-                    attachedColorImages[s] = pairOwner.chainPairColorImageAt(identity, s);
+                    attachedColorImages[s] = pairOwner.chainPairColorImageAt(drawIdentity, s);
+                }
+                if (color0Tex != 0) {
+                    if (drawIdentity == identity) {
+                        celtium$publishFramebufferColorTexture(color0Tex, identity, colorRecord);
+                    } else if (this.publishedFrameImages.get(color0Tex) != attachedColorImages[0]) {
+                        long color0View = pairOwner.chainPairColorView(drawIdentity);
+                        if (attachedColorImages[0] != 0L && color0View != 0L) {
+                            this.postChainBridge.celtium$publishFrameTexture(color0Tex, attachedColorImages[0],
+                                    color0View, passW, passH);
+                            this.publishedTextures.noteColorTexturePublished();
+                        }
+                    }
+                    if (targetColors > 1) {
+                        for (int s = 1; s < targetColors; s++) {
+                            int slotName = this.publishedTextures.colorTextureAt(identity, s);
+                            if (slotName != 0) {
+                                celtium$publishFramebufferColorTextureAt(slotName, drawIdentity, s, passW, passH);
+                            }
+                        }
+                    }
                 }
                 this.postChainBridge.celtium$transitionPublishedFrameTextures(true, 0L, routedDepthImage, attachedColorImages);
-                celtium$consumeRoutedTargetClear(pairOwner, identity, routedDepthKey);
-                pairOwner.recordChainPairAttachAcquire(identity, routedDepthKey, this.commandBuffer);
-                framebuffer = ensureChainPairFramebuffer(targetRenderPass, targetColors);
+                celtium$consumeRoutedTargetClear(pairOwner, drawIdentity, routedDepthKey);
+                pairOwner.recordChainPairAttachAcquire(drawIdentity, routedDepthKey, this.commandBuffer);
+                framebuffer = ensureChainPairFramebuffer(drawIdentity, targetRenderPass, targetColors);
                 if (framebuffer == 0L) {
                     celtium$reportPackTerrainRefused(pass, programId, "no-chain-framebuffer");
                     return false;
@@ -16889,10 +16939,12 @@ this.frameBufferOpen = false;
                 this.packTerrainPipelines.put(pipeKey, modPipeline);
             }
 
-            // Transition non-attached published textures to sampled layout, then resolve all program samplers.
-            this.postChainBridge.celtium$transitionPublishedFrameTextures(false);
+            // Resolve all program samplers first (so any lazy framebuffer/depth publications enter publishedTextures),
+            // then transition non-attached published textures via PostChainBridge so pair color images stay in GENERAL
+            // and shared depth layouts stay synchronized with GllessFrameTarget.
             var samplers = modPipeline.samplers();
             VulkanGlTexture[] samplerTextures = new VulkanGlTexture[samplers.size()];
+            int[] samplerTexNames = new int[samplers.size()];
             for (int i = 0; i < samplers.size(); i++) {
                 var binding = samplers.get(i);
                 int[] unitVal = modProgram.ints(binding.name());
@@ -16904,16 +16956,23 @@ this.frameBufferOpen = false;
                             "sampler " + binding.name() + " (unit " + unit + ", tex " + texName + ") missing");
                     return false;
                 }
-                if (!tex.celtium$ownsImage() && !celtium$passAttachesImage(tex.image())) {
+                samplerTextures[i] = tex;
+                samplerTexNames[i] = texName;
+            }
+            this.postChainBridge.celtium$transitionPublishedFrameTextures(false);
+            for (int i = 0; i < samplers.size(); i++) {
+                VulkanGlTexture tex = samplerTextures[i];
+                if (!tex.celtium$ownsImage() && !celtium$passAttachesImage(tex.image())
+                        && tex.samplingLayout() != org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL
+                        && this.publishedTextures.published(samplerTexNames[i]) == null) {
                     try {
                         tex.ensureSampledLayout(this.commandBuffer);
                     } catch (IllegalStateException ignored) {
                         celtium$reportPackTerrainRefused(pass, programId,
-                                "sampler " + binding.name() + " layout-unknown");
+                                "sampler " + samplers.get(i).name() + " layout-unknown");
                         return false;
                     }
                 }
-                samplerTextures[i] = tex;
             }
             var imageBindings = modPipeline.images();
             VulkanGlTexture[] imageTextures = new VulkanGlTexture[imageBindings.size()];
@@ -16939,10 +16998,10 @@ this.frameBufferOpen = false;
             begin.renderArea().offset().set(0, 0);
             begin.renderArea().extent().set(passW, passH);
             vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
-            this.activeImmediateTarget = identity;
+            this.activeImmediateTarget = drawIdentity;
             this.passAreaWidth = passW;
             this.passAreaHeight = passH;
-            this.commandState.beginPass(identity);
+            this.commandState.beginPass(drawIdentity);
             org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(true);
 
             Iterator<ChunkRenderList> iterator = renderLists.iterator(pass.isReverseOrder());
@@ -17040,24 +17099,46 @@ this.frameBufferOpen = false;
                 this.commandState.endPass();
                 org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
                 if (pairOwner != null) {
-                    pairOwner.recordChainPairAttachRelease(identity, routedDepthKey);
+                    pairOwner.recordChainPairAttachRelease(drawIdentity, routedDepthKey);
                 } else if (onMain) {
                     this.frameTarget.recordReleaseBarriers(this.commandBuffer);
                 }
             }
             if (this.packTerrainDrawnLogs < 16) {
                 this.packTerrainDrawnLogs++;
+                String samplerSummary = "";
+                if (this.packTerrainDrawnLogs <= 8 && !samplers.isEmpty()) {
+                    StringBuilder sb = new StringBuilder(" samplers=[");
+                    for (int i = 0; i < samplers.size(); i++) {
+                        if (i > 0) sb.append(' ');
+                        var binding = samplers.get(i);
+                        int[] unitVal = modProgram.ints(binding.name());
+                        int unit = unitVal == null || unitVal.length == 0 ? 0 : unitVal[0];
+                        VulkanGlTexture st = samplerTextures[i];
+                        sb.append(binding.name()).append('=').append(unit).append(":t")
+                                .append(samplerTexNames[i]).append('(').append(st.width()).append('x')
+                                .append(st.height()).append(",0x").append(Long.toHexString(st.image())).append(')');
+                    }
+                    sb.append(']');
+                    samplerSummary = sb.toString();
+                }
                 System.out.println("[Celtium] CELTIUM_PACK_TERRAIN_DRAWN pass=" + pass.name()
                         + " program=" + programId + " commands=" + drawnCommands + " sections=" + drawnSections
                         + " colors=" + targetColors + " extent=" + passW + "x" + passH
-                        + " identity=0x" + Long.toHexString(identity) + " frame=" + this.frameId
-                        + " skippedRegions=" + this.packTerrainSkippedRegions);
+                        + " identity=0x" + Long.toHexString(identity)
+                        + (drawIdentity != identity ? " drawIdentity=0x" + Long.toHexString(drawIdentity) : "")
+                        + " frame=" + this.frameId
+                        + " skippedRegions=" + this.packTerrainSkippedRegions
+                        + samplerSummary);
             }
             return true;
         } catch (RuntimeException | LinkageError err) {
             celtium$reportPackTerrainRefused(pass, packProgram.handle(), "exception:" + describe(err));
             return false;
         } finally {
+            this.passAttachedColorImage = 0L;
+            this.passAttachedColorImages = null;
+            this.passAttachedDepthImage = 0L;
             if (stateSetup) {
                 try {
                     iface.restoreState();
@@ -17071,6 +17152,40 @@ this.frameBufferOpen = false;
                 }
             }
         }
+    }
+
+    /**
+     * {@return the chain-pair identity a pack terrain pass should draw into}: reuses an already-published
+     * non-main chain-pair owner of the same GL slot-0 colour texture, extent, and shared-depth attachment
+     * (so separate Iris FBOs for clear / gbuffers_terrain / gbuffers_cutout / gbuffers_water that attach
+     * the same {@code colortex0} and {@code depthtex0} draw into one shared {@code VkImage} without
+     * hijacking depth-free composite FBOs), or falls back to {@code boundIdentity}.
+     */
+    static long celtium$resolvePackTerrainDrawIdentity(long boundIdentity,
+                                                       long existingPublishedOwner,
+                                                       long mainIdentity,
+                                                       long gameFramebufferIdentity,
+                                                       boolean ownerPairExists,
+                                                       boolean ownerSizeMatches,
+                                                       boolean ownerDepthMatches) {
+        if (existingPublishedOwner != Long.MIN_VALUE && existingPublishedOwner != 0L
+                && existingPublishedOwner != boundIdentity
+                && existingPublishedOwner != mainIdentity
+                && existingPublishedOwner != gameFramebufferIdentity
+                && ownerPairExists && ownerSizeMatches && ownerDepthMatches) {
+            return existingPublishedOwner;
+        }
+        return boundIdentity;
+    }
+
+    /** {@return whether an immediate group may bake {@code glModelView} into its vertices}. */
+    static boolean celtium$allowPreTransform(boolean hasRetained, boolean hasModProgram, boolean preTransformable) {
+        return !hasRetained && !hasModProgram && preTransformable;
+    }
+
+    /** {@return the chain-pair colour slot count to ensure without shrinking existing MRT slots}. */
+    static int celtium$packTerrainPairColorCount(int targetColors, int existingPairColors) {
+        return Math.max(Math.max(1, targetColors), existingPairColors);
     }
 
     private void celtium$reportPackTerrainRefused(TerrainRenderPass pass, int programId, String reason) {
@@ -17820,6 +17935,18 @@ this.frameBufferOpen = false;
         return glless == null ? 0L
                 : framebufferCache().chainPairMulti(renderPass, glless, colorCount, this.targetWidth,
                         this.targetHeight);
+    }
+
+    private long ensureChainPairFramebuffer(long identity, long renderPass, int colorCount) {
+        GllessFrameTarget glless = offTargetTarget();
+        if (glless == null) {
+            return 0L;
+        }
+        if (!celtium$chainPairMultiTarget(colorCount)) {
+            return framebufferCache().chainPair(identity, renderPass, glless, this.targetWidth, this.targetHeight);
+        }
+        return framebufferCache().chainPairMulti(identity, renderPass, glless, colorCount, this.targetWidth,
+                this.targetHeight);
     }
 
     /** Created on first use: the registry it records into is built with the backend's other render-target state. */

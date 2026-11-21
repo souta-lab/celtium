@@ -214,7 +214,10 @@ final class FramebufferCache {
      * attachments differ; otherwise the same cache, keyed by the render pass it is compatible with.
      */
     long chainPair(long renderPass, GllessFrameTarget glless, int windowWidth, int windowHeight) {
-        long identity = this.registry.currentIdentity();
+        return chainPair(this.registry.currentIdentity(), renderPass, glless, windowWidth, windowHeight);
+    }
+
+    long chainPair(long identity, long renderPass, GllessFrameTarget glless, int windowWidth, int windowHeight) {
         long generation = glless.chainPairGeneration(identity);
         long builtOver = this.chainPairGenerations.get(identity);
         if (builtOver != generation) {
@@ -258,7 +261,12 @@ final class FramebufferCache {
      */
     long chainPairMulti(long renderPass, GllessFrameTarget glless, int colorCount, int windowWidth,
             int windowHeight) {
-        long identity = this.registry.currentIdentity();
+        return chainPairMulti(this.registry.currentIdentity(), renderPass, glless, colorCount, windowWidth,
+                windowHeight);
+    }
+
+    long chainPairMulti(long identity, long renderPass, GllessFrameTarget glless, int colorCount, int windowWidth,
+            int windowHeight) {
         long generation = glless.chainPairGeneration(identity);
         long tupleGeneration = glless.chainPairColorTupleGeneration(identity);
         long recordedTupleGen = this.chainPairTupleGenerations.get(identity);

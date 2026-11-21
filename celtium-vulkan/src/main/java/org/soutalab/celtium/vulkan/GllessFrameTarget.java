@@ -1787,7 +1787,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             return false;
         }
         int needed = Math.max(chainPairColorCount(identity), slot + 1);
-        ensureChainPairColors(identity, needed, width, height);
+        ensureChainPairColors(identity, needed, width, height, chainPairFormatClass(identity));
         Pair pair = existingChainPair(identity);
         if (pair == null || pair.extraColorImages == null || slot - 1 >= pair.extraColorCount) {
             return false;
