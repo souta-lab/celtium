@@ -2751,7 +2751,7 @@ public final class VulkanGlTexture {
         if (this.sampler != 0L) {
             final long retiredSampler = this.sampler;
             final VkDevice device = this.context.device();
-            VulkanRetireQueue.retire(() -> org.lwjgl.vulkan.VK10.vkDestroySampler(device, retiredSampler, null));
+            VulkanRetireQueue.retire(device.address(), () -> org.lwjgl.vulkan.VK10.vkDestroySampler(device, retiredSampler, null));
             this.sampler = 0L;
         }
     }
@@ -2880,7 +2880,7 @@ public final class VulkanGlTexture {
         releaseForeignImage();
         if (sampler != 0L) {
             final long retiredSampler = sampler;
-            VulkanRetireQueue.retire(() -> vkDestroySampler(context.device(), retiredSampler, null));
+            VulkanRetireQueue.retire(context.device().address(), () -> vkDestroySampler(context.device(), retiredSampler, null));
             sampler = 0L;
         }
         width = 0;
@@ -3164,17 +3164,17 @@ public final class VulkanGlTexture {
         if (view != 0L) {
             // Retired rather than destroyed: a command buffer recorded earlier may still name this view (audit S12).
             final long retiredView = view;
-            VulkanRetireQueue.retire(() -> vkDestroyImageView(device, retiredView, null));
+            VulkanRetireQueue.retire(device.address(), () -> vkDestroyImageView(device, retiredView, null));
             view = 0L;
         }
         if (image != 0L) {
             final long retiredImage = image;
-            VulkanRetireQueue.retire(() -> vkDestroyImage(device, retiredImage, null));
+            VulkanRetireQueue.retire(device.address(), () -> vkDestroyImage(device, retiredImage, null));
             image = 0L;
         }
         if (memory != 0L) {
             final long retiredMemory = memory;
-            VulkanRetireQueue.retire(() -> VulkanContext.freeMemory(device, retiredMemory));
+            VulkanRetireQueue.retire(device.address(), () -> VulkanContext.freeMemory(device, retiredMemory));
             memory = 0L;
         }
     }

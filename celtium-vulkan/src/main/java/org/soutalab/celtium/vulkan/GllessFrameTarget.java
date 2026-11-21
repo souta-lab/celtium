@@ -1503,13 +1503,13 @@ public final class GllessFrameTarget implements FrameImageTarget {
         entry.memory = VK_NULL_HANDLE;
         entry.layout = VK_IMAGE_LAYOUT_UNDEFINED;
         if (view != VK_NULL_HANDLE) {
-            VulkanRetireQueue.retire(() -> vkDestroyImageView(device, view, null));
+            VulkanRetireQueue.retire(device.address(), () -> vkDestroyImageView(device, view, null));
         }
         if (image != VK_NULL_HANDLE) {
-            VulkanRetireQueue.retire(() -> vkDestroyImage(device, image, null));
+            VulkanRetireQueue.retire(device.address(), () -> vkDestroyImage(device, image, null));
         }
         if (memory != VK_NULL_HANDLE) {
-            VulkanRetireQueue.retire(() -> VulkanContext.freeMemory(device, memory));
+            VulkanRetireQueue.retire(device.address(), () -> VulkanContext.freeMemory(device, memory));
         }
     }
 
@@ -2388,13 +2388,13 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 final long image = images[i];
                 final long memory = memories[i];
                 if (view != VK_NULL_HANDLE) {
-                    VulkanRetireQueue.retire(() -> vkDestroyImageView(device, view, null));
+                    VulkanRetireQueue.retire(device.address(), () -> vkDestroyImageView(device, view, null));
                 }
                 if (image != VK_NULL_HANDLE) {
-                    VulkanRetireQueue.retire(() -> vkDestroyImage(device, image, null));
+                    VulkanRetireQueue.retire(device.address(), () -> vkDestroyImage(device, image, null));
                 }
                 if (memory != VK_NULL_HANDLE) {
-                    VulkanRetireQueue.retire(() -> VulkanContext.freeMemory(device, memory));
+                    VulkanRetireQueue.retire(device.address(), () -> VulkanContext.freeMemory(device, memory));
                 }
             }
         }
@@ -3295,22 +3295,22 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.depthImage = VK_NULL_HANDLE;
             this.depthMemory = VK_NULL_HANDLE;
             if (view != VK_NULL_HANDLE) {
-                VulkanRetireQueue.retire(() -> vkDestroyImageView(device, view, null));
+                VulkanRetireQueue.retire(device.address(), () -> vkDestroyImageView(device, view, null));
             }
             if (image != VK_NULL_HANDLE) {
-                VulkanRetireQueue.retire(() -> vkDestroyImage(device, image, null));
+                VulkanRetireQueue.retire(device.address(), () -> vkDestroyImage(device, image, null));
             }
             if (memory != VK_NULL_HANDLE) {
-                VulkanRetireQueue.retire(() -> VulkanContext.freeMemory(device, memory));
+                VulkanRetireQueue.retire(device.address(), () -> VulkanContext.freeMemory(device, memory));
             }
             if (depthView != VK_NULL_HANDLE) {
-                VulkanRetireQueue.retire(() -> vkDestroyImageView(device, depthView, null));
+                VulkanRetireQueue.retire(device.address(), () -> vkDestroyImageView(device, depthView, null));
             }
             if (depthImage != VK_NULL_HANDLE) {
-                VulkanRetireQueue.retire(() -> vkDestroyImage(device, depthImage, null));
+                VulkanRetireQueue.retire(device.address(), () -> vkDestroyImage(device, depthImage, null));
             }
             if (depthMemory != VK_NULL_HANDLE) {
-                VulkanRetireQueue.retire(() -> VulkanContext.freeMemory(device, depthMemory));
+                VulkanRetireQueue.retire(device.address(), () -> VulkanContext.freeMemory(device, depthMemory));
             }
             retireExtras();
             // The generation moves with the images: a framebuffer built over the views just handed to the retire

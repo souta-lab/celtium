@@ -427,7 +427,7 @@ public final class VulkanTextureRegistry {
             // this registry's object, so it is destroyed - through the retire queue, because a recorded frame may
             // still name its view. Without this the sampling side could keep resolving the empty mirror.
             final VulkanGlTexture retiredMirror = superseded.texture;
-            VulkanRetireQueue.retire(new Runnable() {
+            VulkanRetireQueue.retire(this.context.device().address(), new Runnable() {
                 @Override
                 public void run() {
                     retiredMirror.delete();
@@ -511,7 +511,7 @@ public final class VulkanTextureRegistry {
         celtium$dropMemoFor(glTextureId);
         if (superseded != null) {
             final VulkanGlTexture retiredMirror = superseded.texture;
-            VulkanRetireQueue.retire(new Runnable() {
+            VulkanRetireQueue.retire(this.context.device().address(), new Runnable() {
                 @Override
                 public void run() {
                     retiredMirror.delete();
@@ -626,7 +626,7 @@ public final class VulkanTextureRegistry {
             System.out.println("[Celtium] CELTIUM_EXTERNAL_IMAGE dropped: " + why
                     + " (the image is the owner's; only this wrapper's sampler is released)");
         }
-        VulkanRetireQueue.retire(new Runnable() {
+        VulkanRetireQueue.retire(this.context.device().address(), new Runnable() {
             @Override
             public void run() {
                 wrapper.delete();
@@ -2088,7 +2088,7 @@ public final class VulkanTextureRegistry {
         if (entry != null) {
             this.forgotten++;
             final VulkanGlTexture image = entry.texture;
-            VulkanRetireQueue.retire(new Runnable() {
+            VulkanRetireQueue.retire(this.context.device().address(), new Runnable() {
                 @Override
                 public void run() {
                     image.delete();

@@ -323,7 +323,7 @@ final class FramebufferCache {
         VkDevice device = this.context.device();
         for (Long handle : handles) {
             final long framebuffer = handle.longValue();
-            VulkanRetireQueue.retire(() -> vkDestroyFramebuffer(device, framebuffer, null));
+            VulkanRetireQueue.retire(device.address(), () -> vkDestroyFramebuffer(device, framebuffer, null));
         }
     }
 
