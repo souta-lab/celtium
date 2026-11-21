@@ -830,6 +830,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private boolean swapchainProbeDone;
     VulkanSwapchain swapchain;
 
+    /**
+     * Consecutive refused swapchain creations, latched for the escalation the swap point polls through
+     * {@link #celtium$swapchainCreationFailure()}: a creation refusal is fail-closed with its reasons, but
+     * on its own it only ever produced another skipped present, so a surface that refuses forever held the
+     * game on a black window for the whole session. The record and the reset live in
+     * {@link #ensureSwapchain()}, at the creation itself; the report and the throw live in the mixin,
+     * because the present hook's catch would swallow a throw from here and this module cannot call
+     * {@code displayCrashReport}.
+     */
+    private final SwapchainCreationEscalation swapchainCreationEscalation = new SwapchainCreationEscalation();
+
     /** Passes a single frame can have; used to reserve uniform blocks before recording. */
     private static final int MAX_UNIFORM_PASSES = 6;
 
@@ -18397,10 +18408,16 @@ this.frameBufferOpen = false;
         this.reusableSurfaceWindow = 0L;
         this.swapchain = VulkanSwapchain.create(this.context, window, framebufferWidth, framebufferHeight, reasons, adopt);
         if (this.swapchain != null) {
+            this.swapchainCreationEscalation.recordSuccess();
             org.soutalab.celtium.vulkan.CeltiumFramePacing.setFifoPacing(this.swapchain.presentModeIsFifo());
         }
         forwardPendingPresentedDumps();
         if (this.swapchain == null) {
+            // Only this branch is a refused creation: the returns above it (no window handle, no drawable
+            // size) attempted nothing, so they never reach the latch. The refusal is latched with its
+            // reasons for the escalation the swap point polls; the recording is all that changes here -
+            // the skip this returns for is counted and reported exactly as before.
+            this.swapchainCreationEscalation.recordRefusal(reasons.toString());
             if (!this.pendingPresentedDumps.isEmpty()) {
                 // Not dropped: the request stays held and is named, so the next creation attempt can still serve it and
                 // a leg can tell "no frame was presented" from "the request was thrown away".
@@ -18419,6 +18436,30 @@ this.frameBufferOpen = false;
         }
         record(this.swapchain.describe());
         return true;
+    }
+
+    /**
+     * The swapchain creation escalation's verdict, for the swap point to poll: the crash line once
+     * {@link SwapchainCreationEscalation#FAILURE_LIMIT} creations in a row have been refused, or
+     * {@code null} while creation is merely failing transiently (or landing).
+     * <p>
+     * Polled rather than thrown from here, for two measured reasons: the swap point's hook wraps the
+     * present in a catch that swallows {@code RuntimeException | LinkageError}, so a throw from the
+     * backend would never reach a crash report; and this module is not compiled against Minecraft, so the
+     * {@code displayCrashReport} the escalation ends in cannot be called from here. The mixin polls this
+     * beside the window-renderer escalation, outside that catch, and owns the report and the throw - the
+     * same split as the renderer's, whose reasons are likewise produced on this side and reported there.
+     *
+     * @return the failure line for the crash report, or {@code null} when no escalation is due
+     */
+    public String celtium$swapchainCreationFailure() {
+        if (!this.swapchainCreationEscalation.escalationDue()) {
+            return null;
+        }
+        return "Celtium could not create the Vulkan swapchain after "
+                + this.swapchainCreationEscalation.consecutiveRefusals()
+                + " consecutive attempts. Last failure: " + this.swapchainCreationEscalation.lastRefusal()
+                + ". Check the Vulkan driver and Celtium's bundled LWJGL Vulkan bindings.";
     }
 
     /**
