@@ -61,4 +61,19 @@ class CeltiumLightCacheFunnelTest {
             }
         }
     }
+
+    @Test
+    void funnelSummaryCarriesTheDynamicSideCounters() {
+        // Item 430: a leg discriminates the dynamic-light candidates from this one line, so the
+        // dynamic-side keys (snapshot consulted / sources found / answers raised, plus the
+        // service's gather split) must stay present alongside the cache counters.
+        String summary = CeltiumLightCache.funnelSummary();
+        assertTrue(summary.contains("funnelCalls="), summary);
+        assertTrue(summary.contains("funnelSourceQueries="), summary);
+        assertTrue(summary.contains("funnelSourceHits="), summary);
+        assertTrue(summary.contains("funnelRaised="), summary);
+        assertTrue(summary.contains("gatherCalls="), summary);
+        assertTrue(summary.contains("snapshotMismatch="), summary);
+        assertTrue(summary.contains("snapshotEmpty="), summary);
+    }
 }

@@ -838,6 +838,10 @@ public final class TerrainRenderer {
     /** The descriptor slot the current frame's gather belongs to. */
     private int dynamicLightSlot;
 
+    /** Item 430 discrimination poison: {@code -Dceltium.dynamicLights.poison=true} replaces the gather. */
+    private static final boolean DYNAMIC_LIGHT_POISON = Boolean.getBoolean("celtium.dynamicLights.poison");
+    private static boolean dynamicLightPoisonPrinted;
+
     /** Whether the current frame's sources have been gathered into {@link #dynamicLightBuffers}. */
     private boolean dynamicLightsGathered = true;
 
@@ -874,6 +878,23 @@ public final class TerrainRenderer {
         double cameraZ = (double) camera.intZ + camera.fracZ;
         if (this.dynamicLightService != null) {
             count = this.dynamicLightService.gatherLights(this.dynamicLightScratch, cameraX, cameraY, cameraZ);
+        }
+        if (DYNAMIC_LIGHT_POISON) {
+            // Item 430 discrimination poison: one level-15 source at the camera-relative origin and a
+            // zero header camera, so the shader's raise must light the terrain around the camera if
+            // the buffer -> descriptor -> shader path is alive at all, whatever the real gather wrote.
+            count = 1;
+            this.dynamicLightScratch[0] = 0.0F;
+            this.dynamicLightScratch[1] = 0.0F;
+            this.dynamicLightScratch[2] = 0.0F;
+            this.dynamicLightScratch[3] = 15.0F;
+            cameraX = 0.0D;
+            cameraY = 0.0D;
+            cameraZ = 0.0D;
+            if (!dynamicLightPoisonPrinted) {
+                dynamicLightPoisonPrinted = true;
+                System.out.println("[Celtium] CELTIUM_DYN_POISON armed");
+            }
         }
         ByteBuffer block = buffer.mapped();
         block.putFloat(0, (float) count);
