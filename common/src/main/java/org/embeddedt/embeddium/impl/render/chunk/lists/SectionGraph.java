@@ -60,10 +60,20 @@ public final class SectionGraph {
     <T> CompletableFuture<T> submit(Supplier<T> task, boolean async) {
         this.inFlight++;
 
-        if (async && this.executor != null) {
-            return CompletableFuture.supplyAsync(task, this.executor);
-        } else {
-            return CompletableFuture.completedFuture(task.get());
+        try {
+            if (async && this.executor != null) {
+                return CompletableFuture.supplyAsync(task, this.executor);
+            } else {
+                return CompletableFuture.completedFuture(task.get());
+            }
+        } catch (RuntimeException | Error e) {
+            // The submission itself failed: either the executor rejected the task, or an
+            // inline task threw before a future existed to carry the failure. No future
+            // will ever be joined for this submission, so the in-flight count is returned
+            // here instead of leaking (a leaked count wedges the graph permanently: every
+            // later attach/detach throws and deferred tasks never drain).
+            this.inFlight--;
+            throw e;
         }
     }
 

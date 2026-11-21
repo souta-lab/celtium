@@ -1149,23 +1149,44 @@ public abstract class RenderSectionManager {
     }
 
     public void destroy() {
-        this.finishAllGraphUpdates();
+        // Each stage runs even when an earlier one failed: a teardown that stops at the
+        // first exception leaks everything after it (up to and including the terrain
+        // backend's device), and a retry then has to survive the half-torn-down state.
+        // The first failure is rethrown once every stage has had its chance, with any
+        // later failures suppressed into it.
+        RuntimeException failure = null;
 
-        this.builder.shutdown(); // stop all the workers, and cancel any tasks
-
-        for (var result : this.collectChunkBuildResults()) {
-            result.output().delete(); // delete resources for any pending tasks (including those that were cancelled)
-        }
-
-        this.renderListManager.destroy();
+        failure = destroyStage(failure, this::finishAllGraphUpdates);
+        failure = destroyStage(failure, this.builder::shutdown); // stop all the workers, and cancel any tasks
+        failure = destroyStage(failure, () -> {
+            for (var result : this.collectChunkBuildResults()) {
+                result.output().delete(); // delete resources for any pending tasks (including those that were cancelled)
+            }
+        });
+        failure = destroyStage(failure, this.renderListManager::destroy);
         if (this.shadowRenderListManager != null) {
-            this.shadowRenderListManager.destroy();
+            failure = destroyStage(failure, this.shadowRenderListManager::destroy);
         }
-        this.sectionGraph.destroy();
-
-        this.terrainBackend.delete();
+        failure = destroyStage(failure, this.sectionGraph::destroy);
+        failure = destroyStage(failure, this.terrainBackend::delete);
 
         this.sectionsWithGlobalEntities.clear();
+
+        if (failure != null) {
+            throw failure;
+        }
+    }
+
+    private static RuntimeException destroyStage(RuntimeException failure, Runnable stage) {
+        try {
+            stage.run();
+        } catch (RuntimeException e) {
+            if (failure == null) {
+                return e;
+            }
+            failure.addSuppressed(e);
+        }
+        return failure;
     }
 
     public int getTotalSections() {
