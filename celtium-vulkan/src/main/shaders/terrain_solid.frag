@@ -97,16 +97,25 @@ layout(set = 0, binding = 4) uniform sampler2D u_ShadowMap;
 
 // Fraction of four taps around the fragment's shadow-map texel that are nearer the light than the fragment: 0 = lit,
 // 1 = fully shadowed. Outside the map (or beyond its depth range) nothing is known, which is lit, as the GL shadow
-// programs' clamp-to-border-white answers. The bias is in the light projection's [0, 1] depth.
-float _shadowFactor(vec4 shadowPos) {
-    vec3 ndc = shadowPos.xyz / shadowPos.w;
+// programs' clamp-to-border-white answers. The bias is the receiver-plane form: the fragment's own depth slope across
+// one shadow texel (from the screen-space derivatives of its shadow coordinate, taken in main() before any discard so
+// the quad is whole) plus a small constant, capped so a surface edge-on to the light does not hide real occluders.
+float _shadowFactor(vec3 ndc, vec3 ndcDx, vec3 ndcDy) {
     vec2 uv = ndc.xy * 0.5 + 0.5;
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) {
         return 0.0;
     }
     vec2 texel = 1.0 / vec2(textureSize(u_ShadowMap, 0));
-    const float bias = 0.0006;
-    float depth = ndc.z - bias;
+    // d(uv)/d(screen) is half of d(ndc.xy)/d(screen); solve for dz/du, dz/dv on the receiver's plane.
+    vec3 dx = vec3(ndcDx.xy * 0.5, ndcDx.z);
+    vec3 dy = vec3(ndcDy.xy * 0.5, ndcDy.z);
+    float det = dx.x * dy.y - dy.x * dx.y;
+    float slope = 0.0;
+    if (abs(det) > 1e-12) {
+        vec2 dzDuv = vec2(dy.y * dx.z - dx.y * dy.z, dx.x * dy.z - dy.x * dx.z) / det;
+        slope = min(dot(abs(dzDuv), texel), 0.002);
+    }
+    float depth = ndc.z - (0.0003 + 1.5 * slope);
     float shadowed = 0.0;
     shadowed += depth > texture(u_ShadowMap, uv + texel * vec2(-0.5, -0.5)).r ? 1.0 : 0.0;
     shadowed += depth > texture(u_ShadowMap, uv + texel * vec2( 0.5, -0.5)).r ? 1.0 : 0.0;
@@ -161,6 +170,11 @@ vec4 _expFog(vec4 fragColor, float fragDistance, vec4 fogColor, float fogDensity
 layout(constant_id = 0) const bool CELTIUM_FRAGMENT_DISCARD = true;
 
 void main() {
+    // Shadow-space coordinate and its screen derivatives, before any return or discard (derivatives need the whole
+    // quad). The shadow projection is orthographic, so w is 1 and the divide is exact either way.
+    vec3 shadowNdc = v_ShadowPos.xyz / max(v_ShadowPos.w, 1e-6);
+    vec3 shadowNdcDx = dFdx(shadowNdc);
+    vec3 shadowNdcDy = dFdy(shadowNdc);
     // Isolation switch for one A/B. A constant colour that reaches the frame image says the geometry is
     // rasterised and the loss is in the fragment maths (the texture, the vertex colour, the light map); a frame
     // that stays black says nothing is being rasterised at all. Every other candidate had been excluded by
@@ -179,7 +193,7 @@ void main() {
 
     vec4 m_color = v_Color;
     if (celtium.u_ShadowEnabled != 0) {
-        m_color = mix(v_Color, v_ShadowColor, _shadowFactor(v_ShadowPos));
+        m_color = mix(v_Color, v_ShadowColor, _shadowFactor(shadowNdc, shadowNdcDx, shadowNdcDy));
     }
     // Apply correction factor to make the resulting color very close to what true bilinear interpolation would obtain
     // min(x, y) * (1 - max(x, y)) == min(x, y) - (x * y)
