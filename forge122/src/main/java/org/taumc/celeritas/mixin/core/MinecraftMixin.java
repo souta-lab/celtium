@@ -6,7 +6,6 @@ import org.soutalab.celtium.harness.HarnessConfig;
 import org.objectweb.asm.Opcodes;
 import org.taumc.celeritas.impl.profile.GameLoopTiming;
 import org.taumc.celeritas.interfaces.LoadingProgressState;
-import org.embeddedt.embeddium.impl.render.frame.RenderAheadManager;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -30,18 +29,6 @@ public class MinecraftMixin {
      */
     private static final boolean PUMP_IN_REDIRECT =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.pumpInRedirect", "true"));
-    @Unique
-    private final RenderAheadManager celeritas$renderAheadManager = new RenderAheadManager();
-
-    @Inject(method = "runTick", at = @At("HEAD"))
-    private void preRender(CallbackInfo ci) {
-        celeritas$renderAheadManager.startFrame(CeleritasVintage.options().advanced.cpuRenderAheadLimit);
-    }
-
-    @Inject(method = "runTick", at = @At("RETURN"))
-    private void postRender(CallbackInfo ci) {
-        celeritas$renderAheadManager.endFrame();
-    }
 
     @org.spongepowered.asm.mixin.injection.Redirect(method = "resize(II)V",
             at = @At(value = "FIELD", opcode = Opcodes.PUTFIELD,
