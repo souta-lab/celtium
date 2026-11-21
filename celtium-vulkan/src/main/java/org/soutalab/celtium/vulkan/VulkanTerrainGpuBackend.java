@@ -10088,7 +10088,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // fires here is paired for the flush fit too; without it, a HUD large enough to trip
                 // the threshold would drain unsampled and the fit would see only the small windows.
                 // Same identification as the ordering flush: the groups it drains carry the stamp.
-                int hudP0WindowGroups = HUD_P0_FRAMES > 0 ? this.immediateGroups.size() : 0;
+                // The busy case is excluded for the same reason the ordering flush returns early on
+                // it: flushImmediateWindow no-ops while a window is already recording, so the pending
+                // groups are not this call's to pair.
+                int hudP0WindowGroups = HUD_P0_FRAMES > 0 && !this.immediateWindowBusy
+                        ? this.immediateGroups.size() : 0;
                 long hudP0WindowStartedNanos = hudP0WindowGroups > 0
                         && HudP0Census.guiClosedGroups(this.immediateGroups) > 0 ? System.nanoTime() : 0L;
                 long acceptFlushStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
