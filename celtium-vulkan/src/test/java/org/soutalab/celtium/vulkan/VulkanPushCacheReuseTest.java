@@ -109,4 +109,31 @@ class VulkanPushCacheReuseTest {
         cache.remember(1L, 1L, left);
         assertFalse(cache.shouldPush(1L, 1L, left), "the stored block is the one just pushed");
     }
+
+    @Test
+    @DisplayName("switching between 128B, 208B and 256B blocks keeps exact length and content matching")
+    void varyingBlockLengthsStayExact() {
+        VulkanPushCache cache = new VulkanPushCache();
+        ByteBuffer b128 = ByteBuffer.allocate(128);
+        ByteBuffer b208 = ByteBuffer.allocate(208);
+        ByteBuffer b256 = ByteBuffer.allocate(256);
+        b128.putInt(0, 42);
+        b208.putInt(0, 42);
+        b208.putInt(128, 99);
+        b256.putInt(0, 42);
+        b256.putInt(128, 99);
+        b256.putInt(224, 7);
+
+        cache.remember(1L, 10L, b256);
+        assertFalse(cache.shouldPush(1L, 10L, b256), "256B hit");
+        assertTrue(cache.shouldPush(1L, 10L, b208), "shorter 208B block must push despite matching prefix");
+        cache.remember(1L, 10L, b208);
+        assertFalse(cache.shouldPush(1L, 10L, b208), "208B hit");
+        assertTrue(cache.shouldPush(1L, 10L, b128), "128B block must push");
+        cache.remember(1L, 10L, b128);
+        assertFalse(cache.shouldPush(1L, 10L, b128), "128B hit");
+        assertTrue(cache.shouldPush(1L, 10L, b256), "growing back to 256B must push");
+        cache.invalidate();
+        assertTrue(cache.shouldPush(1L, 10L, b128), "invalidate clears cached length and forces push");
+    }
 }

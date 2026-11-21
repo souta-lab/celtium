@@ -470,6 +470,9 @@ public final class VulkanImmediateItemPipeline {
             VulkanImmediateTexturePipeline.DESCRIPTOR_KEYS_CACHED.incrementAndGet();
             return set;
         } catch (RuntimeException | LinkageError error) {
+            if (this.context.celtium$isDeviceLost()) {
+                throw error;
+            }
             return 0L;
         }
     }
@@ -556,6 +559,9 @@ public final class VulkanImmediateItemPipeline {
             VulkanImmediateTexturePipeline.DESCRIPTOR_KEYS_CACHED.incrementAndGet();
             return set;
         } catch (RuntimeException | LinkageError error) {
+            if (this.context.celtium$isDeviceLost()) {
+                throw error;
+            }
             return 0L;
         }
     }
@@ -635,6 +641,10 @@ public final class VulkanImmediateItemPipeline {
         this.descriptorSet = VK_NULL_HANDLE;
         this.descriptorPools.clear();
         this.setsByTextureView.clear();
+        this.lastDescriptorKey = -1L;
+        this.lastDescriptorSet = 0L;
+        this.lastLitDescriptorKey = -1L;
+        this.lastLitDescriptorSet = 0L;
         // Retired sets are pools' to free: the pool teardown below releases them with every other set this pipeline
         // allocated, which is why this list only has to keep them reachable until then.
         this.retiredSets.clear();
