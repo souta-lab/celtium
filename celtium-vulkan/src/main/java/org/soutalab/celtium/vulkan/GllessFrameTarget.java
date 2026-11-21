@@ -2010,6 +2010,18 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return pair == null || !pair.exists() ? null : new long[] {pair.width, pair.height};
     }
 
+    /** Zero-allocation width getter for hot-path off-target windows; returns 0 before the pair exists. */
+    public int chainPairWidth(long identity) {
+        Pair pair = existingChainPair(identity);
+        return pair == null || !pair.exists() ? 0 : pair.width;
+    }
+
+    /** Zero-allocation height getter for hot-path off-target windows; returns 0 before the pair exists. */
+    public int chainPairHeight(long identity) {
+        Pair pair = existingChainPair(identity);
+        return pair == null || !pair.exists() ? 0 : pair.height;
+    }
+
     public String chainPairSelfTest(long identity, VkCommandBuffer command) {
         Pair pair = existingChainPair(identity);
         return pair == null ? "no pair for identity" : pair.selfTest(command);

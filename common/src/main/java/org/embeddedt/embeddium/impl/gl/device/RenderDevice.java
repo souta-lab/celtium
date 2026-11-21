@@ -1,22 +1,35 @@
 package org.embeddedt.embeddium.impl.gl.device;
 
-import org.embeddedt.embeddium.impl.gl.functions.DeviceFunctions;
-
+/**
+ * Minimal GL-free Demonica Tier A compatibility shell. Celtium renders exclusively through Vulkan
+ * and has no OpenGL RenderDevice; {@link #enterManagedCode()} and {@link #exitManagedCode()} are no-ops.
+ */
 public interface RenderDevice {
-    RenderDevice INSTANCE = new GLRenderDevice();
+    CommandList NOOP_COMMAND_LIST = () -> { };
+
+    RenderDevice INSTANCE = new RenderDevice() {
+        @Override
+        public CommandList createCommandList() {
+            return NOOP_COMMAND_LIST;
+        }
+
+        @Override
+        public void makeActive() {
+        }
+
+        @Override
+        public void makeInactive() {
+        }
+    };
 
     CommandList createCommandList();
 
     static void enterManagedCode() {
-        RenderDevice.INSTANCE.makeActive();
     }
 
     static void exitManagedCode() {
-        RenderDevice.INSTANCE.makeInactive();
     }
 
     void makeActive();
     void makeInactive();
-
-    DeviceFunctions getDeviceFunctions();
 }

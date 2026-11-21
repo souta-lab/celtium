@@ -106,7 +106,9 @@ public final class ModGlslTranslator {
     private static final Pattern TEXCOORD_BAD_PATTERN = Pattern.compile("(?s).*\\bgl_TexCoord\\s*\\[\\s*[1-9].*");
     private static final Pattern TEXCOORD0_PATTERN = Pattern.compile("\\bgl_TexCoord\\s*\\[\\s*0\\s*\\]");
     private static final Pattern GL_LEFTOVER_PATTERN = Pattern.compile(
-            "\\bgl_(?!Position\\b|FragColor\\b|FragData\\b|FragCoord\\b|PointSize\\b)(\\w+)");
+            "\\bgl_(?!Position\\b|FragColor\\b|FragData\\b|FragCoord\\b|FragDepth\\b|FrontFacing\\b|PointSize\\b|VertexIndex\\b|InstanceIndex\\b)(\\w+)");
+    private static final Pattern GL_VERTEX_ID_PATTERN = Pattern.compile("\\bgl_VertexID\\b");
+    private static final Pattern GL_INSTANCE_ID_PATTERN = Pattern.compile("\\bgl_InstanceID\\b");
     private static final Pattern GL_VERTEX_PATTERN = Pattern.compile("\\bgl_Vertex\\b");
     private static final Pattern GL_COLOR_PATTERN = Pattern.compile("\\bgl_Color\\b");
     private static final Pattern GL_MULTI_TEXCOORD0_PATTERN = Pattern.compile("\\bgl_MultiTexCoord0\\b");
@@ -114,9 +116,12 @@ public final class ModGlslTranslator {
     private static final Pattern GL_MVP_PATTERN = Pattern.compile("\\bgl_ModelViewProjectionMatrix\\b");
     private static final Pattern GL_MV_PATTERN = Pattern.compile("\\bgl_ModelViewMatrix\\b");
     private static final Pattern GL_PROJ_PATTERN = Pattern.compile("\\bgl_ProjectionMatrix\\b");
+    private static final Pattern TEX2D_PROJ_LOD_PATTERN = Pattern.compile("\\btexture2DProjLod\\s*\\(");
+    private static final Pattern TEX2D_PROJ_PATTERN = Pattern.compile("\\btexture2DProj\\s*\\(");
     private static final Pattern TEX2D_LOD_PATTERN = Pattern.compile("\\btexture2DLod\\s*\\(");
     private static final Pattern TEX2D_PATTERN = Pattern.compile("\\btexture2D\\s*\\(");
     private static final Pattern TEX3D_PATTERN = Pattern.compile("\\btexture3D\\s*\\(");
+    private static final Pattern TEXCUBE_LOD_PATTERN = Pattern.compile("\\btextureCubeLod\\s*\\(");
     private static final Pattern TEXCUBE_PATTERN = Pattern.compile("\\btextureCube\\s*\\(");
 
     private ModGlslTranslator() {
@@ -541,6 +546,8 @@ public final class ModGlslTranslator {
     private static String lowerBuiltins(String source, List<Declaration> decls, boolean vertexStage) {
         String s = source;
         if (vertexStage) {
+            s = GL_VERTEX_ID_PATTERN.matcher(s).replaceAll("gl_VertexIndex");
+            s = GL_INSTANCE_ID_PATTERN.matcher(s).replaceAll("gl_InstanceIndex");
             s = FTRANSFORM_PATTERN.matcher(s).replaceAll(
                     // Expanded to the built-ins, not to their lowered names, so the two lowerings below declare them.
                     "(gl_ModelViewProjectionMatrix * gl_Vertex)");
@@ -591,9 +598,12 @@ public final class ModGlslTranslator {
     }
 
     private static String lowerTextureCalls(String s) {
+        s = TEX2D_PROJ_LOD_PATTERN.matcher(s).replaceAll("textureProjLod(");
+        s = TEX2D_PROJ_PATTERN.matcher(s).replaceAll("textureProj(");
         s = TEX2D_LOD_PATTERN.matcher(s).replaceAll("textureLod(");
         s = TEX2D_PATTERN.matcher(s).replaceAll("texture(");
         s = TEX3D_PATTERN.matcher(s).replaceAll("texture(");
+        s = TEXCUBE_LOD_PATTERN.matcher(s).replaceAll("textureLod(");
         return TEXCUBE_PATTERN.matcher(s).replaceAll("texture(");
     }
 

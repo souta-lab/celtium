@@ -13680,7 +13680,7 @@ this.frameBufferOpen = false;
                         offTarget.recordChainPairColorAcquire(chainIdentityValue, this.commandBuffer);
                         framebuffer = framebufferCache().chainPairMulti(passRenderPass, offTarget,
                                 windowColorCount, this.targetWidth, this.targetHeight);
-                    } else if (TERRAIN_TO_DEPTH_TARGET && celtium$depthTextureForTarget(chainIdentityValue) != null) {
+                    } else if (TERRAIN_TO_DEPTH_TARGET && windowDepthRecord != null) {
                         // Item 332: a window whose framebuffer records a depth texture carries depth, and the routed
                         // terrain pass has just written into the shared depth image this pair borrows. The
                         // discard-depth chain pass would CLEAR it (a fast clear) and then drop what this window's
@@ -13711,10 +13711,11 @@ this.frameBufferOpen = false;
                     // The pass's render area cannot exceed the framebuffer's - a chain pair at the game's
                     // framebuffer size (the fixture's 256x256) is smaller than the window's, and the render area
                     // must come from the pair, not from the frame.
-                    long[] chainExtent = offTarget.chainPairExtent(chainIdentityValue);
-                    if (chainExtent != null) {
-                        passWidth = (int) chainExtent[0];
-                        passHeight = (int) chainExtent[1];
+                    int chainW = offTarget.chainPairWidth(chainIdentityValue);
+                    int chainH = offTarget.chainPairHeight(chainIdentityValue);
+                    if (chainW > 0 && chainH > 0) {
+                        passWidth = chainW;
+                        passHeight = chainH;
                     }
                     // The game's own framebuffer whose draws are landing in this pair: its colour texture name is what
                     // the game composites with, and under GL-less that texture has an extent and no pixels (the stub's
@@ -13887,18 +13888,16 @@ this.frameBufferOpen = false;
         if (ModPrograms.MOD_READ_BARRIER && this.modPrograms.celtium$queuedForTargetHasModProgram(windowTarget)) {
             // A mod pass samples framebuffers earlier windows of this frame drew into; they stay in GENERAL, and
             // nothing else makes one pass's colour writes visible to a later pass's fragment reads.
-            try (org.lwjgl.system.MemoryStack barrierStack = org.lwjgl.system.MemoryStack.stackPush()) {
-                org.lwjgl.vulkan.VkMemoryBarrier.Buffer barrier =
-                        org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, barrierStack);
-                barrier.get(0).sType$Default()
-                        .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
-                                | org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT)
-                        .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT);
-                org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(this.commandBuffer,
-                        org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-                                | org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
-                        org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, barrier, null, null);
-            }
+            org.lwjgl.vulkan.VkMemoryBarrier.Buffer barrier =
+                    org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
+            barrier.get(0).sType$Default()
+                    .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                            | org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT);
+            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(this.commandBuffer,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+                            | org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, barrier, null, null);
         }
         org.soutalab.celtium.vulkan.FramePassTimings.begin("winPublish");
         try {
@@ -16190,6 +16189,9 @@ this.frameBufferOpen = false;
                 long pairFramebuffer = ensureChainPairFramebuffer(renderPass);
                 if (pairFramebuffer != 0L) {
                     terrainFramebuffer = pairFramebuffer;
+                    long routedBoundColor = pairOwner.chainPairColorImage(identity);
+                    this.passAttachedColorImage = routedBoundColor;
+                    this.postChainBridge.celtium$transitionPublishedFrameTextures(true, routedBoundColor, 0L);
                     this.terrainPassesToBoundTarget++;
                     if (this.terrainPassesToBoundTarget <= 4) {
                         System.out.println("[Celtium] CELTIUM_TERRAIN_BOUND_TARGET pass=" + pass.name() + " identity=0x"

@@ -657,29 +657,29 @@ public final class TerrainRenderer {
             this.terrainIndirectFallbacks++;
             return false;
         }
-        this.indirectSetupNanos += System.nanoTime() - setupStarted;
+        long afterSetup = System.nanoTime();
+        this.indirectSetupNanos += afterSetup - setupStarted;
         VulkanBuffer wantedIndexBuffer = regionIndex ? resources.indexArena.buffer()
                 : sharedIndexBuffers.get(primitiveType);
-        long bindStarted = System.nanoTime();
         if (wantedIndexBuffer == null || wantedIndexBuffer != this.indexBufferBelief) {
             this.bindIndexBuffer(commandBuffer, wantedIndexBuffer);
         } else {
             this.terrainIndirectBindSkips++;
         }
-        this.indirectBindNanos += System.nanoTime() - bindStarted;
+        long afterBind = System.nanoTime();
+        this.indirectBindNanos += afterBind - afterSetup;
         // Write the packets directly into the mapped page at the draw's offset: the HOST_COHERENT memory needs no
         // flush, and vkQueueSubmit's host-side ordering guarantee publishes these record-time writes to the
         // submission that carries the draw. The per-batch staging snapshot + vkCmdCopyBuffer + deferred upload this
         // replaces was the dominating cost of the indirect path (measured: recDraw ~3 ms/frame while the draw call
         // itself is ~1 vkCmd).
         long packets = this.indirectBuffer.mappedAddress() + this.indirectBatchOffset;
-        long packetStarted = System.nanoTime();
         // The batch's retained encoding, copied in one native copy (item 350): the packets are encoded
         // once per batch instead of once per offer; the compare path further down reads them back from
         // this page exactly as it did a per-offer encoding's.
         MemoryUtil.memCopy(batch.retainedPacketsAddress(regionIndex), packets, (long) needed);
         this.terrainIndirectPacketCacheHits++;
-        this.indirectPacketNanos += System.nanoTime() - packetStarted;
+        this.indirectPacketNanos += System.nanoTime() - afterBind;
         if (TERRAIN_INDIRECT_COMPARE) {
             // Compare the encoded CPU packet with the direct enumeration, not the same CPU values twice. This is
             // an encoder check, not a GPU readback or proof of the packet's resource lifetime.
