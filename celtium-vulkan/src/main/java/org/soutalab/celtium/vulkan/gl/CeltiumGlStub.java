@@ -671,17 +671,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private volatile int unpackAlignment = 4;
     private volatile int unpackRowLength;
     private volatile int unpackSkipPixels, unpackSkipRows;
-    /**
-     * The size GL was last told a buffer holds, per buffer name.
-     * <p>
-     * The storage below is reused when it is already large enough, so its capacity is not the buffer's size: after
-     * {@code glBufferData(size=16)} then {@code glBufferData(size=4)} the capacity is still 16, and a range check against
-     * it accepted a mapping of bytes 8..12 that the 4-byte buffer does not have (#387). Everything that asks "how big is
-     * this buffer" reads this map; the capacity only decides when the allocation grows.
-     */
-    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap bufferLogicalSize =
-            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
-
+    /* The per-name logical sizes that used to sit here live in BufferStorageRecord, which operates on the store below. */
     private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ByteBuffer> bufferStore =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
     private final java.util.List<Callback> ownedTrampolines = new ArrayList<>();
@@ -7101,7 +7091,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (nativeBuffer != null) nativeBuffer.close();
         if (NativeGeometryBuffer.boundId() == name) NativeGeometryBuffer.unbind();
         this.bufferStore.remove(name);
-        this.bufferLogicalSize.remove(name);
+        this.bufferStorage.forget(name);
         if (this.pixelPackBuffer == name) {
             this.pixelPackBuffer = 0;
         }
@@ -9507,6 +9497,15 @@ public final class CeltiumGlStub implements FunctionProvider {
     // ---- buffer storage: the minimum that keeps upload/mapping code paths alive ------------------------
 
     /**
+     * The allocation, logical-size and mapping semantics live in {@link BufferStorageRecord}, which is handed
+     * this stub's store map at construction (the map stays a field of this stub: the pixel-buffer,
+     * texture-upload and draw paths read it directly). What stays in this section is the binding resolution
+     * that names the buffer a call applies to and the delegations the dispatch, the transformer's route and
+     * the census land on.
+     */
+    private final BufferStorageRecord bufferStorage = new BufferStorageRecord(this.bufferStore);
+
+    /**
      * The buffer whose storage an operation applies to: the bound name for {@code glBufferData}, or the name arg
      * itself for {@code glNamedBufferData}.
      */
@@ -9534,76 +9533,18 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The one buffer-data producer: the dispatch case and the transformer's route both land here. */
     private void bufferDataFor(int name, long size, long data) {
-        if (name == 0 || size < 0 || size > Integer.MAX_VALUE) {
-            return;
-        }
-        NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
-        if (nativeBuffer != null) {
-            nativeBuffer.replaceStorage(data == 0L ? null : MemoryUtil.memByteBuffer(data, (int) size), (int) size);
-            return;
-        }
-        if (size == 0) {
-            // glBufferData(size=0) is a legal redefinition that leaves the buffer empty; the old code returned early and
-            // kept the previous storage and size, so the buffer still mapped and still answered the old extent (#387).
-            this.bufferStore.remove(name);
-            this.bufferLogicalSize.put(name, 0);
-            return;
-        }
-        this.bufferLogicalSize.put(name, (int) size);
-        // The storage is reused whenever it is already large enough, rather than replaced. The game's staging buffers
-        // are mapped persistently - the mirror this renderer reads its meshes from is one - and a new allocation moves
-        // the address the caller is still writing to, which shows up as geometry built from whatever the old storage
-        // happened to hold. Keeping the block makes the address a buffer name returns stable for the name's lifetime,
-        // which is the property a persistent mapping needs; a larger request still has to move it.
-        ByteBuffer storage = this.bufferStore.get(name);
-        if (storage == null || storage.capacity() < size) {
-            storage = ByteBuffer.allocateDirect((int) size).order(java.nio.ByteOrder.nativeOrder());
-            this.bufferStore.put(name, storage);
-        }
-        if (data != 0L) {
-            ByteBuffer source = MemoryUtil.memByteBuffer(data, (int) size);
-            int position = storage.position();
-            storage.clear();
-            storage.put(source);
-            storage.clear();
-            storage.position(position);
-        } else {
-            storage.clear();
-        }
+        this.bufferStorage.bufferDataFor(name, size, data);
     }
 
-    /**
-     * {@return the size GL last gave this buffer, falling back to the storage's capacity when nothing was recorded}.
-     *
-     * @param name     the buffer name
-     * @param capacity the backing storage's size
-     */
+    /** {@return the size GL last gave this buffer}; the semantics live in {@link BufferStorageRecord#logicalSizeOf}. */
     private int logicalSizeOf(int name, int capacity) {
-        // containsKey, not get: a buffer redefined to zero is a recorded size, not an absent one.
-        return this.bufferLogicalSize.containsKey(name) ? this.bufferLogicalSize.get(name) : capacity;
+        return this.bufferStorage.logicalSizeOf(name, capacity);
     }
 
-    /**
-     * {@return the byte offset a {@code glMapBufferRange} may map}, or -1 when the range is not within the buffer.
-     * <p>
-     * GL's contract: {@code offset} and {@code length} are non-negative, {@code length > 0}, and the range must lie
-     * inside the buffer. Anything else is an error the caller has to see, not a range quietly moved to zero (audit #361:
-     * offset -1 was answered as 0, and a length running past the end was not looked at).
-     */
+    /** The range contract lives in {@link BufferStorageRecord#mapRangeOffset}; this door keeps its callers unchanged. */
     static long mapRangeOffset(long offset, long length, long capacity) {
-        if (offset < 0L || length <= 0L || capacity < 0L) {
-            return -1L;
-        }
-        // Written this way round so the sum cannot overflow: length is bounded by the capacity instead.
-        if (length > capacity || offset > capacity - length) {
-            return -1L;
-        }
-        return offset;
+        return BufferStorageRecord.mapRangeOffset(offset, length, capacity);
     }
-
-    /** Calls and refusals of {@link #mapBuffer}, so an invalid range is a counted event rather than a silent clamp. */
-    private long mapBufferCalls;
-    private long mapBufferRefusals;
 
     /** {@return the map calls and how many were refused for an out-of-range request}, for the verification line. */
     public static String mapBufferCensus() {
@@ -9611,12 +9552,12 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return "calls=none refusals=none";
         }
-        return "calls=" + stub.mapBufferCalls + " refusals=" + stub.mapBufferRefusals;
+        return stub.bufferStorage.census();
     }
 
     private long mapBuffer(Fn fn, long[] c) {
         boolean range = fn.args.length == 4;
-        return mapBufferFor(bufferFor(fn, c), range, range ? c[1] : 0L, range ? c[2] : 0L, range ? c[3] : 0L);
+        return this.bufferStorage.mapBufferFor(bufferFor(fn, c), range, range ? c[1] : 0L, range ? c[2] : 0L, range ? c[3] : 0L);
     }
 
     /**
@@ -9626,7 +9567,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static long celtium$mapBuffer(int target, boolean range, long offset, long length, int access) {
         CeltiumGlStub stub = installed;
-        return stub == null ? 0L : stub.mapBufferFor(stub.boundBuffer(target), range, offset, length, access);
+        return stub == null ? 0L : stub.bufferStorage.mapBufferFor(stub.boundBuffer(target), range, offset, length, access);
     }
 
     /** {@code glUnmapBuffer}: the storage is the caller's memory already, so there is nothing to flush. */
@@ -9635,57 +9576,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return true;
         }
-        NativeGeometryBuffer mapped = NativeGeometryBuffer.find(stub.boundBuffer(target));
-        return mapped == null || mapped.unmap();
+        return BufferStorageRecord.unmap(stub.boundBuffer(target));
     }
 
     /** The DSA mapping forms: the buffer is named, not the bound target. */
     public static long celtium$mapNamedBuffer(int name, boolean range, long offset, long length, int access) {
         CeltiumGlStub stub = installed;
-        return stub == null ? 0L : stub.mapBufferFor(name, range, offset, length, access);
+        return stub == null ? 0L : stub.bufferStorage.mapBufferFor(name, range, offset, length, access);
     }
 
     public static boolean celtium$unmapNamedBuffer(int name) {
-        NativeGeometryBuffer mapped = NativeGeometryBuffer.find(name);
-        return mapped == null || mapped.unmap();
-    }
-
-    private long mapBufferFor(int name, boolean range, long rangeOffset, long rangeLength, long access) {
-        NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
-        if (nativeBuffer != null) {
-            this.mapBufferCalls++;
-            // VertexBuffer API storage is transiently mappable, not persistent/coherent mapped storage.
-            long address = range && (access & 0xC0L) != 0L ? 0L
-                    : nativeBuffer.map(range ? rangeOffset : 0, range ? rangeLength : nativeBuffer.byteSize());
-            if (address == 0L) this.mapBufferRefusals++;
-            return address;
-        }
-        ByteBuffer storage = this.bufferStore.get(name);
-        if (storage == null) {
-            // Mapping a buffer with no allocation: GL would fault - an empty block keeps the caller alive while
-            // making writes visibly land nowhere.
-            storage = ByteBuffer.allocateDirect(0);
-        }
-        long base = memAddress(storage);
-        if (range) {
-            // glMapBufferRange(target, offset, length, access): the range is validated, not corrected. Returning base +
-            // a clamped offset turned an invalid request into a valid-looking mapping (audit #361 measured offset = -1
-            // answered as 0, and a length past the end simply ignored), which lets a caller write outside the buffer it
-            // thinks it mapped. GL returns NULL for a range that is not within the buffer, and so does this.
-            long offset = mapRangeOffset(rangeOffset, rangeLength, this.logicalSizeOf(name, storage.capacity()));
-            this.mapBufferCalls++;
-            if (offset < 0L) {
-                this.mapBufferRefusals++;
-                if (this.mapBufferRefusals <= 3) {
-                    System.out.println("[Celtium] CELTIUM_MAP_RANGE_REFUSED buffer=" + name + " offset=" + rangeOffset
-                            + " length=" + rangeLength + " capacity=" + storage.capacity());
-                }
-                return 0L;
-            }
-            return base + offset;
-        }
-        this.mapBufferCalls++;
-        return base;
+        return BufferStorageRecord.unmap(name);
     }
 
     // ---- client-array drawing: the one GL drawing entry point that leaves this class for the frame ---------------
