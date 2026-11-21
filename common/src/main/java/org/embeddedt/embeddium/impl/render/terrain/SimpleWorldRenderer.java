@@ -560,6 +560,11 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
      * schedules per frame in a still scene. A section already scheduled only needs the one rebuild (the rebuild reads
      * the world as it is when the task runs), so repeated requests inside the same frame are dropped; the
      * pending-update merge in {@code scheduleRebuild} would have collapsed them anyway, this skips the work.
+     * <p>
+     * The set is render-thread state. The hash table is not thread-safe, while the entry points around it
+     * accept off-thread callers, so both of its mutations are confined to the render thread: the add in
+     * {@link #scheduleRebuildForChunk} is gated on {@code RenderSectionManager.isOnRenderThread()}, and
+     * {@link #setupTerrain} - a render-thread entry point - clears it.
      */
     private final it.unimi.dsi.fastutil.longs.LongOpenHashSet celtium$scheduledSections =
             new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
@@ -572,7 +577,14 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
         // light change, marked so the section is re-meshed). An important request - a block placement or break, which
         // vanilla and Forge mark important - always goes through, so a real edit is never merged away by an earlier
         // light request in the same frame.
-        if (!important) {
+        //
+        // The collapse only runs on the render thread. The set is a plain LongOpenHashSet owned by that
+        // thread (added here, cleared in setupTerrain), while this entry point is reachable off-thread:
+        // scheduleRebuild below explicitly accepts off-thread callers and defers them onto the render
+        // thread. An off-thread request therefore skips the set and goes straight to scheduleRebuild,
+        // whose pending-update merge collapses the duplicate when the deferred task runs; only the
+        // shortcut is lost, never the rebuild.
+        if (!important && this.renderSectionManager != null && this.renderSectionManager.isOnRenderThread()) {
             long key = ((long) (x & 0x3FFFFF) << 42) | ((long) (z & 0x3FFFFF) << 20) | (y & 0xFFFFF);
             if (!this.celtium$scheduledSections.add(key)) {
                 org.embeddedt.embeddium.impl.render.chunk.BuildFlowCounters.scheduleDeduped++;

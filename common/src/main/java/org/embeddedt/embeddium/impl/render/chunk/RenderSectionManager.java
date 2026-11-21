@@ -1229,6 +1229,17 @@ public abstract class RenderSectionManager {
         return sections;
     }
 
+    /**
+     * Whether the calling thread is this manager's render thread. This is the one thread fact the
+     * rest of the terrain code may need: {@link #scheduleRebuild} and {@link #scheduleAsyncTask}
+     * already branch on it privately, and callers keeping render-thread-only state of their own
+     * (the per-frame rebuild dedup in {@code SimpleWorldRenderer}) must gate on the same thread,
+     * not on a second captured thread that could disagree with this one.
+     */
+    public boolean isOnRenderThread() {
+        return Thread.currentThread() == this.renderThread;
+    }
+
     public final void scheduleAsyncTask(Runnable runnable) {
         if (Thread.currentThread() == this.renderThread) {
             // Run immediately, otherwise the thread may deadlock waiting for itself
