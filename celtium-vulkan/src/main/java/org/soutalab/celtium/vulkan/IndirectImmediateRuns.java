@@ -46,7 +46,7 @@ final class IndirectImmediateRuns {
 
     /**
      * {@return the record-reading twin of a texture pipeline, created on first use for that exact state}, or null when the
-     * state is one of the colourless position variants.
+     * state is one of the colourless position variants, the texgen variant, or the combine variant.
      * <p>
      * Those variants use a different shader and a different push block shape (the current colour's alpha at 96 and dead
      * model-view columns where the textures sit), while the twin this class builds is the textured family's. Drawing one
@@ -73,6 +73,13 @@ final class IndirectImmediateRuns {
         if (state.celtium$texGen()) {
             // The texgen variant computes texture coordinates in the vertex stage from state the record does not carry;
             // the position variants do have record-reading twins now, so only this one is refused.
+            return null;
+        }
+        if (state.celtium$combine4()) {
+            // The combine variant's fragment stage evaluates the multi-unit combine the push block selects, and no
+            // record-reading shader pair evaluates it: a twin would be built as the base textured family at the
+            // base stride (24, not 44) and draw the group wrong rather than not at all. It stays on the per-group
+            // path until a combine records pair exists.
             return null;
         }
         VulkanImmediateTexturePipeline twin = this.recordsPipelines.get(state);
@@ -111,9 +118,11 @@ final class IndirectImmediateRuns {
         // The colourless position variants have no record-reading twin yet; asking here, before a run is started, keeps a
         // refused group from leaving a half-built run behind.
         if (texturedFamily && (((VulkanImmediateTexturePipeline) prepared.pipeline).celtium$texGen()
+                || ((VulkanImmediateTexturePipeline) prepared.pipeline).celtium$combine4()
                 || celtium$recordsPipeline((VulkanImmediateTexturePipeline) prepared.pipeline) == null)) {
             VulkanImmediateTexturePipeline refused = (VulkanImmediateTexturePipeline) prepared.pipeline;
             celtium$noteIndirectRefusal(refused.celtium$texGen() ? "texGen"
+                    : refused.celtium$combine4() ? "combine4"
                     : refused.celtium$positionOnly() ? "positionOnly" : "positionNoTexture");
             celtium$flushIndirectRun("texture-twin");
             return false;

@@ -184,8 +184,28 @@ public final class VulkanImmediateTexturePipeline {
     private int insertionOrderCount;
     /** Sets retired because a newer generation of the same GL texture replaced them; counted, never silently dropped. */
     private int descriptorSetsRetired;
-    /** The pool each retired set belongs to, so a completion-gated reset can reach it (OPT-04's release basis). */
-    private final java.util.List<Long> retiredSets = new java.util.ArrayList<Long>();
+    /** Sets this pipeline has handed back to their pools through the completion-gated free. */
+    private int descriptorSetsFreed;
+    /**
+     * Retired sets with the pool each belongs to, awaiting the completion-gated free that returns them.
+     * <p>
+     * This list used to be write-only: nothing ever freed a retired set, no pool carried the
+     * FREE_DESCRIPTOR_SET bit, and pool consumption grew monotonically with texture generations until the
+     * 64-pool ceiling refused every later textured batch. Now the sets are handed to
+     * {@link VulkanContext#celtium$retireCleanup} - OPT-04's completion basis - in batches of
+     * {@link #RETIRED_FREE_BATCH}, and {@link #delete()} advances {@link #descriptorFreeGeneration} so a batch
+     * still queued when its pools are destroyed drops itself instead of freeing into a dead pool.
+     */
+    private final RetiredDescriptorSets retiredSets = new RetiredDescriptorSets();
+    /** The pool each live cached set was allocated from, so a retired set can be handed back to its own pool. */
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap poolByDescriptorSet =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    /** The pool the most recent successful allocation came from; read by {@link #descriptorSetFor} once per miss. */
+    private long lastAllocationPool;
+    /** Advanced by {@link #delete()}; a queued descriptor free that sees a newer value owns nothing any more. */
+    private long descriptorFreeGeneration;
+    /** How many retired sets one completion-gated free hands back at a time. */
+    private static final int RETIRED_FREE_BATCH = 32;
     /** Sets this pipeline has been given: the one reserved at creation plus every cached texture set. */
     private int descriptorSetsAllocated;
 
@@ -215,11 +235,25 @@ public final class VulkanImmediateTexturePipeline {
     }
 
     /**
-     * The record-reading twin of an existing pipeline, keeping its variant flags (position-only, position-no-texture,
-     * combine) so the twin's vertex stride and shader pair match the groups it will draw.
+     * The record-reading twin of an existing pipeline, keeping the variant fields the record-reading shader family
+     * can reproduce (position-only, position-no-texture and the two stride carriers) so the twin's vertex stride
+     * and attribute layout match the groups it will draw.
+     * <p>
+     * The stride carriers matter as much as the flags: a trailing-element variant (the 28-byte
+     * {@code POSITION_TEX_COLOR_NORMAL}, the 24/32-byte colourless normal layouts) or an explicit-stride one (the
+     * 16-byte {@code POSITION_NORMAL}) whose twin dropped them was built at the base family's 24/20/12-byte stride
+     * and read every vertex after the first out of phase. The combine and texgen variants have no record-reading
+     * shader pair at all - the combine is evaluated from the push block and texgen from vertex-stage state a record
+     * does not carry - so they are refused here as a contract; the indirect gate
+     * ({@code IndirectImmediateRuns.celtium$recordsPipeline}) refuses them first and keeps them on the per-group
+     * path.
      */
     public static VulkanImmediateTexturePipeline createRecordsLike(VulkanContext context,
             VulkanImmediateTexturePipeline state, long recordsSetLayout) {
+        if (!celtium$recordsTwinSupported(state.celtium$combine4(), state.celtium$texGen())) {
+            throw new IllegalArgumentException("no record-reading twin for the "
+                    + (state.celtium$combine4() ? "combine4" : "texgen") + " variant");
+        }
         VulkanImmediateTexturePipeline pipeline = allocate(context, state.celtium$renderPass(),
                 state.celtium$colorBlend(), state.celtium$depthTests(), state.celtium$depthWrites(),
                 state.celtium$cullState(), state.celtium$depthCompareOp());
@@ -227,7 +261,18 @@ public final class VulkanImmediateTexturePipeline {
         pipeline.recordsLayout = recordsSetLayout;
         pipeline.positionOnly = state.celtium$positionOnly();
         pipeline.positionNoTexture = state.celtium$positionNoTexture();
+        pipeline.extraTrailingElementBytes = state.celtium$extraTrailingElementBytes();
+        pipeline.explicitStride = state.celtium$explicitStride();
         return pipeline.build();
+    }
+
+    /**
+     * {@return whether a record-reading twin can reproduce this variant}: the records shader family covers the base,
+     * position-only and position-no-texture attribute shapes at any stride the two stride carriers name, but has no
+     * pair for the combine or texgen variants.
+     */
+    static boolean celtium$recordsTwinSupported(boolean combine4, boolean texGen) {
+        return !combine4 && !texGen;
     }
 
     /**
@@ -584,6 +629,16 @@ public final class VulkanImmediateTexturePipeline {
         return this.positionNoTexture;
     }
 
+    /** {@return the trailing element width that widens this variant's stride}, or 0 when the layout carries none. */
+    int celtium$extraTrailingElementBytes() {
+        return this.extraTrailingElementBytes;
+    }
+
+    /** {@return this variant's explicit stride}, or 0 when its layout derives one from the base shapes. */
+    int celtium$explicitStride() {
+        return this.explicitStride;
+    }
+
     /** {@return whether this pipeline writes depth} - the indirect run only takes opaque groups. */
     public boolean celtium$depthWrites() {
         return this.depthWrite;
@@ -657,13 +712,20 @@ public final class VulkanImmediateTexturePipeline {
      * fourth branch.
      */
     private int vertexStride() {
-        if (this.explicitStride != 0) {
-            return this.explicitStride;
+        return strideFor(this.explicitStride, this.extraTrailingElementBytes, this.positionNoTexture,
+                this.positionOnly);
+    }
+
+    /** The stride decision of {@link #vertexStride()}, as a pure function so the variant table can be pinned. */
+    static int strideFor(int explicitStride, int extraTrailingElementBytes, boolean positionNoTexture,
+            boolean positionOnly) {
+        if (explicitStride != 0) {
+            return explicitStride;
         }
-        if (this.extraTrailingElementBytes != 0) {
-            return this.extraTrailingElementBytes;
+        if (extraTrailingElementBytes != 0) {
+            return extraTrailingElementBytes;
         }
-        return this.positionNoTexture ? POSITION_BYTES : this.positionOnly ? POSITION_TEX_BYTES : VERTEX_BYTES;
+        return positionNoTexture ? POSITION_BYTES : positionOnly ? POSITION_TEX_BYTES : VERTEX_BYTES;
     }
 
     /**
@@ -684,6 +746,7 @@ public final class VulkanImmediateTexturePipeline {
         return "descriptorSetsLive=" + this.setsByTextureView.size()
                 + " descriptorSetsRetired=" + this.descriptorSetsRetired
                 + " descriptorSetsAwaitingCompletion=" + this.retiredSets.size()
+                + " descriptorSetsFreed=" + this.descriptorSetsFreed
                 + " descriptorSetsAllocated=" + this.descriptorSetsAllocated;
     }
 
@@ -818,7 +881,7 @@ public final class VulkanImmediateTexturePipeline {
         // added: nothing removed an entry, so a long session with repeated texture reloads grew the cache without
         // bound and exhausted the finite pool. The set itself is not freed here - the command buffers that recorded it
         // may still be in flight, and OPT-04 makes GPU completion the only basis for releasing a resource - so it goes
-        // on the retired list, counted, for a completion-gated reset.
+        // on the retired list with its pool, and a full batch is handed to the completion-gated free.
         while (this.setsByTextureView.size() >= DESCRIPTOR_CACHE_LIMIT && this.insertionOrderCount > 0) {
             long eldest = this.insertionOrderRing[this.insertionOrderHead];
             this.insertionOrderHead = (this.insertionOrderHead + 1) % this.insertionOrderRing.length;
@@ -826,7 +889,13 @@ public final class VulkanImmediateTexturePipeline {
             long removed = this.setsByTextureView.remove(eldest);
             if (removed != 0L) {
                 this.descriptorSetsRetired++;
-                this.retiredSets.add(Long.valueOf(removed));
+                long pool = this.poolByDescriptorSet.remove(removed);
+                if (pool != 0L) {
+                    this.retiredSets.add(pool, removed);
+                    if (this.retiredSets.size() >= RETIRED_FREE_BATCH) {
+                        this.celtium$handOffRetiredSets();
+                    }
+                }
             }
         }
         // A miss allocates and writes a descriptor set. If this fires on almost every batch, the key (the texture's view)
@@ -853,6 +922,7 @@ public final class VulkanImmediateTexturePipeline {
             celtium$noteDescWrite(write);
             vkUpdateDescriptorSets(this.context.device(), write, null);
             this.setsByTextureView.put(key, set);
+            this.poolByDescriptorSet.put(set, this.lastAllocationPool);
             if (this.insertionOrderCount < this.insertionOrderRing.length) {
                 this.insertionOrderRing[this.insertionOrderTail] = key;
                 this.insertionOrderTail = (this.insertionOrderTail + 1) % this.insertionOrderRing.length;
@@ -929,6 +999,9 @@ public final class VulkanImmediateTexturePipeline {
                     .descriptorCount(DESCRIPTOR_SETS_PER_POOL);
             org.lwjgl.vulkan.VkDescriptorPoolCreateInfo poolInfo =
                     org.lwjgl.vulkan.VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
+                            // FREE so a retired set can be handed back individually once its last use has
+                            // completed; without it a pool only ever fills.
+                            .flags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT)
                             .maxSets(DESCRIPTOR_SETS_PER_POOL).pPoolSizes(poolSize);
             LongBuffer poolHandle = stack.mallocLong(1);
             int poolResult = vkCreateDescriptorPool(this.context.device(), poolInfo, null, poolHandle);
@@ -950,40 +1023,137 @@ public final class VulkanImmediateTexturePipeline {
     }
 
     /**
-     * {@return a descriptor set from the newest pool, growing the pool when it is full}.
+     * {@return a descriptor set from one of this pipeline's pools, growing the pool list when every pool is full}.
      * <p>
      * The pools are per pipeline and live as long as it does, which is what makes this growable rather than
      * per-frame: a set's contents (one image view and one sampler) are cached against the texture's key, and a key
      * changes when the view is recreated, so a reload asks for new sets rather than reusing old ones. Reclaiming by
      * completed frame was the other shape the audit allowed; growth is the one that cannot hand a set to two frames at
      * once, which a per-frame reset would when a batch outlives the frame it was recorded in.
+     * <p>
+     * Pools are tried newest first, but every pool is tried: a retired set freed back into an older pool leaves a
+     * slot only an all-pools search can reuse, and without the search the completion-gated free would return slots
+     * nobody allocates from and the pool list would keep growing anyway.
      *
      * @param stack the stack the allocate info is built on
      * @return the set, or 0 when even a fresh pool could not supply one (counted in
      *         {@link #DESCRIPTOR_ALLOCATION_FAILURES})
      */
     private long allocateDescriptorSet(MemoryStack stack) {
-        for (int attempt = 0; attempt < 2; attempt++) {
-            Long pool = this.descriptorPools.get(this.descriptorPools.size() - 1);
-            org.lwjgl.vulkan.VkDescriptorSetAllocateInfo allocate =
-                    org.lwjgl.vulkan.VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
-                            .descriptorPool(pool.longValue())
-                            .pSetLayouts(stack.longs(this.descriptorSetLayout));
-            LongBuffer handle = stack.mallocLong(1);
-            int allocationResult = vkAllocateDescriptorSets(this.context.device(), allocate, handle);
-            if (allocationResult == VK_SUCCESS) {
-                this.descriptorSetsAllocated++;
-                DESCRIPTOR_SETS_ALLOCATED.incrementAndGet();
-                return handle.get(0);
+        int lastResult = VK_SUCCESS;
+        for (int round = 0; round < 2; round++) {
+            for (int i = this.descriptorPools.size() - 1; i >= 0; i--) {
+                Long pool = this.descriptorPools.get(i);
+                org.lwjgl.vulkan.VkDescriptorSetAllocateInfo allocate =
+                        org.lwjgl.vulkan.VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
+                                .descriptorPool(pool.longValue())
+                                .pSetLayouts(stack.longs(this.descriptorSetLayout));
+                LongBuffer handle = stack.mallocLong(1);
+                int allocationResult = vkAllocateDescriptorSets(this.context.device(), allocate, handle);
+                if (allocationResult == VK_SUCCESS) {
+                    this.descriptorSetsAllocated++;
+                    DESCRIPTOR_SETS_ALLOCATED.incrementAndGet();
+                    this.lastAllocationPool = pool.longValue();
+                    return handle.get(0);
+                }
+                lastResult = allocationResult;
+                if (descriptorResultIsDeviceLost(allocationResult)) {
+                    celtium$descriptorFailure("allocateSet", allocationResult);
+                }
             }
-            celtium$descriptorFailure("allocateSet", allocationResult);
-            // The pool is full (or refused for another reason). One growth attempt, then the caller refuses the batch.
+            // Every pool refused (full, or its freed slots not yet returned by the completion gate). One growth
+            // attempt, then the caller refuses the batch.
             if (createDescriptorPool() == VK_NULL_HANDLE) {
                 break;
             }
         }
+        celtium$descriptorFailure("allocateSet", lastResult);
         DESCRIPTOR_ALLOCATION_FAILURES.incrementAndGet();
         return 0L;
+    }
+
+    /**
+     * Hands the retired sets to the completion-gated cleanup that frees them back into their pools.
+     * <p>
+     * A retired set's last recorded use belongs to a submission at or before the sequence current now, and
+     * {@link VulkanContext#celtium$retireCleanup} runs the free only once that sequence is confirmed complete -
+     * the same basis {@link #delete()} destroys whole pools on. If this pipeline is deleted first, the generation
+     * check drops the batch: its sets died with their pools and there is nothing left to free.
+     */
+    private void celtium$handOffRetiredSets() {
+        if (this.retiredSets.size() == 0) {
+            return;
+        }
+        final java.util.Map<Long, long[]> byPool = this.retiredSets.drainGrouped();
+        final long generation = this.descriptorFreeGeneration;
+        final VulkanContext context = this.context;
+        context.celtium$retireCleanup("texture.descriptorFree", () -> {
+            if (generation != this.descriptorFreeGeneration) {
+                return;
+            }
+            int freed = 0;
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                for (java.util.Map.Entry<Long, long[]> entry : byPool.entrySet()) {
+                    int result = vkFreeDescriptorSets(context.device(), entry.getKey().longValue(),
+                            stack.longs(entry.getValue()));
+                    if (result == VK_SUCCESS) {
+                        freed += entry.getValue().length;
+                    }
+                }
+            }
+            this.descriptorSetsFreed += freed;
+        });
+    }
+
+    /**
+     * Retired descriptor sets paired with the pool each was allocated from, in retirement order.
+     * <p>
+     * Two parallel lists rather than a map: a set handle is unique only within its pool, so the pair is the
+     * identity. {@link #drainGrouped()} is the hand-off to the completion-gated free - one
+     * {@code vkFreeDescriptorSets} call per pool.
+     */
+    static final class RetiredDescriptorSets {
+        private final java.util.ArrayList<Long> pools = new java.util.ArrayList<Long>();
+        private final java.util.ArrayList<Long> sets = new java.util.ArrayList<Long>();
+
+        void add(long pool, long set) {
+            this.pools.add(Long.valueOf(pool));
+            this.sets.add(Long.valueOf(set));
+        }
+
+        int size() {
+            return this.sets.size();
+        }
+
+        void clear() {
+            this.pools.clear();
+            this.sets.clear();
+        }
+
+        /** Removes every pair and groups the set handles by pool, in first-seen pool order. */
+        java.util.Map<Long, long[]> drainGrouped() {
+            java.util.Map<Long, java.util.ArrayList<Long>> grouped =
+                    new java.util.LinkedHashMap<Long, java.util.ArrayList<Long>>();
+            for (int i = 0; i < this.sets.size(); i++) {
+                java.util.ArrayList<Long> bucket = grouped.get(this.pools.get(i));
+                if (bucket == null) {
+                    bucket = new java.util.ArrayList<Long>();
+                    grouped.put(this.pools.get(i), bucket);
+                }
+                bucket.add(this.sets.get(i));
+            }
+            this.pools.clear();
+            this.sets.clear();
+            java.util.Map<Long, long[]> drained = new java.util.LinkedHashMap<Long, long[]>();
+            for (java.util.Map.Entry<Long, java.util.ArrayList<Long>> entry : grouped.entrySet()) {
+                long[] handles = new long[entry.getValue().size()];
+                for (int i = 0; i < handles.length; i++) {
+                    handles[i] = entry.getValue().get(i).longValue();
+                }
+                drained.put(entry.getKey(), handles);
+            }
+            return drained;
+        }
     }
 
     /** {@return the descriptor allocation as one line: pools, growths, sets, cached keys and refusals}. */
@@ -1012,6 +1182,10 @@ public final class VulkanImmediateTexturePipeline {
         this.descriptorSet = VK_NULL_HANDLE;
         this.descriptorPools.clear();
         this.setsByTextureView.clear();
+        this.poolByDescriptorSet.clear();
+        // Any descriptor free still queued against these pools drops itself on this generation change: the sets
+        // it names die with the pools destroyed below.
+        this.descriptorFreeGeneration++;
         this.insertionOrderHead = 0;
         this.insertionOrderTail = 0;
         this.insertionOrderCount = 0;
