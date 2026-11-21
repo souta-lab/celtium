@@ -202,4 +202,58 @@ class ModProgramRegistryTest {
         assertTrue(program.lowered().failure().contains("no fragment stage"));
         assertNull(ModProgramRegistry.program(8));
     }
+
+    @Test
+    void linkStatusIsUnrecordedUntilALinkRuns() {
+        // An id the registry never saw, and a program that was created and fed but never linked: neither
+        // has a recorded result, so the query surfaces must keep their default answer for both.
+        assertNull(ModProgramRegistry.linkStatus(4242));
+        assertNull(ModProgramRegistry.linkInfoLog(4242));
+        ModProgramRegistry.shaderSource(20, "void main() { gl_Position = vec4(0.0); }");
+        ModProgramRegistry.attach(7, 20);
+        assertNull(ModProgramRegistry.linkStatus(7));
+        assertNull(ModProgramRegistry.linkInfoLog(7));
+        assertEquals(1, CeltiumGlStub.shaderProgramQueryAnswer(7, 0x8B82));
+        assertEquals(0, CeltiumGlStub.shaderProgramQueryAnswer(7, 0x8B84));
+    }
+
+    @Test
+    void aLinkThatFailsToLowerAnswersFalseWithTheReason() {
+        ModProgramRegistry.shaderSource(20, "void main() { gl_Position = vec4(0.0); }");
+        ModProgramRegistry.attach(7, 20);
+        ModProgramRegistry.link(7);
+        assertEquals(Boolean.FALSE, ModProgramRegistry.linkStatus(7));
+        String log = ModProgramRegistry.linkInfoLog(7);
+        assertTrue(log != null && log.contains("no fragment stage"), String.valueOf(log));
+        // The query answers follow the record: link and validate false, the log length is the reason's,
+        // and compile status keeps its default - no per-shader result exists in a link-time model.
+        assertEquals(0, CeltiumGlStub.shaderProgramQueryAnswer(7, 0x8B82));
+        assertEquals(0, CeltiumGlStub.shaderProgramQueryAnswer(7, 0x8B83));
+        assertEquals(log.length() + 1, CeltiumGlStub.shaderProgramQueryAnswer(7, 0x8B84));
+        assertEquals(1, CeltiumGlStub.shaderProgramQueryAnswer(7, 0x8B81));
+        assertEquals(0, CeltiumGlStub.shaderProgramQueryAnswer(7, 0x8B80));
+    }
+
+    @Test
+    void aRecordedLinkAnswersConsistentlyWithItsCompiledState() {
+        ModProgramRegistry.shaderSource(11, "varying vec2 uv;\n"
+                + "void main() { gl_FragColor = vec4(1.0); }");
+        ModProgramRegistry.shaderSource(10, "attribute vec2 position; varying vec2 uv;\n"
+                + "void main() { gl_Position = vec4(position, 0.0, 1.0); uv = position; }");
+        ModProgramRegistry.attach(5, 11);
+        ModProgramRegistry.attach(5, 10);
+        ModProgramRegistry.Program program = ModProgramRegistry.link(5);
+        assertTrue(program.lowered().ok(), program.lowered().failure());
+        // Whether both stages compiled depends on shaderc being present in the test environment; the
+        // recorded answer must match the recorded state either way.
+        assertEquals(Boolean.valueOf(program.compiled()), ModProgramRegistry.linkStatus(5));
+        if (program.compiled()) {
+            assertNull(ModProgramRegistry.linkInfoLog(5));
+            assertEquals(1, CeltiumGlStub.shaderProgramQueryAnswer(5, 0x8B82));
+            assertEquals(0, CeltiumGlStub.shaderProgramQueryAnswer(5, 0x8B84));
+        } else {
+            assertEquals(0, CeltiumGlStub.shaderProgramQueryAnswer(5, 0x8B82));
+            assertTrue(ModProgramRegistry.linkInfoLog(5) != null);
+        }
+    }
 }

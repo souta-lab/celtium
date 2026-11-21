@@ -708,6 +708,36 @@ public final class ModProgramRegistry {
         return PROGRAMS.get(id);
     }
 
+    /**
+     * {@return the link status a GL query for this program should answer}: TRUE when the link this registry
+     * recorded compiled both stages, FALSE when it recorded why the program has no SPIR-V, and null when no
+     * link was recorded for the id. The null case matters: a program whose link never reached this registry
+     * (a route this class does not feed) must not be condemned by an absence it knows nothing about, so the
+     * query surfaces keep their default answer there.
+     */
+    public static Boolean linkStatus(int id) {
+        Program p = PROGRAMS.get(id);
+        if (p == null || p.lowered == null) {
+            return null;
+        }
+        return p.compiled();
+    }
+
+    /**
+     * {@return the info-log text for a program whose recorded link failed}: the recorded failure, or null
+     * when the program compiled or no link was recorded for the id.
+     */
+    public static String linkInfoLog(int id) {
+        Program p = PROGRAMS.get(id);
+        if (p == null || p.lowered == null || p.compiled()) {
+            return null;
+        }
+        // The lowering's own reason names what the translator refused; the compile failure field is the
+        // stage-prefixed shaderc message (or why no compile was attempted). Either is the log GL would have
+        // carried - the field alone would say only "not lowered" for the lowering case.
+        return !p.lowered.ok() && p.lowered.failure() != null ? p.lowered.failure() : p.compileFailure;
+    }
+
     /** {@code glDeleteProgram}. Shaders are kept: GL deletes them only when detached, and mods reuse them. */
     public static void deleteProgram(int id) {
         Program removed = PROGRAMS.remove(id);

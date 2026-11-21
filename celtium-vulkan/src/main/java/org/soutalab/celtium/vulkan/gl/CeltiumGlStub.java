@@ -4634,16 +4634,61 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
-     * {@code glGetShaderiv/glGetProgramiv/glGetObjectParameterivARB} from the transformer's route. The stubbed shader
-     * surface compiles nothing, but a zero compile/link status is a "failed" answer every caller checks; the status
-     * pnames answer true (the object exists), everything else (log length, uniform counts) answers zero.
+     * {@code glGetShaderiv/glGetProgramiv/glGetObjectParameterivARB} from the transformer's route. A zero
+     * compile/link status is a "failed" answer every caller checks, so the status pnames answer true by
+     * default - but a program whose link {@link ModProgramRegistry} recorded answers with that link's result
+     * instead, and its info-log length is the recorded failure's. Everything else (uniform counts...)
+     * answers zero. See {@link #shaderProgramQueryAnswer(int, int)}.
      */
     public static void celtium$shaderObjectParameter(int object, int pname, long out) {
         if (out == 0L) {
             return;
         }
-        int value = pname == 0x8B81 || pname == 0x8B82 || pname == 0x8B83 ? 1 : 0;
-        org.lwjgl.system.MemoryUtil.memPutInt(out, value);
+        org.lwjgl.system.MemoryUtil.memPutInt(out, shaderProgramQueryAnswer(object, pname));
+    }
+
+    /**
+     * The answer for a shader/program status query, shared by the transformer's route and the native
+     * dispatch. LINK_STATUS and VALIDATE_STATUS answer the recorded link's truth for a program the registry
+     * knows ({@link ModProgramRegistry#linkStatus(int)}): a caller that checks - Iris's program builder,
+     * Embeddium's {@code GlProgram} - then fails at load, with the reason in the info log, instead of
+     * proceeding over a program whose passes this renderer refuses by name at prepare and which therefore
+     * never draws. An id with no recorded link keeps the default true: its link may never have reached the
+     * registry, and an absence this class knows nothing about must not condemn it. COMPILE_STATUS keeps the
+     * default true for a different reason: compilation here happens at link, per program, so no per-shader
+     * result exists when a caller asks right after {@code glCompileShader} - answering false there would
+     * condemn shaders a later link compiles fine.
+     */
+    static int shaderProgramQueryAnswer(int object, int pname) {
+        if (pname == 0x8B82 || pname == 0x8B83) { // GL_LINK_STATUS / GL_VALIDATE_STATUS
+            Boolean recorded = ModProgramRegistry.linkStatus(object);
+            return recorded == null || recorded ? 1 : 0;
+        }
+        if (pname == 0x8B84) { // GL_INFO_LOG_LENGTH
+            String failure = ModProgramRegistry.linkInfoLog(object);
+            return failure == null ? 0 : failure.length() + 1;
+        }
+        return pname == 0x8B81 ? 1 : 0; // GL_COMPILE_STATUS
+    }
+
+    /**
+     * Writes the recorded link failure of a program as its info log, bounded by the caller's buffer size,
+     * and {@return the characters written}, excluding the NUL. With no recorded failure the log is the empty
+     * string, as before. The failure text is the registry's own reason string, which is ASCII; a non-ASCII
+     * character would be truncated by the byte cast, as in any C log.
+     */
+    public static int celtium$writeInfoLog(int object, int maxLength, long log) {
+        String failure = ModProgramRegistry.linkInfoLog(object);
+        if (failure == null || maxLength <= 0) {
+            org.lwjgl.system.MemoryUtil.memPutByte(log, (byte) 0);
+            return 0;
+        }
+        int count = Math.min(failure.length(), maxLength - 1);
+        for (int i = 0; i < count; i++) {
+            org.lwjgl.system.MemoryUtil.memPutByte(log + i, (byte) failure.charAt(i));
+        }
+        org.lwjgl.system.MemoryUtil.memPutByte(log + count, (byte) 0);
+        return count;
     }
 
     /** Records a clear through the same producer used by callback dispatch. */
@@ -11785,30 +11830,42 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         if ("glGetShaderiv".equals(fn.name) || "glGetProgramiv".equals(fn.name)) {
-            // GL_COMPILE_STATUS 0x8B81 / GL_LINK_STATUS 0x8B82 / GL_VALIDATE_STATUS 0x8B83 -> true;
-            // everything else (log length, attached counts...) -> 0.
-            memPutInt(out, pname >= 0x8B81 && pname <= 0x8B83 ? 1 : 0);
+            // The recorded link's answer for a program the registry knows, the default status answer
+            // otherwise; the info-log length comes from the recorded failure. Everything else
+            // (attached counts...) -> 0. See shaderProgramQueryAnswer.
+            memPutInt(out, shaderProgramQueryAnswer((int) c[0], pname));
             return;
         }
         memPutInt(out, 0);
     }
 
-    /** Info-log queries: write the empty string; the length out-arg gets the remainder the caller asked about. */
+    /**
+     * Info-log queries: write the empty string - except the info log of a program whose recorded link
+     * failed, which is the recorded failure, bounded by the caller's bufSize (the int after the object).
+     * The length out-arg gets the characters written. The other SEM_INFO_LOG names (shader source,
+     * resource names) keep the empty answer; only the three log functions carry a log.
+     */
     private void infoLog(Fn fn, long[] c) {
         int last = lastPointerArg(fn);
         if (last < 0) {
             return;
         }
         long log = c[last];
+        int written = 0;
         if (log != 0L) {
-            MemoryUtil.memPutByte(log, (byte) 0);
+            if ("glGetShaderInfoLog".equals(fn.name) || "glGetProgramInfoLog".equals(fn.name)
+                    || "glGetInfoLogARB".equals(fn.name)) {
+                written = celtium$writeInfoLog((int) c[0], c.length > 1 ? (int) c[1] : 0, log);
+            } else {
+                MemoryUtil.memPutByte(log, (byte) 0);
+            }
         }
         // The optional length out is the pointer slot before the buffer, when it exists.
         for (int i = last - 1; i >= 0; i--) {
             if (fn.args[i] == A_PTR) {
                 long lenOut = c[i];
                 if (lenOut != 0L && lenOut != log) {
-                    memPutInt(lenOut, 0);
+                    memPutInt(lenOut, written);
                 }
                 break;
             }
