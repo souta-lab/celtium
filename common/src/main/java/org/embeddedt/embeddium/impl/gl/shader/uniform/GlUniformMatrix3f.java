@@ -23,9 +23,4 @@ public class GlUniformMatrix3f extends GlUniform<Matrix3fc> {
             LWJGL.glUniformMatrix3fv(this.index, false, buf);
         }
     }
-
-    /** Demonica Tier C bridge. */
-    public void set(org.embeddedt.embeddium.impl.shadow.joml.Matrix3fc value) {
-        set(value.toJoml());
-    }
 }
