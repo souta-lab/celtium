@@ -199,9 +199,18 @@ public final class VulkanModProgramPipeline {
      * {@return why this program's attributes cannot be read from this batch layout}, or null when they can - the
      * format half of {@link #unsupported}, split out so both halves are testable without a device: which formats map
      * onto program attributes at all, and which attribute reads which of the layout's fields.
+     * <p>
+     * {@code POSITION} (id 7) maps its one field: the layout is twelve bytes of position and nothing else, so a
+     * program whose attributes all read the position draws with it, and any other attribute is refused by name in
+     * {@link #source}. The measured arrival is Iris's horizon mesh (an octagonal prism and two gridded planes,
+     * 1,384 position-only vertices submitted every frame from {@code HorizonRenderer}): the sky program it is
+     * submitted under also reads a colour, which GL supplies from the current generic attribute - the pipeline
+     * sets it to the fog colour immediately before the draw - so that program stays refused here until the
+     * constant-attribute question is answered, now with the attribute named instead of the whole format.
      */
     static String unsupportedAttributes(List<ModGlslTranslator.Attribute> attributes, int formatId) {
-        if (formatId != VulkanImmediateFormats.POSITION_TEX && formatId != VulkanImmediateFormats.POSITION_TEX_COLOR) {
+        if (formatId != VulkanImmediateFormats.POSITION_TEX && formatId != VulkanImmediateFormats.POSITION_TEX_COLOR
+                && formatId != VulkanImmediateFormats.POSITION) {
             return "batch format " + formatId + " is not mapped onto program attributes";
         }
         for (ModGlslTranslator.Attribute attribute : attributes) {
@@ -235,7 +244,11 @@ public final class VulkanModProgramPipeline {
             return formatId == VulkanImmediateFormats.POSITION_TEX ? Source.TEXCOORD : null;
         }
         if (TEXCOORD_NAMES.contains(attribute.name())) {
-            return Source.TEXCOORD;
+            // POSITION carries no UV element: offset 12 in a 12-byte vertex is the next vertex's position, so the
+            // name is answered only by the layouts that carry the field. A program that reads a texture coordinate
+            // the batch does not carry is refused here, as a colour read on a colourless layout already is.
+            return formatId == VulkanImmediateFormats.POSITION_TEX
+                    || formatId == VulkanImmediateFormats.POSITION_TEX_COLOR ? Source.TEXCOORD : null;
         }
         if (COLOR_NAMES.contains(attribute.name())) {
             // POSITION_TEX has no colour element; a program that reads one needs the colour layout, not this batch.
@@ -451,9 +464,11 @@ public final class VulkanModProgramPipeline {
             stages.get(1).sType$Default().stage(VK_SHADER_STAGE_FRAGMENT_BIT).module(fragmentModule)
                     .pName(stack.UTF8("main"));
 
-            boolean colour = formatId == VulkanImmediateFormats.POSITION_TEX_COLOR;
-            int stride = colour ? VulkanImmediateTexturePipeline.VERTEX_BYTES
-                    : VulkanImmediateTexturePipeline.POSITION_TEX_BYTES;
+            int stride = formatId == VulkanImmediateFormats.POSITION_TEX_COLOR
+                    ? VulkanImmediateTexturePipeline.VERTEX_BYTES
+                    : formatId == VulkanImmediateFormats.POSITION
+                            ? VulkanImmediateTexturePipeline.POSITION_BYTES
+                            : VulkanImmediateTexturePipeline.POSITION_TEX_BYTES;
             VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
             binding.get(0).binding(0).stride(stride).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
             List<ModGlslTranslator.Attribute> declared = this.attributes;
