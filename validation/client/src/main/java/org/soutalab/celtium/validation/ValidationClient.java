@@ -13279,11 +13279,13 @@ public final class ValidationClient {
         if (server == null || mc.world == null || mc.player == null) {
             return;
         }
-        final int px = (int) Math.floor(mc.player.posX);
-        final int pz = (int) Math.floor(mc.player.posZ);
-        // Place on the integrated server so the chunks sync to the client, recompute skylight/blocklight (covering
-        // any sea lanterns underneath), and trigger terrain remeshing. Keep celtium$pose untouched so the fixture's
-        // camera gate stays satisfied and the camera looks directly across the stone platform and pillars.
+        // Place on the integrated server at fixed, idempotent coordinates so OFF and ON legs see identical geometry
+        // even when the fixture reuses the same world save. Platform at y=10 sits directly on top of the flat
+        // nether-brick/sea-lantern floor (y=9), covering the sea lanterns so blockLight does not wash out shadows,
+        // while five 2x2x5 stone pillars stand at y=11..15 directly in front of the fixed camera pose (0.5, 12, 0.5).
+        final int px = 0;
+        final int pz = 0;
+        final int platformY = 10;
         server.addScheduledTask(new Runnable() {
             @Override
             public void run() {
@@ -13291,30 +13293,36 @@ public final class ValidationClient {
                 if (world == null) {
                     return;
                 }
-                int groundY = world.getHeight(px, pz);
                 int built = 0;
-                for (int dx = -24; dx <= 24; dx++) {
-                    for (int dz = -32; dz <= 8; dz++) {
-                        world.setBlockState(new net.minecraft.util.math.BlockPos(px + dx, groundY, pz + dz),
+                for (int dx = -18; dx <= 18; dx++) {
+                    for (int dz = -26; dz <= -4; dz++) {
+                        world.setBlockState(new net.minecraft.util.math.BlockPos(px + dx, platformY, pz + dz),
                                 net.minecraft.init.Blocks.STONE.getDefaultState(), 3);
                         built++;
+                        for (int y = platformY + 1; y <= platformY + 8; y++) {
+                            net.minecraft.util.math.BlockPos airPos =
+                                    new net.minecraft.util.math.BlockPos(px + dx, y, pz + dz);
+                            if (!world.isAirBlock(airPos)) {
+                                world.setBlockState(airPos, net.minecraft.init.Blocks.AIR.getDefaultState(), 3);
+                            }
+                        }
                     }
                 }
                 int[][] pillars = {{-6, -12}, {6, -14}, {0, -18}, {-10, -10}, {10, -10}};
                 for (int[] pillar : pillars) {
                     for (int bx = 0; bx < 2; bx++) {
                         for (int bz = 0; bz < 2; bz++) {
-                            for (int height = 0; height < 6; height++) {
+                            for (int height = 0; height < 5; height++) {
                                 world.setBlockState(new net.minecraft.util.math.BlockPos(
-                                        px + pillar[0] + bx, groundY + 1 + height, pz + pillar[1] + bz),
+                                        px + pillar[0] + bx, platformY + 1 + height, pz + pillar[1] + bz),
                                         net.minecraft.init.Blocks.STONE.getDefaultState(), 3);
                                 built++;
                             }
                         }
                     }
                 }
-                System.out.println("[Celtium] CELTIUM_SHADOW_STAGE blocks=" + built + " at=" + px + "," + groundY
-                        + "," + pz + " server=true");
+                System.out.println("[Celtium] CELTIUM_SHADOW_STAGE blocks=" + built + " at=" + px + "," + platformY
+                        + "," + pz + " server=true idempotent=true");
             }
         });
     }
