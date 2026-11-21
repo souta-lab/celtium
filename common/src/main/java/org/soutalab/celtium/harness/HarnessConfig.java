@@ -10,17 +10,27 @@ import java.util.Properties;
 /**
  * The one place the test harness is configured from, since the 2026-11-20 flag consolidation.
  * <p>
- * The launch surface is a single switch: {@code -Dceltium.validation=true}. It is the only test-related
- * {@code -D} left; the dozens of {@code celtium.validation.*} / harness {@code celtium.vulkan.*} /
- * {@code celtium.debug.*} properties that used to ride on the fixture's command line are gone, and their
- * readers ask this class instead. A normal run (no switch) must observe exactly the behaviour the code had
- * with no {@code -D} at all, so every accessor falls back to the reader's own shipping default while the
- * switch is off.
+ * The launch surface is a single switch: {@code -Dceltium.validation=true}. The
+ * {@code celtium.validation.*} properties and the harness {@code celtium.vulkan.*} switches that used to
+ * ride on the fixture's command line are gone, and their readers ask this class instead. A normal run
+ * (no switch) must observe exactly the behaviour the code had with no {@code -D} at all, so every
+ * accessor falls back to the reader's own shipping default while the switch is off.
+ * <p>
+ * The {@code celtium.debug.*} family is only partly consolidated, and the split is stated here because
+ * it is invisible from any single call site: of the debug switches, exactly two ({@code buildFlow} and
+ * {@code markTrace}) are read through this class. The rest - 48 distinct keys as of 2026-11-21 - are
+ * still read directly from {@code -Dceltium.debug.*} at their call sites, take effect with or without
+ * the master switch, and never consult the harness file: naming one of them in the file does nothing.
+ * That is the current semantics, documented rather than changed (bughunt 09-02): routing those readers
+ * through here would put them behind the master switch and change when they fire. So the route a given
+ * switch takes is decided by its reader - if the reader calls this class, the file works; if it reads
+ * {@code celtium.debug.*} itself, only the command line works.
  * <p>
  * Per-leg variation lives in a file, not on the command line: {@code celtium-harness.properties} in the
  * process working directory (the fixture's run directory), or in its {@code config} subdirectory. Keys are
- * the short names - the property name with its {@code celtium.validation.} / {@code celtium.vulkan.} /
- * {@code celtium.debug.} prefix removed - so {@code frameBudgetLines=2000} is what
+ * the short names - the property name with its {@code celtium.validation.} / {@code celtium.vulkan.}
+ * prefix removed (and, for the two debug traces named above, the {@code celtium.debug.} prefix) - so
+ * {@code frameBudgetLines=2000} is what
  * {@code -Dceltium.vulkan.frameBudgetLines=2000} used to say. The file is read once, lazily, and a missing
  * or unreadable file is simply an empty one: the harness profile below is the standard leg, and the file
  * exists for the legs that differ from it (measurement legs turn the frame budget on and the periodic dumps
@@ -33,7 +43,11 @@ import java.util.Properties;
  */
 public final class HarnessConfig {
 
-    /** The master switch, and the only test-related system property read anywhere in the tree. */
+    /**
+     * The master switch, and the only {@code celtium.validation} property read anywhere in the tree.
+     * It is not the only test-related property read in the tree: the unconsolidated
+     * {@code celtium.debug.*} switches (see the class javadoc) are read directly at their call sites.
+     */
     private static final String MASTER_PROPERTY = "celtium.validation";
 
     private HarnessConfig() {
