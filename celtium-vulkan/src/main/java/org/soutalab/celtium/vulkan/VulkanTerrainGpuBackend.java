@@ -14880,7 +14880,7 @@ this.frameBufferOpen = false;
      */
     @Override
     public java.util.Set<org.embeddedt.embeddium.impl.render.chunk.RenderSection> consumeFailedUploads() {
-        if (this.terrain.isEmpty()) {
+        if (this.terrain.failedUploadsEmpty()) {
             return java.util.Collections.emptySet();
         }
         java.util.Set<org.embeddedt.embeddium.impl.render.chunk.RenderSection> drained =
@@ -14895,7 +14895,10 @@ this.frameBufferOpen = false;
         // The region manager owns region lifetime (creating regions for loaded chunks and dropping empty ones).
         // It is reused unchanged; the Vulkan arenas are released for the regions it has dropped.
         this.regionManager.update();
-        if (this.terrain.isEmpty()) {
+        // The guard is on regions with resources, not on the failed-upload set: that set is drained by
+        // consumeFailedUploads after every upload, so testing it here returned early on every ordinary frame and
+        // the eviction loop below never ran - dropped regions kept their arenas until releaseAll at world end.
+        if (this.terrain.regionCount() == 0) {
             return;
         }
         Set<RenderRegion> live = Collections.newSetFromMap(new IdentityHashMap<RenderRegion, Boolean>());
