@@ -51,6 +51,8 @@ final class VulkanTextureArray {
         return map;
     }
     private int nextIndex;
+    private long lastKey = Long.MIN_VALUE;
+    private int lastIndex = -1;
     private long descriptorsWritten;
     private long writesCoalesced;
     private boolean fullReported;
@@ -129,7 +131,16 @@ final class VulkanTextureArray {
         if (this.set == VK_NULL_HANDLE || texture == null || !texture.hasFullContent()) {
             return -1;
         }
-        return this.indexByKey.get(texture.key());
+        long key = texture.key();
+        if (key == this.lastKey && this.lastIndex >= 0) {
+            return this.lastIndex;
+        }
+        int known = this.indexByKey.get(key);
+        if (known >= 0) {
+            this.lastKey = key;
+            this.lastIndex = known;
+        }
+        return known;
     }
 
     /** {@return the index this wrapper occupies, registering it on first use; -1 when the array is full or absent}. */
@@ -137,8 +148,14 @@ final class VulkanTextureArray {
         if (this.set == VK_NULL_HANDLE || texture == null || !texture.hasFullContent()) {
             return -1;
         }
-        int known = this.indexByKey.get(texture.key());
+        long key = texture.key();
+        if (key == this.lastKey && this.lastIndex >= 0) {
+            return this.lastIndex;
+        }
+        int known = this.indexByKey.get(key);
         if (known >= 0) {
+            this.lastKey = key;
+            this.lastIndex = known;
             return known;
         }
         if (this.nextIndex >= CAPACITY) {
@@ -150,7 +167,9 @@ final class VulkanTextureArray {
             return -1;
         }
         int index = this.nextIndex++;
-        this.indexByKey.put(texture.key(), index);
+        this.indexByKey.put(key, index);
+        this.lastKey = key;
+        this.lastIndex = index;
         write(stack, index, texture);
         return index;
     }
@@ -206,5 +225,7 @@ final class VulkanTextureArray {
         this.set = VK_NULL_HANDLE;
         this.indexByKey.clear();
         this.nextIndex = 0;
+        this.lastKey = Long.MIN_VALUE;
+        this.lastIndex = -1;
     }
 }

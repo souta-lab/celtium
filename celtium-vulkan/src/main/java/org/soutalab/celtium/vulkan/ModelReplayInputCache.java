@@ -42,19 +42,22 @@ final class ModelReplayInputCache {
         if (modelView == null || modelView.length < 11 || rotation == null || rotation.length < ROTATION_FLOATS) {
             return false;
         }
-        for (int i = 0; i < ROTATION_FLOATS; i++) {
-            if (modelView[ROTATION[i]] != rotation[i]) {
-                return false;
-            }
-        }
-        return true;
+        return modelView[0] == rotation[0] && modelView[1] == rotation[1] && modelView[2] == rotation[2]
+                && modelView[4] == rotation[3] && modelView[5] == rotation[4] && modelView[6] == rotation[5]
+                && modelView[8] == rotation[6] && modelView[9] == rotation[7] && modelView[10] == rotation[8];
     }
 
     /** Copies the nine rotation floats the payload is built from, so its inputs are named in one place. */
     static void copyRotation(float[] modelView, float[] out) {
-        for (int i = 0; i < ROTATION_FLOATS; i++) {
-            out[i] = modelView[ROTATION[i]];
-        }
+        out[0] = modelView[0];
+        out[1] = modelView[1];
+        out[2] = modelView[2];
+        out[3] = modelView[4];
+        out[4] = modelView[5];
+        out[5] = modelView[6];
+        out[6] = modelView[8];
+        out[7] = modelView[9];
+        out[8] = modelView[10];
     }
 
     /**
@@ -103,9 +106,16 @@ final class ModelReplayInputCache {
 
     /** Records the inputs the payload was just built from. */
     void noteLightPayload(long generation, float[] modelView) {
-        for (int i = 0; i < ROTATION_FLOATS; i++) {
-            this.lightRotation[i] = modelView[ROTATION[i]];
-        }
+        float[] dst = this.lightRotation;
+        dst[0] = modelView[0];
+        dst[1] = modelView[1];
+        dst[2] = modelView[2];
+        dst[3] = modelView[4];
+        dst[4] = modelView[5];
+        dst[5] = modelView[6];
+        dst[6] = modelView[8];
+        dst[7] = modelView[9];
+        dst[8] = modelView[10];
         this.lightGeneration = generation;
         this.lightValid = true;
     }
@@ -114,12 +124,10 @@ final class ModelReplayInputCache {
         if (modelView == null || modelView.length < 11) {
             return false;
         }
-        for (int i = 0; i < ROTATION_FLOATS; i++) {
-            if (modelView[ROTATION[i]] != this.lightRotation[i]) {
-                return false;
-            }
-        }
-        return true;
+        float[] rot = this.lightRotation;
+        return modelView[0] == rot[0] && modelView[1] == rot[1] && modelView[2] == rot[2]
+                && modelView[4] == rot[3] && modelView[5] == rot[4] && modelView[6] == rot[5]
+                && modelView[8] == rot[6] && modelView[9] == rot[7] && modelView[10] == rot[8];
     }
 
     /**

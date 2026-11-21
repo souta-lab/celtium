@@ -86,7 +86,8 @@ public final class VulkanGlState {
      * 506 reached the "no mirror" refusal with no bind site anywhere, and this map is the layer that cannot be
      * bypassed. One stack walk per new name; repeat binds cost a map lookup.
      */
-    private final java.util.Map<Integer, String> firstBindSites = new java.util.HashMap<Integer, String>();
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<String> firstBindSites =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<String>();
     private static final int MAX_BIND_SITES = 4096;
 
     /** Matrix mode identifiers, matching the values Minecraft passes around. */
@@ -185,11 +186,15 @@ public final class VulkanGlState {
      */
     public void pushMatrix() {
         ArrayDeque<float[]> stack = stack(this.matrixMode);
-        float[] pushed = this.matrixScratchPool.poll();
-        if (pushed == null) {
+        float[] pushed;
+        if (this.matrixScratchPoolSize > 0) {
+            int idx = --this.matrixScratchPoolSize;
+            pushed = this.matrixScratchPool[idx];
+            this.matrixScratchPool[idx] = null;
+        } else {
             pushed = new float[MATRIX_FLOATS];
         }
-        System.arraycopy(top(this.matrixMode), 0, pushed, 0, MATRIX_FLOATS);
+        System.arraycopy(stack.peek(), 0, pushed, 0, MATRIX_FLOATS);
         stack.push(pushed);
         noteMatrixMutation();
     }
@@ -198,8 +203,8 @@ public final class VulkanGlState {
         ArrayDeque<float[]> stack = stack(this.matrixMode);
         if (stack.size() > 1) {
             float[] popped = stack.pop();
-            if (popped != null && this.matrixScratchPool.size() < MATRIX_POOL_LIMIT) {
-                this.matrixScratchPool.push(popped);
+            if (popped != null && this.matrixScratchPoolSize < MATRIX_POOL_LIMIT) {
+                this.matrixScratchPool[this.matrixScratchPoolSize++] = popped;
             }
             noteMatrixMutation();
         }
@@ -278,9 +283,10 @@ public final class VulkanGlState {
         if (length == 0.0) {
             return;
         }
-        double nx = x / length;
-        double ny = y / length;
-        double nz = z / length;
+        double invLen = 1.0 / length;
+        double nx = x * invLen;
+        double ny = y * invLen;
+        double nz = z * invLen;
         float c = (float) Math.cos(radians);
         float s = (float) Math.sin(radians);
         float t = 1.0f - c;
@@ -356,8 +362,9 @@ public final class VulkanGlState {
         if (matrix == null || matrix.length < MATRIX_FLOATS) {
             throw new IllegalArgumentException("a matrix must have at least " + MATRIX_FLOATS + " floats");
         }
-        multiply(top(this.matrixMode), matrix, this.multiplyResult);
-        System.arraycopy(this.multiplyResult, 0, top(this.matrixMode), 0, MATRIX_FLOATS);
+        float[] top = top(this.matrixMode);
+        multiply(top, matrix, this.multiplyResult);
+        System.arraycopy(this.multiplyResult, 0, top, 0, MATRIX_FLOATS);
         noteMatrixMutation();
     }
 
@@ -923,8 +930,8 @@ public final class VulkanGlState {
         // bind - including the ones the font path issues per glyph - and the size check came *after* the lookup, so the
         // cost stayed after the table was full. Off unless diagnostics are asked for, and the size check first.
         if (glTextureId != 0 && VulkanDiagnostics.enabled() && this.firstBindSites.size() < MAX_BIND_SITES
-                && !this.firstBindSites.containsKey(Integer.valueOf(glTextureId))) {
-            this.firstBindSites.put(Integer.valueOf(glTextureId), bindSite());
+                && !this.firstBindSites.containsKey(glTextureId)) {
+            this.firstBindSites.put(glTextureId, bindSite());
         }
     }
 
@@ -934,7 +941,7 @@ public final class VulkanGlState {
      * records never saw.
      */
     public String firstBindSite(int glTextureId) {
-        String site = this.firstBindSites.get(Integer.valueOf(glTextureId));
+        String site = this.firstBindSites.get(glTextureId);
         return site == null ? "none" : site;
     }
 
@@ -1116,8 +1123,9 @@ public final class VulkanGlState {
     }
 
     /** Recycled matrix slots for {@link #pushMatrix()}, bounded so a deep stack cannot pin memory. */
-    private final ArrayDeque<float[]> matrixScratchPool = new ArrayDeque<float[]>();
     private static final int MATRIX_POOL_LIMIT = 64;
+    private final float[][] matrixScratchPool = new float[MATRIX_POOL_LIMIT][];
+    private int matrixScratchPoolSize;
 
     private float[] top(int mode) {
         return stack(mode).peek();

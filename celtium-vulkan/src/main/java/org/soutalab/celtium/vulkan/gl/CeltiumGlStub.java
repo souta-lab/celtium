@@ -560,8 +560,10 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** The serial every filed level write takes its number from; see {@link TexCapture#serial}. */
     private final java.util.concurrent.atomic.AtomicLong texUploadSerial =
             new java.util.concurrent.atomic.AtomicLong();
-    private final java.util.Set<Long> liveSync = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
-    private final java.util.Set<Integer> liveNames = new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet liveSync =
+            new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+    private final it.unimi.dsi.fastutil.ints.IntOpenHashSet liveNames =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     /**
      * The GL state tables are open-addressed primitive maps, not ConcurrentHashMaps: every read and write happens on
      * the render thread by GL contract (the stub's callbacks are invoked by the backend there, never by a worker),
@@ -784,7 +786,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * whose program is already 0 by the time it is drawn, leaves no line at all, and "the composite never drew" and
      * "the composite drew and was refused" are different findings. This census is the one that tells them apart.
      */
-    private final java.util.Set<Integer> celtium$programDraws = new java.util.HashSet<Integer>();
+    private final it.unimi.dsi.fastutil.ints.IntOpenHashSet celtium$programDraws =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     /**
      * The programs {@code glUseProgram} has bound, so the first bind of each is reported once with its call site.
      * <p>
@@ -792,7 +795,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * all, and by whom". They are different findings and the GTCEu bloom investigation needed both: the draw census was
      * empty because the bind itself never reached the stub.
      */
-    private final java.util.Set<Integer> celtium$programBinds = new java.util.HashSet<Integer>();
+    private final it.unimi.dsi.fastutil.ints.IntOpenHashSet celtium$programBinds =
+            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     /** The last name {@code GlStateManager.bindTexture} named. See {@link #celtium$noteBoundTexture}. */
     private volatile int lastBoundTexture = -1;
     /** {@code GL_COMPILE_AND_EXECUTE}: the commands are recorded and also executed as they arrive}. */
@@ -6985,7 +6989,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         stub.currentProgram = program;
-        if (program != 0 && stub.celtium$programBinds.add(Integer.valueOf(program))) {
+        if (program != 0 && stub.celtium$programBinds.add(program)) {
             System.out.println("[Celtium] CELTIUM_PROGRAM_BOUND program=" + program
                     + " site=[" + celtium$callSite() + "]");
         }
@@ -10027,7 +10031,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (reason == null) {
             celtium$noteClientTuple(clientMemory, buffer, count, formatId);
         }
-        if (this.currentProgram != 0 && this.celtium$programDraws.add(Integer.valueOf(this.currentProgram))) {
+        if (this.currentProgram != 0 && this.celtium$programDraws.add(this.currentProgram)) {
             System.out.println("[Celtium] CELTIUM_PROGRAM_DRAW program=" + this.currentProgram + " mode=" + mode
                     + " count=" + count + " format=" + formatId + " reason=" + reason);
         }

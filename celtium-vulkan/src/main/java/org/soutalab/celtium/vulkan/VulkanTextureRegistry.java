@@ -1341,23 +1341,42 @@ public final class VulkanTextureRegistry {
      * @return the number of texels written
      */
     public static int toRgba(int[][] data, int level, int width, int height, java.nio.ByteBuffer out) {
-        int[] texels = data != null && level >= 0 && level < data.length && data[level] != null ? data[level]
-                : new int[0];
-        int written = 0;
-        // One int per texel in the buffer's own byte order, laid out so the bytes land as R, G, B, A - the same four
-        // bytes the per-byte puts wrote, at a quarter of the checked calls.
+        if (width <= 0 || height <= 0) {
+            return 0;
+        }
+        int total = width * height;
+        int[] texels = data != null && level >= 0 && level < data.length ? data[level] : null;
+        int available = texels == null ? 0 : Math.min(total, texels.length);
+        // Fast path for direct buffers on little-endian hosts: writes [R, G, B, A] bytes directly as native 0xAABBGGRR
+        // without per-texel ByteBuffer bounds checks or Integer.reverseBytes.
+        if (out.isDirect() && java.nio.ByteOrder.nativeOrder() == java.nio.ByteOrder.LITTLE_ENDIAN
+                && (long) out.remaining() >= ((long) total << 2)) {
+            long addr = org.lwjgl.system.MemoryUtil.memAddress(out);
+            for (int i = 0; i < available; i++) {
+                int argb = texels[i];
+                int abgr = (argb & 0xFF00FF00) | ((argb & 0x00FF0000) >>> 16) | ((argb & 0x000000FF) << 16);
+                org.lwjgl.system.MemoryUtil.memPutInt(addr + ((long) i << 2), abgr);
+            }
+            if (available < total) {
+                org.lwjgl.system.MemoryUtil.memSet(addr + ((long) available << 2), 0, (long) (total - available) << 2);
+            }
+            out.position(out.position() + (total << 2));
+            return total;
+        }
+        // Fallback for heap buffers, big-endian hosts, or undersized buffers (preserves BufferOverflowException).
         boolean little = out.order() == java.nio.ByteOrder.LITTLE_ENDIAN;
-        for (int row = 0; row < height; row++) {
-            for (int col = 0; col < width; col++) {
-                int texel = row * width + col;
-                int argb = texel < texels.length ? texels[texel] : 0;
+        for (int i = 0; i < total; i++) {
+            int argb = i < available ? texels[i] : 0;
+            if (little) {
+                int abgr = (argb & 0xFF00FF00) | ((argb & 0x00FF0000) >>> 16) | ((argb & 0x000000FF) << 16);
+                out.putInt(abgr);
+            } else {
                 int rgba = ((argb >> 16) & 0xFF) << 24 | ((argb >> 8) & 0xFF) << 16 | (argb & 0xFF) << 8
                         | ((argb >>> 24) & 0xFF);
-                out.putInt(little ? Integer.reverseBytes(rgba) : rgba);
-                written++;
+                out.putInt(rgba);
             }
         }
-        return written;
+        return total;
     }
 
     /**
@@ -1588,25 +1607,33 @@ public final class VulkanTextureRegistry {
      */
     private void logPatchLevelContract(int glTextureId, int width, int height, int x, int y, int appliedLevels,
             int producerDepth, int mirrorLevels) {
-        Integer id = Integer.valueOf(glTextureId);
-        Integer seen = this.patchLevelLogged.get(id);
-        int count = seen == null ? 0 : seen.intValue();
-        // The first few patches of a texture, not just the first: the census is cumulative, so one sample cannot show
-        // the levels catching up across an animation.
-        if (count >= 3 || this.patchLevelLogged.size() >= 8 && seen == null) {
+        if (this.patchLevelLogDone) {
             return;
         }
-        this.patchLevelLogged.put(id, Integer.valueOf(count + 1));
+        int count = this.patchLevelLogged.get(glTextureId);
+        // The first few patches of a texture, not just the first: the census is cumulative, so one sample cannot show
+        // the levels catching up across an animation.
+        if (count >= 3 || (count == 0 && this.patchLevelLogged.size() >= 8)) {
+            return;
+        }
+        int next = count + 1;
+        this.patchLevelLogged.put(glTextureId, next);
+        if (next == 3 && ++this.patchLevelLoggedSaturated >= 8) {
+            this.patchLevelLogDone = true;
+        }
         System.out.println("[Celtium] CELTIUM_MIRROR_PATCH glTexture=" + glTextureId + " region=" + width + "x" + height
                 + " at " + x + "," + y + " producerDepth=" + producerDepth + " appliedLevels=" + appliedLevels
-                + " mirrorLevels=" + mirrorLevels + " patch#" + (count + 1)
+                + " mirrorLevels=" + mirrorLevels + " patch#" + next
                 + " (each applied level is written at x>>level,width>>level; a level above the producer's chain is"
                 + " outside this sprite and is not what the sampler reads at this LOD clamp)"
                 + " census[" + VulkanGlTexture.mirrorLevelSummary() + "]");
     }
 
     /** GL names whose per-level patch contract has been printed, with how many times, so an animation cannot flood the log. */
-    private final java.util.Map<Integer, Integer> patchLevelLogged = new java.util.HashMap<Integer, Integer>();
+    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap patchLevelLogged =
+            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+    private int patchLevelLoggedSaturated;
+    private boolean patchLevelLogDone;
 
     /**
      * Reports a refused patch once per reason.
