@@ -78,6 +78,47 @@ class PublishedFrameTexturesSlotsTest {
     }
 
     @Test
+    void aSharedColourTextureSurvivesTheNamedOwnerRebindingAway() {
+        PublishedFrameTextures record = new PublishedFrameTextures();
+        record.bindColorTexture(42L, 100, 256, 256);
+        record.bindColorTexture(43L, 100, 256, 256);
+        record.bindColorTexture(43L, 300, 256, 256);
+        assertEquals(42L, record.identityForColorTexture(100),
+                "the reverse moves to the surviving owner instead of going absent");
+        assertEquals(100, record.colorTextureName(42L), "the surviving owner's record is untouched");
+        assertEquals(300, record.colorTextureName(43L));
+    }
+
+    @Test
+    void forgettingASharedColourTextureDropsEveryRecord() {
+        PublishedFrameTextures record = new PublishedFrameTextures();
+        record.bindColorTexture(42L, 100, 256, 256);
+        record.bindColorTexture(43L, 100, 256, 256);
+        record.forgetColorTexture(100);
+        assertEquals(0, record.colorTextureName(42L),
+                "no owner keeps a record naming the deleted texture");
+        assertEquals(0, record.colorTextureName(43L));
+        assertEquals(Long.MIN_VALUE, record.identityForColorTexture(100));
+    }
+
+    @Test
+    void aSlotTextureSharedByTwoTuplesSurvivesOneTupleRebinding() {
+        PublishedFrameTextures record = new PublishedFrameTextures();
+        record.bindColorTexture(42L, 100, 256, 256);
+        record.bindColorTexture(43L, 200, 256, 256);
+        record.bindColorAttachments(42L, new int[] {100, 101, 0, 0, 0, 0, 0, 0});
+        record.bindColorAttachments(43L, new int[] {200, 101, 0, 0, 0, 0, 0, 0});
+        record.bindColorAttachments(43L, new int[] {200, 201, 0, 0, 0, 0, 0, 0});
+        assertEquals(101, record.colorTextureAt(42L, 1), "the surviving tuple still carries the name");
+        assertEquals(42L, record.slotIdentityForColorTexture(101),
+                "the slot reverse moves to the surviving tuple instead of going absent");
+        assertEquals(1, record.attachmentSlotForTexture(101));
+        record.forgetColorTexture(101);
+        assertEquals(0, record.colorTextureAt(42L, 1), "forgetting the name clears it from every tuple");
+        assertEquals(-1, record.attachmentSlotForTexture(101));
+    }
+
+    @Test
     void tuplesArePerIdentity() {
         PublishedFrameTextures record = new PublishedFrameTextures();
         record.bindColorTexture(42L, 100, 256, 256);
