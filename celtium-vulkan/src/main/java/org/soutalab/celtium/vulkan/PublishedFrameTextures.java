@@ -404,47 +404,107 @@ final class PublishedFrameTextures {
      * framebuffer's depth it is, and a depth copy asks the same for its read framebuffer). A zero name
      * clears the identity's entry.
      */
-    // Plain maps, not fastutil: this class is one of the sources the CI probe job compiles standalone
-    // (javac --release 21, no dependency jars) for the GPU-independent contract checks, so it must not
-    // import anything outside the JDK and its named companions. The record holds a handful of
-    // framebuffers, so boxing costs nothing measurable.
-    private final java.util.HashMap<Long, Integer> depthTextureByIdentity = new java.util.HashMap<>();
+    // Primitive arrays + direct-indexed table (no external imports so standalone javac contract checks still compile):
+    // eliminates Long/Integer boxing on every bindDepthTexture / depthTexture / identityForDepthTexture call.
+    private long[] depthFbIdentities = new long[16];
+    private int[] depthFbTextures = new int[16];
+    private int depthFbCount;
+    private long lastDepthFbIdentity = Long.MIN_VALUE;
+    private int lastDepthFbTex;
 
-    /** Reverse of {@link #depthTextureByIdentity}; absent reads as {@link Long#MIN_VALUE}. */
-    private final java.util.HashMap<Integer, Long> identityByDepthTexture = new java.util.HashMap<>();
+    /** Direct-indexed reverse table mapping depth GL texture name -> framebuffer identity (Long.MIN_VALUE when absent). */
+    private volatile long[] identityByDepthTexId = createIdentityTable(4096);
+
+    private void setIdentityForDepthTexture(int glTextureName, long identity) {
+        if (glTextureName <= 0) {
+            return;
+        }
+        long[] table = this.identityByDepthTexId;
+        if (glTextureName >= table.length) {
+            int nextLen = Math.max(table.length * 2, glTextureName + 1);
+            long[] grown = Arrays.copyOf(table, nextLen);
+            Arrays.fill(grown, table.length, nextLen, Long.MIN_VALUE);
+            table = grown;
+            this.identityByDepthTexId = table;
+        }
+        table[glTextureName] = identity;
+    }
 
     /** Records a framebuffer's depth attachment. A zero name clears the entry. */
     synchronized void bindDepthTexture(long framebufferIdentity, int depthTexture) {
-        Integer previousBoxed = this.depthTextureByIdentity.get(framebufferIdentity);
-        int previous = previousBoxed == null ? 0 : previousBoxed;
+        int existingIndex = -1;
+        int previous = 0;
+        for (int i = 0; i < this.depthFbCount; i++) {
+            if (this.depthFbIdentities[i] == framebufferIdentity) {
+                existingIndex = i;
+                previous = this.depthFbTextures[i];
+                break;
+            }
+        }
         if (previous == depthTexture) {
             return;
         }
-        Long reverse = previous == 0 ? null : this.identityByDepthTexture.get(previous);
-        if (reverse != null && reverse == framebufferIdentity) {
-            this.identityByDepthTexture.remove(previous);
+        if (previous != 0 && identityForDepthTexture(previous) == framebufferIdentity) {
+            setIdentityForDepthTexture(previous, Long.MIN_VALUE);
         }
         if (depthTexture == 0) {
-            this.depthTextureByIdentity.remove(framebufferIdentity);
+            if (existingIndex >= 0) {
+                int last = --this.depthFbCount;
+                if (existingIndex != last) {
+                    this.depthFbIdentities[existingIndex] = this.depthFbIdentities[last];
+                    this.depthFbTextures[existingIndex] = this.depthFbTextures[last];
+                }
+                if (this.lastDepthFbIdentity == framebufferIdentity) {
+                    this.lastDepthFbIdentity = Long.MIN_VALUE;
+                    this.lastDepthFbTex = 0;
+                }
+            }
             return;
         }
-        this.depthTextureByIdentity.put(framebufferIdentity, depthTexture);
-        this.identityByDepthTexture.put(depthTexture, framebufferIdentity);
+        if (existingIndex >= 0) {
+            this.depthFbTextures[existingIndex] = depthTexture;
+        } else {
+            if (this.depthFbCount == this.depthFbIdentities.length) {
+                int nextCap = this.depthFbIdentities.length * 2;
+                this.depthFbIdentities = Arrays.copyOf(this.depthFbIdentities, nextCap);
+                this.depthFbTextures = Arrays.copyOf(this.depthFbTextures, nextCap);
+            }
+            this.depthFbIdentities[this.depthFbCount] = framebufferIdentity;
+            this.depthFbTextures[this.depthFbCount] = depthTexture;
+            this.depthFbCount++;
+        }
+        this.lastDepthFbIdentity = framebufferIdentity;
+        this.lastDepthFbTex = depthTexture;
+        setIdentityForDepthTexture(depthTexture, framebufferIdentity);
     }
 
     /** {@return the depth texture name recorded for an identity, or 0 when there is none}. */
     synchronized int depthTexture(long identity) {
-        Integer recorded = this.depthTextureByIdentity.get(identity);
-        return recorded == null ? 0 : recorded;
+        if (identity == this.lastDepthFbIdentity) {
+            return this.lastDepthFbTex;
+        }
+        for (int i = 0; i < this.depthFbCount; i++) {
+            if (this.depthFbIdentities[i] == identity) {
+                int found = this.depthFbTextures[i];
+                this.lastDepthFbIdentity = identity;
+                this.lastDepthFbTex = found;
+                return found;
+            }
+        }
+        return 0;
     }
 
     /** {@return the framebuffer identity whose depth attachment carries this GL texture name}, or {@code MIN_VALUE}. */
-    synchronized long identityForDepthTexture(int glTextureName) {
+    long identityForDepthTexture(int glTextureName) {
         if (glTextureName <= 0) {
             return Long.MIN_VALUE;
         }
-        Long identity = this.identityByDepthTexture.get(glTextureName);
-        return identity == null || identity == 0L ? Long.MIN_VALUE : identity;
+        long[] table = this.identityByDepthTexId;
+        if (glTextureName >= table.length) {
+            return Long.MIN_VALUE;
+        }
+        long identity = table[glTextureName];
+        return identity == 0L ? Long.MIN_VALUE : identity;
     }
 
     /** Drops every depth record naming this GL texture (it was deleted or its name reused). */

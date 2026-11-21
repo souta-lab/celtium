@@ -406,9 +406,13 @@ public final class VulkanContext {
     /** Reclaimed entries wait here for the next submission; the fields are cleared before an entry returns. */
     private final java.util.ArrayDeque<DeferredSubmit> deferredEntryPool = new java.util.ArrayDeque<DeferredSubmit>();
     private static final int DEFERRED_ENTRY_POOL_CAP = 256;
+    /** Reclaimed SharedBatch holders, avoiding per-flush allocation. */
+    private final java.util.ArrayDeque<SharedBatch> sharedBatchPool = new java.util.ArrayDeque<SharedBatch>();
+    private static final int SHARED_BATCH_POOL_CAP = 32;
     /** Reset fences ready to arm the next deferred submission; bounded so an idle run does not hoard them. */
-    private final java.util.ArrayDeque<Long> idleDeferredFences = new java.util.ArrayDeque<Long>();
     private static final int IDLE_DEFERRED_FENCE_CAP = 16;
+    private final long[] idleDeferredFences = new long[IDLE_DEFERRED_FENCE_CAP];
+    private int idleDeferredFenceCount;
     private int deferredSubmitsOutstanding;
     private int deferredSubmitsPeak;
     private long deferredReclaims;
@@ -1125,9 +1129,8 @@ public final class VulkanContext {
      * is destroyed at reclaim instead of hoarded.
      */
     private long celtium$borrowDeferredFence() {
-        Long pooled = this.idleDeferredFences.poll();
-        if (pooled != null) {
-            return pooled.longValue();
+        if (this.idleDeferredFenceCount > 0) {
+            return this.idleDeferredFences[--this.idleDeferredFenceCount];
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer handle = stack.mallocLong(1);
@@ -1242,11 +1245,17 @@ public final class VulkanContext {
             // The fence is the batch's: armed once for every entry it carried, it returns to the pool only when the
             // last entry reclaims - pooling it early would let a new submission arm a fence older entries still
             // complete against.
-            entry.batch.pending--;
-            if (entry.batch.pending == 0) {
-                entry.fence = entry.batch.fence;
+            SharedBatch completedBatch = entry.batch;
+            completedBatch.pending--;
+            if (completedBatch.pending == 0) {
+                entry.fence = completedBatch.fence;
                 entry.batch = null;
-                if (this.quarantinedFences.contains(Long.valueOf(entry.fence))) {
+                if (completedBatch != this.pendingBatch && completedBatch != this.presenterBatch
+                        && this.sharedBatchPool.size() < SHARED_BATCH_POOL_CAP) {
+                    completedBatch.fence = VK_NULL_HANDLE;
+                    this.sharedBatchPool.addLast(completedBatch);
+                }
+                if (!this.quarantinedFences.isEmpty() && this.quarantinedFences.contains(Long.valueOf(entry.fence))) {
                     // A sibling entry of this batch timed out and quarantined the shared fence: the quarantine
                     // set owns it until teardown's device-wide wait, so it is neither reset nor pooled here.
                     entry.fence = VK_NULL_HANDLE;
@@ -1256,7 +1265,7 @@ public final class VulkanContext {
             }
         }
         int reset = org.lwjgl.vulkan.VK10.VK_SUCCESS;
-        if (entry.fence != VK_NULL_HANDLE && this.idleDeferredFences.size() < IDLE_DEFERRED_FENCE_CAP) {
+        if (entry.fence != VK_NULL_HANDLE && this.idleDeferredFenceCount < IDLE_DEFERRED_FENCE_CAP) {
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 LongBuffer handle = stack.mallocLong(1);
                 handle.put(0, entry.fence);
@@ -1264,19 +1273,21 @@ public final class VulkanContext {
             }
         }
         if (entry.fence != VK_NULL_HANDLE) {
-            if (reset == org.lwjgl.vulkan.VK10.VK_SUCCESS && this.idleDeferredFences.size() < IDLE_DEFERRED_FENCE_CAP) {
-                this.idleDeferredFences.add(Long.valueOf(entry.fence));
+            if (reset == org.lwjgl.vulkan.VK10.VK_SUCCESS && this.idleDeferredFenceCount < IDLE_DEFERRED_FENCE_CAP) {
+                this.idleDeferredFences[this.idleDeferredFenceCount++] = entry.fence;
             } else {
                 vkDestroyFence(this.device, entry.fence, null);
             }
         }
         long mask = entry.uploadSlotMask;
-        for (int slot = 0; slot < UPLOAD_SLOT_COUNT; slot++) {
-            if ((mask & (1L << slot)) != 0L) {
-                this.uploadSlotFree[slot] = true;
+        if (mask != 0L) {
+            for (int slot = 0; slot < UPLOAD_SLOT_COUNT; slot++) {
+                if ((mask & (1L << slot)) != 0L) {
+                    this.uploadSlotFree[slot] = true;
+                }
             }
+            entry.uploadSlotMask = 0L;
         }
-        entry.uploadSlotMask = 0L;
         this.deferredSubmitsOutstanding--;
         this.deferredReclaims++;
         noteCompletionConfirmed(lostDevice);
@@ -1303,9 +1314,19 @@ public final class VulkanContext {
     /** {@return the batch the next deferred submit joins, borrowing a fence on first use}. */
     private SharedBatch celtium$currentBatch() {
         if (this.pendingBatch == null) {
-            this.pendingBatch = new SharedBatch();
-            this.pendingBatch.fence = celtium$borrowDeferredFence();
-            this.pendingBatch.serial = ++this.batchSerialSequence;
+            SharedBatch batch = this.sharedBatchPool.pollFirst();
+            if (batch == null) {
+                batch = new SharedBatch();
+            } else {
+                batch.pending = 0;
+                batch.submittedNanos = 0L;
+                batch.frameEntries = 0;
+                batch.deferredEntries = 0;
+                batch.semaphoreEntries = 0;
+            }
+            batch.fence = celtium$borrowDeferredFence();
+            batch.serial = ++this.batchSerialSequence;
+            this.pendingBatch = batch;
         }
         return this.pendingBatch;
     }
@@ -2346,10 +2367,10 @@ public final class VulkanContext {
                             + " confirm idle) and were dropped; the resources are left to the process teardown");
                 }
             }
-            for (Long pooledFence : this.idleDeferredFences) {
-                vkDestroyFence(this.device, pooledFence.longValue(), null);
+            for (int i = 0; i < this.idleDeferredFenceCount; i++) {
+                vkDestroyFence(this.device, this.idleDeferredFences[i], null);
             }
-            this.idleDeferredFences.clear();
+            this.idleDeferredFenceCount = 0;
             destroyStaging();
             if (ringDrained) {
                 destroyUploadRing();

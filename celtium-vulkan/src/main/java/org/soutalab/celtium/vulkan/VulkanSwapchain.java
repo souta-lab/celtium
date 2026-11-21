@@ -1443,11 +1443,14 @@ public final class VulkanSwapchain {
             // that lasts a handful of presents is the worst case, against a fifth of a millisecond paid every frame.
             // Time-bounded as well: at several hundred presents a second, every eighth present was still ~16 us a
             // frame, while a resize the framebuffer size does not announce only needs catching within a blink.
-            long capsNow = System.nanoTime();
-            boolean checkCaps = this.capsCheckCountdown <= 0 && capsNow - this.capsCheckedNanos >= CAPS_CHECK_MIN_NANOS;
-            if (checkCaps) {
-                this.capsCheckCountdown = CAPS_CHECK_INTERVAL;
-                this.capsCheckedNanos = capsNow;
+            boolean checkCaps = false;
+            if (this.capsCheckCountdown <= 0) {
+                long capsNow = System.nanoTime();
+                if (capsNow - this.capsCheckedNanos >= CAPS_CHECK_MIN_NANOS) {
+                    checkCaps = true;
+                    this.capsCheckCountdown = CAPS_CHECK_INTERVAL;
+                    this.capsCheckedNanos = capsNow;
+                }
             }
             this.capsCheckCountdown--;
             if (checkCaps) try (org.lwjgl.system.MemoryStack capStack = org.lwjgl.system.MemoryStack.stackPush()) {

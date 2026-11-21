@@ -113,6 +113,8 @@ public final class RenderTargetRegistry {
     /** identity -> the slot it was routed to, with the generation that routing was recorded under. */
     private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<Alias> aliases =
             new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private long lastAliasIdentity = Long.MIN_VALUE;
+    private Alias lastAlias;
     /** The distinct identities the game has bound, bounded; the census the routing rule is read against. */
     private final it.unimi.dsi.fastutil.longs.LongOpenHashSet bindCensus =
             new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
@@ -146,14 +148,18 @@ public final class RenderTargetRegistry {
             this.mainIdentity = identity;
         }
         ImageSlot slot = isMain ? ImageSlot.MAIN : ImageSlot.forNonMainIdentity(identity);
-        Alias existing = this.aliases.get(identity);
+        Alias existing = (identity == this.lastAliasIdentity && this.lastAlias != null)
+                ? this.lastAlias : this.aliases.get(identity);
         if (existing != null) {
             existing.slot = slot;
             existing.main = isMain;
             existing.generation = this.generation;
         } else {
-            this.aliases.put(identity, new Alias(slot, isMain, this.generation));
+            existing = new Alias(slot, isMain, this.generation);
+            this.aliases.put(identity, existing);
         }
+        this.lastAliasIdentity = identity;
+        this.lastAlias = existing;
         if (this.bindCensus.size() < CENSUS_LIMIT) {
             if (this.bindCensus.add(identity) && this.bindCensus.size() == CENSUS_LIMIT) {
                 // The summary is built once, at the point the census stops growing, so the per-bind path stays cheap.
@@ -188,8 +194,16 @@ public final class RenderTargetRegistry {
      * that asks about an identity it has not seen is asking a question about the rule, not about history.
      */
     public ImageSlot slotFor(long identity) {
+        if (identity == this.lastAliasIdentity && this.lastAlias != null) {
+            return this.lastAlias.slot;
+        }
         Alias alias = this.aliases.get(identity);
-        return alias != null ? alias.slot : ImageSlot.forNonMainIdentity(identity);
+        if (alias != null) {
+            this.lastAliasIdentity = identity;
+            this.lastAlias = alias;
+            return alias.slot;
+        }
+        return ImageSlot.forNonMainIdentity(identity);
     }
 
     /**
@@ -258,19 +272,22 @@ public final class RenderTargetRegistry {
 
     // ---------------------------------------------------------------- layout
 
-    /** slot -> {layout, generation it was noted at}. */
-    private final Map<ImageSlot, long[]> layouts = new EnumMap<ImageSlot, long[]>(ImageSlot.class);
+    /** Per-slot layout and generation it was noted at (Long.MIN_VALUE when unrecorded). */
+    private final int[] slotLayout = new int[ImageSlot.values().length];
+    private final long[] slotLayoutGen = createUnrecordedGens(ImageSlot.values().length);
     private int staleLayoutReads;
+
+    private static long[] createUnrecordedGens(int length) {
+        long[] gens = new long[length];
+        java.util.Arrays.fill(gens, Long.MIN_VALUE);
+        return gens;
+    }
 
     /** Records the layout a slot's image is in, at the current generation. */
     public void noteLayout(ImageSlot slot, int layout) {
-        long[] entry = this.layouts.get(slot);
-        if (entry == null) {
-            this.layouts.put(slot, new long[] {layout, this.generation});
-        } else {
-            entry[0] = layout;
-            entry[1] = this.generation;
-        }
+        int ord = slot.ordinal();
+        this.slotLayout[ord] = layout;
+        this.slotLayoutGen[ord] = this.generation;
     }
 
     /**
@@ -281,15 +298,16 @@ public final class RenderTargetRegistry {
      * the failure B10 produced: a layout recorded for the previous frame target read as if it described the new one.
      */
     public int layoutOf(ImageSlot slot) {
-        long[] entry = this.layouts.get(slot);
-        if (entry == null) {
+        int ord = slot.ordinal();
+        long gen = this.slotLayoutGen[ord];
+        if (gen == Long.MIN_VALUE) {
             return -1;
         }
-        if (entry[1] != this.generation) {
+        if (gen != this.generation) {
             this.staleLayoutReads++;
             return -1;
         }
-        return (int) entry[0];
+        return this.slotLayout[ord];
     }
 
     /** {@return how many layout reads were refused as stale}. */
@@ -327,19 +345,19 @@ public final class RenderTargetRegistry {
      * retire the old handle - measured as ~5 settleGpu calls per frame on leg ind2-amd. Compatible framebuffers are
      * all over the same attachments, so keeping them only costs handles.
      */
-    private final Map<ImageSlot, Long2LongOpenHashMap> pairFramebuffers =
-            new EnumMap<ImageSlot, Long2LongOpenHashMap>(ImageSlot.class);
+    private final Long2LongOpenHashMap[] pairFramebuffers =
+            new Long2LongOpenHashMap[ImageSlot.values().length];
     private final int[] pairFramebufferCreationCounts = new int[ImageSlot.values().length];
 
     /** {@return the pair slot's framebuffer built for this render pass, or 0 when it has none}. */
     public long pairFramebuffer(ImageSlot slot, long renderPass) {
-        Long2LongOpenHashMap entry = this.pairFramebuffers.get(slot);
+        Long2LongOpenHashMap entry = this.pairFramebuffers[slot.ordinal()];
         return entry == null ? 0L : entry.get(renderPass);
     }
 
     /** {@return every framebuffer handle the slot holds}, for the destroy paths. */
     public java.util.Collection<Long> pairFramebufferHandles(ImageSlot slot) {
-        Long2LongOpenHashMap entry = this.pairFramebuffers.get(slot);
+        Long2LongOpenHashMap entry = this.pairFramebuffers[slot.ordinal()];
         return entry == null ? java.util.Collections.<Long>emptyList() : entry.values();
     }
 
@@ -350,20 +368,21 @@ public final class RenderTargetRegistry {
 
     /** Records a framebuffer for (slot, renderPass), counting it when it adds a new handle. */
     public void notePairFramebuffer(ImageSlot slot, long handle, long renderPass) {
-        Long2LongOpenHashMap entry = this.pairFramebuffers.get(slot);
+        int ord = slot.ordinal();
+        Long2LongOpenHashMap entry = this.pairFramebuffers[ord];
         if (entry == null) {
             entry = new Long2LongOpenHashMap();
-            this.pairFramebuffers.put(slot, entry);
+            this.pairFramebuffers[ord] = entry;
         }
         if (!entry.containsKey(renderPass)) {
-            this.pairFramebufferCreationCounts[slot.ordinal()]++;
+            this.pairFramebufferCreationCounts[ord]++;
         }
         entry.put(renderPass, handle);
     }
 
     /** Forgets the slot's framebuffers, after they have been destroyed. */
     public void clearPairFramebuffer(ImageSlot slot) {
-        this.pairFramebuffers.remove(slot);
+        this.pairFramebuffers[slot.ordinal()] = null;
     }
 
     // ---------------------------------------------------------------- per-identity chain-pair records
@@ -376,6 +395,9 @@ public final class RenderTargetRegistry {
     /** identity -> render pass -> framebuffer, for the chain pairs. */
     private final Long2ObjectOpenHashMap<Long2LongOpenHashMap> chainPairFramebuffers =
             new Long2ObjectOpenHashMap<Long2LongOpenHashMap>();
+    private long lastChainFbIdentity = Long.MIN_VALUE;
+    private long lastChainFbRenderPass = Long.MIN_VALUE;
+    private long lastChainFbHandle;
     private final Long2IntOpenHashMap chainPairFramebufferCreationCounts = new Long2IntOpenHashMap();
     /** identity -> {frame serial of its last clear, the content identity it then held}. */
     private final Long2ObjectOpenHashMap<long[]> chainPairClears = new Long2ObjectOpenHashMap<long[]>();
@@ -384,8 +406,18 @@ public final class RenderTargetRegistry {
 
     /** {@return the identity's chain-pair framebuffer built for this render pass, or 0 when it has none}. */
     public long chainPairFramebuffer(long identity, long renderPass) {
+        if (identity == this.lastChainFbIdentity && renderPass == this.lastChainFbRenderPass
+                && this.lastChainFbHandle != 0L) {
+            return this.lastChainFbHandle;
+        }
         Long2LongOpenHashMap entry = this.chainPairFramebuffers.get(identity);
-        return entry == null ? 0L : entry.get(renderPass);
+        long handle = entry == null ? 0L : entry.get(renderPass);
+        if (handle != 0L) {
+            this.lastChainFbIdentity = identity;
+            this.lastChainFbRenderPass = renderPass;
+            this.lastChainFbHandle = handle;
+        }
+        return handle;
     }
 
     /** {@return every framebuffer handle one identity's chain pair holds}. */
@@ -432,11 +464,19 @@ public final class RenderTargetRegistry {
             this.chainPairFramebufferCreationCounts.addTo(identity, 1);
         }
         entry.put(renderPass, handle);
+        this.lastChainFbIdentity = identity;
+        this.lastChainFbRenderPass = renderPass;
+        this.lastChainFbHandle = handle;
     }
 
     /** Forgets one identity's chain-pair framebuffers, after they have been destroyed. */
     public void clearChainPairFramebuffer(long identity) {
         this.chainPairFramebuffers.remove(identity);
+        if (this.lastChainFbIdentity == identity) {
+            this.lastChainFbIdentity = Long.MIN_VALUE;
+            this.lastChainFbRenderPass = Long.MIN_VALUE;
+            this.lastChainFbHandle = 0L;
+        }
     }
 
     /** Drops per-target bookkeeping once its owner has deleted the framebuffer. */
@@ -445,12 +485,24 @@ public final class RenderTargetRegistry {
         this.chainPairLayouts.remove(identity);
         this.chainPairFramebufferCreationCounts.remove(identity);
         this.aliases.remove(identity);
+        if (this.lastAliasIdentity == identity) {
+            this.lastAliasIdentity = Long.MIN_VALUE;
+            this.lastAlias = null;
+        }
+        if (this.lastChainFbIdentity == identity) {
+            this.lastChainFbIdentity = Long.MIN_VALUE;
+            this.lastChainFbRenderPass = Long.MIN_VALUE;
+            this.lastChainFbHandle = 0L;
+        }
         this.framebufferNames.int2LongEntrySet().removeIf(entry -> entry.getLongValue() == identity);
     }
 
     /** Forgets every chain-pair framebuffer, after they have been destroyed. */
     public void clearAllChainPairFramebuffers() {
         this.chainPairFramebuffers.clear();
+        this.lastChainFbIdentity = Long.MIN_VALUE;
+        this.lastChainFbRenderPass = Long.MIN_VALUE;
+        this.lastChainFbHandle = 0L;
     }
 
     /** {@return the frame serial the identity's chain pair was last cleared in}, or a value no serial can equal. */
@@ -541,7 +593,7 @@ public final class RenderTargetRegistry {
      */
     public void noteFrameTargetReplaced() {
         this.generation++;
-        this.layouts.clear();
+        java.util.Arrays.fill(this.slotLayoutGen, Long.MIN_VALUE);
         this.chainPairLayouts.clear();
     }
 

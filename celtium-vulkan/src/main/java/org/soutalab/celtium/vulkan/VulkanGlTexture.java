@@ -1965,8 +1965,11 @@ public final class VulkanGlTexture {
                         + levelY + " outside the mirror level " + levelWidth + "x" + levelHeight);
                 return false;
             }
-            long bytes = requiredUploadBytes("mip level " + level + " of a patch at " + x + "," + y, patchWidth,
-                    patchHeight, levels[level]);
+            long bytes = requiredUploadBytesFast(patchWidth, patchHeight, levels[level]);
+            if (bytes < 0L) {
+                bytes = requiredUploadBytes("mip level " + level + " of a patch at " + x + "," + y, patchWidth,
+                        patchHeight, levels[level]);
+            }
             offsets[level] = packed;
             packed += bytes;
         }
@@ -2372,6 +2375,18 @@ public final class VulkanGlTexture {
      * @return the number of bytes the extent needs, as a {@code long} that is known to fit an {@code int}
      * @throws IllegalArgumentException if the buffer cannot supply the declared extent
      */
+    private static long requiredUploadBytesFast(int pixelWidth, int pixelHeight, java.nio.ByteBuffer pixels) {
+        if (pixels == null || pixelWidth <= 0 || pixelHeight <= 0 || !pixels.isDirect()) {
+            return -1L;
+        }
+        long area = (long) pixelWidth * (long) pixelHeight;
+        if (area > (Integer.MAX_VALUE / BYTES_PER_PIXEL)) {
+            return -1L;
+        }
+        long required = area * (long) BYTES_PER_PIXEL;
+        return pixels.remaining() >= (int) required ? required : -1L;
+    }
+
     public static long requiredUploadBytes(String what, int pixelWidth, int pixelHeight, java.nio.ByteBuffer pixels) {
         if (pixels == null) {
             throw new IllegalArgumentException(what + ": no pixel buffer was supplied for a declared extent of "
@@ -2911,6 +2926,10 @@ public final class VulkanGlTexture {
         // confirms; afterwards nothing remains that a late endPatchBatch could record or submit against the
         // handles destroyStaging and destroyImageResources are about to zero (L06-02, the delete() entry).
         if (this.deferredCount > 0 || this.patchBatch != null) submitPatchBatch();
+        if (this.deferredCopyScratch != null) {
+            this.deferredCopyScratch.free();
+            this.deferredCopyScratch = null;
+        }
         this.patchBatching = false;
         this.regionDeferring = false;
         // Deferred uploads made the "caller ensures the device is idle" contract enforceable here: a pending copy
@@ -4082,8 +4101,11 @@ public final class VulkanGlTexture {
         // Every path that reaches the staging buffer goes through the same slice validation: the declared extent must
         // fit the buffer's remaining bytes from its current position, which is where the address the copy takes starts
         // (audit N08). Refused by name, before ensureStaging allocates anything.
-        long bytes = requiredUploadBytes("a whole-image upload of " + pixelWidth + "x" + pixelHeight, pixelWidth,
-                pixelHeight, pixels);
+        long bytes = requiredUploadBytesFast(pixelWidth, pixelHeight, pixels);
+        if (bytes < 0L) {
+            bytes = requiredUploadBytes("a whole-image upload of " + pixelWidth + "x" + pixelHeight, pixelWidth,
+                    pixelHeight, pixels);
+        }
         if (level == 0) {
             // Sighted before the driver: the extent this copy will write, against the image it writes into. The
             // black-screen logs end on a 4096x4224 atlas upload and a GPUVM write fault, so what the next such log
@@ -4432,6 +4454,9 @@ public final class VulkanGlTexture {
     /** Per deferred region: level, x, y, width, height. */
     private int[] deferredRects = new int[5 * 64];
     private long[] deferredOffsets = new long[64];
+    /** Reusable native copy-region scratch for {@link #flushDeferredRegions()}; freed in {@link #delete()}. */
+    private VkBufferImageCopy.Buffer deferredCopyScratch;
+    private int[] deferredLevelCounts = new int[16];
 
     private boolean celtium$levelsSampled(int depth) {
         for (int level = 0; level < depth; level++) {
@@ -4509,22 +4534,44 @@ public final class VulkanGlTexture {
             vkCmdPipelineBarrier(commandBuffer, SAMPLING_STAGES | VK_PIPELINE_STAGE_TRANSFER_BIT,
                     VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
             int[] rects = this.deferredRects;
+            if (this.deferredLevelCounts.length < depth) {
+                this.deferredLevelCounts = new int[depth];
+            }
+            int[] levelCounts = this.deferredLevelCounts;
             for (int level = 0; level < depth; level++) {
-                int regions = 0;
-                for (int i = 0; i < count; i++) {
-                    if (rects[i * 5] == level) {
-                        regions++;
+                levelCounts[level] = 0;
+            }
+            int maxRegions = 0;
+            for (int i = 0; i < count; i++) {
+                int lvl = rects[i * 5];
+                if (lvl >= 0 && lvl < depth) {
+                    int next = ++levelCounts[lvl];
+                    if (next > maxRegions) {
+                        maxRegions = next;
                     }
                 }
-                if (regions == 0) {
-                    continue;
-                }
+            }
+            if (maxRegions > 0) {
                 // Heap, not the MemoryStack: the first animation tick after a stitch flushes every animated sprite
                 // at once (1730 regions over five levels on E2E-E, leg lt1-e2ee-amd), and five levels' arrays on the
                 // 64 KiB stack threw "Out of stack space" after the opening barrier - the mixin swallows it, and the
                 // half-recorded batch was submitted by the next tick: levels 0..4 left in TRANSFER_DST (5x 09600).
-                VkBufferImageCopy.Buffer copies = VkBufferImageCopy.calloc(regions);
-                try {
+                // Reused across ticks and freed in delete() so steady-state animation ticks do not calloc/free per level.
+                VkBufferImageCopy.Buffer copies = this.deferredCopyScratch;
+                if (copies == null || copies.capacity() < maxRegions) {
+                    if (copies != null) {
+                        copies.free();
+                    }
+                    copies = VkBufferImageCopy.calloc(maxRegions);
+                    this.deferredCopyScratch = copies;
+                }
+                for (int level = 0; level < depth; level++) {
+                    int regions = levelCounts[level];
+                    if (regions == 0) {
+                        continue;
+                    }
+                    copies.clear();
+                    copies.limit(regions);
                     int k = 0;
                     for (int i = 0; i < count; i++) {
                         int r = i * 5;
@@ -4540,8 +4587,6 @@ public final class VulkanGlTexture {
                     }
                     vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                             copies);
-                } finally {
-                    copies.free();
                 }
             }
             barrier.get(0).srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)

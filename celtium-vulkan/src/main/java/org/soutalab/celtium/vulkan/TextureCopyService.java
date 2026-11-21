@@ -220,8 +220,70 @@ public final class TextureCopyService {
      * answered from the first frame's content, so the panorama did not move while {@code panoramaTimer} advanced.
      */
     private long textureCopyPresent = -1L;
-    /** The copies served this present, keyed by the exact request, against the content marker they were served at. */
-    private final java.util.Map<String, Long> textureCopiesServedThisFrame = new java.util.HashMap<String, Long>();
+    /**
+     * The copies served this present, keyed by the exact 9-field request tuple against the content marker they were
+     * served at. Stored in reusable primitive parallel arrays (zero String/Long allocation per copy, exact B08 tuple
+     * match with zero collision risk).
+     */
+    private static final int COPY_CACHE_INITIAL_CAP = 8;
+    private int copyCacheSize;
+    private int[] copyCacheDest = new int[COPY_CACHE_INITIAL_CAP];
+    private int[] copyCacheLevel = new int[COPY_CACHE_INITIAL_CAP];
+    private int[] copyCacheXoff = new int[COPY_CACHE_INITIAL_CAP];
+    private int[] copyCacheYoff = new int[COPY_CACHE_INITIAL_CAP];
+    private int[] copyCacheX = new int[COPY_CACHE_INITIAL_CAP];
+    private int[] copyCacheY = new int[COPY_CACHE_INITIAL_CAP];
+    private int[] copyCacheW = new int[COPY_CACHE_INITIAL_CAP];
+    private int[] copyCacheH = new int[COPY_CACHE_INITIAL_CAP];
+    private long[] copyCacheImage = new long[COPY_CACHE_INITIAL_CAP];
+    private long[] copyCacheMarker = new long[COPY_CACHE_INITIAL_CAP];
+
+    private int findCopyCacheIndex(int destName, int level, int xoffset, int yoffset,
+            int x, int y, int width, int height, long image) {
+        for (int i = 0; i < this.copyCacheSize; i++) {
+            if (this.copyCacheDest[i] == destName && this.copyCacheImage[i] == image
+                    && this.copyCacheX[i] == x && this.copyCacheY[i] == y
+                    && this.copyCacheW[i] == width && this.copyCacheH[i] == height
+                    && this.copyCacheXoff[i] == xoffset && this.copyCacheYoff[i] == yoffset
+                    && this.copyCacheLevel[i] == level) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private void putCopyCache(int existingIndex, int destName, int level, int xoffset, int yoffset,
+            int x, int y, int width, int height, long image, long marker) {
+        if (existingIndex >= 0 && existingIndex < this.copyCacheSize) {
+            this.copyCacheMarker[existingIndex] = marker;
+            return;
+        }
+        int idx = this.copyCacheSize;
+        if (idx == this.copyCacheDest.length) {
+            int nextCap = idx * 2;
+            this.copyCacheDest = java.util.Arrays.copyOf(this.copyCacheDest, nextCap);
+            this.copyCacheLevel = java.util.Arrays.copyOf(this.copyCacheLevel, nextCap);
+            this.copyCacheXoff = java.util.Arrays.copyOf(this.copyCacheXoff, nextCap);
+            this.copyCacheYoff = java.util.Arrays.copyOf(this.copyCacheYoff, nextCap);
+            this.copyCacheX = java.util.Arrays.copyOf(this.copyCacheX, nextCap);
+            this.copyCacheY = java.util.Arrays.copyOf(this.copyCacheY, nextCap);
+            this.copyCacheW = java.util.Arrays.copyOf(this.copyCacheW, nextCap);
+            this.copyCacheH = java.util.Arrays.copyOf(this.copyCacheH, nextCap);
+            this.copyCacheImage = java.util.Arrays.copyOf(this.copyCacheImage, nextCap);
+            this.copyCacheMarker = java.util.Arrays.copyOf(this.copyCacheMarker, nextCap);
+        }
+        this.copyCacheDest[idx] = destName;
+        this.copyCacheLevel[idx] = level;
+        this.copyCacheXoff[idx] = xoffset;
+        this.copyCacheYoff[idx] = yoffset;
+        this.copyCacheX[idx] = x;
+        this.copyCacheY[idx] = y;
+        this.copyCacheW[idx] = width;
+        this.copyCacheH[idx] = height;
+        this.copyCacheImage[idx] = image;
+        this.copyCacheMarker[idx] = marker;
+        this.copyCacheSize = idx + 1;
+    }
     /** Copies served for one present, and the most any single present has served (the panorama's seven passes). */
     private int textureCopiesServedThisPresent;
     private int textureCopiesServedLastPresent;
@@ -418,12 +480,8 @@ public final class TextureCopyService {
                     + " is not inside the " + sourceImageWidth + "x" + sourceImageHeight + " image");
         }
         // The frame's first request for this destination rectangle pays for the readback; the rest are answered from it.
-        // B08: the key is the exact tuple, as a string, because the bit-mix this used to be collided across different
-        // rectangles (each field was shifted into a range narrower than the value it carries, so two distinct copies
-        // could share one key and one of them was silently served from the other's pixels). It includes the source
-        // image, which the mix did not name at all.
-        String copyKey = destName + ":" + level + ":" + xoffset + ":" + yoffset + ":" + x + ":" + y + ":" + width + ":"
-                + height + ":0x" + Long.toHexString(image);
+        // B08: exact tuple comparison across all 9 fields including source image, stored in reusable primitive arrays
+        // so there is neither bit-mix collision risk nor per-copy String/Long allocation.
         // ...and the entry remembers the content marker it was served at, because "the same request" is not "the same
         // pixels": the panorama asks for the same 256x256 seven times per frame and draws a blurred quad between them
         // (GuiMainMenu.rotateAndBlurSkybox), so each pass's source content differs from the last one's. A copy whose
@@ -448,21 +506,21 @@ public final class TextureCopyService {
             this.textureCopyPresent = this.host.presentSerial();
             this.copiesThisPresent = 0;
             this.copyCallsThisPresent = 0;
-            this.textureCopiesServedThisFrame.clear();
+            this.copyCacheSize = 0;
             this.textureCopiesServedThisPresent = 0;
             if (this.textureCopiesServedLastPresent > this.textureCopiesServedPeakPerPresent) {
                 this.textureCopiesServedPeakPerPresent = this.textureCopiesServedLastPresent;
             }
             this.textureCopiesServedLastPresent = 0;
         }
-        Long servedAt = this.textureCopiesServedThisFrame.get(copyKey);
-        if (servedAt != null && servedAt.longValue() == copyMarker) {
+        int copyCacheIndex = findCopyCacheIndex(destName, level, xoffset, yoffset, x, y, width, height, image);
+        if (copyCacheIndex >= 0 && this.copyCacheMarker[copyCacheIndex] == copyMarker) {
             this.textureCopiesReusedInFrame++;
             this.textureCopiesServed++;
             this.textureCopiesServedLastPresent++;
             return "served";
         }
-        if (servedAt != null) {
+        if (copyCacheIndex >= 0) {
             // The request is the same and the content is not: counted, so "the cache elided a copy that had to happen"
             // is a number rather than an inference from a picture.
             this.textureCopiesReServedAfterContentChange++;
@@ -578,7 +636,8 @@ public final class TextureCopyService {
                         // deferred blit 1,830 - a grey background.
                         this.host.context().celtium$flushBatchedSubmits();
                         this.textureCopyBlits++;
-                        this.textureCopiesServedThisFrame.put(copyKey, Long.valueOf(copyMarker));
+                        putCopyCache(copyCacheIndex, destName, level, xoffset, yoffset, x, y, width, height, image,
+                                copyMarker);
                         this.textureCopiesServed++;
                         this.textureCopiesServedLastPresent++;
                         return "served";
@@ -920,7 +979,7 @@ public final class TextureCopyService {
                 org.lwjgl.system.MemoryUtil.memFree(rgba);
             }
         }
-        this.textureCopiesServedThisFrame.put(copyKey, Long.valueOf(copyMarker));
+        putCopyCache(copyCacheIndex, destName, level, xoffset, yoffset, x, y, width, height, image, copyMarker);
         this.textureCopiesServed++;
         this.textureCopiesServedLastPresent++;
         return "served";

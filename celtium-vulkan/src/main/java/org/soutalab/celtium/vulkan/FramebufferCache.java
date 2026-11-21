@@ -68,9 +68,15 @@ final class FramebufferCache {
      * item 372 hole 1). The entry therefore records its attachments and is rebuilt when they no longer match, the
      * same way the chain pair's entry is rebuilt when its generation moves.
      */
+    private long lastFramePass = Long.MIN_VALUE;
+    private FrameEntry lastFrameEntry;
+
     long frame(long renderPass, long colorView, long depthView, int width, int height) {
-        FrameEntry cached = this.frameFramebuffers.get(renderPass);
+        FrameEntry cached = (renderPass == this.lastFramePass) ? this.lastFrameEntry
+                : this.frameFramebuffers.get(renderPass);
         if (celtium$frameEntryReusable(cached, colorView, depthView, width, height)) {
+            this.lastFramePass = renderPass;
+            this.lastFrameEntry = cached;
             noteFrameCache(CrashBreadcrumbs.FRAME_CACHE_HIT, cached);
             return cached.handle;
         }
@@ -79,11 +85,17 @@ final class FramebufferCache {
             // an unused cache entry, not a pass in an open recording - so it goes to the retire queue rather than
             // being destroyed in place: the queue is the rule every handle of this kind follows (see the class note).
             this.frameFramebuffers.remove(renderPass);
+            if (renderPass == this.lastFramePass) {
+                this.lastFramePass = Long.MIN_VALUE;
+                this.lastFrameEntry = null;
+            }
             retire(List.of(cached.handle));
         }
         FrameEntry entry = new FrameEntry(create(renderPass, colorView, depthView, width, height, null),
                 colorView, depthView, width, height);
         this.frameFramebuffers.put(renderPass, entry);
+        this.lastFramePass = renderPass;
+        this.lastFrameEntry = entry;
         noteFrameCache(CrashBreadcrumbs.FRAME_CACHE_MISS, entry);
         return entry.handle;
     }
@@ -164,6 +176,8 @@ final class FramebufferCache {
             handles.add(entry.handle);
         }
         this.frameFramebuffers.clear();
+        this.lastFramePass = Long.MIN_VALUE;
+        this.lastFrameEntry = null;
         retire(handles);
         return handles.size();
     }
@@ -247,9 +261,9 @@ final class FramebufferCache {
         long identity = this.registry.currentIdentity();
         long generation = glless.chainPairGeneration(identity);
         long tupleGeneration = glless.chainPairColorTupleGeneration(identity);
+        long recordedTupleGen = this.chainPairTupleGenerations.get(identity);
         boolean stale = this.chainPairGenerations.get(identity) != generation
-                || (this.chainPairTupleGenerations.containsKey(identity)
-                        && this.chainPairTupleGenerations.get(identity) != tupleGeneration);
+                || (recordedTupleGen != -1L && recordedTupleGen != tupleGeneration);
         if (stale) {
             Collection<Long> staleHandles = this.registry.chainPairFramebufferHandles(identity);
             if (!staleHandles.isEmpty()) {
@@ -316,6 +330,8 @@ final class FramebufferCache {
             vkDestroyFramebuffer(device, entry.handle, null);
         }
         this.frameFramebuffers.clear();
+        this.lastFramePass = Long.MIN_VALUE;
+        this.lastFrameEntry = null;
     }
 
     /** Hands framebuffers to {@link VulkanRetireQueue}, which destroys them once nothing in flight can name them. */
