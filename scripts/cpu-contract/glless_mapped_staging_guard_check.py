@@ -1,35 +1,34 @@
 #!/usr/bin/env python3
 """Capability-safety contract: chunk initialization never attempts persistent GL mapping."""
 from pathlib import Path
-import re
 import sys
 
 root = Path(__file__).resolve().parents[2]
-staging = (root / 'common/src/main/java/org/embeddedt/embeddium/impl/gl/arena/staging/MappedStagingBuffer.java').read_text()
+arena_dir = root / 'common/src/main/java/org/embeddedt/embeddium/impl/gl/arena'
+staging_dir = arena_dir / 'staging'
 manager = (root / 'common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/region/RenderRegionManager.java').read_text()
-# The property this guard must agree with is defined by the GL-less entry points that survive: the Display mixin
-# that used to carry it was deleted (commit 508fe76cc) because it never registered - the mixin plugin's getMixins()
-# runs after RandomPatches defines org.lwjgl.opengl.Display - so the coremod transformer took over that job. The
-# contract is unchanged, so it is read from the loader plugin, which installs the stub under the same property.
-# The property and its default are read from CeltiumGllessHint, which is the surviving definition of the GL-less
-# default. LwjglxDisplayMixin used to carry the same expression and was deleted in 508fe76cc because it never
-# registered - the mixin plugin's getMixins() runs after RandomPatches defines org.lwjgl.opengl.Display - so the
-# coremod transformer took over its job. The contract this check enforces is unchanged.
-display = (root / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessHint.java').read_text()
+# This guard used to pin the contract inside the GL staging classes themselves: MappedStagingBuffer.isSupported()
+# hardcoded to false, no property override, and RenderRegionManager installing only the non-mapped
+# FallbackStagingBuffer. The decouple change (PR #426) deleted the whole GL staging/arena machinery, so the
+# contract is now structural: the code that could attempt persistent GL mapping no longer exists. The guard
+# therefore pins the absence, so reintroducing GL staging into chunk initialization fails here.
+# The GL-less property definition itself survives in CeltiumGllessHint and is covered by
+# glless_hint_descriptor_check.py, so it is not re-read here.
 
 conditions = {
-    'mapped staging is unsupported, with no property to override it':
-        bool(re.search(r'public static boolean isSupported\(RenderDevice instance\) \{(?:\s*//[^\n]*\n)*\s*return false;\s*\}', staging))
-        and 'System.getProperty' not in staging,
-    'mapped staging never reaches a live GL capability query':
-        staging.index('public static boolean isSupported(') < staging.index('return false;')
-        and 'getDeviceFunctions' not in staging,
-    'region manager preserves the non-mapped staging fallback':
-        'return new FallbackStagingBuffer(commandList);' in manager,
-    'the constructor still installs the fallback staging buffer':
-        'this.fallbackStagingBuffer = new FallbackStagingBuffer(commandList);' in staging,
+    'the mapped staging buffer class is deleted, so persistent GL mapping cannot be attempted':
+        not (staging_dir / 'MappedStagingBuffer.java').exists(),
+    'the GL staging and arena classes are deleted':
+        not (staging_dir / 'FallbackStagingBuffer.java').exists()
+        and not (staging_dir / 'StagingBuffer.java').exists()
+        and not (arena_dir / 'GlBufferArena.java').exists(),
+    'region manager references no GL arena package':
+        'impl.gl.arena' not in manager,
+    'region manager installs no staging buffer':
+        'new FallbackStagingBuffer' not in manager
+        and 'new MappedStagingBuffer' not in manager,
 }
-for label,passed in conditions.items():
-    print(('PASS ' if passed else 'FAIL ')+label)
+for label, passed in conditions.items():
+    print(('PASS ' if passed else 'FAIL ') + label)
 print(f'{sum(conditions.values())}/{len(conditions)} CPU source contracts')
 sys.exit(0 if all(conditions.values()) else 1)
