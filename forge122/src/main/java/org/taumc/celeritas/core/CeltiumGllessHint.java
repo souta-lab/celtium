@@ -253,6 +253,18 @@ public final class CeltiumGllessHint {
     }
 
     /**
+     * {@code glCreateShader}: a fresh name, with its stage recorded in the registry. The generic name generator
+     * the transformer falls back to discards the type argument, and the registry then had to guess the stage
+     * from the source text at link time - a guess a comment could overturn. Recording it here costs the link
+     * nothing and makes the classification the caller's own statement.
+     */
+    public static int glCreateShader(int type) {
+        int shader = glGenName();
+        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.shaderStage(shader, type);
+        return shader;
+    }
+
+    /**
      * {@code glShaderSource}: the strings GL would concatenate, kept so a mod's program can be lowered and run natively
      * ({@link org.soutalab.celtium.vulkan.gl.ModProgramRegistry}). {@code lengths} 0 or a negative entry means the
      * string is NUL-terminated.

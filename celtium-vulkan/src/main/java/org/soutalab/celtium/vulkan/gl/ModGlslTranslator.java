@@ -21,7 +21,9 @@ import java.util.regex.Pattern;
  * What is lowered, and nothing more (a program outside this subset is reported, not guessed at):
  * <ul>
  * <li>{@code attribute} -> {@code layout(location=N) in}, N in declaration order; {@code varying} -> matched
- * {@code out}/{@code in} locations by name across the two stages.</li>
+ * {@code out}/{@code in} locations by name across the two stages. A varying the two stages declare with a
+ * different type, array length or interpolation qualifier is a refusal: GL would fail the link, and lowering
+ * both declarations as written would leave the fragment stage reading undefined values.</li>
  * <li>The modern spelling of the same interface (GLSL 330 / ES 3.00 sources, measured: GLSM's fixed-function
  * generator): a vertex {@code in} is an attribute, a vertex {@code out} / fragment {@code in} pair is a varying
  * matched by name, and a fragment {@code out} is a draw-buffer output. A {@code layout(location = N)} the source
@@ -29,7 +31,9 @@ import java.util.regex.Pattern;
  * declaration with no number is given the next free location, so no user input/output reaches shaderc without
  * one (SPIR-V refuses it otherwise). Interpolation qualifiers ({@code flat} and peers) are carried through.</li>
  * <li>Every non-sampler {@code uniform} -> one std140 block, with the byte offset of each member, so the values
- * {@code glUniform*} recorded can be packed. The block travels as push constants while it fits the selected
+ * {@code glUniform*} recorded can be packed. A uniform declared with a constant initializer keeps that value
+ * until first written (it is in {@link Result#uniformDefaults}); an initializer that is not a constant this
+ * lowering evaluates is a refusal, not a silent drop of the declaration. The block travels as push constants while it fits the selected
  * device's {@code maxPushConstantsSize} ({@link ModPushConstantLimit}), and as a uniform buffer at set 0's
  * binding after the samplers and images when it does not - the limit is a property of the push route, not of
  * the block, so a program above it is lowered, not refused. Samplers -> combined image samplers at set 0,
@@ -62,7 +66,8 @@ public final class ModGlslTranslator {
     /** The lowered program, or why it could not be lowered. */
     public record Result(String vertex, String fragment, List<Attribute> attributes, List<UniformMember> uniforms,
                          int uniformBlockSize, List<SamplerBinding> samplers, List<ImageBinding> images, List<String> varyings,
-                         int fragOutputCount, boolean uniformsViaBuffer, String failure) {
+                         int fragOutputCount, boolean uniformsViaBuffer, Map<String, float[]> uniformDefaults,
+                         String failure) {
         public boolean ok() {
             return this.failure == null;
         }
@@ -72,11 +77,24 @@ public final class ModGlslTranslator {
     private static final Pattern LINE_COMMENT = Pattern.compile("//[^\\n]*");
     private static final Pattern VERSION = Pattern.compile("^\\s*#\\s*version[^\\n]*\\n?", Pattern.MULTILINE);
     private static final Pattern EXTENSION = Pattern.compile("^\\s*#\\s*extension[^\\n]*\\n?", Pattern.MULTILINE);
-    /** A global declaration with a storage qualifier: optional layout/interpolation, qualifier, optional precision, type, declarators. */
+    /**
+     * A global declaration with a storage qualifier: optional layout/interpolation, qualifier, optional precision,
+     * type, declarators. The declarator part allows parentheses because a uniform's initializer may be a
+     * constructor call ({@code uniform vec4 c = vec4(1.0);}): excluding them made the whole declaration
+     * unparseable, so the uniform never reached the interface and its {@code glUniform*} writes were dropped
+     * without a word. A storage qualifier cannot open a function definition, so the wider span is safe.
+     */
     private static final Pattern DECLARATION = Pattern.compile(
             "(?<![\\w.])(?:layout\\s*\\([^)]*\\)\\s*)?(?:(flat|smooth|noperspective|centroid)\\s+)?"
-                    + "(attribute|varying|uniform)\\s+(?:(?:lowp|mediump|highp)\\s+)?(\\w+)\\s+([^;{}()]+);");
-    private static final Pattern DECLARATOR = Pattern.compile("^\\s*(\\w+)\\s*(?:\\[\\s*(\\d+)\\s*\\])?\\s*(?:=.*)?$");
+                    + "(attribute|varying|uniform)\\s+(?:(?:lowp|mediump|highp)\\s+)?(\\w+)\\s+([^;{}]+);");
+    private static final Pattern DECLARATOR = Pattern.compile(
+            "^\\s*(\\w+)\\s*(?:\\[\\s*(\\d+)\\s*\\])?\\s*(?:=\\s*(.*))?$", Pattern.DOTALL);
+    /** A constant constructor initializer: a type name, an optional array size, and the argument text. */
+    private static final Pattern CONSTRUCTOR_INITIALIZER = Pattern.compile(
+            "(\\w+)\\s*(?:\\[\\s*(\\d+)\\s*\\])?\\s*\\((.*)\\)", Pattern.DOTALL);
+    /** One numeric literal of an initializer (a trailing {@code f} is GLSL's float suffix). */
+    private static final Pattern NUMBER_LITERAL = Pattern.compile(
+            "[+-]?(?:0[xX][0-9a-fA-F]+|(?:\\d+\\.\\d*|\\.\\d+|\\d+)(?:[eE][+-]?\\d+)?)[fF]?");
     /**
      * A modern global input/output declaration: an optional {@code layout(... location = N ...)}, an optional
      * interpolation qualifier, {@code in}/{@code out}, optional precision, type, declarators. The declarator part
@@ -143,9 +161,9 @@ public final class ModGlslTranslator {
      * {@code out} / fragment {@code in} -> {@code varying}, fragment {@code out} -> {@code fragout}).
      */
     private record Declaration(String qualifier, String type, String name, int arrayLength, int explicitLocation,
-                               String interpolation) {
+                               String interpolation, String initializer) {
         Declaration(String qualifier, String type, String name, int arrayLength) {
-            this(qualifier, type, name, arrayLength, -1, "");
+            this(qualifier, type, name, arrayLength, -1, "", null);
         }
     }
 
@@ -158,7 +176,7 @@ public final class ModGlslTranslator {
             return translateOrThrow(vertexSource, fragmentSource);
         } catch (IllegalArgumentException outside) {
             return new Result(null, null, List.of(), List.of(), 0, List.of(), List.of(), List.of(), 0, false,
-                    outside.getMessage());
+                    Map.of(), outside.getMessage());
         }
     }
 
@@ -241,6 +259,7 @@ public final class ModGlslTranslator {
             }
         }
         List<UniformMember> members = new ArrayList<>();
+        Map<String, float[]> uniformDefaults = new LinkedHashMap<>();
         List<SamplerBinding> samplers = new ArrayList<>();
         int offset = 0;
         for (Declaration d : uniforms.values()) {
@@ -266,6 +285,9 @@ public final class ModGlslTranslator {
             int[] layout = std140(d.type, d.arrayLength);
             offset = align(offset, layout[0]);
             members.add(new UniformMember(glName(d.name), d.type, d.arrayLength, offset, layout[1]));
+            if (d.initializer != null) {
+                uniformDefaults.put(glName(d.name), constantInitializer(d));
+            }
             offset += layout[1];
         }
         int blockSize = align(offset, 16);
@@ -345,6 +367,24 @@ public final class ModGlslTranslator {
         java.util.BitSet varyingLocations = new java.util.BitSet();
         for (Declaration d : vertexVaryings.values()) {
             Declaration f = fragmentVaryings.get(d.name);
+            if (f != null) {
+                // The interface the two stages share: GL fails the link when any of these disagree, and the
+                // lowering compiles the stages separately (there is no link step to catch it), so a mismatch
+                // checked nowhere would hand the fragment stage undefined values at the shared locations.
+                if (!f.type.equals(d.type)) {
+                    throw new IllegalArgumentException("varying " + d.name + " is declared as " + d.type
+                            + " in the vertex stage and " + f.type + " in the fragment stage");
+                }
+                if (f.arrayLength != d.arrayLength) {
+                    throw new IllegalArgumentException("varying " + d.name + " is declared with array length "
+                            + d.arrayLength + " in the vertex stage and " + f.arrayLength
+                            + " in the fragment stage");
+                }
+                if (!effectiveInterpolation(f).equals(effectiveInterpolation(d))) {
+                    throw new IllegalArgumentException("varying " + d.name + " is " + effectiveInterpolation(d)
+                            + " in the vertex stage and " + effectiveInterpolation(f) + " in the fragment stage");
+                }
+            }
             int explicit = d.explicitLocation;
             if (f != null && f.explicitLocation >= 0) {
                 if (explicit >= 0 && explicit != f.explicitLocation) {
@@ -447,7 +487,8 @@ public final class ModGlslTranslator {
         return new Result(vs.toString(), fs.toString(), Collections.unmodifiableList(attributes),
                 Collections.unmodifiableList(members), blockSize, Collections.unmodifiableList(samplers),
                 Collections.unmodifiableList(images),
-                Collections.unmodifiableList(varyings), fragOutputCount, uniformsViaBuffer, null);
+                Collections.unmodifiableList(varyings), fragOutputCount, uniformsViaBuffer,
+                Collections.unmodifiableMap(uniformDefaults), null);
     }
 
     /**
@@ -491,7 +532,8 @@ public final class ModGlslTranslator {
         return RESERVED_IN_450.contains(glName) ? RENAMED + glName : glName;
     }
 
-    private static String strip(String source) {
+    /** Package-private for {@link ModProgramRegistry}'s fallback stage heuristic, which reads the same cleaned text. */
+    static String strip(String source) {
         if (source == null) {
             throw new IllegalArgumentException("a stage has no source");
         }
@@ -508,13 +550,14 @@ public final class ModGlslTranslator {
             String interpolation = m.group(1) == null ? "" : m.group(1);
             String qualifier = m.group(2);
             String type = m.group(3);
-            for (String declarator : m.group(4).split(",")) {
+            for (String declarator : splitDeclarators(m.group(4))) {
                 Matcher d = DECLARATOR.matcher(declarator);
                 if (!d.matches()) {
                     throw new IllegalArgumentException("unparsed declaration: " + m.group(0).strip());
                 }
                 int length = d.group(2) == null ? 0 : Integer.parseInt(d.group(2));
-                out.add(new Declaration(qualifier, type, d.group(1), length, -1, interpolation));
+                String initializer = d.group(3) == null ? null : d.group(3).strip();
+                out.add(new Declaration(qualifier, type, d.group(1), length, -1, interpolation, initializer));
             }
             m.appendReplacement(rest, "");
         }
@@ -539,7 +582,7 @@ public final class ModGlslTranslator {
                         : ("in".equals(io.group(3)) ? "varying" : "fragout");
                 int explicit = io.group(1) == null ? -1 : Integer.parseInt(io.group(1));
                 String interpolation = io.group(2) == null ? "" : io.group(2);
-                parsed.add(new Declaration(qualifier, type, d.group(1), length, explicit, interpolation));
+                parsed.add(new Declaration(qualifier, type, d.group(1), length, explicit, interpolation, null));
             }
             if (builtin) {
                 io.appendReplacement(modern, Matcher.quoteReplacement(io.group(0)));
@@ -629,6 +672,156 @@ public final class ModGlslTranslator {
 
     private static String interpolationPrefix(Declaration d) {
         return d.interpolation.isEmpty() ? "" : d.interpolation + " ";
+    }
+
+    /** {@return the interpolation a declaration effectively carries}: an unqualified varying is {@code smooth}. */
+    private static String effectiveInterpolation(Declaration d) {
+        return d.interpolation.isEmpty() ? "smooth" : d.interpolation;
+    }
+
+    /**
+     * Splits a declarator list on its top-level commas. A constructor initializer's argument commas sit inside
+     * parentheses and belong to one declarator, so a plain {@code split(",")} would shred
+     * {@code vec4 a = vec4(1, 2, 3, 4), b} into pieces no declarator pattern can read.
+     */
+    private static List<String> splitDeclarators(String text) {
+        List<String> parts = new ArrayList<>();
+        int depth = 0;
+        int start = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '(' || c == '[') {
+                depth++;
+            } else if (c == ')' || c == ']') {
+                depth--;
+            } else if (c == ',' && depth == 0) {
+                parts.add(text.substring(start, i));
+                start = i + 1;
+            }
+        }
+        parts.add(text.substring(start));
+        return parts;
+    }
+
+    /**
+     * {@return the value of a uniform's constant initializer}, one float per scalar component in the order
+     * {@code packUniforms} consumes them (element, then matrix column, then component). The forms evaluated are
+     * the ones a generated shader writes: a bare literal, a constructor of literals (a single argument splats,
+     * a matrix's single argument is its diagonal, as GLSL defines), and an array constructor of literals over a
+     * scalar element type. Anything else - an expression, a reference, a nested constructor - is a refusal
+     * naming the uniform: the declaration is part of the interface now, so guessing a value (or zero) would be
+     * a silent wrong answer where the pre-fix behaviour at least kept the initializer in the emitted shader.
+     */
+    private static float[] constantInitializer(Declaration d) {
+        String init = d.initializer.strip();
+        int components = scalarComponents(d.type);
+        Matcher ctor = CONSTRUCTOR_INITIALIZER.matcher(init);
+        if (ctor.matches()) {
+            String ctorType = ctor.group(1);
+            List<String> args = new ArrayList<>();
+            for (String arg : splitDeclarators(ctor.group(3))) {
+                if (!arg.isBlank()) {
+                    args.add(arg.strip());
+                }
+            }
+            if (d.arrayLength > 0) {
+                // An array constructor: float[2](1.0, 2.0). Only a scalar element type is evaluated - a
+                // vector element's own constructor would nest, which the refusal below names.
+                if (!ctorType.equals(d.type) || ctor.group(2) == null
+                        || Integer.parseInt(ctor.group(2)) != d.arrayLength || components != 1
+                        || args.size() != d.arrayLength) {
+                    throw notConstant(d, init);
+                }
+                float[] values = new float[d.arrayLength];
+                for (int i = 0; i < values.length; i++) {
+                    values[i] = literal(d, args.get(i));
+                }
+                return values;
+            }
+            if (!ctorType.equals(d.type)) {
+                throw notConstant(d, init);
+            }
+            if (d.type.startsWith("mat")) {
+                // matN's constructor arguments fill column by column; one scalar is the diagonal.
+                if (args.size() == 1) {
+                    float[] values = new float[components * components];
+                    float v = literal(d, args.get(0));
+                    for (int c = 0; c < components; c++) {
+                        values[c * components + c] = v;
+                    }
+                    return values;
+                }
+                if (args.size() != components * components) {
+                    throw notConstant(d, init);
+                }
+                float[] values = new float[args.size()];
+                for (int i = 0; i < values.length; i++) {
+                    values[i] = literal(d, args.get(i));
+                }
+                return values;
+            }
+            if (args.size() == 1 && components > 1) {
+                float[] values = new float[components];
+                java.util.Arrays.fill(values, literal(d, args.get(0)));
+                return values;
+            }
+            if (args.size() != components) {
+                throw notConstant(d, init);
+            }
+            float[] values = new float[components];
+            for (int i = 0; i < components; i++) {
+                values[i] = literal(d, args.get(i));
+            }
+            return values;
+        }
+        if (d.arrayLength == 0 && components == 1) {
+            return new float[] {literal(d, init)};
+        }
+        throw notConstant(d, init);
+    }
+
+    private static IllegalArgumentException notConstant(Declaration d, String init) {
+        return new IllegalArgumentException("uniform " + d.name + " has an initializer this lowering does not "
+                + "evaluate (" + init + "): only a constant literal or a constructor of literals is carried");
+    }
+
+    /** {@return one initializer literal as a float} ({@code true}/{@code false} are 1/0), or refuses. */
+    private static float literal(Declaration d, String text) {
+        if ("true".equals(text)) {
+            return 1.0f;
+        }
+        if ("false".equals(text)) {
+            return 0.0f;
+        }
+        if (!NUMBER_LITERAL.matcher(text).matches()) {
+            throw notConstant(d, text);
+        }
+        String digits = text.endsWith("f") || text.endsWith("F") ? text.substring(0, text.length() - 1) : text;
+        try {
+            if (digits.startsWith("0x") || digits.startsWith("0X") || digits.startsWith("+0x")
+                    || digits.startsWith("-0x")) {
+                boolean negative = digits.startsWith("-");
+                String hex = digits.substring(digits.indexOf('x') + 1);
+                long v = Long.parseLong(hex, 16);
+                return (float) (negative ? -v : v);
+            }
+            return (float) Double.parseDouble(digits);
+        } catch (NumberFormatException bad) {
+            throw notConstant(d, text);
+        }
+    }
+
+    /** {@return the scalar components of one element of a uniform type} (a matrix counts its columns' scalars). */
+    private static int scalarComponents(String type) {
+        return switch (type) {
+            case "vec2", "ivec2", "uvec2", "bvec2" -> 2;
+            case "vec3", "ivec3", "uvec3", "bvec3" -> 3;
+            case "vec4", "ivec4", "uvec4", "bvec4" -> 4;
+            case "mat2" -> 2;
+            case "mat3" -> 3;
+            case "mat4" -> 4;
+            default -> 1;
+        };
     }
 
     /**

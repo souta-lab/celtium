@@ -18,9 +18,11 @@ import org.lwjgl.system.MemoryUtil;
  * a native pass needs to run the program instead: the lowered stages ({@link ModGlslTranslator}) and the values to pack
  * into the uniform block and to pick the sampled textures.
  * <p>
- * Client thread only, like every GL call the stub receives. The stage of a shader is read from its source (a stage that
- * writes {@code gl_Position} is the vertex stage) rather than from {@code glCreateShader}'s argument, so the stub's
- * name generation is not touched.
+ * Client thread only, like every GL call the stub receives. A shader's stage is the one {@code glCreateShader}
+ * was called with, recorded by {@link #shaderStage} when the GL-less route mints the name. A name minted without
+ * that call (a test, or a route that does not reach it) falls back to reading the stage from the source - a stage
+ * that writes {@code gl_Position} is the vertex stage - with the comments stripped first, so a fragment stage
+ * that merely mentions {@code gl_Position} in a comment is not misread as the vertex stage.
  * <p>
  * Uniform locations are the stub's stable name hash ({@code CeltiumGllessHint.glUniformLocation}: 31-hash of the
  * name's bytes, masked to 30 bits), so a location maps back to a name once the program is linked.
@@ -113,7 +115,14 @@ public final class ModProgramRegistry {
         }
     }
 
+    /** {@code GL_VERTEX_SHADER} / {@code GL_FRAGMENT_SHADER}: the stages this registry can lower. */
+    private static final int GL_VERTEX_SHADER = 0x8B31;
+    private static final int GL_FRAGMENT_SHADER = 0x8B30;
+
     private static final Int2ObjectOpenHashMap<String> SHADER_SOURCES = new Int2ObjectOpenHashMap<>();
+    /** The stage each shader name was created for, by GL enum; absent when the creating call was never routed here. */
+    private static final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap SHADER_STAGES =
+            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
     private static final Int2ObjectOpenHashMap<Program> PROGRAMS = new Int2ObjectOpenHashMap<>();
     /**
      * Shader names deleted while a live program still referenced them (item 328, V-04). GL defers such a
@@ -136,6 +145,19 @@ public final class ModProgramRegistry {
             PROGRAMS.put(program, p);
         }
         return p;
+    }
+
+    /**
+     * {@code glCreateShader}: the name the GL-less route minted is for a shader of {@code glStage}. Creating is
+     * what makes the name a new object, so a deletion marker the name still carries is spent here and the source
+     * retained for its predecessor is dropped - the same fresh start {@link #attach} gives a recycled name, taken
+     * at the call that actually starts the new incarnation.
+     */
+    public static void shaderStage(int shader, int glStage) {
+        SHADER_STAGES.put(shader, glStage);
+        if (DELETED_SHADERS.remove(shader)) {
+            SHADER_SOURCES.remove(shader);
+        }
     }
 
     /** {@code glShaderSource}: the stage's text, concatenated as GL concatenates the strings. */
@@ -165,22 +187,58 @@ public final class ModProgramRegistry {
         Program p = getOrCreateProgram(program);
         String vertex = null;
         String fragment = null;
+        String stageFailure = null;
         for (int i = 0, n = p.shaders.size(); i < n; i++) {
-            String source = SHADER_SOURCES.get(p.shaders.getInt(i));
+            int shader = p.shaders.getInt(i);
+            String source = SHADER_SOURCES.get(shader);
             if (source == null) {
                 continue;
             }
-            if (containsWord(source, "gl_Position")) {
+            // The stage is the one the shader was created for. The source heuristic remains only for a name
+            // whose creation never reached shaderStage, and it reads the comment-stripped text: before, a
+            // fragment stage that mentioned gl_Position in a comment was classified as the vertex stage and
+            // the whole program was refused for having no fragment stage. Two shaders claiming one stage is
+            // a link error in GL; it is one here too, rather than the second silently overwriting the first.
+            int stage = SHADER_STAGES.get(shader);
+            boolean isVertex;
+            if (stage == GL_VERTEX_SHADER) {
+                isVertex = true;
+            } else if (stage == GL_FRAGMENT_SHADER) {
+                isVertex = false;
+            } else if (stage != 0) {
+                stageFailure = "shader stage 0x" + Integer.toHexString(stage) + " is not lowered ("
+                        + p.shaders.size() + " shaders)";
+                break;
+            } else {
+                String stripped = ModGlslTranslator.strip(source);
+                isVertex = containsWord(stripped, "gl_Position") || containsWord(stripped, "ftransform");
+            }
+            if (isVertex) {
+                if (vertex != null) {
+                    stageFailure = "two vertex stages attached (" + p.shaders.size() + " shaders)";
+                    break;
+                }
                 vertex = source;
             } else {
+                if (fragment != null) {
+                    stageFailure = "two fragment stages attached (" + p.shaders.size() + " shaders)";
+                    break;
+                }
                 fragment = source;
             }
         }
-        p.lowered = fragment == null
+        if (stageFailure == null && fragment == null) {
+            stageFailure = "no fragment stage attached (" + p.shaders.size() + " shaders)";
+        }
+        p.lowered = stageFailure != null
                 ? new ModGlslTranslator.Result(null, null, List.of(), List.of(), 0, List.of(), List.of(), List.of(), 0,
-                        false, "no fragment stage attached (" + p.shaders.size() + " shaders)")
+                        false, java.util.Map.of(), stageFailure)
                 : ModGlslTranslator.translate(vertex, fragment);
         p.nameByLocation.clear();
+        // A link starts the program's uniforms over, as in GL: the values a previous link's interface
+        // collected belong to that interface, and a same-named member of the new one must not inherit them.
+        p.floatValues.clear();
+        p.intValues.clear();
         p.cachedPackedUniforms = null;
         p.cachedPackedVersion = -1L;
         p.uniformVersion++;
@@ -637,6 +695,7 @@ public final class ModProgramRegistry {
                 if (DELETED_SHADERS.contains(shader) && !referencedByLiveProgram(shader)) {
                     DELETED_SHADERS.remove(shader);
                     SHADER_SOURCES.remove(shader);
+                    SHADER_STAGES.remove(shader);
                 }
             }
         }
@@ -654,6 +713,7 @@ public final class ModProgramRegistry {
         } else {
             DELETED_SHADERS.remove(id);
             SHADER_SOURCES.remove(id);
+            SHADER_STAGES.remove(id);
         }
     }
 
@@ -673,6 +733,7 @@ public final class ModProgramRegistry {
     /** Test support: forget everything. */
     static void clear() {
         SHADER_SOURCES.clear();
+        SHADER_STAGES.clear();
         PROGRAMS.clear();
         DELETED_SHADERS.clear();
         unmatchedUniformWrites = 0;
