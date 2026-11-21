@@ -183,6 +183,9 @@ public final class CeltiumLightCache {
     private static long funnelSourceHits;
     private static long funnelRaised;
     private static boolean funnelFirstRaisePrinted;
+    private static boolean funnelFirstSourceQueryPrinted;
+    private static boolean funnelFirstSourceHitPrinted;
+    private static boolean funnelNoRaisePrinted;
 
     /** {@return a compact summary of combined-light funnel traffic for diagnostics}. */
     public static String funnelSummary() {
@@ -201,6 +204,13 @@ public final class CeltiumLightCache {
      * the one place that runs after the last lookup of every configuration - a run killed by the
      * harness's timeout included - and it only reads these counters, never the game. The font glyph
      * capture's summary hook is the same shape, for the same reason.
+     * <p>
+     * Measured caveat (item 430, 2026-11-21 legs): in the validation harness this print does NOT
+     * reach the captured console even in runs where the funnel provably raised - by JVM-hook time
+     * the harness's log plumbing is already torn down, while prints from the game's own shutdown
+     * sequence still land. Legs must read the in-run first-event prints in
+     * {@link #combinedLightFunnel} (first source query / first source hit / no-raise-yet), which
+     * carry the same counters; this hook remains as a last resort for interactive runs only.
      */
     static {
         try {
@@ -235,10 +245,24 @@ public final class CeltiumLightCache {
             }
             funnelSourceQueries++;
             int sources = MinecraftDynamicLightService.snapshotSources(world, MIRROR_SOURCES);
+            if (!funnelFirstSourceQueryPrinted) {
+                funnelFirstSourceQueryPrinted = true;
+                // In-run, once: the shutdown summary's print does not survive the validation
+                // harness's exit path (see the hook's javadoc), so the dynamic-side counters a
+                // leg discriminates with are surfaced here instead, while the run is alive.
+                // The service counters in the line split a 0 by its reason (no gather yet,
+                // different world, empty snapshot).
+                System.out.println("[Celtium] CELTIUM_FUNNEL_FIRST_SOURCE_QUERY sources=" + sources
+                        + " " + MinecraftDynamicLightService.diagnosticSummary());
+            }
             if (sources == 0) {
                 return value;
             }
             funnelSourceHits++;
+            if (!funnelFirstSourceHitPrinted) {
+                funnelFirstSourceHitPrinted = true;
+                System.out.println("[Celtium] CELTIUM_FUNNEL_FIRST_SOURCE_HIT sources=" + sources);
+            }
             int raised = raiseCombinedLight(value, pos.getX(), pos.getY(), pos.getZ(),
                     MIRROR_SOURCES, sources);
             if (raised != value) {
@@ -248,6 +272,14 @@ public final class CeltiumLightCache {
                     // In-run, once: a leg reads this without depending on shutdown-time log capture.
                     System.out.println("[Celtium] CELTIUM_FUNNEL_FIRST_RAISE sources=" + sources);
                 }
+            } else if (!funnelNoRaisePrinted && funnelSourceHits >= 1000) {
+                funnelNoRaisePrinted = true;
+                // A thousand snapshot-bearing queries without one changed answer is the
+                // signature of a raise that can never fire in this scene (max-only against
+                // already-bright answers, or queries that never come near a source). Dump
+                // the full counters in-run so the leg can tell that apart from a dead funnel
+                // without depending on the shutdown print.
+                System.out.println("[Celtium] CELTIUM_FUNNEL_NO_RAISE_YET " + funnelSummary());
             }
             return raised;
         } finally {
