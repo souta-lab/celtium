@@ -21,7 +21,6 @@ import org.taumc.celeritas.api.options.structure.OptionPage;
 import org.taumc.celeritas.api.options.structure.OptionStorage;
 import org.taumc.celeritas.api.options.structure.StandardOptions;
 import org.taumc.celeritas.impl.compat.modernui.MuiGuiScaleHook;
-import org.taumc.celeritas.impl.render.terrain.compile.task.ChunkBuilderMeshingTask;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -52,7 +51,7 @@ public class SodiumGameOptionPages {
                         .setName(TextComponent.translatable("options.gamma"))
                         .setTooltip(TextComponent.translatable("sodium.options.brightness.tooltip"))
                         .setControl(opt -> new SliderControl(opt, 0, 100, 1, ControlValueFormatter.brightness()))
-                        .setBinding((opts, value) -> opts.gammaSetting = (float) (value * 0.01D), (opts) -> (int) (opts.gammaSetting / 0.01D))
+                        .setBinding((opts, value) -> opts.gammaSetting = MinecraftOptionsStorage.percentToGamma(value), (opts) -> MinecraftOptionsStorage.gammaToPercent(opts.gammaSetting))
                         .build())
                 .build());
 
@@ -295,7 +294,7 @@ public class SodiumGameOptionPages {
                         .setTooltip(TextComponent.literal("Enables the backported faster block renderer from modern Celeritas versions, which has better performance but may look slightly different."))
                         .setControl(TickBoxControl::new)
                         .setImpact(OptionImpact.MEDIUM)
-                        .setBinding((opts, value) -> ChunkBuilderMeshingTask.USE_NEW_BLOCK_RENDERER = value, opts -> ChunkBuilderMeshingTask.USE_NEW_BLOCK_RENDERER)
+                        .setBinding((opts, value) -> opts.performance.useFastBlockRenderer = value, opts -> opts.performance.useFastBlockRenderer)
                         .setFlags(OptionFlag.REQUIRES_RENDERER_RELOAD)
                         .build())
                 .build());
