@@ -9,7 +9,7 @@ import java.util.List;
  * <p>This exists as a separate, dependency-free class for two reasons. The off-target pass runs before the main pass and
  * filters to a single render target, and the code used to retire **every** group there - which destroyed the main pass's
  * accepted geometry before it could be drawn (audit A32). And the rule is small enough to be checked without a device, which
- * is what {@code scripts/cpu-contract/TextureContractCheck.java} does with two independent targets.
+ * is what {@code ImmediateGroupQueueTest} does with two independent targets.
  */
 public final class ImmediateGroupQueue {
 
