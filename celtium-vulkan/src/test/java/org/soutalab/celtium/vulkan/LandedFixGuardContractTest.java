@@ -126,11 +126,34 @@ class LandedFixGuardContractTest {
      * 7a25b7827: a merge run is drawn while its own index source is still bound, and a new run
      * binds its command's source first when it differs - at both places a run opens (the run
      * start and the run end), which is the two {@code arena != arenaBound} blocks.
+     * <p>
+     * The pin is per site, not a count: every {@code arena != arenaBound} block must bind the
+     * run's index source and record the binding, in that order. A count pin (== 2, the original
+     * form of this test) broke when the pack terrain loop added a third run boundary of exactly
+     * the same shape - a legitimate site the guard's intent covers, measured on the
+     * merge-exec-9 stack gate. The floor stays: the two original boundaries must not disappear.
      */
     @Test
     void mergeRunsBindTheirIndexSourceBeforeDrawing() throws IOException {
         String backend = read(BACKEND);
-        assertEquals(2, count(backend, "if (arena != arenaBound)"),
+        String guard = "if (arena != arenaBound)";
+        int sites = 0;
+        int from = 0;
+        while (true) {
+            int site = backend.indexOf(guard, from);
+            if (site < 0) {
+                break;
+            }
+            sites++;
+            String block = backend.substring(site, Math.min(backend.length(), site + 400));
+            int bind = block.indexOf("bindIndexBuffer(");
+            int record = block.indexOf("arenaBound = arena;");
+            assertTrue(bind >= 0 && record > bind,
+                    "every run boundary binds the run's own index source before recording it"
+                            + " as bound (site " + sites + ")");
+            from = site + guard.length();
+        }
+        assertTrue(sites >= 2,
                 "both run boundaries bind the run's own index source before any draw of it");
     }
 
