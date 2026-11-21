@@ -252,6 +252,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return cached;
     }
 
+    /** Creates (once) and returns a load/store-depth multi-target render pass for shader-pack terrain passes. */
+    private long frameVariantRenderPass(int colorAttachments, TargetFormatClass formatClass) {
+        int colors = Math.max(1, colorAttachments);
+        TargetFormatClass effectiveClass = formatClass == null ? TargetFormatClass.RGBA8_UNORM : formatClass;
+        long key = celtium$chainPassKey(colors, effectiveClass.vkFormat());
+        long cached = this.frameVariantPasses.get(key);
+        if (cached == 0L) {
+            cached = VulkanTerrainPipeline.createFrameRenderPass(this.context, colors, effectiveClass.vkFormat());
+            this.frameVariantPasses.put(key, cached);
+        }
+        return cached;
+    }
+
     /**
      * The frame-shaped pass (load/store, one colour) in {@code formatClass} - the pass immediate and
      * mod-program pipelines are built against when the current target is a non-default-class pair
@@ -356,6 +369,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap chainPairVariantPasses =
             new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    /** Load/store-depth multi-target render passes for shader-pack terrain passes (gbuffers_terrain / shadow). */
+    final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap frameVariantPasses =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    /** Cached VulkanModProgramPipeline instances for shader-pack terrain passes. */
+    final java.util.Map<String, VulkanModProgramPipeline> packTerrainPipelines = new java.util.HashMap<>();
+    private static final boolean PACK_TERRAIN_PROGRAMS =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.packTerrainPrograms", "true"));
+    private int packTerrainDrawnLogs;
+    private int packTerrainRefusedLogs;
     /** The reverse of {@link #chainPairVariantPasses}: a variant pass handle to its colour count. */
     final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap chainPairVariantColorCounts =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
@@ -16141,6 +16163,16 @@ this.frameBufferOpen = false;
             }
         }
         this.chainPairVariantPasses.clear();
+        for (long framePass : this.frameVariantPasses.values()) {
+            if (framePass != 0) {
+                org.lwjgl.vulkan.VK10.vkDestroyRenderPass(this.context.device(), framePass, null);
+            }
+        }
+        this.frameVariantPasses.clear();
+        for (VulkanModProgramPipeline packPipe : this.packTerrainPipelines.values()) {
+            packPipe.delete();
+        }
+        this.packTerrainPipelines.clear();
         this.chainPairVariantColorCounts.clear();
         for (int slot = 0; slot < this.formatClassPipelinePasses.length; slot++) {
             if (this.formatClassPipelinePasses[slot] != 0) {
@@ -16629,6 +16661,352 @@ this.frameBufferOpen = false;
         celtium$noteChainPairClear("routed-terrain-pass");
     }
 
+    /**
+     * Attempts to render a terrain pass using the active shader pack's terrain program ({@code gbuffers_terrain} /
+     * {@code gbuffers_water} / {@code shadow}) obtained via Demonica's {@code ShaderTerrain.packProgram}.
+     * Returns {@code true} if the pass was drawn natively on Vulkan with the pack's shader, or {@code false} to
+     * fall back to the built-in terrain pass (logging the refusal reason boundedly).
+     */
+    private boolean celtium$tryRenderPackTerrainPass(MemoryStack stack,
+                                                     ChunkRenderMatrices matrices,
+                                                     ChunkRenderListIterable renderLists,
+                                                     TerrainRenderPass pass,
+                                                     CameraTransform occlusionCamera,
+                                                     CameraTransform camera,
+                                                     Object view,
+                                                     boolean useBlockFaceCulling,
+                                                     ChunkPrimitiveType primitiveType) {
+        if (!PACK_TERRAIN_PROGRAMS || this.configuration == null || this.gpuStalled) {
+            return false;
+        }
+        org.embeddedt.embeddium.impl.gl.shader.GlProgram<? extends org.embeddedt.embeddium.impl.render.chunk.shader.ChunkShaderInterface> packProgram =
+                DemonicaTerrainBridge.packProgram(pass, this.configuration);
+        if (packProgram == null) {
+            return false;
+        }
+        org.embeddedt.embeddium.impl.render.chunk.shader.ChunkShaderInterface iface = packProgram.getInterface();
+        if (iface == null) {
+            return false;
+        }
+        boolean bound = false;
+        boolean stateSetup = false;
+        try {
+            packProgram.bind();
+            bound = true;
+            iface.setupState(pass);
+            stateSetup = true;
+            iface.setProjectionMatrix(matrices.projection());
+            iface.setModelViewMatrix(matrices.modelView());
+
+            int programId = packProgram.handle();
+            org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program modProgram =
+                    org.soutalab.celtium.vulkan.gl.ModProgramRegistry.program(programId);
+            if (modProgram == null || !modProgram.compiled() || modProgram.lowered() == null) {
+                celtium$reportPackTerrainRefused(pass, programId,
+                        modProgram == null ? "program-not-registered"
+                                : "not-compiled:" + modProgram.compileFailure());
+                return false;
+            }
+            var vertexType = this.configuration.getVertexTypeForPass(pass);
+            var vertexFormat = vertexType == null ? null : vertexType.getVertexFormat();
+            if (vertexFormat == null) {
+                celtium$reportPackTerrainRefused(pass, programId, "no-vertex-format");
+                return false;
+            }
+
+            boolean onMain = this.targetRegistry.currentIsMain();
+            long identity = this.targetRegistry.currentIdentity();
+            int targetColors = onMain ? 1 : Math.max(1, this.modPrograms.celtium$modTargetColors());
+            int fragOutputs = modProgram.lowered().fragOutputCount();
+            if (fragOutputs > targetColors) {
+                // Ensure the bound FBO's color count covers the shader's declared outputs when off-target.
+                if (!onMain && fragOutputs <= 8) {
+                    targetColors = fragOutputs;
+                } else {
+                    celtium$reportPackTerrainRefused(pass, programId,
+                            "fragOutputs=" + fragOutputs + ">targetColors=" + targetColors);
+                    return false;
+                }
+            }
+
+            TargetFormatClass pairClass = onMain ? TargetFormatClass.RGBA8_UNORM : celtium$currentPairFormatClass();
+            long targetRenderPass = frameVariantRenderPass(targetColors, pairClass);
+            int passW = this.targetWidth;
+            int passH = this.targetHeight;
+            long framebuffer;
+            GllessFrameTarget pairOwner = onMain ? null : offTargetTarget();
+            long routedDepthKey = 0L;
+            long routedDepthImage = 0L;
+            long[] attachedColorImages = null;
+
+            if (onMain) {
+                this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+                framebuffer = ensureFramebuffer(targetRenderPass);
+                this.passAttachedColorImage = this.frameTarget.colorImage();
+                this.passAttachedColorImages = null;
+                this.passAttachedDepthImage = 0L;
+            } else {
+                if (pairOwner == null) {
+                    celtium$reportPackTerrainRefused(pass, programId, "no-offtarget");
+                    return false;
+                }
+                int[] depthRecord = celtium$depthTextureForTarget(identity);
+                long[] colorRecord = framebufferColorTexture(identity);
+                if (depthRecord != null && depthRecord[1] > 0 && depthRecord[2] > 0) {
+                    passW = depthRecord[1];
+                    passH = depthRecord[2];
+                } else if (colorRecord != null && colorRecord[0] > 0) {
+                    int cw = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter((int) colorRecord[0], 0, 0x1000);
+                    int ch = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter((int) colorRecord[0], 0, 0x1001);
+                    if (cw > 0 && ch > 0) {
+                        passW = cw;
+                        passH = ch;
+                    }
+                }
+                pairOwner.ensureChainPairColors(identity, targetColors, passW, passH, pairClass);
+                for (int s = 1; s < targetColors; s++) {
+                    pairOwner.ensureAndInitializeExtraColor(identity, s, passW, passH, this.commandBuffer);
+                }
+                if (depthRecord != null && depthRecord[0] != 0 && depthRecord[1] > 0 && depthRecord[2] > 0) {
+                    long candidateKey = RenderTargetRegistry.rawColorTextureIdentity(depthRecord[0]);
+                    if (pairOwner.ensureChainPairSharedDepth(identity, candidateKey, depthRecord[1], depthRecord[2])
+                            && pairOwner.chainPairUsesSharedDepth(identity, candidateKey)) {
+                        routedDepthKey = candidateKey;
+                        routedDepthImage = pairOwner.sharedDepthImage(candidateKey);
+                    }
+                }
+                attachedColorImages = new long[targetColors];
+                attachedColorImages[0] = pairOwner.chainPairColorImage(identity);
+                for (int s = 1; s < targetColors; s++) {
+                    attachedColorImages[s] = pairOwner.chainPairColorImageAt(identity, s);
+                }
+                this.postChainBridge.celtium$transitionPublishedFrameTextures(true, 0L, routedDepthImage, attachedColorImages);
+                celtium$consumeRoutedTargetClear(pairOwner, identity, routedDepthKey);
+                pairOwner.recordChainPairAttachAcquire(identity, routedDepthKey, this.commandBuffer);
+                framebuffer = ensureChainPairFramebuffer(targetRenderPass);
+                if (framebuffer == 0L) {
+                    celtium$reportPackTerrainRefused(pass, programId, "no-chain-framebuffer");
+                    return false;
+                }
+                this.passAttachedColorImage = attachedColorImages[0];
+                this.passAttachedColorImages = attachedColorImages;
+                this.passAttachedDepthImage = routedDepthImage;
+            }
+
+            // Build or fetch the cached VulkanModProgramPipeline for this terrain program + state.
+            int cull = this.immediateState.cullState();
+            boolean depthTest = this.immediateState.depthTestEnabled();
+            boolean depthWrite = this.immediateState.depthMask();
+            int depthCompareOp = org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL;
+            VulkanColorBlendState colorBlend = this.immediateState.blendEnabled()
+                    ? VulkanColorBlendState.legacy()
+                    : VulkanColorBlendState.of(false, 0, 0,
+                            org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE,
+                            org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ZERO,
+                            org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD,
+                            org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD,
+                            VulkanColorBlendState.allChannels());
+            String pipeKey = System.identityHashCode(modProgram.vertexSpirv()) + ":"
+                    + System.identityHashCode(modProgram.fragmentSpirv()) + ":"
+                    + vertexFormat.getStride() + ":" + targetRenderPass + ":" + cull + ":"
+                    + depthTest + ":" + depthWrite + ":" + depthCompareOp + ":"
+                    + colorBlend.hashCode() + ":" + targetColors;
+            VulkanModProgramPipeline modPipeline = this.packTerrainPipelines.get(pipeKey);
+            if (modPipeline == null) {
+                try {
+                    modPipeline = VulkanModProgramPipeline.createForTerrain(this.context, modProgram, vertexFormat,
+                            targetRenderPass, cull, depthTest, depthWrite, depthCompareOp, colorBlend, targetColors);
+                } catch (RuntimeException | LinkageError err) {
+                    celtium$reportPackTerrainRefused(pass, programId, "pipeline:" + describe(err));
+                    return false;
+                }
+                this.packTerrainPipelines.put(pipeKey, modPipeline);
+            }
+
+            // Transition non-attached published textures to sampled layout, then resolve all program samplers.
+            this.postChainBridge.celtium$transitionPublishedFrameTextures(false);
+            var samplers = modPipeline.samplers();
+            VulkanGlTexture[] samplerTextures = new VulkanGlTexture[samplers.size()];
+            for (int i = 0; i < samplers.size(); i++) {
+                var binding = samplers.get(i);
+                int[] unitVal = modProgram.ints(binding.name());
+                int unit = unitVal == null || unitVal.length == 0 ? 0 : unitVal[0];
+                int texName = this.immediateState.boundTextureName(unit);
+                VulkanGlTexture tex = this.modPrograms.celtium$modSamplerTexture(texName);
+                if (tex == null || tex.view() == 0L) {
+                    celtium$reportPackTerrainRefused(pass, programId,
+                            "sampler " + binding.name() + " (unit " + unit + ", tex " + texName + ") missing");
+                    return false;
+                }
+                if (!tex.celtium$ownsImage() && !celtium$passAttachesImage(tex.image())) {
+                    try {
+                        tex.ensureSampledLayout(this.commandBuffer);
+                    } catch (IllegalStateException ignored) {
+                        celtium$reportPackTerrainRefused(pass, programId,
+                                "sampler " + binding.name() + " layout-unknown");
+                        return false;
+                    }
+                }
+                samplerTextures[i] = tex;
+            }
+            var imageBindings = modPipeline.images();
+            VulkanGlTexture[] imageTextures = new VulkanGlTexture[imageBindings.size()];
+            for (int i = 0; i < imageBindings.size(); i++) {
+                var imgBind = imageBindings.get(i);
+                int[] unitVal = modProgram.ints(imgBind.name());
+                int unit = unitVal == null || unitVal.length == 0 ? 0 : unitVal[0];
+                int texName = org.soutalab.celtium.vulkan.NativeImageBindings.current().texture(unit);
+                VulkanGlTexture tex = this.modPrograms.celtium$modSamplerTexture(texName);
+                if (tex == null || tex.view() == 0L) {
+                    celtium$reportPackTerrainRefused(pass, programId,
+                            "image " + imgBind.name() + " (unit " + unit + ", tex " + texName + ") missing");
+                    return false;
+                }
+                imageTextures[i] = tex;
+            }
+
+            // Begin the load/store-depth MRT render pass.
+            VkRenderPassBeginInfo begin = VkRenderPassBeginInfo.calloc(stack)
+                    .sType$Default()
+                    .renderPass(targetRenderPass)
+                    .framebuffer(framebuffer);
+            begin.renderArea().offset().set(0, 0);
+            begin.renderArea().extent().set(passW, passH);
+            vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
+            this.activeImmediateTarget = identity;
+            this.passAreaWidth = passW;
+            this.passAreaHeight = passH;
+            this.commandState.beginPass(identity);
+            org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(true);
+
+            setViewportAndScissor(stack, passW, passH);
+            modPipeline.bindTerrainPipeline(this.commandBuffer);
+
+            Iterator<ChunkRenderList> iterator = renderLists.iterator(pass.isReverseOrder());
+            SectionRenderDataStorage.BatchCacheParams cacheParams =
+                    new SectionRenderDataStorage.BatchCacheParams(useBlockFaceCulling, view);
+            boolean indexBound = false;
+            LongBuffer regionVertexBuf = stack.mallocLong(1);
+            LongBuffer regionVertexOffset = stack.longs(0L);
+            LongBuffer setScratch = stack.mallocLong(1);
+            int drawnCommands = 0;
+            int drawnSections = 0;
+            boolean sortedPass = pass.isSorted();
+
+            try {
+                while (iterator.hasNext()) {
+                    ChunkRenderList renderList = iterator.next();
+                    RenderRegion region = renderList.getRegion();
+                    TerrainRenderer.RegionResources resources = this.terrain.resourcesIfPresent(region);
+                    SectionRenderDataStorage storage = region.getStorage(pass);
+                    if (resources == null || storage == null) {
+                        continue;
+                    }
+                    CachedBatch cached = storage.getCachedMultiDrawBatch(cacheParams);
+                    if (cached == null || !cached.isValidFor(renderList.getSectionsWithGeometry(),
+                            renderList.getSectionsWithGeometryCount(), occlusionCamera.intX, occlusionCamera.intY,
+                            occlusionCamera.intZ)) {
+                        if (cached != null) {
+                            storage.retireCachedMultiDrawBatch(cacheParams);
+                        }
+                        cached = BatchAssembler.createCachedBatch(region, storage, renderList, occlusionCamera, pass,
+                                useBlockFaceCulling, null, (commands, ignored, ignoredPass) -> null);
+                        storage.storeCachedMultiDrawBatch(cacheParams, cached);
+                    }
+                    if (!(cached.getBatch() instanceof VulkanMultiDrawBatch batch) || batch.isEmpty()) {
+                        continue;
+                    }
+                    float regionOffsetX = (region.getOriginX() - camera.intX) - camera.fracX;
+                    float regionOffsetY = (region.getOriginY() - camera.intY) - camera.fracY;
+                    float regionOffsetZ = (region.getOriginZ() - camera.intZ) - camera.fracZ;
+                    iface.setRegionOffset(regionOffsetX, regionOffsetY, regionOffsetZ);
+
+                    long descSet = modPipeline.samplersAndImages(samplerTextures, imageTextures, modProgram, this.frameId);
+                    ByteBuffer pushUniforms = modPipeline.uniformsViaBuffer() ? null
+                            : VulkanModProgramPipeline.packUniforms(modProgram);
+                    modPipeline.bindTerrainUniformsAndSet(this.commandBuffer, pushUniforms, descSet, setScratch);
+
+                    this.terrain.bindVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset, resources);
+                    if (!indexBound) {
+                        this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
+                        indexBound = true;
+                    }
+                    boolean arenaBound = false;
+                    for (int cmd = 0; cmd < batch.size(); cmd++) {
+                        long byteOffset = batch.indexByteOffset(cmd);
+                        boolean arena;
+                        int firstIndex;
+                        if (sortedPass) {
+                            if (resources.indexArena == null) continue;
+                            arena = true;
+                            firstIndex = (int) (byteOffset / 4);
+                        } else if (byteOffset == 0) {
+                            arena = false;
+                            firstIndex = 0;
+                        } else if (resources.indexArena != null) {
+                            arena = true;
+                            firstIndex = (int) (byteOffset / 4);
+                        } else {
+                            continue;
+                        }
+                        if (arena != arenaBound) {
+                            this.terrain.bindIndexBuffer(this.commandBuffer, arena
+                                    ? resources.indexArena.buffer()
+                                    : this.sharedIndexBuffers.get(primitiveType));
+                            arenaBound = arena;
+                        }
+                        vkCmdDrawIndexed(this.commandBuffer, batch.elementCount(cmd), 1, firstIndex,
+                                batch.baseVertex(cmd), 0);
+                        drawnCommands++;
+                    }
+                    if (arenaBound) {
+                        this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
+                    }
+                    drawnSections += renderList.getSectionsWithGeometryCount();
+                }
+            } finally {
+                vkCmdEndRenderPass(this.commandBuffer);
+                this.commandState.endPass();
+                org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
+                if (pairOwner != null) {
+                    pairOwner.recordChainPairAttachRelease(identity, routedDepthKey);
+                }
+            }
+            if (this.packTerrainDrawnLogs < 16) {
+                this.packTerrainDrawnLogs++;
+                System.out.println("[Celtium] CELTIUM_PACK_TERRAIN_DRAWN pass=" + pass.name()
+                        + " program=" + programId + " commands=" + drawnCommands + " sections=" + drawnSections
+                        + " colors=" + targetColors + " extent=" + passW + "x" + passH
+                        + " identity=0x" + Long.toHexString(identity) + " frame=" + this.frameId);
+            }
+            return true;
+        } catch (RuntimeException | LinkageError err) {
+            celtium$reportPackTerrainRefused(pass, packProgram.handle(), "exception:" + describe(err));
+            return false;
+        } finally {
+            if (stateSetup) {
+                try {
+                    iface.restoreState();
+                } catch (Throwable ignored) {
+                }
+            }
+            if (bound) {
+                try {
+                    packProgram.unbind();
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+    }
+
+    private void celtium$reportPackTerrainRefused(TerrainRenderPass pass, int programId, String reason) {
+        if (this.packTerrainRefusedLogs < 24) {
+            this.packTerrainRefusedLogs++;
+            System.out.println("[Celtium] CELTIUM_PACK_TERRAIN_REFUSED pass=" + pass.name()
+                    + " program=" + programId + " reason=" + reason + " frame=" + this.frameId);
+        }
+    }
+
     private void recordRenderPass(MemoryStack stack,
                                   VulkanTerrainPipeline pipeline,
                                   ChunkRenderMatrices matrices,
@@ -16656,6 +17034,10 @@ this.frameBufferOpen = false;
         long routedDepthKey = 0L;
         int passAreaWidth = this.targetWidth;
         int passAreaHeight = this.targetHeight;
+        if (celtium$tryRenderPackTerrainPass(stack, matrices, renderLists, pass, occlusionCamera, camera, view,
+                useBlockFaceCulling, primitiveType)) {
+            return;
+        }
         org.soutalab.celtium.vulkan.FramePassTimings.begin("recordPrepare");
         try {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("prepDescriptors");

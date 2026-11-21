@@ -348,7 +348,7 @@ final class ModPrograms {
      * framebuffer's one, and for a mod's own framebuffer the publication record's count - the same record the
      * window sizes its pass from, so the pipeline and the pass cannot disagree about the target.
      */
-    private int celtium$modTargetColors() {
+    int celtium$modTargetColors() {
         long identity = b.currentFramebufferIdentity;
         if (identity == b.targetRegistry.mainIdentity()) {
             return 1;
