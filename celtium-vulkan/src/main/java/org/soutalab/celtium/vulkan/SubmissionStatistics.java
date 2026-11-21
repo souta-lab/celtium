@@ -29,6 +29,10 @@ public final class SubmissionStatistics {
     private long retiredFlushes;
     private int signalOnlySubmissions;
     private int presentModeRebuilds;
+    /** Swapchains dropped because the swapchain itself asked for a rebuild (out-of-date verdicts, retired acquisitions). */
+    private int outOfDateRebuilds;
+    /** Swapchains dropped with their surface because the surface was lost (VK_ERROR_SURFACE_LOST_KHR). */
+    private int surfaceLostRebuilds;
     private int idleWaitTimeouts;
     private int idleWaitRetries;
     private long deviceWaitToken;
@@ -293,6 +297,46 @@ public final class SubmissionStatistics {
     /** {@return presentModeRebuilds}. */
     int presentModeRebuilds() {
         return this.presentModeRebuilds;
+    }
+
+    /** Records one outOfDateRebuilds. */
+    void noteOutOfDateRebuilds() {
+        this.outOfDateRebuilds++;
+    }
+
+    /** Sets outOfDateRebuilds. */
+    void setOutOfDateRebuilds(int value) {
+        this.outOfDateRebuilds = value;
+    }
+
+    /** Adds to outOfDateRebuilds. */
+    void addOutOfDateRebuilds(int value) {
+        this.outOfDateRebuilds += value;
+    }
+
+    /** {@return outOfDateRebuilds}. */
+    int outOfDateRebuilds() {
+        return this.outOfDateRebuilds;
+    }
+
+    /** Records one surfaceLostRebuilds. */
+    void noteSurfaceLostRebuilds() {
+        this.surfaceLostRebuilds++;
+    }
+
+    /** Sets surfaceLostRebuilds. */
+    void setSurfaceLostRebuilds(int value) {
+        this.surfaceLostRebuilds = value;
+    }
+
+    /** Adds to surfaceLostRebuilds. */
+    void addSurfaceLostRebuilds(int value) {
+        this.surfaceLostRebuilds += value;
+    }
+
+    /** {@return surfaceLostRebuilds}. */
+    int surfaceLostRebuilds() {
+        return this.surfaceLostRebuilds;
     }
 
     /** Records one idleWaitTimeouts. */

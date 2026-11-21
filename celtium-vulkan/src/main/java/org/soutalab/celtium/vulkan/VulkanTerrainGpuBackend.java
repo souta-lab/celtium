@@ -17264,6 +17264,21 @@ this.frameBufferOpen = false;
         this.seenDumpWriteSerialByName.clear();
     }
 
+    /**
+     * Drops the swapchain WITHOUT handing its surface over to the next one.
+     * <p>
+     * The counterpart of {@link #releaseSwapchainForRebuild()} for a lost surface: the handover exists because a
+     * surface belongs to its window, but a lost surface is dead - adopting it would rebuild every new swapchain on
+     * the same dead handle and fail forever (bughunt LANE-05 #5). {@code delete()} destroys the surface with the
+     * swapchain, and the creation below builds a fresh one from the window.
+     */
+    private void dropSwapchainAndSurface() {
+        this.pendingPresentedDumps.addAll(this.swapchain.takePendingPresentedImageDumps());
+        this.swapchain.delete();
+        this.swapchain = null;
+        this.seenDumpWriteSerialByName.clear();
+    }
+
     private void forwardPendingPresentedDumps() {
         if (this.swapchain == null) {
             return;
@@ -17298,6 +17313,27 @@ this.frameBufferOpen = false;
                     + " previous=[" + this.swapchain.presentModeSummary() + "]");
             releaseSwapchainForRebuild();
             this.submissionStatistics.notePresentModeRebuilds();
+        }
+        // The swapchain's own verdicts, consumed here because this is the one place that runs before every present
+        // and owns the drop: an out-of-date acquire or present, a retired acquisition and a presenter failure all
+        // used to set a flag no production code read, so the rebuild they asked for never happened - an out-of-date
+        // whose cause was not an extent change presented-failed every frame forever, and retired acquisitions
+        // leaked an image each until the acquire blocked for good (bughunt LANE-05 #1). A lost surface is the
+        // stronger verdict and is decided first: its surface must not be handed over to the next swapchain.
+        if (this.swapchain != null) {
+            String decision = org.soutalab.celtium.vulkan.VulkanSwapchain.rebuildDecision(
+                    this.swapchain.surfaceLost(), this.swapchain.rebuildNeeded());
+            if ("recreate-surface".equals(decision)) {
+                record("the surface was lost (VK_ERROR_SURFACE_LOST_KHR): dropping the swapchain and its"
+                        + " surface so both are recreated");
+                dropSwapchainAndSurface();
+                this.submissionStatistics.noteSurfaceLostRebuilds();
+            } else if ("rebuild".equals(decision)) {
+                record("the swapchain asked for a rebuild (" + this.swapchain.rebuildReason()
+                        + "): dropping it so it is rebuilt");
+                releaseSwapchainForRebuild();
+                this.submissionStatistics.noteOutOfDateRebuilds();
+            }
         }
         // Under the GL-less window there is no current context to ask, so the handle comes from Display - the same
         // GLFW window either way. Reflective because celtium-vulkan does not depend on the lwjglxx shim.
@@ -22573,22 +22609,25 @@ this.frameBufferOpen = false;
                     result = vkWaitForFences(this.context.device(), fences, true, IDLE_TIMEOUT_NANOS);
                 }
             }
-// An abandoned frame is not "the frame is still recording": the flag must not route the
-// next beginCommands into the buffer whose recording the abandon just discards.
-this.frameBufferOpen = false;
             if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
                 this.submissionStatistics.noteIdleWaitTimeouts();
                 this.noteStalled();
+                // An abandoned frame is not "the frame is still recording": the flag must not route the
+                // next beginCommands into the buffer whose recording the abandon just discards. Cleared on the
+                // abandon paths only - this clear used to run unconditionally before both checks, so a wait that
+                // merely succeeded while a frame was open (the immediate-window waitForIdle path) cleared the
+                // flag behind its owner's back and the next beginCommands took the new-begin path into a
+                // "nested begin" failure (bughunt LANE-05 #3).
+                this.frameBufferOpen = false;
                 this.frameTarget.abandonFrame("frame slot fence timed out");
                 return false;
             }
-// An abandoned frame is not "the frame is still recording": the flag must not route the
-// next beginCommands into the buffer whose recording the abandon just discards.
-this.frameBufferOpen = false;
             if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS
                     && result != org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
                 record("waitForSlot(" + slot + "): vkWaitForFences returned " + result);
                 this.noteStalled();
+                // The abandon-path flag clear, as in the timeout branch above (bughunt LANE-05 #3).
+                this.frameBufferOpen = false;
                 this.frameTarget.abandonFrame("frame slot fence failed: " + result);
                 return false;
             }

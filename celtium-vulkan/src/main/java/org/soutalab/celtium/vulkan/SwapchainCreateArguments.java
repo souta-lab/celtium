@@ -131,6 +131,15 @@ public final class SwapchainCreateArguments {
         result.extentNote = result.extentFromSurface
                 ? "surface currentExtent"
                 : "request clamped into min..max (currentExtent unspecified)";
+        if (result.width <= 0 || result.height <= 0) {
+            // Only the pinned-extent path can land here (the clamp never returns below 1): a surface that pins a
+            // 0x0 current extent - a minimised window on some platforms - would otherwise flow unprocessed into
+            // vkCreateSwapchainKHR and fail there every frame until the window settles (bughunt LANE-05 #8).
+            // Refusing by name lets the caller skip the frame and retry creation once the surface reports a size.
+            result.refusal = "the surface pins a current extent of " + result.width + "x" + result.height
+                    + ", so no swapchain can be created until it reports a size";
+            return result;
+        }
 
         // --- usage: colour attachment is required, the transfer bits are taken only when the surface offers them,
         // and what was dropped is named.
