@@ -370,12 +370,34 @@ public final class CeltiumLightCache {
 
     private static long lightEpochSeen = Long.MIN_VALUE;
 
+    /**
+     * The world the current generation was rolled under, compared by identity. The cache key is a packed
+     * position only - it carries no world - so invalidation rests on the generation tag alone, and a roll
+     * keyed on the tick and the light epoch only cannot separate two client worlds whose total times
+     * coincide at the switch: at equal total time with no light write in between, the previous world's
+     * entries would keep the current generation and be served in the new world until its tick first moved
+     * (roam-hunt-9). A world object is recreated on every world load, so identity is the exact test - the
+     * same one the entity gatherer's cache gate uses.
+     */
+    private static World rolledWorld;
+
+    /**
+     * Whether a lookup must start a new generation: the tick moved, a light write landed, or the world is
+     * a different object than the one the current generation was rolled under. Kept pure, like
+     * {@link #funnelApplies}, so the rule itself is unit-testable; the wiring that feeds it needs a running
+     * world.
+     */
+    static boolean generationRolls(long rolledTick, long rolledEpoch, boolean sameWorld, long now, long epoch) {
+        return now != rolledTick || epoch != rolledEpoch || !sameWorld;
+    }
+
     private static void rollTick(World world) {
         long now = world.getTotalWorldTime();
         long epoch = lightEpoch;
-        if (now != tick || epoch != lightEpochSeen) {
+        if (generationRolls(tick, lightEpochSeen, world == rolledWorld, now, epoch)) {
             tick = now;
             lightEpochSeen = epoch;
+            rolledWorld = world;
             // One increment instead of two map clears: the entries stay and are read as misses by their tag. The
             // wrap is the only case that needs the old behaviour, and it is 4 billion invalidations away.
             if (++generation == 0) {

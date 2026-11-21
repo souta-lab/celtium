@@ -11864,6 +11864,16 @@ this.frameBufferOpen = false;
             released += releaseDirect(modProgram == null ? null : modProgram::delete);
         }
         this.modPrograms.modProgramPipelines.clear();
+        // Shader-pack terrain pipelines are the same kind of object - a live pipeline with descriptor pools,
+        // keyed by the program's SPIR-V identity - and they go with it too. The full delete cleared them, but
+        // the world teardown path did not (roam-hunt-9): the render passes they were built against outlive a
+        // world, the pipelines must not. A pack that recreates its programs for the next world (a pack switch,
+        // a resource reload) would leave the old entries unreachable by key yet alive for the rest of the
+        // process, and a later key collision could hand the new world a pipeline built from the old SPIR-V.
+        for (VulkanModProgramPipeline packPipeline : this.packTerrainPipelines.values()) {
+            released += releaseDirect(packPipeline == null ? null : packPipeline::delete);
+        }
+        this.packTerrainPipelines.clear();
         this.indirectRuns.indirectRunPipeline = null;
         this.indirectRuns.indirectRunPipelineObject = null;
         this.indirectRuns.indirectRunOriginalPipeline = null;
