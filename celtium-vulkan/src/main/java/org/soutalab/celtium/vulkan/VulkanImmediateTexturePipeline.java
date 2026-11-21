@@ -889,6 +889,14 @@ public final class VulkanImmediateTexturePipeline {
             long removed = this.setsByTextureView.remove(eldest);
             if (removed != 0L) {
                 this.descriptorSetsRetired++;
+                // The single-slot cache in front of the map is dropped with its set: the slot is consulted
+                // before the map, so a slot still naming a retired set would hand back a set that is on its
+                // way back to its pool - and, after the completion-gated free and a reallocation, a set that
+                // now belongs to another texture. The item and block families clear their slots the same way.
+                if (removed == this.lastDescriptorSet) {
+                    this.lastDescriptorKey = -1L;
+                    this.lastDescriptorSet = 0L;
+                }
                 long pool = this.poolByDescriptorSet.remove(removed);
                 if (pool != 0L) {
                     this.retiredSets.add(pool, removed);
