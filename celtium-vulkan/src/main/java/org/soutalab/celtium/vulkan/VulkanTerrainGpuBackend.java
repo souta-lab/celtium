@@ -2952,6 +2952,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private final float[] currentGroupModelView = new float[16];
     /** The four-float scratch {@code GL_CURRENT_COLOR} is read into, reused across groups rather than alloc/freed. */
     private final java.nio.FloatBuffer colourScratch = org.lwjgl.system.MemoryUtil.memAllocFloat(4);
+    /** Reusable 1-element structs for {@link #celtium$setGroupViewport}, avoiding per-change MemoryStack+wrapper alloc. */
+    private org.lwjgl.vulkan.VkViewport.Buffer groupViewportScratch;
+    private org.lwjgl.vulkan.VkRect2D.Buffer groupScissorScratch;
     /** The nine-float working matrix {@link #celtium$lightParams} inverts the modelview's upper 3x3 into. */
     final float[] lightInverseScratch = new float[9];
     /**
@@ -15649,6 +15652,14 @@ this.frameBufferOpen = false;
             this.cachedWindowBeginArea.free();
             this.cachedWindowBeginArea = null;
         }
+        if (this.groupViewportScratch != null) {
+            this.groupViewportScratch.free();
+            this.groupViewportScratch = null;
+        }
+        if (this.groupScissorScratch != null) {
+            this.groupScissorScratch.free();
+            this.groupScissorScratch = null;
+        }
         if (this.gpuStalled) {
             // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded
             // references are still live. Destroying the frame target or its framebuffers here is what validation reported as
@@ -22177,13 +22188,15 @@ this.frameBufferOpen = false;
             this.immediateOffTargetViewports++;
         }
         if (x0 != this.passVpX || y != this.passVpY || width != this.passVpW || height != this.passVpH) {
-            try (MemoryStack vpStack = MemoryStack.stackPush()) {
-                org.lwjgl.vulkan.VkViewport.Buffer vkViewport = org.lwjgl.vulkan.VkViewport.calloc(1, vpStack);
-                vkViewport.get(0).x((float) x0).y((float) y)
-                        .width((float) width).height((float) height)
-                        .minDepth(0.0f).maxDepth(1.0f);
-                vkCmdSetViewport(this.commandBuffer, 0, vkViewport);
+            org.lwjgl.vulkan.VkViewport.Buffer vkViewport = this.groupViewportScratch;
+            if (vkViewport == null) {
+                vkViewport = org.lwjgl.vulkan.VkViewport.calloc(1);
+                this.groupViewportScratch = vkViewport;
             }
+            vkViewport.get(0).x((float) x0).y((float) y)
+                    .width((float) width).height((float) height)
+                    .minDepth(0.0f).maxDepth(1.0f);
+            vkCmdSetViewport(this.commandBuffer, 0, vkViewport);
             this.passVpX = x0;
             this.passVpY = y;
             this.passVpW = width;
@@ -22263,12 +22276,14 @@ this.frameBufferOpen = false;
         }
         if (scissorX != this.passScX || scissorY != this.passScY
                 || scissorWidth != this.passScW || scissorHeight != this.passScH) {
-            try (MemoryStack scStack = MemoryStack.stackPush()) {
-                org.lwjgl.vulkan.VkRect2D.Buffer scissor = org.lwjgl.vulkan.VkRect2D.calloc(1, scStack);
-                scissor.get(0).offset().set(scissorX, scissorY);
-                scissor.get(0).extent().set(scissorWidth, scissorHeight);
-                vkCmdSetScissor(this.commandBuffer, 0, scissor);
+            org.lwjgl.vulkan.VkRect2D.Buffer scissor = this.groupScissorScratch;
+            if (scissor == null) {
+                scissor = org.lwjgl.vulkan.VkRect2D.calloc(1);
+                this.groupScissorScratch = scissor;
             }
+            scissor.get(0).offset().set(scissorX, scissorY);
+            scissor.get(0).extent().set(scissorWidth, scissorHeight);
+            vkCmdSetScissor(this.commandBuffer, 0, scissor);
             this.passScX = scissorX;
             this.passScY = scissorY;
             this.passScW = scissorWidth;

@@ -178,8 +178,23 @@ public abstract class WorldVertexBufferUploaderMixin {
 
     private static final Map<VertexFormat, Integer> celtium$formatIds =
             Collections.synchronizedMap(new WeakHashMap<VertexFormat, Integer>());
+    private static final Map<VertexFormat, int[]> celtium$particleRepackCache =
+            Collections.synchronizedMap(new WeakHashMap<VertexFormat, int[]>());
+    private static final int[] celtium$NO_REPACK = new int[0];
+    private static ByteBuffer celtium$compactScratch;
     private static VertexFormat celtium$lastFormat;
     private static int celtium$lastFormatId;
+
+    private static int[] celtium$cachedParticleRepack(VertexFormat format, int stride) {
+        int[] cached = celtium$particleRepackCache.get(format);
+        if (cached != null) {
+            return cached == celtium$NO_REPACK ? null : cached;
+        }
+        int[] computed = org.soutalab.celtium.vulkan.VulkanImmediateFormats.particleRepack(
+                celtium$signature(format), stride);
+        celtium$particleRepackCache.put(format, computed == null ? celtium$NO_REPACK : computed);
+        return computed;
+    }
 
     // cancellable = true is what makes info.cancel() mean anything: with it false - the default - cancel() throws, and
     // this injector's broad catch swallowed that exception, so the original GL draw ran for every batch the backend had
@@ -341,41 +356,44 @@ public abstract class WorldVertexBufferUploaderMixin {
             // 28-byte id and had the backend refuse every one of its arrivals.
             int submitStride = stride;
             long submitAddress = address;
-            ByteBuffer celtium$compacted = null;
             // The same holds for the 31-byte Fancy Block Particles layout and for a particle layout that carries its
             // light map before its colour: both are rebuilt into PARTICLE's order and width (particleRepack).
-            // Vanilla's own particle format is PARTICLE already; only a mod's format pays for the element text.
+            // Vanilla's own particle format is PARTICLE already; only a mod's format pays for the cached lookup.
             int[] celtium$repack = formatId == org.soutalab.celtium.vulkan.VulkanImmediateFormats.PARTICLE
                     && format != DefaultVertexFormats.PARTICLE_POSITION_TEX_COLOR_LMAP
-                    ? org.soutalab.celtium.vulkan.VulkanImmediateFormats.particleRepack(celtium$signature(format), stride)
+                    ? celtium$cachedParticleRepack(format, stride)
                     : null;
             if (celtium$repack != null) {
                 int compactedStride = 28;
-                {
-                    celtium$compacted = org.lwjgl.system.MemoryUtil.memAlloc(
-                            Math.multiplyExact(vertices, compactedStride));
-                    long to = org.lwjgl.system.MemoryUtil.memAddress(celtium$compacted);
-                    for (int i = 0; i < vertices; i++) {
-                        long from = address + (long) i * stride;
-                        long into = to + (long) i * compactedStride;
-                        for (int s = 0; s < celtium$repack.length; s += 2) {
-                            org.lwjgl.system.MemoryUtil.memCopy(from + celtium$repack[s], into, celtium$repack[s + 1]);
-                            into += celtium$repack[s + 1];
-                        }
+                int compactedBytes = Math.multiplyExact(vertices, compactedStride);
+                if (celtium$compactScratch == null || celtium$compactScratch.capacity() < compactedBytes) {
+                    if (celtium$compactScratch != null) {
+                        org.lwjgl.system.MemoryUtil.memFree(celtium$compactScratch);
                     }
-                    submitStride = compactedStride;
-                    submitAddress = to;
-                    celtium$compactedBatches++;
-                    if (celtium$compactedDumps < 2) {
-                        // The evidence that this path ran at all: the layout is rare (three arrivals in the measured
-                        // Supersymmetry session), so without this line a silent no-op and a working compaction look
-                        // the same in a log.
-                        celtium$compactedDumps++;
-                        System.out.println("[Celtium] CELTIUM_COMPACTED_BATCH format="
-                                + org.soutalab.celtium.vulkan.VulkanImmediateFormats.nameOf(formatId)
-                                + " from=" + stride + " to=" + compactedStride + " vertices=" + vertices
-                                + " callers=[" + celtium$drawCallers() + "]");
+                    celtium$compactScratch = org.lwjgl.system.MemoryUtil.memAlloc(
+                            Math.max(compactedBytes, 16 * 1024));
+                }
+                long to = org.lwjgl.system.MemoryUtil.memAddress(celtium$compactScratch);
+                for (int i = 0; i < vertices; i++) {
+                    long from = address + (long) i * stride;
+                    long into = to + (long) i * compactedStride;
+                    for (int s = 0; s < celtium$repack.length; s += 2) {
+                        org.lwjgl.system.MemoryUtil.memCopy(from + celtium$repack[s], into, celtium$repack[s + 1]);
+                        into += celtium$repack[s + 1];
                     }
+                }
+                submitStride = compactedStride;
+                submitAddress = to;
+                celtium$compactedBatches++;
+                if (celtium$compactedDumps < 2) {
+                    // The evidence that this path ran at all: the layout is rare (three arrivals in the measured
+                    // Supersymmetry session), so without this line a silent no-op and a working compaction look
+                    // the same in a log.
+                    celtium$compactedDumps++;
+                    System.out.println("[Celtium] CELTIUM_COMPACTED_BATCH format="
+                            + org.soutalab.celtium.vulkan.VulkanImmediateFormats.nameOf(formatId)
+                            + " from=" + stride + " to=" + compactedStride + " vertices=" + vertices
+                            + " callers=[" + celtium$drawCallers() + "]");
                 }
             }
             int mode = celtium$drawMode(buffer);
@@ -412,9 +430,6 @@ public abstract class WorldVertexBufferUploaderMixin {
                     }
                 }
             } finally {
-                if (celtium$compacted != null) {
-                    org.lwjgl.system.MemoryUtil.memFree(celtium$compacted);
-                }
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallCount++;
                 if (batchTimed) {
                     long batchCallTook = System.nanoTime() - batchCallStarted;
