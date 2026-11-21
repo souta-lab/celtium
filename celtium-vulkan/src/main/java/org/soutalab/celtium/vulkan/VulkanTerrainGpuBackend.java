@@ -2840,6 +2840,37 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int hudCaptureFramesReported;
     private long hudCaptureLastFrame = -1L;
     /**
+     * Item 312's P0 measurement: how many frames report the HUD group census and run partition.
+     * <p>
+     * {@code -Dceltium.vulkan.hudP0Frames=<n>}, default 0 (off). The HUD cache design's gates G1-G4 are
+     * stated in numbers no existing line prints: the flush's group-proportional microseconds, the
+     * cacheable share of the HUD's groups under the exclusion rules, and the run count a layer would
+     * face. This census counts the groups closed while the {@code gui} bracket is open (the same vantage
+     * as {@link #celtium$reportHudGroup}), classifies each against E1-E5 and the F1 replace reading in
+     * {@link HudP0Census}, and pairs each gui flush window's wall time with the group count it recorded
+     * so the flush cost can be fitted rather than guessed. It draws nothing and changes nothing.
+     */
+    private static final int HUD_P0_FRAMES =
+            Integer.getInteger("celtium.vulkan.hudP0Frames", 0).intValue();
+    /** First frame {@code CELTIUM_HUD_P0} reports; same loading-phase reason as {@link #HUD_CAPTURE_MIN_FRAME}. */
+    private static final long HUD_P0_MIN_FRAME =
+            Long.getLong("celtium.vulkan.hudP0MinFrame", 0L).longValue();
+    /** The frame the P0 census is accumulating, its accumulator, and how many frames it has reported. */
+    private long hudP0FrameId = -1L;
+    private HudP0Census.Frame hudP0Frame;
+    private int hudP0FramesReported;
+    private boolean hudP0SummaryPrinted;
+    /** Flush-window (groups, nanos) pairs for the G1 fit, accumulated across the whole census. */
+    private final HudP0Census.FlushRegression hudP0FlushFit = new HudP0Census.FlushRegression();
+    /** Running totals across reported frames, so the summary line states the G3/G4 inputs directly. */
+    private long hudP0TotalGroups;
+    private long hudP0TotalCacheable;
+    private long hudP0TotalCacheableStrict;
+    private long hudP0TotalRuns;
+    private long hudP0TotalRunsStrict;
+    private long hudP0TotalVertices;
+    private long hudP0TotalVertexBytes;
+    /**
      * Diagnostic only: the rotations the mirror applied since this frame's camera boundary, oldest first.
      * <p>
      * A group's model-view is the camera base times whatever {@code GlStateManager.rotate} calls the pass made on top
@@ -6928,6 +6959,90 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 + round3(projection[10]) + "," + round3(projection[14])
                 + " viewport=" + java.util.Arrays.toString(this.currentGroupViewportValues)
                 + " worldPass=" + this.worldPassActive);
+    }
+
+    /**
+     * Counts one group closed inside the HUD's bracket into the item-312 P0 census; see {@link #HUD_P0_FRAMES}.
+     * <p>
+     * Called from the same site as {@link #celtium$reportHudGroup}, where the closing group's format,
+     * texture, batches, captured state and target are all still the current-group fields. Main-ness is
+     * answered by the same rule the HUD report uses, and a group sampling a published framebuffer colour
+     * texture is flagged through the publication map, which is the E4 fact the census can state today.
+     */
+    private void celtium$noteHudP0Group() {
+        if (HUD_P0_FRAMES <= 0 || !FramePassTimings.guiSectionActive()) {
+            return;
+        }
+        if (this.frameId < HUD_P0_MIN_FRAME || this.hudP0FramesReported >= HUD_P0_FRAMES) {
+            return;
+        }
+        if (this.hudP0FrameId != this.frameId) {
+            celtium$flushHudP0Frame();
+            this.hudP0FrameId = this.frameId;
+            this.hudP0Frame = new HudP0Census.Frame();
+        }
+        long identity = this.currentGroupTarget;
+        boolean isMain = this.targetRegistry.currentIsMain()
+                || identity == this.gameFramebufferIdentity
+                || identity == this.targetRegistry.mainIdentity();
+        boolean samplesTarget = this.currentGroupTexture != 0
+                && this.publishedTextures.identityForColorTexture(this.currentGroupTexture) != Long.MIN_VALUE;
+        int vertices = this.currentImmediateMesh == null ? 0 : this.currentImmediateMesh.vertexCount();
+        long vertexBytes = this.currentImmediateMesh == null ? 0L
+                : (long) vertices * this.currentImmediateMesh.layout().stride;
+        this.hudP0Frame.note(this.currentGroupState, isMain, samplesTarget,
+                this.currentGroupBatches, vertices, vertexBytes);
+    }
+
+    /** Prints the accumulated frame's census line and folds it into the running totals. */
+    private void celtium$flushHudP0Frame() {
+        HudP0Census.Frame frame = this.hudP0Frame;
+        if (frame == null || frame.groups == 0) {
+            return;
+        }
+        // Consumed: the world-teardown call must not print the same frame a rollover already reported.
+        this.hudP0Frame = null;
+        this.hudP0FramesReported++;
+        this.hudP0TotalGroups += frame.groups;
+        this.hudP0TotalCacheable += frame.cacheable();
+        this.hudP0TotalCacheableStrict += frame.cacheableStrict();
+        this.hudP0TotalRuns += frame.runs();
+        this.hudP0TotalRunsStrict += frame.runsStrict();
+        this.hudP0TotalVertices += frame.vertices;
+        this.hudP0TotalVertexBytes += frame.vertexBytes;
+        System.out.println("[Celtium] CELTIUM_HUD_P0 frame=" + this.hudP0FrameId
+                + " groups=" + frame.groups + " batches=" + frame.batches
+                + " vertices=" + frame.vertices + " vertexBytes=" + frame.vertexBytes
+                + " depthExcluded=" + frame.depthExcluded + " maskPartial=" + frame.maskPartial
+                + " offTarget=" + frame.offTarget + " samplesTarget=" + frame.samplesTarget
+                + " blendOff=" + frame.blendOff + " blendOver=" + frame.blendOver
+                + " blendOther=" + frame.blendOther
+                + " runs=" + frame.runs() + " runsStrict=" + frame.runsStrict()
+                + " cacheable=" + frame.cacheable() + " cacheableStrict=" + frame.cacheableStrict()
+                + (frame.sequenceOverflow ? " sequenceOverflow=1" : ""));
+        if (this.hudP0FramesReported >= HUD_P0_FRAMES) {
+            celtium$printHudP0Summary();
+        }
+    }
+
+    /** Prints the census summary once, at the budget's end or at world teardown, whichever comes first. */
+    private void celtium$printHudP0Summary() {
+        if (this.hudP0SummaryPrinted || this.hudP0FramesReported == 0) {
+            return;
+        }
+        this.hudP0SummaryPrinted = true;
+        double slope = this.hudP0FlushFit.slopeNanosPerGroup();
+        double intercept = this.hudP0FlushFit.interceptNanos();
+        System.out.println("[Celtium] CELTIUM_HUD_P0_SUMMARY frames=" + this.hudP0FramesReported
+                + " groups=" + this.hudP0TotalGroups
+                + " cacheable=" + this.hudP0TotalCacheable
+                + " cacheableStrict=" + this.hudP0TotalCacheableStrict
+                + " runs=" + this.hudP0TotalRuns + " runsStrict=" + this.hudP0TotalRunsStrict
+                + " vertices=" + this.hudP0TotalVertices + " vertexBytes=" + this.hudP0TotalVertexBytes
+                + " flushWindows=" + this.hudP0FlushFit.windows()
+                + " flushGroups=" + this.hudP0FlushFit.totalGroups()
+                + " flushSlopeNsPerGroup=" + (Double.isNaN(slope) ? "nan" : Long.toString(Math.round(slope)))
+                + " flushInterceptNs=" + (Double.isNaN(intercept) ? "nan" : Long.toString(Math.round(intercept))));
     }
 
     /** Prints the line {@link #celtium$noteTargetIdentity} collected, with the group's texture and format. */
@@ -11941,6 +12056,11 @@ this.frameBufferOpen = false;
         long flushStartedNanos = BATCH_TIMINGS ? System.nanoTime() : 0;
         long flushCpuStartedNanos = BATCH_TIMINGS ? threadCpuNanos() : -1L;
         boolean guiFlush = FramePassTimings.guiSectionActive();
+        // Item 312 P0: the flush window's group count is the pending list's size at entry (the caller
+        // closed the open group before this point), and its wall time is fitted against that count in
+        // HudP0Census.FlushRegression. Only gui windows are paired; the world flushes are not the HUD's.
+        long hudP0FlushStartedNanos = HUD_P0_FRAMES > 0 && guiFlush ? System.nanoTime() : 0L;
+        int hudP0FlushGroups = this.immediateGroups.size();
         try {
             FramePassTimings.begin("flush");
             if (guiFlush) FramePassTimings.begin("guiFlush");
@@ -11960,6 +12080,9 @@ this.frameBufferOpen = false;
             } finally {
                 if (guiFlush) FramePassTimings.end("guiFlush");
                 FramePassTimings.end("flush");
+                if (hudP0FlushStartedNanos != 0L) {
+                    this.hudP0FlushFit.note(hudP0FlushGroups, System.nanoTime() - hudP0FlushStartedNanos);
+                }
             }
             this.immediateStatistics.noteOrderPreservingFlushes();
             long tookNanos = BATCH_TIMINGS ? System.nanoTime() - flushStartedNanos : 0;
@@ -14666,6 +14789,7 @@ this.frameBufferOpen = false;
                 celtium$noteTargetStage(this.currentGroupTarget, this.currentGroupTexture, this.currentGroupFormatId);
             }
             celtium$reportHudGroup(projection);
+            celtium$noteHudP0Group();
             ImmediateGroup group = ImmediateGroup.obtain(this.currentImmediateMesh, projection, modelView,
                     this.currentGroupFormatId, this.currentGroupTexture,
                     this.currentGroupStateKey, this.currentGroupState, this.currentGroupTarget);
@@ -15757,6 +15881,9 @@ this.frameBufferOpen = false;
         // at the same point and for the same reason as the census above: world teardown is the last point whose output
         // the log actually holds.
         celtium$printWindowSplit();
+        // Item 312 P0: the last HUD frame's census and the summary, at the same last-live point.
+        celtium$flushHudP0Frame();
+        celtium$printHudP0Summary();
         // The world's own lifetime ends here, and a queued group belongs to it: a captured model group's mesh is lent by
         // one of the model meshes released just below, so drawing such a group after this point reads freed geometry.
         // Undrawn groups are retired now rather than left for a draw that may never come, and the epoch bump keeps a
