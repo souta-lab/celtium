@@ -570,6 +570,17 @@ public final class CeltiumGlStub implements FunctionProvider {
      * so the concurrency the CHMs bought was unused - while their per-call cost was real: a {@code Long.valueOf} box
      * plus the hash probe on every bind and every texture-parameter lookup, ~4.6% of the unbounded leg's warm
      * samples between {@code ConcurrentHashMap.get}/{@code putVal} and {@code Integer.valueOf}.
+     * <p>
+     * The thread policy for these tables (audit-gl-deep G2, remainder): they are confined to whichever thread is
+     * inside dispatch. Arrivals are serialized at the {@code dispatchArgs} funnel by the
+     * {@link DispatchThreadGate}: a call that arrives while another thread is mid-dispatch is refused and counted
+     * ({@link #celtium$noteForeignDispatch}) rather than raced against the tables, because an open-addressed map
+     * under a concurrent write can lose entries or loop. Sequential arrivals from other threads are served one at
+     * a time - they are a measured reality (a mod querying {@code glGetString} during construction, GL calls out
+     * of a {@code preInit}, class-loading threads), and they touch the tables only while no dispatch is in flight.
+     * The direct {@code celtium$*} statics are part of the same confined surface: their callers are the same
+     * game/mod code under the same contract, plus the render-thread backend, so they are covered by this policy
+     * statement rather than by per-method guards.
      */
     // The two hottest maps the GL call path owned were hash lookups: every glEnable/glDisable/glIsEnabled took an
     // Int2Object get/put through a Boolean box, and every buffer bind did the same through Int2Int. Both key spaces
@@ -5391,6 +5402,61 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
+     * Dispatches refused because another thread was mid-dispatch (audit-gl-deep G2, remainder). The state tables
+     * are open-addressed and confined to the dispatching thread; a foreign call that overlaps one is answered
+     * with zero and counted here, by function name, instead of racing the tables. Sequential foreign arrivals
+     * are served by the {@link DispatchThreadGate} and are not counted - this counter reads exactly the overlap
+     * the confinement exists to prevent, so a growing number names both the function and the two threads.
+     */
+    private static final java.util.concurrent.atomic.AtomicLong FOREIGN_DISPATCH_REFUSALS =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong>
+            FOREIGN_DISPATCH_REFUSALS_BY_NAME =
+            new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
+    /** Full refusal lines are printed for the first few refusals only; the counters above carry the rest. */
+    private static final java.util.concurrent.atomic.AtomicInteger FOREIGN_DISPATCH_REFUSAL_LOGS =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static final int FOREIGN_DISPATCH_REFUSAL_LOG_LIMIT = 8;
+
+    private static void celtium$noteForeignDispatch(String name, Thread arriving, Thread active) {
+        long total = FOREIGN_DISPATCH_REFUSALS.incrementAndGet();
+        java.util.concurrent.atomic.AtomicLong counter = FOREIGN_DISPATCH_REFUSALS_BY_NAME.get(name);
+        if (counter == null) {
+            java.util.concurrent.atomic.AtomicLong fresh = new java.util.concurrent.atomic.AtomicLong();
+            java.util.concurrent.atomic.AtomicLong raced =
+                    FOREIGN_DISPATCH_REFUSALS_BY_NAME.putIfAbsent(name, fresh);
+            counter = raced == null ? fresh : raced;
+        }
+        long forName = counter.incrementAndGet();
+        if (FOREIGN_DISPATCH_REFUSAL_LOGS.incrementAndGet() <= FOREIGN_DISPATCH_REFUSAL_LOG_LIMIT) {
+            System.out.println("[Celtium] CELTIUM_GL_DISPATCH_FOREIGN fn=" + name + " count=" + forName
+                    + " total=" + total + " arrivingThread=" + arriving.getName()
+                    + " activeThread=" + (active == null ? "?" : active.getName())
+                    + " (the call is answered with zero rather than raced against the GL state tables,"
+                    + " which are confined to the thread inside dispatch)");
+        }
+    }
+
+    /** {@return the foreign-dispatch refusals so far: the total and the worst offenders by name}. */
+    public static String foreignDispatchSummary() {
+        long total = FOREIGN_DISPATCH_REFUSALS.get();
+        if (total == 0L) {
+            return "foreignDispatchRefusals=0";
+        }
+        java.util.List<java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong>> entries =
+                new java.util.ArrayList<>(FOREIGN_DISPATCH_REFUSALS_BY_NAME.entrySet());
+        entries.sort((a, b) -> Long.compare(b.getValue().get(), a.getValue().get()));
+        StringBuilder line = new StringBuilder("foreignDispatchRefusals=").append(total).append(" top=[");
+        for (int i = 0; i < entries.size() && i < 8; i++) {
+            if (i > 0) {
+                line.append(' ');
+            }
+            line.append(entries.get(i).getKey()).append('=').append(entries.get(i).getValue().get());
+        }
+        return line.append(']').toString();
+    }
+
+    /**
      * The legacy (libffi) entry. {@code args} is an array of pointers, one per C argument, each pointing at that
      * argument's storage: the value is read out of the storage by declared type, then the call goes through the
      * same {@link #dispatch} as the FFM entry. The CIF return is always a pointer, so the result slot is always
@@ -5543,7 +5609,84 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
-     * The guarded dispatch every entry lands in. A handler that throws is answered with zero and counted by
+     * Serializes dispatch occupancy across threads: the mechanism behind the state tables' thread policy
+     * (audit-gl-deep G2, remainder). At most one thread is inside dispatch at a time. The occupying thread may
+     * re-enter (list replay dispatches the recorded calls from inside a handler), tracked by a depth counter
+     * only the occupying thread reads or writes - the handoff through the atomic reference's set/get gives the
+     * next occupier the ordering it needs. A call that arrives while another thread occupies dispatch is
+     * refused, never queued: the occupier is the render thread in every measured configuration, and making it
+     * wait on a foreign thread would trade a named refusal for a stall (or a deadlock, if the foreign handler
+     * ever waited back). Sequential arrivals from any thread are served - the gate is free again by the time
+     * they arrive - which is what the measured startup arrivals (mod construction, {@code preInit},
+     * class-loading threads) rely on.
+     * <p>
+     * The steady-state cost on the dispatching thread is one atomic read and an identity compare per call, the
+     * same shape as the argument scratch's claim; the CAS is paid once per outermost dispatch, and only by a
+     * call that finds the gate free or contended.
+     */
+    static final class DispatchThreadGate {
+        /** The arriving thread now occupies dispatch (its depth went 0 to 1). */
+        static final int ENTERED = 0;
+        /** The arriving thread already occupied dispatch and re-entered (its depth grew). */
+        static final int REENTERED = 1;
+        /** Another thread occupies dispatch; the call must not proceed. */
+        static final int REFUSED = -1;
+
+        private final java.util.concurrent.atomic.AtomicReference<Thread> active =
+                new java.util.concurrent.atomic.AtomicReference<Thread>();
+        /** Nested-dispatch depth of the occupying thread; only that thread touches it. */
+        private int depth;
+
+        int enter(Thread self) {
+            Thread current = this.active.get();
+            if (current == self) {
+                this.depth++;
+                return REENTERED;
+            }
+            if (current == null && this.active.compareAndSet(null, self)) {
+                this.depth = 1;
+                return ENTERED;
+            }
+            return REFUSED;
+        }
+
+        void exit(Thread self) {
+            if (--this.depth == 0) {
+                this.active.set(null);
+            }
+        }
+
+        /** {@return the thread inside dispatch, or {@code null} when the gate is free}; for refusal lines. */
+        Thread activeThread() {
+            return this.active.get();
+        }
+    }
+
+    /** The one gate every dispatch on this stub passes through; see {@link DispatchThreadGate}. */
+    private final DispatchThreadGate dispatchGate = new DispatchThreadGate();
+
+    /**
+     * The funnel every dispatch entry lands in. The thread gate runs first: a call that arrives while another
+     * thread is mid-dispatch is refused and counted ({@link #celtium$noteForeignDispatch}) before it can touch
+     * the state tables, and the gate is released on every exit path, including the guarded body's own failure
+     * handling.
+     */
+    private long dispatchArgs(Fn fn, long[] c) {
+        Thread self = Thread.currentThread();
+        if (this.dispatchGate.enter(self) == DispatchThreadGate.REFUSED) {
+            celtium$noteForeignDispatch(fn == null ? "<unresolved>" : fn.name, self,
+                    this.dispatchGate.activeThread());
+            return 0L;
+        }
+        try {
+            return dispatchArgsGuarded(fn, c);
+        } finally {
+            this.dispatchGate.exit(self);
+        }
+    }
+
+    /**
+     * The guarded dispatch behind the thread gate. A handler that throws is answered with zero and counted by
      * name ({@link #celtium$noteDispatchFailure}), because both upcall entries end in native code that cannot
      * receive a Java exception (audit-gl-deep G1). While a display list is being compiled, the call's own
      * additions to the compilation are rolled back first: before this guard, an exception out of
@@ -5553,7 +5696,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * The snapshot is three field reads plus two list sizes, and only while a list is open - with no list open
      * there is nothing a failed call can leave half-recorded, and the wrapper costs the reads alone.
      */
-    private long dispatchArgs(Fn fn, long[] c) {
+    private long dispatchArgsGuarded(Fn fn, long[] c) {
         List<Object[]> openAtEntry = this.openList;
         int openSize = openAtEntry == null ? -1 : openAtEntry.size();
         int payloadsSize = openAtEntry == null || this.openListPayloads == null ? -1 : this.openListPayloads.size();
