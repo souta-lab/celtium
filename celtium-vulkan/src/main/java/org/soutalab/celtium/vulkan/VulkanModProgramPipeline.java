@@ -165,8 +165,12 @@ public final class VulkanModProgramPipeline {
     private final boolean uniformsViaBuffer;
     /** The uniform block's byte size on the buffer route; 0 on the push route. */
     private final int uniformBlockBytes;
-    /** Slots of {@link #uniformBuffer} the descriptor sets can name; covers multi-region terrain passes too. */
-    private static final int UNIFORM_RING_SLOTS = 512;
+    /** Slots of {@link #uniformBuffer} the descriptor sets can name; the post chain's ring depth. */
+    private static final int UNIFORM_RING_SLOTS = 32;
+    /** Ring depth of a shader-pack terrain pipeline: one claim per region per pass, and two frames in flight. */
+    private static final int TERRAIN_UNIFORM_RING_SLOTS = 2048;
+    /** This pipeline's ring depth: {@link #UNIFORM_RING_SLOTS}, or {@link #TERRAIN_UNIFORM_RING_SLOTS} for terrain. */
+    private int uniformRingSlots = UNIFORM_RING_SLOTS;
     private VulkanUniformBuffer uniformBuffer;
     /** The constant-attribute ring (binding 1, stride 0); null for a pipeline whose layout feeds every attribute. */
     private VulkanUniformBuffer constantRing;
@@ -490,6 +494,7 @@ public final class VulkanModProgramPipeline {
         boolean viaBuffer = lowered.uniformsViaBuffer();
         VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, lowered.attributes(),
                 lowered.samplers(), lowered.images(), lowered.uniformBlockSize(), viaBuffer);
+        built.uniformRingSlots = TERRAIN_UNIFORM_RING_SLOTS;
         try {
             built.createLayouts();
             built.createTerrainPipeline(program.vertexSpirv(), program.fragmentSpirv(), vertexFormat, renderPass,
@@ -735,7 +740,7 @@ public final class VulkanModProgramPipeline {
                 // never grown or replaced the way the terrain's own uniform buffer is.
                 this.uniformStride = uniformStride(this.context, this.uniformBlockBytes);
                 this.uniformBuffer = new VulkanUniformBuffer(this.context,
-                        (long) this.uniformStride * UNIFORM_RING_SLOTS);
+                        (long) this.uniformStride * this.uniformRingSlots);
             }
         }
     }
@@ -1010,11 +1015,12 @@ public final class VulkanModProgramPipeline {
         if (staged >= 0) {
             return staged;
         }
-        if (this.uniformClaimsThisEpoch >= UNIFORM_RING_SLOTS) {
+        if (this.uniformClaimsThisEpoch >= (this.uniformRingSlots == TERRAIN_UNIFORM_RING_SLOTS
+                ? this.uniformRingSlots / 2 : this.uniformRingSlots)) {
             return -1;
         }
         int slot = this.uniformCursor;
-        this.uniformCursor = (this.uniformCursor + 1) % UNIFORM_RING_SLOTS;
+        this.uniformCursor = (this.uniformCursor + 1) % this.uniformRingSlots;
         ByteBuffer packed = packUniforms(program);
         MemoryUtil.memCopy(MemoryUtil.memAddress0(packed),
                 this.uniformBuffer.mappedAddress() + (long) slot * this.uniformStride,

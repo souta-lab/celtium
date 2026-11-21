@@ -378,6 +378,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.packTerrainPrograms", "true"));
     private int packTerrainDrawnLogs;
     private int packTerrainRefusedLogs;
+    private long packTerrainSkippedRegions;
     /** The reverse of {@link #chainPairVariantPasses}: a variant pass handle to its colour count. */
     final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap chainPairVariantColorCounts =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
@@ -16879,9 +16880,6 @@ this.frameBufferOpen = false;
             this.commandState.beginPass(identity);
             org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(true);
 
-            setViewportAndScissor(stack, passW, passH);
-            modPipeline.bindTerrainPipeline(this.commandBuffer);
-
             Iterator<ChunkRenderList> iterator = renderLists.iterator(pass.isReverseOrder());
             SectionRenderDataStorage.BatchCacheParams cacheParams =
                     new SectionRenderDataStorage.BatchCacheParams(useBlockFaceCulling, view);
@@ -16894,6 +16892,8 @@ this.frameBufferOpen = false;
             boolean sortedPass = pass.isSorted();
 
             try {
+                setViewportAndScissor(stack, passW, passH);
+                modPipeline.bindTerrainPipeline(this.commandBuffer);
                 while (iterator.hasNext()) {
                     ChunkRenderList renderList = iterator.next();
                     RenderRegion region = renderList.getRegion();
@@ -16924,6 +16924,12 @@ this.frameBufferOpen = false;
                     long descSet = modPipeline.samplersAndImages(samplerTextures, imageTextures, modProgram, this.frameId);
                     ByteBuffer pushUniforms = modPipeline.uniformsViaBuffer() ? null
                             : VulkanModProgramPipeline.packUniforms(modProgram);
+                    if (descSet == 0L && (modPipeline.uniformsViaBuffer() || !samplers.isEmpty() || !imageBindings.isEmpty())) {
+                        // Ring or pool exhausted: a draw without its own set would read the previous region's
+                        // uniforms (wrong region offset), so the region is skipped and counted instead.
+                        this.packTerrainSkippedRegions++;
+                        continue;
+                    }
                     modPipeline.bindTerrainUniformsAndSet(this.commandBuffer, pushUniforms, descSet, setScratch);
 
                     this.terrain.bindVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset, resources);
@@ -16970,6 +16976,8 @@ this.frameBufferOpen = false;
                 org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
                 if (pairOwner != null) {
                     pairOwner.recordChainPairAttachRelease(identity, routedDepthKey);
+                } else if (onMain) {
+                    this.frameTarget.recordReleaseBarriers(this.commandBuffer);
                 }
             }
             if (this.packTerrainDrawnLogs < 16) {
@@ -16977,7 +16985,8 @@ this.frameBufferOpen = false;
                 System.out.println("[Celtium] CELTIUM_PACK_TERRAIN_DRAWN pass=" + pass.name()
                         + " program=" + programId + " commands=" + drawnCommands + " sections=" + drawnSections
                         + " colors=" + targetColors + " extent=" + passW + "x" + passH
-                        + " identity=0x" + Long.toHexString(identity) + " frame=" + this.frameId);
+                        + " identity=0x" + Long.toHexString(identity) + " frame=" + this.frameId
+                        + " skippedRegions=" + this.packTerrainSkippedRegions);
             }
             return true;
         } catch (RuntimeException | LinkageError err) {
