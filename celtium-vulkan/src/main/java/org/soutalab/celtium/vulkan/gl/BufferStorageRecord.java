@@ -1,6 +1,7 @@
 package org.soutalab.celtium.vulkan.gl;
 
 import org.lwjgl.system.MemoryUtil;
+import org.soutalab.celtium.vulkan.NativeGeometryBuffer;
 
 import java.nio.ByteBuffer;
 
