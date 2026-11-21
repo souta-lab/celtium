@@ -16,13 +16,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Pins the quad-normals shading option at its one construction seam.
  *
- * <p>{@code performance.useQuadNormalsForShading} (config key
+ * <p>{@code quality.useQuadNormalsForShading} (config key
  * {@code use_quad_normals_for_shading_v2}) feeds the light pipelines through
  * {@code LightPipelineProvider}'s third constructor argument. The only construction site in
  * this module, {@code VintageBlockRenderer}, passed a literal {@code true}, so the config key
  * changed nothing. A utf8 sweep cannot pin this - the literal leaves no trace - so this test
  * resolves the constant pool's field references of the compiled mesher and requires an actual
- * read of the {@code PerformanceSettings} field. It also pins the field's default, because
+ * read of the {@code QualitySettings} field. It also pins the field's default, because
  * the wiring is only behaviour-preserving while the default stays {@code true}.
  */
 class QuadNormalsOptionTest {
@@ -32,16 +32,16 @@ class QuadNormalsOptionTest {
         List<String[]> fieldRefs = fieldReferences(readClassBytes(
                 "/org/taumc/celeritas/impl/render/terrain/compile/pipeline/VintageBlockRenderer.class"));
         boolean found = fieldRefs.stream().anyMatch(ref ->
-                ref[0].equals("org/embeddedt/embeddium/impl/gui/SodiumGameOptions$PerformanceSettings")
+                ref[0].equals("org/embeddedt/embeddium/impl/gui/SodiumGameOptions$QualitySettings")
                         && ref[1].equals("useQuadNormalsForShading"));
         assertTrue(found,
-                "VintageBlockRenderer must read SodiumGameOptions.performance.useQuadNormalsForShading "
+                "VintageBlockRenderer must read SodiumGameOptions.quality.useQuadNormalsForShading "
                         + "when constructing LightPipelineProvider; a literal leaves the config key dead");
     }
 
     @Test
     void quadNormalsDefaultStaysOn() {
-        assertTrue(new SodiumGameOptions().performance.useQuadNormalsForShading,
+        assertTrue(new SodiumGameOptions().quality.useQuadNormalsForShading,
                 "wiring the option must not change default shading");
     }
 
