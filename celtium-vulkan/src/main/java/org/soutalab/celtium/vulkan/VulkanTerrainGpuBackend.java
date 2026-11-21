@@ -984,6 +984,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         this.nativePassExecutor = new PassExecutor(this.context, this.targetRegistry,
                 this.publishedTextures, this.nativePassRegistry);
         celtium$installWindowSplitExitHook();
+        celtium$installFontCensusExitHook();
 }
 
     /**
@@ -2206,6 +2207,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         | ((long) (VulkanTerrainGpuBackend.this.rasterState.scissorY() & 0xFFFF) << 32)
                         | ((long) (VulkanTerrainGpuBackend.this.rasterState.scissorWidth() & 0xFFFF) << 16)
                         | (VulkanTerrainGpuBackend.this.rasterState.scissorHeight() & 0xFFFF);
+            }
+            // QUEUE 631: the game side registers each font page's atlas rectangle in FontAtlasRegistry when it
+            // builds the atlas; the batch asks here so a page-bound segment can be keyed into the atlas instead
+            // of closing the open run at the texture witness.
+            @Override public FontAtlasRemap atlasRemap(int texture) {
+                return FontAtlasRegistry.remapFor(texture);
             }
         });
         this.fontBatch.celtium$setFontRunSink(new FontBatch.RunSink() {
@@ -8271,35 +8278,109 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     }
 
     /**
-     * Prints the font run's refusal, retention and draw-state census once, at world teardown.
+     * Prints the font run's refusal, retention and draw-state census once.
      * <p>
      * The two summaries existed with no caller, so "the retention never had to fire" and "the retention cannot fire"
      * were the same absence - and it was the second: the sink answered every run with {@code true}. The glyph
      * capture's shutdown summary carries them too, but a shutdown hook's stdout is not in the log (measured on leg
      * r39a-gate: {@code CELTIUM_FONT_GLYPH_SUMMARY} appears in no file of the run), so this is the copy a leg can
      * actually read. Printed once, because a leg may tear down more than one world.
+     * <p>
+     * Callers: the world teardown, the verification summary's non-snapshot path (the fixture's final request -
+     * added after the Gate 0 font legs showed a fixture that exits with its world loaded reaches neither a
+     * teardown nor a readable shutdown hook), and the exit hook below as the last net.
      */
+    /** {@return the {@code CELTIUM_FONT_RUN_CENSUS} line}. Split out of the printer for the exit hook below. */
+    private String celtium$fontRunCensusLine() {
+        return "[Celtium] CELTIUM_FONT_RUN_CENSUS " + celtium$fontRetentionSummary()
+                + " " + celtium$fontStateSummary()
+                + " " + this.fontBatch.celtium$fontAggregationSummary();
+    }
+
+    /**
+     * {@return the {@code CELTIUM_FONT_WITNESS_CENSUS} line}. Which witness closed each run: the world frame starts
+     * one run per string segment, and folding two segments needs the name of the value that differs between them;
+     * the census is one increment per closed run.
+     */
+    private String celtium$fontWitnessCensusLine() {
+        return "[Celtium] CELTIUM_FONT_WITNESS_CENSUS " + this.fontBatch.celtium$fontWitnessSummary();
+    }
+
+    /**
+     * {@return the {@code CELTIUM_FONT_GLYPH_CENSUS} line, or {@code null} when no capture registered a summary}.
+     * The glyph capture's own counters, at the same point and for the same reason as the other two: its
+     * shutdown-hook line is not in the log, so without this a leg cannot say how many glyphs a frame drew or what
+     * they cost.
+     */
+    private String celtium$fontGlyphCensusLine() {
+        java.util.function.Supplier<String> capture = this.fontCaptureSummary;
+        if (capture == null) {
+            return null;
+        }
+        try {
+            return "[Celtium] CELTIUM_FONT_GLYPH_CENSUS " + capture.get();
+        } catch (RuntimeException | LinkageError error) {
+            return "[Celtium] CELTIUM_FONT_GLYPH_CENSUS unavailable: " + describe(error);
+        }
+    }
+
     private void celtium$printFontRunCensus() {
         if (this.fontRunCensusPrinted) {
             return;
         }
         this.fontRunCensusPrinted = true;
-        System.out.println("[Celtium] CELTIUM_FONT_RUN_CENSUS " + celtium$fontRetentionSummary()
-                + " " + celtium$fontStateSummary());
-        // Which witness closed each run. The world frame starts one run per string segment, and folding two segments
-        // needs the name of the value that differs between them; the census is one increment per closed run.
-        System.out.println("[Celtium] CELTIUM_FONT_WITNESS_CENSUS " + this.fontBatch.celtium$fontWitnessSummary());
-        // The glyph capture's own counters, at the same point and for the same reason: its shutdown-hook line is not
-        // in the log, so without this a leg cannot say how many glyphs a frame drew or what they cost.
-        java.util.function.Supplier<String> capture = this.fontCaptureSummary;
-        if (capture != null) {
-            try {
-                System.out.println("[Celtium] CELTIUM_FONT_GLYPH_CENSUS " + capture.get());
-            } catch (RuntimeException | LinkageError error) {
-                System.out.println("[Celtium] CELTIUM_FONT_GLYPH_CENSUS unavailable: " + describe(error));
-            }
+        System.out.println(celtium$fontRunCensusLine());
+        System.out.println(celtium$fontWitnessCensusLine());
+        String glyph = celtium$fontGlyphCensusLine();
+        if (glyph != null) {
+            System.out.println(glyph);
         }
     }
+
+    /**
+     * Prints the font census at process exit, through the descriptor the process was started with.
+     * <p>
+     * Registered once per backend. The teardown and the fixture's final summary are the other callers of these
+     * lines, and a leg whose fixture quits by process exit never tears the world down - measured on the
+     * ImmediatelyFast Gate 0
+     * font legs, where the witness census (the instrument that names which run-key value closes the runs) was
+     * unreadable in exactly the legs that measured the font scene. The mechanism and the reason are the window
+     * split's: Forge routes {@code System.out} into Log4j and Log4j's own shutdown hook stops the appenders, so
+     * the lines go to {@code FileDescriptor.out} directly. A backend that never started a font run prints nothing.
+     */
+    private void celtium$installFontCensusExitHook() {
+        if (this.fontCensusExitHookInstalled) {
+            return;
+        }
+        this.fontCensusExitHookInstalled = true;
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                if (this.fontRunCensusPrinted || this.fontBatch.fontRunsStarted() <= 0L) {
+                    return;
+                }
+                this.fontRunCensusPrinted = true;
+                String witness = celtium$fontWitnessCensusLine();
+                try {
+                    java.io.PrintStream stream = new java.io.PrintStream(
+                            new java.io.FileOutputStream(java.io.FileDescriptor.out), true,
+                            java.nio.charset.StandardCharsets.UTF_8);
+                    stream.println(celtium$fontRunCensusLine());
+                    stream.println(witness);
+                    String glyph = celtium$fontGlyphCensusLine();
+                    if (glyph != null) {
+                        stream.println(glyph);
+                    }
+                    stream.flush();
+                } catch (RuntimeException | LinkageError error) {
+                    System.out.println(witness);
+                }
+            }, "celtium-font-census"));
+        } catch (RuntimeException | LinkageError ignored) {
+            // A JVM that refuses a hook (shutting down already) must not fail the frame path.
+        }
+    }
+
+    private boolean fontCensusExitHookInstalled;
 
     /**
      * Prints the window's fixed cost in microseconds per window, split into the parts that own it.
@@ -15605,6 +15686,14 @@ this.frameBufferOpen = false;
             // registered and the JVM runs hooks, and this one still leaves nothing. Printing here does not depend on
             // that: world teardown and the fixture's final request are both inside the log's lifetime.
             celtium$printNoopCensus(trigger);
+            // The font census, at the same point and for the same reason: its only other exits are the world
+            // teardown a fixture that exits with its world loaded never reaches, and the exit hook below, whose
+            // descriptor write a harness that kills the process never runs. Measured on the ImmediatelyFast
+            // Gate 0 font legs: the CELTIUM_VERIFY lines arrived through this very path while
+            // CELTIUM_FONT_WITNESS_CENSUS appeared in no file of the run, so the witness that closes the font
+            // runs was unreadable in exactly the legs that measured the font scene. One-shot, so the teardown
+            // call after this one prints nothing twice.
+            celtium$printFontRunCensus();
         }
         // The guard and the line's shape live in BackendReport now; the counter text is still this class's.
         this.report.printSummary(trigger, this.verificationSummary(), snapshot);

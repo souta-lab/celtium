@@ -152,17 +152,20 @@ public final class CeltiumFontAtlas {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc == null || mc.getResourceManager() == null) {
             buildFailed = true;
+            org.soutalab.celtium.vulkan.FontAtlasRegistry.invalidate();
             return;
         }
         BufferedImage image = rasterise(mc);
         TextureManager tm = mc.getTextureManager();
         if (tm == null) {
             buildFailed = true;
+            org.soutalab.celtium.vulkan.FontAtlasRegistry.invalidate();
             return;
         }
         atlasTexture = new AtlasTexture(image);
         tm.loadTexture(ATLAS_LOCATION, atlasTexture);
         atlasName = atlasTexture.getGlTextureId();
+        registerAtlasRemaps();
         System.out.println("[Celtium] font atlas built: " + atlasW + "x" + atlasH
                 + " unicodeDim=" + unicodeDim + " asciiDim=" + asciiDim + " texture=" + atlasName
                 + " imageBytes=" + atlasImageBytes
@@ -172,6 +175,52 @@ public final class CeltiumFontAtlas {
             // the renderer's own font path have none. This hands the exact GL name to the renderer, which mirrors it the
             // way the group path would - including the whole-content upload the crash ends on.
             org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.celtium$requestDebugMirror(atlasName);
+        }
+    }
+
+    /**
+     * Publishes this atlas's page rectangles to the renderer's font run keying (QUEUE 631).
+     * <p>
+     * The fast path above draws every glyph from the atlas, but a segment can still reach {@code FontBatch} bound
+     * with a per-page texture - the window path's glyphs, interleaved with atlas segments of the same string - and
+     * there the texture witness closes the run the atlas segments opened. For every page texture the texture
+     * manager already holds, this registers the affine map from that page's UV space into this atlas, so the batch
+     * can rewrite such a segment's UVs and key it by the atlas instead. A page the manager has not loaded yet has
+     * no GL name to register; under an active atlas the vanilla body that would create it never runs, so the gap
+     * is a page only another renderer created, and its segments keep the per-page keying they have today.
+     * <p>
+     * Called at build and again after every reload re-upload ({@link AtlasTexture#loadTexture}), because a
+     * reload deletes the atlas texture and publishes a new GL name - registrations naming the old one must not
+     * survive it, which the registry enforces by only honouring entries for the current atlas name.
+     */
+    private static void registerAtlasRemaps() {
+        if (atlasName <= 0 || atlasW <= 0 || atlasH <= 0) {
+            org.soutalab.celtium.vulkan.FontAtlasRegistry.invalidate();
+            return;
+        }
+        org.soutalab.celtium.vulkan.FontAtlasRegistry.setCurrentAtlas(atlasName);
+        Minecraft mc = Minecraft.getMinecraft();
+        TextureManager tm = mc == null ? null : mc.getTextureManager();
+        if (tm == null) {
+            return;
+        }
+        for (int p = 0; p < 256; p++) {
+            net.minecraft.client.renderer.texture.ITextureObject page = tm.getTexture(new ResourceLocation(
+                    String.format("textures/font/unicode_page_%02x.png", p)));
+            if (page != null && page.getGlTextureId() > 0) {
+                org.soutalab.celtium.vulkan.FontAtlasRegistry.register(page.getGlTextureId(),
+                        new org.soutalab.celtium.vulkan.FontAtlasRemap(atlasName,
+                                (float) unicodeDim / atlasW, (float) ((p & 15) * unicodeDim) / atlasW,
+                                (float) unicodeDim / atlasH, (float) ((p >> 4) * unicodeDim) / atlasH));
+            }
+        }
+        net.minecraft.client.renderer.texture.ITextureObject ascii = tm.getTexture(
+                new ResourceLocation("textures/font/ascii.png"));
+        if (ascii != null && ascii.getGlTextureId() > 0) {
+            org.soutalab.celtium.vulkan.FontAtlasRegistry.register(ascii.getGlTextureId(),
+                    new org.soutalab.celtium.vulkan.FontAtlasRemap(atlasName,
+                            (float) asciiDim / atlasW, 0.0F,
+                            (float) asciiDim / atlasH, (float) (16 * unicodeDim) / atlasH));
         }
     }
 
@@ -344,6 +393,9 @@ public final class CeltiumFontAtlas {
             TextureUtil.uploadTextureImageAllocate(this.getGlTextureId(), this.content, false, false);
             this.uploaded = true;
             atlasName = this.getGlTextureId();
+            // The re-upload published a new GL name for the same atlas; the run keying's registrations must
+            // name this one, not the deleted texture (QUEUE 631).
+            registerAtlasRemaps();
             // Item 387: the upload was the image's only consumer. A reload with the same packs returns at the
             // signature check above without touching the image, and a changed pack re-rasterises into a fresh
             // one - the pack signature alone carries the "do not re-rasterise" contract, so the raster itself

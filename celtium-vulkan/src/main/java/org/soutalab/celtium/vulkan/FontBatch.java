@@ -160,6 +160,22 @@ public final class FontBatch {
         default long scissorKey() {
             return 0L;
         }
+
+        /**
+         * The font atlas rectangle of the texture a glyph segment was appended under (QUEUE 631), or {@code null}
+         * when that texture is not a registered page of the celtium font atlas.
+         * <p>
+         * The game side already gathers every unicode page and the ASCII sheet into one atlas texture and draws
+         * its own fast path from it; a segment that still arrives bound with a per-page texture (the window path's
+         * glyphs, interleaved with atlas segments of the same string) would close the open run at the texture
+         * witness and start another. With the page's rectangle the batch rewrites the segment's UVs into atlas
+         * space as it copies them and keys the run by the atlas, so the two halves of one string stay one run.
+         * The default is {@code null} - no aggregation - so a state view that does not answer it keeps the old
+         * behaviour exactly.
+         */
+        default FontAtlasRemap atlasRemap(int texture) {
+            return null;
+        }
     }
 
     /**
@@ -369,6 +385,15 @@ public final class FontBatch {
     /** Glyph quads appended to a run and runs started, so "batched" is a quantity and not a claim. */
     private long quadsAppended;
     private long batchesStarted;
+    /**
+     * Segments whose UVs were rewritten into the font atlas at append time (QUEUE 631). Counted apart and kept
+     * out of {@code celtium$fontBatchSummary()} for the same reason {@link #flushedDrawState} is: that string is
+     * quoted by past acceptances byte for byte. The font census line carries this count instead.
+     */
+    private long atlasAggregatedSegments;
+    /** Property switch for the atlas aggregation: {@code =false} restores the per-page run keying for A/B work. */
+    private static final boolean ATLAS_AGGREGATION = Boolean
+            .parseBoolean(System.getProperty("celtium.vulkan.fontAtlasAggregation", "true"));
     private long appendNanos;
     /**
      * Degenerate separator vertices inserted between glyphs of a strip run (see {@link #celtium$fontAppend}): the
@@ -476,6 +501,18 @@ public final class FontBatch {
                 return false;
             }
             int texture = view.texture2dEnabled() ? view.boundTextureName() : view.whiteTextureId();
+            // QUEUE 631: a segment bound with a font page that lives in the celtium atlas is keyed by the atlas
+            // and its UVs are rewritten into atlas space below, so it joins the run the atlas-bound segments of
+            // the same string opened instead of closing it at the texture witness. Only the textured colour
+            // format (id 2, LegacyImmediateCapture.FORMAT_POSITION_TEX_COLOR) carries UVs at a fixed offset -
+            // 12 bytes of position, then U and V - so only it can be rewritten; anything else keeps its key.
+            FontAtlasRemap remap = null;
+            if (ATLAS_AGGREGATION && formatId == 2) {
+                remap = view.atlasRemap(texture);
+                if (remap != null) {
+                    texture = remap.atlasTexture;
+                }
+            }
             if (APPEND_DEBUG && appendLogged < 80) {
                 appendLogged++;
                 System.out.println("[Celtium] CELTIUM_FONTAPPEND tex=" + texture + " mode=" + drawMode
@@ -544,6 +581,21 @@ public final class FontBatch {
             }
             long destination = base + this.pendingBytesUsed;
             org.lwjgl.system.MemoryUtil.memCopy(vertexAddress, destination, bytes);
+            if (remap != null) {
+                // The separator's second vertex is a copy of this segment's first vertex taken from the source,
+                // so it is rewritten together with the segment; the separator's first vertex is a copy of the
+                // previous glyph's last vertex out of this buffer, already in atlas space from its own append.
+                long first = needsSeparator ? destination - vertexStride : destination;
+                int remappedVertices = vertexCount + (needsSeparator ? 1 : 0);
+                for (int i = 0; i < remappedVertices; i++) {
+                    long uv = first + (long) i * vertexStride + 12L;
+                    org.lwjgl.system.MemoryUtil.memPutFloat(uv,
+                            remap.remapU(org.lwjgl.system.MemoryUtil.memGetFloat(uv)));
+                    org.lwjgl.system.MemoryUtil.memPutFloat(uv + 4L,
+                            remap.remapV(org.lwjgl.system.MemoryUtil.memGetFloat(uv + 4L)));
+                }
+                this.atlasAggregatedSegments++;
+            }
             this.pendingBytesUsed += bytes;
             this.pendingVertexCount += vertexCount;
             this.quadsAppended++;
@@ -975,6 +1027,20 @@ public final class FontBatch {
                 + "(" + this.pendingCull + ")"
                 + " colorMask=" + Integer.toHexString(this.pendingColorMask)
                 + " scissor=" + Long.toHexString(this.pendingScissorKey);
+    }
+
+    /**
+     * The atlas aggregation, for a leg to read: how many appended segments were keyed into the celtium font atlas
+     * with their UVs rewritten (QUEUE 631). Deliberately not part of {@link #celtium$fontBatchSummary()}, for the
+     * same byte-for-byte reason as the two summaries above; the font census line carries it.
+     */
+    public String celtium$fontAggregationSummary() {
+        return "fontAtlasAggregatedSegments=" + this.atlasAggregatedSegments;
+    }
+
+    /** {@return how many segments the atlas aggregation rewrote}; read by the owner's census and by tests. */
+    public long fontAtlasAggregatedSegments() {
+        return this.atlasAggregatedSegments;
     }
 
     /**
