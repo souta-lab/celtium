@@ -273,8 +273,9 @@ public final class VulkanDynamicMesh {
         if (this.destroyed) {
             throw new IllegalStateException("a destroyed mesh cannot be drawn");
         }
-        LongBuffer vertexBuffers = org.lwjgl.system.MemoryStack.stackGet().longs(vertexBuffer());
-        LongBuffer vertexOffsets = org.lwjgl.system.MemoryStack.stackGet().longs(vertexBindOffset());
+        org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackGet();
+        LongBuffer vertexBuffers = stack.longs(vertexBuffer());
+        LongBuffer vertexOffsets = stack.longs(vertexBindOffset());
         org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, vertexBuffers, vertexOffsets);
         org.lwjgl.vulkan.VK10.vkCmdBindIndexBuffer(commandBuffer, indexBuffer(), indexBindOffset(),
                 org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32);
@@ -305,7 +306,7 @@ public final class VulkanDynamicMesh {
         int stride = this.layout.stride;
         // Index byte offsets are always 4-aligned (the arena aligns slices to 16 and indices are uint32), so the
         // firstIndex conversion below is lossless on every path.
-        boolean drawForm = stride > 0 && (vbo % stride) == 0L;
+        boolean drawForm = stride > 0 && (vbo == 0L || (vbo % stride) == 0L);
         // The stack view and the timing flag are only needed when a bind actually happens; taking them on every call put two
         // voluntary reads on the cached path, which is the one the flush takes for most groups.
         boolean timed = PacketCost.enabled();
@@ -329,7 +330,7 @@ public final class VulkanDynamicMesh {
             // The skip switch applies here as well: this is the path the immediate flush actually uses, so leaving it out
             // meant -Dceltium.debug.skipDrawCalls measured nothing on the one path that matters. With it, the difference
             // is the cost of the vkCmdDrawIndexed command itself.
-            drawRangeInternal(commandBuffer, (int) (ibo / 4L), this.indexCount, (int) (vbo / stride));
+            drawRangeInternal(commandBuffer, (int) (ibo >>> 2), this.indexCount, vbo == 0L ? 0 : (int) (vbo / stride));
             if (timed) {
                 PacketCost.noteDraw(PacketCost.start() - drawStart);
                 PacketCost.notePacket(bound);

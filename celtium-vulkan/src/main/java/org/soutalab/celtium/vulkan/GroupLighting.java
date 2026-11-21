@@ -179,9 +179,10 @@ final class GroupLighting {
             float z = inv[2] * dirs[eye] + inv[5] * dirs[eye + 1] + inv[8] * dirs[eye + 2];
             float len = (float) Math.sqrt(x * x + y * y + z * z);
             if (len > 1.0e-6f) {
-                params[i * 4] = x / len;
-                params[i * 4 + 1] = y / len;
-                params[i * 4 + 2] = z / len;
+                float invLen = 1.0f / len;
+                params[i * 4] = x * invLen;
+                params[i * 4 + 1] = y * invLen;
+                params[i * 4 + 2] = z * invLen;
             }
             int diffuseBase = 12 + i * 4;
             if (b.immediateState.lightEnabled(i)) {
