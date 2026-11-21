@@ -110,11 +110,37 @@ final class PublishedFrameTextures {
         return -1;
     }
 
+    /**
+     * Restores the slot reverse entry for a texture one identity's tuple just stopped naming: the name can
+     * fill a slot of several framebuffers at once, so when the identity the reverse names lets go, another
+     * identity whose tuple still carries the name takes its place instead of the entry going absent while
+     * the attachment stands. Clears the entry when no tuple names the texture anymore. The detaching
+     * identity's own tuple is skipped - it is the record being changed, not a surviving owner.
+     */
+    private void repairSlotReverse(int glTextureName, long detachedIdentity) {
+        if (slotIdentityForColorTexture(glTextureName) != detachedIdentity) {
+            return;
+        }
+        for (int i = 0; i < this.fbSlotCount; i++) {
+            if (this.fbSlotIdentities[i] == detachedIdentity) {
+                continue;
+            }
+            int[] tuple = this.fbSlotTextures[i];
+            for (int s = 1; s < MAX_COLOR_SLOTS; s++) {
+                if (tuple[s] == glTextureName) {
+                    setSlotForTexture(glTextureName, this.fbSlotIdentities[i], s);
+                    return;
+                }
+            }
+        }
+        clearSlotForTexture(glTextureName);
+    }
+
     private void removeSlotsAt(int index) {
         int[] removed = this.fbSlotTextures[index];
         for (int s = 1; s < MAX_COLOR_SLOTS; s++) {
             if (removed[s] != 0 && slotIdentityForColorTexture(removed[s]) == this.fbSlotIdentities[index]) {
-                clearSlotForTexture(removed[s]);
+                repairSlotReverse(removed[s], this.fbSlotIdentities[index]);
             }
         }
         int last = --this.fbSlotCount;
@@ -164,7 +190,7 @@ final class PublishedFrameTextures {
             for (int s = 1; s < MAX_COLOR_SLOTS; s++) {
                 if (old[s] != 0 && old[s] != tuple[s]
                         && slotIdentityForColorTexture(old[s]) == framebufferIdentity) {
-                    clearSlotForTexture(old[s]);
+                    repairSlotReverse(old[s], framebufferIdentity);
                 }
             }
         }
@@ -264,6 +290,26 @@ final class PublishedFrameTextures {
     private int stalePruned;
     private int republished;
 
+    /**
+     * Restores the colour reverse entry for a texture one identity just stopped naming: several
+     * framebuffers can attach the same colour texture, so when the identity the reverse names lets go,
+     * another identity whose record still names the texture takes its place instead of the entry going
+     * absent while the attachment stands. Clears the entry when no record names the texture anymore.
+     * Callers update or remove the detaching identity's own record first, so the scan only sees survivors.
+     */
+    private void repairColorReverse(int glTextureName, long detachedIdentity) {
+        if (identityForColorTexture(glTextureName) != detachedIdentity) {
+            return;
+        }
+        for (int i = 0; i < this.fbCount; i++) {
+            if (this.fbIdentities[i] != detachedIdentity && this.fbAttachments[i][0] == glTextureName) {
+                setIdentityForTexture(glTextureName, this.fbIdentities[i]);
+                return;
+            }
+        }
+        setIdentityForTexture(glTextureName, Long.MIN_VALUE);
+    }
+
     /** Records a framebuffer's colour attachment. A zero name or an empty extent clears the entry. */
     synchronized void bindColorTexture(long framebufferIdentity, int colorTexture, int width, int height) {
         if (colorTexture == 0 || width <= 0 || height <= 0) {
@@ -280,10 +326,7 @@ final class PublishedFrameTextures {
                         this.lastFbIdentity = Long.MIN_VALUE;
                         this.lastFbAttachment = null;
                     }
-                    int oldTex = (int) removed[0];
-                    if (identityForColorTexture(oldTex) == framebufferIdentity) {
-                        setIdentityForTexture(oldTex, Long.MIN_VALUE);
-                    }
+                    repairColorReverse((int) removed[0], framebufferIdentity);
                     break;
                 }
             }
@@ -293,12 +336,12 @@ final class PublishedFrameTextures {
             if (this.fbIdentities[i] == framebufferIdentity) {
                 long[] existing = this.fbAttachments[i];
                 int oldTex = (int) existing[0];
-                if (oldTex != colorTexture && identityForColorTexture(oldTex) == framebufferIdentity) {
-                    setIdentityForTexture(oldTex, Long.MIN_VALUE);
-                }
                 existing[0] = colorTexture;
                 existing[1] = width;
                 existing[2] = height;
+                if (oldTex != colorTexture) {
+                    repairColorReverse(oldTex, framebufferIdentity);
+                }
                 this.lastFbIdentity = framebufferIdentity;
                 this.lastFbAttachment = existing;
                 setIdentityForTexture(colorTexture, framebufferIdentity);
@@ -323,45 +366,50 @@ final class PublishedFrameTextures {
 
     /** Drops every framebuffer's colour-attachment record that names this GL texture (it was deleted or reused). */
     synchronized void forgetColorTexture(int glTextureName) {
-        long slotIdentity = slotIdentityForColorTexture(glTextureName);
-        if (slotIdentity != Long.MIN_VALUE) {
-            int slot = slotIndexForColorTexture(glTextureName);
-            clearSlotForTexture(glTextureName);
-            int index = indexOfSlots(slotIdentity);
-            if (index >= 0 && slot > 0 && slot < MAX_COLOR_SLOTS) {
-                int[] tuple = this.fbSlotTextures[index];
-                tuple[slot] = 0;
-                boolean hasExtra = false;
-                for (int s = 1; s < MAX_COLOR_SLOTS; s++) {
-                    if (tuple[s] != 0) {
-                        hasExtra = true;
-                        break;
-                    }
-                }
-                if (!hasExtra) {
-                    removeSlotsAt(index);
+        // The name can fill a slot of several framebuffers at once, so every tuple carrying it loses it -
+        // not just the tuple of the identity the reverse entry happens to name, whose co-owners would
+        // otherwise keep resolving a deleted name.
+        for (int index = 0; index < this.fbSlotCount; index++) {
+            int[] tuple = this.fbSlotTextures[index];
+            for (int s = 1; s < MAX_COLOR_SLOTS; s++) {
+                if (tuple[s] == glTextureName) {
+                    tuple[s] = 0;
                 }
             }
         }
-        long identity = identityForColorTexture(glTextureName);
-        if (identity != Long.MIN_VALUE) {
-            setIdentityForTexture(glTextureName, Long.MIN_VALUE);
-            for (int i = 0; i < this.fbCount; i++) {
-                if (this.fbIdentities[i] == identity && this.fbAttachments[i][0] == glTextureName) {
-                    int last = --this.fbCount;
-                    if (i != last) {
-                        this.fbIdentities[i] = this.fbIdentities[last];
-                        this.fbAttachments[i] = this.fbAttachments[last];
-                    }
-                    this.fbAttachments[last] = null;
-                    if (this.lastFbIdentity == identity) {
-                        this.lastFbIdentity = Long.MIN_VALUE;
-                        this.lastFbAttachment = null;
-                    }
+        for (int index = this.fbSlotCount - 1; index >= 0; index--) {
+            int[] tuple = this.fbSlotTextures[index];
+            boolean hasExtra = false;
+            for (int s = 1; s < MAX_COLOR_SLOTS; s++) {
+                if (tuple[s] != 0) {
+                    hasExtra = true;
                     break;
                 }
             }
+            if (!hasExtra) {
+                removeSlotsAt(index);
+            }
         }
+        clearSlotForTexture(glTextureName);
+        // The slot-0 records follow the same rule: every record naming the texture goes.
+        for (int i = 0; i < this.fbCount; ) {
+            if (this.fbAttachments[i][0] != glTextureName) {
+                i++;
+                continue;
+            }
+            long removedIdentity = this.fbIdentities[i];
+            int last = --this.fbCount;
+            if (i != last) {
+                this.fbIdentities[i] = this.fbIdentities[last];
+                this.fbAttachments[i] = this.fbAttachments[last];
+            }
+            this.fbAttachments[last] = null;
+            if (this.lastFbIdentity == removedIdentity) {
+                this.lastFbIdentity = Long.MIN_VALUE;
+                this.lastFbAttachment = null;
+            }
+        }
+        setIdentityForTexture(glTextureName, Long.MIN_VALUE);
     }
 
     /** {@return the colour texture recorded for a framebuffer identity as {texture, width, height}, or null}. */
@@ -430,6 +478,26 @@ final class PublishedFrameTextures {
         table[glTextureName] = identity;
     }
 
+    /**
+     * Restores the depth reverse entry for a texture one identity just stopped naming: a framebuffer
+     * family can share one depth texture, so when the identity the reverse names lets go, another
+     * identity whose record still names the texture takes its place instead of the entry going absent
+     * while that identity's attachment stands. Clears the entry when no record names it anymore.
+     * Callers update or remove the detaching identity's own record first, so the scan only sees survivors.
+     */
+    private void repairDepthReverse(int glTextureName, long detachedIdentity) {
+        if (identityForDepthTexture(glTextureName) != detachedIdentity) {
+            return;
+        }
+        for (int i = 0; i < this.depthFbCount; i++) {
+            if (this.depthFbIdentities[i] != detachedIdentity && this.depthFbTextures[i] == glTextureName) {
+                setIdentityForDepthTexture(glTextureName, this.depthFbIdentities[i]);
+                return;
+            }
+        }
+        setIdentityForDepthTexture(glTextureName, Long.MIN_VALUE);
+    }
+
     /** Records a framebuffer's depth attachment. A zero name clears the entry. */
     synchronized void bindDepthTexture(long framebufferIdentity, int depthTexture) {
         int existingIndex = -1;
@@ -444,9 +512,6 @@ final class PublishedFrameTextures {
         if (previous == depthTexture) {
             return;
         }
-        if (previous != 0 && identityForDepthTexture(previous) == framebufferIdentity) {
-            setIdentityForDepthTexture(previous, Long.MIN_VALUE);
-        }
         if (depthTexture == 0) {
             if (existingIndex >= 0) {
                 int last = --this.depthFbCount;
@@ -457,6 +522,9 @@ final class PublishedFrameTextures {
                 if (this.lastDepthFbIdentity == framebufferIdentity) {
                     this.lastDepthFbIdentity = Long.MIN_VALUE;
                     this.lastDepthFbTex = 0;
+                }
+                if (previous != 0) {
+                    repairDepthReverse(previous, framebufferIdentity);
                 }
             }
             return;
@@ -475,6 +543,9 @@ final class PublishedFrameTextures {
         }
         this.lastDepthFbIdentity = framebufferIdentity;
         this.lastDepthFbTex = depthTexture;
+        if (previous != 0) {
+            repairDepthReverse(previous, framebufferIdentity);
+        }
         setIdentityForDepthTexture(depthTexture, framebufferIdentity);
     }
 
@@ -509,10 +580,25 @@ final class PublishedFrameTextures {
 
     /** Drops every depth record naming this GL texture (it was deleted or its name reused). */
     synchronized void forgetDepthTexture(int glTextureName) {
-        long identity = identityForDepthTexture(glTextureName);
-        if (identity != Long.MIN_VALUE) {
-            bindDepthTexture(identity, 0);
+        // Every record naming the texture goes, not just the one the reverse entry names: a shared
+        // depth texture's co-owners would otherwise keep a forward record pointing at a deleted name.
+        for (int i = 0; i < this.depthFbCount; ) {
+            if (this.depthFbTextures[i] != glTextureName) {
+                i++;
+                continue;
+            }
+            long removedIdentity = this.depthFbIdentities[i];
+            int last = --this.depthFbCount;
+            if (i != last) {
+                this.depthFbIdentities[i] = this.depthFbIdentities[last];
+                this.depthFbTextures[i] = this.depthFbTextures[last];
+            }
+            if (this.lastDepthFbIdentity == removedIdentity) {
+                this.lastDepthFbIdentity = Long.MIN_VALUE;
+                this.lastDepthFbTex = 0;
+            }
         }
+        setIdentityForDepthTexture(glTextureName, Long.MIN_VALUE);
     }
 
     /** {@return the publication version}, incremented whenever the published set changes. */

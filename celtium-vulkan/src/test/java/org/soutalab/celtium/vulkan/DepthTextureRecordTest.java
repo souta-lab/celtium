@@ -35,4 +35,41 @@ class DepthTextureRecordTest {
         assertEquals(Long.MIN_VALUE, record.identityForDepthTexture(179));
         assertEquals(Long.MIN_VALUE, record.identityForDepthTexture(0));
     }
+
+    @Test
+    void aSharedDepthTextureSurvivesTheNamedOwnerRebindingAway() {
+        PublishedFrameTextures record = new PublishedFrameTextures();
+        record.bindDepthTexture(0x1000_0000_00B7L, 179);
+        record.bindDepthTexture(0x1000_0000_00B8L, 179);
+        record.bindDepthTexture(0x1000_0000_00B8L, 180);
+        assertEquals(179, record.depthTexture(0x1000_0000_00B7L), "the first owner's record is untouched");
+        assertEquals(0x1000_0000_00B7L, record.identityForDepthTexture(179),
+                "the reverse moves to the surviving owner instead of going absent");
+        assertEquals(180, record.depthTexture(0x1000_0000_00B8L));
+        assertEquals(0x1000_0000_00B8L, record.identityForDepthTexture(180));
+    }
+
+    @Test
+    void aSharedDepthTextureSurvivesTheNamedOwnerBeingCleared() {
+        PublishedFrameTextures record = new PublishedFrameTextures();
+        record.bindDepthTexture(0x1000_0000_00B7L, 179);
+        record.bindDepthTexture(0x1000_0000_00B8L, 179);
+        record.bindDepthTexture(0x1000_0000_00B8L, 0);
+        assertEquals(0, record.depthTexture(0x1000_0000_00B8L));
+        assertEquals(179, record.depthTexture(0x1000_0000_00B7L));
+        assertEquals(0x1000_0000_00B7L, record.identityForDepthTexture(179),
+                "clearing the named owner leaves the family's other attachment resolving");
+    }
+
+    @Test
+    void forgettingASharedDepthTextureDropsEveryOwner() {
+        PublishedFrameTextures record = new PublishedFrameTextures();
+        record.bindDepthTexture(0x1000_0000_00B7L, 179);
+        record.bindDepthTexture(0x1000_0000_00B8L, 179);
+        record.forgetDepthTexture(179);
+        assertEquals(0, record.depthTexture(0x1000_0000_00B7L),
+                "no owner keeps a forward record naming the deleted texture");
+        assertEquals(0, record.depthTexture(0x1000_0000_00B8L));
+        assertEquals(Long.MIN_VALUE, record.identityForDepthTexture(179));
+    }
 }
