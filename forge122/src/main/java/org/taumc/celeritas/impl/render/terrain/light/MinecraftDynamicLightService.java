@@ -61,6 +61,22 @@ public final class MinecraftDynamicLightService implements DynamicLightService {
     private int snapshotCount;
     private WorldClient snapshotWorld;
 
+    // Gather/snapshot telemetry (item 430): the funnel's own counters can only see the combined-light
+    // cache, so a leg that reads them cannot tell a gather that never ran from a snapshot the funnel
+    // never matched. These counters split the ways snapshotSources can answer 0 - no gather yet, a
+    // different world, a matching world with an empty snapshot - and whether gatherLights runs at all.
+    // Written and read on the client main thread (the gather and the funnel both live there).
+    private static long gatherCalls;
+    private static long gatherDisabledReturns;
+    private static long gatherNoWorldReturns;
+    private static long gatherLastSources;
+    private static long gatherMaxSources;
+    private static long snapshotQueries;
+    private static long snapshotNoSnapshot;
+    private static long snapshotWorldMismatches;
+    private static long snapshotEmpty;
+    private static boolean gatherFirstPrinted;
+
     private MinecraftDynamicLightService() {
     }
 
@@ -71,11 +87,30 @@ public final class MinecraftDynamicLightService implements DynamicLightService {
      */
     public static int snapshotSources(World world, float[] out) {
         MinecraftDynamicLightService service = INSTANCE;
-        if (service.snapshotWorld == null || service.snapshotWorld != world) {
+        snapshotQueries++;
+        if (service.snapshotWorld == null) {
+            snapshotNoSnapshot++;
+            return 0;
+        }
+        if (service.snapshotWorld != world) {
+            snapshotWorldMismatches++;
+            return 0;
+        }
+        if (service.snapshotCount == 0) {
+            snapshotEmpty++;
             return 0;
         }
         System.arraycopy(service.snapshot, 0, out, 0, service.snapshotCount * 4);
         return service.snapshotCount;
+    }
+
+    /** {@return a compact summary of gather and snapshot traffic for diagnostics (item 430)}. */
+    public static String diagnosticSummary() {
+        return "gatherCalls=" + gatherCalls + " gatherDisabled=" + gatherDisabledReturns
+                + " gatherNoWorld=" + gatherNoWorldReturns + " gatherLast=" + gatherLastSources
+                + " gatherMax=" + gatherMaxSources + " snapshotQueries=" + snapshotQueries
+                + " snapshotNoSnapshot=" + snapshotNoSnapshot
+                + " snapshotMismatch=" + snapshotWorldMismatches + " snapshotEmpty=" + snapshotEmpty;
     }
 
     private void clearSnapshot() {
@@ -85,13 +120,16 @@ public final class MinecraftDynamicLightService implements DynamicLightService {
 
     @Override
     public int gatherLights(float[] out, double cameraX, double cameraY, double cameraZ) {
+        gatherCalls++;
         if (!ENABLED) {
+            gatherDisabledReturns++;
             clearSnapshot();
             return 0;
         }
         Minecraft minecraft = Minecraft.getMinecraft();
         WorldClient world = minecraft.world;
         if (world == null) {
+            gatherNoWorldReturns++;
             clearSnapshot();
             return 0;
         }
@@ -111,6 +149,16 @@ public final class MinecraftDynamicLightService implements DynamicLightService {
         int count = this.accumulator.finish(out);
         this.snapshotCount = this.accumulator.copyWorldSources(this.snapshot);
         this.snapshotWorld = world;
+        gatherLastSources = count;
+        if (count > gatherMaxSources) {
+            gatherMaxSources = count;
+        }
+        if (count > 0 && !gatherFirstPrinted) {
+            gatherFirstPrinted = true;
+            // In-run, once: a leg reads this without depending on shutdown-time log capture.
+            System.out.println("[Celtium] CELTIUM_GATHER_FIRST count=" + count
+                    + " snapshot=" + this.snapshotCount);
+        }
         return count;
     }
 
