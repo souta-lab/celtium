@@ -12264,6 +12264,27 @@ this.frameBufferOpen = false;
                             record(frameLine);
                         }
                     }
+                    // The depth half of the same boundary (QUEUE 632): three boxes of the frame target's depth
+                    // image - one over an item frame's measured NDC box, one sky, one floor - so the value the
+                    // entity draws tested against is a measurement, not a derivation. Rows are image rows
+                    // (row 0 = the picture's bottom, the readback's own order).
+                    if (FRAME_DEPTH_PROBE_FRAME >= 0L && this.frameId == FRAME_DEPTH_PROBE_FRAME
+                            && this.frameDepthProbes < FRAME_DEPTH_PROBE_LINES
+                            && this.frameTarget.depthImage() != 0L) {
+                        this.frameDepthProbes++;
+                        int w = this.targetWidth;
+                        int h = this.targetHeight;
+                        String depthLine = "CELTIUM_FRAME_DEPTH_PROBE frame=" + this.frameId
+                                + " afterWindows=" + this.immediateStatistics.immediateWindowsThisFrame()
+                                + celtium$depthBoxSummary("frame", (int) (w * 0.1875), (int) (h * 0.5278),
+                                        (int) (w * 0.0625), (int) (h * 0.0639))
+                                + celtium$depthBoxSummary("sky", (int) (w * 0.4688), (int) (h * 0.8611),
+                                        (int) (w * 0.0625), (int) (h * 0.0694))
+                                + celtium$depthBoxSummary("floor", (int) (w * 0.4688), (int) (h * 0.1389),
+                                        (int) (w * 0.0625), (int) (h * 0.0694));
+                        System.out.println("[Celtium] " + depthLine);
+                        record(depthLine);
+                    }
                     // Every window of frame 0, the centre of the frame image and of the pair, but only the changes are
                     // printed: the splash redraws its framebuffer many times in one presented frame, and the presented
                     // picture is whatever the last of those left. A state trace says which window whitened a frame
@@ -15635,6 +15656,19 @@ this.frameBufferOpen = false;
     /** How many window boundaries that frame reports; {@code -Dceltium.vulkan.frameAtWindowLines}, default 8. */
     private static final int FRAME_AT_WINDOW_LINES =
             Integer.getInteger("celtium.vulkan.frameAtWindowLines", 8).intValue();
+    /**
+     * A frame whose window boundaries also read the frame target's depth image back (QUEUE 632 discrimination:
+     * entity-phase immediate groups are accepted, closed with on-screen bounds and drawn, yet leave no pixels in
+     * the presented image - the depth the terrain left at their texels is the one fact the colour readbacks
+     * cannot give). {@code -Dceltium.vulkan.frameDepthProbeFrame=<n>}, default -1 (off).
+     */
+    private static final long FRAME_DEPTH_PROBE_FRAME =
+            Long.getLong("celtium.vulkan.frameDepthProbeFrame", -1L).longValue();
+    /** How many window boundaries the depth probe reports; {@code -Dceltium.vulkan.frameDepthProbeLines}. */
+    private static final int FRAME_DEPTH_PROBE_LINES =
+            Integer.getInteger("celtium.vulkan.frameDepthProbeLines", 4).intValue();
+    /** Depth readbacks taken at window boundaries in the probe run. */
+    private int frameDepthProbes;
     /**
      * How many {@code CELTIUM_PAIR_LAYOUT} lines the run may print; {@code -Dceltium.vulkan.pairLayoutLines}.
      * <p>
@@ -20417,6 +20451,44 @@ this.frameBufferOpen = false;
         // Thin delegate, kept because the chain-time dump (celtium$dumpOwnedImage) reads through this name; the
         // implementation moved to TextureCopyService with the rest of the copy path.
         return this.textureCopyService.readImageRectangle(image, x, y, width, height);
+    }
+
+    /**
+     * One depth box of the frame target for the depth probe: min, max, how many texels sit at the far plane, and
+     * an 8x6 grid of centre samples at five decimals - two depth levels inside one box (a nearer surface written
+     * over a farther one) is the shape this summary exists to show.
+     */
+    private String celtium$depthBoxSummary(String label, int x, int y, int width, int height) {
+        float[] box = this.textureCopyService.readDepthRectangle(this.frameTarget.depthImage(), x, y, width, height,
+                org.soutalab.celtium.vulkan.VulkanDepthFormat.chosen(),
+                this.frameTarget.depthLayout(), this.frameTarget.depthLayout());
+        if (box == null) {
+            return " " + label + "=unreadable";
+        }
+        float min = Float.MAX_VALUE;
+        float max = -Float.MAX_VALUE;
+        int atOne = 0;
+        for (float value : box) {
+            min = Math.min(min, value);
+            max = Math.max(max, value);
+            if (value >= 0.99999F) {
+                atOne++;
+            }
+        }
+        StringBuilder grid = new StringBuilder();
+        for (int row = 5; row >= 0; row--) {
+            for (int col = 0; col < 8; col++) {
+                int sx = Math.min(width - 1, (col * 2 + 1) * width / 16);
+                int sy = Math.min(height - 1, (row * 2 + 1) * height / 12);
+                if (grid.length() > 0) {
+                    grid.append(',');
+                }
+                grid.append(String.format(java.util.Locale.ROOT, "%.5f", box[sy * width + sx]));
+            }
+        }
+        return " " + label + "=[min=" + String.format(java.util.Locale.ROOT, "%.5f", min)
+                + " max=" + String.format(java.util.Locale.ROOT, "%.5f", max)
+                + " atOne=" + atOne + "/" + box.length + " grid=" + grid + "]";
     }
 
     /** {@return whether a requested presented-image dump has been written}. */
