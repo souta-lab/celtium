@@ -2133,52 +2133,74 @@ public final class VulkanPostChain {
                             .offset(0).size(pushRange);
                     layoutInfo.pPushConstantRanges(range);
                 }
-                check(vkCreatePipelineLayout(device, layoutInfo, null, handle),
-                        "vkCreatePipelineLayout(post " + fragment + ")");
-                long layout = handle.get(0);
+                // Everything created from here on is this method's to destroy until the Program takes it over.
+                // The caller caches a refusal and never retries, so a handle dropped on one of the failure
+                // paths below would leak for the life of the device (audit-vulkan-core F3).
+                long layout = 0L;
+                long vertexModule = 0L;
+                long fragmentModule = 0L;
+                try {
+                    check(vkCreatePipelineLayout(device, layoutInfo, null, handle),
+                            "vkCreatePipelineLayout(post " + fragment + ")");
+                    layout = handle.get(0);
 
-                VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
-                stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT)
-                        .module(createShaderModule(stack, device, uniformBlock ? uboVariant(vertex) : vertex))
-                        .pName(stack.UTF8("main"));
-                stages.get(1).sType$Default().stage(VK_SHADER_STAGE_FRAGMENT_BIT)
-                        .module(createShaderModule(stack, device, uniformBlock ? uboVariant(fragment) : fragment))
-                        .pName(stack.UTF8("main"));
+                    vertexModule = createShaderModule(stack, device, uniformBlock ? uboVariant(vertex) : vertex);
+                    fragmentModule = createShaderModule(stack, device, uniformBlock ? uboVariant(fragment) : fragment);
+                    VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
+                    stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT)
+                            .module(vertexModule)
+                            .pName(stack.UTF8("main"));
+                    stages.get(1).sType$Default().stage(VK_SHADER_STAGE_FRAGMENT_BIT)
+                            .module(fragmentModule)
+                            .pName(stack.UTF8("main"));
 
-                VkPipelineVertexInputStateCreateInfo vertexInput = VkPipelineVertexInputStateCreateInfo
-                        .calloc(stack).sType$Default();
-                VkPipelineInputAssemblyStateCreateInfo inputAssembly = VkPipelineInputAssemblyStateCreateInfo
-                        .calloc(stack).sType$Default().topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
-                VkPipelineViewportStateCreateInfo viewport = VkPipelineViewportStateCreateInfo.calloc(stack)
-                        .sType$Default().viewportCount(1).scissorCount(1);
-                VkPipelineRasterizationStateCreateInfo raster = VkPipelineRasterizationStateCreateInfo.calloc(stack)
-                        .sType$Default().polygonMode(VK_POLYGON_MODE_FILL).cullMode(VK_CULL_MODE_NONE)
-                        .frontFace(VK_FRONT_FACE_COUNTER_CLOCKWISE).lineWidth(1.0f);
-                VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo
-                        .calloc(stack).sType$Default().rasterizationSamples(VK_SAMPLE_COUNT_1_BIT);
-                VkPipelineColorBlendAttachmentState.Buffer blendAttachment = VkPipelineColorBlendAttachmentState
-                        .calloc(1, stack);
-                blendAttachment.get(0).blendEnable(false)
-                        .colorWriteMask(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
-                                | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT);
-                VkPipelineColorBlendStateCreateInfo blend = VkPipelineColorBlendStateCreateInfo.calloc(stack)
-                        .sType$Default().pAttachments(blendAttachment);
-                java.nio.IntBuffer dynamic = stack.ints(VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR);
-                org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo dynamicState = org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo
-                        .calloc(stack).sType$Default().pDynamicStates(dynamic);
+                    VkPipelineVertexInputStateCreateInfo vertexInput = VkPipelineVertexInputStateCreateInfo
+                            .calloc(stack).sType$Default();
+                    VkPipelineInputAssemblyStateCreateInfo inputAssembly = VkPipelineInputAssemblyStateCreateInfo
+                            .calloc(stack).sType$Default().topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
+                    VkPipelineViewportStateCreateInfo viewport = VkPipelineViewportStateCreateInfo.calloc(stack)
+                            .sType$Default().viewportCount(1).scissorCount(1);
+                    VkPipelineRasterizationStateCreateInfo raster = VkPipelineRasterizationStateCreateInfo.calloc(stack)
+                            .sType$Default().polygonMode(VK_POLYGON_MODE_FILL).cullMode(VK_CULL_MODE_NONE)
+                            .frontFace(VK_FRONT_FACE_COUNTER_CLOCKWISE).lineWidth(1.0f);
+                    VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo
+                            .calloc(stack).sType$Default().rasterizationSamples(VK_SAMPLE_COUNT_1_BIT);
+                    VkPipelineColorBlendAttachmentState.Buffer blendAttachment = VkPipelineColorBlendAttachmentState
+                            .calloc(1, stack);
+                    blendAttachment.get(0).blendEnable(false)
+                            .colorWriteMask(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                                    | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT);
+                    VkPipelineColorBlendStateCreateInfo blend = VkPipelineColorBlendStateCreateInfo.calloc(stack)
+                            .sType$Default().pAttachments(blendAttachment);
+                    java.nio.IntBuffer dynamic = stack.ints(VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR);
+                    org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo dynamicState = org.lwjgl.vulkan.VkPipelineDynamicStateCreateInfo
+                            .calloc(stack).sType$Default().pDynamicStates(dynamic);
 
-                VkGraphicsPipelineCreateInfo.Buffer info = VkGraphicsPipelineCreateInfo.calloc(1, stack);
-                info.get(0).sType$Default().pStages(stages).pVertexInputState(vertexInput)
-                        .pInputAssemblyState(inputAssembly).pViewportState(viewport).pRasterizationState(raster)
-                        .pMultisampleState(multisample).pColorBlendState(blend).pDynamicState(dynamicState)
-                        .layout(layout).renderPass(renderPass).subpass(0);
-                LongBuffer pipelineHandle = stack.mallocLong(1);
-                check(VulkanContext.createGraphicsPipelines(device, info, pipelineHandle, "post-chain"),
-                        "vkCreateGraphicsPipelines(post " + fragment + ")");
-                vkDestroyShaderModule(device, stages.get(0).module(), null);
-                vkDestroyShaderModule(device, stages.get(1).module(), null);
-                return new Program(pipelineHandle.get(0), layout, pushRange, uniformBlock, declared.offsets,
-                        declared.bytes);
+                    VkGraphicsPipelineCreateInfo.Buffer info = VkGraphicsPipelineCreateInfo.calloc(1, stack);
+                    info.get(0).sType$Default().pStages(stages).pVertexInputState(vertexInput)
+                            .pInputAssemblyState(inputAssembly).pViewportState(viewport).pRasterizationState(raster)
+                            .pMultisampleState(multisample).pColorBlendState(blend).pDynamicState(dynamicState)
+                            .layout(layout).renderPass(renderPass).subpass(0);
+                    LongBuffer pipelineHandle = stack.mallocLong(1);
+                    check(VulkanContext.createGraphicsPipelines(device, info, pipelineHandle, "post-chain"),
+                            "vkCreateGraphicsPipelines(post " + fragment + ")");
+                    long pipeline = pipelineHandle.get(0);
+                    vkDestroyShaderModule(device, vertexModule, null);
+                    vkDestroyShaderModule(device, fragmentModule, null);
+                    return new Program(pipeline, layout, pushRange, uniformBlock, declared.offsets,
+                            declared.bytes);
+                } catch (RuntimeException | Error failure) {
+                    if (fragmentModule != 0L) {
+                        vkDestroyShaderModule(device, fragmentModule, null);
+                    }
+                    if (vertexModule != 0L) {
+                        vkDestroyShaderModule(device, vertexModule, null);
+                    }
+                    if (layout != 0L) {
+                        vkDestroyPipelineLayout(device, layout, null);
+                    }
+                    throw failure;
+                }
             }
         }
     }
