@@ -1200,6 +1200,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // Unconditional: the mirror census is not a timing and must not depend on a diagnostics switch to be visible.
         this.diagnostics.add("stateMirror: stubTransformCalls="
                 + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.stubTransformSummary());
+        // Unconditional for the same reason: these counters were kept but read by nothing outside tests, so a
+        // run could hold shaderc timeouts, uniform writes that matched no uniform, location collisions and
+        // descriptor-set collisions that no log ever showed.
+        this.diagnostics.add("modPrograms: " + org.soutalab.celtium.vulkan.gl.ModShaderCompiler.compileRefusalSummary()
+                + " unmatchedUniformWrites=" + org.soutalab.celtium.vulkan.gl.ModProgramRegistry.unmatchedUniformWrites()
+                + " locationNameCollisions=" + org.soutalab.celtium.vulkan.gl.ModProgramRegistry.locationNameCollisions()
+                + " descriptorSetKeyCollisions=" + this.modPrograms.celtium$descriptorSetKeyCollisions());
         if (HANDOFF_TIMINGS) {
             // The refusal counters belong beside the timings: the shutter that keeps a shader-drawn batch out of Vulkan
             // changes which batches are taken, so a run has to say how many it refused and why.

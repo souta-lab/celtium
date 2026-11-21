@@ -240,8 +240,15 @@ public final class VulkanModProgramPipeline {
      * object is created, so a refusal costs nothing.
      */
     public static String unsupported(ModProgramRegistry.Program program, int formatId) {
-        if (program == null || program.lowered() == null || !program.lowered().ok()) {
+        if (program == null || program.lowered() == null) {
             return "the program is not lowered";
+        }
+        if (!program.lowered().ok()) {
+            // The lowering's own reason, not just the fact: the LINKED line printed it once at link time,
+            // but the per-batch refusal line is the one a leg reads, and it repeated only the general text.
+            String failure = program.lowered().failure();
+            return failure == null ? "the program is not lowered"
+                    : "the program is not lowered (" + failure + ")";
         }
         if (!program.compiled()) {
             return "the program has no SPIR-V (" + program.compileFailure() + ")";
