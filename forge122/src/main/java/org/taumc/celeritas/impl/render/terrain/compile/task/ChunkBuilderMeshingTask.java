@@ -140,7 +140,7 @@ public class ChunkBuilderMeshingTask extends ChunkBuilderTask<ChunkBuildOutput> 
 
                         buildContext.getBlockRenderer().resetSharedState();
 
-                        for (BlockRenderLayer layer : VintageChunkBuildContext.LAYERS) {
+                        for (BlockRenderLayer layer : buildContext.layers()) {
                             if (block.canRenderInLayer(blockState, layer)) {
                                 ForgeHooksClient.setRenderLayer(layer);
                                 if (blockState.getRenderType() == EnumBlockRenderType.MODEL && USE_NEW_BLOCK_RENDERER) {
