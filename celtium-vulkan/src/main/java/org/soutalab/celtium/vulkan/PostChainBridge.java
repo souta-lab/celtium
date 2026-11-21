@@ -736,6 +736,36 @@ b.frameBufferOpen = false;
     }
 
     /**
+     * Zero-allocation attach hand-back predicate covering a pass's color target(s) AND its borrowed shared depth
+     * target (shadow §3.4). When {@code general == false} (sampling side) or all attach arguments are unset
+     * (unnarrowed walk), returns {@code true}; otherwise returns {@code true} iff {@code publishedImage} matches
+     * {@code attachColor}, {@code attachDepth}, or any element of {@code attachColors}.
+     */
+    static boolean celtium$attachHandBackNeeded(boolean general, long attachColor, long attachDepth,
+            long[] attachColors, long publishedImage) {
+        if (!general) {
+            return true;
+        }
+        if (attachColor == 0L && attachDepth == 0L && attachColors == null) {
+            return true;
+        }
+        if (attachColor != 0L && publishedImage == attachColor) {
+            return true;
+        }
+        if (attachDepth != 0L && publishedImage == attachDepth) {
+            return true;
+        }
+        if (attachColors != null) {
+            for (long candidate : attachColors) {
+                if (candidate != 0L && candidate == publishedImage) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * {@return the layout the published-name walk moves one name's image to, and the layout it reports to the
      * image's owner afterwards}.
      * <p>
@@ -831,8 +861,12 @@ b.frameBufferOpen = false;
      * @param attachImage the image the pass is about to attach, or 0 to hand back every published name as before
      */
     void celtium$transitionPublishedFrameTextures(boolean general, long attachImage) {
-        celtium$transitionPublishedFrameTextures(general,
-                attachImage == 0L ? null : new long[] {attachImage});
+        celtium$transitionPublishedFrameTextures(general, attachImage, 0L, null);
+    }
+
+    /** Zero-allocation overload for a single-color pass that may also attach a borrowed shared depth image. */
+    void celtium$transitionPublishedFrameTextures(boolean general, long attachColor, long attachDepth) {
+        celtium$transitionPublishedFrameTextures(general, attachColor, attachDepth, null);
     }
 
     /**
@@ -842,6 +876,11 @@ b.frameBufferOpen = false;
      * @param attachImages the images the pass is about to attach, or null to hand back every published name
      */
     void celtium$transitionPublishedFrameTextures(boolean general, long[] attachImages) {
+        celtium$transitionPublishedFrameTextures(general, 0L, 0L, attachImages);
+    }
+
+    void celtium$transitionPublishedFrameTextures(boolean general, long attachColor, long attachDepth,
+            long[] attachImages) {
         if (b.publishedTextures.isEmptyPublished() || b.commandBuffer == null) {
             return;
         }
@@ -866,22 +905,21 @@ b.frameBufferOpen = false;
             long publishedImageHandleValue = this.cachedImages[cachedIndex];
             long publishedImageIdentity = this.cachedPairIdentities[cachedIndex];
             boolean pairImageName = publishedImageIdentity != Long.MIN_VALUE;
-            if (!celtium$attachHandBackNeeded(general, attachImages, publishedImageHandleValue)) {
+            if (!celtium$attachHandBackNeeded(general, attachColor, attachDepth, attachImages,
+                    publishedImageHandleValue)) {
                 // The hand-back is the attach's own precondition: only the names that stand for the image this pass
-                // attaches have to be in GENERAL for it. A name over another image is not attached here and is not
-                // moved here, so the transition would be one nothing asked for. Counted, so "the walk was narrowed"
-                // is a measurement rather than a reading of the code.
+                // attaches have to be in GENERAL / DEPTH_STENCIL_ATTACHMENT_OPTIMAL for it. A name over another
+                // image is not attached here and is not moved here, so the transition would be one nothing asked for.
                 this.attachNarrowedSkips++;
                 continue;
             }
-            // The sampling side must not move the image this pass is about to attach: the pass declares GENERAL for
-            // attachment 0, and the transition to SHADER_READ_ONLY_OPTIMAL right before vkCmdBeginRenderPass is
-            // VUID-vkCmdBeginRenderPass-initialLayout-00900. The attach-side hand-back (the `true` direction) already
-            // moved it to GENERAL for this pass; leaving it there is the whole fix. A batch that samples this same
-            // image inside the pass would be a feedback loop and is not a case this rule has to serve.
-            if (!general && b.passAttachedColorImage != 0L) {
+            // The sampling side must not move an image (color OR depth) that this pass is about to attach: the pass
+            // declares GENERAL for color attachments and DEPTH_STENCIL_ATTACHMENT_OPTIMAL for depth attachments, so
+            // transitioning it to SHADER_READ_ONLY_OPTIMAL right before vkCmdBeginRenderPass causes
+            // VUID-vkCmdBeginRenderPass-initialLayout-00900.
+            if (!general && (b.passAttachedColorImage != 0L || b.passAttachedDepthImage != 0L)) {
                 if (publishedImageHandleValue != 0L
-                        && b.celtium$passAttachesColorImage(publishedImageHandleValue)) {
+                        && b.celtium$passAttachesImage(publishedImageHandleValue)) {
                     b.publishedTextures.noteSkippedForAttach();
                     if (b.publishedTextures.skippedForAttach() == 1) {
                         b.record("published name " + entryKey + " stands for the image this pass attaches (0x"

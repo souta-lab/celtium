@@ -465,6 +465,24 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * the tuple is kept out of the sampling layout exactly as slot 0's name is.
      */
     long[] passAttachedColorImages;
+    /**
+     * Depth image the pass being begun attaches (shared depth for a routed shadow/depth target), or 0 when the pass
+     * uses a private depth image. Checked alongside {@link #passAttachedColorImage} so the sampling-side transition
+     * never moves the pass's own depth attachment into {@code SHADER_READ_ONLY_OPTIMAL} right before
+     * {@code vkCmdBeginRenderPass} (shadow §3.4 / item 537 wall (c)).
+     */
+    long passAttachedDepthImage;
+
+    /** {@return whether the pass this window or terrain pass records attaches this image as color or depth}. */
+    boolean celtium$passAttachesImage(long image) {
+        if (image == 0L) {
+            return false;
+        }
+        if (image == this.passAttachedDepthImage) {
+            return true;
+        }
+        return celtium$passAttachesColorImage(image);
+    }
 
     /** {@return whether the pass this window records attaches this image as one of its colour targets}. */
     boolean celtium$passAttachesColorImage(long image) {
@@ -7232,6 +7250,27 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (identity == Long.MIN_VALUE) {
             return false;
         }
+        return celtium$publishDepthFromSharedStore(glTextureName, identity);
+    }
+
+    /**
+     * Publishes a standalone depth texture (no framebuffer currently attaches it, e.g. a copied {@code altDepth} /
+     * {@code depthtex1} texture written via the native depth copy) when the shared depth store already holds an image
+     * under its raw-texture key (item 537 wall (b2) branch ii).
+     */
+    boolean celtium$publishStandaloneDepthTexture(int glTextureName) {
+        GllessFrameTarget target = offTargetTarget();
+        if (target == null) {
+            return false;
+        }
+        long depthKey = RenderTargetRegistry.rawColorTextureIdentity(glTextureName);
+        if (target.sharedDepthImage(depthKey) == 0L) {
+            return false;
+        }
+        return celtium$publishDepthFromSharedStore(glTextureName, depthKey);
+    }
+
+    private boolean celtium$publishDepthFromSharedStore(int glTextureName, long identity) {
         GllessFrameTarget target = offTargetTarget();
         if (target == null) {
             if (this.fboPublishRefusalLogs < 16) {
@@ -13449,6 +13488,7 @@ this.frameBufferOpen = false;
         // image, which is what both the plain path and the fallback path attach.
         this.passAttachedColorImage = this.frameTarget.colorImage();
         this.passAttachedColorImages = null;
+        this.passAttachedDepthImage = 0L;
         if (WINDOW_SPLIT) {
             long now = System.nanoTime();
             this.wsRouteNanos += now - this.wsMark;
@@ -13488,12 +13528,17 @@ this.frameBufferOpen = false;
                     int windowDepthTexture = windowDepthRecord == null ? 0 : windowDepthRecord[0];
                     String depthTextureSource = windowDepthRecord == null || windowDepthRecord[3] == 0
                             ? "record" : "stub-bound-" + windowDepthRecord[3];
+                    long windowAttachedDepthImage = 0L;
                     if (windowDepthTexture != 0) {
                         int[] depthSize = new int[] { windowDepthRecord[1], windowDepthRecord[2] };
                         if (depthSize[0] > 0 && depthSize[1] > 0) {
+                            long windowDepthKey = RenderTargetRegistry.rawColorTextureIdentity(windowDepthTexture);
                             boolean sharedDepth = offTarget.ensureChainPairSharedDepth(chainIdentityValue,
-                                    RenderTargetRegistry.rawColorTextureIdentity(windowDepthTexture),
+                                    windowDepthKey,
                                     depthSize[0], depthSize[1]);
+                            if (sharedDepth) {
+                                windowAttachedDepthImage = offTarget.sharedDepthImage(windowDepthKey);
+                            }
                             if (this.sharedDepthWindowLogs < 8) {
                                 this.sharedDepthWindowLogs++;
                                 System.out.println("[Celtium] CELTIUM_SHARED_DEPTH identity=0x"
@@ -13538,16 +13583,16 @@ this.frameBufferOpen = false;
                     // moved back first. The two VUIDs are one lifecycle: sampled -> read-only, attached -> general.
                     FramePassTimings.begin("winTransition");
                     try {
-                        // Narrowed to the image this pass is about to attach: the hand-back is that attach's own
-                        // precondition, and a name published over another image is neither attached nor moved here.
+                        // Narrowed to the images this pass is about to attach (both color targets and any borrowed
+                        // shared depth image): handing back the depth image here closes the shadow §3.4 loop so the
+                        // next pass attaching shadowtex0 transitions it from SHADER_READ_ONLY_OPTIMAL back to
+                        // DEPTH_STENCIL_ATTACHMENT_OPTIMAL before clearing or attaching it.
                         if (windowAttachedImages != null) {
-                            // Every slot's name is handed back, not only slot 0's: the pass attaches the whole
-                            // tuple, and each attached image carries the same initialLayout precondition.
                             this.postChainBridge.celtium$transitionPublishedFrameTextures(true,
-                                    windowAttachedImages);
+                                    0L, windowAttachedDepthImage, windowAttachedImages);
                         } else {
                             this.postChainBridge.celtium$transitionPublishedFrameTextures(true,
-                                    offTarget.chainPairColorImage(chainIdentityValue));
+                                    offTarget.chainPairColorImage(chainIdentityValue), windowAttachedDepthImage);
                         }
                     } finally {
                         FramePassTimings.end("winTransition");
@@ -13661,6 +13706,7 @@ this.frameBufferOpen = false;
                     }
                     this.passAttachedColorImage = offTarget.chainPairColorImage(chainIdentityValue);
                     this.passAttachedColorImages = windowAttachedImages;
+                    this.passAttachedDepthImage = windowAttachedDepthImage;
                     // The pass's render area cannot exceed the framebuffer's - a chain pair at the game's
                     // framebuffer size (the fixture's 256x256) is smaller than the window's, and the render area
                     // must come from the pair, not from the frame.
@@ -16110,6 +16156,9 @@ this.frameBufferOpen = false;
 
         long renderPass = pipeline.renderPass();
         long terrainFramebuffer = ensureFramebuffer(renderPass);
+        this.passAttachedColorImage = this.frameTarget.colorImage();
+        this.passAttachedColorImages = null;
+        this.passAttachedDepthImage = 0L;
         long[] depthRouting = celtium$routeTerrainPassToDepthTarget(pass.name(), renderPass);
         if (depthRouting != null) {
             // Item 332: the bound framebuffer's pair borrows this framebuffer's depth texture, so the terrain of this
@@ -16120,6 +16169,14 @@ this.frameBufferOpen = false;
             routedDepthKey = depthRouting[2];
             passAreaWidth = (int) depthRouting[3];
             passAreaHeight = (int) depthRouting[4];
+            GllessFrameTarget depthOwner = offTargetTarget();
+            long routedColorImage = depthOwner != null ? depthOwner.chainPairColorImage(routedDepthIdentity) : 0L;
+            long routedDepthImage = depthOwner != null ? depthOwner.sharedDepthImage(routedDepthKey) : 0L;
+            this.passAttachedColorImage = routedColorImage;
+            this.passAttachedDepthImage = routedDepthImage;
+            // Hand back any published wrapper over this routed target's color or depth image BEFORE the sampling
+            // walk below runs (which skips our attached images via passAttachedColorImage/passAttachedDepthImage).
+            this.postChainBridge.celtium$transitionPublishedFrameTextures(true, routedColorImage, routedDepthImage);
         } else if (TERRAIN_TO_BOUND_TARGET && !this.targetRegistry.currentIsMain()) {
             // A mod that binds its own framebuffer around renderBlockLayer wants that layer in it: GTCEu renders its
             // Bloom layer into bloomFBO and builds the bloom mask from it, which stays empty (no halo) while the terrain
