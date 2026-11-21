@@ -879,9 +879,25 @@ public final class FontBatch {
         // flush rather than offered again immediately - offering it twice in one flush asks the same question twice.
         offerRetained(view, target);
         // The run's bytes stay valid until the pending buffer is reused, so a refusal can still copy them.
-        if (!offer(run, target)) {
+        // But an older run for the same target may still be waiting: offerRetained stops at the first
+        // refusal, so a retained run that was just refused again is still queued, and offering this run
+        // past it - if the sink takes it - draws the newer glyphs before the older ones, breaking the
+        // order this class promises (audit-vulkan-core I1). Queue behind it instead; a target whose
+        // submissions are being refused retains this run too, at the bounded copy cost retention
+        // already pays.
+        if (retainedFor(run.targetIdentity) || !offer(run, target)) {
             retain(run);
         }
+    }
+
+    /** Whether an older run for {@code targetIdentity} is still retained, waiting its turn. */
+    private boolean retainedFor(long targetIdentity) {
+        for (RetainedRun retained : this.retained) {
+            if (retained.targetIdentity == targetIdentity) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
