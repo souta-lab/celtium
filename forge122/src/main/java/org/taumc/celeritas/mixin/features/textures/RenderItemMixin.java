@@ -9,7 +9,11 @@ import org.taumc.celeritas.impl.render.terrain.sprite.SpriteUtil;
 
 @Mixin(RenderItem.class)
 public class RenderItemMixin {
-    @ModifyExpressionValue(method = { "func_175032_a", "renderQuads" }, at = @At(value = "INVOKE", target = "Ljava/util/List;get(I)Ljava/lang/Object;"))
+    // renderQuads is func_191970_a in the 1.12.2 SRG set (mcp_stable/39 srg-mcp.srg). The name this
+    // list carried until 2026-11-22, func_175032_a, exists in no 1.12.2 mapping file, and the refmap
+    // is empty, so in the SRG runtime neither listed name could match and this handler was dead in
+    // production while alive in dev.
+    @ModifyExpressionValue(method = { "func_191970_a", "renderQuads" }, at = @At(value = "INVOKE", target = "Ljava/util/List;get(I)Ljava/lang/Object;"))
     private Object markSpriteActive(Object o) {
         if (o instanceof BakedQuad quad) {
             var sprite = quad.getSprite();
