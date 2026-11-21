@@ -489,6 +489,55 @@ public final class CeltiumGlStub implements FunctionProvider {
         fn("glCreateQueries", R_VOID, SEM_GEN, A_INT, A_INT, A_PTR);
         fn("glCreateTransformFeedbacks", R_VOID, SEM_GEN, A_INT, A_PTR);
         fn("glCreateProgramPipelines", R_VOID, SEM_GEN, A_INT, A_PTR);
+        // ---- ARB/EXT-suffixed entry points (roam-vanilla-diff audit, 2026-11-22): LWJGL2 exposes the
+        // framebuffer, buffer-object, shader-object, query, multitexture and copy-image families under
+        // ARB/EXT-suffixed names as separate native symbols. Only glBindFramebufferARB/EXT were registered, so a
+        // caller on the ARB/EXT dispatch path (OpenGlHelper picks it by reported capability; some mods call the
+        // suffixed names directly) could bind a framebuffer but not create, check or delete one - the gen calls
+        // fell into the unknown-symbol record and returned 0, which a caller reads as the default framebuffer.
+        // That is the same silent-wrongness shape as the once-unrouted glCopyImageSubData. The suffixed names are
+        // semantically identical to their core names in LWJGL2, so they alias to the same semantics and argument
+        // shapes; suffixed names whose core form is a deliberate no-op are listed with the no-ops below instead,
+        // so the unknown-symbol census stops charging them.
+        fn("glGenFramebuffersEXT", R_INT, SEM_GEN, A_INT, A_PTR);
+        fn("glGenRenderbuffersEXT", R_INT, SEM_GEN, A_INT, A_PTR);
+        fn("glDeleteFramebuffersEXT", R_VOID, SEM_DELETE, A_INT, A_PTR);
+        fn("glDeleteRenderbuffersEXT", R_VOID, SEM_DELETE, A_INT, A_PTR);
+        fn("glIsFramebufferEXT", R_INT, SEM_IS_OBJECT, A_INT);
+        fn("glIsRenderbufferEXT", R_INT, SEM_IS_OBJECT, A_INT);
+        fn("glCheckFramebufferStatusEXT", R_INT, SEM_FBO_COMPLETE, A_INT);
+        fn("glGenFramebuffersARB", R_INT, SEM_GEN, A_INT, A_PTR);
+        fn("glGenRenderbuffersARB", R_INT, SEM_GEN, A_INT, A_PTR);
+        fn("glDeleteFramebuffersARB", R_VOID, SEM_DELETE, A_INT, A_PTR);
+        fn("glDeleteRenderbuffersARB", R_VOID, SEM_DELETE, A_INT, A_PTR);
+        fn("glIsFramebufferARB", R_INT, SEM_IS_OBJECT, A_INT);
+        fn("glIsRenderbufferARB", R_INT, SEM_IS_OBJECT, A_INT);
+        fn("glCheckFramebufferStatusARB", R_INT, SEM_FBO_COMPLETE, A_INT);
+        fn("glGenBuffersARB", R_INT, SEM_GEN, A_INT, A_PTR);
+        fn("glDeleteBuffersARB", R_VOID, SEM_DELETE, A_INT, A_PTR);
+        fn("glIsBufferARB", R_INT, SEM_IS_OBJECT, A_INT);
+        fn("glBindBufferARB", R_VOID, SEM_BIND_BUFFER, A_INT, A_INT);
+        fn("glBufferDataARB", R_VOID, SEM_BUFFER_DATA, A_INT, A_LONG, A_PTR, A_INT);
+        fn("glBufferSubDataARB", R_VOID, SEM_BUFFER_SUBDATA, A_INT, A_LONG, A_LONG, A_PTR);
+        fn("glMapBufferARB", R_PTR, SEM_MAP, A_INT, A_INT);
+        fn("glUnmapBufferARB", R_INT, SEM_UNMAP, A_INT);
+        fn("glGetBufferParameterivARB", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
+        fn("glCreateShaderObjectARB", R_INT, SEM_GEN, A_INT);
+        fn("glCreateProgramObjectARB", R_INT, SEM_GEN);
+        fn("glDeleteObjectARB", R_VOID, SEM_DELETE, A_INT);
+        fn("glUseProgramObjectARB", R_VOID, SEM_USE_PROGRAM, A_INT);
+        fn("glGetUniformLocationARB", R_INT, SEM_ZERO, A_INT, A_PTR);
+        fn("glGetObjectParameteriARB", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
+        fn("glGetInfoLogARB", R_VOID, SEM_INFO_LOG, A_INT, A_INT, A_PTR, A_PTR);
+        fn("glGetActiveUniformARB", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR, A_PTR, A_PTR, A_PTR);
+        fn("glGetAttachedObjectsARB", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR, A_PTR);
+        fn("glGetShaderSourceARB", R_VOID, SEM_INFO_LOG, A_INT, A_INT, A_PTR, A_PTR);
+        fn("glCopyImageSubDataARB", R_VOID, SEM_COPY_IMAGE_SUB_DATA, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT,
+                A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
+        fn("glActiveTextureARB", R_VOID, SEM_ACTIVE_TEXTURE, A_INT);
+        fn("glGenQueriesARB", R_INT, SEM_GEN, A_INT, A_PTR);
+        fn("glDeleteQueriesARB", R_VOID, SEM_DELETE, A_INT, A_PTR);
+        fn("glIsQueryARB", R_INT, SEM_IS_OBJECT, A_INT);
     }
 
     private static void registerNoops() {
@@ -545,7 +594,24 @@ public final class CeltiumGlStub implements FunctionProvider {
                 "glUniformBlockBinding",
                 "glUseProgramStages", "glActiveShaderProgram", "glProgramUniform1i", "glProgramUniform1f",
                 "glProgramUniform2f", "glProgramUniform3f", "glProgramUniform4f", "glProgramUniform1iv",
-                "glProgramUniformMatrix4fv"
+                "glProgramUniformMatrix4fv",
+                // ARB/EXT-suffixed forms of the no-op rows above (roam-vanilla-diff audit, 2026-11-22): same
+                // deliberate no-op as their core names, registered so the unknown-symbol census stops charging
+                // them and an ARB/EXT-path caller sees the same surface as a core-path caller.
+                "glBindRenderbufferEXT", "glBindRenderbufferARB",
+                "glFramebufferTexture2DEXT", "glFramebufferTexture2DARB",
+                "glFramebufferRenderbufferEXT", "glFramebufferRenderbufferARB",
+                "glRenderbufferStorageEXT", "glRenderbufferStorageARB",
+                "glGenerateMipmapEXT", "glGenerateMipmapARB",
+                "glShaderSourceARB", "glCompileShaderARB", "glAttachObjectARB", "glDetachObjectARB",
+                "glLinkProgramARB", "glValidateProgramARB",
+                "glUniform1iARB", "glUniform1fARB", "glUniform2fARB", "glUniform3fARB", "glUniform4fARB",
+                "glUniform1ivARB", "glUniform2ivARB", "glUniform3ivARB", "glUniform4ivARB",
+                "glUniform1fvARB", "glUniform2fvARB", "glUniform3fvARB", "glUniform4fvARB",
+                "glUniformMatrix2fvARB", "glUniformMatrix3fvARB", "glUniformMatrix4fvARB",
+                "glVertexAttribPointerARB", "glEnableVertexAttribArrayARB", "glDisableVertexAttribArrayARB",
+                "glBeginQueryARB", "glEndQueryARB",
+                "glMultiTexCoord2fARB"
         };
         for (String name : noops) {
             // Rough signature for the table: every arg marshals as int/pointer uniformly - the noop discards them,
