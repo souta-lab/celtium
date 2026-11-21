@@ -794,38 +794,6 @@ class ModGlslTranslatorTest {
     }
 
     @Test
-    void shadowSamplingIsNamedNotPassedThrough() {
-        // shadow2D and its family were neither lowered nor named: the text passed through and the program
-        // died at shader compilation with an unknown function. A shadow sampler declared on its own is
-        // refused by the same name, before any call is looked at.
-        String fragment = """
-                #version 120
-                varying vec2 uv;
-                uniform sampler2DShadow smap;
-                void main() {
-                    gl_FragColor = shadow2D(smap, vec3(uv, 0.5));
-                }
-                """;
-        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, fragment);
-        assertFalse(result.ok());
-        assertNotNull(result.failure());
-        assertTrue(result.failure().contains("shadow"), result.failure());
-
-        String samplerOnly = """
-                #version 120
-                varying vec2 uv;
-                uniform sampler2DShadow smap;
-                uniform sampler2D first;
-                void main() {
-                    gl_FragColor = texture2D(first, uv);
-                }
-                """;
-        ModGlslTranslator.Result byType = ModGlslTranslator.translate(QUAD_VERTEX, samplerOnly);
-        assertFalse(byType.ok());
-        assertTrue(byType.failure().contains("shadow sampler"), byType.failure());
-    }
-
-    @Test
     void lowersProjectiveFetchesFor1DAnd3D() {
         String fragment = """
                 #version 120

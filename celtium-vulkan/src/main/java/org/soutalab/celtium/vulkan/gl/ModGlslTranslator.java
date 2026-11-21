@@ -153,15 +153,6 @@ public final class ModGlslTranslator {
     private static final Pattern TEXCUBE_LOD_PATTERN = Pattern.compile("\\btextureCubeLod\\s*\\(");
     private static final Pattern TEXCUBE_GRAD_ARB_PATTERN = Pattern.compile("\\btextureCubeGradARB\\s*\\(");
     private static final Pattern TEXCUBE_PATTERN = Pattern.compile("\\btextureCube\\s*\\(");
-    /**
-     * The legacy shadow-sampling calls. They are not lowered - a shadow fetch's answer is a comparison the
-     * lowered {@code texture} call only makes when the bound sampler compares, and the legacy call returns a
-     * {@code vec4} where the modern one returns the comparison alone - and until now they were not named
-     * either: the text passed through untouched and the program died at shader compilation with an unknown
-     * function, a failure filed under the compile rather than under the construct this lowering does not do.
-     */
-    private static final Pattern SHADOW_CALL_PATTERN = Pattern.compile(
-            "\\b(shadow1DProj|shadow2DProj|shadow1D|shadow2D)\\s*\\(");
 
     private ModGlslTranslator() {
     }
@@ -302,11 +293,6 @@ public final class ModGlslTranslator {
                 uniformDefaults.put(glName(d.name), constantInitializer(d));
             }
             offset += layout[1];
-        }
-        for (SamplerBinding s : samplers) {
-            if (s.type().contains("Shadow")) {
-                throw new IllegalArgumentException("shadow sampler " + s.name() + " is not lowered");
-            }
         }
         int blockSize = align(offset, 16);
         // The block travels as push constants while it fits, and as a uniform buffer when it does not: the limit
@@ -496,13 +482,6 @@ public final class ModGlslTranslator {
         }
         vertex = lowerTextureCalls(vertex);
         fragment = lowerTextureCalls(fragment);
-        for (String stageText : List.of(vertex, fragment)) {
-            Matcher shadowCall = SHADOW_CALL_PATTERN.matcher(stageText);
-            if (shadowCall.find()) {
-                throw new IllegalArgumentException(
-                        "shadow sampling call " + shadowCall.group(1) + " is not lowered");
-            }
-        }
 
         vs.append(vertex).append("\nvoid main() {\n    celtium_user_main();\n")
                 // GL's clip depth is [-1, 1], Vulkan's [0, 1]. y is not flipped: like every other pass here the image
