@@ -92,10 +92,12 @@ public class VintageBlockRenderer {
         this.context = context;
         // The third argument is the quad-normals shading option; it was a literal true here,
         // which left the config key (use_quad_normals_for_shading_v2) with no effect on the
-        // only mesher this module has. Read it like useRenderPassOptimization below. The field
+        // only mesher this module has. The field lives in QualitySettings - unlike
+        // useRenderPassOptimization below - and has since the options refactor that made the
+        // options logic common; reading it through performance does not compile. The field
         // defaults to true, so the default shading is unchanged.
         this.lighters = new LightPipelineProvider(cache, VintageDiffuseProvider.INSTANCE,
-                CeleritasVintage.options().performance.useQuadNormalsForShading);
+                CeleritasVintage.options().quality.useQuadNormalsForShading);
         this.blockColors = ((BlockColorsAccessor)Minecraft.getMinecraft().getBlockColors()).getBlockColorMap();
         this.useRenderPassOptimization = CeleritasVintage.options().performance.useRenderPassOptimization;
     }
