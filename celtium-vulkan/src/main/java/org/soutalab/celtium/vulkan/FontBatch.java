@@ -809,10 +809,12 @@ public final class FontBatch {
         } else {
             this.flushedStateChange++;
         }
-        // The retained runs are older than the open one, so they are offered first: glyphs that were written before
-        // this run must not be drawn after it. A run that is refused in this call is retained and left for the next
-        // flush rather than offered again immediately - offering it twice in one flush asks the same question twice.
-        offerRetained(view, target);
+        // The open run is built and marked inactive BEFORE anything is offered, as this method's contract has
+        // always stated: offering a retained run submits through the sink, and the submission's own entry flush
+        // re-enters this method (the leg-5 recursion path). While the run was still marked active at that point,
+        // the nested flush saw it - hasPendingWork answered true for it - and offered it a second time at
+        // whatever bytes it then held, after which this call offered it again and counted it twice. Built and
+        // closed first, the nested flush finds no pending run and only re-offers what is still retained.
         Run run = new Run(this.pendingFormat, this.pendingStride, this.pendingFormatId,
                 this.pendingVerticesAddress, this.pendingVertexCount,
                 this.pendingDrawMode, this.pendingTexture, this.pendingAlphaTest, this.pendingAlphaRef,
@@ -820,6 +822,10 @@ public final class FontBatch {
         this.pendingActive = false;
         this.pendingBytesUsed = 0;
         this.pendingVertexCount = 0;
+        // The retained runs are older than the open one, so they are offered first: glyphs that were written before
+        // this run must not be drawn after it. A run that is refused in this call is retained and left for the next
+        // flush rather than offered again immediately - offering it twice in one flush asks the same question twice.
+        offerRetained(view, target);
         // The run's bytes stay valid until the pending buffer is reused, so a refusal can still copy them.
         if (!offer(run, target)) {
             retain(run);
