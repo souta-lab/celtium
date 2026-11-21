@@ -40,7 +40,10 @@ import java.util.regex.Pattern;
  * bindings 0..n-1.</li>
  * <li>{@code gl_FragColor}/{@code gl_FragData[0]} -> an output at location 0; {@code gl_FragData[n]} -> an output
  * at location n, up to {@link #MAX_FRAG_OUTPUTS} draw buffers; {@code texture2D}, {@code texture2DLod}
- * -> {@code texture}, {@code textureLod}.</li>
+ * -> {@code texture}, {@code textureLod}. The legacy shadow calls ({@code shadow1D}/{@code shadow2D} and
+ * their Proj forms) -> the modern comparison fetch wrapped back into the {@code vec4} the legacy call
+ * answers with, and a shadow sampler type is carried as declared: whether the texture a binding resolves
+ * to has a comparing sampler is a property of that texture, checked by the prepare path, not here.</li>
  * <li>The fixed-function inputs mods still read: {@code gl_Vertex}, {@code gl_Color}, {@code gl_MultiTexCoord0},
  * {@code gl_ModelViewProjectionMatrix}, {@code gl_ModelViewMatrix}, {@code gl_ProjectionMatrix},
  * {@code ftransform()}, and the {@code gl_TexCoord[0]}/{@code gl_FrontColor} varyings. They become ordinary
@@ -153,6 +156,20 @@ public final class ModGlslTranslator {
     private static final Pattern TEXCUBE_LOD_PATTERN = Pattern.compile("\\btextureCubeLod\\s*\\(");
     private static final Pattern TEXCUBE_GRAD_ARB_PATTERN = Pattern.compile("\\btextureCubeGradARB\\s*\\(");
     private static final Pattern TEXCUBE_PATTERN = Pattern.compile("\\btextureCube\\s*\\(");
+    /**
+     * The legacy shadow-sampling calls. GLSL 1.20 answers them with a {@code vec4} - the comparison result
+     * in the first three components, 1.0 in the fourth - where the modern {@code texture} on a shadow
+     * sampler returns the comparison alone, so the lowering wraps the fetch: {@code shadow2D(s, c)} becomes
+     * {@code vec4(vec3(texture(s, c)), 1.0)}, and the Proj forms wrap {@code textureProj} the same way. The
+     * coordinate text carries over for the 2D forms (a {@code vec3} whose third component is the reference
+     * value; a {@code vec4} divided through for Proj) and for {@code shadow1DProj}; {@code shadow1D}'s
+     * {@code vec3} narrows to the {@code vec2} the modern signature takes, keeping the coordinate and the
+     * reference value and dropping the ignored middle component. A call whose argument list this lowering
+     * cannot parse - it does not close, or it does not split into a sampler, a coordinate and an optional
+     * bias - is refused by name, not passed through to die at shader compilation as an unknown function.
+     */
+    private static final Pattern SHADOW_CALL_PATTERN = Pattern.compile(
+            "\\b(shadow1DProj|shadow2DProj|shadow1D|shadow2D)\\s*\\(");
 
     private ModGlslTranslator() {
     }
@@ -480,8 +497,8 @@ public final class ModGlslTranslator {
         if (fragment.contains("gl_FragData")) {
             throw new IllegalArgumentException("gl_FragData with a non-constant index is not lowered");
         }
-        vertex = lowerTextureCalls(vertex);
-        fragment = lowerTextureCalls(fragment);
+        vertex = lowerTextureCalls(lowerShadowCalls(vertex));
+        fragment = lowerTextureCalls(lowerShadowCalls(fragment));
 
         vs.append(vertex).append("\nvoid main() {\n    celtium_user_main();\n")
                 // GL's clip depth is [-1, 1], Vulkan's [0, 1]. y is not flipped: like every other pass here the image
@@ -727,6 +744,78 @@ public final class ModGlslTranslator {
 
     private static boolean isSamplerType(String type) {
         return type.startsWith("sampler") || type.startsWith("isampler") || type.startsWith("usampler");
+    }
+
+    /**
+     * Lowers one stage's legacy shadow-sampling calls (see {@link #SHADOW_CALL_PATTERN} for the shapes and
+     * the wrap). The scan is positional rather than a pattern replacement because the wrap has to span the
+     * whole call: a name-only rewrite would leave the fetch returning a scalar where the source's {@code .z}
+     * swizzle or {@code vec4} assignment expects the legacy four components. The scan resumes after each
+     * call it wraps, so a legacy call nested inside another's arguments is not wrapped twice. This runs
+     * before {@link #lowerTextureCalls}, so a legacy fetch inside a shadow call's own arguments is still
+     * lowered by that pass, and the {@code texture}/{@code textureProj} this pass inserts are not its
+     * patterns' targets.
+     */
+    private static String lowerShadowCalls(String s) {
+        Matcher m = SHADOW_CALL_PATTERN.matcher(s);
+        if (!m.find()) {
+            return s;
+        }
+        StringBuilder out = new StringBuilder(s.length() + 64);
+        int copied = 0;
+        while (true) {
+            String call = m.group(1);
+            int open = m.end() - 1;
+            int close = matchingParen(s, open);
+            if (close < 0) {
+                throw new IllegalArgumentException(
+                        "shadow sampling call " + call + " is not lowered: its argument list does not close");
+            }
+            List<String> args = new ArrayList<>();
+            for (String arg : splitDeclarators(s.substring(open + 1, close))) {
+                args.add(arg.strip());
+            }
+            if (args.size() < 2 || args.size() > 3 || args.get(0).isEmpty() || args.get(1).isEmpty()) {
+                throw new IllegalArgumentException("shadow sampling call " + call + " is not lowered: it has "
+                        + args.size() + " argument(s), not the sampler, coordinate and optional bias it takes");
+            }
+            out.append(s, copied, m.start());
+            out.append("vec4(vec3(").append(call.endsWith("Proj") ? "textureProj(" : "texture(");
+            out.append(args.get(0)).append(", ");
+            if ("shadow1D".equals(call)) {
+                // GLSL 1.20's shadow1D takes a vec3 whose middle component is ignored (the coordinate is
+                // .x, the reference value .z); the modern fetch on a sampler1DShadow takes a vec2 of
+                // exactly those two. The parentheses keep the swizzles on the whole coordinate
+                // expression, whatever it is.
+                out.append("vec2((").append(args.get(1)).append(").x, (").append(args.get(1)).append(").z)");
+            } else {
+                out.append(args.get(1));
+            }
+            if (args.size() == 3) {
+                out.append(", ").append(args.get(2));
+            }
+            out.append(")), 1.0)");
+            copied = close + 1;
+            if (!m.find(copied)) {
+                break;
+            }
+        }
+        out.append(s, copied, s.length());
+        return out.toString();
+    }
+
+    /** {@return the index of the close parenthesis matching the one at {@code open}, or -1 when it never closes}. */
+    private static int matchingParen(String s, int open) {
+        int depth = 0;
+        for (int i = open; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '(') {
+                depth++;
+            } else if (c == ')' && --depth == 0) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static String lowerTextureCalls(String s) {

@@ -214,6 +214,16 @@ final class ModPrograms {
                 return celtium$modFailure(programId, "sampler " + sampler.name() + " (unit " + unit + ", texture "
                         + name + ") has no native image");
             }
+            if (sampler.type().contains("Shadow") && !texture.celtium$samplerCompares()) {
+                // The lowered shader samples this binding with a Dref fetch, which needs the comparison in
+                // the VkSampler itself; the texture's sampler only compares when its GL texture was
+                // recorded with COMPARE_REF_TO_TEXTURE. A shadow binding resolved to a texture without it
+                // would fetch through a plain sampler - undefined, and a validation error against the
+                // shader's shadow type - so the pairing is refused by name here, at prepare.
+                return celtium$modFailure(programId, "sampler " + sampler.name() + " (unit " + unit + ", texture "
+                        + name + ") is declared " + sampler.type()
+                        + " but the texture's sampler does not compare");
+            }
             if (b.celtium$samplesCurrentTargetColor(name)) {
                 // The pass would read the image it is drawing into: inside one Vulkan render pass that is a feedback
                 // loop whose result is undefined (measured: leg r17-gt drew the whole world black). Refused until the
