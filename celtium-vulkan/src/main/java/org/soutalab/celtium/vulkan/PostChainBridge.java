@@ -966,13 +966,15 @@ b.frameBufferOpen = false;
                 entryValue.ensureSampledLayout(b.commandBuffer);
             }
             // The pair's own record of the image's layout follows the wrapper's barrier, but only for the names that
-            // stand for the pair image: a name published over the frame image is not the pair's business. This is what
-            // makes the pair's actual layout readable next to the GENERAL its pass declares and the layout the
-            // descriptor was written with - the three values VUID-vkCmdDraw-None-09600 compares.
-            if (pairOwner != null && publishedImageIdentity != Long.MIN_VALUE) {
+            // stand for the pair image on the hand-back side: on the sampling side (!general), pairImageName already
+            // skipped the transition and recorded GENERAL above, so writing SHADER_READ_ONLY_OPTIMAL here would
+            // overwrite the true GENERAL layout with a stale sampling layout.
+            if (general && pairOwner != null && publishedImageIdentity != Long.MIN_VALUE) {
                 notePairColorLayout(pairOwner, publishedImageIdentity, publishedImageHandleValue,
-                        celtium$publishedHandBackLayout(false, general, 0));
-                celtium$reportPairLayout(general ? "hand-back" : "sampling");
+                        celtium$publishedHandBackLayout(false, true, 0));
+                celtium$reportPairLayout("hand-back");
+            } else if (!general && pairOwner != null && publishedImageIdentity != Long.MIN_VALUE) {
+                celtium$reportPairLayout("sampling");
             }
             // A depth publication's layout record is the shared depth store, not a pair, so the wrapper's move is
             // reported into it under the name's key: the owner's next attachment acquire reads the store for its
