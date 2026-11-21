@@ -311,7 +311,7 @@ final class PassExecutor {
 
             this.targetRegistry.noteNamedTargetLayout(commandBuffer.address(), output.name(), attachmentLayout);
             if (shouldClear) {
-                this.targetRegistry.noteNamedTargetCleared(output.name(), frameSerial);
+                this.targetRegistry.noteNamedTargetCleared(commandBuffer.address(), output.name(), frameSerial);
             }
             this.publishedTextures.syncNamedTargets(this.targetRegistry);
             this.passRegistry.noteExecution();
@@ -332,6 +332,11 @@ final class PassExecutor {
             if (outputTransitionRecorded) {
                 this.targetRegistry.noteNamedTargetLayout(commandBuffer.address(), output.name(), attachmentLayout);
             }
+            if (passOpen && shouldClear) {
+                // The pass began, so its clear load operation is in the recording as well; note the clear
+                // as the success path does - as a pending the submission's fate settles, never as fact.
+                this.targetRegistry.noteNamedTargetCleared(commandBuffer.address(), output.name(), frameSerial);
+            }
             this.passRegistry.noteExecutionRefusal(pass.spec().name(),
                     failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage());
             return false;
@@ -346,7 +351,10 @@ final class PassExecutor {
         }
         return switch (spec.clearPolicy()) {
             case CLEAR_EACH_FRAME -> true;
-            case CLEAR_ON_CREATE -> state == null || state.clearedFrame() < 0L;
+            // The recorded head, not the confirmed frame: a pass recorded later in the same recording
+            // must see an earlier pass's clear, while a clear that sat in an abandoned recording must
+            // not suppress this frame's clear (lanechat #1596).
+            case CLEAR_ON_CREATE -> state == null || state.recordedClearedFrame() < 0L;
             case DONT_CARE -> false;
         };
     }
