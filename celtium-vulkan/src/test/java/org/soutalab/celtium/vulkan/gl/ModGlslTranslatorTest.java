@@ -524,17 +524,17 @@ class ModGlslTranslatorTest {
         String vertex = """
                 #version 120
                 attribute vec2 position;
-                varying vec2 shared;
-                void main() { shared = position; gl_Position = vec4(position, 0.0, 1.0); }
+                varying vec2 varyingData;
+                void main() { varyingData = position; gl_Position = vec4(position, 0.0, 1.0); }
                 """;
         String fragment = """
                 #version 120
-                varying vec3 shared;
-                void main() { gl_FragColor = vec4(shared, 1.0); }
+                varying vec3 varyingData;
+                void main() { gl_FragColor = vec4(varyingData, 1.0); }
                 """;
         ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
         assertNotNull(result.failure());
-        assertTrue(result.failure().contains("varying shared"), result.failure());
+        assertTrue(result.failure().contains("varying varyingData"), result.failure());
     }
 
     @Test
