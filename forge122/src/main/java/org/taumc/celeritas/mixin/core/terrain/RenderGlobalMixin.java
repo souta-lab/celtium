@@ -2,6 +2,7 @@ package org.taumc.celeritas.mixin.core.terrain;
 
 import com.llamalad7.mixinextras.sugar.Local;
 import net.minecraft.client.Minecraft;
+import net.minecraft.init.Blocks;
 import org.soutalab.celtium.harness.HarnessConfig;
 import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.multiplayer.WorldClient;
@@ -28,6 +29,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.taumc.celeritas.CeleritasVintage;
 import org.taumc.celeritas.impl.render.entity.EntityGatherer;
 import org.taumc.celeritas.impl.render.terrain.CeleritasWorldRenderer;
 
@@ -361,6 +363,29 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
             return;
         }
         this.renderer.reload();
+    }
+
+    /**
+     * The leaves quality option, applied at the seam vanilla itself uses.
+     * <p>
+     * The body of {@code loadRenderers} is the one place vanilla drives {@code BlockLeaves.leavesFancy}
+     * (for {@code Blocks.LEAVES} and {@code Blocks.LEAVES2}), always from the raw vanilla graphics
+     * mode. That flag is what the mesher ultimately reads: it gates same-block face culling in
+     * {@code BlockLeaves.shouldSideBeRendered} and picks the render layer in
+     * {@code BlockLeaves.getRenderLayer}. Rewriting it here with the option resolved against the
+     * vanilla mode gives the celtium leaves-quality setting its consumer; with the option at
+     * DEFAULT the value written is exactly vanilla's, and because culling and layer selection read
+     * the same flag they cannot disagree when FAST/FANCY pin it. The rewrite is unconditional
+     * (vanilla's own calls are), so no later {@code loadRenderers} on any instance can restore the
+     * raw value behind the option's back. An inject at RETURN is used rather than a redirect of
+     * the {@code setGraphicsLevel} calls because the refmap is empty: a single-name INVOKE target
+     * would silently match in only one of the MCP/SRG runtimes.
+     */
+    @Inject(method = {"loadRenderers", "func_72712_a"}, at = @At("RETURN"))
+    private void celtium$applyLeavesQuality(CallbackInfo ci) {
+        boolean fancy = CeleritasVintage.options().quality.leavesQuality.isFancy(this.mc.gameSettings.fancyGraphics);
+        Blocks.LEAVES.setGraphicsLevel(fancy);
+        Blocks.LEAVES2.setGraphicsLevel(fancy);
     }
 
     @Inject(method = {"renderEntities", "func_180446_a"}, at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/RenderHelper;func_74519_b()V", shift = At.Shift.AFTER, ordinal = 1), cancellable = true, require = 0)
