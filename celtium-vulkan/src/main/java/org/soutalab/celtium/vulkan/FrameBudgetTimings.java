@@ -29,13 +29,21 @@ import java.util.Locale;
  * <li>{@code present} - the swap point, {@code celtium$presentFrame};</li>
  * <li>{@code gpu} - the GPU's own duration for the frame's window passes, from the timestamp queries this flag
  *     turns on for them (0 when the queue cannot record timestamps);</li>
+ * <li>{@code terrainGpu} - the GPU's own duration for the frame's terrain passes, summed over the passes the
+ *     backend times individually for {@code GpuPassTimingReport}: the main view's passes and the shadow view's
+ *     alike, because the pass loop times them through the same bracket and this column is their sum. Read back
+ *     with the window figure, so like it, it is the previous frame's measurement filed against this one;</li>
  * <li>{@code other} - {@code frame - (record + batch + submit + fence + slot + present)}, clamped at zero.</li>
  * </ul>
  * <p>
  * What this does <b>not</b> prove: {@code batch} can contain a flush, which is also counted in {@code submit}, so
  * {@code other} is a floor on the unattributed time and not an exact remainder - the double count can only make
- * {@code other} smaller. {@code gpu} covers the timestamped window passes only, not terrain recording or any copy
- * submitted outside them, so a frame can be GPU-bound with a small {@code gpu} number. None of these numbers is a
+ * {@code other} smaller. {@code gpu} covers the timestamped window passes only, and {@code terrainGpu} the
+ * terrain passes' own brackets, not any copy or barrier submitted outside the passes, so a frame can be
+ * GPU-bound with small numbers in both GPU columns. Neither GPU column is subtracted from the frame - GPU work
+ * overlaps the CPU spans that submitted it - so {@code other} stays a CPU-side remainder and the GPU columns
+ * separate by comparison: an {@code other} that stays large while {@code terrainGpu} is small is not terrain
+ * execution. None of these numbers is a
  * performance claim about a release: they say where a measured run's time went, on that run's driver and scene.
  * <p>
  * Off unless the harness asks for it ({@code frameBudget=true} in the harness file), the same rule the other
@@ -44,7 +52,9 @@ import java.util.Locale;
  * the window timestamp path (see {@code timeImmediatePass}), because the {@code gpu} column is what separates "the
  * GPU is the limiter" from "the GPU is idle and the CPU is the limiter" - and a report that cannot say which is the
  * report that could not name the Windows frame rate. That path costs two timestamp writes per window and one
- * readback per frame, which is the instrument's own price and why it stays off by default. The two neighbours are
+ * readback per frame, which is the instrument's own price and why it stays off by default. The
+ * {@code terrainGpu} column adds no recording of its own: the terrain passes write their timestamps whenever the
+ * queue can record them (they feed the pass report), and this instrument only sums that readback. The two neighbours are
  * {@link FramePassTimings} (which attributes the frame to the game's own passes, and needs its brackets on) and
  * {@code CELTIUM_BOUNDARY_SPLIT} (which reports submit/slot means every 600 frames with no per-frame record). This
  * one is per frame and opt-in; it costs seven clock reads a frame and nothing else when it is off.
@@ -85,6 +95,7 @@ public final class FrameBudgetTimings {
     private static final long[] slotRing = new long[CAPACITY];
     private static final long[] presentRing = new long[CAPACITY];
     private static final long[] gpuRing = new long[CAPACITY];
+    private static final long[] terrainGpuRing = new long[CAPACITY];
     private static final long[] otherRing = new long[CAPACITY];
     /** Intervals between presented frames; see {@link #markPresent}. */
     private static final long[] presentIntervalRing = new long[CAPACITY];
@@ -109,6 +120,8 @@ public final class FrameBudgetTimings {
     private static long currentPresent;
     /** The last measured GPU window time in this frame; a measurement, not a sum. */
     private static long currentGpu;
+    /** The last measured GPU terrain-pass time in this frame; a measurement, not a sum. */
+    private static long currentTerrainGpu;
     /** Boundary clock of the previous frame, or 0 before the first boundary. */
     private static long lastBoundaryNanos;
 
@@ -183,6 +196,19 @@ public final class FrameBudgetTimings {
     }
 
     /**
+     * Records the GPU's duration for this frame's terrain passes, summed over the passes the backend timed.
+     * <p>
+     * The same measurement rule as {@link #setGpuPass}: the readback is the last frame's terrain time and
+     * replaces rather than adds, so a frame without a readback keeps zero there instead of inheriting the
+     * previous frame's number. The backend sums only the durations it read back fresh for that frame - the
+     * per-pass map it also fills keeps a pass's last measured value across frames, and summing that here would
+     * file stale durations for passes whose readback has not landed yet.
+     */
+    public static void setTerrainGpuPass(long nanos) {
+        if (ENABLED) currentTerrainGpu = nanos;
+    }
+
+    /**
      * Whether the present cadence is measured. It is cheap enough to ask for on its own: the world-frame sample costs
      * four clock reads and a timestamp query per window, while the cadence costs one clock read per present. A leg
      * that only needs the frame period (the menu, or a renderer comparison where the split's own tax would change the
@@ -236,7 +262,7 @@ public final class FrameBudgetTimings {
     /** Files one frame's sample, prints the window's line when due, and resets the accumulators. */
     private static void file(long frameNanos) {
         long[] sample = split(frameNanos, currentRecord, currentBatch, currentSubmit, currentFence, currentSlot,
-                currentPresent, currentGpu);
+                currentPresent, currentGpu, currentTerrainGpu);
         int slot = written % CAPACITY;
         frameRing[slot] = frameNanos;
         recordRing[slot] = currentRecord;
@@ -246,7 +272,8 @@ public final class FrameBudgetTimings {
         slotRing[slot] = currentSlot;
         presentRing[slot] = currentPresent;
         gpuRing[slot] = currentGpu;
-        otherRing[slot] = sample[8];
+        terrainGpuRing[slot] = currentTerrainGpu;
+        otherRing[slot] = sample[9];
         written++;
         currentRecord = 0L;
         currentBatch = 0L;
@@ -255,6 +282,7 @@ public final class FrameBudgetTimings {
         currentSlot = 0L;
         currentPresent = 0L;
         currentGpu = 0L;
+        currentTerrainGpu = 0L;
         if (written % REPORT_EVERY_FRAMES == 0) {
             printWindow();
         }
@@ -285,6 +313,7 @@ public final class FrameBudgetTimings {
                 + " slot=" + triple(slotRing, count)
                 + " present=" + triple(presentRing, count)
                 + " gpu=" + triple(gpuRing, count)
+                + " terrainGpu=" + triple(terrainGpuRing, count)
                 + " other=" + triple(otherRing, count) + "]"
                 + " gpuShare=" + share(gpuRing, frameRing, count)
                 + " worstFrame=" + worstFrameText()
@@ -331,6 +360,7 @@ public final class FrameBudgetTimings {
                 + " slot=" + triple(slotRing, count)
                 + " present=" + triple(presentRing, count)
                 + " gpu=" + triple(gpuRing, count)
+                + " terrainGpu=" + triple(terrainGpuRing, count)
                 + " other=" + triple(otherRing, count) + "]"
                 + " gpuShare=" + share(gpuRing, frameRing, count)
                 + " worstFrame=" + worstFrameText());
@@ -364,6 +394,7 @@ public final class FrameBudgetTimings {
                 + " slot=" + ms(slotRing[slot])
                 + " present=" + ms(presentRing[slot])
                 + " gpu=" + ms(gpuRing[slot])
+                + " terrainGpu=" + ms(terrainGpuRing[slot])
                 + " other=" + ms(otherRing[slot]) + "]";
     }
 
@@ -438,18 +469,20 @@ public final class FrameBudgetTimings {
 
     /**
      * {@return the frame's parts with {@code other} computed}, in this order: frame, record, batch, submit, fence,
-     * slot, present, gpu, other.
+     * slot, present, gpu, terrainGpu, other.
      * <p>
      * The subtraction lives here and {@link #file} consumes it, so the unit test asserts the production arithmetic
      * rather than a copy of it: {@code other} is a floor (a nesting span can only shrink it) and it must never be
-     * negative, which a frame boundary that fires twice in one frame would otherwise produce.
+     * negative, which a frame boundary that fires twice in one frame would otherwise produce. Both GPU figures
+     * pass through untouched: they are durations on the GPU's timeline, overlapping the CPU spans, and
+     * subtracting either would charge the same time twice.
      */
     static long[] split(long frameNanos, long recordNanos, long batchNanos, long submitNanos, long fenceNanos,
-            long slotNanos, long presentNanos, long gpuNanos) {
+            long slotNanos, long presentNanos, long gpuNanos, long terrainGpuNanos) {
         long accounted = recordNanos + batchNanos + submitNanos + fenceNanos + slotNanos + presentNanos;
         long other = frameNanos - accounted;
         if (other < 0L) other = 0L;
         return new long[] {frameNanos, recordNanos, batchNanos, submitNanos, fenceNanos, slotNanos, presentNanos,
-                gpuNanos, other};
+                gpuNanos, terrainGpuNanos, other};
     }
 }

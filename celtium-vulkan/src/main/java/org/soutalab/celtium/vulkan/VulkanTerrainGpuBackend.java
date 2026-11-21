@@ -15428,6 +15428,7 @@ this.frameBufferOpen = false;
             if (result != VK_SUCCESS && result != VK_NOT_READY) {
                 return;
             }
+            long terrainGpuNanos = 0L;
             for (int slot = 0; slot < this.timestampSlots; slot++) {
                 long startAvailable = data.get((slot * 2 * 2) + 1);
                 long endAvailable = data.get((slot * 2 * 2) + 3);
@@ -15438,10 +15439,15 @@ this.frameBufferOpen = false;
                 long start = data.get(slot * 2 * 2);
                 long end = data.get((slot * 2 * 2) + 2);
                 if (end >= start) {
-                    this.passTimings.put(this.timestampPasses.get(slot),
-                            (long) ((end - start) * this.timestampPeriod));
+                    long passNanos = (long) ((end - start) * this.timestampPeriod);
+                    this.passTimings.put(this.timestampPasses.get(slot), passNanos);
+                    // The frame budget's terrain column is this frame's passes summed fresh from the readback:
+                    // the map above keeps a pass's last measured value across frames, so summing it would file
+                    // stale durations for passes whose readback has not landed yet.
+                    terrainGpuNanos += passNanos;
                 }
             }
+            FrameBudgetTimings.setTerrainGpuPass(terrainGpuNanos);
             if (this.frameGpuTimed) {
                 long startAvailable = data.get(FRAME_TIMESTAMP_SLOT * 2 * 2 + 1);
                 long endAvailable = data.get(FRAME_TIMESTAMP_SLOT * 2 * 2 + 3);
