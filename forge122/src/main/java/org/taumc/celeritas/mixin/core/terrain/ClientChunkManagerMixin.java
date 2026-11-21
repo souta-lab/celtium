@@ -55,7 +55,7 @@ public abstract class ClientChunkManagerMixin {
         celtium$noteChunkAdded(x, z, "loadChunk");
     }
 
-    @Inject(method = "func_73234_b", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/chunk/Chunk;onUnload()V", shift = At.Shift.AFTER), require = 0)
+    @Inject(method = "func_73234_b", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/chunk/Chunk;func_76623_d()V", shift = At.Shift.AFTER), require = 0)
     private void afterUnloadChunk(int x, int z, CallbackInfo ci) {
         ChunkTrackerHolder.get(this.world).onChunkStatusRemoved(x, z, ChunkStatus.FLAG_ALL);
     }

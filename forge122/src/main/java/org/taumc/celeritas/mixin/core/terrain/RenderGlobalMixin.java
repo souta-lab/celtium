@@ -72,7 +72,7 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
     private Set<TileEntity> setTileEntities;
     private CeleritasWorldRenderer renderer;
 
-    @Redirect(method = "loadRenderers", at = @At(value = "FIELD", target = "Lnet/minecraft/client/settings/GameSettings;renderDistanceChunks:I", ordinal = 1))
+    @Redirect(method = {"loadRenderers", "func_72712_a"}, at = @At(value = "FIELD", target = "Lnet/minecraft/client/settings/GameSettings;field_151451_c:I", ordinal = 1))
     private int nullifyBuiltChunkStorage(GameSettings settings) {
         // Do not allow any resources to be allocated
         return 0;
@@ -87,7 +87,7 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
      * thread while the world is being joined (JFR, world leg: 137 ms in {@code Unsafe.setMemory} under
      * {@code ChunkRenderDispatcher.<init>}). Nothing ever takes a builder from it here, so one is enough.
      */
-    @Redirect(method = "loadRenderers", at = @At(value = "NEW",
+    @Redirect(method = {"loadRenderers", "func_72712_a"}, at = @At(value = "NEW",
             target = "()Lnet/minecraft/client/renderer/chunk/ChunkRenderDispatcher;"), require = 1)
     private ChunkRenderDispatcher celtium$smallDispatcher() {
         return new ChunkRenderDispatcher(1);
@@ -107,14 +107,14 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
     }
 
     /** Entities, measured inside the world pass and reported but never subtracted from the frame's residual. */
-    @Inject(method = "renderEntities", at = @At("HEAD"), require = 0)
+    @Inject(method = {"renderEntities", "func_180446_a"}, at = @At("HEAD"), require = 0)
     private void celtium$entitiesTimedBegin(net.minecraft.entity.Entity entityIn,
             net.minecraft.client.renderer.culling.ICamera camera, float partialTicks,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("entities");
     }
 
-    @Inject(method = "renderEntities", at = @At("RETURN"), require = 0)
+    @Inject(method = {"renderEntities", "func_180446_a"}, at = @At("RETURN"), require = 0)
     private void celtium$entitiesTimedEnd(net.minecraft.entity.Entity entityIn,
             net.minecraft.client.renderer.culling.ICamera camera, float partialTicks,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
@@ -345,17 +345,17 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
 
     // The following two redirects force light updates to trigger chunk updates and not check vanilla's chunk renderer
     // flags
-    @Redirect(method = "updateClouds", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/chunk/ChunkRenderDispatcher;hasNoFreeRenderBuilders()Z"))
+    @Redirect(method = {"updateClouds", "func_72734_e"}, at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/chunk/ChunkRenderDispatcher;hasNoFreeRenderBuilders()Z"))
     private boolean alwaysHaveBuilders(ChunkRenderDispatcher instance) {
         return false;
     }
 
-    @Redirect(method = "updateClouds", at = @At(value = "INVOKE", target = "Ljava/util/Set;isEmpty()Z", ordinal = 1))
+    @Redirect(method = {"updateClouds", "func_72734_e"}, at = @At(value = "INVOKE", target = "Ljava/util/Set;isEmpty()Z", ordinal = 1))
     private boolean alwaysHaveNoTasks(Set instance) {
         return true;
     }
 
-    @Inject(method = "loadRenderers", at = @At("RETURN"))
+    @Inject(method = {"loadRenderers", "func_72712_a"}, at = @At("RETURN"))
     private void onReload(CallbackInfo ci) {
         if (!celtium$isGameRenderGlobal()) {
             return;
@@ -363,7 +363,7 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         this.renderer.reload();
     }
 
-    @Inject(method = "renderEntities", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/RenderHelper;enableStandardItemLighting()V", shift = At.Shift.AFTER, ordinal = 1), cancellable = true, require = 0)
+    @Inject(method = {"renderEntities", "func_180446_a"}, at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/RenderHelper;func_74519_b()V", shift = At.Shift.AFTER, ordinal = 1), cancellable = true, require = 0)
     public void sodium$renderTileEntities(Entity entity, ICamera camera, float partialTicks, CallbackInfo ci, @Local(ordinal = 0) int pass) {
         // Whether this injection runs at all is an open question in the runtime we target: Cleanroom's Kirino
         // replaces EntityRenderer.renderWorld and calls its own renderEntities, and the only callers of
@@ -435,7 +435,7 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
      * @author embeddedt
      * @reason reimplement entity render loop because vanilla's relies on the renderInfos list
      */
-    @Inject(method = "renderEntities", at = @At(value = "FIELD", target = "Lnet/minecraft/client/renderer/RenderGlobal;renderInfos:Ljava/util/List;", ordinal = 0))
+    @Inject(method = {"renderEntities", "func_180446_a"}, at = @At(value = "FIELD", target = "Lnet/minecraft/client/renderer/RenderGlobal;field_72755_R:Ljava/util/List;", ordinal = 0))
     private void renderEntities(Entity renderViewEntity, ICamera camera, float partialTicks, CallbackInfo ci,
                                 @Local(ordinal = 1) List<Entity> outlineEntityList,
                                 @Local(ordinal = 2) List<Entity> multipassEntityList,

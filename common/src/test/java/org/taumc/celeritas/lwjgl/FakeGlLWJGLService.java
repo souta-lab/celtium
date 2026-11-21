@@ -38,6 +38,7 @@ public final class FakeGlLWJGLService {
     public static LWJGLService create() {
         return (LWJGLService) Proxy.newProxyInstance(LWJGLService.class.getClassLoader(),
                 new Class<?>[] { LWJGLService.class }, (proxy, method, args) -> switch (method.getName()) {
+                    case "isDegraded" -> false;
                     case "isOpenGLVersionSupported" -> true;
                     case "isExtensionSupported" -> false;
                     case "getPointerSize" -> 8;

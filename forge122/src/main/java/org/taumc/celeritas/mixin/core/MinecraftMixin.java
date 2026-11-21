@@ -30,9 +30,9 @@ public class MinecraftMixin {
     private static final boolean PUMP_IN_REDIRECT =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.pumpInRedirect", "true"));
 
-    @org.spongepowered.asm.mixin.injection.Redirect(method = "resize(II)V",
+    @org.spongepowered.asm.mixin.injection.Redirect(method = {"resize(II)V", "func_71370_a(II)V"},
             at = @At(value = "FIELD", opcode = Opcodes.PUTFIELD,
-                    target = "Lnet/minecraft/client/Minecraft;loadingScreen:Lnet/minecraft/client/LoadingScreenRenderer;"))
+                    target = "Lnet/minecraft/client/Minecraft;field_71461_s:Lnet/minecraft/client/LoadingScreenRenderer;"))
     private void celtium$replaceLoadingScreen(Minecraft mc, LoadingScreenRenderer replacement) {
         // Scope the handover to resize, not arbitrary progress-renderer construction by other mods.
         if (mc.loadingScreen instanceof LoadingProgressState
@@ -47,23 +47,27 @@ public class MinecraftMixin {
      * only updateCameraAndRender, so the interval minus the frame was unattributed - tick is measured separately by
      * MinecraftTickTimingMixin, and updateDisplay carries the swapchain's acquire/vsync wait. require = 0 for the
      * same reason the tick hooks carry it.
+     * <p>
+     * Method names in this file are written in both forms (MCP and SRG): the item-430 lesson was a hook that
+     * named only one form and silently never bound in the other environment, and require = 0 hides exactly
+     * that failure. @At targets name a single string, so they carry the SRG form.
      */
-    @Inject(method = "runGameLoop", at = @At("HEAD"), require = 0)
+    @Inject(method = {"runGameLoop", "func_71411_J"}, at = @At("HEAD"), require = 0)
     private void celtium$loopStarted(CallbackInfo ci) {
         GameLoopTiming.loopStarted();
     }
 
-    @Inject(method = "runGameLoop", at = @At("RETURN"), require = 0)
+    @Inject(method = {"runGameLoop", "func_71411_J"}, at = @At("RETURN"), require = 0)
     private void celtium$loopEnded(CallbackInfo ci) {
         GameLoopTiming.loopEnded();
     }
 
-    @Inject(method = "updateDisplay", at = @At("HEAD"), require = 0)
+    @Inject(method = {"updateDisplay", "func_175601_h"}, at = @At("HEAD"), require = 0)
     private void celtium$displayUpdateStarted(CallbackInfo ci) {
         GameLoopTiming.displayUpdateStarted();
     }
 
-    @Inject(method = "updateDisplay", at = @At("RETURN"), require = 0)
+    @Inject(method = {"updateDisplay", "func_175601_h"}, at = @At("RETURN"), require = 0)
     private void celtium$displayUpdateEnded(CallbackInfo ci) {
         GameLoopTiming.displayUpdateEnded();
     }
@@ -74,9 +78,9 @@ public class MinecraftMixin {
      * on leg perf-attrib1-amd), and the fps-limit Display.sync is where a capped loop spends its tail. Both run only
      * inside runGameLoop, so the loop-open gate inside GameLoopTiming is belt-and-braces.
      */
-    @org.spongepowered.asm.mixin.injection.Redirect(method = "runGameLoop",
+    @org.spongepowered.asm.mixin.injection.Redirect(method = {"runGameLoop", "func_71411_J"},
             at = @At(value = "INVOKE",
-                    target = "Lnet/minecraft/client/shader/Framebuffer;framebufferRender(II)V"), require = 0)
+                    target = "Lnet/minecraft/client/shader/Framebuffer;func_147615_c(II)V"), require = 0)
     private void celtium$timedFramebufferRender(net.minecraft.client.shader.Framebuffer fb,
             int width, int height) {
         GameLoopTiming.blitStarted();
@@ -91,9 +95,9 @@ public class MinecraftMixin {
      * The scheduled-executables drain inside the loop, timed per task: chunk-mesh uploads, world updates and mod
      * tasks all queue there, so their share of the frame is named rather than folded into the unnamed remainder.
      */
-    @org.spongepowered.asm.mixin.injection.Redirect(method = "runGameLoop",
+    @org.spongepowered.asm.mixin.injection.Redirect(method = {"runGameLoop", "func_71411_J"},
             at = @At(value = "INVOKE",
-                    target = "Lnet/minecraft/util/Util;runTask(Ljava/util/concurrent/FutureTask;Lorg/apache/logging/log4j/Logger;)Ljava/lang/Object;"),
+                    target = "Lnet/minecraft/util/Util;func_181617_a(Ljava/util/concurrent/FutureTask;Lorg/apache/logging/log4j/Logger;)Ljava/lang/Object;"),
             require = 0)
     private Object celtium$timedScheduledTask(java.util.concurrent.FutureTask<Object> task,
             org.apache.logging.log4j.Logger logger) {
@@ -110,9 +114,9 @@ public class MinecraftMixin {
      * toast draw and Forge's render-tick hooks. Together with the render-section span they name "render minus frame"
      * - the share the frame bracket cannot see.
      */
-    @org.spongepowered.asm.mixin.injection.Redirect(method = "runGameLoop",
+    @org.spongepowered.asm.mixin.injection.Redirect(method = {"runGameLoop", "func_71411_J"},
             at = @At(value = "INVOKE",
-                    target = "Lnet/minecraft/client/shader/Framebuffer;bindFramebuffer(Z)V"), require = 0)
+                    target = "Lnet/minecraft/client/shader/Framebuffer;func_147610_a(Z)V"), require = 0)
     private void celtium$timedRenderFramebufferBind(net.minecraft.client.shader.Framebuffer framebuffer,
             boolean setViewport) {
         long started = GameLoopTiming.renderPieceStarted();
@@ -123,9 +127,9 @@ public class MinecraftMixin {
         }
     }
 
-    @org.spongepowered.asm.mixin.injection.Redirect(method = "runGameLoop",
+    @org.spongepowered.asm.mixin.injection.Redirect(method = {"runGameLoop", "func_71411_J"},
             at = @At(value = "INVOKE",
-                    target = "Lnet/minecraft/client/gui/toasts/GuiToast;drawToast(Lnet/minecraft/client/gui/ScaledResolution;)V"),
+                    target = "Lnet/minecraft/client/gui/toasts/GuiToast;func_191783_a(Lnet/minecraft/client/gui/ScaledResolution;)V"),
             require = 0)
     private void celtium$timedToastDraw(net.minecraft.client.gui.toasts.GuiToast toastGui,
             net.minecraft.client.gui.ScaledResolution resolution) {
@@ -137,7 +141,7 @@ public class MinecraftMixin {
         }
     }
 
-    @org.spongepowered.asm.mixin.injection.Redirect(method = "runGameLoop",
+    @org.spongepowered.asm.mixin.injection.Redirect(method = {"runGameLoop", "func_71411_J"},
             at = @At(value = "INVOKE",
                     target = "Lnet/minecraftforge/fml/common/FMLCommonHandler;onRenderTickStart(F)V"), require = 0)
     private void celtium$timedFmlRenderTickStart(net.minecraftforge.fml.common.FMLCommonHandler handler,
@@ -150,7 +154,7 @@ public class MinecraftMixin {
         }
     }
 
-    @org.spongepowered.asm.mixin.injection.Redirect(method = "runGameLoop",
+    @org.spongepowered.asm.mixin.injection.Redirect(method = {"runGameLoop", "func_71411_J"},
             at = @At(value = "INVOKE",
                     target = "Lnet/minecraftforge/fml/common/FMLCommonHandler;onRenderTickEnd(F)V"), require = 0)
     private void celtium$timedFmlRenderTickEnd(net.minecraftforge.fml.common.FMLCommonHandler handler,
@@ -168,7 +172,7 @@ public class MinecraftMixin {
      * {@code updateCameraAndRender}, so {@code loop minus render} names what the brackets cannot - the tick,
      * display and "everything else" shares of a frame.
      */
-    @org.spongepowered.asm.mixin.injection.Redirect(method = "runGameLoop",
+    @org.spongepowered.asm.mixin.injection.Redirect(method = {"runGameLoop", "func_71411_J"},
             at = @At(value = "INVOKE",
                     target = "Lnet/minecraft/client/renderer/EntityRenderer;func_181560_a(FJ)V"), require = 0)
     private void celtium$timedRenderSection(net.minecraft.client.renderer.EntityRenderer entityRenderer,
@@ -181,7 +185,7 @@ public class MinecraftMixin {
         }
     }
 
-    @org.spongepowered.asm.mixin.injection.Redirect(method = "runGameLoop",
+    @org.spongepowered.asm.mixin.injection.Redirect(method = {"runGameLoop", "func_71411_J"},
             at = @At(value = "INVOKE", target = "Lorg/lwjgl/opengl/Display;sync(I)V"), require = 0)
     private void celtium$timedFpsSync(int fps) {
         GameLoopTiming.syncStarted();
@@ -225,8 +229,8 @@ public class MinecraftMixin {
      * {@code -Dceltium.vulkan.displaySync=true} the game's own sync is restored by the redirect above and this
      * hook stands down, so the two never pace the same frame.
      */
-    @Inject(method = "runGameLoop",
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/Minecraft;updateDisplay()V",
+    @Inject(method = {"runGameLoop", "func_71411_J"},
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/Minecraft;func_175601_h()V",
                     shift = At.Shift.AFTER), require = 0)
     private void celtium$paceAfterDisplayUpdate(CallbackInfo ci) {
         if (!GL_LESS_SYNC_SKIPPED) {
@@ -313,9 +317,12 @@ public class MinecraftMixin {
     /**
      * The control anchor: {@code startGame} runs on every launch, so a leg that shows no splash line at all can be
      * read as "the mixin did not apply" rather than "the splash method was not reached" - the two have different
-     * fixes and the same silence otherwise.
+     * fixes and the same silence otherwise. The method is {@code func_71384_a} in SRG form: the
+     * decompiled sources this hook was written against name it {@code startGame}, but the build's own
+     * mapping table (mcp_stable 39) names the same method {@code init}, so all three names are listed -
+     * with only {@code startGame} the hook matched nothing in either environment.
      */
-    @Inject(method = "startGame", at = @At("HEAD"), require = 0)
+    @Inject(method = {"init", "startGame", "func_71384_a"}, at = @At("HEAD"), require = 0)
     private void celtium$splashHookControl(CallbackInfo ci) {
         System.out.println("[Celtium] CELTIUM_SPLASH_HOOK startGame=true (mixin applied; the splash hook is live)");
     }
@@ -325,7 +332,7 @@ public class MinecraftMixin {
      * through it too), so RETURN is the one point where every {@code TextureMap} has finished loading - the
      * moment the frame census/release pass is defined to run at, never per atlas.
      */
-    @Inject(method = "refreshResources", at = @At("RETURN"), require = 0)
+    @Inject(method = {"refreshResources", "func_110436_a"}, at = @At("RETURN"), require = 0)
     private void celtium$frameReleasePass(CallbackInfo ci) {
         org.taumc.celeritas.impl.CeltiumFrameRelease.onResourceReloadComplete();
     }
@@ -333,7 +340,7 @@ public class MinecraftMixin {
     /** Read once: this hook runs per splash frame, and the fixture switch cannot change mid-run. */
     private static final boolean celtium$VALIDATION = HarnessConfig.enabled();
 
-    @Inject(method = "drawSplashScreen", at = @At("HEAD"), require = 0)
+    @Inject(method = {"drawSplashScreen", "func_180510_a"}, at = @At("HEAD"), require = 0)
     private void celtium$dumpLoadingFrame(CallbackInfo ci) {
         System.out.println("[Celtium] CELTIUM_SPLASH_HOOK drawSplashScreen=true");
         // The validation fixture is omitted from production jars. Avoid a ClassNotFoundException
@@ -377,7 +384,7 @@ public class MinecraftMixin {
      * compile-time dependency, and the report is one bounded line at the point where the window exists and mod
      * pre-init has not run yet.
      */
-    @Inject(method = "createDisplay", at = @At("RETURN"), require = 0)
+    @Inject(method = {"createDisplay", "func_175609_am"}, at = @At("RETURN"), require = 0)
     private void celtium$reportLwjgl3DispatchState(CallbackInfo ci) {
         try {
             Class<?> gl = Class.forName("org.lwjgl.opengl.GL");
@@ -460,7 +467,7 @@ public class MinecraftMixin {
      * the surface needs; the device and swapchain are created before the framebuffer and the resource load, and the
      * world legs see the same single renderer as before because this is the same latch the tick path uses.
      */
-    @Inject(method = "createDisplay", at = @At("RETURN"), require = 0)
+    @Inject(method = {"createDisplay", "func_175609_am"}, at = @At("RETURN"), require = 0)
     private void celtium$ensureWindowRendererAtDisplay(CallbackInfo ci) {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc != null) {
@@ -471,7 +478,7 @@ public class MinecraftMixin {
         celtium$ensureWindowRenderer();
     }
 
-    @Inject(method = "runTick", at = @At("HEAD"), require = 0)
+    @Inject(method = {"runTick", "func_71407_l"}, at = @At("HEAD"), require = 0)
     private void celtium$ensureWindowRendererAtTick(CallbackInfo ci) {
         if (!"createDisplay".equals(celtium$windowRendererStage)) {
             celtium$windowRendererStage = "runTick";

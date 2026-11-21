@@ -331,9 +331,16 @@ final class ModPrograms {
                         b.immediateState.colorBlue(), b.immediateState.colorAlpha())
                 : -1L;
         VulkanGlTexture[] drawInputs = retainInputs ? textures : EMPTY_TEXTURES;
+        // On the push route the draw's bytes must be frozen here: the packed buffer is the program's own and
+        // is refilled in place when its uniforms change, so a second prepare of the same program in this window
+        // would rewrite the first draw's values before its flush. On the buffer route the values already sit
+        // in the descriptor set's ring slot (staged by samplersAndImages above) and the draw's buffer is never
+        // read, so the shared packed buffer goes in as before.
+        java.nio.ByteBuffer drawUniforms = pipeline.uniformsViaBuffer()
+                ? VulkanModProgramPipeline.packUniforms(program)
+                : VulkanModProgramPipeline.packUniformsSnapshot(program);
         return new PreparedImmediate(new VulkanModProgramPipeline.Draw(pipeline,
-                VulkanModProgramPipeline.packUniforms(program), set, label, drawInputs, imageTextures, constantOffset),
-                set, 0L);
+                drawUniforms, set, label, drawInputs, imageTextures, constantOffset), set, 0L);
     }
 
     /**
@@ -387,9 +394,13 @@ final class ModPrograms {
             if (b.celtium$publishFramebufferDepthTexture(name)) {
                 return registry.get(name);
             }
-            // Publication refused (the store holds no image for the name yet): fall through to the ordinary
-            // resolution rather than inventing an answer. The refusal is censused at the publish site, and the
-            // next prepare retries.
+            // Publication refused (the store holds no image for the name yet). The name IS a framebuffer's
+            // depth texture - the identity record above is what brought us here - so the ordinary resolution
+            // below has no right answer for it: it would return the registry's mirror of the GL depth texture,
+            // an image nothing ever writes, and the draw would sample that and proceed. Refuse the prepare
+            // instead (the caller refuses a null texture and retries on the next frame, when publication may
+            // succeed). The refusal is censused at the publish site.
+            return null;
         } else {
             // Item 537 wall (b2) branches i & ii: a depth texture may be attached to a raw framebuffer whose backend
             // depth record was not yet registered (branch i), or be a standalone depth copy target (e.g. altDepth /
