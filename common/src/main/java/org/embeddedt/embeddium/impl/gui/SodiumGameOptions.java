@@ -102,6 +102,16 @@ public class SodiumGameOptions implements OptionStorage<SodiumGameOptions> {
     public static class QualitySettings {
         public GraphicsQuality weatherQuality = GraphicsQuality.DEFAULT;
 
+        /**
+         * Consumed in RenderGlobalMixin: when vanilla reloads the renderers it sets the leaves
+         * graphics level from the raw vanilla graphics mode; an inject at the end of
+         * loadRenderers then substitutes
+         * {@code leavesQuality.isFancy(vanillaMode)} as the value handed to
+         * {@code BlockLeaves.setGraphicsLevel}, which is what drives leaf face culling
+         * (BlockLeaves.shouldSideBeRendered) and the leaves render layer in the mesher.
+         */
+        public GraphicsQuality leavesQuality = GraphicsQuality.DEFAULT;
+
         public boolean enableVignette = true;
 
         @SerializedName("use_quad_normals_for_shading_v2")
