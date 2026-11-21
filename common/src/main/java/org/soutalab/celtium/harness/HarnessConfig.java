@@ -12,7 +12,9 @@ import java.util.Properties;
  * <p>
  * The launch surface is a single switch: {@code -Dceltium.validation=true}. The
  * {@code celtium.validation.*} properties and the harness {@code celtium.vulkan.*} switches that used to
- * ride on the fixture's command line are gone, and their readers ask this class instead. A normal run
+ * ride on the fixture's command line no longer have readers of their own; their readers ask this class
+ * instead, and this class still honours the spellings as a fallback layer (see the resolution order
+ * below). A normal run
  * (no switch) must observe exactly the behaviour the code had with no {@code -D} at all, so every
  * accessor falls back to the reader's own shipping default while the switch is off.
  * <p>
@@ -36,10 +38,20 @@ import java.util.Properties;
  * exists for the legs that differ from it (measurement legs turn the frame budget on and the periodic dumps
  * off; gate legs add tick timings and the build-flow trace).
  * <p>
- * Resolution order for every accessor: the file's value, then - with the master switch on - the harness
- * default the call site passes, then the shipping default the call site passes. Boolean accessors take no
- * separate shipping default: off is the only shipping state for a harness boolean, which keeps an
- * instrument from waking up in a player's run because a call site picked a cheerful default.
+ * Resolution order for every accessor: the file's value, then - with the master switch on - the
+ * pre-consolidation command-line spellings ({@code celtium.vulkan.<key>}, then
+ * {@code celtium.validation.<key>}), then the harness default the call site passes, then the shipping
+ * default the call site passes. Boolean accessors take no separate shipping default: off is the only
+ * shipping state for a harness boolean, which keeps an instrument from waking up in a player's run
+ * because a call site picked a cheerful default.
+ * <p>
+ * The command-line layer exists because its absence failed silently, twice: the consolidation removed
+ * the {@code -D} readers, but leg command lines kept carrying the spellings, and nothing anywhere said
+ * they were being ignored - QUEUE 641's {@code litFog} premise and the 2026-11-22 FPS A/B's
+ * {@code presentReadback=false} (the readback it meant to disable ran on every present of both celtium
+ * runs) were both measured under a switch the leg believed it had set. The layer sits below the file,
+ * so a leg that writes the file still wins, and it is gated on the master switch, so a player's run
+ * observes exactly the behaviour it had before: no file, no harness.
  */
 public final class HarnessConfig {
 
@@ -59,11 +71,34 @@ public final class HarnessConfig {
     }
 
     /**
+     * The pre-consolidation command-line spelling of a key, or null when it is not set or the harness is
+     * off. The {@code celtium.vulkan.} spelling is the harness's own and wins; the
+     * {@code celtium.validation.} spelling is the fixture's and is asked second. Gated on the master
+     * switch so the layer cannot wake an instrument in a player's run.
+     */
+    private static String legacyValue(String key) {
+        if (!enabled()) {
+            return null;
+        }
+        String value = System.getProperty("celtium.vulkan." + key);
+        if (value != null) {
+            return value;
+        }
+        return System.getProperty("celtium.validation." + key);
+    }
+
+    /** A key's configured value: the harness file first, then the legacy command-line spellings. */
+    private static String value(String key) {
+        String fromFile = FileValues.get(key);
+        return fromFile != null ? fromFile : legacyValue(key);
+    }
+
+    /**
      * A harness boolean. With the switch on and no file entry, {@code harnessDefault} is the answer; with
      * the switch off, the answer is {@code false} unless the file names the key.
      */
     public static boolean bool(String key, boolean harnessDefault) {
-        String value = FileValues.get(key);
+        String value = value(key);
         if (value != null) {
             return Boolean.parseBoolean(value.trim());
         }
@@ -72,7 +107,7 @@ public final class HarnessConfig {
 
     /** A harness integer whose harness and shipping defaults differ. */
     public static int integer(String key, int harnessDefault, int shippingDefault) {
-        String value = FileValues.get(key);
+        String value = value(key);
         if (value != null) {
             try {
                 return Integer.parseInt(value.trim());
@@ -90,7 +125,7 @@ public final class HarnessConfig {
 
     /** A harness long with one default for both shapes of run. */
     public static long longValue(String key, long defaultValue) {
-        String value = FileValues.get(key);
+        String value = value(key);
         if (value != null) {
             try {
                 return Long.parseLong(value.trim());
@@ -103,7 +138,7 @@ public final class HarnessConfig {
 
     /** A harness double with one default for both shapes of run. */
     public static double doubleValue(String key, double defaultValue) {
-        String value = FileValues.get(key);
+        String value = value(key);
         if (value != null) {
             try {
                 return Double.parseDouble(value.trim());
@@ -116,7 +151,7 @@ public final class HarnessConfig {
 
     /** A harness string whose harness and shipping defaults differ. */
     public static String string(String key, String harnessDefault, String shippingDefault) {
-        String value = FileValues.get(key);
+        String value = value(key);
         if (value != null) {
             return value;
         }
@@ -129,13 +164,14 @@ public final class HarnessConfig {
     }
 
     /**
-     * A harness directory, named by the file only: there is no default, because a run that did not ask for
-     * dumps must not grow a dump directory just by enabling the harness. A relative value resolves against
-     * the working directory, so a fixture template copied into a fresh run directory points at that
-     * directory's own folder without an absolute path being rewritten per leg.
+     * A harness directory, named by the file or - with the switch on - the legacy command-line spellings:
+     * there is no default, because a run that did not ask for dumps must not grow a dump directory just
+     * by enabling the harness. A relative value resolves against the working directory, so a fixture
+     * template copied into a fresh run directory points at that directory's own folder without an
+     * absolute path being rewritten per leg.
      */
     public static String path(String key) {
-        String value = FileValues.get(key);
+        String value = value(key);
         if (value == null) {
             return null;
         }
