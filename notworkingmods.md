@@ -2,7 +2,7 @@
 
 Known failures and refusals, with the reason. Verified mods are in [verifiedmods.md](verifiedmods.md).
 
-Last updated: 2026-10-28.
+Last updated: 2026-11-21.
 
 ## Refused at startup (competing renderers)
 
@@ -17,6 +17,10 @@ naming them. Remove them from the instance; Celtium provides the corresponding f
 | Gnetum | The HUD's drawing (its framebuffer kept the HUD out of the frame) |
 | Nothirium | The terrain renderer |
 | Naughthirium | The terrain renderer |
+| OptiFine | The terrain renderer, the GL/shader pipeline and the font renderer |
+| Vintagium | The terrain renderer |
+| Relictium | The terrain renderer |
+| Phosphor | The light-propagation internals of Chunk — it crashes at startup whenever Celtium is present; use Pulsar Lighting Engine instead |
 
 ## Unsupported
 

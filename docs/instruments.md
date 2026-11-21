@@ -60,7 +60,7 @@
 
 | キー | 読み取りAPI | 位置 |
 |---|---|---|
-| `celtium.allowCompetitors` | `Boolean.getBoolean` | [CeltiumCompetitors.java:68](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumCompetitors.java#L68>) |
+| `celtium.allowCompetitors` | `Boolean.getBoolean` | [CeltiumCompetitors.java:70](<../forge122/src/main/java/org/taumc/celeritas/core/CeltiumCompetitors.java#L70>) |
 
 <a id="group-celtium-clearlatch"></a>
 ## `celtium.clearlatch.*`

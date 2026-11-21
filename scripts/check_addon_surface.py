@@ -9,11 +9,13 @@ source, and this checker keeps the three representations of it - this list, the 
 mixin tree - from drifting apart:
 
 1. **No replacing injection on a ledger point.** A HEAD-cancelling `@Inject`, a `@WrapOperation`,
-   a `@Redirect` or an `@Overwrite` landing on a point marked `presence="none"` (or `"call"`)
-   silently disables an addon injecting there - its injection applies but never runs, or its
-   argument edit is overwritten. That failure mode is what item 378 removed; this check keeps it
-   out. For the `getCombinedLight` call site (II-4) `@ModifyArg`/`@ModifyArgs` count as replacing
-   too: editing the call's arguments contests the same instruction point.
+   a `@Redirect`, an `@Overwrite`, a `@WrapWithCondition`, or a value-rewriting
+   `@ModifyReturnValue` / `@ModifyExpressionValue` / `@ModifyVariable` landing on a point marked
+   `presence="none"` (or `"call"`) silently disables an addon injecting there - its injection
+   applies but never runs, or its argument edit is overwritten. That failure mode is what item 378
+   removed; this check keeps it out. For the `getCombinedLight` call site (II-4) `@ModifyArg`/
+   `@ModifyArgs` count as replacing too: editing the call's arguments contests the same
+   instruction point.
 2. **Sanctioned presences exist as declared.** II-1 is a plain call in `LightDataCache` (no mixin
    on the method), II-6 is the one `@Overwrite` celtium keeps (the method itself must exist for
    addons calling it), II-7 is the funnel: exactly one `@WrapMethod` on `World.getCombinedLight`,
@@ -47,23 +49,25 @@ LEDGER_II = [
     {"id": "II-1", "doc_token": "getPackedLightmapCoords",
      "names": ("getPackedLightmapCoords", "func_185484_c"), "presence": "call"},
     {"id": "II-2", "doc_token": "Entity.getBrightnessForRender",
-     "names": ("func_70070_b",), "presence": "none"},
+     "names": ("func_70070_b", "getBrightnessForRender"), "presence": "none"},
     {"id": "II-3", "doc_token": "Particle.getBrightnessForRender",
-     "names": ("func_189214_a",), "presence": "none"},
+     "names": ("func_189214_a", "getBrightnessForRender"), "presence": "none"},
     {"id": "II-4", "doc_token": "getCombinedLight",
-     "names": (), "call_target": "getCombinedLight", "presence": "none"},
+     "names": (), "call_targets": ("getCombinedLight", "func_175626_b"), "presence": "none"},
     {"id": "II-5", "doc_token": "ItemRenderer.setLightmap",
      "names": ("setLightmap", "func_77008_a", "func_177105_a", "func_187464_b"),
      "mixin_target": "ItemRenderer", "presence": "none"},
     {"id": "II-6", "doc_token": "markBlocksForUpdate",
      "names": ("markBlocksForUpdate",), "presence": "overwrite"},
     {"id": "II-7", "doc_token": "World.getCombinedLight",
-     "names": ("func_175626_b",), "presence": "funnel"},
+     "names": ("func_175626_b", "getCombinedLight"), "presence": "funnel"},
 ]
 
-ANNOTATION = re.compile(r"@(Inject|WrapOperation|Redirect|Overwrite|WrapMethod|ModifyArg|ModifyArgs)\b")
+ANNOTATION = re.compile(r"@(Inject|WrapOperation|Redirect|Overwrite|WrapMethod|ModifyArg|ModifyArgs"
+                        r"|ModifyReturnValue|ModifyExpressionValue|ModifyVariable|WrapWithCondition)\b")
 STRING = re.compile(r'"((?:[^"\\]|\\.)*)"')
-REPLACING = {"WrapOperation", "Redirect", "Overwrite"}
+REPLACING = {"WrapOperation", "Redirect", "Overwrite", "WrapWithCondition",
+             "ModifyReturnValue", "ModifyExpressionValue", "ModifyVariable"}
 CALL_SITE_REPLACING = REPLACING | {"ModifyArg", "ModifyArgs"}
 
 
@@ -219,8 +223,9 @@ def check(root=ROOT):
         for path, injections in parsed.items():
             for injection in injections:
                 on_point = _method_matches(injection, names) if names else False
-                if point.get("call_target"):
-                    on_point = any(point["call_target"] in target for target in injection["targets"])
+                if point.get("call_targets"):
+                    on_point = any(form in target for form in point["call_targets"]
+                                   for target in injection["targets"])
                 if point.get("mixin_target") and point["mixin_target"] not in files[path]:
                     on_point = False
                 if not on_point:
@@ -228,7 +233,7 @@ def check(root=ROOT):
                 sanctioned = (
                     (pid == "II-6" and injection["kind"] == "Overwrite" and path == RENDER_GLOBAL)
                     or (pid == "II-7" and injection["kind"] == "WrapMethod" and path == FUNNEL))
-                if _is_replacing(injection, call_site=bool(point.get("call_target"))) and not sanctioned:
+                if _is_replacing(injection, call_site=bool(point.get("call_targets"))) and not sanctioned:
                     problems.append(
                         f"{path}: @{injection['kind']} replaces {pid} ({point['doc_token']}), a ledger II "
                         "point an addon may target; celtium keeps no replacing injection there (item 378, R2)")
@@ -254,11 +259,13 @@ def check(root=ROOT):
 
     funnel = files.get(FUNNEL)
     if funnel is None or not any(
-            injection["kind"] == "WrapMethod" and _method_matches(injection, ("func_175626_b",))
+            injection["kind"] == "WrapMethod"
+            and _method_matches(injection, ("func_175626_b", "getCombinedLight"))
             for injection in parsed.get(FUNNEL, [])):
         problems.append(
             f"{FUNNEL}: II-7 expects the funnel - one @WrapMethod on World.getCombinedLight "
-            "(func_175626_b) serving CeltiumLightCache inside the method; it is not there")
+            "(func_175626_b, or the MCP name getCombinedLight) serving CeltiumLightCache inside "
+            "the method; it is not there")
 
     docs_path = root / DOCS
     if not docs_path.is_file():

@@ -31,7 +31,9 @@ final class CeltiumCompetitors {
             {"me/decce/gnetum/FramebufferManager.class", "Gnetum (gnetum)",
                     "the HUD's drawing, which Celtium draws natively every frame"},
             {"meldexun/nothirium/mc/Nothirium.class", "Nothirium", "the terrain renderer"},
-            {"zone/rong/naughthirium/Naughthirium.class", "Naughthirium", "the terrain renderer"},
+            {"zone/rong/naughthirium/Naughthirium.class", "Naughthirium",
+                    "nothing of its own — it is a mixin patch layer over Nothirium (refused above) that"
+                            + " un-freezes what Nothirium's static terrain bake freezes"},
             // OptiFine: a competing whole-renderer overhaul - terrain, the GL/shader pipeline and fonts at once.
             // Marker is its coremod transformer class, verified in the official OptiFine_1.12.2_HD_U_G5.jar from
             // optifine.net (sha256 3b000679...; the jar's MANIFEST names optifine.OptiFineForgeTweaker as its
