@@ -51,6 +51,9 @@ public class RenderRegionManager {
                 region.update(commandList);
 
                 if (region.isEmpty()) {
+                    if (ChunkUploadProbe.ENABLED) {
+                        ChunkUploadProbe.forgetRegion(region);
+                    }
                     region.delete(commandList);
 
                     it.remove();
@@ -90,6 +93,9 @@ public class RenderRegionManager {
 
         private void processBuildResult(ChunkBuildOutput result) {
             // Delete all existing data for the section in the region
+            if (ChunkUploadProbe.ENABLED) {
+                ChunkUploadProbe.forgetSection(region, result.render.getSectionIndex());
+            }
             region.removeMeshes(result.render.getSectionIndex());
 
             // Add uploads for any new data
@@ -136,6 +142,16 @@ public class RenderRegionManager {
                 return;
             }
 
+            if (ChunkUploadProbe.ENABLED) {
+                ChunkUploadProbe.beginBurst();
+                for (PendingSectionUpload upload : uploads) {
+                    if (upload instanceof PendingMeshRebuildUpload meshUpload) {
+                        ChunkUploadProbe.snapshotSource(region, meshUpload.section(), meshUpload.pass(),
+                                meshUpload.meshData());
+                    }
+                }
+            }
+
             var resources = region.createResources(commandList);
 
             boolean bufferChanged = resources.getGeometryArena().upload(commandList, uploads.stream()
@@ -158,17 +174,32 @@ public class RenderRegionManager {
             // Collect the upload results
             for (PendingSectionUpload upload : uploads) {
                 var storage = region.createStorage(upload.pass(), renderPassConfiguration);
+                if (ChunkUploadProbe.ENABLED) {
+                    ChunkUploadProbe.registerStorage(storage, region, upload.pass());
+                }
                 if (upload instanceof PendingMeshRebuildUpload meshUpload) {
                     // Replace meshes
                     var indexResult = upload.indexUpload() != null ? upload.indexUpload().getResult() : null;
                     storage.setMeshes(upload.section().getSectionIndex(),
                             upload.vertexUpload().getResult(), indexResult, meshUpload.meshData().ranges());
+                    if (ChunkUploadProbe.ENABLED) {
+                        ChunkUploadProbe.recordRebuild(region, upload.section(), upload.pass(), meshUpload.meshData(),
+                                upload.vertexUpload().getResult(), indexResult, commonVertexStride);
+                    }
                 } else if (upload instanceof PendingMeshSortUpload) {
                     // Replace index buffer
                     storage.replaceIndexBuffer(upload.section().getSectionIndex(), upload.indexUpload().getResult());
+                    if (ChunkUploadProbe.ENABLED) {
+                        ChunkUploadProbe.recordSort(region, upload.section(), upload.pass(),
+                                upload.indexUpload().getDataBuffer(), upload.indexUpload().getResult());
+                    }
                 } else {
                     throw new IllegalStateException();
                 }
+            }
+
+            if (bufferChanged && ChunkUploadProbe.ENABLED) {
+                ChunkUploadProbe.recordResize(region);
             }
 
             region.removeEmptyStorages();
@@ -192,6 +223,9 @@ public class RenderRegionManager {
     }
 
     public void delete(CommandList commandList) {
+        if (ChunkUploadProbe.ENABLED) {
+            ChunkUploadProbe.forgetAll();
+        }
         for (RenderRegion region : this.regions.values()) {
             region.delete(commandList);
         }

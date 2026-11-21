@@ -4,6 +4,7 @@ import org.embeddedt.embeddium.impl.gl.util.VertexRange;
 import org.embeddedt.embeddium.impl.model.quad.properties.ModelQuadFacing;
 import org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveType;
 import org.embeddedt.embeddium.impl.render.chunk.multidraw.CachedBatch;
+import org.embeddedt.embeddium.impl.render.chunk.region.ChunkUploadProbe;
 import org.embeddedt.embeddium.impl.render.chunk.region.RenderRegion;
 import org.jetbrains.annotations.Nullable;
 
@@ -99,6 +100,11 @@ public class SectionRenderDataStorage {
 
         this.storageStrategy.writeMeshesAndSliceMask(this.pMeshDataArray, localSectionIndex, vertexOffset, indexOffset, ranges, this.primitiveType);
 
+        if (ChunkUploadProbe.ENABLED) {
+            ChunkUploadProbe.verifyRow(this, localSectionIndex, allocation, indexAllocation, ranges,
+                    this.verticesPerArenaElement, this.storageStrategy, this.primitiveType);
+        }
+
         this.invalidateCachedBatches();
     }
 
@@ -136,6 +142,10 @@ public class SectionRenderDataStorage {
         int indexOffset = indexAllocation != null ? indexAllocation.getOffset() * 4 : 0;
 
         this.storageStrategy.writeIndexOffsets(pMeshData, indexOffset, this.primitiveType);
+
+        if (ChunkUploadProbe.ENABLED) {
+            ChunkUploadProbe.verifyIndexRow(this, localSectionIndex, indexAllocation, this.storageStrategy, this.primitiveType);
+        }
 
         this.invalidateCachedBatches();
     }

@@ -2,7 +2,7 @@
 
 生成: `python3 scripts/instrument-index.py`。手で編集しない。
 
-システムプロパティの読み取りキー **352 個**／文字列内マーカー **552 個**。
+システムプロパティの読み取りキー **354 個**／文字列内マーカー **553 個**。
 機能設定・故障注入も含む。すべてが計測用スイッチという意味ではない。
 
 名前を検索してリンク先の実装を読む。既定値・有効条件・出力上限は推測で掲載しない。
@@ -35,6 +35,7 @@
 | [celtium.glless](#group-celtium-glless) | 2 |
 | [celtium.glstub](#group-celtium-glstub) | 6 |
 | [celtium.gpuPassTimings](#group-celtium-gpuPassTimings) | 1 |
+| [celtium.issue422](#group-celtium-issue422) | 2 |
 | [celtium.itemMeshCache](#group-celtium-itemMeshCache) | 1 |
 | [celtium.mirrorDump](#group-celtium-mirrorDump) | 1 |
 | [celtium.modelPhaseReport](#group-celtium-modelPhaseReport) | 1 |
@@ -244,6 +245,14 @@
 | キー | 読み取りAPI | 位置 |
 |---|---|---|
 | `celtium.gpuPassTimings` | `Boolean.getBoolean` | [GpuPassTimingReport.java:24](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GpuPassTimingReport.java#L24>) |
+
+<a id="group-celtium-issue422"></a>
+## `celtium.issue422.*`
+
+| キー | 読み取りAPI | 位置 |
+|---|---|---|
+| `celtium.issue422.c4probe` | `Boolean.getBoolean` | [ChunkUploadProbe.java:70](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/region/ChunkUploadProbe.java#L70>) |
+| `celtium.issue422.c4probeVerbose` | `Boolean.getBoolean` | [ChunkUploadProbe.java:71](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/region/ChunkUploadProbe.java#L71>) |
 
 <a id="group-celtium-itemMeshCache"></a>
 ## `celtium.itemMeshCache.*`
@@ -634,6 +643,7 @@
 | `CELTIUM_BUFFER_CENSUS` | [FrameStatsReport.java:148](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FrameStatsReport.java#L148>) |
 | `CELTIUM_BUFFER_RETIRED` | [VulkanContext.java:3945](<../celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java#L3945>) |
 | `CELTIUM_BUILD_FLOW` | [RenderSectionManager.java:762](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/RenderSectionManager.java#L762>) |
+| `CELTIUM_C4PROBE` | [ChunkUploadProbe.java:240](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/region/ChunkUploadProbe.java#L240>), [ChunkUploadProbe.java:262](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/region/ChunkUploadProbe.java#L262>), [ChunkUploadProbe.java:298](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/region/ChunkUploadProbe.java#L298>), [ChunkUploadProbe.java:312](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/region/ChunkUploadProbe.java#L312>), [ChunkUploadProbe.java:449](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/region/ChunkUploadProbe.java#L449>), [ChunkUploadProbe.java:450](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/region/ChunkUploadProbe.java#L450>), [ChunkUploadProbe.java:510](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/region/ChunkUploadProbe.java#L510>), [ChunkUploadProbe.java:521](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/region/ChunkUploadProbe.java#L521>) |
 | `CELTIUM_CAMERA_EVENT_PROBE` | [CameraEventProbe.java:26](<../validation/client/src/main/java/org/soutalab/celtium/validation/CameraEventProbe.java#L26>) |
 | `CELTIUM_CANCEL_NOT_CANCELLABLE` | [GlStateManagerMixin.java:86](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java#L86>) |
 | `CELTIUM_CANCEL_STATE` | [GlStateManagerMixin.java:74](<../forge122/src/main/java/org/taumc/celeritas/mixin/core/GlStateManagerMixin.java#L74>) |

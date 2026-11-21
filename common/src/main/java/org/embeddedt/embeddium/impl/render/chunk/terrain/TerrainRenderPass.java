@@ -129,6 +129,10 @@ public class TerrainRenderPass {
         return this.extraDefines;
     }
 
+    public String name() {
+        return this.name;
+    }
+
     @Override
     public String toString() {
         return "TerrainRenderPass[name=" + this.name + "]";
