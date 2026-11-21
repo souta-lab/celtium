@@ -3287,6 +3287,68 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     private static final boolean TERRAIN_TO_DEPTH_TARGET =
             Boolean.getBoolean("celtium.vulkan.terrainToDepthTarget");
+    /**
+     * Item 537, the terrain shadow lookup: {@code -Dceltium.vulkan.terrainShadow} (default true, and inert unless
+     * {@link #TERRAIN_TO_DEPTH_TARGET} routes a shadow pass). A shader pack's sun shadow is computed by its gbuffers
+     * terrain program, which this backend does not run - the terrain is drawn by the built-in terrain shaders, also
+     * into the shadow target when the route is on. So the frame's routed pass is captured here (its light-space
+     * matrix, Vulkan projection x model-view, and the depth texture it drew into) and every later non-routed terrain
+     * pass of the same frame samples that depth with the same matrix over the same camera-relative position the
+     * shadow pass rasterised: a fragment the shadow map sees something nearer the light than keeps only part of its
+     * sky light ({@link #TERRAIN_SHADOW_DARKNESS}). No capture in this frame, or a depth that does not publish, leaves
+     * the pass exactly as before (u_ShadowEnabled 0).
+     */
+    private static final boolean TERRAIN_SHADOW_LOOKUP =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.terrainShadow", "true"));
+    /** Fraction of the sky light a shadowed fragment loses, {@code -Dceltium.vulkan.terrainShadowDarkness}. */
+    private static final float TERRAIN_SHADOW_DARKNESS = celtium$shadowDarkness(
+            System.getProperty("celtium.vulkan.terrainShadowDarkness"));
+    private final Matrix4f terrainShadowMatrix = new Matrix4f();
+    private long terrainShadowFrame = Long.MIN_VALUE;
+    private int terrainShadowDepthTexture;
+    private int terrainShadowLogs;
+    private long terrainShadowPassesApplied;
+    private long terrainShadowPassesRefused;
+
+    /** {@return the darkness property parsed and clamped to [0, 1]}, 0.45 when absent or malformed. Pure. */
+    static float celtium$shadowDarkness(String property) {
+        if (property == null || property.isBlank()) {
+            return 0.45f;
+        }
+        try {
+            float value = Float.parseFloat(property.trim());
+            return Float.isNaN(value) ? 0.45f : Math.max(0.0f, Math.min(1.0f, value));
+        } catch (NumberFormatException malformed) {
+            return 0.45f;
+        }
+    }
+
+    /**
+     * {@return why a non-routed terrain pass does not sample the frame's shadow capture}, or null when it does.
+     * Static and pure so the rule is pinned without a device: the switch, a routed shadow pass earlier in this very
+     * frame (a capture from another frame names a matrix and a depth the current camera did not draw), a depth texture
+     * name, and a published native image for it.
+     */
+    static String celtium$terrainShadowRefusal(boolean enabled, boolean routeEnabled, long captureFrame, long frame,
+            int depthTexture, boolean published) {
+        if (!enabled) {
+            return "switch-off";
+        }
+        if (!routeEnabled) {
+            return "route-off";
+        }
+        if (captureFrame != frame) {
+            return "no-capture-this-frame";
+        }
+        if (depthTexture <= 0) {
+            return "no-depth-texture";
+        }
+        if (!published) {
+            return "depth-not-published";
+        }
+        return null;
+    }
+
     /** Bounded census counters for the route and its refusals (see {@link #celtium$routeTerrainToDepthTarget}). */
     private int terrainDepthTargetLogs;
     private int terrainDepthTargetDrawLogs;
@@ -7363,6 +7425,57 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             return false;
         }
         return celtium$publishDepthFromSharedStore(glTextureName, depthKey);
+    }
+
+    /**
+     * {@return whether a name no supply route could fill may be materialized as a standalone texture}:
+     * it has recorded storage and no usable mirror yet, it is no framebuffer's colour or depth
+     * attachment (those have owners - the publish and adopt routes - whose supply must not be shadowed),
+     * it carries no depth record (a depth publication refused for an unrecorded layout heals on the next
+     * prepare, and materializing under it would draw an empty depth instead of refusing), and the game
+     * never wrote a pixel into its level 0 (a captured upload is then the supply, and the registry's own
+     * refusal of its zero surface stands). Static and pure so the rule is pinned without a device.
+     */
+    static boolean celtium$standaloneTextureMaterializable(boolean hasUsableMirror, boolean colourAttachment,
+            boolean depthRecorded, boolean gamePixels, int width, int height) {
+        return !hasUsableMirror && !colourAttachment && !depthRecorded && !gamePixels
+                && width > 0 && height > 0;
+    }
+
+    /**
+     * Materializes the mirror of a standalone texture the game allocated storage for but nothing
+     * supplies - the colour twin of {@link #celtium$publishStandaloneDepthTexture}'s case, for a name
+     * whose only writer is a framebuffer copy (item 537: Iris's centre-depth alt texture, a 1x1 colour
+     * texture no framebuffer attaches, filled by a copy out of the sampler's own framebuffer). GL
+     * samples such a texture from the moment its storage exists, so the mod-program sampler resolution
+     * materializes it at its recorded extent rather than refusing the draw; the refusal deadlocked the
+     * measured case, because the copy's source pair is acquired by the very draw the missing image
+     * refused. The registry's deferral in {@code get} is untouched - this is the sampler path's own
+     * answer, reached only after the upload, publish and adopt routes have all declined.
+     *
+     * @return whether the name resolves to a mirror with an image now
+     */
+    boolean celtium$materializeStandaloneTexture(int glTextureName) {
+        VulkanTextureRegistry registry = celtium$registry();
+        VulkanGlTexture existing = registry.existing(glTextureName);
+        boolean hasUsableMirror = existing != null && existing.view() != 0L;
+        boolean colourAttachment = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                .celtium$framebufferForColorTexture(glTextureName) != 0
+                || celtium$framebufferIdentityForColorTexture(glTextureName) != Long.MIN_VALUE;
+        boolean depthRecorded = this.publishedTextures.identityForDepthTexture(glTextureName) != Long.MIN_VALUE
+                || org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                        .celtium$framebufferForDepthTexture(glTextureName) != 0;
+        boolean gamePixels = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                .textureLevelHasGamePixels(glTextureName, 0);
+        int width = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(
+                glTextureName, 0, 0x1000);
+        int height = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(
+                glTextureName, 0, 0x1001);
+        if (!celtium$standaloneTextureMaterializable(hasUsableMirror, colourAttachment, depthRecorded,
+                gamePixels, width, height)) {
+            return false;
+        }
+        return registry.materializeAllocated(glTextureName) != null;
     }
 
     private boolean celtium$publishDepthFromSharedStore(int glTextureName, long identity) {
@@ -16041,7 +16154,8 @@ this.frameBufferOpen = false;
      * per identity, with the shared depth's own once-per-frame guard) and the pair's acquire. The begin, the draws and
      * the hand-back stay with the caller, which is where the pass' own extent lives.
      *
-     * @return {@code {framebuffer, identity, depthKey, width, height}} for the routed pass, null to draw into the frame
+     * @return {@code {framebuffer, identity, depthKey, width, height, depthTexture}} for the routed pass, null to draw
+     *         into the frame
      */
     private long[] celtium$routeTerrainPassToDepthTarget(String passName, long renderPass) {
         if (!TERRAIN_TO_DEPTH_TARGET) {
@@ -16167,7 +16281,7 @@ this.frameBufferOpen = false;
         }
         celtium$consumeRoutedTargetClear(owner, identity, depthKey);
         owner.recordChainPairAttachAcquire(identity, depthKey, this.commandBuffer);
-        return new long[] {pairFramebuffer, identity, depthKey, pairWidth, pairHeight};
+        return new long[] {pairFramebuffer, identity, depthKey, pairWidth, pairHeight, depthRecord[0]};
     }
 
     /**
@@ -16318,6 +16432,44 @@ this.frameBufferOpen = false;
         this.passAttachedColorImages = null;
         this.passAttachedDepthImage = 0L;
         long[] depthRouting = celtium$routeTerrainPassToDepthTarget(pass.name(), renderPass);
+        // Item 537 terrain shadow: every pass starts disarmed, so none inherits the previous pass' state.
+        VulkanGlTexture terrainShadowMap = null;
+        this.terrain.setShadowLookup(null, 0.0f);
+        pipeline.useShadowMap(null, this.frameSlot);
+        if (depthRouting != null && TERRAIN_SHADOW_LOOKUP) {
+            // The capture: the light-space matrix this routed pass draws with and the depth texture it draws into.
+            this.terrainShadowMatrix.set(vulkanProjection(matrices.projection())).mul(matrices.modelView());
+            this.terrainShadowFrame = this.frameId;
+            this.terrainShadowDepthTexture = (int) depthRouting[5];
+        } else if (depthRouting == null && TERRAIN_SHADOW_LOOKUP && TERRAIN_TO_DEPTH_TARGET) {
+            VulkanGlTexture candidate = null;
+            boolean published = false;
+            if (this.terrainShadowFrame == this.frameId && this.terrainShadowDepthTexture > 0) {
+                candidate = this.modPrograms.celtium$modSamplerTexture(this.terrainShadowDepthTexture);
+                published = candidate != null && candidate.view() != 0L && !candidate.celtium$ownsImage()
+                        && this.publishedFrameImages.get(this.terrainShadowDepthTexture) != 0L;
+            }
+            String refusal = celtium$terrainShadowRefusal(true, true, this.terrainShadowFrame, this.frameId,
+                    this.terrainShadowDepthTexture, published);
+            if (refusal == null) {
+                terrainShadowMap = candidate;
+                this.terrainShadowPassesApplied++;
+            } else if (this.terrainShadowFrame != Long.MIN_VALUE) {
+                this.terrainShadowPassesRefused++;
+            }
+            if (this.terrainShadowLogs < 16 && this.terrainShadowFrame != Long.MIN_VALUE) {
+                this.terrainShadowLogs++;
+                System.out.println("[Celtium] CELTIUM_TERRAIN_SHADOW pass=" + pass.name()
+                        + " verdict=" + (refusal == null ? "apply" : refusal)
+                        + " depthTexture=" + this.terrainShadowDepthTexture
+                        + " captureFrame=" + this.terrainShadowFrame + " frame=" + this.frameId
+                        + " view=0x" + Long.toHexString(candidate == null ? 0L : candidate.view())
+                        + " layout=" + (candidate == null ? -1 : candidate.samplingLayout())
+                        + " darkness=" + TERRAIN_SHADOW_DARKNESS
+                        + " applied=" + this.terrainShadowPassesApplied
+                        + " refused=" + this.terrainShadowPassesRefused);
+            }
+        }
         if (depthRouting != null) {
             // Item 332: the bound framebuffer's pair borrows this framebuffer's depth texture, so the terrain of this
             // pass belongs in that pair - that image is what the pre-translucent depth copy reads. The pair's own
@@ -16419,6 +16571,29 @@ this.frameBufferOpen = false;
         // exactly the VUID-vkCmdDraw-None-09600 the vsync leg reported on three distinct images at vkQueueSubmit. The
         // transition is recorded outside the pass, before the draw, like the outline's.
         this.postChainBridge.celtium$transitionPublishedFrameTextures(false);
+        if (terrainShadowMap != null) {
+            // The shadow depth is sampled by this pass' fragment stage: in its sampling layout before the pass
+            // begins (idempotent after the published walk above), then the shadow variant of the set and the
+            // armed uniforms for every region block this pass writes.
+            boolean sampled;
+            try {
+                terrainShadowMap.ensureSampledLayout(this.commandBuffer);
+                sampled = true;
+            } catch (IllegalStateException unknownLayout) {
+                // A wrapper whose image never got a recorded layout cannot be transitioned; the pass draws unshadowed
+                // rather than sampling an image in a layout nobody knows.
+                sampled = false;
+                this.terrainShadowPassesRefused++;
+                if (this.terrainShadowLogs < 16) {
+                    this.terrainShadowLogs++;
+                    System.out.println("[Celtium] CELTIUM_TERRAIN_SHADOW pass=" + pass.name()
+                            + " verdict=layout-unknown error=" + describe(unknownLayout) + " frame=" + this.frameId);
+                }
+            }
+            if (sampled && pipeline.useShadowMap(terrainShadowMap, this.frameSlot)) {
+                this.terrain.setShadowLookup(this.terrainShadowMatrix, TERRAIN_SHADOW_DARKNESS);
+            }
+        }
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("prepBarriers");
         }

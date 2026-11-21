@@ -293,6 +293,16 @@ public final class VulkanTerrainPipeline {
      */
     static final int DYNAMIC_LIGHTS_BINDING = 3;
 
+    /**
+     * The terrain shadow map binding (item 537): the depth the routed shadow pass drew, sampled by the fragment stage
+     * of a pass that has it. Each slot has two sets - the ordinary one, whose binding 4 names the light map as a
+     * stand-in (the shader never reads it there: {@code u_ShadowEnabled} is 0), and the shadow one, a copy of the
+     * ordinary set with binding 4 naming the shadow depth. Two sets rather than one rewritten set, because the shadow
+     * pass and the main pass of a frame share a slot, and the shadow pass attaches the very image the main pass
+     * samples: one set could not name it for one and not the other.
+     */
+    static final int SHADOW_MAP_BINDING = 4;
+
     /** The byte size of the dynamic light block: the info vec4 plus one vec4 per source. */
     static final int DYNAMIC_LIGHT_BLOCK_SIZE = 16 + DynamicLightService.MAX_LIGHTS * 16;
 
@@ -345,6 +355,16 @@ public final class VulkanTerrainPipeline {
     /** The descriptor slot count; {@code TerrainRenderer} sizes its per-slot dynamic light buffers by it. */
     static final int DESCRIPTOR_SLOTS = 4;
     private final long[] descriptorSets = new long[DESCRIPTOR_SLOTS];
+    /** The shadow variant of each slot's set; see {@link #SHADOW_MAP_BINDING}. */
+    private final long[] shadowDescriptorSets = new long[DESCRIPTOR_SLOTS];
+    /** Bumped on every ordinary-set write, so the shadow copy knows when it is stale. */
+    private final long[] descriptorWriteSerial = new long[DESCRIPTOR_SLOTS];
+    private final long[] shadowCopiedSerial = new long[DESCRIPTOR_SLOTS];
+    private final long[] shadowWrittenView = new long[DESCRIPTOR_SLOTS];
+    /** Whether the pass being recorded binds the shadow variant ({@link #useShadowMap}). */
+    private boolean shadowSetActive;
+    /** Nearest, clamp-to-edge, no compare: the shader compares depths itself. Created with the pool. */
+    private long shadowSampler;
     private long pipeline;
     /**
      * The atlas sampler this pass binds when {@link #ATLAS_MAX_LOD} differs from the mirror's own clamp; zero when
@@ -795,7 +815,7 @@ public final class VulkanTerrainPipeline {
             // The binding of each write comes from the constant, so the array order carries no meaning: the atlas
             // goes to BLOCK_ATLAS_BINDING (2) and the lightmap to LIGHTMAP_BINDING (1), matching the shader source.
             long set = this.descriptorSets[writeSlot];
-            VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(4, stack);
+            VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(5, stack);
             writes.get(0).sType$Default().dstSet(set).dstBinding(UNIFORM_BINDING).dstArrayElement(0)
                     .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
                     .pBufferInfo(bufferInfo);
@@ -808,11 +828,64 @@ public final class VulkanTerrainPipeline {
             writes.get(3).sType$Default().dstSet(set).dstBinding(DYNAMIC_LIGHTS_BINDING).dstArrayElement(0)
                     .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
                     .pBufferInfo(dynamicLightInfo);
+            // The shadow map's stand-in: the light map, already valid and in its sampling layout. Never read while
+            // u_ShadowEnabled is 0, which is every pass that binds this set (see SHADOW_MAP_BINDING).
+            writes.get(4).sType$Default().dstSet(set).dstBinding(SHADOW_MAP_BINDING).dstArrayElement(0)
+                    .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .pImageInfo(lightmapInfo);
             VulkanDescriptorWrites.note(writes, "VulkanTerrainPipeline");
             vkUpdateDescriptorSets(context.device(), writes, null);
         }
         descriptorsWritten[slot & (DESCRIPTOR_SLOTS - 1)] = true;
+        descriptorWriteSerial[slot & (DESCRIPTOR_SLOTS - 1)]++;
         auditAtlasWrite(atlas);
+    }
+
+    /**
+     * Selects the set the next {@link #bindDescriptors} calls bind for this pass: the shadow variant with
+     * {@code shadowMap} at binding 4, or (null) the ordinary set. Call after {@link #bindTextures} and before the
+     * pass' draws. The shadow variant is a copy of the ordinary set plus binding 4, rewritten only when the ordinary
+     * set or the shadow view changed - the same write-only-what-changed rule {@link #bindTextures} keeps, so a set a
+     * frame in flight names is not rewritten in the steady state.
+     *
+     * @param shadowMap the shadow depth, already in {@code samplingLayout()}; null selects the ordinary set
+     * @return whether the shadow variant is selected
+     */
+    public boolean useShadowMap(VulkanGlTexture shadowMap, int slot) {
+        requireAlive();
+        int useSlot = slot & (DESCRIPTOR_SLOTS - 1);
+        if (shadowMap == null || shadowMap.view() == 0L || !descriptorsWritten[useSlot] || this.shadowSampler == 0L) {
+            this.shadowSetActive = false;
+            return false;
+        }
+        long view = shadowMap.view();
+        if (this.shadowCopiedSerial[useSlot] != this.descriptorWriteSerial[useSlot]
+                || this.shadowWrittenView[useSlot] != view) {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                long from = this.descriptorSets[useSlot];
+                long to = this.shadowDescriptorSets[useSlot];
+                org.lwjgl.vulkan.VkCopyDescriptorSet.Buffer copies =
+                        org.lwjgl.vulkan.VkCopyDescriptorSet.calloc(4, stack);
+                int[] copied = {UNIFORM_BINDING, BLOCK_ATLAS_BINDING, LIGHTMAP_BINDING, DYNAMIC_LIGHTS_BINDING};
+                for (int i = 0; i < copied.length; i++) {
+                    copies.get(i).sType$Default().srcSet(from).srcBinding(copied[i]).srcArrayElement(0)
+                            .dstSet(to).dstBinding(copied[i]).dstArrayElement(0).descriptorCount(1);
+                }
+                VkDescriptorImageInfo.Buffer shadowInfo = VkDescriptorImageInfo.calloc(1, stack);
+                shadowInfo.get(0).sampler(this.shadowSampler).imageView(view)
+                        .imageLayout(shadowMap.samplingLayout());
+                VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(1, stack);
+                writes.get(0).sType$Default().dstSet(to).dstBinding(SHADOW_MAP_BINDING).dstArrayElement(0)
+                        .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                        .pImageInfo(shadowInfo);
+                VulkanDescriptorWrites.note(writes, "VulkanTerrainPipeline.shadow");
+                vkUpdateDescriptorSets(context.device(), writes, copies);
+            }
+            this.shadowCopiedSerial[useSlot] = this.descriptorWriteSerial[useSlot];
+            this.shadowWrittenView[useSlot] = view;
+        }
+        this.shadowSetActive = true;
+        return true;
     }
 
     /**
@@ -937,7 +1010,8 @@ public final class VulkanTerrainPipeline {
 
     /** The descriptor set this object writes and binds for a frame slot; see {@link #pipelineHandle()}. */
     public long descriptorSetHandle(int slot) {
-        return this.descriptorSets[slot & (DESCRIPTOR_SLOTS - 1)];
+        return this.shadowSetActive ? this.shadowDescriptorSets[slot & (DESCRIPTOR_SLOTS - 1)]
+                : this.descriptorSets[slot & (DESCRIPTOR_SLOTS - 1)];
     }
 
     /**
@@ -997,7 +1071,7 @@ public final class VulkanTerrainPipeline {
                     + passName + "'; the uniform blocks of this buffer must be " + UNIFORM_BLOCK_SIZE + " bytes");
         }
         auditAtlasDraw(uniformBufferOffset);
-        long set = this.descriptorSets[useSlot];
+        long set = this.shadowSetActive ? this.shadowDescriptorSets[useSlot] : this.descriptorSets[useSlot];
         int dynamicOffset = (int) uniformBufferOffset;
         this.lastDescriptorSet = set;
         this.lastDynamicOffset = dynamicOffset;
@@ -1160,6 +1234,11 @@ public final class VulkanTerrainPipeline {
 vkDestroyDescriptorPool(device, descriptorPool, null);
             descriptorPool = 0L;
             java.util.Arrays.fill(this.descriptorSets, 0L);
+            java.util.Arrays.fill(this.shadowDescriptorSets, 0L);
+        }
+        if (this.shadowSampler != 0L) {
+            vkDestroySampler(device, this.shadowSampler, null);
+            this.shadowSampler = 0L;
         }
         if (descriptorSetLayout != 0L) {
             vkDestroyDescriptorSetLayout(device, descriptorSetLayout, null);
@@ -1413,8 +1492,8 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
         // listed in its stageFlags makes the set invalid, while listing a stage that does not use it is harmless.
         // The shader sources are authored in parallel with this class, so permissiveness is the safe choice.
         int stages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        // Four bindings: the region uniforms, the atlas, the light map and the dynamic light block.
-        VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(4, stack);
+        // Five bindings: the region uniforms, the atlas, the light map, the dynamic light block and the shadow map.
+        VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(5, stack);
         bindings.get(0).binding(UNIFORM_BINDING)
                 .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
                 .descriptorCount(1)
@@ -1429,6 +1508,10 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
                 .stageFlags(stages);
         bindings.get(3).binding(DYNAMIC_LIGHTS_BINDING)
                 .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                .descriptorCount(1)
+                .stageFlags(stages);
+        bindings.get(4).binding(SHADOW_MAP_BINDING)
+                .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                 .descriptorCount(1)
                 .stageFlags(stages);
         VkDescriptorSetLayoutCreateInfo create = VkDescriptorSetLayoutCreateInfo.calloc(stack).sType$Default()
@@ -1619,26 +1702,39 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
         // The pool has to name every descriptor type the set layout uses, or the allocation makes sets of the wrong type
         // (WARNING-CoreValidation-AllocateDescriptorSets-WrongType).
         VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(3, stack);
-        sizes.get(0).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC).descriptorCount(DESCRIPTOR_SLOTS);
-        sizes.get(1).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(2 * DESCRIPTOR_SLOTS);
-        sizes.get(2).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(DESCRIPTOR_SLOTS);
+        // Two sets per slot (ordinary and shadow, see SHADOW_MAP_BINDING), each with three image samplers.
+        sizes.get(0).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC).descriptorCount(2 * DESCRIPTOR_SLOTS);
+        sizes.get(1).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(6 * DESCRIPTOR_SLOTS);
+        sizes.get(2).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(2 * DESCRIPTOR_SLOTS);
         VkDescriptorPoolCreateInfo create = VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
-                .maxSets(DESCRIPTOR_SLOTS)
+                .maxSets(2 * DESCRIPTOR_SLOTS)
                 .pPoolSizes(sizes);
         LongBuffer handle = stack.mallocLong(1);
         check(vkCreateDescriptorPool(device, create, null, handle), "vkCreateDescriptorPool");
 
         descriptorPool = handle.get(0);
-        long[] layouts = new long[DESCRIPTOR_SLOTS];
+        long[] layouts = new long[2 * DESCRIPTOR_SLOTS];
         java.util.Arrays.fill(layouts, descriptorSetLayout);
-        LongBuffer sets = stack.mallocLong(DESCRIPTOR_SLOTS);
+        LongBuffer sets = stack.mallocLong(2 * DESCRIPTOR_SLOTS);
         VkDescriptorSetAllocateInfo allocate = VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
                 .descriptorPool(descriptorPool)
                 .pSetLayouts(stack.longs(layouts));
         check(vkAllocateDescriptorSets(device, allocate, sets), "vkAllocateDescriptorSets");
         for (int slot = 0; slot < DESCRIPTOR_SLOTS; slot++) {
             this.descriptorSets[slot] = sets.get(slot);
+            this.shadowDescriptorSets[slot] = sets.get(DESCRIPTOR_SLOTS + slot);
         }
+        org.lwjgl.vulkan.VkSamplerCreateInfo samplerInfo = org.lwjgl.vulkan.VkSamplerCreateInfo.calloc(stack)
+                .sType$Default()
+                .magFilter(VK_FILTER_NEAREST).minFilter(VK_FILTER_NEAREST)
+                .mipmapMode(VK_SAMPLER_MIPMAP_MODE_NEAREST)
+                .addressModeU(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                .addressModeV(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                .addressModeW(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                .compareEnable(false).minLod(0.0f).maxLod(0.0f);
+        LongBuffer samplerHandle = stack.mallocLong(1);
+        check(vkCreateSampler(device, samplerInfo, null, samplerHandle), "vkCreateSampler(terrain shadow)");
+        this.shadowSampler = samplerHandle.get(0);
     }
 
     private static long createShaderModule(MemoryStack stack, VkDevice device, ByteBuffer code, String stage) {

@@ -324,6 +324,12 @@ final class ModPrograms {
                         + " inputs=[" + trimmedInputs + "]";
             }
         }
+        // GL's current colour for a colour attribute the batch layout does not carry (the constant attribute):
+        // captured now, while the mirror holds the value the game set for this draw.
+        long constantOffset = pipeline.readsConstant()
+                ? pipeline.constantColorOffset(b.immediateState.colorRed(), b.immediateState.colorGreen(),
+                        b.immediateState.colorBlue(), b.immediateState.colorAlpha())
+                : -1L;
         VulkanGlTexture[] drawInputs = retainInputs ? textures : EMPTY_TEXTURES;
         // On the push route the draw's bytes must be frozen here: the packed buffer is the program's own and
         // is refilled in place when its uniforms change, so a second prepare of the same program in this window
@@ -334,7 +340,7 @@ final class ModPrograms {
                 ? VulkanModProgramPipeline.packUniforms(program)
                 : VulkanModProgramPipeline.packUniformsSnapshot(program);
         return new PreparedImmediate(new VulkanModProgramPipeline.Draw(pipeline,
-                drawUniforms, set, label, drawInputs, imageTextures), set, 0L);
+                drawUniforms, set, label, drawInputs, imageTextures, constantOffset), set, 0L);
     }
 
     /**
@@ -429,6 +435,14 @@ final class ModPrograms {
             if (published) {
                 texture = registry.get(name);
             }
+        }
+        if ((texture == null || texture.view() == 0L) && b.celtium$materializeStandaloneTexture(name)) {
+            // Every supply route declined and the name is a standalone texture the game allocated storage
+            // for: GL samples it (content undefined) from that moment, so the mirror is materialized at
+            // its recorded extent instead of refusing the draw. The measured deadlock this breaks is
+            // item 537's centre-depth sampler - the texture's only writer is a copy out of a framebuffer
+            // whose pair only this draw acquires, so refusing here refused the copy as well, forever.
+            texture = registry.get(name);
         }
         return texture;
     }

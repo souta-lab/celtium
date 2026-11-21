@@ -50,7 +50,14 @@ public final class VulkanModProgramPipeline {
     enum Source {
         POSITION(VK_FORMAT_R32G32B32_SFLOAT, 0),
         TEXCOORD(VK_FORMAT_R32G32_SFLOAT, 12),
-        COLOR(VK_FORMAT_R8G8B8A8_UNORM, 20);
+        COLOR(VK_FORMAT_R8G8B8A8_UNORM, 20),
+        /**
+         * GL's current colour, for a layout that carries none: GL feeds a colour attribute whose array is disabled
+         * from the current generic attribute ({@code glColor4f}), the same value for every vertex. Here that is a
+         * second vertex binding ({@link #CONSTANT_BINDING}) with stride 0 over four floats the draw writes from the
+         * backend's colour mirror, so every vertex reads the one value - Vulkan's form of a constant attribute.
+         */
+        CONSTANT_COLOR(VK_FORMAT_R32G32B32A32_SFLOAT, 0);
 
         final int format;
         final int offset;
@@ -59,7 +66,23 @@ public final class VulkanModProgramPipeline {
             this.format = format;
             this.offset = offset;
         }
+
+        /** {@return the vertex binding this field is read from}: the batch's own (0), or the constant ring (1). */
+        int binding() {
+            return this == CONSTANT_COLOR ? CONSTANT_BINDING : 0;
+        }
     }
+
+    /** The vertex binding of the constant-attribute ring (stride 0); the batch's own vertices are binding 0. */
+    static final int CONSTANT_BINDING = 1;
+    /** Bytes of one constant colour slot: four floats. */
+    static final int CONSTANT_SLOT_BYTES = 16;
+    /**
+     * Slots in a pipeline's constant ring. A slot is rewritten only after the ring wraps, and the ring is sized far
+     * beyond the draws one pipeline issues across the frames in flight (the measured user is the sky program's
+     * horizon mesh: a handful of draws a frame); consecutive draws with an unchanged colour share one slot.
+     */
+    static final int CONSTANT_RING_SLOTS = 4096;
 
     /**
      * The texture-coordinate names: the lowering's own (a legacy {@code gl_MultiTexCoord0} comes back as
@@ -104,17 +127,29 @@ public final class VulkanModProgramPipeline {
         /** Storage images whose layouts are transitioned around the fragment draw. */
         public final VulkanGlTexture[] images;
 
+        /** The constant ring slot's byte offset holding the draw's current colour; -1 when nothing reads it. */
+        final long constantOffset;
+
         Draw(VulkanModProgramPipeline pipeline, ByteBuffer uniforms, long samplerSet, String label,
              VulkanGlTexture[] inputs, VulkanGlTexture[] images) {
+            this(pipeline, uniforms, samplerSet, label, inputs, images, -1L);
+        }
+
+        Draw(VulkanModProgramPipeline pipeline, ByteBuffer uniforms, long samplerSet, String label,
+             VulkanGlTexture[] inputs, VulkanGlTexture[] images, long constantOffset) {
             this.pipeline = pipeline;
             this.uniforms = uniforms;
             this.samplerSet = samplerSet;
             this.label = label;
             this.inputs = inputs;
             this.images = images;
+            this.constantOffset = constantOffset;
         }
 
         public void draw(VkCommandBuffer commandBuffer, VulkanDynamicMesh mesh, long[] bindCache) {
+            if (this.constantOffset >= 0L) {
+                this.pipeline.bindConstant(commandBuffer, this.constantOffset);
+            }
             this.pipeline.draw(commandBuffer, mesh, this.uniforms, this.samplerSet, this.images, bindCache);
         }
     }
@@ -133,6 +168,13 @@ public final class VulkanModProgramPipeline {
     /** Slots of {@link #uniformBuffer} the descriptor sets can name; the post chain's ring depth. */
     private static final int UNIFORM_RING_SLOTS = 32;
     private VulkanUniformBuffer uniformBuffer;
+    /** The constant-attribute ring (binding 1, stride 0); null for a pipeline whose layout feeds every attribute. */
+    private VulkanUniformBuffer constantRing;
+    private int constantCursor = -1;
+    private float lastConstantRed = Float.NaN;
+    private float lastConstantGreen;
+    private float lastConstantBlue;
+    private float lastConstantAlpha;
     private int uniformStride;
     private int uniformCursor;
     private long uniformEpoch = Long.MIN_VALUE;
@@ -264,9 +306,71 @@ public final class VulkanModProgramPipeline {
         }
         if (COLOR_NAMES.contains(attribute.name())) {
             // POSITION_TEX has no colour element; a program that reads one needs the colour layout, not this batch.
-            return formatId == VulkanImmediateFormats.POSITION_TEX_COLOR ? Source.COLOR : null;
+            // POSITION is answered with GL's current colour (the constant attribute): its measured arrival is Iris's
+            // horizon mesh, drawn by the sky program right after glColor4f(fog colour), which is exactly the value GL
+            // would hand gl_Color there. POSITION_TEX stays refused until a measured case says what feeds it.
+            if (formatId == VulkanImmediateFormats.POSITION_TEX_COLOR) {
+                return Source.COLOR;
+            }
+            return formatId == VulkanImmediateFormats.POSITION ? Source.CONSTANT_COLOR : null;
         }
         return attribute.location() == 0 ? Source.POSITION : null;
+    }
+
+    /** {@return whether any of these attributes reads the constant ring on this layout} (static and pure, for tests). */
+    static boolean readsConstant(List<ModGlslTranslator.Attribute> attributes, int formatId) {
+        for (ModGlslTranslator.Attribute attribute : attributes) {
+            if (source(attribute, formatId) == Source.CONSTANT_COLOR) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Binds the constant ring at {@code offset} on {@link #CONSTANT_BINDING}. Binding 1 is not part of the shared
+     * bind cache (which names binding 0 only), so binding it here cannot make a later batch skip its own bind.
+     */
+    void bindConstant(VkCommandBuffer commandBuffer, long offset) {
+        VulkanUniformBuffer ring = this.constantRing;
+        if (ring == null || offset < 0L) {
+            return;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            vkCmdBindVertexBuffers(commandBuffer, CONSTANT_BINDING, stack.longs(ring.buffer()), stack.longs(offset));
+        }
+    }
+
+    /** {@return whether this pipeline reads GL's current colour from the constant ring} */
+    public boolean readsConstant() {
+        return this.constantRing != null;
+    }
+
+    /**
+     * {@return the byte offset of a ring slot holding this colour}, or -1 when the pipeline has no ring. Written at
+     * prepare time, when the backend's colour mirror holds the value GL would give the draw; the recorded draw binds
+     * the slot later. An unchanged colour reuses the previous slot, so a run of same-coloured draws costs one write.
+     */
+    public long constantColorOffset(float red, float green, float blue, float alpha) {
+        VulkanUniformBuffer ring = this.constantRing;
+        if (ring == null) {
+            return -1L;
+        }
+        if (this.constantCursor >= 0 && red == this.lastConstantRed && green == this.lastConstantGreen
+                && blue == this.lastConstantBlue && alpha == this.lastConstantAlpha) {
+            return (long) this.constantCursor * CONSTANT_SLOT_BYTES;
+        }
+        this.constantCursor = (this.constantCursor + 1) % CONSTANT_RING_SLOTS;
+        long address = ring.mappedAddress() + (long) this.constantCursor * CONSTANT_SLOT_BYTES;
+        MemoryUtil.memPutFloat(address, red);
+        MemoryUtil.memPutFloat(address + 4L, green);
+        MemoryUtil.memPutFloat(address + 8L, blue);
+        MemoryUtil.memPutFloat(address + 12L, alpha);
+        this.lastConstantRed = red;
+        this.lastConstantGreen = green;
+        this.lastConstantBlue = blue;
+        this.lastConstantAlpha = alpha;
+        return (long) this.constantCursor * CONSTANT_SLOT_BYTES;
     }
 
     /** Builds the pipeline with the render state of {@code like}; throws on a Vulkan failure. */
@@ -513,9 +617,19 @@ public final class VulkanModProgramPipeline {
                     : formatId == VulkanImmediateFormats.POSITION
                             ? VulkanImmediateTexturePipeline.POSITION_BYTES
                             : VulkanImmediateTexturePipeline.POSITION_TEX_BYTES;
-            VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
-            binding.get(0).binding(0).stride(stride).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
             List<ModGlslTranslator.Attribute> declared = this.attributes;
+            boolean constant = readsConstant(declared, formatId);
+            VkVertexInputBindingDescription.Buffer binding =
+                    VkVertexInputBindingDescription.calloc(constant ? 2 : 1, stack);
+            binding.get(0).binding(0).stride(stride).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
+            if (constant) {
+                // Stride 0: every vertex reads the same four floats, the draw's current colour.
+                binding.get(1).binding(CONSTANT_BINDING).stride(0).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
+                if (this.constantRing == null) {
+                    this.constantRing = new VulkanUniformBuffer(this.context,
+                            (long) CONSTANT_SLOT_BYTES * CONSTANT_RING_SLOTS, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+                }
+            }
             VkVertexInputAttributeDescription.Buffer attributes =
                     VkVertexInputAttributeDescription.calloc(declared.size(), stack);
             for (int i = 0; i < declared.size(); i++) {
@@ -527,7 +641,7 @@ public final class VulkanModProgramPipeline {
                     throw new IllegalStateException("attribute " + attribute.name() + " has no source in format "
                             + formatId);
                 }
-                attributes.get(i).location(attribute.location()).binding(0)
+                attributes.get(i).location(attribute.location()).binding(field.binding())
                         .format(field.format).offset(field.offset);
             }
             VkPipelineVertexInputStateCreateInfo vertexInput = VkPipelineVertexInputStateCreateInfo.calloc(stack)
@@ -1008,6 +1122,11 @@ public final class VulkanModProgramPipeline {
 
     /** Destroys the Vulkan objects; defers cleanup if a command buffer is currently recording. */
     public void delete() {
+        if (this.constantRing != null) {
+            // The ring's own delete defers its free while a recording is open (VulkanUniformBuffer.delete).
+            this.constantRing.delete();
+            this.constantRing = null;
+        }
         VulkanUniformBuffer uniformBufferToDestroy = this.uniformBuffer;
         long pipelineToDestroy = this.pipeline;
         java.util.List<Long> poolsToDestroy = new java.util.ArrayList<Long>(this.descriptorPools);
