@@ -141,8 +141,15 @@ public final class VulkanImmediateBlockPipeline {
         }
         VulkanImmediateBlockPipeline result = new VulkanImmediateBlockPipeline(context, renderPass, colorBlend,
                 depthTest, depthWrite, cull, depthCompareOp);
-        result.createPipelineLayout();
-        result.createPipeline();
+        // BH-20: roll back partial layout/pool handles if pipeline creation fails.
+        try {
+            result.createPipelineLayout();
+            result.createPipeline();
+        } catch (RuntimeException | LinkageError error) {
+            VulkanImmediateTexturePipeline.BUILD_ROLLBACKS.incrementAndGet();
+            result.delete();
+            throw error;
+        }
         return result;
     }
 
@@ -270,33 +277,61 @@ public final class VulkanImmediateBlockPipeline {
             this.setsCreated++;
             return set;
         } catch (RuntimeException | LinkageError error) {
+            if (this.context.celtium$isDeviceLost()) {
+                throw error;
+            }
             return 0L;
         }
     }
 
     public void delete() {
-        if (this.pipeline != VK_NULL_HANDLE) {
-            this.context.celtium$notePipelineDestroy("immediateblockpipeline");
-            vkDestroyPipeline(this.context.device(), this.pipeline, null);
-            this.pipeline = VK_NULL_HANDLE;
-        }
+        long pipelineToDestroy = this.pipeline;
+        long poolToDestroy = this.descriptorPool;
+        long setLayoutToDestroy = this.descriptorSetLayout;
+        long pipelineLayoutToDestroy = this.pipelineLayout;
+        this.pipeline = VK_NULL_HANDLE;
+        this.descriptorPool = VK_NULL_HANDLE;
+        this.descriptorSet = VK_NULL_HANDLE;
+        this.descriptorSetLayout = VK_NULL_HANDLE;
+        this.pipelineLayout = VK_NULL_HANDLE;
         this.setsByTextureView.clear();
+        this.lastDescriptorKey = -1L;
+        this.lastDescriptorSet = 0L;
         // Retired sets are pools' to free: the pool teardown below releases them with every other set this pipeline
         // allocated, which is why this list only has to keep them reachable until then.
         this.retiredSets.clear();
-        if (this.descriptorPool != VK_NULL_HANDLE) {
+        if (this.context.celtium$recordingOpen()) {
+            this.context.celtium$retireCleanup("block.delete", () -> {
+                if (pipelineToDestroy != VK_NULL_HANDLE) {
+                    this.context.celtium$notePipelineDestroy("immediateblockpipeline");
+                    vkDestroyPipeline(this.context.device(), pipelineToDestroy, null);
+                }
+                if (poolToDestroy != VK_NULL_HANDLE) {
+                    this.context.celtium$noteDescriptorDestroy("block.delete.deferred");
+                    vkDestroyDescriptorPool(this.context.device(), poolToDestroy, null);
+                }
+                if (setLayoutToDestroy != VK_NULL_HANDLE) {
+                    vkDestroyDescriptorSetLayout(this.context.device(), setLayoutToDestroy, null);
+                }
+                if (pipelineLayoutToDestroy != VK_NULL_HANDLE) {
+                    vkDestroyPipelineLayout(this.context.device(), pipelineLayoutToDestroy, null);
+                }
+            });
+            return;
+        }
+        if (pipelineToDestroy != VK_NULL_HANDLE) {
+            this.context.celtium$notePipelineDestroy("immediateblockpipeline");
+            vkDestroyPipeline(this.context.device(), pipelineToDestroy, null);
+        }
+        if (poolToDestroy != VK_NULL_HANDLE) {
             this.context.celtium$noteDescriptorDestroy("block.delete");
-vkDestroyDescriptorPool(this.context.device(), this.descriptorPool, null);
-            this.descriptorPool = VK_NULL_HANDLE;
-            this.descriptorSet = VK_NULL_HANDLE;
+            vkDestroyDescriptorPool(this.context.device(), poolToDestroy, null);
         }
-        if (this.descriptorSetLayout != VK_NULL_HANDLE) {
-            vkDestroyDescriptorSetLayout(this.context.device(), this.descriptorSetLayout, null);
-            this.descriptorSetLayout = VK_NULL_HANDLE;
+        if (setLayoutToDestroy != VK_NULL_HANDLE) {
+            vkDestroyDescriptorSetLayout(this.context.device(), setLayoutToDestroy, null);
         }
-        if (this.pipelineLayout != VK_NULL_HANDLE) {
-            vkDestroyPipelineLayout(this.context.device(), this.pipelineLayout, null);
-            this.pipelineLayout = VK_NULL_HANDLE;
+        if (pipelineLayoutToDestroy != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(this.context.device(), pipelineLayoutToDestroy, null);
         }
     }
 
