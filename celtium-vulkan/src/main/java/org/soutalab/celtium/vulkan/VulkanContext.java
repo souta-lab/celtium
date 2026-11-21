@@ -1645,7 +1645,8 @@ public final class VulkanContext {
                 return thread;
             });
         }
-        if (!this.pendingBatchedSubmits.isEmpty()) {
+        boolean tookBatch = !this.pendingBatchedSubmits.isEmpty();
+        if (tookBatch) {
             this.presenterBatch = this.pendingBatch;
             this.presenterEntries = new java.util.ArrayList<DeferredSubmit>(this.pendingBatchedSubmits);
             this.pendingBatch = null;
@@ -1659,7 +1660,7 @@ public final class VulkanContext {
             System.out.println("[Celtium] CELTIUM_ASYNC_PRESENT jobs=" + presenterJobs + " joins=" + presenterJoins
                     + " joinMicros=" + (presenterJoinNanos / 1000L) + " batch=" + (batch != null));
         }
-        this.presenterJob = this.presenter.submit(() -> {
+        this.presenterJob = celtium$submitPresenter(() -> {
             if (batch != null) {
                 Throwable error = submitBatch(batch, entries);
                 if (error != null) {
@@ -1690,7 +1691,29 @@ public final class VulkanContext {
                 this.presenterResult = org.lwjgl.vulkan.KHRSwapchain.vkQueuePresentKHR(this.queue, present);
             }
         });
+        if (this.presenterJob == null) {
+            // The executor refused the job (it has been shut down): the documented false, with nothing handed
+            // over - a batch taken out of the pending list for this hand-over goes back, so a later submission
+            // still carries it (bughunt LANE-05 #7: submit() used to throw here instead, and no path returned
+            // false at all, while the caller marked the present done unconditionally).
+            if (tookBatch) {
+                this.pendingBatch = batch;
+                this.pendingBatchedSubmits.addAll(entries);
+                this.presenterBatch = null;
+                this.presenterEntries = null;
+            }
+            return false;
+        }
         return true;
+    }
+
+    /** {@return the submitted job, or null when the presenter executor refused it}. */
+    private java.util.concurrent.Future<?> celtium$submitPresenter(Runnable job) {
+        try {
+            return this.presenter.submit(job);
+        } catch (java.util.concurrent.RejectedExecutionException rejected) {
+            return null;
+        }
     }
 
     /**
