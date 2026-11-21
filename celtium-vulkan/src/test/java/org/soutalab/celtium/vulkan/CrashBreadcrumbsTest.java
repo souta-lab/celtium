@@ -40,6 +40,42 @@ class CrashBreadcrumbsTest {
     }
 
     @Test
+    void windowPassLineCarriesTheBeginArguments() {
+        // Item 536: the write-through line is read next to an hs_err after a native AV, so it names the same
+        // three numbers the ring's WINDOW_PASS describe does, plus the sequence of the window in the session.
+        assertEquals("celtium last window-pass seq=7 renderPass=0x2a framebuffer=0x10 extent=3440x1369\n",
+                CrashBreadcrumbs.windowPassLine(7L, 0x2aL, 0x10L, (3440L << 32) | 1369L));
+    }
+
+    @Test
+    void windowPassNotesWriteThroughTheLatestTuple(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
+            throws Exception {
+        // Item 536: the ring is dumped only at a device loss, so a process-killing AV inside
+        // vkCmdBeginRenderPass takes the fatal window's begin arguments with it. The write-through file must
+        // hold the latest tuple after each change, and an unchanged tuple inside the heartbeat interval must
+        // not be rewritten (the sequence number in the line would move if it were).
+        java.nio.file.Path file = dir.resolve("celtium-last-window-pass.log");
+        CrashBreadcrumbs.windowPassFileForTest = file;
+        try {
+            long extent = (1920L << 32) | 1080L;
+            CrashBreadcrumbs.note3(CrashBreadcrumbs.WINDOW_PASS, 0xaaaaL, 0xbbbbL, extent);
+            String first = java.nio.file.Files.readString(file);
+            assertTrue(first.contains("renderPass=0xaaaa"), first);
+            assertTrue(first.contains("framebuffer=0xbbbb"), first);
+            assertTrue(first.contains("extent=1920x1080"), first);
+            CrashBreadcrumbs.note3(CrashBreadcrumbs.WINDOW_PASS, 0xaaaaL, 0xbbbbL, extent);
+            assertEquals(first, java.nio.file.Files.readString(file),
+                    "an unchanged tuple inside the interval is not rewritten");
+            CrashBreadcrumbs.note3(CrashBreadcrumbs.WINDOW_PASS, 0xccccL, 0xddddL, extent);
+            String changed = java.nio.file.Files.readString(file);
+            assertTrue(changed.contains("renderPass=0xcccc"), changed);
+            assertTrue(changed.contains("framebuffer=0xdddd"), changed);
+        } finally {
+            CrashBreadcrumbs.windowPassFileForTest = null;
+        }
+    }
+
+    @Test
     void newCodesDoNotCollideWithTheExistingOnes() {
         int[] codes = {CrashBreadcrumbs.WINDOW, CrashBreadcrumbs.TERRAIN_PASS, CrashBreadcrumbs.CHAIN_PAIR,
                 CrashBreadcrumbs.TEXTURE_UPLOAD, CrashBreadcrumbs.RAW_WRITE, CrashBreadcrumbs.PRESENT,
