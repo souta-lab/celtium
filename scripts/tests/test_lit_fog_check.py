@@ -1,7 +1,8 @@
 """The lit-fog checker separates "the fog reached the picture" from "something else changed".
 
-`scripts/cpu-contract/lit-fog-check.py` reads the two presented dumps one flag apart (`-Dceltium.vulkan.litFog=false`
-against the default) and asks whether every changed pixel is the same pixel mixed toward the fog colour, with the sky
+`scripts/cpu-contract/lit-fog-check.py` reads two presented dumps - one arm without lit fog, one with it (an archived
+pair from when the flag existed, or a two-build pair; the flag itself is gone, QUEUE 641) - and asks whether every
+changed pixel is the same pixel mixed toward the fog colour, with the sky
 band untouched. The leg that produces the pair needs a GPU and a five-minute game launch, so this test pins the reading
 itself: a synthetic mix at a known weight has to pass and be recovered, a band painted a fixed colour has to fail, and a
 change in the sky band has to fail even when the rest of the frame is a perfect fog mix. A checker that cannot fail
