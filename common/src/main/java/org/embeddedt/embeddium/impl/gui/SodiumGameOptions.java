@@ -79,8 +79,6 @@ public class SodiumGameOptions implements OptionStorage<SodiumGameOptions> {
         public boolean useTranslucentFaceSorting = true;
         public boolean useRenderPassOptimization = true;
         public boolean useRenderPassConsolidation = true;
-        public boolean useFasterClouds = true;
-        public boolean useNoErrorGLContext = true;
 
         public AsyncOcclusionMode asyncOcclusionMode = AsyncOcclusionMode.ONLY_SHADOW;
 
@@ -98,16 +96,11 @@ public class SodiumGameOptions implements OptionStorage<SodiumGameOptions> {
     }
 
     public static class AdvancedSettings {
-        public boolean enableMemoryTracing = false;
-        public boolean useAdvancedStagingBuffers = true;
-        public boolean disableIncompatibleModWarnings = false;
-
         public int cpuRenderAheadLimit = 3;
     }
 
     public static class QualitySettings {
         public GraphicsQuality weatherQuality = GraphicsQuality.DEFAULT;
-        public GraphicsQuality leavesQuality = GraphicsQuality.DEFAULT;
 
         public boolean enableVignette = true;
 
