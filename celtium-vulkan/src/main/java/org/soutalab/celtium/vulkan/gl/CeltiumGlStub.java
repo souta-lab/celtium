@@ -114,6 +114,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int SEM_COPY_TEX_IMAGE = 52;    // copy from the bound read framebuffer into a texture level
     private static final int SEM_COPY_TEX_SUB_IMAGE = 53; // the same, into a sub-rectangle
     private static final int SEM_BLIT_FRAMEBUFFER = 78;  // framebuffer-to-framebuffer blit (the depth bit is served)
+    private static final int SEM_COPY_IMAGE_SUB_DATA = 79; // (srcName,srcTarget,srcLevel,srcX,srcY,srcZ,dstName,dstTarget,dstLevel,dstX,dstY,dstZ,w,h,d) -> captured level to captured level
     private static final int SEM_TEX_PARAM_I = 54;     // (target,pname,param) -> texture parameter of the bound texture
     private static final int SEM_TEX_PARAM_IV = 55;    // (target,pname,values) -> the same, from an array
     private static final int SEM_TEX_PARAM_I_DSA = 56; // (texture,pname,param) -> the same, texture named directly
@@ -417,6 +418,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         // image for the bound read framebuffer, which is a different component's resource.
         fn("glCopyTexImage2D", R_VOID, SEM_COPY_TEX_IMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
         fn("glCopyTexSubImage2D", R_VOID, SEM_COPY_TEX_SUB_IMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
+        // Texture-to-texture copy: unlike the framebuffer copies above, both levels live in the stub's own
+        // capture, so this one is served in full - it is FoamFix's fast animation path (see copyImageSubData).
+        fn("glCopyImageSubData", R_VOID, SEM_COPY_IMAGE_SUB_DATA, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT,
+                A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
         fn("glBlitFramebuffer", R_VOID, SEM_BLIT_FRAMEBUFFER, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT,
                 A_INT, A_INT);
         // glReadPixels is the same question the copies answer, asked into a client buffer: the bound read framebuffer's
@@ -1862,6 +1867,22 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         stub.celtium$noteTextureCopy("glCopyTexSubImage2D", target, level, xoffset, yoffset, x, y, width, height);
+    }
+
+    /**
+     * Serves a {@code glCopyImageSubData}, from the transformer's route.
+     *
+     * <p>Same producer the stub's own dispatch calls, so the two spellings cannot diverge; this is the call
+     * FoamFix's fast animation path makes every tick (see {@link #copyImageSubData}).
+     */
+    public static void celtium$copyImageSubData(int srcName, int srcTarget, int srcLevel, int srcX, int srcY,
+            int srcZ, int dstName, int dstTarget, int dstLevel, int dstX, int dstY, int dstZ,
+            int width, int height, int depth) {
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.copyImageSubData(srcName, srcTarget, srcLevel, srcX, srcY, srcZ, dstName, dstTarget, dstLevel,
+                    dstX, dstY, dstZ, width, height, depth);
+        }
     }
 
     /**
@@ -5692,6 +5713,11 @@ public final class CeltiumGlStub implements FunctionProvider {
                 celtium$noteTextureCopy(fn.name, (int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4],
                         (int) c[5], (int) c[6], (int) c[7]);
                 return 0L;
+            case SEM_COPY_IMAGE_SUB_DATA:
+                copyImageSubData((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4], (int) c[5],
+                        (int) c[6], (int) c[7], (int) c[8], (int) c[9], (int) c[10], (int) c[11],
+                        (int) c[12], (int) c[13], (int) c[14]);
+                return 0L;
             case SEM_BLIT_FRAMEBUFFER:
                 celtium$noteBlitFramebuffer((int) c[0], (int) c[1], (int) c[2], (int) c[3], (int) c[4],
                         (int) c[5], (int) c[6], (int) c[7], (int) c[8], (int) c[9]);
@@ -8710,6 +8736,18 @@ public final class CeltiumGlStub implements FunctionProvider {
             this.unconvertedUploads.incrementAndGet();
             return;
         }
+        fileTexturePatch(name, level, x, y, width, height, patch);
+    }
+
+    /**
+     * Files one converted RGBA8 patch into a level's captured rows.
+     * <p>
+     * The shared half of {@link #texSubImageForName} and {@link #copyImageSubData}: a patch that arrives as
+     * client memory and one that arrives as a copy from another captured level land in the same place, so the
+     * backlog, surface and settled-release rules stay the level's own rather than diverging per spelling.
+     * {@code x}/{@code y} are the patch's position in the level, {@code patch} its RGBA8 rows, top row first.
+     */
+    private void fileTexturePatch(int name, int level, int x, int y, int width, int height, ByteBuffer patch) {
         long key = texLevelKey(name, level);
         this.patchKeys.addTo(key, 1);
         TexCapture existing = this.texCaptures.get(key);
@@ -9470,6 +9508,98 @@ public final class CeltiumGlStub implements FunctionProvider {
                     + " source=" + x + "," + y + " " + width + "x" + height
                     + " readFbo=" + this.readFbo + " drawFbo=" + this.drawFbo
                     + " servedFrom=" + servedFrom + " requests=" + this.textureCopyRequests
+                    + " site=[" + celtium$callSite(8) + "]");
+        }
+    }
+
+    // ---- copy between captured levels: glCopyImageSubData -----------------------------------------------------
+    //
+    // What the request is (measured shape): FoamFix's fast animation path (txFasterAnimation=2, the setting AMD
+    // users are told to raise) holds every frame of an animated sprite side by side in a texture of its own and
+    // copies the current frame into the atlas level each tick with ARBCopyImage.glCopyImageSubData. Both sides
+    // are ordinary uploads here - the frame strip arrives through TextureUtil, so the stub's capture holds its
+    // bytes - which makes this the one texture copy GL-less can serve in full: the source is a captured level,
+    // not the framebuffer the copies above have to refuse. Before this route existed the call fell to the
+    // no-op table, the copy vanished without a sound, and the atlas kept its first frame forever: water, lava
+    // and fire froze with no crash and no log line (roam-compat's finding, lanechat #1387).
+    private long copyImageRequests;
+    private long copyImageServed;
+    private static final java.util.Set<String> COPY_IMAGE_SHAPES =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private void copyImageSubData(int srcName, int srcTarget, int srcLevel, int srcX, int srcY, int srcZ,
+            int dstName, int dstTarget, int dstLevel, int dstX, int dstY, int dstZ,
+            int width, int height, int depth) {
+        this.copyImageRequests++;
+        String refusal = null;
+        if (srcTarget != GL_TEXTURE_2D || dstTarget != GL_TEXTURE_2D || depth != 1 || srcZ != 0 || dstZ != 0
+                || width <= 0 || height <= 0) {
+            refusal = "refused-shape: srcTarget=0x" + Integer.toHexString(srcTarget)
+                    + " dstTarget=0x" + Integer.toHexString(dstTarget)
+                    + " depth=" + depth + " srcZ=" + srcZ + " dstZ=" + dstZ
+                    + " size=" + width + "x" + height
+                    + " (only a 2D level-to-level copy is served)";
+        }
+        TexCapture source = refusal == null
+                ? this.texCaptures.get(texLevelKey(srcName, srcLevel))
+                : null;
+        // A capture filed as a patch covers its level from the record's own (x, y), so the rectangle this copy
+        // names in level coordinates is read at the level position minus the record's origin.
+        int srcRecX = source == null ? 0 : srcX - source.x;
+        int srcRecY = source == null ? 0 : srcY - source.y;
+        if (refusal == null && (source == null || !source.gamePixels)) {
+            refusal = "refused-source-unrecorded: src=" + srcName + " level=" + srcLevel
+                    + " (the stub captured no game pixels for the source level)";
+        } else if (refusal == null && (srcRecX < 0 || srcRecY < 0
+                || srcRecX + width > source.width || srcRecY + height > source.height)) {
+            refusal = "refused-source-outside: src=" + srcName + " level=" + srcLevel
+                    + " rect=" + srcX + "," + srcY + " " + width + "x" + height
+                    + " record=" + source.width + "x" + source.height + " at " + source.x + "," + source.y;
+        }
+        if (refusal != null) {
+            String key = refusal.substring(0, refusal.indexOf(':')) + "/" + width + "x" + height;
+            if (COPY_IMAGE_SHAPES.size() < 8 && COPY_IMAGE_SHAPES.add(key)) {
+                System.out.println("[Celtium] CELTIUM_COPY_IMAGE glCopyImageSubData src=" + srcName
+                        + " dst=" + dstName + " " + refusal + " requests=" + this.copyImageRequests
+                        + " site=[" + celtium$callSite(8) + "]");
+            }
+            return;
+        }
+        // Snapshot the rectangle before filing it: the destination may be the source's own level, where GL
+        // leaves an overlapping copy undefined - a snapshot at least makes it one whole older image rather
+        // than a row-by-row smear.
+        ByteBuffer patch = ByteBuffer.allocateDirect(width * height * 4);
+        int rowBytes = width * 4;
+        int sourceStride = source.width * 4;
+        for (int row = 0; row < height; row++) {
+            patch.put(row * rowBytes, source.data, (srcRecY + row) * sourceStride + srcRecX * 4, rowBytes);
+        }
+        // A patch the mirror has not consumed yet is a newer write to the source level than the record it
+        // sits beside: where one overlaps the rectangle it wins, in the order the game wrote them.
+        java.util.List<TexCapture> pending = this.texPatchBacklog.get(texLevelKey(srcName, srcLevel));
+        if (pending != null) {
+            for (TexCapture newer : pending) {
+                int ix0 = Math.max(srcX, newer.x);
+                int iy0 = Math.max(srcY, newer.y);
+                int ix1 = Math.min(srcX + width, newer.x + newer.width);
+                int iy1 = Math.min(srcY + height, newer.y + newer.height);
+                if (ix0 >= ix1 || iy0 >= iy1) {
+                    continue;
+                }
+                int span = (ix1 - ix0) * 4;
+                for (int row = iy0; row < iy1; row++) {
+                    patch.put((row - srcY) * rowBytes + (ix0 - srcX) * 4, newer.data,
+                            (row - newer.y) * newer.width * 4 + (ix0 - newer.x) * 4, span);
+                }
+            }
+        }
+        fileTexturePatch(dstName, dstLevel, dstX, dstY, width, height, patch);
+        this.copyImageServed++;
+        if (this.copyImageServed == 1) {
+            System.out.println("[Celtium] CELTIUM_COPY_IMAGE glCopyImageSubData src=" + srcName
+                    + " level=" + srcLevel + " rect=" + srcX + "," + srcY + " " + width + "x" + height
+                    + " -> dst=" + dstName + " level=" + dstLevel + " at=" + dstX + "," + dstY
+                    + " servedFrom=captured-level requests=" + this.copyImageRequests
                     + " site=[" + celtium$callSite(8) + "]");
         }
     }
