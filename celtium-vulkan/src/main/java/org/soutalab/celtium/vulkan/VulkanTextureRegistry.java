@@ -1489,7 +1489,11 @@ public final class VulkanTextureRegistry {
         // configuration this project measured as the closest to the GL reference, and leaves no level stale. The
         // patchMipLevels property turns the per-level application off for measurement only; see PATCH_MIP_LEVELS.
         int appliedLevels = wholeTexture || !PATCH_MIP_LEVELS ? 1 : producerDepth;
-        java.nio.ByteBuffer[] levelBytes = new java.nio.ByteBuffer[appliedLevels];
+        java.nio.ByteBuffer[] levelBytes = this.announceLevelBytes;
+        if (levelBytes.length < appliedLevels) {
+            levelBytes = new java.nio.ByteBuffer[appliedLevels];
+            this.announceLevelBytes = levelBytes;
+        }
         try {
             for (int level = 0; level < appliedLevels; level++) {
                 int levelWidth = width >> level;
@@ -1546,6 +1550,7 @@ public final class VulkanTextureRegistry {
      * reference, so one buffer per level serves every call. Limited to the call's own byte count each time.
      */
     private java.nio.ByteBuffer[] announceScratch = new java.nio.ByteBuffer[0];
+    private java.nio.ByteBuffer[] announceLevelBytes = new java.nio.ByteBuffer[16];
 
     private java.nio.ByteBuffer announceScratch(int level, int bytes) {
         if (level >= this.announceScratch.length) {

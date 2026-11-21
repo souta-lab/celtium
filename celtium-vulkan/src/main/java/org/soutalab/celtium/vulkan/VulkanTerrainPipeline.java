@@ -11,6 +11,7 @@ import org.lwjgl.vulkan.*;
 
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
+import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 import java.util.Locale;
 
@@ -955,6 +956,17 @@ public final class VulkanTerrainPipeline {
     }
 
     public void bindDescriptors(VkCommandBuffer commandBuffer, long uniformBufferOffset, int slot) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            bindDescriptors(commandBuffer, uniformBufferOffset, slot, stack.mallocLong(1), stack.mallocInt(1));
+        }
+    }
+
+    /**
+     * Zero-push overload for the per-region terrain draw loop: reuses the caller's 1-element scratch buffers
+     * allocated once outside the region loop instead of pushing/popping a {@link MemoryStack} frame per region.
+     */
+    public void bindDescriptors(VkCommandBuffer commandBuffer, long uniformBufferOffset, int slot,
+                                LongBuffer descriptorSetScratch, IntBuffer dynamicOffsetScratch) {
         requireAlive();
         if (commandBuffer == null) {
             throw new NullPointerException("commandBuffer");
@@ -971,11 +983,13 @@ public final class VulkanTerrainPipeline {
             throw new IllegalArgumentException("Uniform buffer offset " + uniformBufferOffset
                     + " does not fit in the 32 bit dynamic offset");
         }
-        if (minUniformBufferOffsetAlignment > 0L
-                && uniformBufferOffset % minUniformBufferOffsetAlignment != 0L) {
+        long align = minUniformBufferOffsetAlignment;
+        if (align > 0L && (((align & (align - 1L)) == 0L)
+                ? (uniformBufferOffset & (align - 1L)) != 0L
+                : uniformBufferOffset % align != 0L)) {
             throw new IllegalStateException("Uniform buffer offset " + uniformBufferOffset + " for terrain pass '"
                     + passName + "' is not a multiple of minUniformBufferOffsetAlignment "
-                    + minUniformBufferOffsetAlignment);
+                    + align);
         }
         if (uniformBufferOffset + uniformsRange > uniformsSize) {
             throw new IllegalStateException("Uniform buffer offset " + uniformBufferOffset + " with range "
@@ -983,12 +997,14 @@ public final class VulkanTerrainPipeline {
                     + passName + "'; the uniform blocks of this buffer must be " + UNIFORM_BLOCK_SIZE + " bytes");
         }
         auditAtlasDraw(uniformBufferOffset);
-        this.lastDescriptorSet = this.descriptorSets[useSlot];
-        this.lastDynamicOffset = (int) uniformBufferOffset;
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0,
-                    stack.longs(this.descriptorSets[useSlot]), stack.ints((int) uniformBufferOffset));
-        }
+        long set = this.descriptorSets[useSlot];
+        int dynamicOffset = (int) uniformBufferOffset;
+        this.lastDescriptorSet = set;
+        this.lastDynamicOffset = dynamicOffset;
+        descriptorSetScratch.put(0, set);
+        dynamicOffsetScratch.put(0, dynamicOffset);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0,
+                descriptorSetScratch, dynamicOffsetScratch);
     }
 
     /**
