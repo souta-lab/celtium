@@ -3304,6 +3304,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final float TERRAIN_SHADOW_DARKNESS = celtium$shadowDarkness(
             System.getProperty("celtium.vulkan.terrainShadowDarkness"));
     private final Matrix4f terrainShadowMatrix = new Matrix4f();
+    private final Matrix4f terrainShadowAdjustedMatrix = new Matrix4f();
+    private int terrainShadowCamIntX;
+    private int terrainShadowCamIntY;
+    private int terrainShadowCamIntZ;
+    private float terrainShadowCamFracX;
+    private float terrainShadowCamFracY;
+    private float terrainShadowCamFracZ;
     private long terrainShadowFrame = Long.MIN_VALUE;
     private int terrainShadowDepthTexture;
     private int terrainShadowLogs;
@@ -16279,6 +16286,13 @@ this.frameBufferOpen = false;
                     + " via=" + (depthRecord[3] == 0 ? "record" : "stub-bound-" + depthRecord[3])
                     + " shared=true colors=" + colors + " frame=" + this.frameId);
         }
+        // Hand back any published wrapper over this routed target's color or depth image BEFORE the clear and acquire
+        // barriers run: PostChainBridge transitions the published depth from SHADER_READ_ONLY to DEPTH_STENCIL_ATTACHMENT
+        // and updates GllessFrameTarget's shared-depth layout record, avoiding the duplicate oldLayout=SHADER_READ_ONLY
+        // barrier (VUID-VkImageMemoryBarrier-oldLayout-01197) that fired when this ran after recordChainPairAttachAcquire.
+        long routedColorImage = owner.chainPairColorImage(identity);
+        long routedDepthImage = owner.sharedDepthImage(depthKey);
+        this.postChainBridge.celtium$transitionPublishedFrameTextures(true, routedColorImage, routedDepthImage);
         celtium$consumeRoutedTargetClear(owner, identity, depthKey);
         owner.recordChainPairAttachAcquire(identity, depthKey, this.commandBuffer);
         return new long[] {pairFramebuffer, identity, depthKey, pairWidth, pairHeight, depthRecord[0]};
@@ -16437,8 +16451,14 @@ this.frameBufferOpen = false;
         this.terrain.setShadowLookup(null, 0.0f);
         pipeline.useShadowMap(null, this.frameSlot);
         if (depthRouting != null && TERRAIN_SHADOW_LOOKUP) {
-            // The capture: the light-space matrix this routed pass draws with and the depth texture it draws into.
+            // The capture: the light-space matrix this routed pass draws with, its camera origin, and the depth texture.
             this.terrainShadowMatrix.set(vulkanProjection(matrices.projection())).mul(matrices.modelView());
+            this.terrainShadowCamIntX = camera.intX;
+            this.terrainShadowCamIntY = camera.intY;
+            this.terrainShadowCamIntZ = camera.intZ;
+            this.terrainShadowCamFracX = camera.fracX;
+            this.terrainShadowCamFracY = camera.fracY;
+            this.terrainShadowCamFracZ = camera.fracZ;
             this.terrainShadowFrame = this.frameId;
             this.terrainShadowDepthTexture = (int) depthRouting[5];
         } else if (depthRouting == null && TERRAIN_SHADOW_LOOKUP && TERRAIN_TO_DEPTH_TARGET) {
@@ -16459,6 +16479,12 @@ this.frameBufferOpen = false;
             }
             if (this.terrainShadowLogs < 16 && this.terrainShadowFrame != Long.MIN_VALUE) {
                 this.terrainShadowLogs++;
+                float logDx = (float) ((camera.intX - this.terrainShadowCamIntX)
+                        + ((double) camera.fracX - (double) this.terrainShadowCamFracX));
+                float logDy = (float) ((camera.intY - this.terrainShadowCamIntY)
+                        + ((double) camera.fracY - (double) this.terrainShadowCamFracY));
+                float logDz = (float) ((camera.intZ - this.terrainShadowCamIntZ)
+                        + ((double) camera.fracZ - (double) this.terrainShadowCamFracZ));
                 System.out.println("[Celtium] CELTIUM_TERRAIN_SHADOW pass=" + pass.name()
                         + " verdict=" + (refusal == null ? "apply" : refusal)
                         + " depthTexture=" + this.terrainShadowDepthTexture
@@ -16466,6 +16492,7 @@ this.frameBufferOpen = false;
                         + " view=0x" + Long.toHexString(candidate == null ? 0L : candidate.view())
                         + " layout=" + (candidate == null ? -1 : candidate.samplingLayout())
                         + " darkness=" + TERRAIN_SHADOW_DARKNESS
+                        + " camDelta=(" + round3(logDx) + "," + round3(logDy) + "," + round3(logDz) + ")"
                         + " applied=" + this.terrainShadowPassesApplied
                         + " refused=" + this.terrainShadowPassesRefused);
             }
@@ -16484,9 +16511,6 @@ this.frameBufferOpen = false;
             long routedDepthImage = depthOwner != null ? depthOwner.sharedDepthImage(routedDepthKey) : 0L;
             this.passAttachedColorImage = routedColorImage;
             this.passAttachedDepthImage = routedDepthImage;
-            // Hand back any published wrapper over this routed target's color or depth image BEFORE the sampling
-            // walk below runs (which skips our attached images via passAttachedColorImage/passAttachedDepthImage).
-            this.postChainBridge.celtium$transitionPublishedFrameTextures(true, routedColorImage, routedDepthImage);
         } else if (TERRAIN_TO_BOUND_TARGET && !this.targetRegistry.currentIsMain()) {
             // A mod that binds its own framebuffer around renderBlockLayer wants that layer in it: GTCEu renders its
             // Bloom layer into bloomFBO and builds the bloom mask from it, which stays empty (no halo) while the terrain
@@ -16578,6 +16602,12 @@ this.frameBufferOpen = false;
             boolean sampled;
             try {
                 terrainShadowMap.ensureSampledLayout(this.commandBuffer);
+                GllessFrameTarget shadowDepthOwner = offTargetTarget();
+                if (shadowDepthOwner != null && this.terrainShadowDepthTexture > 0) {
+                    long shadowDepthKey = RenderTargetRegistry.rawColorTextureIdentity(this.terrainShadowDepthTexture);
+                    shadowDepthOwner.noteSharedDepthLayout(shadowDepthKey,
+                            terrainShadowMap.foreignLayoutIn(this.commandBuffer));
+                }
                 sampled = true;
             } catch (IllegalStateException unknownLayout) {
                 // A wrapper whose image never got a recorded layout cannot be transitioned; the pass draws unshadowed
@@ -16591,7 +16621,17 @@ this.frameBufferOpen = false;
                 }
             }
             if (sampled && pipeline.useShadowMap(terrainShadowMap, this.frameSlot)) {
-                this.terrain.setShadowLookup(this.terrainShadowMatrix, TERRAIN_SHADOW_DARKNESS);
+                float dx = (float) ((camera.intX - this.terrainShadowCamIntX)
+                        + ((double) camera.fracX - (double) this.terrainShadowCamFracX));
+                float dy = (float) ((camera.intY - this.terrainShadowCamIntY)
+                        + ((double) camera.fracY - (double) this.terrainShadowCamFracY));
+                float dz = (float) ((camera.intZ - this.terrainShadowCamIntZ)
+                        + ((double) camera.fracZ - (double) this.terrainShadowCamFracZ));
+                this.terrainShadowAdjustedMatrix.set(this.terrainShadowMatrix);
+                if (dx != 0.0f || dy != 0.0f || dz != 0.0f) {
+                    this.terrainShadowAdjustedMatrix.translate(dx, dy, dz);
+                }
+                this.terrain.setShadowLookup(this.terrainShadowAdjustedMatrix, TERRAIN_SHADOW_DARKNESS);
             }
         }
         } finally {

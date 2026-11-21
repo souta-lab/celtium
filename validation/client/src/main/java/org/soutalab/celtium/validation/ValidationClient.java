@@ -13274,34 +13274,49 @@ public final class ValidationClient {
      * -Dceltium.validation.shadowStage=true this runs at world tick 60 and the capture that follows shows the pillars'
      * shadows on the platform.
      */
-    private void celtium$buildShadowStage(net.minecraft.client.Minecraft mc) {
-        if (mc.world == null || mc.player == null) {
+    private void celtium$buildShadowStage(final net.minecraft.client.Minecraft mc) {
+        final net.minecraft.server.integrated.IntegratedServer server = mc.getIntegratedServer();
+        if (server == null || mc.world == null || mc.player == null) {
             return;
         }
-        int px = (int) Math.floor(mc.player.posX);
-        int pz = (int) Math.floor(mc.player.posZ);
-        int groundY = mc.world.getHeight(px, pz);
-        int built = 0;
-        for (int dx = -20; dx <= 20; dx++) {
-            for (int dz = -20; dz <= 20; dz++) {
-                // getHeight is the first air block above the top solid one, so the platform goes at groundY to sit on
-                // the surface; at groundY - 1 it was buried inside the ground and the earlier stage screenshots showed
-                // the map's own wall instead of a floor.
-                mc.world.setBlockState(new net.minecraft.util.math.BlockPos(px + dx, groundY, pz + dz),
-                        net.minecraft.init.Blocks.STONE.getDefaultState(), 2);
-                built++;
+        final int px = (int) Math.floor(mc.player.posX);
+        final int pz = (int) Math.floor(mc.player.posZ);
+        // Place on the integrated server so the chunks sync to the client, recompute skylight/blocklight (covering
+        // any sea lanterns underneath), and trigger terrain remeshing. Keep celtium$pose untouched so the fixture's
+        // camera gate stays satisfied and the camera looks directly across the stone platform and pillars.
+        server.addScheduledTask(new Runnable() {
+            @Override
+            public void run() {
+                net.minecraft.world.WorldServer world = server.worlds[0];
+                if (world == null) {
+                    return;
+                }
+                int groundY = world.getHeight(px, pz);
+                int built = 0;
+                for (int dx = -24; dx <= 24; dx++) {
+                    for (int dz = -32; dz <= 8; dz++) {
+                        world.setBlockState(new net.minecraft.util.math.BlockPos(px + dx, groundY, pz + dz),
+                                net.minecraft.init.Blocks.STONE.getDefaultState(), 3);
+                        built++;
+                    }
+                }
+                int[][] pillars = {{-6, -12}, {6, -14}, {0, -18}, {-10, -10}, {10, -10}};
+                for (int[] pillar : pillars) {
+                    for (int bx = 0; bx < 2; bx++) {
+                        for (int bz = 0; bz < 2; bz++) {
+                            for (int height = 0; height < 6; height++) {
+                                world.setBlockState(new net.minecraft.util.math.BlockPos(
+                                        px + pillar[0] + bx, groundY + 1 + height, pz + pillar[1] + bz),
+                                        net.minecraft.init.Blocks.STONE.getDefaultState(), 3);
+                                built++;
+                            }
+                        }
+                    }
+                }
+                System.out.println("[Celtium] CELTIUM_SHADOW_STAGE blocks=" + built + " at=" + px + "," + groundY
+                        + "," + pz + " server=true");
             }
-        }
-        int[][] pillars = {{-6, -10}, {6, -12}, {0, -16}, {-10, -6}, {10, -8}};
-        for (int[] pillar : pillars) {
-            for (int height = 0; height < 4; height++) {
-                mc.world.setBlockState(new net.minecraft.util.math.BlockPos(px + pillar[0], groundY + 1 + height,
-                        pz + pillar[1]), net.minecraft.init.Blocks.STONE.getDefaultState(), 2);
-                built++;
-            }
-        }
-        mc.player.setPositionAndRotation(px + 0.5D, groundY + 8.0D, pz + 8.5D, 180.0F, 35.0F);
-        System.out.println("[Celtium] CELTIUM_SHADOW_STAGE blocks=" + built + " at=" + px + "," + groundY + "," + pz);
+        });
     }
 
     /** Whether the GTCEu showcase stage has been requested; the placement itself runs on the server thread. */
