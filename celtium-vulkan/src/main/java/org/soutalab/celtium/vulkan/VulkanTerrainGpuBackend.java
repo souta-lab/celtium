@@ -13530,12 +13530,13 @@ this.frameBufferOpen = false;
                             ? "record" : "stub-bound-" + windowDepthRecord[3];
                     long windowAttachedDepthImage = 0L;
                     if (windowDepthTexture != 0) {
-                        int[] depthSize = new int[] { windowDepthRecord[1], windowDepthRecord[2] };
-                        if (depthSize[0] > 0 && depthSize[1] > 0) {
+                        int depthWidth = windowDepthRecord[1];
+                        int depthHeight = windowDepthRecord[2];
+                        if (depthWidth > 0 && depthHeight > 0) {
                             long windowDepthKey = RenderTargetRegistry.rawColorTextureIdentity(windowDepthTexture);
                             boolean sharedDepth = offTarget.ensureChainPairSharedDepth(chainIdentityValue,
                                     windowDepthKey,
-                                    depthSize[0], depthSize[1]);
+                                    depthWidth, depthHeight);
                             if (sharedDepth) {
                                 windowAttachedDepthImage = offTarget.sharedDepthImage(windowDepthKey);
                             }
@@ -13544,7 +13545,7 @@ this.frameBufferOpen = false;
                                 System.out.println("[Celtium] CELTIUM_SHARED_DEPTH identity=0x"
                                         + Long.toHexString(chainIdentityValue) + " depthTexture="
                                         + windowDepthTexture + " via=" + depthTextureSource
-                                        + " size=" + depthSize[0] + "x" + depthSize[1]
+                                        + " size=" + depthWidth + "x" + depthHeight
                                         + " pairSize=" + pairWidth + "x" + pairHeight
                                         + " shared=" + sharedDepth
                                         + " sharedDepths=" + offTarget.sharedDepthCount());
@@ -13814,6 +13815,7 @@ this.frameBufferOpen = false;
                     this.pendingChainPairClearColors = 1;
                 }
                 this.passAttachedColorImages = null;
+                this.passAttachedDepthImage = 0L;
                 framebuffer = ensureFramebuffer(renderPass);
             }
             if (WINDOW_SPLIT) {

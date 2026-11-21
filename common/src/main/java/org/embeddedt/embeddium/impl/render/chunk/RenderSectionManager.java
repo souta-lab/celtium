@@ -168,7 +168,9 @@ public abstract class RenderSectionManager {
                                 BiFunction<RenderDevice, RenderPassConfiguration<?>, ChunkRenderer> chunkRenderer,
                                 int renderDistance, CommandList commandList, int minSection, int maxSection,
                                 int requestedThreads, boolean hasShadowPass) {
-        this.chunkRenderer = chunkRenderer.apply(RenderDevice.INSTANCE, configuration);
+        // On Celtium's Vulkan-native path (commandList == null), do not touch RenderDevice.INSTANCE so Celeritas's
+        // GLRenderDevice is never class-loaded or instantiated at runtime.
+        this.chunkRenderer = chunkRenderer.apply(commandList != null ? RenderDevice.INSTANCE : null, configuration);
 
         this.renderPassConfiguration = configuration;
 
