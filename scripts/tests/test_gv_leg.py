@@ -384,6 +384,21 @@ class LegRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(runner.LegError, "CELTIUM_E2E_PACK"):
             self.plan(mode="e2e")
 
+    def test_susy_pack_excludes_the_refused_custom_loading_screen(self):
+        # The susy staged pack still ships Custom Loading Screen 1.5.9, which Celtium refuses at startup;
+        # without the preset exclusion every susy leg dies on the refusal before reaching the world (item 634).
+        staged = self.root / ".celtium-work/modpack-susy/staged/mods"
+        staged.mkdir(parents=True)
+        for name in ("CustomLoadingScreen-1.12.2-1.5.9.jar", "content-mod.jar"):
+            (staged / name).write_bytes(name.encode())
+        os.environ["CELTIUM_E2E_PACK"] = "susy"
+        self.addCleanup(os.environ.pop, "CELTIUM_E2E_PACK", None)
+        plan = self.plan(mode="e2e")
+        supplied = {Path(dep["source"]).name for dep in plan.manifest["dependencies"]}
+        self.assertIn("content-mod.jar", supplied)
+        self.assertNotIn("CustomLoadingScreen-1.12.2-1.5.9.jar", supplied)
+        self.assertIn("CustomLoadingScreen-*", plan.manifest["instanceModExclusions"])
+
     def test_every_preset_names_its_three_parts(self):
         # A typo'd key is not a cosmetic defect: `exclude` misspelt makes gv_leg raise KeyError at plan time,
         # while `staged` misspelt silently reads a different .celtium-work directory. Pin the key set of every

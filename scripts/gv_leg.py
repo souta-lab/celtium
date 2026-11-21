@@ -103,11 +103,12 @@ E2E_PACKS = {
     # applied in the staged directory (.celtium-work/modpack-susy/SUBSTITUTIONS.md). The instance is a dedicated
     # clone with an empty minecraft/mods: the pack jars arrive from `staged` at leg time, exactly as e2ee does it,
     # and modpack-reverify.sh writes saves/celtium-gen into this instance - so it must never be the instance the
-    # KPI world legs run on (ITEM362-PLAN-2026-11-18.md §5.2).
+    # KPI world legs run on (ITEM362-PLAN-2026-11-18.md §5.2). The staged pack still ships Custom Loading Screen
+    # 1.5.9, which Celtium refuses at startup, so it is excluded at leg time like e2ee's copy (item 634).
     "susy": {
         "instance": lambda root: Path.home() / ".local/share/PrismLauncher/instances/celtium-susy-0.2.0.2",
         "staged": lambda root: root / ".celtium-work/modpack-susy/staged/mods",
-        "exclude": [],
+        "exclude": ["CustomLoadingScreen-*"],
     },
 }
 
