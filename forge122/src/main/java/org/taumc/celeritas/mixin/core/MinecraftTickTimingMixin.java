@@ -20,7 +20,7 @@ import org.taumc.celeritas.impl.profile.GameLoopTiming;
 @Mixin(Minecraft.class)
 public abstract class MinecraftTickTimingMixin {
 
-    @Inject(method = "runTick", at = @At("HEAD"), require = 0)
+    @Inject(method = {"runTick", "func_71407_l"}, at = @At("HEAD"), require = 0)
     private void celtium$tickStarted(CallbackInfo ci) {
         GameLoopTiming.tickStarted();
         // The tick split (TickTimings): the tick runs between frames, so the frame brackets cannot see it, and the
@@ -30,7 +30,7 @@ public abstract class MinecraftTickTimingMixin {
                 net.minecraft.client.Minecraft.getMinecraft().world != null);
     }
 
-    @Inject(method = "runTick", at = @At("RETURN"), require = 0)
+    @Inject(method = {"runTick", "func_71407_l"}, at = @At("RETURN"), require = 0)
     private void celtium$tickEnded(CallbackInfo ci) {
         org.soutalab.celtium.vulkan.TickTimings.endTick();
         GameLoopTiming.tickEnded();

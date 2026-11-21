@@ -26,27 +26,27 @@ import org.soutalab.celtium.vulkan.TickTimings;
 @Mixin(World.class)
 public abstract class WorldTickSplitMixin {
 
-    @Inject(method = "updateEntities", at = @At("HEAD"), require = 0)
+    @Inject(method = {"updateEntities", "func_72939_s"}, at = @At("HEAD"), require = 0)
     private void celtium$tickEntBegin(CallbackInfo ci) {
         TickTimings.begin(TickSplit2Index.TICK_ENT);
     }
 
-    @Inject(method = "updateEntities", at = @At("RETURN"), require = 0)
+    @Inject(method = {"updateEntities", "func_72939_s"}, at = @At("RETURN"), require = 0)
     private void celtium$tickEntEnd(CallbackInfo ci) {
         TickTimings.end(TickSplit2Index.TICK_ENT);
     }
 
-    @Inject(method = "updateEntities",
+    @Inject(method = {"updateEntities", "func_72939_s"},
             at = @At(value = "INVOKE",
-                    target = "Lnet/minecraft/profiler/Profiler;endStartSection(Ljava/lang/String;)V",
+                    target = "Lnet/minecraft/profiler/Profiler;func_76318_c(Ljava/lang/String;)V",
                     ordinal = 2, shift = At.Shift.AFTER), require = 0)
     private void celtium$tickTileEntBegin(CallbackInfo ci) {
         TickTimings.begin(TickSplit2Index.TICK_TILE_ENT);
     }
 
-    @Inject(method = "updateEntities",
+    @Inject(method = {"updateEntities", "func_72939_s"},
             at = @At(value = "INVOKE",
-                    target = "Lnet/minecraft/profiler/Profiler;endStartSection(Ljava/lang/String;)V",
+                    target = "Lnet/minecraft/profiler/Profiler;func_76318_c(Ljava/lang/String;)V",
                     ordinal = 3, shift = At.Shift.BEFORE), require = 0)
     private void celtium$tickTileEntEnd(CallbackInfo ci) {
         TickTimings.end(TickSplit2Index.TICK_TILE_ENT);
