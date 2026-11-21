@@ -676,6 +676,25 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final long SKY_FRAME_PROBE = Long.getLong("celtium.vulkan.skyFrameProbe", -1L).longValue();
     private static final int SKY_FRAME_PROBE_LIMIT =
             Integer.getInteger("celtium.vulkan.skyFrameProbeLimit", 24).intValue();
+    /**
+     * Issue #422 (a): {@code -Dceltium.issue422.diagDump=true} arms a paired dump at the present, for the
+     * first {@code -Dceltium.issue422.diagFrames} presents (default 40 - the loading screen's span, which is
+     * where the reporter's purple tiles are). Each armed present reads the frame image the blit is about to
+     * read and dumps the swapchain image the same blit produced, and one CELTIUM_DIAG422 line counts the
+     * exact purple (170,85,255) in both. Purple already in the frame image puts its origin at or before the
+     * composite; purple only in the presented image puts it in the blit or in the swapchain image's own
+     * allocation regime, which is the desk triage's main candidate (a driver surface-compression
+     * inconsistency, RDNA3 + AMD proprietary). Default off, and off the present path is untouched.
+     */
+    private static final boolean ISSUE422_DIAG_DUMP = Boolean.getBoolean("celtium.issue422.diagDump");
+    private static final int ISSUE422_DIAG_FRAMES =
+            Integer.getInteger("celtium.issue422.diagFrames", 40).intValue();
+    /** Where the paired dumps go, relative to the game directory ({@code -Dceltium.issue422.diagDir}). */
+    private static final String ISSUE422_DIAG_DIR =
+            System.getProperty("celtium.issue422.diagDir", "celtium-422diag");
+    /** The reporter's purple, RGB(170,85,255), as the low 24 bits of an ARGB texel. */
+    private static final int ISSUE422_PURPLE_RGB = 0xAA55FF;
+    private int issue422DiagDumped;
     private int skyFrameProbeLines;
     /** Sky draws issued in the frame that is running; the probe prints it for the frame that just ended. */
     private int skyDrawsThisFrame;
@@ -19101,12 +19120,53 @@ this.frameBufferOpen = false;
                         + " skyDraws=" + this.skyDrawsThisFrame
                         + " " + PixelSignatures.celtium$skyBandSignature(presentFramePixels, this.targetWidth, this.targetHeight));
             }
+            // Issue #422 (a) paired dump (see ISSUE422_DIAG_DUMP): the frame image is read here, at the same
+            // point and through the same route as the sky present probe above, and the presented image is
+            // requested for this same present - a pending dump request is also what keeps this present off
+            // the async path, so the write is served by the present that follows the request, not a later one.
+            int[] issue422PrePixels = null;
+            java.nio.file.Path issue422PostPath = null;
+            int issue422Frame = this.framePresentedFromVulkan + 1;
+            if (ISSUE422_DIAG_DUMP && this.issue422DiagDumped < ISSUE422_DIAG_FRAMES
+                    && this.frameTarget.colorImage() != 0L) {
+                this.issue422DiagDumped++;
+                issue422PrePixels = celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,
+                        this.targetWidth, this.targetHeight);
+                java.nio.file.Path issue422DiagDir = java.nio.file.Paths.get(ISSUE422_DIAG_DIR);
+                if (issue422PrePixels != null) {
+                    celtium$writeIssue422DiagPng(issue422PrePixels, this.targetWidth, this.targetHeight,
+                            issue422DiagDir.resolve("celtium-422diag-pre-" + issue422Frame + ".png"));
+                }
+                issue422PostPath = issue422DiagDir.resolve("celtium-422diag-post-" + issue422Frame + ".png");
+                this.swapchain.requestPresentedImageDump(issue422PostPath);
+            }
             this.lastPresentResult = this.swapchain.presentImage(this.frameTarget.colorImage(),
                     presentSourceLayout, this.targetWidth, this.targetHeight, org.lwjgl.vulkan.VK10.VK_NULL_HANDLE,
                     org.lwjgl.vulkan.VK10.VK_NULL_HANDLE, org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);            this.frameTarget.noteColorImageLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
             long presentImageNanos = System.nanoTime() - presentImageStartedNanos;
             this.swapPointImageNanos += presentImageNanos;
             celtium$noteSwapPointImage(presentImageNanos);
+            if (issue422PostPath != null) {
+                // The post file's name is unique to this present, so a write serial under it means this
+                // present wrote it; no serial means the write is still queued for a later present and the
+                // count is reported as -1 rather than read from a file this frame did not produce.
+                Long issue422WrittenSerial = this.swapchain.dumpWriteSerialByPath()
+                        .get(issue422PostPath.getFileName().toString());
+                int issue422PostPurple = -1;
+                if (issue422WrittenSerial != null) {
+                    int[] issue422PostPixels = celtium$readPngPixels(issue422PostPath);
+                    if (issue422PostPixels != null) {
+                        issue422PostPurple = celtium$countIssue422Purple(issue422PostPixels);
+                    }
+                }
+                System.out.println("[Celtium] CELTIUM_DIAG422 present=" + issue422Frame
+                        + " prePurple=" + (issue422PrePixels == null ? -1
+                                : celtium$countIssue422Purple(issue422PrePixels))
+                        + " postPurple=" + issue422PostPurple
+                        + " size=" + this.targetWidth + "x" + this.targetHeight
+                        + " preFlipped=true"
+                        + " dir=" + ISSUE422_DIAG_DIR);
+            }
             this.presentAttempts++;
             this.presentSkipReason = "presented";
             boolean reached = this.swapchain.lastPresentSucceeded();
@@ -19852,6 +19912,59 @@ this.frameBufferOpen = false;
         // Thin delegate, kept because the chain-time dump (celtium$dumpOwnedImage) reads through this name; the
         // implementation moved to TextureCopyService with the rest of the copy path.
         return this.textureCopyService.readImageRectangle(image, x, y, width, height);
+    }
+
+    /** {@return how many texels are exactly the issue #422 purple, RGB(170,85,255), alpha ignored}. */
+    private static int celtium$countIssue422Purple(int[] pixels) {
+        int count = 0;
+        for (int pixel : pixels) {
+            if ((pixel & 0xFFFFFF) == ISSUE422_PURPLE_RGB) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Writes a frame-image readback as a PNG, flipped vertically. The readback is in image order (row 0 is
+     * the picture's bottom) while the presented-image dump is in picture order, and the pair exists to be
+     * compared, so the pre-blit side is put in the presented side's order rather than leaving a flip for
+     * whoever opens the two files.
+     */
+    private void celtium$writeIssue422DiagPng(int[] pixels, int width, int height, java.nio.file.Path path) {
+        try {
+            int[] flipped = new int[pixels.length];
+            for (int y = 0; y < height; y++) {
+                int sourceRow = y * width;
+                int targetRow = (height - 1 - y) * width;
+                int rowLength = Math.min(width, pixels.length - sourceRow);
+                if (rowLength > 0) {
+                    System.arraycopy(pixels, sourceRow, flipped, targetRow, rowLength);
+                }
+            }
+            java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(width, height,
+                    java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            out.setRGB(0, 0, width, height, flipped, 0, width);
+            if (path.getParent() != null) {
+                java.nio.file.Files.createDirectories(path.getParent());
+            }
+            javax.imageio.ImageIO.write(out, "png", path.toFile());
+        } catch (java.io.IOException | RuntimeException | LinkageError error) {
+            record("issue422 diag dump write failed: " + describe(error));
+        }
+    }
+
+    /** {@return the ARGB texels of a PNG}, or null when it cannot be read. */
+    private static int[] celtium$readPngPixels(java.nio.file.Path path) {
+        try {
+            java.awt.image.BufferedImage in = javax.imageio.ImageIO.read(path.toFile());
+            if (in == null) {
+                return null;
+            }
+            return in.getRGB(0, 0, in.getWidth(), in.getHeight(), null, 0, in.getWidth());
+        } catch (java.io.IOException | RuntimeException | LinkageError error) {
+            return null;
+        }
     }
 
     /** {@return whether a requested presented-image dump has been written}. */

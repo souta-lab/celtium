@@ -71,6 +71,8 @@ public final class SwapchainCreateArguments {
         public String formatNote = "";
         public String imageCountNote = "";
         public String droppedUsage = "";
+        /** Why the usage differs from the standard request, when a variant asked for that; empty otherwise. */
+        public String usageNote = "";
         public String alphaNote = "OPAQUE";
         public String extentNote = "";
         /** Null when the surface is usable; otherwise the sentence that refuses it, and nothing may be created. */
@@ -84,6 +86,7 @@ public final class SwapchainCreateArguments {
                     + " format=" + this.format + " colourSpace=" + this.colorSpace
                     + (this.formatNote.isEmpty() ? "" : " (" + this.formatNote + ")")
                     + " usage=0x" + Integer.toHexString(this.usage)
+                    + (this.usageNote.isEmpty() ? "" : " (" + this.usageNote + ")")
                     + (this.droppedUsage.isEmpty() ? "" : " dropped[" + this.droppedUsage + "]")
                     + " compositeAlpha=0x" + Integer.toHexString(this.compositeAlpha) + " " + this.alphaNote;
         }
@@ -102,6 +105,22 @@ public final class SwapchainCreateArguments {
      * @return the arguments to request, or a {@link Result#refusal} when this surface cannot carry a frame
      */
     public static Result select(Surface surface, int requestedWidth, int requestedHeight, int desiredImages) {
+        return select(surface, requestedWidth, requestedHeight, desiredImages, false);
+    }
+
+    /**
+     * Chooses the creation arguments, optionally in the issue #422 A/B variant.
+     *
+     * @param transferOnlyPresent when true, the usage request drops {@code COLOR_ATTACHMENT} and keeps only
+     *                            the transfer bits the surface offers, so the swapchain's images are allocated
+     *                            as transfer surfaces rather than renderable ones. The present itself is the
+     *                            same blit either way; what changes is the allocation regime the driver gives
+     *                            the images, which is the variable that arm of the experiment exists to move.
+     *                            The variant refuses a surface without {@code TRANSFER_DST}, because the blit
+     *                            writes into the image and nothing else in the variant can.
+     */
+    public static Result select(Surface surface, int requestedWidth, int requestedHeight, int desiredImages,
+            boolean transferOnlyPresent) {
         if (surface == null) {
             throw new IllegalArgumentException("surface must not be null");
         }
@@ -142,19 +161,33 @@ public final class SwapchainCreateArguments {
         }
 
         // --- usage: colour attachment is required, the transfer bits are taken only when the surface offers them,
-        // and what was dropped is named.
-        if ((surface.supportedUsage & USAGE_COLOR_ATTACHMENT) == 0) {
-            result.refusal = "the surface does not support colour-attachment usage (supported=0x"
-                    + Integer.toHexString(surface.supportedUsage) + "), which the native present path attaches the"
-                    + " frame to";
-            return result;
+        // and what was dropped is named. The A/B variant inverts the requirement: no colour attachment at all,
+        // and transfer-dst becomes the bit that cannot be dropped.
+        if (transferOnlyPresent) {
+            if ((surface.supportedUsage & USAGE_TRANSFER_DST) == 0) {
+                result.refusal = "the surface does not support transfer-dst usage (supported=0x"
+                        + Integer.toHexString(surface.supportedUsage) + "), which the transfer-only present"
+                        + " variant blits the frame in with";
+                return result;
+            }
+            result.usage = (surface.supportedUsage & USAGE_TRANSFER_DST)
+                    | (surface.supportedUsage & USAGE_TRANSFER_SRC);
+            result.usageNote = "transfer-only A/B variant: COLOR_ATTACHMENT not requested";
+            result.droppedUsage = ((surface.supportedUsage & USAGE_TRANSFER_SRC) == 0 ? "TRANSFER_SRC" : "");
+        } else {
+            if ((surface.supportedUsage & USAGE_COLOR_ATTACHMENT) == 0) {
+                result.refusal = "the surface does not support colour-attachment usage (supported=0x"
+                        + Integer.toHexString(surface.supportedUsage) + "), which the native present path attaches the"
+                        + " frame to";
+                return result;
+            }
+            result.usage = USAGE_COLOR_ATTACHMENT
+                    | (surface.supportedUsage & USAGE_TRANSFER_DST)
+                    | (surface.supportedUsage & USAGE_TRANSFER_SRC);
+            result.droppedUsage = ((surface.supportedUsage & USAGE_TRANSFER_DST) == 0 ? "TRANSFER_DST " : "")
+                    + ((surface.supportedUsage & USAGE_TRANSFER_SRC) == 0 ? "TRANSFER_SRC" : "");
+            result.droppedUsage = result.droppedUsage.trim();
         }
-        result.usage = USAGE_COLOR_ATTACHMENT
-                | (surface.supportedUsage & USAGE_TRANSFER_DST)
-                | (surface.supportedUsage & USAGE_TRANSFER_SRC);
-        result.droppedUsage = ((surface.supportedUsage & USAGE_TRANSFER_DST) == 0 ? "TRANSFER_DST " : "")
-                + ((surface.supportedUsage & USAGE_TRANSFER_SRC) == 0 ? "TRANSFER_SRC" : "");
-        result.droppedUsage = result.droppedUsage.trim();
 
         // --- composite alpha: OPAQUE when offered, else the next one the surface does offer, named.
         if (surface.supportedCompositeAlpha == 0) {

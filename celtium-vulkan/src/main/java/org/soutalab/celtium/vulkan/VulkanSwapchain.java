@@ -353,6 +353,15 @@ public final class VulkanSwapchain {
     private float lastPresentedMean = -1.0f;
     /** The harness's {@code presentReadback} reads the presented image back and records its mean. */
     private static final boolean PRESENT_READBACK = HarnessConfig.bool("presentReadback", true);
+    /**
+     * {@code -Dceltium.issue422.transferOnlyPresent=true}: the issue #422 (a) A/B lever. The swapchain is
+     * created with transfer usage only, without {@code COLOR_ATTACHMENT}, so its images are allocated as
+     * transfer surfaces rather than renderable ones; the frame still arrives by the same blit. The desk
+     * triage's main candidate is a driver surface-compression inconsistency on exactly that allocation
+     * regime (RDNA3 + AMD proprietary), so if the purple tiles vanish under this switch the regime is a
+     * contributing factor and if they persist it is not. Default off: creation arguments are unchanged.
+     */
+    private static final boolean PRESENT_TRANSFER_ONLY = Boolean.getBoolean("celtium.issue422.transferOnlyPresent");
     /** {@code -Dceltium.debug.flickerSample=true}: compare two consecutive presented frames for temporal flicker. */
     private static final boolean FLICKER_SAMPLE = Boolean.getBoolean("celtium.debug.flickerSample");
     private int[] flickerPrevious;
@@ -2673,10 +2682,17 @@ public final class VulkanSwapchain {
             surfaceOfferValues.formats = offeredFormats;
             SwapchainCreateArguments.Result choice =
                     SwapchainCreateArguments.select(surfaceOfferValues, requestedWidth, requestedHeight,
-                            desiredImageCount());
+                            desiredImageCount(), PRESENT_TRANSFER_ONLY);
             if (choice.refusal != null) {
                 reasons.add(choice.refusal + " (surface offered formats " + availableFormats + ")");
                 return false;
+            }
+            if (PRESENT_TRANSFER_ONLY) {
+                // Said on stdout, not only in the reconciliation the report carries: the reporter's log is
+                // the evidence that the A/B arm really ran with the allocation regime it claims.
+                System.out.println("[Celtium] CELTIUM_DIAG422_AB transferOnlyPresent=on usage=0x"
+                        + Integer.toHexString(choice.usage)
+                        + " (COLOR_ATTACHMENT dropped by -Dceltium.issue422.transferOnlyPresent)");
             }
             // BH-18's measurement, assembled from the same surface values the decision used: what the surface offered
             // beside what was requested, with the reconciliation the pure function produced. Printed on stdout (a
