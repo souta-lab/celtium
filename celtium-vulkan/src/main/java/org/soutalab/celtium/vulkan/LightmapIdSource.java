@@ -22,6 +22,47 @@ public final class LightmapIdSource {
     private static volatile java.util.function.Supplier<int[]> pixelSource;
     private static volatile IntSupplier atlasSource;
 
+    /**
+     * How many supplier calls have failed, and the first failure's description. A failing
+     * supplier answers exactly like an absent one at every call site below (-1 / null, which the
+     * backend's existing refusal paths then report as a missing lightmap or atlas) - that answer
+     * is the right behaviour, but until this census existed it was also indistinguishable from
+     * absence: a supplier that threw on every call (a linkage failure on the game side, an owner
+     * object not yet built) silently disabled the lightmap and atlas ids for the whole session,
+     * and the leg logs showed only the downstream refusal with id=-1, never the cause. The census
+     * keeps the answer and names the cause, in the shape the GL stub's failure summaries use.
+     */
+    private static final java.util.concurrent.atomic.AtomicLong SUPPLIER_FAILURES =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static volatile String firstSupplierFailure;
+
+    private static void noteSupplierFailure(String which, Throwable error) {
+        SUPPLIER_FAILURES.incrementAndGet();
+        if (firstSupplierFailure == null) {
+            synchronized (LightmapIdSource.class) {
+                if (firstSupplierFailure == null) {
+                    firstSupplierFailure = which + ": " + error;
+                }
+            }
+        }
+    }
+
+    /** {@return how many installed-supplier calls have failed since the last reset}. */
+    public static long supplierFailures() {
+        return SUPPLIER_FAILURES.get();
+    }
+
+    /** {@return the first supplier failure's description, or null when none has been recorded}. */
+    public static String firstSupplierFailure() {
+        return firstSupplierFailure;
+    }
+
+    /** Clears the failure census; for tests. */
+    static void resetSupplierFailuresForTest() {
+        SUPPLIER_FAILURES.set(0L);
+        firstSupplierFailure = null;
+    }
+
     private LightmapIdSource() {
     }
 
@@ -52,6 +93,7 @@ public final class LightmapIdSource {
         try {
             return current.getAsInt();
         } catch (RuntimeException | LinkageError error) {
+            noteSupplierFailure("atlasTextureId", error);
             return -1;
         }
     }
@@ -77,6 +119,7 @@ public final class LightmapIdSource {
         try {
             return current.get();
         } catch (RuntimeException | LinkageError error) {
+            noteSupplierFailure("lightmapPixels", error);
             return null;
         }
     }
@@ -91,6 +134,7 @@ public final class LightmapIdSource {
             return current.getAsInt();
         } catch (RuntimeException | LinkageError error) {
             // A source that cannot answer must not take the frame down with it; -1 keeps the existing refusal path.
+            noteSupplierFailure("lightmapTextureId", error);
             return -1;
         }
     }
