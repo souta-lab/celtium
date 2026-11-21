@@ -11,9 +11,10 @@ import org.junit.jupiter.api.Test;
  * The funnel's contract (item 378), pinned without a world: the cache may answer a
  * {@code World#getCombinedLight} call only where its answer is identical to the vanilla body's -
  * enabled, no lightValue floor to fold in, a client world, the client main thread - and the cache
- * key layout is the documented vanilla packing. The epoch invariants (tick roll, light-write
- * invalidation) live in code this change does not touch and are covered by the fixture legs, not
- * here: they need a running world, and a test that faked one would pin the fake.
+ * key layout is the documented vanilla packing. The epoch roll's decision is pinned here as a pure
+ * rule ({@code generationRolls}); the wiring that feeds it (a world's total time, the write epoch)
+ * needs a running world and is covered by the fixture legs, not here - a test that faked a world
+ * would pin the fake.
  */
 class CeltiumLightCacheFunnelTest {
 
@@ -29,6 +30,21 @@ class CeltiumLightCacheFunnelTest {
         assertFalse(CeltiumLightCache.funnelApplies(true, 0, false, true));
         // The maps are unsynchronised statics: off the client main thread, vanilla answers.
         assertFalse(CeltiumLightCache.funnelApplies(true, 0, true, false));
+    }
+
+    @Test
+    void generationRollsOnTickWriteOrWorldChange() {
+        // Same world, same tick, no light write: the generation stands.
+        assertFalse(CeltiumLightCache.generationRolls(100L, 7L, true, 100L, 7L));
+        // The tick moved.
+        assertTrue(CeltiumLightCache.generationRolls(100L, 7L, true, 101L, 7L));
+        // A light write landed.
+        assertTrue(CeltiumLightCache.generationRolls(100L, 7L, true, 100L, 8L));
+        // A different world object whose total time coincides with the previous world's, with no
+        // light write in between: the roll must still fire, because the key carries no world and
+        // the previous world's entries would otherwise be served under the current generation
+        // (roam-hunt-9).
+        assertTrue(CeltiumLightCache.generationRolls(100L, 7L, false, 100L, 7L));
     }
 
     @Test
