@@ -1,13 +1,10 @@
 package org.taumc.celeritas.mixin.features.textures;
 
-import com.google.common.base.Predicate;
-import com.google.common.collect.Iterators;
-import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import com.llamalad7.mixinextras.sugar.Local;
 import net.minecraft.client.renderer.texture.Stitcher;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.texture.TextureMap;
-import org.objectweb.asm.Opcodes;
 import org.embeddedt.embeddium.impl.util.collections.quadtree.QuadTree;
 import org.embeddedt.embeddium.impl.util.collections.quadtree.Rect2i;
 import org.spongepowered.asm.mixin.Final;
@@ -21,8 +18,6 @@ import org.taumc.celeritas.CeleritasVintage;
 import org.taumc.celeritas.impl.extensions.SpriteExtension;
 import org.taumc.celeritas.impl.extensions.TextureMapExtension;
 
-import java.util.AbstractList;
-import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -116,67 +111,45 @@ public class TextureAtlasMixin implements TextureMapExtension {
     }
 
     /**
-     * The visible-only animation gate, aimed at the read of the animated-sprite list rather than at the
-     * {@code List.iterator()} call the loop makes on it. The call is not a stable target: it is unique in
-     * vanilla's {@code updateAnimations}, but VanillaFix {@code @Overwrite}s that method with its own
-     * visible-texture pass, whose body calls {@code List.iterator()} twice - once over the render-info list
-     * to mark visible sprites, once over the sprite list to tick the marked ones. A single-expression
-     * injector with two candidate expressions fails in prepare, the failure aborts the whole mixin, and the
-     * game dies with {@code NoClassDefFoundError: TextureMap} (measured on the VanillaFix leg,
-     * run-compat445a: InvalidInjectionException "cannot inject into func_94248_c()V merged by
-     * org.dimdev.vanillafix.textures.mixins.client.MixinTextureMap"). Priority cannot order this away -
-     * overwrites merge before injectors prepare. The field read is unique in both bodies (the decompiled
-     * vanilla source reads it once, for the loop; the overwrite reads it once, bytecode offset 119, feeding
-     * its iterator directly), and wrapping the list value composes with the overwrite instead of competing
-     * with it: a sprite must pass this filter and then VanillaFix's own mark check. {@code require = 0} is
-     * for shapes neither original has - a body that reads the list zero or several times loses the gate, not
-     * the game. This injector is an optimization; the essential part of the textures group is the interface
-     * this class carries, which does not depend on it.
+     * The visible-only animation gate. When the option is on, this handler runs the animation pass
+     * itself - bind the atlas, tick exactly the sprites the visibility predicate accepts, with the
+     * CELTIUM_ANIM_TICK counting inline - and cancels the method body, whoever wrote it. With the
+     * option off it returns at once and the body runs untouched.
+     *
+     * <p>The gate lives at the method boundary because every expression-level aim inside
+     * {@code updateAnimations} has failed in measurement against VanillaFix, whose
+     * {@code MixinTextureMap} {@code @Overwrite}s that method. The {@code List.iterator()} call is
+     * not unique in the overwritten body - its pass calls it twice, once over the render-info list
+     * and once over the sprite list - and the injection failed prepare on leg run-compat445a. The
+     * read of {@code listAnimatedSprites} is unique in both bodies, but in the overwritten body the
+     * field reference's owner is VanillaFix's shadow rather than {@code TextureMap}, so a FIELD
+     * target naming the field on {@code TextureMap} did not resolve there either (leg
+     * run-compat445f: InvalidInjectionException in INJECT_PREPARE_LEGACY, a failure
+     * {@code require = 0} does not cover). The HEAD/RETURN injectors on this same method - the
+     * batch pair above - applied cleanly in both shapes on both legs, so the gate uses HEAD and
+     * replaces the pass outright while enabled. That also replaces VanillaFix's own
+     * visible-texture pass while the option is on; the outcome that pass exists for - only visible
+     * sprites tick - is this gate's own contract, kept with celtium's visibility predicate.
      */
-    @ModifyExpressionValue(method = "updateAnimations",
-            at = @At(value = "FIELD", opcode = Opcodes.GETFIELD,
-                    target = "Lnet/minecraft/client/renderer/texture/TextureMap;listAnimatedSprites:Ljava/util/List;"),
-            require = 0)
-    private List<TextureAtlasSprite> getFilteredSpriteList(List<TextureAtlasSprite> sprites) {
+    @Inject(method = "updateAnimations", at = @At("HEAD"), cancellable = true)
+    private void celtium$animateOnlyVisible(CallbackInfo ci) {
         if (!CeleritasVintage.options().performance.animateOnlyVisibleTextures) {
-            return sprites;
+            return;
         }
-        return celtium$filteringView(sprites, sprite -> {
+        ci.cancel();
+        // The body's own bind is TextureUtil.bindTexture, a package-private one-liner over
+        // GlStateManager.bindTexture (decompiled original) - call the public form directly.
+        GlStateManager.bindTexture(((TextureMap) (Object) this).getGlTextureId());
+        for (TextureAtlasSprite sprite : this.listAnimatedSprites) {
             celtium$animTotal++;
             if (((SpriteExtension) sprite).celeritas$shouldUpdate()) {
                 celtium$animTicked++;
                 if (celtium$animTickedNames.size() < 24) {
                     celtium$animTickedNames.add(sprite.getIconName());
                 }
-                return true;
+                sprite.updateAnimation();
             }
-            return false;
-        });
-    }
-
-    /**
-     * A read-through view of {@code sprites} whose iterator yields only the elements {@code predicate}
-     * accepts. Every other operation delegates, so the list a caller loops over keeps its size and
-     * contents; only the iteration is filtered, which is the whole of the gate above.
-     */
-    @Unique
-    static <T> List<T> celtium$filteringView(List<T> sprites, Predicate<T> predicate) {
-        return new AbstractList<T>() {
-            @Override
-            public T get(int index) {
-                return sprites.get(index);
-            }
-
-            @Override
-            public int size() {
-                return sprites.size();
-            }
-
-            @Override
-            public Iterator<T> iterator() {
-                return Iterators.filter(sprites.iterator(), predicate);
-            }
-        };
+        }
     }
 
     // ------------------------------------------------------------------
