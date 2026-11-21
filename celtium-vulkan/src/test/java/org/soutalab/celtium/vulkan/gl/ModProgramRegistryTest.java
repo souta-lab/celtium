@@ -54,18 +54,29 @@ class ModProgramRegistryTest {
     @Test
     void aLocationCollisionBetweenTwoNamesIsCounted() {
         // Locations are 30-bit name hashes, so a colliding pair exists; find one rather than hard-coding it.
+        // The candidates are random letter strings from a fixed seed: sequential names ("u0", "u1", ...) hash
+        // to distinct values by construction (their digit strings are unique base-31 representations), while
+        // random names collide at the birthday bound, tens of thousands in. java.util.Random's sequence is
+        // specified, so the search is deterministic.
         java.util.Map<Integer, String> byLocation = new java.util.HashMap<>();
+        java.util.Random random = new java.util.Random(42);
         String first = null;
         String second = null;
-        for (int i = 0; i < 1_000_000 && second == null; i++) {
-            String name = "u" + i;
-            String other = byLocation.putIfAbsent(ModProgramRegistry.location(name), name);
-            if (other != null) {
+        for (int i = 0; i < 2_000_000 && second == null; i++) {
+            StringBuilder name = new StringBuilder("u");
+            for (int c = 0; c < 8; c++) {
+                name.append((char) ('a' + random.nextInt(26)));
+            }
+            String other = byLocation.putIfAbsent(ModProgramRegistry.location(name.toString()), name.toString());
+            if (other != null && !other.contentEquals(name)) {
                 first = other;
-                second = name;
+                second = name.toString();
             }
         }
-        org.junit.jupiter.api.Assertions.assertNotNull(second, "a colliding pair has to exist in a million names");
+        org.junit.jupiter.api.Assertions.assertNotNull(second, "a colliding pair has to exist among random names");
+        org.junit.jupiter.api.Assertions.assertEquals(
+                ModProgramRegistry.location(first), ModProgramRegistry.location(second));
+        int collisionsBefore = ModProgramRegistry.locationNameCollisions();
         ModProgramRegistry.shaderSource(31,
                 "attribute vec2 position;\nvoid main() { gl_Position = vec4(position, 0.0, 1.0); }");
         ModProgramRegistry.shaderSource(32, "uniform float " + first + "; uniform float " + second + ";\n"
@@ -74,7 +85,7 @@ class ModProgramRegistryTest {
         ModProgramRegistry.attach(9, 32);
         ModProgramRegistry.Program program = ModProgramRegistry.link(9);
         assertTrue(program.lowered().ok(), program.lowered().failure());
-        assertTrue(ModProgramRegistry.locationNameCollisions() >= 1,
+        assertTrue(ModProgramRegistry.locationNameCollisions() > collisionsBefore,
                 "the second name's mapping replaced the first's at their shared location, and that is counted");
     }
 
