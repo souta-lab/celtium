@@ -4863,6 +4863,17 @@ public final class VulkanGlTexture {
     }
 
     /**
+     * {@return whether this texture's sampler compares against a reference value} - publication took the
+     * source GL texture's recorded {@code GL_TEXTURE_COMPARE_MODE}, so this answers for the sampler the
+     * descriptor will carry. A shadow sampler binding resolved to a texture whose sampler does not compare
+     * would run a Dref fetch through a plain sampler, whose result is undefined; the mod-program prepare
+     * path asks this so it can refuse that pairing by name instead.
+     */
+    public boolean celtium$samplerCompares() {
+        return this.samplerCompareEnable;
+    }
+
+    /**
      * Refuses a write, a resize or a diagnostic copy on a wrapper whose image belongs to someone else.
      * <p>
      * A shared image is handed over for sampling only. Writing it would overwrite the frame the owner rendered into
