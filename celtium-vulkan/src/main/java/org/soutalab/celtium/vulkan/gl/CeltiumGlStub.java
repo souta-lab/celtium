@@ -9787,6 +9787,17 @@ public final class CeltiumGlStub implements FunctionProvider {
 
 
     /**
+     * {@return the value a texture parameter query answers}: the record when the game set this pname on this
+     * texture, otherwise GL's own initial state. The semantics live in {@link TextureParameterRecord#valueOrDefault};
+     * this door stays because the transformer-facing query entry points above answer through it.
+     */
+    private static int textureParameterValue(int textureName, int pname) {
+        CeltiumGlStub stub = installed;
+        return stub == null ? TextureParameterRecord.defaultValue(pname)
+                : stub.textureParameters.valueOrDefault(textureName, pname);
+    }
+
+    /**
      * {@return the filter or wrap value recorded for this texture and pname, or -1 when the game never set it}.
      * <p>
      * This is the mirror's door to the record: {@link #textureParameter} answers GL's default for an unset pname,
@@ -9802,9 +9813,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * the game never set it. See {@link #recordedTextureParameter} for the recorded/absent distinction.
      */
     public static int textureParameter(int textureName, int pname) {
-        CeltiumGlStub stub = installed;
-        return stub == null ? TextureParameterRecord.defaultValue(pname)
-                : stub.textureParameters.valueOrDefault(textureName, pname);
+        return textureParameterValue(textureName, pname);
     }
 
     /** {@return whether the game set this pname on this texture} - false for the GL defaults. */
