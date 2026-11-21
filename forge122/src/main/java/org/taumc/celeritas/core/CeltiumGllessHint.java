@@ -2297,13 +2297,18 @@ public final class CeltiumGllessHint {
                 precision);
     }
 
-    /** Raw ARB {@code glGetInfoLogARB}: an empty log, with the written length. */
+    /**
+     * Raw ARB {@code glGetInfoLogARB}: a recorded link failure's text for a program the registry knows,
+     * else an empty log, with the written length.
+     */
     public static void glGetInfoLogARB(int object, int maxLength, long length, long infoLog) {
-        if (length != 0L) {
-            org.lwjgl.system.MemoryUtil.memPutInt(length, 0);
-        }
+        int written = 0;
         if (infoLog != 0L && maxLength > 0) {
-            org.lwjgl.system.MemoryUtil.memPutByte(infoLog, (byte) 0);
+            written = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$writeInfoLog(object, maxLength,
+                    infoLog);
+        }
+        if (length != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(length, written);
         }
     }
 
