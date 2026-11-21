@@ -126,7 +126,7 @@ class ModProgramRegistryTest {
         ModProgramRegistry.Program program = ModProgramRegistry.link(18);
         assertTrue(program.lowered().ok(), program.lowered().failure());
         assertTrue(!program.lowered().uniformsViaBuffer(), "this program must take the push route");
-        int offset = program.lowered().uniforms().get(0).offsetBytes();
+        int offset = program.lowered().uniforms().get(0).offset();
 
         int strength = ModProgramRegistry.location("strength");
         ModProgramRegistry.uniformFloats(18, strength, new float[] {1.0f});
@@ -149,7 +149,7 @@ class ModProgramRegistryTest {
         ModProgramRegistry.Program program = ModProgramRegistry.link(21);
         assertTrue(program.lowered().ok(), program.lowered().failure());
         java.nio.ByteBuffer packed = org.soutalab.celtium.vulkan.VulkanModProgramPipeline.packUniforms(program);
-        int offset = program.lowered().uniforms().get(0).offsetBytes();
+        int offset = program.lowered().uniforms().get(0).offset();
         assertEquals(2.0f, packed.getFloat(offset));
     }
 
