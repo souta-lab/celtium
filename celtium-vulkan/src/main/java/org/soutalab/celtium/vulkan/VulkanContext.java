@@ -744,6 +744,15 @@ public final class VulkanContext {
                 check(result, "vkBeginCommandBuffer");
             }
         }
+        // A one-shot recording joins the same layout discipline as a frame recording (audit N05): a shared
+        // image's transition noted into this buffer stays pending until the submission carrying it is accepted -
+        // endCommands commits after its submit, and a deferred buffer is committed when its batch flush submits
+        // it. Without the token, noteForeignTransition's unbound fallback promoted a merely recorded layout to
+        // fact at record time, and a pair operation running on a one-shot buffer (a chain-pair bootstrap clear,
+        // a texture copy) could declare a shared depth image attached while it still sat in the read layout -
+        // the pack terrain route's VUID-vkCmdDraw-None-09600, where the same shared depth alternates between
+        // the frame recording and one-shot buffers several times a frame.
+        VulkanGlTexture.beginLayoutRecording(commandBuffer);
         return commandBuffer;
     }
 
@@ -1073,6 +1082,11 @@ public final class VulkanContext {
                     VulkanContext.queueSubmitCalls++;
                         celtium$awaitPresenter();
                         check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit");
+                        // The queue accepted this one-shot submission, so the layout transitions recorded into
+                        // it are fact now - and only now (the recording was opened in beginCommands). This path
+                        // waits on its own fence below, so acceptance here is the exact point the frame path's
+                        // submission bookkeeping commits at.
+                        VulkanGlTexture.commitLayoutRecording(commandBuffer);
                     long waitStarted = System.nanoTime();
                     int waited = vkWaitForFences(this.device, fence, true, SUBMIT_TIMEOUT_NANOS);
                     celtium$recordBootstrapFenceWait(waitStarted);
@@ -1379,12 +1393,27 @@ public final class VulkanContext {
             this.deviceLost = true;
             // Some chunks may already be executing, and this failure might be
             // VK_ERROR_DEVICE_LOST. Freeing their buffers/fence is unsafe.
+            for (DeferredSubmit entry : entries) {
+                if (entry.commandBuffer != null) {
+                    VulkanGlTexture.abandonLayoutRecording(entry.commandBuffer,
+                            "the batched submit failed; the recording is dropped with the batch");
+                }
+            }
             abandonFailedBatch(batch, new java.util.ArrayList<DeferredSubmit>(entries));
             entries.clear();
             if (submitError instanceof RuntimeException runtime) {
                 throw runtime;
             }
             throw (LinkageError) submitError;
+        }
+        // The queue accepted every entry in this batch, so each entry's recorded layout transitions are fact
+        // now. Frame-slot entries were already committed by the coordinator's submission bookkeeping and a
+        // second commit is a no-op; one-shot entries queued through celtium$submitDeferred are committed here,
+        // at the one point their submission is known accepted (their recording was opened in beginCommands).
+        for (DeferredSubmit entry : entries) {
+            if (entry.commandBuffer != null) {
+                VulkanGlTexture.commitLayoutRecording(entry.commandBuffer);
+            }
         }
         entries.clear();
     }
