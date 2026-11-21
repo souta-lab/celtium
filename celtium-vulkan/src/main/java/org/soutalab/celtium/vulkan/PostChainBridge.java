@@ -1127,6 +1127,11 @@ b.frameBufferOpen = false;
                 } else {
                     republished = b.celtium$registry().publishExternalImage(name, live,
                             offTarget.chainPairColorView(owner), b.targetWidth, b.targetHeight);
+                    // A republished wrapper is a fresh wrapper: without the flag it declares SHADER_READ_ONLY over an
+                    // image the pair keeps in GENERAL (09600/00344 colour form, 00900 on the next attach).
+                    if (republished != null) {
+                        republished.notePairImage(true);
+                    }
                 }
                 if (republished != null) {
                     b.publishedTextures.setPublishedValueAt(idx, republished);
@@ -1216,6 +1221,7 @@ b.frameBufferOpen = false;
                     VulkanGlTexture republished = b.celtium$registry().publishExternalImage(name,
                             liveImage, liveView, b.targetWidth, b.targetHeight);
                 if (republished != null) {
+                    republished.notePairImage(true);
                     b.publishedTextures.setPublishedValueAt(idx, republished);
                     b.publishedFrameImages.put(name, liveImage);
                     b.publishedTextures.noteRepublished();
