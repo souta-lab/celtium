@@ -51,8 +51,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * lightmap restore + {@code enableLighting}) in a {@code finally}, so a hit leaves the same outgoing
  * lighting state as a miss - including on an exception.</li>
  * <li>B14: the negative set and the tint memo are bounded like the positive cache; all three plus the
- * plans live under one resource-manager epoch (identity of {@code Minecraft#getResourceManager()},
- * checked per call - a reload replaces the instance and clears every entry). A cached plan also
+ * plans are cleared from RenderItem's own reload callback (a reload replaces every model instance they
+ * key on; the resource manager's identity never changes across one, so no per-call check can see it). A cached plan also
  * re-verifies the model's null-face quad list (size + first-quad identity) on every hit, so a model
  * whose {@code getQuads} output mutates invalidates instead of replaying stale bytes; repeated
  * invalidation demotes the key to uncacheable.</li>
@@ -128,9 +128,12 @@ public abstract class RenderItemMixin {
                 }
             };
     /**
-     * The resource-manager instance the caches belong to. A resource reload installs a new resource
-     * manager and every model instance it keyed is replaced with it; the identity check turns the
-     * reload into one cheap epoch bump instead of a stale-geometry leak.
+     * The resource-manager instance the caches were last cleared for. This identity check fires exactly
+     * once - the first draw - and cannot see a reload: vanilla creates the resource manager once, in
+     * Minecraft's constructor, and {@code refreshResources} reloads through that same instance. The
+     * reload clearing lives in {@link #celtium$clearItemMeshCachesOnReload} instead: RenderItem is itself
+     * a registered reload listener, and its callback runs at the point where the models these caches key
+     * on have just been replaced.
      */
     private Object celtium$resourceEpoch;
     private long celtium$itemMeshHits, celtium$itemMeshMisses, celtium$itemMeshInvalidations;
@@ -138,6 +141,29 @@ public abstract class RenderItemMixin {
     private int celtium$itemMeshEmpty;
     /** Whether the plan just built was empty because the model answered no quads; see the miss branch. */
     private boolean celtium$planWasEmpty;
+
+    /** Drops every entry of the five item-mesh caches: their keys name model instances a reload replaced. */
+    private void celtium$clearItemMeshCaches() {
+        this.celtium$untintedItemMeshes.clear();
+        this.celtium$itemMeshes.clear();
+        this.celtium$uncacheableMeshes.clear();
+        this.celtium$tintedModels.clear();
+        this.celtium$probeFailures.clear();
+    }
+
+    /**
+     * A resource reload replaces every model instance these caches key on (ModelManager rebuilds its
+     * registry in its own callback, which is registered before RenderItem's), so the caches empty here -
+     * the one point guaranteed to run on every reload, on the client thread, before the next draw. The
+     * entries would not draw wrong without this - the keys are model identities and a hit re-probes the
+     * model - but they would sit as stale geometry until each cache's cap evicted them, which is the leak
+     * the epoch comment once claimed this check prevented.
+     */
+    @Inject(method = "func_110549_a", at = @At("RETURN"), require = 0)
+    private void celtium$clearItemMeshCachesOnReload(net.minecraft.client.resources.IResourceManager manager,
+                                                     CallbackInfo info) {
+        celtium$clearItemMeshCaches();
+    }
 
     @Shadow
     public abstract void renderQuads(BufferBuilder renderer, List<BakedQuad> quads, int color, ItemStack stack);
@@ -150,11 +176,7 @@ public abstract class RenderItemMixin {
         Object manager = Minecraft.getMinecraft().getResourceManager();
         if (manager != this.celtium$resourceEpoch) {
             this.celtium$resourceEpoch = manager;
-            this.celtium$untintedItemMeshes.clear();
-            this.celtium$itemMeshes.clear();
-            this.celtium$uncacheableMeshes.clear();
-            this.celtium$tintedModels.clear();
-            this.celtium$probeFailures.clear();
+            celtium$clearItemMeshCaches();
         }
         if (color == -1) {
             Plan untinted = this.celtium$untintedItemMeshes.get(model);

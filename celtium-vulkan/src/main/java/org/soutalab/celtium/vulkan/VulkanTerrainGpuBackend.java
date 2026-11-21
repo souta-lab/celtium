@@ -11875,6 +11875,9 @@ this.frameBufferOpen = false;
             released += releaseDirect(modProgram == null ? null : modProgram::delete);
         }
         this.modPrograms.modProgramPipelines.clear();
+        // The prepare memo holds one of the pipelines just released: it forgets with the map, so no later
+        // prepare can be handed a released pipeline through it (roam-hunt-11).
+        this.modPrograms.celtium$forgetLastModPipeline();
         // Shader-pack terrain pipelines are the same kind of object - a live pipeline with descriptor pools,
         // keyed by the program's SPIR-V identity - and they go with it too. The full delete cleared them, but
         // the world teardown path did not (roam-hunt-9): the render passes they were built against outlive a

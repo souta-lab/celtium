@@ -108,11 +108,15 @@ final class ModPrograms {
     /** Texture names whose depth-attach probe line has been printed: one line per name, ever (item 537 wall (b2)). */
     final it.unimi.dsi.fastutil.ints.IntOpenHashSet modSamplerDepthProbed =
             new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
-    private org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program lastModProgram;
-    private int lastModFormatId = -1;
-    private Object lastModLike;
-    private long lastModRenderPass;
-    private int lastModColorCount = -1;
+    /**
+     * The one-entry prepare memo, keyed exactly like {@link #modProgramPipelines}: by the SPIR-V arrays
+     * themselves, in a {@link ModProgramKey}. It must not key on the program object alone - a re-link
+     * replaces a program's arrays in place (the registry mutates the same Program), so after a resource
+     * reload re-links a program the memo would otherwise keep handing back the pipeline built from the
+     * pre-link bytes - old samplers and bindings included - for as long as that program is the only one
+     * prepared. Keyed on the arrays, the first prepare after a re-link misses and rebuilds.
+     */
+    private ModProgramKey lastModKey;
     private VulkanModProgramPipeline lastModPipeline;
     String lastModProgramFailure = "none";
 
@@ -160,15 +164,13 @@ final class ModPrograms {
                 ? b.chainPairRenderPass(targetColors, b.celtium$currentPairFormatClass())
                 : like.celtium$renderPassHandle();
         VulkanModProgramPipeline pipeline;
-        if (program == this.lastModProgram && formatId == this.lastModFormatId && like == this.lastModLike
-                && targetRenderPass == this.lastModRenderPass && targetColors == this.lastModColorCount
-                && this.lastModPipeline != null) {
+        // Keyed by the objects themselves: identity hash codes are not unique, so a key built from them could hand
+        // one program's pipeline to another (and, after a world teardown, to a pipeline built like a released one).
+        ModProgramKey key = this.probeKey.set(program.vertexSpirv(), program.fragmentSpirv(), formatId, like,
+                targetRenderPass, targetColors);
+        if (celtium$modMemoHit(key, this.lastModKey, this.lastModPipeline != null)) {
             pipeline = this.lastModPipeline;
         } else {
-            // Keyed by the objects themselves: identity hash codes are not unique, so a key built from them could hand
-            // one program's pipeline to another (and, after a world teardown, to a pipeline built like a released one).
-            ModProgramKey key = this.probeKey.set(program.vertexSpirv(), program.fragmentSpirv(), formatId, like,
-                    targetRenderPass, targetColors);
             pipeline = this.modProgramPipelines.get(key);
             if (pipeline == null) {
                 try {
@@ -181,11 +183,7 @@ final class ModPrograms {
                 }
                 this.modProgramPipelines.put(key.copy(), pipeline);
             }
-            this.lastModProgram = program;
-            this.lastModFormatId = formatId;
-            this.lastModLike = like;
-            this.lastModRenderPass = targetRenderPass;
-            this.lastModColorCount = targetColors;
+            this.lastModKey = key.copy();
             this.lastModPipeline = pipeline;
         }
         int samplerCount = pipeline.samplerCount();
@@ -355,6 +353,28 @@ final class ModPrograms {
                 : VulkanModProgramPipeline.packUniformsSnapshot(program);
         return new PreparedImmediate(new VulkanModProgramPipeline.Draw(pipeline,
                 drawUniforms, set, label, drawInputs, imageTextures, constantOffset), set, 0L);
+    }
+
+    /**
+     * {@return whether the one-entry prepare memo may answer for {@code probe}}: only when the memo holds a
+     * pipeline and the probe key equals the memo's key - the SPIR-V array identities included, which is what
+     * makes a re-link miss. A memo keyed on anything less (the program object, the variant parameters)
+     * cannot see a re-link at all, because a re-link changes nothing but the arrays. Static and pure so the
+     * rule is pinned without a device.
+     */
+    static boolean celtium$modMemoHit(ModProgramKey probe, ModProgramKey memoKey, boolean memoHoldsPipeline) {
+        return memoHoldsPipeline && probe != null && probe.equals(memoKey);
+    }
+
+    /**
+     * Drops the prepare memo. Called where {@link #modProgramPipelines} is emptied (world teardown, full
+     * delete): the memo's pipeline is one of the map's values, so past that point the memo names a released
+     * pipeline, and only the next prepare's variant objects happening to differ kept it from being handed
+     * back. Forgetting it here closes that by construction.
+     */
+    void celtium$forgetLastModPipeline() {
+        this.lastModKey = null;
+        this.lastModPipeline = null;
     }
 
     /**
