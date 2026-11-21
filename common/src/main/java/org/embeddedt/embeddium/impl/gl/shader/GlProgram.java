@@ -10,7 +10,6 @@ import org.embeddedt.embeddium.impl.gl.GlObject;
 import org.embeddedt.embeddium.impl.gl.attribute.GlVertexFormat;
 import org.embeddedt.embeddium.impl.gl.debug.GLDebug;
 import org.embeddedt.embeddium.impl.gl.shader.uniform.GlUniform;
-import org.embeddedt.embeddium.impl.gl.shader.uniform.GlUniformBlock;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.jetbrains.annotations.Nullable;
@@ -61,19 +60,6 @@ public class GlProgram<T> extends GlObject implements ShaderBindingContext {
         }
 
         return factory.apply(index);
-    }
-
-    @Override
-    public @Nullable GlUniformBlock bindUniformBlockIfPresent(String name, int bindingPoint) {
-        int index = LWJGL.glGetUniformBlockIndex(this.handle(), name);
-
-        if (index < 0) {
-            return null;
-        }
-
-        LWJGL.glUniformBlockBinding(this.handle(), index, bindingPoint);
-
-        return new GlUniformBlock(bindingPoint);
     }
 
     public static class Builder {

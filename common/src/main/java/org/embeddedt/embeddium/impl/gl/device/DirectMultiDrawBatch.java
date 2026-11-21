@@ -1,12 +1,10 @@
 package org.embeddedt.embeddium.impl.gl.device;
 
-import org.embeddedt.embeddium.impl.gl.tessellation.GlIndexType;
 import org.embeddedt.embeddium.impl.gl.tessellation.GlPrimitiveType;
 import org.embeddedt.embeddium.impl.gl.tessellation.GlTessellation;
 
 import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
 import org.taumc.celeritas.lwjgl.LWJGLServiceProvider;
-import java.nio.IntBuffer;
 
 public class DirectMultiDrawBatch extends MultiDrawBatch {
     public final long pElementPointer;
@@ -77,8 +75,6 @@ public class DirectMultiDrawBatch extends MultiDrawBatch {
 
     @Override
     public void execute(CommandList commandList, GlTessellation tessellation, GlPrimitiveType primitiveType) {
-        try (DrawCommandList drawCommandList = commandList.beginTessellating(tessellation)) {
-            drawCommandList.multiDrawElementsBaseVertex(this, primitiveType, GlIndexType.UNSIGNED_INT);
-        }
+        throw new UnsupportedOperationException("Celtium renders terrain exclusively through Vulkan");
     }
 }
