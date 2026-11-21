@@ -77,7 +77,6 @@ public class VintageBlockRenderer {
     private final QuadLightData quadLightData = new QuadLightData();
     private final int[] quadColors = new int[4];
     private final ChunkVertexEncoder.Vertex[] vertices = ChunkVertexEncoder.Vertex.uninitializedQuad();
-    private final ModelQuadOrientation[] currentOrientations = new ModelQuadOrientation[EnumFacing.VALUES.length];
     private final boolean useRenderPassOptimization;
 
     private IBlockState currentState;
@@ -94,10 +93,6 @@ public class VintageBlockRenderer {
         this.lighters = new LightPipelineProvider(cache, VintageDiffuseProvider.INSTANCE, true);
         this.blockColors = ((BlockColorsAccessor)Minecraft.getMinecraft().getBlockColors()).getBlockColorMap();
         this.useRenderPassOptimization = CeleritasVintage.options().performance.useRenderPassOptimization;
-    }
-
-    public void resetSharedState() {
-        Arrays.fill(this.currentOrientations, null);
     }
 
     public void renderBlock(IBlockState state, BlockPos pos, CeleritasBlockAccess blockAccess, BlockRenderLayer layer) {
@@ -182,6 +177,18 @@ public class VintageBlockRenderer {
         return rendered;
     }
 
+    /**
+     * The orientation of one quad, decided from that quad's own light. {@link ModelQuadOrientation}'s
+     * contract is per-quad - the split diagonal follows the quad's own vertex brightness pattern - so
+     * a later quad on the same face of the same block must not inherit an earlier quad's answer. (A
+     * per-face cache did exactly that, across render layers too; its cross-layer rationale does not
+     * need it, because the light calculation is layer-independent and deterministic, so the same
+     * quad already receives the same orientation in every layer.) Unassigned quads keep NORMAL.
+     */
+    static ModelQuadOrientation orientationFor(EnumFacing cullFace, QuadLightData light) {
+        return cullFace != null ? ModelQuadOrientation.orientByBrightness(light.br, light.lm) : ModelQuadOrientation.NORMAL;
+    }
+
     private QuadLightData getVertexLight(LightPipeline lighter, BlockPos pos, EnumFacing cullFace, BakedQuadView quad) {
         QuadLightData light = this.quadLightData;
         lighter.calculate(quad, pos.getX(), pos.getY(), pos.getZ(), light, VintageDiffuseProvider.fromEnumFacingOrUnassigned(cullFace), quad.getLightFace(), quad.hasShade(), false);
@@ -222,10 +229,7 @@ public class VintageBlockRenderer {
             var light = this.getVertexLight(lighter, pos, cullFace, quadView);
             var colors = this.getVertexColors(pos, colorProvider, quadView);
 
-            ModelQuadOrientation orientation = cullFace != null ? this.currentOrientations[cullFace.ordinal()] : ModelQuadOrientation.NORMAL;
-            if (orientation == null) {
-                this.currentOrientations[cullFace.ordinal()] = orientation = ModelQuadOrientation.orientByBrightness(light.br, light.lm);
-            }
+            ModelQuadOrientation orientation = orientationFor(cullFace, light);
 
             var quadMaterial = BakedQuadGroupAnalyzer.chooseOptimalMaterial(this.currentQuadRenderingFlags, material, config, BakedQuadView.of(quad));
             ChunkModelBuilder buffer = (quadMaterial == material) ? defaultBuffer : buffers.get(quadMaterial);
