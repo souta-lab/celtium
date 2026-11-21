@@ -899,4 +899,60 @@ class ModGlslTranslatorTest {
         assertNotNull(result.failure());
         assertTrue(result.failure().contains("shadow2D"), result.failure());
     }
+
+    @Test
+    void aDuplicateAttributeOfTheSameTypeFoldsIntoOne() {
+        // Part B of the a_PosId disposition, pinned without its preprocessor mask: two declarations of
+        // one attribute name in plain body text - no conditionals anywhere - both reached the attribute
+        // list, so the lowered header carried the name twice, at two locations, and shaderc refused the
+        // stage with a redefinition error. The same-type duplicate now folds into the first declaration:
+        // one attribute, and the folded copy consumes no location, so the next attribute moves up.
+        String vertex = """
+                #version 120
+                attribute vec3 a_dup;
+                attribute vec3 a_dup;
+                attribute vec2 a_next;
+                void main(void) {
+                    gl_Position = vec4(a_dup, 1.0) + vec4(a_next, 0.0, 1.0);
+                }
+                """;
+        String fragment = """
+                #version 120
+                void main() {
+                    gl_FragColor = vec4(1.0);
+                }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertEquals(List.of(
+                new ModGlslTranslator.Attribute("a_dup", "vec3", 0),
+                new ModGlslTranslator.Attribute("a_next", "vec2", 1)), result.attributes());
+    }
+
+    @Test
+    void aDuplicateAttributeOfAnotherTypeIsRefusedByName() {
+        // The other half of the same disposition: a same-name duplicate whose type differs is not a fold
+        // candidate - which of the two declarations the vertex data means is undecidable here - so
+        // translation refuses it by name, in the uniform collision's phrasing, instead of emitting both
+        // declarations for shaderc to reject as a redefinition.
+        String vertex = """
+                #version 330 core
+                in uvec4 a_dup;
+                in vec3 a_dup;
+                void main() {
+                    gl_Position = vec4(0.0);
+                }
+                """;
+        String fragment = """
+                #version 330 core
+                out vec4 outColor;
+                void main() {
+                    outColor = vec4(1.0);
+                }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertFalse(result.ok());
+        assertNotNull(result.failure());
+        assertTrue(result.failure().contains("attribute a_dup is declared as uvec4 and vec3"), result.failure());
+    }
 }
