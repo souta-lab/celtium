@@ -38,7 +38,8 @@ public abstract class DefaultChunkRenderer extends ShaderChunkRenderer {
         this.sharedIndexBuffers = new Reference2ReferenceOpenHashMap<>();
     }
 
-    protected boolean useBlockFaceCulling() {
+    @Override
+    public boolean useBlockFaceCulling() {
         return true;
     }
 
