@@ -24,6 +24,13 @@ import org.lwjgl.vulkan.VkPhysicalDeviceProperties;
  * Every candidate is admitted only if it can be a single-sample 2D optimal-tiling image that is both a depth-stencil
  * attachment and sampled - not merely "the device lists the format" - because the renderer attaches it and reads it
  * back. If none passes, the run refuses with the list and the reason rather than creating a target that cannot work.
+ * <p>
+ * The choice is a property of the device it was probed on, not of the process. A process can select a device more
+ * than once - a backend replacement and a renderer reload each create a fresh context with its own selection - and
+ * if a later selection settles on a different GPU, the earlier choice is forgotten and the new device is probed
+ * (see {@link #noteDevice}). Two identical models share a name and, for this contract, a probe answer, so the
+ * device name is the identity the latch is keyed by; each context also enumerates its own handle wrapper for the
+ * same GPU, which is why the wrapper alone cannot be.
  */
 public final class VulkanDepthFormat {
 
@@ -82,26 +89,67 @@ public final class VulkanDepthFormat {
     private static final AtomicInteger CHOSEN = new AtomicInteger(VK_FORMAT_UNDEFINED);
     /** The device the choice was made on, so a static caller (the render-pass builder) asks about the same one. */
     private static volatile VkPhysicalDevice chosenDevice;
+    /** The name of the device the latched choice was probed on; the identity {@link #choiceAppliesTo} compares. */
+    private static volatile String chosenDeviceName;
     private static volatile String chosenName;
     private static volatile String decision;
 
     private VulkanDepthFormat() {
     }
 
-    /** {@return the chosen format}, choosing it on first use. Throws when nothing is usable. */
+    /**
+     * {@return the chosen format}, choosing it on first use. Throws when nothing is usable.
+     * <p>
+     * A latched choice is spent only on the device it was probed on: asked about a different device, this
+     * chooses again for that device rather than returning the first device's answer.
+     */
     public static int chosen(VkPhysicalDevice device) {
         int existing = CHOSEN.get();
-        if (existing != VK_FORMAT_UNDEFINED) {
+        if (existing != VK_FORMAT_UNDEFINED && (device == null || choiceAppliesTo(device))) {
             return existing;
         }
         synchronized (VulkanDepthFormat.class) {
-            if (CHOSEN.get() != VK_FORMAT_UNDEFINED) {
-                return CHOSEN.get();
+            existing = CHOSEN.get();
+            if (existing != VK_FORMAT_UNDEFINED && (device == null || choiceAppliesTo(device))) {
+                return existing;
             }
             int format = choose(device);
             chosenDevice = device;
+            chosenDeviceName = deviceName(device);
             CHOSEN.set(format);
             return format;
+        }
+    }
+
+    /**
+     * {@return whether the latched choice may be spent on {@code device}}: the same wrapper, or a wrapper
+     * naming the same device. A second context enumerates its own wrapper for the same GPU, and two
+     * identical models answer the probe identically, so the name is the identity that separates "the same
+     * device again" from "a different device was selected".
+     */
+    private static boolean choiceAppliesTo(VkPhysicalDevice device) {
+        if (device == chosenDevice) {
+            return true;
+        }
+        return sameDeviceName(chosenDeviceName, deviceName(device));
+    }
+
+    /** The device-identity rule, without a device: a name matches only the same non-null name. */
+    static boolean sameDeviceName(String latchedDeviceName, String askedDeviceName) {
+        return latchedDeviceName != null && latchedDeviceName.equals(askedDeviceName);
+    }
+
+    /** {@return the device's name}, or null when it cannot be read. */
+    private static String deviceName(VkPhysicalDevice device) {
+        if (device == null) {
+            return null;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkPhysicalDeviceProperties properties = VkPhysicalDeviceProperties.calloc(stack);
+            vkGetPhysicalDeviceProperties(device, properties);
+            return properties.deviceNameString();
+        } catch (RuntimeException | LinkageError error) {
+            return null;
         }
     }
 
@@ -137,10 +185,28 @@ public final class VulkanDepthFormat {
      * Called by the context the moment it has a physical device, which is before any pipeline or render pass is built
      * and in both configurations. Without it the chooser existed but only the GL-less frame target ever invoked it, so
      * the contract "the format is chosen from the device" held in one configuration and threw in the other.
+     * <p>
+     * A registration naming a different device than the one a latched choice was probed on forgets that choice.
+     * Selection runs once per context and a process can create a context more than once - a backend replacement,
+     * a renderer reload - so "the first device, forever" would spend one GPU's probe answer on another GPU's
+     * images and render passes. A format has no safe direction to be kept in, the way
+     * {@code ModPushConstantLimit} keeps the smaller of two budgets; the honest move is to probe again, which is
+     * the shape {@code VulkanColorFormat} already uses for its own per-device answers.
      */
     public static void noteDevice(VkPhysicalDevice device) {
-        if (device != null && chosenDevice == null) {
+        if (device == null) {
+            return;
+        }
+        synchronized (VulkanDepthFormat.class) {
+            if (chosenDevice == null || choiceAppliesTo(device)) {
+                chosenDevice = device;
+                return;
+            }
             chosenDevice = device;
+            chosenDeviceName = null;
+            CHOSEN.set(VK_FORMAT_UNDEFINED);
+            chosenName = null;
+            decision = null;
         }
     }
 
@@ -217,13 +283,8 @@ public final class VulkanDepthFormat {
 
     /** {@return the device name}, for the refusal text, or an empty string when it cannot be read. */
     private static String capabilityNote(VkPhysicalDevice device) {
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkPhysicalDeviceProperties properties = VkPhysicalDeviceProperties.calloc(stack);
-            vkGetPhysicalDeviceProperties(device, properties);
-            return " on " + properties.deviceNameString();
-        } catch (RuntimeException | LinkageError error) {
-            return "";
-        }
+        String name = deviceName(device);
+        return name == null ? "" : " on " + name;
     }
 
     static int formatNamed(String name) {
