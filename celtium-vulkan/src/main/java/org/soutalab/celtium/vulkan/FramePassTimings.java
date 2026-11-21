@@ -21,8 +21,9 @@ import java.util.Arrays;
  * not comparable with the profiler's self-time sum, which is 4.01x the frame time because {@code frame}, {@code root}
  * and {@code gameRenderer} each hold all of it; the two must never be added together.
  * <p>
- * Off unless something is measuring ({@link VulkanDiagnostics#enabled()}) or
- * {@code -Dceltium.vulkan.passSplit=true} is set, the same rule the other repeating instruments follow.
+ * Off unless the harness asks for it ({@code passSplit=true} in the harness file, or the legacy
+ * {@code -Dceltium.vulkan.passSplit=true} spelling with the master switch on), the same rule the other
+ * repeating instruments follow: every switch in this class resolves through {@link HarnessConfig}.
  */
 public final class FramePassTimings {
 
@@ -155,16 +156,51 @@ public final class FramePassTimings {
     private static final long[] currentInside = new long[INSIDE.length];
     private static long lastReportedFrames;
 
+    /**
+     * The thread the bracket tables belong to: the one that opens the frame and tick contexts (the client
+     * main thread, through {@link #beginFrame()} and {@code TickTimings.beginTick}).
+     * <p>
+     * The tables above are plain statics with no synchronisation, which is sound only while one thread
+     * writes them - and one bracket's call sites break that. The light funnel opens its {@code lightCache}
+     * bracket before its own gate, and its mixins hang on light lookups the integrated server thread also
+     * makes (mob AI), so with the timings on, a server-thread bracket could take a name's outermost slot
+     * (its start in {@code starts}, the depth in {@code insideDepth}) while the frame's own pair nested
+     * inside it and filed nothing - or filed the foreign interval, subtracted across threads when the CPU
+     * clock is selected (roam-hunt-10's thread-boundary audit, observation A). Brackets from any other
+     * thread are still counted in {@code BEGIN_CALLS}, so whether the bracket ran stays answerable, but
+     * they never touch the tables, on either the frame path or the tick delegation.
+     */
+    private static volatile Thread contextThread;
+
+    /** Records the calling thread as the bracket tables' owner; called when a frame or tick context opens. */
+    static void noteContextThread() {
+        contextThread = Thread.currentThread();
+    }
+
+    private static boolean onContextThread() {
+        Thread owner = contextThread;
+        return owner == null || Thread.currentThread() == owner;
+    }
+
     private FramePassTimings() {
     }
 
     /**
-     * Resolved once: {@code Boolean.getBoolean} walks {@code System.getProperty} into a ConcurrentHashMap, and this is
-     * asked on both sides of every bracket - the JFR census of the shipping configuration put that lookup at 1.8% of the
-     * client thread's samples, 65 of the 87 ConcurrentHashMap.get samples, from the instrumentation itself. The switch is
-     * a JVM argument, so it cannot change after this class initialises.
+     * Resolved once, through {@link HarnessConfig} like every other repeating instrument's switch: this is asked on
+     * both sides of every bracket, and a per-bracket property walk is what the JFR census of the shipping
+     * configuration put at 1.8% of the client thread's samples (65 of the 87 ConcurrentHashMap.get samples, from the
+     * instrumentation itself) - so the answer is a field read, taken when this class initialises.
+     * <p>
+     * This switch used to be the family's exception, a raw {@code Boolean.getBoolean("celtium.vulkan.passSplit")}:
+     * the harness file could not name it at all, and the legacy command-line layer in {@link HarnessConfig} only
+     * serves keys it is asked for, so the present fix never reached it. A pass-split leg on the validation harness
+     * (FB2, 2026-11-22) ran with the switch set the way its launcher carries switches and the instrument's own
+     * summary reported {@code enabled=false} - the same silent shape as QUEUE 641's litFog and the FPS A/B's
+     * presentReadback. Through {@link HarnessConfig} the file's {@code passSplit=true} works and the legacy
+     * spellings work with the master switch on; a player's run, which has neither, observes exactly the old
+     * no-switch behaviour.
      */
-    private static final boolean PASS_SPLIT_ENABLED = Boolean.getBoolean("celtium.vulkan.passSplit");
+    private static final boolean PASS_SPLIT_ENABLED = HarnessConfig.bool("passSplit", false);
 
     /** {@return whether the instrument should measure at all}. */
     public static boolean enabled() {
@@ -176,13 +212,13 @@ public final class FramePassTimings {
         return PASS_SPLIT_ENABLED || BRACKETS_ENABLED || TICK_PERCENTILES || TickTimings.enabled();
     }
 
-    /** {@code -Dceltium.vulkan.brackets=true}: keep the pass brackets on without the pass-split report. */
-    private static final boolean BRACKETS_ENABLED = Boolean.getBoolean("celtium.vulkan.brackets");
+    /** The harness's {@code brackets=true}: keep the pass brackets on without the pass-split report. */
+    private static final boolean BRACKETS_ENABLED = HarnessConfig.bool("brackets", false);
 
     /**
      * The clock the brackets read.
      * <p>
-     * {@code -Dceltium.vulkan.passSplitCpu=true} switches every bracket to the render thread's own CPU time, which
+     * The harness's {@code passSplitCpu=true} switches every bracket to the render thread's own CPU time, which
      * subtracts scheduler preemption and GC stop-the-world pauses from what the frame wall clock counts. The need is
      * the same one the immediate path's {@code getCurrentThreadCpuTime} split already serves (OPT-01): leg
      * perf-prep1 measured {@code prepBarriers} at ~95% of recordPrepare (5 ms AMD, 10.4 ms Intel p50) for what is
@@ -190,7 +226,7 @@ public final class FramePassTimings {
      * driver work or preemption counted as work, and only a CPU clock separates them. Default stays wall time, so
      * every measured number before this flag keeps its meaning.
      */
-    private static final boolean CPU_CLOCK = Boolean.getBoolean("celtium.vulkan.passSplitCpu");
+    private static final boolean CPU_CLOCK = HarnessConfig.bool("passSplitCpu", false);
     private static final java.lang.management.ThreadMXBean THREAD_BEAN =
             java.lang.management.ManagementFactory.getThreadMXBean();
     private static final boolean THREAD_CPU_SUPPORTED = THREAD_BEAN.isCurrentThreadCpuTimeSupported();
@@ -205,7 +241,7 @@ public final class FramePassTimings {
      * {@link #TICK_SPLIT_FRAMES} frames as {@code CELTIUM_FRAME_TICK_PASSES}: Intel's warm p99 is the tick frames, and
      * the frame drawn after a tick costs ~0.3 ms more than a plain one - these say which bracket holds it.
      */
-    private static final int TICK_SPLIT_FRAMES = Integer.getInteger("celtium.vulkan.tickSplitFrames", 4000).intValue();
+    private static final int TICK_SPLIT_FRAMES = HarnessConfig.integer("tickSplitFrames", 4000);
     private static boolean tickSinceLastFrame;
     private static final long[] tickFrameSums = new long[1 + TOP_LEVEL.length + INSIDE.length];
     private static final long[] plainFrameSums = new long[1 + TOP_LEVEL.length + INSIDE.length];
@@ -218,7 +254,7 @@ public final class FramePassTimings {
     }
 
     /**
-     * {@code -Dceltium.vulkan.tickPercentiles=true}: the same tick/plain split as {@code CELTIUM_FRAME_TICK_PASSES},
+     * The harness's {@code tickPercentiles=true}: the same tick/plain split as {@code CELTIUM_FRAME_TICK_PASSES},
      * but as percentiles of the tick frames instead of means.
      * <p>
      * The mean form cannot answer the question the KPI asks. The warm window's p99 is a <em>tick</em> frame - 200 of
@@ -232,9 +268,9 @@ public final class FramePassTimings {
      * <p>
      * Memory is {@code frames x brackets x 8} bytes, allocated only when the switch is on (4 096 frames is ~3 MB).
      */
-    private static final boolean TICK_PERCENTILES = Boolean.getBoolean("celtium.vulkan.tickPercentiles");
+    private static final boolean TICK_PERCENTILES = HarnessConfig.bool("tickPercentiles", false);
     private static final int PERCENTILE_FRAMES =
-            Math.max(64, Integer.getInteger("celtium.vulkan.tickPercentileFrames", 4096).intValue());
+            Math.max(64, HarnessConfig.integer("tickPercentileFrames", 4096));
     private static final int PERCENTILE_COLUMNS = 1 + TOP_LEVEL.length + INSIDE.length;
     private static long[][] percentileRows;
     private static boolean[] percentileIsTick;
@@ -391,6 +427,7 @@ public final class FramePassTimings {
     /** Brackets the frame itself. */
     public static void beginFrame() {
         if (!enabled()) return;
+        noteContextThread();
         coverage.reset();
         Arrays.fill(starts, 0L);
         Arrays.fill(insideDepth, 0);
@@ -487,6 +524,8 @@ public final class FramePassTimings {
         int counted = timingsOn || COUNT_CALLS ? indexOf(pass) : -1;
         if (counted >= 0) BEGIN_CALLS[counted]++;
         if (!timingsOn) return;
+        // Off the context thread the bracket is the count above and nothing else: see contextThread.
+        if (!onContextThread()) return;
         // The client tick runs between frames, so `frameStart` is zero there and the frame path below would drop the
         // bracket. TickTimings keeps its own row and its own report; the name table is shared, so a bracket means the
         // same thing in both contexts.
@@ -513,6 +552,8 @@ public final class FramePassTimings {
             guiActive = false;
         }
         if (!enabled()) return;
+        // Off the context thread the close pairs with a count-only open: see contextThread.
+        if (!onContextThread()) return;
         if (TickTimings.open()) {
             TickTimings.end(indexOf(pass));
             return;
@@ -581,9 +622,9 @@ public final class FramePassTimings {
      * steady-state profile. They exist to separate "the bracket never ran" from "the bracket ran and measured zero", a
      * question asked while diagnosing, so they are a switch rather than a permanent tax.
      */
-    private static final boolean COUNT_CALLS = Boolean.getBoolean("celtium.vulkan.passCounts");
+    private static final boolean COUNT_CALLS = HarnessConfig.bool("passCounts", false);
 
-    /** {@return whether per-bracket call counting is on} ({@code -Dceltium.vulkan.passCounts}). */
+    /** {@return whether per-bracket call counting is on} (the harness's {@code passCounts}). */
     public static boolean countsCallsEnabled() {
         return COUNT_CALLS;
     }
@@ -743,7 +784,7 @@ public final class FramePassTimings {
     }
 
     /**
-     * {@code -Dceltium.vulkan.passSplitMicros=true}: print the split in microseconds instead of milliseconds.
+     * The harness's {@code passSplitMicros=true}: print the split in microseconds instead of milliseconds.
      * <p>
      * The millisecond form rounds to 0.1 ms, so every bracket under 50 us reads 0.0 and cannot be ranked. Round 58's
      * split left eight window brackets - {@code winHead}, {@code winPublish}, {@code winBeginPass}, {@code winPassEnd},
@@ -751,7 +792,7 @@ public final class FramePassTimings {
      * ~0.2 ms a frame, which is exactly the resolution the next decision needs and exactly what 0.1 ms cannot give.
      * The unit is printed beside the frame count so a microsecond line can never be read as a millisecond one.
      */
-    private static final boolean MICROS = Boolean.getBoolean("celtium.vulkan.passSplitMicros");
+    private static final boolean MICROS = HarnessConfig.bool("passSplitMicros", false);
 
     /** {@return the unit the split is printed in, for the line's own label}. */
     public static String unit() {

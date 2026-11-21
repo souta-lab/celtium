@@ -1,6 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
 import org.junit.jupiter.api.Test;
+import org.soutalab.celtium.harness.HarnessConfig;
 
 import java.lang.reflect.Field;
 
@@ -50,9 +51,21 @@ class PassTimingCoverageTest {
     }
 
     @Test void actualFrameResidualDoesNotSubtractHandInsideWorldTwice() throws Exception {
-        String previous = System.getProperty("celtium.vulkan.passSplit");
-        System.setProperty("celtium.vulkan.passSplit", "true");
+        String previousSplit = System.getProperty("celtium.vulkan.passSplit");
+        String previousMaster = System.getProperty("celtium.validation");
         try {
+            // The resolution this instrument's switch takes, pinned for its own key before the class is
+            // touched: nothing set stays off; the legacy spelling alone stays off, because a stray launcher
+            // argument must not wake a harness instrument; the spelling with the master switch on is the
+            // leg's route. That route is what FB2 (2026-11-22) did not have: this class read the spelling
+            // raw, so the harness file could not name the key at all, and the run's own summary had to be
+            // read afterwards to learn the instrument had stayed off.
+            assertFalse(HarnessConfig.bool("passSplit", false));
+            System.setProperty("celtium.vulkan.passSplit", "true");
+            assertFalse(HarnessConfig.bool("passSplit", false));
+            System.setProperty("celtium.validation", "true");
+            assertTrue(HarnessConfig.bool("passSplit", false));
+
             FramePassTimings.beginFrame();
             FramePassTimings.begin("world");
             FramePassTimings.begin("hand");
@@ -68,10 +81,45 @@ class PassTimingCoverageTest {
             assertTrue(hand > 0);
             assertTrue(world >= hand);
             assertEquals(frame - world, residual);
+            // The companion switches stay opt-in in the same run: the per-bracket call counts the FB2
+            // summary read are not kept unless passCounts asks, and the split prints in milliseconds
+            // unless passSplitMicros asks.
+            assertFalse(FramePassTimings.countsCallsEnabled());
+            assertEquals("ms", FramePassTimings.unit());
+
+            // Thread confinement (roam-hunt-10 observation A, lanechat #2103): the light funnel opens
+            // its lightCache bracket before its own gate, and its mixins also fire from the integrated
+            // server thread, whose brackets share these tables. A foreign thread's still-open bracket
+            // is counted, but it must not hold the name's outermost slot: unconfined, this frame's own
+            // lightCache pair nests inside the foreign open (depth never returns to zero for it) and
+            // its time is never filed, so the inside row below reads zero on the pre-fix code.
+            FramePassTimings.beginFrame();
+            long countBefore = FramePassTimings.passBeginCalls("lightCache");
+            Thread foreign = new Thread(() -> FramePassTimings.begin("lightCache"));
+            foreign.start();
+            foreign.join();
+            assertEquals(countBefore + 1, FramePassTimings.passBeginCalls("lightCache"));
+            FramePassTimings.begin("lightCache");
+            Thread.sleep(2);
+            FramePassTimings.end("lightCache");
+            FramePassTimings.endFrame();
+            int frameSlot = ((Integer) field("written")) - 1;
+            frameSlot %= 512;
+            int lightCacheRow = FramePassTimings.indexOfName("lightCache")
+                    - ((long[][]) field("topLevel")).length;
+            assertTrue(((long[][]) field("inside"))[lightCacheRow][frameSlot] > 0);
+            Thread foreignClose = new Thread(() -> FramePassTimings.end("lightCache"));
+            foreignClose.start();
+            foreignClose.join();
         } finally {
-            if (previous == null) System.clearProperty("celtium.vulkan.passSplit");
-            else System.setProperty("celtium.vulkan.passSplit", previous);
+            restore("celtium.vulkan.passSplit", previousSplit);
+            restore("celtium.validation", previousMaster);
         }
+    }
+
+    private static void restore(String name, String previous) {
+        if (previous == null) System.clearProperty(name);
+        else System.setProperty(name, previous);
     }
 
     private static Object field(String name) throws Exception {

@@ -229,6 +229,9 @@ public final class TickTimings {
         }
         ensure();
         open = true;
+        // The tick window is the other context FramePassTimings' brackets delegate into; the thread that
+        // opens it owns those tables too (see FramePassTimings' contextThread).
+        FramePassTimings.noteContextThread();
         tickStart = now();
         Arrays.fill(current, 0L);
         Arrays.fill(starts, 0L);
