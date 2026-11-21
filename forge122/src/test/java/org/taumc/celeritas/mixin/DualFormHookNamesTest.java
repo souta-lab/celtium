@@ -69,14 +69,49 @@ class DualFormHookNamesTest {
         for (Map.Entry<String, String[][]> entry : METHOD_PAIRS.entrySet()) {
             Set<String> utf8 = constantPoolUtf8(readMixinBytes(entry.getKey()));
             for (String[] pair : entry.getValue()) {
-                assertTrue(utf8.contains(pair[0]),
+                assertTrue(namesMethod(utf8, pair[0]),
                         entry.getKey() + " must keep the MCP name " + pair[0]);
-                assertTrue(utf8.contains(pair[1]),
+                assertTrue(namesMethod(utf8, pair[1]),
                         entry.getKey() + " must keep the SRG name " + pair[1]
                                 + " beside " + pair[0] + " - one form alone is silently unbound"
                                 + " in the other environment");
             }
         }
+    }
+
+    /**
+     * Whether the pool names a hook method, bare or descriptor-qualified. Most swept hooks are
+     * written bare, but a hook the sweep qualified to disambiguate an overload (MinecraftMixin's
+     * {@code resize(II)V} / {@code func_71370_a(II)V}) is a single pool entry in its qualified
+     * form, so a bare-name lookup cannot see it - measured on the merge-exec-6 combined gate,
+     * where the exact-match version of this test failed against the qualified entry the sweep
+     * itself wrote.
+     */
+    private static boolean namesMethod(Set<String> utf8, String name) {
+        if (utf8.contains(name)) {
+            return true;
+        }
+        String qualified = name + "(";
+        for (String entry : utf8) {
+            if (entry.startsWith(qualified)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether any pool entry contains the name. An {@code @At} invoke target is one pool entry
+     * in its owner-qualified form ({@code Lnet/minecraft/world/chunk/Chunk;func_76623_d()V}),
+     * so a target's SRG name is visible only as a substring of that entry.
+     */
+    private static boolean namesTarget(Set<String> utf8, String srgName) {
+        for (String entry : utf8) {
+            if (entry.contains(srgName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Test
@@ -97,7 +132,7 @@ class DualFormHookNamesTest {
         for (String srg : new String[]{"func_146269_k", "func_184118_az", "func_184124_aB",
                 "func_72734_e", "func_72835_b", "func_72939_s", "func_73660_a", "func_73831_a",
                 "func_73876_c", "func_74428_b", "func_78765_e"}) {
-            assertTrue(utf8.contains(srg),
+            assertTrue(namesTarget(utf8, srg),
                     "MinecraftTickSplitMixin must keep the invoke target " + srg);
         }
     }
@@ -107,11 +142,11 @@ class DualFormHookNamesTest {
         Set<String> chunk = constantPoolUtf8(readMixinBytes(
                 "/org/taumc/celeritas/mixin/core/terrain/ClientChunkManagerMixin.class"));
         assertTrue(chunk.contains("func_73234_b"), "the provideChunk hook's SRG name stays");
-        assertTrue(chunk.contains("func_76623_d"), "the Chunk.onUnload target's SRG form stays");
+        assertTrue(namesTarget(chunk, "func_76623_d"), "the Chunk.onUnload target's SRG form stays");
 
         Set<String> gui = constantPoolUtf8(readMixinBytes(
                 "/org/taumc/celeritas/mixin/features/options/MixinGuiIngameForge.class"));
-        assertTrue(gui.contains("func_71375_t"),
+        assertTrue(namesTarget(gui, "func_71375_t"),
                 "the isFancyGraphicsEnabled target's SRG form (a9e3db579) stays");
     }
 
