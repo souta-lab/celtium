@@ -34,6 +34,7 @@ import org.embeddedt.embeddium.impl.render.chunk.occlusion.VisibilityEncoding;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.embeddedt.embeddium.impl.util.task.CancellationToken;
 import org.joml.Vector3d;
+import org.taumc.celeritas.CeleritasVintage;
 import org.taumc.celeritas.impl.compat.fluidlogged.FluidloggedCompat;
 import org.taumc.celeritas.impl.render.terrain.compile.VintageChunkBuildContext;
 import org.taumc.celeritas.impl.world.WorldSlice;
@@ -43,16 +44,6 @@ import org.taumc.celeritas.impl.world.cloned.ChunkRenderContext;
 import java.util.*;
 
 public class ChunkBuilderMeshingTask extends ChunkBuilderTask<ChunkBuildOutput> {
-    /**
-     * Whether section meshing uses the Sodium-style {@code VintageBlockRenderer} instead of the game's
-     * {@code BlockRendererDispatcher} (Forge's block-model pipeline). Off by default, as in upstream Celeritas: on the
-     * QMAGNET capture the dispatcher path matches the reference's face shades (pixels over 16 levels 0.97 % against
-     * 2.00 % with the fast renderer, whose smooth lighting put a concrete side 11 % and a quartz side 22 % brighter).
-     * It was turned on in October when the dispatcher path measured 0.66 of the reference's luminance; that darkness
-     * was this renderer's handling of the path and is gone. {@code -Dceleritas.useVintageFastBlockRenderer=true} puts
-     * the fast renderer back.
-     */
-    public static boolean USE_NEW_BLOCK_RENDERER = Boolean.getBoolean("celeritas.useVintageFastBlockRenderer");
     private static final ProxyClassGenerator<WorldSlice, CeleritasBlockAccess> WORLD_SLICE_LOCAL_GENERATOR = new ProxyClassGenerator<>(WorldSlice.class, "WorldSliceLocal", CeleritasBlockAccess.class);
     private final RenderSection render;
     private final int buildTime;
@@ -141,7 +132,8 @@ public class ChunkBuilderMeshingTask extends ChunkBuilderTask<ChunkBuildOutput> 
                         for (BlockRenderLayer layer : buildContext.layers()) {
                             if (block.canRenderInLayer(blockState, layer)) {
                                 ForgeHooksClient.setRenderLayer(layer);
-                                if (blockState.getRenderType() == EnumBlockRenderType.MODEL && USE_NEW_BLOCK_RENDERER) {
+                                if (blockState.getRenderType() == EnumBlockRenderType.MODEL
+                                        && CeleritasVintage.options().performance.useFastBlockRenderer) {
                                     buildContext.getBlockRenderer().renderBlock(blockState, blockPos, slice, layer);
                                 } else {
                                     var buffer = buildContext.getBufferForLayer(layer);

@@ -75,6 +75,22 @@ public class SodiumGameOptions implements OptionStorage<SodiumGameOptions> {
         // format stays one option away for content that needs full float position/UV precision.
         // Saved configs keep their stored value; this default governs fresh configurations only.
         public boolean useCompactVertexFormat = true;
+        /**
+         * Whether section meshing uses the Sodium-style {@code VintageBlockRenderer} instead of the game's
+         * {@code BlockRendererDispatcher} (Forge's block-model pipeline). Off by default, as in upstream
+         * Celeritas: on the QMAGNET capture the dispatcher path matches the reference's face shades (pixels
+         * over 16 levels 0.97 % against 2.00 % with the fast renderer, whose smooth lighting put a concrete
+         * side 11 % and a quartz side 22 % brighter). It was turned on in October when the dispatcher path
+         * measured 0.66 of the reference's luminance; that darkness was this renderer's handling of the path
+         * and is gone.
+         * <p>
+         * The initial value is seeded from {@code -Dceleritas.useVintageFastBlockRenderer} - the read that
+         * used to initialise a static field in {@code ChunkBuilderMeshingTask} - and the value is then
+         * persisted like every other option here. Before this field existed, the options page's toggle read
+         * and wrote only that static, so a change applied in the GUI silently reverted to the property's
+         * value on the next launch.
+         */
+        public boolean useFastBlockRenderer = Boolean.getBoolean("celeritas.useVintageFastBlockRenderer");
         @SerializedName("use_translucent_face_sorting_v2")
         public boolean useTranslucentFaceSorting = true;
         public boolean useRenderPassOptimization = true;
