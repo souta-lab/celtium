@@ -104,7 +104,8 @@ public class SodiumGameOptions implements OptionStorage<SodiumGameOptions> {
 
         /**
          * Consumed in RenderGlobalMixin: when vanilla reloads the renderers it sets the leaves
-         * graphics level from the raw vanilla graphics mode; the redirect substitutes
+         * graphics level from the raw vanilla graphics mode; an inject at the end of
+         * loadRenderers then substitutes
          * {@code leavesQuality.isFancy(vanillaMode)} as the value handed to
          * {@code BlockLeaves.setGraphicsLevel}, which is what drives leaf face culling
          * (BlockLeaves.shouldSideBeRendered) and the leaves render layer in the mesher.
