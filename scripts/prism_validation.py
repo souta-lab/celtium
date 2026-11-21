@@ -527,6 +527,23 @@ def relauncher_summary(instance):
     }
 
 
+VALIDATION_FLAG = "-Dceltium.validation=true"
+
+
+def relauncher_arguments(jvm_arg, validate):
+    """{@return} the runner arguments handed to the relauncher's child JVM.
+
+    The validation flag is composed for the outer JVM in run_locked, but a relauncher instance runs the game in a
+    child JVM whose command the relauncher builds itself, so the flag only reaches the game if it is also among the
+    arguments written into the copy's config/relauncher.json. A caller who already passed the same flag through
+    --jvm-arg must not get it twice.
+    """
+    arguments = [str(arg) for arg in jvm_arg or []]
+    if validate and VALIDATION_FLAG not in arguments:
+        arguments.append(VALIDATION_FLAG)
+    return arguments
+
+
 def inject_relauncher_arguments(game, runner_arguments):
     """{@return} the -D flags written into the isolated copy's relauncher config.
 
@@ -707,7 +724,7 @@ def main():
     # run could otherwise be judged without its instruments.
     # This has to happen after the profile is copied into the isolated directory, or the copy fails on config/ existing.
     if relauncher is not None:
-        injected = inject_relauncher_arguments(game, args.jvm_arg)
+        injected = inject_relauncher_arguments(game, relauncher_arguments(args.jvm_arg, args.validate))
         if injected:
             relauncher["injectedJvmArgs"] = injected
             print("Relauncher arguments: wrote " + str(len(injected)) + " -D flag(s) into the copy's config/relauncher.json")
@@ -777,7 +794,7 @@ def run_locked(args, game, cp, main_class, tweakers, jvm_args, java, assets, ass
                java_major=None):
     player = "CeltiumValidation"
     player_uuid = uuid.UUID(bytes=hashlib.md5(("OfflinePlayer:" + player).encode("utf-8")).digest(), version=3).hex
-    validation_args = ["-Dceltium.validation=true"] if args.validate else []
+    validation_args = [VALIDATION_FLAG] if args.validate else []
     # The window the game is asked for. It used to be hard-coded 1280x720, which is the headless compositor's output
     # size and therefore the only size any placement measurement could be taken at - while the operator's own window
     # is 1920x1080, and the presented frame's placement at that size is exactly what the "the menu is shifted" report
