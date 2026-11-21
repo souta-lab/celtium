@@ -13817,6 +13817,19 @@ this.frameBufferOpen = false;
                 }
                 this.passAttachedColorImages = null;
                 this.passAttachedDepthImage = 0L;
+                // The rest of the pass state the routing reassigned goes back to the frame's with the
+                // framebuffer: passRenderPass (a frame framebuffer begun with the chain-pair pass clears and
+                // discards the world's depth, and a multi-target variant's attachment count does not match the
+                // frame framebuffer's one colour image), passAttachedColorImage (the sampling-side transition
+                // below skips the image this field names, so leaving it on the pair would move the frame image
+                // the fallback actually attaches to SHADER_READ_ONLY ahead of a pass declaring GENERAL -
+                // VUID-vkCmdBeginRenderPass-initialLayout-00900), and the pass extent (the pair's, smaller
+                // than the frame's, would clip the fallback window's draws to the pair's rectangle).
+                // Bughunt 2026-11-21 lane 01, finding 1.
+                this.passAttachedColorImage = this.frameTarget.colorImage();
+                passRenderPass = renderPass;
+                passWidth = this.targetWidth;
+                passHeight = this.targetHeight;
                 framebuffer = ensureFramebuffer(renderPass);
             }
             if (WINDOW_SPLIT) {
