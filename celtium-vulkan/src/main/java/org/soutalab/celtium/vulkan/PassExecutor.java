@@ -247,7 +247,8 @@ final class PassExecutor {
                             : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
                     transitionImageLayout(commandBuffer, inputs[i].image(), inputs[i].layout(), sampledLayout,
                             inputs[i].depth(), stack);
-                    this.targetRegistry.noteNamedTargetLayout(inputs[i].name(), sampledLayout);
+                    this.targetRegistry.noteNamedTargetLayout(commandBuffer.address(), inputs[i].name(),
+                            sampledLayout);
                     views[i] = inputs[i].view();
                     samplers[i] = inputs[i].sampler();
                     layouts[i] = sampledLayout;
@@ -308,7 +309,7 @@ final class PassExecutor {
             vkCmdEndRenderPass(commandBuffer);
             passOpen = false;
 
-            this.targetRegistry.noteNamedTargetLayout(output.name(), attachmentLayout);
+            this.targetRegistry.noteNamedTargetLayout(commandBuffer.address(), output.name(), attachmentLayout);
             if (shouldClear) {
                 this.targetRegistry.noteNamedTargetCleared(output.name(), frameSerial);
             }
@@ -329,7 +330,7 @@ final class PassExecutor {
                 }
             }
             if (outputTransitionRecorded) {
-                this.targetRegistry.noteNamedTargetLayout(output.name(), attachmentLayout);
+                this.targetRegistry.noteNamedTargetLayout(commandBuffer.address(), output.name(), attachmentLayout);
             }
             this.passRegistry.noteExecutionRefusal(pass.spec().name(),
                     failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage());

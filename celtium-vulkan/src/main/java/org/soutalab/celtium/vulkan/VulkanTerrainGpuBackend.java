@@ -113,6 +113,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         @Override public FrameSubmissionScheduler scheduler() { return VulkanTerrainGpuBackend.this.scheduler; }
         @Override public boolean submissionPending() { return VulkanTerrainGpuBackend.this.submissionPending; }
         @Override public SubmissionStatistics submissionStatistics() { return VulkanTerrainGpuBackend.this.submissionStatistics; }
+        @Override public RenderTargetRegistry targetRegistry() { return VulkanTerrainGpuBackend.this.targetRegistry; }
         @Override public int failImmediateSubmits() { return VulkanTerrainGpuBackend.this.failImmediateSubmits; }
         @Override public void noteImmediateSubmitFailure() { VulkanTerrainGpuBackend.this.failImmediateSubmits--; }
         @Override public void check(int result, String operation) { VulkanTerrainGpuBackend.check(result, operation); }
@@ -21405,6 +21406,10 @@ this.frameBufferOpen = false;
             // fact only when the submission that carries it is accepted; opening a recording on a handle that still
             // has an uncommitted one abandons that one first, which is exactly the reset/abandon case.
             VulkanGlTexture.beginLayoutRecording(this.commandBuffer);
+            // The named targets keep the same discipline on the same recording (audit-vulkan-core E2):
+            // their transitions become fact only when this buffer's submission is accepted, and opening
+            // this recording drops the previous one's uncommitted notes with it.
+            this.targetRegistry.beginNamedTargetLayoutRecording(this.commandBuffer.address());
             // Queries must be reset before they are written again, and a fresh command buffer is exactly where that
             // belongs; without it validation reports every timestamp write as using an unavailable query.
             if (this.timestampPool != 0) {
