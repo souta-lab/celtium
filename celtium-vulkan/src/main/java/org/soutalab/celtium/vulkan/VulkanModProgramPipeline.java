@@ -174,6 +174,8 @@ public final class VulkanModProgramPipeline {
     private VulkanUniformBuffer uniformBuffer;
     /** The constant-attribute ring (binding 1, stride 0); null for a pipeline whose layout feeds every attribute. */
     private VulkanUniformBuffer constantRing;
+    /** Dedicated zero-filled vertex buffer (binding 1, stride 0) for optional pack terrain attributes absent from the vertex format (e.g. {@code at_midBlock}). */
+    private VulkanUniformBuffer terrainZeroAttributeBuffer;
     private int constantCursor = -1;
     private float lastConstantRed = Float.NaN;
     private float lastConstantGreen;
@@ -545,10 +547,24 @@ public final class VulkanModProgramPipeline {
                     .pName(stack.UTF8("main"));
 
             int stride = vertexFormat.getStride();
-            VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
-            binding.get(0).binding(0).stride(stride).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
-
             List<ModGlslTranslator.Attribute> declared = this.attributes;
+            boolean needsZeroFallback = false;
+            for (int i = 0; i < declared.size(); i++) {
+                if (matchTerrainAttribute(vertexFormat, declared.get(i).name()) == null) {
+                    needsZeroFallback = true;
+                    break;
+                }
+            }
+            VkVertexInputBindingDescription.Buffer binding =
+                    VkVertexInputBindingDescription.calloc(needsZeroFallback ? 2 : 1, stack);
+            binding.get(0).binding(0).stride(stride).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
+            if (needsZeroFallback) {
+                binding.get(1).binding(1).stride(0).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
+                this.terrainZeroAttributeBuffer =
+                        new VulkanUniformBuffer(this.context, 16L, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+                MemoryUtil.memSet(this.terrainZeroAttributeBuffer.mappedAddress(), 0, 16L);
+            }
+
             VkVertexInputAttributeDescription.Buffer attrs =
                     VkVertexInputAttributeDescription.calloc(declared.size(), stack);
             for (int i = 0; i < declared.size(); i++) {
@@ -556,11 +572,12 @@ public final class VulkanModProgramPipeline {
                 org.embeddedt.embeddium.impl.gl.attribute.GlVertexAttribute matched =
                         matchTerrainAttribute(vertexFormat, attr.name());
                 if (matched == null) {
-                    throw new IllegalStateException("terrain attribute " + attr.name()
-                            + " has no source in vertex format (stride=" + stride + ")");
+                    attrs.get(i).location(attr.location()).binding(1)
+                            .format(zeroAttributeVkFormat(attr.type())).offset(0);
+                } else {
+                    int vkFormat = vkFormatForTerrainAttribute(matched, attr.type());
+                    attrs.get(i).location(attr.location()).binding(0).format(vkFormat).offset(matched.getPointer());
                 }
-                int vkFormat = vkFormatForTerrainAttribute(matched, attr.type());
-                attrs.get(i).location(attr.location()).binding(0).format(vkFormat).offset(matched.getPointer());
             }
 
             VkPipelineVertexInputStateCreateInfo vertexInput = VkPipelineVertexInputStateCreateInfo.calloc(stack)
@@ -1347,10 +1364,27 @@ public final class VulkanModProgramPipeline {
         return this.images;
     }
 
+    /** {@return the Vulkan 4-component format for a zero-fallback terrain attribute matching {@code glslType}} */
+    static int zeroAttributeVkFormat(String glslType) {
+        if (glslType != null && glslType.startsWith("u")) {
+            return VK_FORMAT_R32G32B32A32_UINT;
+        }
+        if (glslType != null && glslType.startsWith("i")) {
+            return VK_FORMAT_R32G32B32A32_SINT;
+        }
+        return VK_FORMAT_R32G32B32A32_SFLOAT;
+    }
+
     /** Binds this pipeline for indexed terrain draws inside an open render pass. */
     void bindTerrainPipeline(VkCommandBuffer commandBuffer) {
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
         vkCmdSetDepthBias(commandBuffer, 0.0f, 0.0f, 0.0f);
+        if (this.terrainZeroAttributeBuffer != null) {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                vkCmdBindVertexBuffers(commandBuffer, 1,
+                        stack.longs(this.terrainZeroAttributeBuffer.buffer()), stack.longs(0L));
+            }
+        }
     }
 
     /** Binds descriptor set and/or push constants for one region's terrain draws. */
@@ -1375,6 +1409,10 @@ public final class VulkanModProgramPipeline {
             // The ring's own delete defers its free while a recording is open (VulkanUniformBuffer.delete).
             this.constantRing.delete();
             this.constantRing = null;
+        }
+        if (this.terrainZeroAttributeBuffer != null) {
+            this.terrainZeroAttributeBuffer.delete();
+            this.terrainZeroAttributeBuffer = null;
         }
         VulkanUniformBuffer uniformBufferToDestroy = this.uniformBuffer;
         long pipelineToDestroy = this.pipeline;
