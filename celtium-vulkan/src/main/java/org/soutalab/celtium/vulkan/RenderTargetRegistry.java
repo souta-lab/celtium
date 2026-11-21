@@ -1013,6 +1013,7 @@ public final class RenderTargetRegistry {
         private int recordedLayout;
         private long generation;
         private long clearedFrame = -1L;
+        private long recordedClearedFrame = -1L;
 
         NamedTargetState(NamedTargetSpec spec, long image, long view, long sampler, int width, int height,
                          int layout, long generation) {
@@ -1068,8 +1069,18 @@ public final class RenderTargetRegistry {
             return this.generation;
         }
 
+        /** The confirmed cleared frame: the frame serial whose clear the last accepted submission carried. */
         public long clearedFrame() {
             return this.clearedFrame;
+        }
+
+        /**
+         * The cleared frame the open recording leaves this target with - what a clear decision made while
+         * recording must read, so a pass later in the same recording sees an earlier pass's clear. Equals
+         * {@link #clearedFrame()} while no open recording names this target.
+         */
+        public long recordedClearedFrame() {
+            return this.recordedClearedFrame;
         }
     }
 
@@ -1139,15 +1150,33 @@ public final class RenderTargetRegistry {
     private final Map<Long, Map<String, Integer>> namedLayoutRecordings = new java.util.HashMap<>();
 
     /**
-     * Opens the named-target layout recording for a command buffer, dropping any uncommitted recording the
+     * Clears recorded into one command buffer and not yet accepted by the queue, per named target: the frame
+     * serial whose clear the recording carries. Clears ride the same recording as the layout transitions
+     * above - there is one recording per command buffer, opened, committed and abandoned at the same points -
+     * because a clear, too, is a fact about what the recording does to the image, not about the image itself:
+     * {@link NamedTargetState#clearedFrame()} is the clear the last accepted submission carried, and a clear
+     * recorded into a buffer whose submission never happens must not move it, or a {@code CLEAR_ON_CREATE}
+     * target whose first clear sat in an abandoned recording would never be cleared at all
+     * (lanechat #1596, the cleared-frame sibling of E2).
+     */
+    private final Map<Long, Map<String, Long>> namedClearedRecordings = new java.util.HashMap<>();
+
+    /**
+     * Opens the named-target recording for a command buffer, dropping any uncommitted recording the
      * same handle still holds - which is exactly the reset/abandon case, as with
      * {@code VulkanGlTexture.beginLayoutRecording}: the previous recording's barriers may never have executed,
-     * so its targets' recorded heads fall back to their confirmed layouts.
+     * so its targets' recorded heads fall back to their confirmed layouts. The recording carries the
+     * cleared notes too, so the previous recording's clears drop here as well and their targets' recorded
+     * cleared heads fall back to their confirmed cleared frames.
      */
     public void beginNamedTargetLayoutRecording(long commandBuffer) {
         Map<String, Integer> previous = this.namedLayoutRecordings.remove(commandBuffer);
         if (previous != null) {
             settleNamedTargetRecordedLayouts(previous.keySet());
+        }
+        Map<String, Long> previousCleared = this.namedClearedRecordings.remove(commandBuffer);
+        if (previousCleared != null) {
+            settleNamedTargetRecordedClearedFrames(previousCleared.keySet());
         }
     }
 
@@ -1168,32 +1197,64 @@ public final class RenderTargetRegistry {
     }
 
     /**
-     * Makes every transition recorded into this command buffer fact: the submission that carries them was
-     * accepted by the queue. Called at the same point as {@code VulkanGlTexture.commitLayoutRecording} -
-     * immediately after the queue accepted the submission, never before it.
+     * Notes that the recording into {@code commandBuffer} clears the named target for {@code frameSerial}.
+     * The target's recorded cleared head moves now, so a clear decision made later in the same recording
+     * sees the clear; its confirmed cleared frame moves only at
+     * {@link #commitNamedTargetLayoutRecording(long)}.
      */
-    public void commitNamedTargetLayoutRecording(long commandBuffer) {
-        Map<String, Integer> recording = this.namedLayoutRecordings.remove(commandBuffer);
-        if (recording == null) {
+    public void noteNamedTargetCleared(long commandBuffer, String name, long frameSerial) {
+        NamedTargetState state = this.namedTargetStates.get(name);
+        if (state == null) {
             return;
         }
-        for (Map.Entry<String, Integer> entry : recording.entrySet()) {
-            NamedTargetState state = this.namedTargetStates.get(entry.getKey());
-            if (state != null) {
-                state.layout = entry.getValue().intValue();
-            }
-        }
-        settleNamedTargetRecordedLayouts(recording.keySet());
+        this.namedClearedRecordings
+                .computeIfAbsent(commandBuffer, key -> new java.util.LinkedHashMap<>())
+                .put(name, Long.valueOf(frameSerial));
+        state.recordedClearedFrame = frameSerial;
     }
 
     /**
-     * Drops the transitions recorded into a command buffer without applying them, because the submission
-     * that would have carried them was refused or its recording thrown away.
+     * Makes everything recorded into this command buffer fact - the layout transitions and the clears:
+     * the submission that carries them was accepted by the queue. Called at the same point as
+     * {@code VulkanGlTexture.commitLayoutRecording} - immediately after the queue accepted the submission,
+     * never before it.
+     */
+    public void commitNamedTargetLayoutRecording(long commandBuffer) {
+        Map<String, Integer> recording = this.namedLayoutRecordings.remove(commandBuffer);
+        if (recording != null) {
+            for (Map.Entry<String, Integer> entry : recording.entrySet()) {
+                NamedTargetState state = this.namedTargetStates.get(entry.getKey());
+                if (state != null) {
+                    state.layout = entry.getValue().intValue();
+                }
+            }
+            settleNamedTargetRecordedLayouts(recording.keySet());
+        }
+        Map<String, Long> clearedRecording = this.namedClearedRecordings.remove(commandBuffer);
+        if (clearedRecording != null) {
+            for (Map.Entry<String, Long> entry : clearedRecording.entrySet()) {
+                NamedTargetState state = this.namedTargetStates.get(entry.getKey());
+                if (state != null) {
+                    state.clearedFrame = entry.getValue().longValue();
+                }
+            }
+            settleNamedTargetRecordedClearedFrames(clearedRecording.keySet());
+        }
+    }
+
+    /**
+     * Drops everything recorded into a command buffer without applying it - the layout transitions and
+     * the clears - because the submission that would have carried them was refused or its recording
+     * thrown away.
      */
     public void abandonNamedTargetLayoutRecording(long commandBuffer) {
         Map<String, Integer> recording = this.namedLayoutRecordings.remove(commandBuffer);
         if (recording != null) {
             settleNamedTargetRecordedLayouts(recording.keySet());
+        }
+        Map<String, Long> clearedRecording = this.namedClearedRecordings.remove(commandBuffer);
+        if (clearedRecording != null) {
+            settleNamedTargetRecordedClearedFrames(clearedRecording.keySet());
         }
     }
 
@@ -1215,17 +1276,31 @@ public final class RenderTargetRegistry {
         }
     }
 
-    /** Drops any uncommitted recorded transitions naming a target whose allocation fact was just replaced or forgotten. */
+    /** Recomputes each named target's recorded cleared head from the recordings still open, falling back to the confirmed cleared frame. */
+    private void settleNamedTargetRecordedClearedFrames(java.util.Set<String> names) {
+        for (String name : names) {
+            NamedTargetState state = this.namedTargetStates.get(name);
+            if (state == null) {
+                continue;
+            }
+            long head = state.clearedFrame;
+            for (Map<String, Long> recording : this.namedClearedRecordings.values()) {
+                Long noted = recording.get(name);
+                if (noted != null) {
+                    head = noted.longValue();
+                }
+            }
+            state.recordedClearedFrame = head;
+        }
+    }
+
+    /** Drops any uncommitted recorded transitions and clears naming a target whose allocation fact was just replaced or forgotten. */
     private void dropNamedTargetRecordings(String name) {
         for (Map<String, Integer> recording : this.namedLayoutRecordings.values()) {
             recording.remove(name);
         }
-    }
-
-    public void noteNamedTargetCleared(String name, long frameSerial) {
-        NamedTargetState state = this.namedTargetStates.get(name);
-        if (state != null) {
-            state.clearedFrame = frameSerial;
+        for (Map<String, Long> recording : this.namedClearedRecordings.values()) {
+            recording.remove(name);
         }
     }
 
@@ -1239,12 +1314,14 @@ public final class RenderTargetRegistry {
     public void clearNamedTargetAllocations() {
         this.namedTargetStates.clear();
         this.namedLayoutRecordings.clear();
+        this.namedClearedRecordings.clear();
     }
 
     public void clearNamedTargets() {
         this.namedTargetStates.clear();
         this.namedTargetSpecs.clear();
         this.namedLayoutRecordings.clear();
+        this.namedClearedRecordings.clear();
     }
 
     private static String hex(long value) {
