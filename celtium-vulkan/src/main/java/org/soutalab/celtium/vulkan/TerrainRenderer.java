@@ -167,7 +167,7 @@ public final class TerrainRenderer {
     }
 
     /** {@return whether any failed upload is waiting}. */
-    boolean isEmpty() {
+    boolean failedUploadsEmpty() {
         return this.failedUploads.isEmpty();
     }
 

@@ -878,7 +878,9 @@ public abstract class RenderSectionManager {
         // BH-25: the sections whose geometry did not reach the GPU. Committing them below would clear their build
         // token, advance lastBuiltFrame and store their metadata as if they were built, and nothing re-submits a
         // section that reads as built - the chunks stay missing until something else rebuilds them. Skipping the
-        // commit leaves exactly those queued, which is the retry the finding asks for.
+        // commit alone is not the retry, though: submission already consumed the section's pending update and its
+        // queue membership and left its cancellation token pointing at the submitted job, so a skipped section
+        // was stranded with no path back into a build. The branch below re-queues it explicitly.
         java.util.Set<org.embeddedt.embeddium.impl.render.chunk.RenderSection> failedUploads =
                 this.terrainBackend.consumeFailedUploads();
 
@@ -886,6 +888,28 @@ public abstract class RenderSectionManager {
             var result = holder.output();
 
             if (failedUploads.contains(result.render)) {
+                // Retry the failed upload: clear the finished job's token, request the same kind of update again
+                // and dirty the graph so the search picks the section up. Only the latest submission is retried -
+                // a stale result's replacement build is already in flight and commits (or retries) on its own.
+                boolean latest = result.buildTime >= result.render.getLastSubmittedFrame();
+
+                if (latest && !result.render.isDisposed()) {
+                    var job = result.render.getBuildCancellationToken();
+
+                    if (job != null) {
+                        result.render.setBuildCancellationToken(null);
+                    }
+
+                    ChunkUpdateType retry = result instanceof ChunkBuildOutput
+                            ? ChunkUpdateType.REBUILD : ChunkUpdateType.SORT;
+
+                    if (result.render.requestUpdate(retry)) {
+                        this.celtiumPendingMeshUpdates.add(result.render);
+                    }
+
+                    this.markGraphDirty();
+                }
+
                 continue;
             }
 
