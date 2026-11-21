@@ -119,6 +119,19 @@ public final class ImmediateGroup {
      * that the slice still holds the batch by the time the command reads it.
      */
     public boolean probePoisoned;
+    /**
+     * Whether this group was closed while the {@code gui} bracket was open, stamped at the close site
+     * only when the item-312 P0 census is on ({@code -Dceltium.vulkan.hudP0Frames}); always false with
+     * the census off.
+     * <p>
+     * The census's flush fit identifies a gui window by the provenance of the groups it drains, not by
+     * the bracket still being open when the flush runs: the HUD's groups are drained by the
+     * frame-boundary flush after the bracket has closed, so a flush-time bracket read stamps the very
+     * windows the fit exists to measure as not-gui (measured by leg-hud312: 300 frames, zero windows).
+     * Captured at the close for the same reason as the fog and the state: at close the bracket state is
+     * the batch's own.
+     */
+    public boolean closedInGuiSection;
 
     /**
      * {@return a hash of the group's viewport and scissor state}.
@@ -330,6 +343,7 @@ public final class ImmediateGroup {
         this.scissorBox = null;
         this.scissorEnabled = false;
         this.probePoisoned = false;
+        this.closedInGuiSection = false;
         this.polygonOffsetFactor = 0.0f;
         this.polygonOffsetUnits = 0.0f;
         this.polygonOffsetEnabled = false;

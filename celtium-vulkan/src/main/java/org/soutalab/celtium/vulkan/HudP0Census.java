@@ -210,10 +210,33 @@ final class HudP0Census {
     }
 
     /**
+     * {@return how many of a flush window's pending groups were closed inside the gui bracket}.
+     * <p>
+     * This count is what makes a window a gui window for {@link FlushRegression}: the HUD's groups
+     * close inside the bracket but are drained by the frame-boundary flush after it closes, so the
+     * bracket's state at flush time cannot identify the window (leg-hud312 measured 300 frames with
+     * zero windows under that rule). The stamp is the group's own ({@link ImmediateGroup#closedInGuiSection},
+     * written at the same close site the census counts from), so the fit's population is exactly the
+     * population the census classifies.
+     */
+    static int guiClosedGroups(java.util.List<ImmediateGroup> pending) {
+        int count = 0;
+        for (ImmediateGroup group : pending) {
+            if (group.closedInGuiSection) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
      * Least-squares fit of flush wall time against the number of groups the flush recorded, over the
      * bounded window sample. The slope is the flush's group-proportional cost (G1's input); the
      * intercept is its fixed cost. Windows are the unit, not frames, because one frame flushes several
-     * times and each flush's group count is known exactly at its entry.
+     * times and each flush's group count is known exactly at its entry. A window enters the sample
+     * when it drains at least one group closed inside the gui bracket (see {@link #guiClosedGroups});
+     * the paired group count is still the window's whole pending count at its entry, the number the
+     * window actually recorded.
      */
     static final class FlushRegression {
         private static final int MAX_WINDOWS = 8192;
