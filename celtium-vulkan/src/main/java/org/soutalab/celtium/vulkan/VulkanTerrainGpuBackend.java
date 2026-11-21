@@ -16199,12 +16199,46 @@ this.frameBufferOpen = false;
             GllessFrameTarget pairOwner = offTargetTarget();
             long identity = this.targetRegistry.currentIdentity();
             if (pairOwner != null && pairOwner.chainPairMatches(identity, this.targetWidth, this.targetHeight)) {
+                // The pair is attached whole - colour and depth - so it is acquired whole, the depth route's way:
+                // the frame pass declares the depth's initial layout as the attachment layout, and a pair depth
+                // left in SHADER_READ_ONLY by the sampling side (a borrowed shared depth above all) would begin
+                // the pass in the wrong layout (VUID-vkCmdBeginRenderPass-initialLayout-00900), while a pair on
+                // its first use holds colour in UNDEFINED against the pass' GENERAL declaration. The depth
+                // texture the bound framebuffer's record names is resolved the window path's way, and the borrow
+                // is settled before the framebuffer is fetched, because borrowing can rebuild the pair's depth
+                // view. Bughunt 2026-11-21 lane 01, finding 2.
+                int[] boundDepthRecord = celtium$depthTextureForTarget(identity);
+                int boundDepthTexture = boundDepthRecord == null ? 0 : boundDepthRecord[0];
+                long boundDepthKey = 0L;
+                long boundDepthImage = 0L;
+                if (boundDepthTexture != 0 && boundDepthRecord[1] > 0 && boundDepthRecord[2] > 0) {
+                    long candidateKey = RenderTargetRegistry.rawColorTextureIdentity(boundDepthTexture);
+                    if (pairOwner.ensureChainPairSharedDepth(identity, candidateKey,
+                            boundDepthRecord[1], boundDepthRecord[2])
+                            && pairOwner.chainPairUsesSharedDepth(identity, candidateKey)) {
+                        boundDepthKey = candidateKey;
+                        boundDepthImage = pairOwner.sharedDepthImage(candidateKey);
+                    }
+                }
                 long pairFramebuffer = ensureChainPairFramebuffer(renderPass);
                 if (pairFramebuffer != 0L) {
                     terrainFramebuffer = pairFramebuffer;
+                    if (boundDepthKey != 0L) {
+                        // A shared-depth member's owed clear is consumed here, in the depth route's order -
+                        // before this pass draws, not left for a later window of the same framebuffer to clear
+                        // over the terrain this pass is about to write.
+                        celtium$consumeRoutedTargetClear(pairOwner, identity, boundDepthKey);
+                    }
+                    pairOwner.recordChainPairAttachAcquire(identity, boundDepthKey, this.commandBuffer);
                     long routedBoundColor = pairOwner.chainPairColorImage(identity);
                     this.passAttachedColorImage = routedBoundColor;
-                    this.postChainBridge.celtium$transitionPublishedFrameTextures(true, routedBoundColor, 0L);
+                    this.passAttachedDepthImage = boundDepthImage;
+                    // The end-of-pass hand-back reads the routed state, so this pass leaves the pair's colour
+                    // and shared depth recorded in the layouts the pass leaves them in, like a depth-routed one.
+                    routedDepthIdentity = identity;
+                    routedDepthKey = boundDepthKey;
+                    this.postChainBridge.celtium$transitionPublishedFrameTextures(true, routedBoundColor,
+                            boundDepthImage);
                     this.terrainPassesToBoundTarget++;
                     if (this.terrainPassesToBoundTarget <= 4) {
                         System.out.println("[Celtium] CELTIUM_TERRAIN_BOUND_TARGET pass=" + pass.name() + " identity=0x"
