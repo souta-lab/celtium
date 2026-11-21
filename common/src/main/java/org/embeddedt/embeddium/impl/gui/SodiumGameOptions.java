@@ -192,6 +192,18 @@ public class SodiumGameOptions implements OptionStorage<SodiumGameOptions> {
         return applied;
     }
 
+    /**
+     * Whether a parsed config can be used as-is: every section the loader and the
+     * options pages dereference is present. Package-private for the unit test.
+     */
+    static boolean isUsable(SodiumGameOptions config) {
+        return config != null
+                && config.quality != null
+                && config.advanced != null
+                && config.performance != null
+                && config.notifications != null;
+    }
+
     public static SodiumGameOptions load() {
         return load(DEFAULT_FILE_NAME);
     }
@@ -213,6 +225,17 @@ public class SodiumGameOptions implements OptionStorage<SodiumGameOptions> {
             }
         } else {
             config = new SodiumGameOptions();
+        }
+
+        if (!isUsable(config)) {
+            // Gson returns null for an empty or "null" file and honours an explicit
+            // "quality": null (and its siblings), and everything below dereferences the
+            // sections. Treat a parse that produced no usable config like the syntax
+            // error above - defaults, file left untouched - instead of letting a null
+            // reach the caller, whose fallback is a read-only config for the session.
+            LOGGER.error("Could not parse config, will fallback to default settings");
+            config = new SodiumGameOptions();
+            resaveConfig = false;
         }
 
         config.configPath = path;
