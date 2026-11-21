@@ -16,8 +16,6 @@ import org.embeddedt.embeddium.impl.render.chunk.data.BuiltRenderSectionData;
 import org.embeddedt.embeddium.impl.render.chunk.data.MinecraftBuiltRenderSectionData;
 import org.embeddedt.embeddium.impl.render.chunk.lists.SectionTicker;
 import org.embeddedt.embeddium.impl.render.chunk.occlusion.AsyncOcclusionMode;
-import org.embeddedt.embeddium.impl.render.chunk.shader.ChunkShaderInterface;
-import org.embeddedt.embeddium.impl.render.chunk.shader.ChunkShaderTextureSlot;
 import org.embeddedt.embeddium.impl.render.chunk.shader.TerrainPipelineConfig;
 import org.embeddedt.embeddium.impl.render.chunk.sprite.GenericSectionSpriteTicker;
 import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkVertexType;
@@ -45,7 +43,7 @@ public class VintageRenderSectionManager extends RenderSectionManager {
     }
 
     public VintageRenderSectionManager(RenderPassConfiguration<?> configuration, WorldClient world, int renderDistance, CommandList commandList, int minSection, int maxSection, boolean hasShadowPass) {
-        super(configuration, () -> new VintageChunkBuildContext(world, configuration), ChunkRenderer::new, renderDistance, commandList, minSection, maxSection, CeleritasVintage.options().performance.chunkBuilderThreads, hasShadowPass);
+        super(configuration, () -> new VintageChunkBuildContext(world, configuration), CeltiumTerrainChunkRenderer::new, renderDistance, commandList, minSection, maxSection, CeleritasVintage.options().performance.chunkBuilderThreads, hasShadowPass);
         this.world = world;
         this.sectionCache = new ClonedChunkSectionCache(world);
         if (celtium$shadowPassReports < 8) {
@@ -235,10 +233,40 @@ public class VintageRenderSectionManager extends RenderSectionManager {
         return new GenericSectionSpriteTicker<>(SpriteUtil::markSpriteActive);
     }
 
-    private static class ChunkRenderer extends DefaultChunkRenderer {
+    /**
+     * Celtium-native terrain service carrier implementing {@link org.embeddedt.embeddium.impl.render.chunk.ChunkRenderer}
+     * directly without inheriting Celeritas's OpenGL {@code DefaultChunkRenderer}/{@code ShaderChunkRenderer}
+     * (no GL shader compilation, no {@code SharedQuadIndexBuffer}, no {@code GlTessellation}).
+     */
+    private static final class CeltiumTerrainChunkRenderer implements org.embeddedt.embeddium.impl.render.chunk.ChunkRenderer {
+        private final RenderPassConfiguration<?> renderPassConfiguration;
 
-        public ChunkRenderer(RenderDevice device, RenderPassConfiguration<?> renderPassConfiguration) {
-            super(device, renderPassConfiguration, GLStateManagerFogService.INSTANCE);
+        CeltiumTerrainChunkRenderer(RenderDevice ignoredDevice, RenderPassConfiguration<?> renderPassConfiguration) {
+            this.renderPassConfiguration = renderPassConfiguration;
+        }
+
+        @Override
+        public void render(ChunkRenderMatrices matrices, CommandList commandList,
+                           org.embeddedt.embeddium.impl.render.chunk.lists.ChunkRenderListIterable renderLists,
+                           org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass pass,
+                           org.embeddedt.embeddium.impl.render.viewport.CameraTransform occlusionCamera,
+                           org.embeddedt.embeddium.impl.render.viewport.CameraTransform camera) {
+            throw new UnsupportedOperationException("Celtium renders terrain exclusively through VulkanTerrainGpuBackend");
+        }
+
+        @Override
+        public void delete(CommandList commandList) {
+            // No GL resources owned.
+        }
+
+        @Override
+        public RenderPassConfiguration<?> getRenderPassConfiguration() {
+            return this.renderPassConfiguration;
+        }
+
+        @Override
+        public FogService getFogService() {
+            return GLStateManagerFogService.INSTANCE;
         }
 
         @Override
@@ -247,14 +275,8 @@ public class VintageRenderSectionManager extends RenderSectionManager {
         }
 
         @Override
-        public boolean useBlockFaceCulling(){
+        public boolean useBlockFaceCulling() {
             return CeleritasVintage.options().performance.useBlockFaceCulling;
-        }
-
-        @Override
-        protected void configureShaderInterface(ChunkShaderInterface shader) {
-            shader.setTextureSlot(ChunkShaderTextureSlot.BLOCK, 0);
-            shader.setTextureSlot(ChunkShaderTextureSlot.LIGHT, 1);
         }
     }
 }

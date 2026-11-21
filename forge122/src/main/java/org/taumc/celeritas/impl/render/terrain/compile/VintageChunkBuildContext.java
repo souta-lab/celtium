@@ -31,10 +31,20 @@ import java.util.Objects;
 import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
 
 public class VintageChunkBuildContext extends ChunkBuildContext {
+    /**
+     * Snapshot kept for compatibility; runtime-added {@link BlockRenderLayer} constants (e.g. GTCEu's Bloom) are
+     * read fresh per context via {@link #layers()} so class-load order can never hide a modded layer.
+     */
     public static final BlockRenderLayer[] LAYERS = BlockRenderLayer.values();
+    private final BlockRenderLayer[] layers = BlockRenderLayer.values();
     private final TextureMapExtension textureAtlas;
-    private final ChunkBufferBuilder[] worldRenderers = new ChunkBufferBuilder[LAYERS.length];
-    private final boolean[] usedWorldRenderers = new boolean[LAYERS.length];
+    private final ChunkBufferBuilder[] worldRenderers = new ChunkBufferBuilder[layers.length];
+    private final boolean[] usedWorldRenderers = new boolean[layers.length];
+
+    /** {@return the active block render layers, including any enum constants added at runtime}. */
+    public BlockRenderLayer[] layers() {
+        return this.layers;
+    }
     @Getter
     private int offX, offY, offZ;
     @Getter
@@ -91,7 +101,7 @@ public class VintageChunkBuildContext extends ChunkBuildContext {
             bufferBuilder.finishDrawing();
             used[i] = false;
             ByteBuffer rawBuffer = bufferBuilder.getByteBuffer();
-            var material = buffers.getRenderPassConfiguration().getMaterialForRenderType(LAYERS[i]);
+            var material = buffers.getRenderPassConfiguration().getMaterialForRenderType(this.layers[i]);
             copyBlockData(rawBuffer, buffers, material);
         }
     }
@@ -100,7 +110,7 @@ public class VintageChunkBuildContext extends ChunkBuildContext {
     public void cleanup() {
         super.cleanup();
         this.worldSlice.reset();
-        for (int i = 0; i < LAYERS.length; i++) {
+        for (int i = 0; i < this.layers.length; i++) {
             if (this.usedWorldRenderers[i]) {
                 this.worldRenderers[i].finishDrawing();
                 this.usedWorldRenderers[i] = false;
@@ -110,14 +120,37 @@ public class VintageChunkBuildContext extends ChunkBuildContext {
 
     private Material selectMaterial(Material material, TextureAtlasSprite sprite) {
         if (sprite != null && sprite.getClass() == TextureAtlasSprite.class && !sprite.hasAnimationMetadata() && this.useRenderPassOptimization) {
-            var transparencyLevel = ((SpriteTransparencyLevel.Holder)sprite).embeddium$getTransparencyLevel();
-            if (transparencyLevel == SpriteTransparencyLevel.OPAQUE) {
-                // Downgrade to solid
-                return this.renderPassConfiguration.defaultSolidMaterial();
-            } else if (material == this.renderPassConfiguration.defaultTranslucentMaterial() && transparencyLevel != SpriteTransparencyLevel.TRANSLUCENT) {
-                // Downgrade to cutout
-                return this.renderPassConfiguration.defaultCutoutMippedMaterial();
-            }
+            return selectOptimizedMaterial(material,
+                    ((SpriteTransparencyLevel.Holder) sprite).embeddium$getTransparencyLevel(),
+                    this.renderPassConfiguration.defaultSolidMaterial(),
+                    this.renderPassConfiguration.defaultCutoutMippedMaterial(),
+                    this.renderPassConfiguration.defaultTranslucentMaterial(),
+                    this.renderPassConfiguration.getMaterialForRenderType(BlockRenderLayer.CUTOUT));
+        }
+        return material;
+    }
+
+    /**
+     * Pure render-pass downgrade rule: only vanilla cutout/translucent materials may be downgraded based on sprite
+     * transparency. Custom mod render layers (such as GTCEu's Bloom layer) MUST keep their own material even when
+     * their sprite is opaque, otherwise their geometry is moved into SOLID and the custom pass draws nothing.
+     */
+    static Material selectOptimizedMaterial(Material material,
+                                            SpriteTransparencyLevel transparencyLevel,
+                                            Material solidMaterial,
+                                            Material cutoutMippedMaterial,
+                                            Material translucentMaterial,
+                                            Material cutoutMaterial) {
+        boolean isVanillaDowngradable = material == cutoutMaterial
+                || material == cutoutMippedMaterial
+                || material == translucentMaterial;
+        if (!isVanillaDowngradable) {
+            return material;
+        }
+        if (transparencyLevel == SpriteTransparencyLevel.OPAQUE) {
+            return solidMaterial;
+        } else if (material == translucentMaterial && transparencyLevel != SpriteTransparencyLevel.TRANSLUCENT) {
+            return cutoutMippedMaterial;
         }
         return material;
     }

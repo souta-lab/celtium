@@ -328,6 +328,20 @@ final class ModPrograms {
             // Publication refused (the store holds no image for the name yet): fall through to the ordinary
             // resolution rather than inventing an answer. The refusal is censused at the publish site, and the
             // next prepare retries.
+        } else {
+            // Item 537 wall (b2) branches i & ii: a depth texture may be attached to a raw framebuffer whose backend
+            // depth record was not yet registered (branch i), or be a standalone depth copy target (e.g. altDepth /
+            // depthtex1) already residing in the shared depth store (branch ii). Adopt and publish before falling
+            // through to the colour/mirror routes.
+            int depthFbo = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferForDepthTexture(name);
+            if (depthFbo != 0) {
+                b.celtium$registerRawFramebuffer(depthFbo, false);
+                if (b.celtium$publishFramebufferDepthTexture(name)) {
+                    return registry.get(name);
+                }
+            } else if (b.celtium$publishStandaloneDepthTexture(name)) {
+                return registry.get(name);
+            }
         }
         VulkanGlTexture texture = registry.get(name);
         if (texture != null && b.publishedFrameImages.get(name) != 0L) {

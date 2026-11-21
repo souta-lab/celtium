@@ -37,8 +37,10 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
      */
     private java.nio.ByteBuffer sharedPackets;
     private java.nio.ByteBuffer regionPackets;
-    private boolean packetsEncoded;
-    /** Whether every command reads the shared quad buffer at offset 0; computed with the packets. */
+    private boolean sharedPacketsEncoded;
+    private boolean regionPacketsEncoded;
+    private boolean unsortedOffsetsChecked;
+    /** Whether every command reads the shared quad buffer at offset 0; computed once on demand. */
     private boolean unsortedOffsetsClean;
 
     public VulkanMultiDrawBatch(int capacity) {
@@ -94,22 +96,24 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
             org.lwjgl.system.MemoryUtil.memFree(this.regionPackets);
             this.regionPackets = null;
         }
-        this.packetsEncoded = false;
+        this.sharedPacketsEncoded = false;
+        this.regionPacketsEncoded = false;
+        this.unsortedOffsetsChecked = false;
     }
 
-    /** Encodes both packet variants and the offset verdict, once. The encoding is byte-identical to the
-     * renderer's per-offer loop: same fields, same order, same native byte order (memPutInt). */
-    private void encodePackets() {
+    /**
+     * Lazily encodes only the requested packet variant (shared-index OR region-index). Unsorted passes only ever
+     * read {@code sharedPackets} and sorted passes only ever read {@code regionPackets}, so encoding both eagerly
+     * doubled native memory allocations and CPU encoding work for every cached terrain batch.
+     */
+    private void encodeSharedPackets() {
         int size = this.size();
         boolean clean = true;
         if (size > 0) {
             this.sharedPackets = org.lwjgl.system.MemoryUtil.memAlloc(size * INDIRECT_COMMAND_BYTES);
-            this.regionPackets = org.lwjgl.system.MemoryUtil.memAlloc(size * INDIRECT_COMMAND_BYTES);
             long shared = org.lwjgl.system.MemoryUtil.memAddress(this.sharedPackets);
-            long region = org.lwjgl.system.MemoryUtil.memAddress(this.regionPackets);
             for (int i = 0; i < size; i++) {
-                long byteOffset = this.elementPointers[i];
-                if (byteOffset != 0) {
+                if (this.elementPointers[i] != 0L) {
                     clean = false;
                 }
                 long s = shared + (long) i * INDIRECT_COMMAND_BYTES;
@@ -118,6 +122,24 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
                 org.lwjgl.system.MemoryUtil.memPutInt(s + 8, 0);
                 org.lwjgl.system.MemoryUtil.memPutInt(s + 12, this.baseVertices[i]);
                 org.lwjgl.system.MemoryUtil.memPutInt(s + 16, 0);
+            }
+        }
+        this.unsortedOffsetsClean = clean;
+        this.unsortedOffsetsChecked = true;
+        this.sharedPacketsEncoded = true;
+    }
+
+    private void encodeRegionPackets() {
+        int size = this.size();
+        boolean clean = true;
+        if (size > 0) {
+            this.regionPackets = org.lwjgl.system.MemoryUtil.memAlloc(size * INDIRECT_COMMAND_BYTES);
+            long region = org.lwjgl.system.MemoryUtil.memAddress(this.regionPackets);
+            for (int i = 0; i < size; i++) {
+                long byteOffset = this.elementPointers[i];
+                if (byteOffset != 0L) {
+                    clean = false;
+                }
                 long r = region + (long) i * INDIRECT_COMMAND_BYTES;
                 org.lwjgl.system.MemoryUtil.memPutInt(r, this.elementCounts[i]);
                 org.lwjgl.system.MemoryUtil.memPutInt(r + 4, 1);
@@ -127,27 +149,41 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
             }
         }
         this.unsortedOffsetsClean = clean;
-        this.packetsEncoded = true;
+        this.unsortedOffsetsChecked = true;
+        this.regionPacketsEncoded = true;
     }
 
     /**
      * {@return the native address of this batch's retained packet block for the given index source,
-     * encoding it on first use}. Only meaningful for a non-empty batch; the renderer's offer path
+     * encoding only that variant on first use}. Only meaningful for a non-empty batch; the renderer's offer path
      * returns before this point for an empty one.
      */
     long retainedPacketsAddress(boolean regionIndex) {
-        if (!this.packetsEncoded) {
-            encodePackets();
+        if (regionIndex) {
+            if (!this.regionPacketsEncoded) {
+                encodeRegionPackets();
+            }
+            return this.regionPackets == null ? 0L : org.lwjgl.system.MemoryUtil.memAddress(this.regionPackets);
         }
-        java.nio.ByteBuffer packets = regionIndex ? this.regionPackets : this.sharedPackets;
-        return packets == null ? 0L : org.lwjgl.system.MemoryUtil.memAddress(packets);
+        if (!this.sharedPacketsEncoded) {
+            encodeSharedPackets();
+        }
+        return this.sharedPackets == null ? 0L : org.lwjgl.system.MemoryUtil.memAddress(this.sharedPackets);
     }
 
     /** {@return whether every command's element pointer is 0 (the unsorted indirect path's condition),
-     * computed once with the retained packets instead of by a per-offer walk}. */
+     * computed once instead of by a per-offer walk}. */
     boolean unsortedOffsetsClean() {
-        if (!this.packetsEncoded) {
-            encodePackets();
+        if (!this.unsortedOffsetsChecked) {
+            boolean clean = true;
+            for (int i = 0, size = this.size(); i < size; i++) {
+                if (this.elementPointers[i] != 0L) {
+                    clean = false;
+                    break;
+                }
+            }
+            this.unsortedOffsetsClean = clean;
+            this.unsortedOffsetsChecked = true;
         }
         return this.unsortedOffsetsClean;
     }

@@ -17,7 +17,6 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.BlockRenderLayer;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.MathHelper;
-import org.embeddedt.embeddium.impl.gl.device.RenderDevice;
 import org.embeddedt.embeddium.impl.render.terrain.SimpleWorldRenderer;
 import org.embeddedt.embeddium.impl.render.viewport.ViewportProvider;
 import org.spongepowered.asm.mixin.Final;
@@ -191,13 +190,7 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         if (!celtium$isGameRenderGlobal()) {
             return;
         }
-        RenderDevice.enterManagedCode();
-
-        try {
-            this.renderer.setWorld(world);
-        } finally {
-            RenderDevice.exitManagedCode();
-        }
+        this.renderer.setWorld(world);
     }
 
     /**
@@ -251,8 +244,6 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
                     + " name=" + blockLayerIn.name() + " pass=" + pass
                     + " calls=" + celtium$blockLayerCalls + " layers=" + celtium$blockLayersSeen.size());
         }
-        RenderDevice.enterManagedCode();
-
         RenderHelper.disableStandardItemLighting();
 
         GlStateManager.setActiveTexture(OpenGlHelper.defaultTexUnit);
@@ -265,11 +256,7 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         double d4 = entityIn.lastTickPosY + (entityIn.posY - entityIn.lastTickPosY) * partialTicks;
         double d5 = entityIn.lastTickPosZ + (entityIn.posZ - entityIn.lastTickPosZ) * partialTicks;
 
-        try {
-            this.renderer.drawChunkLayer(blockLayerIn, d3, d4, d5);
-        } finally {
-            RenderDevice.exitManagedCode();
-        }
+        this.renderer.drawChunkLayer(blockLayerIn, d3, d4, d5);
 
         this.mc.entityRenderer.disableLightmap();
 
@@ -285,14 +272,8 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         if (!celtium$isGameRenderGlobal()) {
             return;
         }
-        RenderDevice.enterManagedCode();
-
-        try {
-            this.renderer.setupTerrain(((ViewportProvider)camera).sodium$createViewport(), CeleritasWorldRenderer.captureCameraState(tick),
-                    frame, spectator, false);
-        } finally {
-            RenderDevice.exitManagedCode();
-        }
+        this.renderer.setupTerrain(((ViewportProvider)camera).sodium$createViewport(), CeleritasWorldRenderer.captureCameraState(tick),
+                frame, spectator, false);
     }
 
     /**
@@ -379,13 +360,7 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         if (!celtium$isGameRenderGlobal()) {
             return;
         }
-        RenderDevice.enterManagedCode();
-
-        try {
-            this.renderer.reload();
-        } finally {
-            RenderDevice.exitManagedCode();
-        }
+        this.renderer.reload();
     }
 
     @Inject(method = "renderEntities", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/RenderHelper;enableStandardItemLighting()V", shift = At.Shift.AFTER, ordinal = 1), cancellable = true, require = 0)

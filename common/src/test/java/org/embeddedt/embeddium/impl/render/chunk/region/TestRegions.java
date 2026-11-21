@@ -5,6 +5,6 @@ public final class TestRegions {
     }
 
     public static RenderRegion create(int x, int y, int z, int id) {
-        return new RenderRegion(x, y, z, id, null, 0);
+        return new RenderRegion(x, y, z, id, 0);
     }
 }

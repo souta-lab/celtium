@@ -1,9 +1,10 @@
 package org.embeddedt.embeddium.impl.render.chunk;
 
 import org.embeddedt.embeddium.impl.gl.device.CommandList;
+import org.embeddedt.embeddium.impl.render.chunk.fog.FogService;
+import org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService;
 import org.embeddedt.embeddium.impl.render.chunk.lists.ChunkRenderListIterable;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
-import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkVertexType;
 import org.embeddedt.embeddium.impl.render.viewport.CameraTransform;
 
 /**
@@ -33,4 +34,19 @@ public interface ChunkRenderer {
      * Get the render pass configuration used by this renderer.
      */
     RenderPassConfiguration<?> getRenderPassConfiguration();
+
+    /** {@return the fog service for terrain shading, or {@code null} if not supplied}. */
+    default FogService getFogService() {
+        return null;
+    }
+
+    /** {@return the dynamic light service for terrain shading}. */
+    default DynamicLightService getDynamicLightService() {
+        return DynamicLightService.EMPTY;
+    }
+
+    /** {@return whether block face culling is enabled for terrain passes}. */
+    default boolean useBlockFaceCulling() {
+        return true;
+    }
 }

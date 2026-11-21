@@ -3510,6 +3510,30 @@ public final class VulkanContext {
         return offset;
     }
 
+    /**
+     * Updates upload-ring slot ownership after a {@link #flushUploads()} attempt.
+     * <p>
+     * Only slots actually written by this batch ({@code usedSlotMask}) transition to closed when the batch is
+     * enqueued (or stay free if submission failed). Slots already owned by an earlier in-flight batch
+     * ({@code slotFree[slot] == false}) are NEVER reopened here — only fence reclamation may reopen them.
+     * Previously, setting {@code slotFree[slot] = !enqueued || (usedSlotMask & (1L << slot)) == 0L} reopened
+     * every slot owned by an earlier in-flight batch whenever a subsequent batch did not use that slot, allowing
+     * the CPU to overwrite staging bytes while the GPU was still executing {@code vkCmdCopyBuffer} from them
+     * (issue #422).
+     */
+    static void celtium$releaseUploadSlotsAfterFlush(boolean[] slotFree, long[] slotCursor,
+            long usedSlotMask, boolean enqueued) {
+        for (int slot = 0; slot < slotCursor.length; slot++) {
+            boolean usedByThisBatch = (usedSlotMask & (1L << slot)) != 0L;
+            if (usedByThisBatch) {
+                slotCursor[slot] = 0L;
+                slotFree[slot] = !enqueued;
+            } else if (slotFree[slot]) {
+                slotCursor[slot] = 0L;
+            }
+        }
+    }
+
     /** {@return a ring slot with room for {@code bytes} that no in-flight batch owns, or -1 when there is none}. */
     private int celtium$writableSlot(long bytes) {
         for (int i = 0; i < UPLOAD_SLOT_COUNT; i++) {
@@ -3634,13 +3658,20 @@ public final class VulkanContext {
         long uploadSlotMask = 0L;
         try {
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                // Write-after-read: an arena range freed by a rebuild or a translucent re-sort is handed out again at
-                // once, and frames already submitted may still be reading the old contents (four frames can be in
-                // flight). Submission order alone does not order execution, so without this the copy could overwrite
-                // indices a previous frame was drawing - the translucent layer's flicker (stained glass), whose index
-                // ranges are replaced on every sort. An execution dependency is enough for a read-then-write hazard.
-                vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
-                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, null);
+                // Write-after-read and write-after-write: an arena range freed by a rebuild or a translucent re-sort
+                // is handed out again at once, and frames already submitted may still be reading or copying into the
+                // old range (four frames can be in flight). Also make prior host writes into the upload ring
+                // explicitly visible to TRANSFER_READ (defensive against Windows AMD LLPC/AMDVLK staging cache
+                // visibility, issue #422).
+                org.lwjgl.vulkan.VkMemoryBarrier.Buffer preCopyBarrier =
+                        org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
+                preCopyBarrier.get(0).sType$Default()
+                        .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+                vkCmdPipelineBarrier(commandBuffer,
+                        VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT
+                                | VK_PIPELINE_STAGE_HOST_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, preCopyBarrier, null, null);
                 int maxBatchRegions = Math.min(64, this.pendingUploads.size());
                 VkBufferCopy.Buffer copyRegions = VkBufferCopy.calloc(maxBatchRegions, stack);
                 long batchDestination = VK_NULL_HANDLE;
@@ -3703,12 +3734,8 @@ public final class VulkanContext {
             } finally {
                 this.uploadCopiesFlushed += this.pendingUploads.size();
                 recyclePendingUploads();
-                for (int slot = 0; slot < this.uploadSlotCursor.length; slot++) {
-                    this.uploadSlotCursor[slot] = 0L;
-                    // A slot the batch read stays closed until the batch's fence confirms it; a refused submission
-                    // owns nothing, so its slots reopen for the next batch.
-                    this.uploadSlotFree[slot] = !enqueued || (uploadSlotMask & (1L << slot)) == 0L;
-                }
+                celtium$releaseUploadSlotsAfterFlush(this.uploadSlotFree, this.uploadSlotCursor,
+                        uploadSlotMask, enqueued);
             }
         }
         this.uploadFlushes++;
