@@ -26,7 +26,8 @@ final class UpgradingLWJGLService implements LWJGLService {
     private final Supplier<LWJGLService> upgradeSource;
     private final long retryNanos;
     private volatile LWJGLService delegate;
-    private volatile long lastAttemptNanos;
+    /** Nano time of the last upgrade attempt, or {@link Long#MIN_VALUE} while none has been made. */
+    private volatile long lastAttemptNanos = Long.MIN_VALUE;
 
     UpgradingLWJGLService(LWJGLService initial, Supplier<LWJGLService> upgradeSource) {
         this(initial, upgradeSource, UPGRADE_RETRY_NANOS);
@@ -43,15 +44,20 @@ final class UpgradingLWJGLService implements LWJGLService {
         return current.isDegraded() ? tryUpgrade(current) : current;
     }
 
+    private boolean insideRetryWindow() {
+        long last = this.lastAttemptNanos;
+        return last != Long.MIN_VALUE && System.nanoTime() - last < this.retryNanos;
+    }
+
     private LWJGLService tryUpgrade(LWJGLService current) {
-        if (System.nanoTime() - this.lastAttemptNanos < this.retryNanos) {
+        if (insideRetryWindow()) {
             return current;
         }
         synchronized (this) {
             if (this.delegate != current) {
                 return this.delegate;
             }
-            if (System.nanoTime() - this.lastAttemptNanos < this.retryNanos) {
+            if (insideRetryWindow()) {
                 return this.delegate;
             }
             this.lastAttemptNanos = System.nanoTime();
