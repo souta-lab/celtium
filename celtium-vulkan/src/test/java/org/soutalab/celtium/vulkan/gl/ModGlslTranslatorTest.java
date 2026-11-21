@@ -746,4 +746,100 @@ class ModGlslTranslatorTest {
                 new ModGlslTranslator.Attribute("a_first", "vec3", 2),
                 new ModGlslTranslator.Attribute("a_second", "vec2", 0)), result.attributes());
     }
+
+    @Test
+    void aBlockMarkerInsideALineCommentEatsNothing() {
+        // The comment stripper used to run its block pattern over the whole text first, so a /* mentioned
+        // in a line comment paired with the next real */ below and ate the live code in between; the line
+        // pattern then ate what the block pass had joined onto the comment's own line. Both uniforms here
+        // were lost, and the body's uses of them failed compilation as undeclared identifiers.
+        String fragment = """
+                #version 120
+                varying vec2 uv;
+                uniform sampler2D first;
+                // note: the /* marker below opens the kernel table
+                uniform float eaten;
+                /* kernel */ uniform float kept;
+                void main() {
+                    gl_FragColor = texture2D(first, uv) * (eaten + kept);
+                }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, fragment);
+        assertTrue(result.ok(), result.failure());
+        assertTrue(result.uniforms().stream().anyMatch(u -> u.name().equals("eaten")), result.uniforms().toString());
+        assertTrue(result.uniforms().stream().anyMatch(u -> u.name().equals("kept")), result.uniforms().toString());
+    }
+
+    @Test
+    void aDeclarationInsideADefineBodyIsNotAnInterfaceMember() {
+        // A #define body is macro text: extracting its declaration shape filed the stamped-out name - and,
+        // for a parameterised macro, the parameter itself - as real uniform block members, and left the
+        // define gutted. Preprocessor lines are not code and are left exactly as they are.
+        String fragment = """
+                #version 120
+                #define SHARED uniform vec4 phantom;
+                #define MKU(n) uniform vec4 n;
+                varying vec2 uv;
+                uniform sampler2D first;
+                void main() {
+                    gl_FragColor = texture2D(first, uv);
+                }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, fragment);
+        assertTrue(result.ok(), result.failure());
+        assertTrue(result.uniforms().stream().noneMatch(u -> u.name().equals("phantom")), result.uniforms().toString());
+        assertTrue(result.uniforms().stream().noneMatch(u -> u.name().equals("n")), result.uniforms().toString());
+        assertTrue(result.fragment().contains("#define SHARED uniform vec4 phantom;"), result.fragment());
+        assertTrue(result.fragment().contains("#define MKU(n) uniform vec4 n;"), result.fragment());
+    }
+
+    @Test
+    void shadowSamplingIsNamedNotPassedThrough() {
+        // shadow2D and its family were neither lowered nor named: the text passed through and the program
+        // died at shader compilation with an unknown function. A shadow sampler declared on its own is
+        // refused by the same name, before any call is looked at.
+        String fragment = """
+                #version 120
+                varying vec2 uv;
+                uniform sampler2DShadow smap;
+                void main() {
+                    gl_FragColor = shadow2D(smap, vec3(uv, 0.5));
+                }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, fragment);
+        assertFalse(result.ok());
+        assertNotNull(result.failure());
+        assertTrue(result.failure().contains("shadow"), result.failure());
+
+        String samplerOnly = """
+                #version 120
+                varying vec2 uv;
+                uniform sampler2DShadow smap;
+                uniform sampler2D first;
+                void main() {
+                    gl_FragColor = texture2D(first, uv);
+                }
+                """;
+        ModGlslTranslator.Result byType = ModGlslTranslator.translate(QUAD_VERTEX, samplerOnly);
+        assertFalse(byType.ok());
+        assertTrue(byType.failure().contains("shadow sampler"), byType.failure());
+    }
+
+    @Test
+    void lowersProjectiveFetchesFor1DAnd3D() {
+        String fragment = """
+                #version 120
+                varying vec2 uv;
+                uniform sampler1D lut;
+                uniform sampler3D vol;
+                void main() {
+                    gl_FragColor = texture1DProj(lut, vec4(uv, 0.0, 1.0)) + texture3DProj(vol, vec4(uv, 0.0, 1.0));
+                }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, fragment);
+        assertTrue(result.ok(), result.failure());
+        assertTrue(result.fragment().contains("textureProj("), result.fragment());
+        assertFalse(result.fragment().contains("texture1DProj"), result.fragment());
+        assertFalse(result.fragment().contains("texture3DProj"), result.fragment());
+    }
 }

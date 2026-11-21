@@ -73,8 +73,6 @@ public final class ModGlslTranslator {
         }
     }
 
-    private static final Pattern BLOCK_COMMENT = Pattern.compile("/\\*.*?\\*/", Pattern.DOTALL);
-    private static final Pattern LINE_COMMENT = Pattern.compile("//[^\\n]*");
     private static final Pattern VERSION = Pattern.compile("^\\s*#\\s*version[^\\n]*\\n?", Pattern.MULTILINE);
     private static final Pattern EXTENSION = Pattern.compile("^\\s*#\\s*extension[^\\n]*\\n?", Pattern.MULTILINE);
     /**
@@ -140,6 +138,7 @@ public final class ModGlslTranslator {
     private static final Pattern GL_MV_PATTERN = Pattern.compile("\\bgl_ModelViewMatrix\\b");
     private static final Pattern GL_PROJ_PATTERN = Pattern.compile("\\bgl_ProjectionMatrix\\b");
     private static final Pattern TEX1D_LOD_PATTERN = Pattern.compile("\\btexture1DLod\\s*\\(");
+    private static final Pattern TEX1D_PROJ_PATTERN = Pattern.compile("\\btexture1DProj\\s*\\(");
     private static final Pattern TEX1D_PATTERN = Pattern.compile("\\btexture1D\\s*\\(");
     private static final Pattern TEX2D_PROJ_LOD_PATTERN = Pattern.compile("\\btexture2DProjLod\\s*\\(");
     private static final Pattern TEX2D_PROJ_PATTERN = Pattern.compile("\\btexture2DProj\\s*\\(");
@@ -149,10 +148,20 @@ public final class ModGlslTranslator {
     private static final Pattern TEX2D_RECT_PATTERN = Pattern.compile("\\btexture2DRect\\s*\\(");
     private static final Pattern TEX2D_PATTERN = Pattern.compile("\\btexture2D\\s*\\(");
     private static final Pattern TEX3D_LOD_PATTERN = Pattern.compile("\\btexture3DLod\\s*\\(");
+    private static final Pattern TEX3D_PROJ_PATTERN = Pattern.compile("\\btexture3DProj\\s*\\(");
     private static final Pattern TEX3D_PATTERN = Pattern.compile("\\btexture3D\\s*\\(");
     private static final Pattern TEXCUBE_LOD_PATTERN = Pattern.compile("\\btextureCubeLod\\s*\\(");
     private static final Pattern TEXCUBE_GRAD_ARB_PATTERN = Pattern.compile("\\btextureCubeGradARB\\s*\\(");
     private static final Pattern TEXCUBE_PATTERN = Pattern.compile("\\btextureCube\\s*\\(");
+    /**
+     * The legacy shadow-sampling calls. They are not lowered - a shadow fetch's answer is a comparison the
+     * lowered {@code texture} call only makes when the bound sampler compares, and the legacy call returns a
+     * {@code vec4} where the modern one returns the comparison alone - and until now they were not named
+     * either: the text passed through untouched and the program died at shader compilation with an unknown
+     * function, a failure filed under the compile rather than under the construct this lowering does not do.
+     */
+    private static final Pattern SHADOW_CALL_PATTERN = Pattern.compile(
+            "\\b(shadow1DProj|shadow2DProj|shadow1D|shadow2D)\\s*\\(");
 
     private ModGlslTranslator() {
     }
@@ -293,6 +302,11 @@ public final class ModGlslTranslator {
                 uniformDefaults.put(glName(d.name), constantInitializer(d));
             }
             offset += layout[1];
+        }
+        for (SamplerBinding s : samplers) {
+            if (s.type().contains("Shadow")) {
+                throw new IllegalArgumentException("shadow sampler " + s.name() + " is not lowered");
+            }
         }
         int blockSize = align(offset, 16);
         // The block travels as push constants while it fits, and as a uniform buffer when it does not: the limit
@@ -482,6 +496,13 @@ public final class ModGlslTranslator {
         }
         vertex = lowerTextureCalls(vertex);
         fragment = lowerTextureCalls(fragment);
+        for (String stageText : List.of(vertex, fragment)) {
+            Matcher shadowCall = SHADOW_CALL_PATTERN.matcher(stageText);
+            if (shadowCall.find()) {
+                throw new IllegalArgumentException(
+                        "shadow sampling call " + shadowCall.group(1) + " is not lowered");
+            }
+        }
 
         vs.append(vertex).append("\nvoid main() {\n    celtium_user_main();\n")
                 // GL's clip depth is [-1, 1], Vulkan's [0, 1]. y is not flipped: like every other pass here the image
@@ -541,16 +562,82 @@ public final class ModGlslTranslator {
         if (source == null) {
             throw new IllegalArgumentException("a stage has no source");
         }
-        String s = BLOCK_COMMENT.matcher(source.replace("\r\n", "\n")).replaceAll(" ");
-        s = LINE_COMMENT.matcher(s).replaceAll("");
+        String s = stripComments(source.replace("\r\n", "\n"));
         s = VERSION.matcher(s).replaceAll("");
         return EXTENSION.matcher(s).replaceAll("");
+    }
+
+    /**
+     * Blanks the comments out of a source, one pass, the way GLSL itself lexes them: whichever comment form
+     * opens first owns the text until its own end, so a {@code /*} inside a {@code //} comment opens nothing
+     * and a {@code //} inside a block comment ends nothing. The two-pattern version this replaces ran the
+     * block pattern over the whole text first, so a {@code /*} mentioned in a line comment (a note about a
+     * block comment, a commented-out line carrying one) paired with the next real {@code *}{@code /} anywhere
+     * below and ate the live code in between - declarations included, which then never reached the interface.
+     * Comment characters become spaces and newlines stay, so the cleaned text keeps the source's line layout
+     * for the line-anchored patterns that run on it. An unterminated block comment blanks to the end of the
+     * source: the text after it is comment by the same lexing, and what it held is not code this lowering
+     * may extract declarations from.
+     */
+    private static String stripComments(String source) {
+        StringBuilder out = new StringBuilder(source.length());
+        int i = 0;
+        int n = source.length();
+        while (i < n) {
+            char c = source.charAt(i);
+            if (c == '/' && i + 1 < n && source.charAt(i + 1) == '/') {
+                out.append("  ");
+                i += 2;
+                while (i < n && source.charAt(i) != '\n') {
+                    out.append(' ');
+                    i++;
+                }
+            } else if (c == '/' && i + 1 < n && source.charAt(i + 1) == '*') {
+                out.append("  ");
+                i += 2;
+                while (i < n && !(source.charAt(i) == '*' && i + 1 < n && source.charAt(i + 1) == '/')) {
+                    out.append(source.charAt(i) == '\n' ? '\n' : ' ');
+                    i++;
+                }
+                if (i < n) {
+                    out.append("  ");
+                    i += 2;
+                }
+            } else {
+                out.append(c);
+                i++;
+            }
+        }
+        return out.toString();
+    }
+
+    /**
+     * {@return whether {@code offset} sits on a preprocessor line} - a line whose first non-whitespace
+     * character is {@code #}. Declaration patterns run on raw text, and a preprocessor line's text is not
+     * code: a {@code #define} body is stamped out by the compiler's expansion, at sites this lowering does
+     * not model, so a declaration shape found there names the macro's own text, not an interface member.
+     */
+    private static boolean onPreprocessorLine(String text, int offset) {
+        int lineStart = offset == 0 ? 0 : text.lastIndexOf('\n', offset - 1) + 1;
+        int i = lineStart;
+        while (i < offset && (text.charAt(i) == ' ' || text.charAt(i) == '\t' || text.charAt(i) == '\r')) {
+            i++;
+        }
+        return i < offset && text.charAt(i) == '#';
     }
 
     private static String removeDeclarations(String source, List<Declaration> out, boolean vertexStage) {
         Matcher m = DECLARATION.matcher(source);
         StringBuilder rest = new StringBuilder();
         while (m.find()) {
+            if (onPreprocessorLine(source, m.start())) {
+                // A declaration inside a #define body is macro text, not a declaration: extracting it would
+                // file the macro's parameter name (or whatever name the macro would have stamped out) as a
+                // real member of the interface and leave the define itself gutted. Preprocessor lines are
+                // left exactly as they are; an invocation's expansion is the compiler's, not this lowering's.
+                m.appendReplacement(rest, Matcher.quoteReplacement(m.group()));
+                continue;
+            }
             int explicit = m.group(1) == null ? -1 : Integer.parseInt(m.group(1));
             String interpolation = m.group(2) == null ? "" : m.group(2);
             String qualifier = m.group(3);
@@ -569,9 +656,14 @@ public final class ModGlslTranslator {
         m.appendTail(rest);
         // The modern spelling of the same declarations. A built-in name (a gl_FragCoord redeclaration is the
         // sane case) is not user input/output: its text stays, and the leftover check below judges it as before.
-        Matcher io = IO_DECLARATION.matcher(rest.toString());
+        String restText = rest.toString();
+        Matcher io = IO_DECLARATION.matcher(restText);
         StringBuilder modern = new StringBuilder();
         while (io.find()) {
+            if (onPreprocessorLine(restText, io.start())) {
+                io.appendReplacement(modern, Matcher.quoteReplacement(io.group(0)));
+                continue;
+            }
             String type = io.group(4);
             List<Declaration> parsed = new ArrayList<>();
             boolean builtin = false;
@@ -660,6 +752,7 @@ public final class ModGlslTranslator {
 
     private static String lowerTextureCalls(String s) {
         s = TEX1D_LOD_PATTERN.matcher(s).replaceAll("textureLod(");
+        s = TEX1D_PROJ_PATTERN.matcher(s).replaceAll("textureProj(");
         s = TEX1D_PATTERN.matcher(s).replaceAll("texture(");
         s = TEX2D_PROJ_LOD_PATTERN.matcher(s).replaceAll("textureProjLod(");
         s = TEX2D_PROJ_PATTERN.matcher(s).replaceAll("textureProj(");
@@ -669,6 +762,7 @@ public final class ModGlslTranslator {
         s = TEX2D_RECT_PATTERN.matcher(s).replaceAll("texture(");
         s = TEX2D_PATTERN.matcher(s).replaceAll("texture(");
         s = TEX3D_LOD_PATTERN.matcher(s).replaceAll("textureLod(");
+        s = TEX3D_PROJ_PATTERN.matcher(s).replaceAll("textureProj(");
         s = TEX3D_PATTERN.matcher(s).replaceAll("texture(");
         s = TEXCUBE_LOD_PATTERN.matcher(s).replaceAll("textureLod(");
         s = TEXCUBE_GRAD_ARB_PATTERN.matcher(s).replaceAll("textureGrad(");
