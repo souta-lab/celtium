@@ -195,3 +195,32 @@ class RelauncherArgumentTests(unittest.TestCase):
             game.mkdir()
             self.assertEqual([], runner.inject_relauncher_arguments(game, []))
             self.assertFalse((game / "config" / "relauncher.json").exists())
+
+    def test_the_validation_flag_reaches_the_child_jvm_when_validate_is_on(self):
+        # The flag is composed for the outer JVM in run_locked, but the relauncher builds the game's command
+        # itself, so a leg judged by --validate needs the flag in the copy's relauncher.json as well.
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp) / "game"
+            game.mkdir()
+            added = runner.inject_relauncher_arguments(game, runner.relauncher_arguments([], True))
+            self.assertEqual(["-Dceltium.validation=true"], added)
+            written = json.loads((game / "config" / "relauncher.json").read_text())
+            self.assertEqual("-Dceltium.validation=true", written["args"])
+
+    def test_the_validation_flag_stays_out_when_validate_is_off(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp) / "game"
+            game.mkdir()
+            added = runner.inject_relauncher_arguments(game, runner.relauncher_arguments([], False))
+            self.assertEqual([], added)
+            self.assertFalse((game / "config" / "relauncher.json").exists())
+
+    def test_the_validation_flag_is_not_doubled_when_the_caller_passed_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp) / "game"
+            game.mkdir()
+            added = runner.inject_relauncher_arguments(
+                game, runner.relauncher_arguments(["-Dceltium.validation=true"], True))
+            self.assertEqual(["-Dceltium.validation=true"], added)
+            written = json.loads((game / "config" / "relauncher.json").read_text())
+            self.assertEqual("-Dceltium.validation=true", written["args"])
