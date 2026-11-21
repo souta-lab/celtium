@@ -20,16 +20,20 @@ import static org.junit.jupiter.api.Assertions.*;
  * makes ambiguous (its body calls it twice), which failed the whole mixin in prepare and with it the
  * TextureMap class. The gate now targets the read of the sprite list itself - unique in both bodies -
  * and these tests hold both halves of that: the annotation shape (read by reflection; the class is
- * loaded but not initialized) and the filtering view's behaviour.
+ * loaded but not initialized) and the filtering view's behaviour. A second failure is pinned here
+ * too, measured on the first leg of the retargeted gate (run-compat445d): the filtering-view helper
+ * was a non-private static {@code @Unique} method, and Mixin rejects a mixin class declaring one
+ * outright - the same startup death, a different cause. The helper is private now, and one test
+ * below holds every {@code @Unique} static in the class to that.
  */
 class TextureAtlasMixinTest {
 
     @Test
-    void filteringViewFiltersOnlyTheIteration() {
+    void filteringViewFiltersOnlyTheIteration() throws Exception {
         List<String> backing = new ArrayList<>(Arrays.asList("water", "stone", "lava", "glass"));
         List<String> consulted = new ArrayList<>();
 
-        List<String> view = TextureAtlasMixin.celtium$filteringView(backing, element -> {
+        List<String> view = filteringView(backing, element -> {
             consulted.add(element);
             return element.contains("a");
         });
@@ -74,6 +78,30 @@ class TextureAtlasMixinTest {
     }
 
     @Test
+    void uniqueStaticHelpersArePrivate() throws Exception {
+        // Mixin rejects a mixin class that declares a non-private static method
+        // (InvalidMixinException: "contains non-private static method"), aborting the whole
+        // mixin and its target class - measured on leg run-compat445d, where the filtering-view
+        // helper without `private` killed TextureMap at startup. Every @Unique static helper
+        // in this class must therefore be private.
+        boolean foundHelper = false;
+        for (Method method : mixinClass().getDeclaredMethods()) {
+            if (!java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                continue;
+            }
+            if (method.getName().equals("celtium$filteringView")) {
+                foundHelper = true;
+            }
+            if (method.isAnnotationPresent(org.spongepowered.asm.mixin.Unique.class)) {
+                assertTrue(java.lang.reflect.Modifier.isPrivate(method.getModifiers()),
+                        "@Unique static helper " + method.getName() + " must be private, "
+                                + "or Mixin rejects the whole mixin class at apply time");
+            }
+        }
+        assertTrue(foundHelper, "the celtium$filteringView helper is expected to exist");
+    }
+
+    @Test
     void noInjectorTargetsTheAmbiguousIteratorCall() throws Exception {
         for (Method method : mixinClass().getDeclaredMethods()) {
             for (Annotation annotation : method.getDeclaredAnnotations()) {
@@ -84,6 +112,17 @@ class TextureAtlasMixinTest {
                 }
             }
         }
+    }
+
+    /** The helper is private (see uniqueStaticHelpersArePrivate), so tests reach it by reflection. */
+    @SuppressWarnings("unchecked")
+    private static List<String> filteringView(List<String> backing,
+                                              com.google.common.base.Predicate<String> predicate)
+            throws Exception {
+        Method helper = mixinClass().getDeclaredMethod("celtium$filteringView",
+                List.class, com.google.common.base.Predicate.class);
+        helper.setAccessible(true);
+        return (List<String>) helper.invoke(null, backing, predicate);
     }
 
     private static Class<?> mixinClass() throws Exception {

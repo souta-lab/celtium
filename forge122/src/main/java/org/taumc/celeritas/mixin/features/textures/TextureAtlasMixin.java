@@ -158,9 +158,15 @@ public class TextureAtlasMixin implements TextureMapExtension {
      * A read-through view of {@code sprites} whose iterator yields only the elements {@code predicate}
      * accepts. Every other operation delegates, so the list a caller loops over keeps its size and
      * contents; only the iteration is filtered, which is the whole of the gate above.
+     *
+     * <p>The helper must stay {@code private}: Mixin rejects a mixin class that declares a
+     * non-private static method ({@code InvalidMixinException}: "contains non-private static
+     * method"), which aborts the whole mixin and the class it targets - measured on the
+     * VanillaFix leg run-compat445d, where this helper without {@code private} killed
+     * {@code TextureMap} at startup exactly like the injection clash it was written to fix.
      */
     @Unique
-    static <T> List<T> celtium$filteringView(List<T> sprites, Predicate<T> predicate) {
+    private static <T> List<T> celtium$filteringView(List<T> sprites, Predicate<T> predicate) {
         return new AbstractList<T>() {
             @Override
             public T get(int index) {
