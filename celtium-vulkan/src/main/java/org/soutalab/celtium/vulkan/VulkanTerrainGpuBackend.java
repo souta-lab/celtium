@@ -7288,6 +7288,57 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         return celtium$publishDepthFromSharedStore(glTextureName, depthKey);
     }
 
+    /**
+     * {@return whether a name no supply route could fill may be materialized as a standalone texture}:
+     * it has recorded storage and no usable mirror yet, it is no framebuffer's colour or depth
+     * attachment (those have owners - the publish and adopt routes - whose supply must not be shadowed),
+     * it carries no depth record (a depth publication refused for an unrecorded layout heals on the next
+     * prepare, and materializing under it would draw an empty depth instead of refusing), and the game
+     * never wrote a pixel into its level 0 (a captured upload is then the supply, and the registry's own
+     * refusal of its zero surface stands). Static and pure so the rule is pinned without a device.
+     */
+    static boolean celtium$standaloneTextureMaterializable(boolean hasUsableMirror, boolean colourAttachment,
+            boolean depthRecorded, boolean gamePixels, int width, int height) {
+        return !hasUsableMirror && !colourAttachment && !depthRecorded && !gamePixels
+                && width > 0 && height > 0;
+    }
+
+    /**
+     * Materializes the mirror of a standalone texture the game allocated storage for but nothing
+     * supplies - the colour twin of {@link #celtium$publishStandaloneDepthTexture}'s case, for a name
+     * whose only writer is a framebuffer copy (item 537: Iris's centre-depth alt texture, a 1x1 colour
+     * texture no framebuffer attaches, filled by a copy out of the sampler's own framebuffer). GL
+     * samples such a texture from the moment its storage exists, so the mod-program sampler resolution
+     * materializes it at its recorded extent rather than refusing the draw; the refusal deadlocked the
+     * measured case, because the copy's source pair is acquired by the very draw the missing image
+     * refused. The registry's deferral in {@code get} is untouched - this is the sampler path's own
+     * answer, reached only after the upload, publish and adopt routes have all declined.
+     *
+     * @return whether the name resolves to a mirror with an image now
+     */
+    boolean celtium$materializeStandaloneTexture(int glTextureName) {
+        VulkanTextureRegistry registry = celtium$registry();
+        VulkanGlTexture existing = registry.existing(glTextureName);
+        boolean hasUsableMirror = existing != null && existing.view() != 0L;
+        boolean colourAttachment = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                .celtium$framebufferForColorTexture(glTextureName) != 0
+                || celtium$framebufferIdentityForColorTexture(glTextureName) != Long.MIN_VALUE;
+        boolean depthRecorded = this.publishedTextures.identityForDepthTexture(glTextureName) != Long.MIN_VALUE
+                || org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                        .celtium$framebufferForDepthTexture(glTextureName) != 0;
+        boolean gamePixels = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                .textureLevelHasGamePixels(glTextureName, 0);
+        int width = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(
+                glTextureName, 0, 0x1000);
+        int height = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(
+                glTextureName, 0, 0x1001);
+        if (!celtium$standaloneTextureMaterializable(hasUsableMirror, colourAttachment, depthRecorded,
+                gamePixels, width, height)) {
+            return false;
+        }
+        return registry.materializeAllocated(glTextureName) != null;
+    }
+
     private boolean celtium$publishDepthFromSharedStore(int glTextureName, long identity) {
         GllessFrameTarget target = offTargetTarget();
         if (target == null) {

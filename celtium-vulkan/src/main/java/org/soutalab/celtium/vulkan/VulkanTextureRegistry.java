@@ -773,6 +773,82 @@ public final class VulkanTextureRegistry {
         return id;
     }
 
+    /** Mirrors materialized for standalone allocated textures (see {@link #materializeAllocated}). */
+    private int materializedStandalone;
+    /** Bounded CELTIUM_MIRROR_MATERIALIZED lines. */
+    private int materializedStandaloneLogs;
+
+    /**
+     * {@return the mirror for a standalone texture the game allocated storage for, created at the recorded
+     * level-0 extent and initialized to zeros}, or {@code null} when the name already has a mirror or a
+     * published image, or when no extent is recorded for it.
+     * <p>
+     * The one population {@link #get} defers and no other route supplies: a texture the game sized with a
+     * {@code glTexImage2D} (data or none) that is no framebuffer's attachment and whose only writer is a
+     * framebuffer copy. The deferral in {@code get} is the right answer for the sampling paths it serves -
+     * a content-less mirror built there could not draw and would hide a later upload - but a mod program
+     * that samples such a name has no later owner to wait for: GL samples a texture from the moment its
+     * storage exists (content undefined), so refusing the draw is the divergence, and it deadlocks when
+     * the copy that would fill the name reads a framebuffer only that draw acquires. The measured case is
+     * Iris's centre-depth sampler (item 537): its 1x1 alt texture is written only by a copy out of its own
+     * framebuffer, whose pair the sampler's refused draw never acquired, so neither the draw nor the copy
+     * could ever run.
+     * <p>
+     * The zeros are an honest initial content, not a claim about the game's pixels: undefined content is
+     * the GL contract for storage nothing has written, zero is one of its values, and the upload goes
+     * through the same whole-image initialization an announcement takes, so the mirror's content marks say
+     * exactly what arrived - a defined zero surface the game's own writes (the copy above all) replace.
+     * Callers decide which names qualify (the backend's standalone predicate); this method only refuses
+     * the names that already have an image, where materializing would shadow the owner's own supply.
+     */
+    public VulkanGlTexture materializeAllocated(int glTextureId) {
+        if (glTextureId == 0 || this.entries.get((int) glTextureId) != null
+                || this.externalImages.get((int) glTextureId) != null) {
+            return null;
+        }
+        int width = textureLevelParameter(glTextureId, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
+        int height = textureLevelParameter(glTextureId, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT);
+        if (width <= 0 || height <= 0) {
+            return null;
+        }
+        VulkanGlTexture texture;
+        try {
+            texture = VulkanGlTexture.create(this.context, width, height,
+                    nearestFilterFor(glTextureId, 0, 0, width, height),
+                    wrapRepeats(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_S),
+                    wrapRepeats(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_T));
+        } catch (RuntimeException | LinkageError error) {
+            this.failureCount++;
+            this.lastFailure = "materializing GL texture " + glTextureId + ": " + error;
+            return null;
+        }
+        Entry entry = new Entry(glTextureId, width, height, texture);
+        this.entries.put((int) glTextureId, entry);
+        this.mutations++;
+        celtium$dropMemoFor(glTextureId);
+        this.mirrorCount++;
+        java.nio.ByteBuffer zeros = org.lwjgl.system.MemoryUtil.memCalloc((long) width * (long) height, 4L);
+        try {
+            if (texture.uploadFromNamedImage(glTextureId, width, height, zeros)) {
+                this.imageUploads++;
+                recordApplication(glTextureId, true);
+                markFullyInitialized(glTextureId);
+            } else {
+                this.imageUploadsSkipped++;
+            }
+        } finally {
+            org.lwjgl.system.MemoryUtil.memFree(zeros);
+        }
+        this.materializedStandalone++;
+        if (this.materializedStandaloneLogs < 6) {
+            this.materializedStandaloneLogs++;
+            System.out.println("[Celtium] CELTIUM_MIRROR_MATERIALIZED glTexture=" + glTextureId + " size="
+                    + width + "x" + height
+                    + " (standalone storage no upload or framebuffer supplies; zero-initialized)");
+        }
+        return texture;
+    }
+
     /** Records that the whole image has been filled, which a partial patch alone cannot establish. */
     public void markFullyInitialized(int glTextureId) {
         if (glTextureId != 0) {
@@ -2276,6 +2352,7 @@ public final class VulkanTextureRegistry {
                 + " staleAttachmentDeferred=" + this.staleAttachmentsDeferred
                 + " noGamePixels=" + this.capturesRefusedWithoutGamePixels
                 + " contentlessDeferred=" + this.contentlessMirrorsDeferred
+                + " materializedStandalone=" + this.materializedStandalone
                 + " deferralSkips=" + this.deferralLookupsSkipped
                 + " deferredNames=" + this.deferrals.namesDeferred()
                 + " wrapDefaults=" + wrapDefaultsUsed + "]";
