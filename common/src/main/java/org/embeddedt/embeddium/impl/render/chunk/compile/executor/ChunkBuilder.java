@@ -277,7 +277,10 @@ public class ChunkBuilder {
      */
     public void shutdown() {
         if (!this.queue.isRunning()) {
-            throw new IllegalStateException("Worker threads are not running");
+            // Already stopped: the contract above promises a no-op. Throwing here made
+            // teardown non-retryable, because a destroy() that failed partway could
+            // never get past this call on its second attempt.
+            return;
         }
 
         // Delete any queued tasks and resources attached to them
@@ -441,6 +444,14 @@ public class ChunkBuilder {
 
                 try {
                     job.execute(this.context);
+                } catch (Throwable throwable) {
+                    // Task failures are reported as Failure results inside execute();
+                    // what escapes is a failing result consumer (or a defect in the job
+                    // plumbing itself). Letting it out would end this worker thread for
+                    // good - there is no restart mechanism, so the builder would
+                    // silently lose build capacity until no workers remain and chunk
+                    // building stops without a word. Log it and take the next job.
+                    LOGGER.error("Chunk job escaped execute() with an exception; worker continuing", throwable);
                 } finally {
                     this.context.cleanup();
 
