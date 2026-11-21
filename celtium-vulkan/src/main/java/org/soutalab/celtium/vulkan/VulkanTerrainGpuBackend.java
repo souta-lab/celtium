@@ -320,6 +320,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      * it. The default ({@code default}) lets the GL request decide. The main identity and identity 0 are
      * never forced (rule R1). An unrecognised or depth name is ignored, not fatal: a mistyped A/B arm must
      * not take the renderer down, and the census (QUEUE 405) is where the effective class is reported.
+     * The force lands at the registration junction for raw pairs ({@link #celtium$resolvePairFormat}) and
+     * at the off-target window path for pairs no junction resolves ({@link #celtium$pairClassForWindow} -
+     * a ShaderGroup group pair, whose class the post chain's generation trace reports instead, QUEUE 395).
      */
     static final TargetFormatClass FORCED_TARGET_FORMAT_CLASS = celtium$parseForcedTargetFormatClass(
             System.getProperty("celtium.vulkan.targetFormatClass", "default"));
@@ -6595,6 +6598,41 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         TargetFormatClass chosen = celtium$deviceCheckedFormatClass(widest);
         return new TargetFormatCensus.Resolution(chosen, color, slot0Gl, widestRequested, slotsDiffer,
                 anyUnmapped, anyWidenable, pinned, false, chosen != widest);
+    }
+
+    /**
+     * {@return the class the off-target window path ensures the identity's chain pair in}. A raw pair's
+     * class was resolved at the registration junction ({@link #celtium$resolvePairFormat}) and is followed
+     * here, never re-resolved (rule R5). A pair no junction resolves - a ShaderGroup group pair, whose
+     * identity is the framebuffer object's identity hash and which passes no registration - has no GL
+     * request to resolve, so this is the one place its class is decided: the pair's own class as it stands,
+     * or the forced class (QUEUE 404, rule R8) when one is set, so the forced arm of a leg reaches group
+     * chains too (QUEUE 395, section 5.1). The main identity and identity 0 are never forced (rule R1),
+     * and an unusable forced class falls back to the default through the same device check the junction
+     * uses.
+     */
+    private TargetFormatClass celtium$pairClassForWindow(long identity, GllessFrameTarget target) {
+        return celtium$windowPairClass(FORCED_TARGET_FORMAT_CLASS,
+                identity == 0L || identity == this.targetRegistry.mainIdentity(),
+                target.chainPairFormatClass(identity),
+                FORCED_TARGET_FORMAT_CLASS == null ? null
+                        : celtium$deviceCheckedFormatClass(FORCED_TARGET_FORMAT_CLASS));
+    }
+
+    /**
+     * The pure half of {@link #celtium$pairClassForWindow} (the device check stays with the caller, as in
+     * the rest of QUEUE 404's decisions): no forcing follows the pair, a pinned identity never leaves the
+     * default, anything else takes the device-checked forced class.
+     */
+    static TargetFormatClass celtium$windowPairClass(TargetFormatClass forcedClass, boolean pinned,
+            TargetFormatClass pairClass, TargetFormatClass deviceCheckedForcedClass) {
+        if (forcedClass == null) {
+            return pairClass;
+        }
+        if (pinned) {
+            return TargetFormatClass.RGBA8_UNORM;
+        }
+        return deviceCheckedForcedClass;
     }
 
     /**
@@ -13568,7 +13606,14 @@ this.frameBufferOpen = false;
                     // slot to publish. One is the ordinary chain window and follows it exactly.
                     int windowColorCount = Math.max(1,
                             this.publishedTextures.colorAttachmentCount(chainIdentityValue));
-                    offTarget.ensureChainPairColors(chainIdentityValue, windowColorCount, pairWidth, pairHeight);
+                    // The pair is ensured in its resolved class, not merely kept at the class it happens to
+                    // hold: a raw pair's class was resolved at the registration junction and is followed
+                    // here, and a pair no junction resolves (a ShaderGroup group pair, whose identity is an
+                    // object hash with no GL request behind it) is where the forced class of QUEUE 404 rule
+                    // R8 lands - before this, such a pair kept its initial default class and the forced arm
+                    // of a leg could not be walked on the chains a fixture actually runs (QUEUE 395, 5.1).
+                    offTarget.ensureChainPairColors(chainIdentityValue, windowColorCount, pairWidth, pairHeight,
+                            celtium$pairClassForWindow(chainIdentityValue, offTarget));
                     // The depth half of the same window: when the bound framebuffer's record names a depth
                     // texture, the pair borrows the shared depth image for that texture, so every framebuffer
                     // attaching the same depth texture (Iris's shadow family over one mainDepth) renders into

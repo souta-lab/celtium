@@ -134,4 +134,25 @@ class ChainPairFormatClassTest {
                 "a depth class is not a colour class: forcing one must not take effect");
         assertNull(VulkanTerrainGpuBackend.celtium$parseForcedTargetFormatClass("not-a-class"));
     }
+
+    // QUEUE 395 section 5.1: the window path's pair class - the forced class reaches pairs no
+    // registration junction resolves (a ShaderGroup group pair), while an unforced run follows the pair.
+    @Test
+    void theWindowPairClassFollowsThePairUnlessForced() {
+        assertEquals(TargetFormatClass.RGBA8_UNORM, VulkanTerrainGpuBackend.celtium$windowPairClass(
+                null, false, TargetFormatClass.RGBA8_UNORM, null), "no forcing: the pair's class stands");
+        assertEquals(TargetFormatClass.RGBA16_FLOAT, VulkanTerrainGpuBackend.celtium$windowPairClass(
+                null, false, TargetFormatClass.RGBA16_FLOAT, null),
+                "no forcing: a junction-resolved non-default class is followed, not re-resolved");
+        assertEquals(TargetFormatClass.RGBA16_FLOAT, VulkanTerrainGpuBackend.celtium$windowPairClass(
+                TargetFormatClass.RGBA16_FLOAT, false, TargetFormatClass.RGBA8_UNORM,
+                TargetFormatClass.RGBA16_FLOAT), "forced: a group pair leaves the default class");
+        assertEquals(TargetFormatClass.RGBA8_UNORM, VulkanTerrainGpuBackend.celtium$windowPairClass(
+                TargetFormatClass.RGBA16_FLOAT, false, TargetFormatClass.RGBA8_UNORM,
+                TargetFormatClass.RGBA8_UNORM),
+                "forced but unusable on this device: the device check's fallback stands");
+        assertEquals(TargetFormatClass.RGBA8_UNORM, VulkanTerrainGpuBackend.celtium$windowPairClass(
+                TargetFormatClass.RGBA16_FLOAT, true, TargetFormatClass.RGBA8_UNORM,
+                TargetFormatClass.RGBA16_FLOAT), "rule R1: a pinned identity is never forced");
+    }
 }
