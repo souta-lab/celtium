@@ -147,16 +147,6 @@ public class CommonOptionPages {
                         .setBinding((opts, value) -> opts.performance.useRenderPassOptimization = value, opts -> opts.performance.useRenderPassOptimization)
                         .setFlags(OptionFlag.REQUIRES_RENDERER_RELOAD)
                         .build())
-                //? if <1.21.2 {
-                .add(OptionImpl.createBuilder(boolean.class, sodiumOpts)
-                        .setId(StandardOptions.Option.USE_FASTER_CLOUDS.cast())
-                        .setName(TextComponent.translatable("embeddium.options.use_faster_clouds.name"))
-                        .setTooltip(TextComponent.translatable("embeddium.options.use_faster_clouds.tooltip"))
-                        .setControl(TickBoxControl::new)
-                        .setImpact(OptionImpact.LOW)
-                        .setBinding((opts, value) -> opts.performance.useFasterClouds = value, opts -> opts.performance.useFasterClouds)
-                        .build())
-                //?}
                 .add(OptionImpl.createBuilder(boolean.class, sodiumOpts)
                         .setId(StandardOptions.Option.RASTER_OCCLUSION_CULLING.cast())
                         .setName(TextComponent.translatable("celeritas.options.raster_occlusion_culling.name"))
