@@ -633,11 +633,9 @@ public final class VulkanModProgramPipeline {
         int slot = this.uniformCursor;
         this.uniformCursor = (this.uniformCursor + 1) % UNIFORM_RING_SLOTS;
         ByteBuffer packed = packUniforms(program);
-        ByteBuffer source = packed.duplicate();
-        source.position(0).limit(this.uniformBlockBytes);
-        ByteBuffer target = this.uniformBuffer.mapped().duplicate();
-        target.position(slot * this.uniformStride).limit(slot * this.uniformStride + this.uniformBlockBytes);
-        target.put(source);
+        MemoryUtil.memCopy(MemoryUtil.memAddress0(packed),
+                this.uniformBuffer.mappedAddress() + (long) slot * this.uniformStride,
+                this.uniformBlockBytes);
         this.uniformSlotsByVersion.put(version, slot);
         this.uniformClaimsThisEpoch++;
         return slot;

@@ -477,6 +477,45 @@ class ModGlslTranslatorTest {
         assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
     }
 
+    @Test
+    void lowersLayoutQualifiedUniformsIntegerSamplersQualifiedVaryingsAndPointCoord() {
+        String vertex = """
+                #version 120
+                attribute vec3 position;
+                flat varying int v_kind;
+                varying vec2 v_uv;
+                void main() {
+                    v_kind = gl_VertexID;
+                    v_uv = position.xy;
+                    gl_Position = vec4(position, 1.0);
+                }
+                """;
+        String fragment = """
+                #version 120
+                layout(binding = 0) uniform sampler2D u_color;
+                uniform isampler2D u_ids;
+                uniform sampler1D u_lut;
+                flat varying int v_kind;
+                varying vec2 v_uv;
+                void main() {
+                    int id = texture2D(u_ids, v_uv).r + v_kind;
+                    vec4 lut = texture1D(u_lut, gl_PointCoord.x);
+                    vec4 col = texture2DGradARB(u_color, v_uv, vec2(0.01, 0.0), vec2(0.0, 0.01));
+                    gl_FragColor = (id > 0 ? col : lut);
+                }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertTrue(result.ok(), () -> "expected lowering to succeed, got: " + result.failure());
+        assertEquals(3, result.samplers().size());
+        assertEquals("isampler2D", result.samplers().get(1).type());
+        assertTrue(result.vertex().contains("flat out int v_kind;"), result.vertex());
+        assertTrue(result.fragment().contains("flat in int v_kind;"), result.fragment());
+        assertTrue(result.fragment().contains("gl_PointCoord"), result.fragment());
+        assertTrue(result.fragment().contains("textureGrad("), result.fragment());
+        assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
     /**
      * A mod's real shaders, when a directory of them is named by {@code CELTIUM_MOD_SHADER_DIR}: every {@code *.frag}
      * paired with the directory's single {@code *.vert} (the shape GTCEu's {@code Shaders} uses) must lower and

@@ -236,9 +236,15 @@ public final class TerrainRenderer {
     void bindVertexBuffer(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, org.lwjgl.system.MemoryStack stack,
             RegionResources resources) {
         java.nio.LongBuffer buffers = stack.mallocLong(1);
-        buffers.put(0, resources.vertexArena.buffer().buffer());
         java.nio.LongBuffer offsets = stack.mallocLong(1);
         offsets.put(0, 0L);
+        bindVertexBuffer(commandBuffer, buffers, offsets, resources);
+    }
+
+    /** Zero-allocation overload reusing caller's pre-allocated 1-element vertex buffer/offset scratch buffers. */
+    void bindVertexBuffer(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, java.nio.LongBuffer buffers,
+            java.nio.LongBuffer offsets, RegionResources resources) {
+        buffers.put(0, resources.vertexArena.buffer().buffer());
         org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, buffers, offsets);
     }
 
@@ -595,26 +601,28 @@ public final class TerrainRenderer {
             VulkanMultiDrawBatch batch, boolean sortedPass,
             ChunkPrimitiveType primitiveType) {
         long batchStarted = System.nanoTime();
-        try {
-            return indirectBatchBody(context, commandBuffer, stack, sharedIndexBuffers, resources, batch, sortedPass,
-                    primitiveType);
-        } finally {
-            this.indirectBatchNanos += System.nanoTime() - batchStarted;
+        long finishedAt = indirectBatchBody(context, commandBuffer, stack, sharedIndexBuffers, resources, batch,
+                sortedPass, primitiveType, batchStarted);
+        if (finishedAt != Long.MIN_VALUE) {
+            this.indirectBatchNanos += finishedAt - batchStarted;
+            return true;
         }
+        this.indirectBatchNanos += System.nanoTime() - batchStarted;
+        return false;
     }
 
-    private boolean indirectBatchBody(VulkanContext context, org.lwjgl.vulkan.VkCommandBuffer commandBuffer,
+    /** Returns the final {@code System.nanoTime()} timestamp on success, or {@code Long.MIN_VALUE} on fallback. */
+    private long indirectBatchBody(VulkanContext context, org.lwjgl.vulkan.VkCommandBuffer commandBuffer,
             org.lwjgl.system.MemoryStack stack,
             java.util.Map<org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveType, VulkanBuffer> sharedIndexBuffers,
             RegionResources resources,
             VulkanMultiDrawBatch batch, boolean sortedPass,
-            ChunkPrimitiveType primitiveType) {
-        long setupStarted = System.nanoTime();
+            ChunkPrimitiveType primitiveType, long setupStarted) {
         this.terrainIndirectOffers++;
         if (!context.multiDrawIndirectEnabled()) {
             this.terrainIndirectFallbacks++;
             this.lastTerrainIndirectFallback = "the device was not created with multiDrawIndirect";
-            return false;
+            return Long.MIN_VALUE;
         }
         // Unsigned, because the limit is a uint32: RADV reports 0xFFFFFFFF ("no small bound"), which reads as -1 as a
         // signed int and is not a negative draw count. Only a true 0 means "not reported", and then the direct path is
@@ -623,11 +631,11 @@ public final class TerrainRenderer {
         if (maxDraws == 0L) {
             this.terrainIndirectFallbacks++;
             this.lastTerrainIndirectFallback = "maxDrawIndirectCount is unknown (0)";
-            return false;
+            return Long.MIN_VALUE;
         }
         int size = batch.size();
         if (size <= 0) {
-            return false;
+            return Long.MIN_VALUE;
         }
         // BH-02's rule, applied to the whole batch this time: one indirect call binds one index buffer, so a batch whose
         // commands do not all read the same one is drawn directly.
@@ -639,23 +647,23 @@ public final class TerrainRenderer {
             if (!offsetsClean) {
                 this.terrainIndirectFallbacks++;
                 this.lastTerrainIndirectFallback = "unsorted batch with a non-zero index offset (mixed sources)";
-                return false;
+                return Long.MIN_VALUE;
             }
         }
         if (regionIndex && resources.indexArena == null) {
             this.terrainIndirectFallbacks++;
             this.lastTerrainIndirectFallback = "sorted batch with no region index arena";
-            return false;
+            return Long.MIN_VALUE;
         }
         if (size > Integer.MAX_VALUE / INDIRECT_COMMAND_BYTES) {
             this.terrainIndirectFallbacks++;
             this.lastTerrainIndirectFallback = "the indirect packet byte count exceeds the supported range";
-            return false;
+            return Long.MIN_VALUE;
         }
         int needed = size * INDIRECT_COMMAND_BYTES;
         if (!this.reserveIndirectPacketBytes(context, needed)) {
             this.terrainIndirectFallbacks++;
-            return false;
+            return Long.MIN_VALUE;
         }
         long afterSetup = System.nanoTime();
         this.indirectSetupNanos += afterSetup - setupStarted;
@@ -679,7 +687,8 @@ public final class TerrainRenderer {
         // this page exactly as it did a per-offer encoding's.
         MemoryUtil.memCopy(batch.retainedPacketsAddress(regionIndex), packets, (long) needed);
         this.terrainIndirectPacketCacheHits++;
-        this.indirectPacketNanos += System.nanoTime() - afterBind;
+        long afterPacket = System.nanoTime();
+        this.indirectPacketNanos += afterPacket - afterBind;
         if (TERRAIN_INDIRECT_COMPARE) {
             // Compare the encoded CPU packet with the direct enumeration, not the same CPU values twice. This is
             // an encoder check, not a GPU readback or proof of the packet's resource lifetime.
@@ -696,24 +705,28 @@ public final class TerrainRenderer {
                         Integer.toUnsignedLong(MemoryUtil.memGetInt(packet + 8)),
                         MemoryUtil.memGetInt(packet + 12));
             }
+            afterPacket = System.nanoTime();
         }
         int first = 0;
+        long drawStarted = afterPacket;
+        long afterDraw = afterPacket;
         while (first < size) {
             int count = (int) Math.min(maxDraws, (long) (size - first));
             if (count != size - first) {
                 this.terrainIndirectClampEvents++;
             }
             long offsetBytes = this.indirectBatchOffset + (long) first * INDIRECT_COMMAND_BYTES;
-            long drawStarted = System.nanoTime();
             vkCmdDrawIndexedIndirect(commandBuffer, this.indirectBuffer.buffer(), offsetBytes, count,
                     INDIRECT_COMMAND_BYTES);
-            this.indirectDrawNanos += System.nanoTime() - drawStarted;
+            afterDraw = System.nanoTime();
+            this.indirectDrawNanos += afterDraw - drawStarted;
+            drawStarted = afterDraw;
             this.terrainIndirectCalls++;
             this.terrainIndirectDraws += count;
             this.statistics.addLastDrawCommands(count);
             first += count;
         }
-        return true;
+        return afterDraw;
     }
 
     /** Called after this command slot's prior fence completed and its command buffer was reset successfully. */
@@ -925,6 +938,39 @@ public final class TerrainRenderer {
         return fog.glMode() == 2049 ? 1 : fog.glMode() == 2048 ? 2 : 3;
     }
 
+    /** Per-pass fog snapshot so the region loop reads FogService once per pass rather than once per region. */
+    private boolean passFogPrepared;
+    private float passFogR;
+    private float passFogG;
+    private float passFogB;
+    private float passFogA;
+    private float passFogDensity;
+    private float passFogStart;
+    private float passFogEnd;
+    private int passFogMode;
+    private int passFogShape;
+    private int passFragmentDiscard;
+
+    void preparePassFog(TerrainRenderPass pass) {
+        FogService service = this.fogService;
+        float[] fogColor = service != null ? service.getFogColor() : null;
+        this.passFogR = fogColor != null && fogColor.length > 0 ? fogColor[0] : 0.0f;
+        this.passFogG = fogColor != null && fogColor.length > 1 ? fogColor[1] : 0.0f;
+        this.passFogB = fogColor != null && fogColor.length > 2 ? fogColor[2] : 0.0f;
+        this.passFogA = fogColor != null && fogColor.length > 3 ? fogColor[3] : 0.0f;
+        this.passFogDensity = service != null ? service.getFogDensity() : 0.0f;
+        this.passFogStart = service != null ? service.getFogStart() : 0.0f;
+        this.passFogEnd = service != null ? service.getFogEnd() : 0.0f;
+        this.passFogMode = fogMode();
+        this.passFogShape = service != null ? service.getFogShapeIndex() : FogService.FOG_SHAPE_SPHERICAL;
+        this.passFragmentDiscard = pass != null && pass.supportsFragmentDiscard() ? 1 : 0;
+        this.passFogPrepared = true;
+    }
+
+    void clearPassFog() {
+        this.passFogPrepared = false;
+    }
+
     long writeUniforms(RenderRegion region, TerrainRenderPass pass, CameraTransform camera) {
         if (!this.dynamicLightsGathered) {
             this.dynamicLightsGathered = true;
@@ -942,15 +988,38 @@ public final class TerrainRenderer {
             this.uniformBlocks = (int) (this.uniforms.size() / this.uniformStride);
         }
 
-        ByteBuffer block = this.uniforms.mapped();
-        int base = (int) offset;
+        float regionOffsetX = (region.getOriginX() - camera.intX) - camera.fracX;
+        float regionOffsetY = (region.getOriginY() - camera.intY) - camera.fracY;
+        float regionOffsetZ = (region.getOriginZ() - camera.intZ) - camera.fracZ;
 
-        block.putFloat(base + 0, (region.getOriginX() - camera.intX) - camera.fracX);
-        block.putFloat(base + 4, (region.getOriginY() - camera.intY) - camera.fracY);
-        block.putFloat(base + 8, (region.getOriginZ() - camera.intZ) - camera.fracZ);
-        block.putFloat(base + 12, 0.0f);
+        float fogR, fogG, fogB, fogA, fogDensity, fogStart, fogEnd;
+        int currentFogMode, fogShape, fragmentDiscard;
+        if (this.passFogPrepared) {
+            fogR = this.passFogR;
+            fogG = this.passFogG;
+            fogB = this.passFogB;
+            fogA = this.passFogA;
+            fogDensity = this.passFogDensity;
+            fogStart = this.passFogStart;
+            fogEnd = this.passFogEnd;
+            currentFogMode = this.passFogMode;
+            fogShape = this.passFogShape;
+            fragmentDiscard = this.passFragmentDiscard;
+        } else {
+            FogService service = this.fogService;
+            float[] fogColor = service != null ? service.getFogColor() : null;
+            fogR = fogColor != null && fogColor.length > 0 ? fogColor[0] : 0.0f;
+            fogG = fogColor != null && fogColor.length > 1 ? fogColor[1] : 0.0f;
+            fogB = fogColor != null && fogColor.length > 2 ? fogColor[2] : 0.0f;
+            fogA = fogColor != null && fogColor.length > 3 ? fogColor[3] : 0.0f;
+            fogDensity = service != null ? service.getFogDensity() : 0.0f;
+            fogStart = service != null ? service.getFogStart() : 0.0f;
+            fogEnd = service != null ? service.getFogEnd() : 0.0f;
+            currentFogMode = fogMode();
+            fogShape = service != null ? service.getFogShapeIndex() : FogService.FOG_SHAPE_SPHERICAL;
+            fragmentDiscard = pass.supportsFragmentDiscard() ? 1 : 0;
+        }
 
-        float[] fogColor = this.fogService != null ? this.fogService.getFogColor() : null;
         // The line is repeated every FOG_LOG_EVERY region draws as well as on the first one, and carries the draw
         // index. It printed once, which made the two legs' single samples different frames and so incomparable: the
         // bridge leg read [0.3816, 0.4421, 0.545] and the GL-less leg [0.4786, 0.5544, 0.6834] with no way to tell
@@ -958,42 +1027,42 @@ public final class TerrainRenderer {
         this.fogLogDraws++;
         if (!uniformsLogged || (PeriodicLog.ENABLED && this.fogLogDraws % FOG_LOG_EVERY == 0)) {
             uniformsLogged = true;
+            float[] fogColor = this.fogService != null ? this.fogService.getFogColor() : null;
             // stdout, not record(): the diagnostics list is capped and this line was being dropped from it.
             System.out.println("[Celtium] CELTIUM_FOG draw=" + this.fogLogDraws + " fogColor=" + java.util.Arrays.toString(fogColor)
-                    + " start=" + (this.fogService != null ? this.fogService.getFogStart() : 0.0f)
-                    + " end=" + (this.fogService != null ? this.fogService.getFogEnd() : 0.0f)
-                    + " density=" + (this.fogService != null ? this.fogService.getFogDensity() : 0.0f)
-                    + " shape=" + (this.fogService != null ? this.fogService.getFogShapeIndex() : -1)
-                    + " glFogMode=" + fogMode() + " cutoff=" + (this.fogService != null ? this.fogService.getFogCutoff() : 0.0f)
-                    + " regionOffset=(" + ((region.getOriginX() - camera.intX) - camera.fracX) + ","
-                    + ((region.getOriginY() - camera.intY) - camera.fracY) + ","
-                    + ((region.getOriginZ() - camera.intZ) - camera.fracZ) + ")");
+                    + " start=" + fogStart
+                    + " end=" + fogEnd
+                    + " density=" + fogDensity
+                    + " shape=" + (this.fogService != null ? fogShape : -1)
+                    + " glFogMode=" + currentFogMode + " cutoff=" + (this.fogService != null ? this.fogService.getFogCutoff() : 0.0f)
+                    + " regionOffset=(" + regionOffsetX + "," + regionOffsetY + "," + regionOffsetZ + ")");
         }
-        block.putFloat(base + 16, fogColor != null && fogColor.length > 0 ? fogColor[0] : 0.0f);
-        block.putFloat(base + 20, fogColor != null && fogColor.length > 1 ? fogColor[1] : 0.0f);
-        block.putFloat(base + 24, fogColor != null && fogColor.length > 2 ? fogColor[2] : 0.0f);
-        block.putFloat(base + 28, fogColor != null && fogColor.length > 3 ? fogColor[3] : 0.0f);
 
-        block.putFloat(base + 32, this.fogService != null ? this.fogService.getFogDensity() : 0.0f);
-        block.putFloat(base + 36, this.fogService != null ? this.fogService.getFogStart() : 0.0f);
-        block.putFloat(base + 40, this.fogService != null ? this.fogService.getFogEnd() : 0.0f);
+        long addr = this.uniforms.mappedAddress() + offset;
+        MemoryUtil.memPutFloat(addr + 0, regionOffsetX);
+        MemoryUtil.memPutFloat(addr + 4, regionOffsetY);
+        MemoryUtil.memPutFloat(addr + 8, regionOffsetZ);
+        MemoryUtil.memPutFloat(addr + 12, 0.0f);
+        MemoryUtil.memPutFloat(addr + 16, fogR);
+        MemoryUtil.memPutFloat(addr + 20, fogG);
+        MemoryUtil.memPutFloat(addr + 24, fogB);
+        MemoryUtil.memPutFloat(addr + 28, fogA);
+        MemoryUtil.memPutFloat(addr + 32, fogDensity);
+        MemoryUtil.memPutFloat(addr + 36, fogStart);
+        MemoryUtil.memPutFloat(addr + 40, fogEnd);
         // Additive atlas LOD shift. The per-material bias already travels in the vertex, so parity needs 0 here.
-        // 0.0 is exact OpenGL parity. The property exists so the shader's level-of-detail can be swept against the
-        // reference: the mirrored chain measures 5.60% while a shallow clamp measures 0.16%, and the question is whether
-        // that difference is the chain's content or the LOD the shader asks for.
-        block.putFloat(base + 44, MIP_BIAS_ADD);
-        block.putInt(base + 48, fogMode());
-        // A/B only: a constant fragment colour that reaches the frame image says the geometry is rasterised and the
-        // loss is in the fragment maths; a frame that stays black says nothing is being rasterised at all.
-        block.putInt(base + 80, SOLID_TERRAIN ? 1 : 0);
-        block.putInt(base + 52, this.fogService != null ? this.fogService.getFogShapeIndex() : FogService.FOG_SHAPE_SPHERICAL);
-        block.putInt(base + 56, pass.supportsFragmentDiscard() ? 1 : 0);
+        MemoryUtil.memPutFloat(addr + 44, MIP_BIAS_ADD);
+        MemoryUtil.memPutInt(addr + 48, currentFogMode);
+        MemoryUtil.memPutInt(addr + 52, fogShape);
+        MemoryUtil.memPutInt(addr + 56, fragmentDiscard);
         // Chunk fade is a separate feature that the Vulkan path does not port yet; 0 keeps the GL default look.
-        block.putInt(base + 60, 0);
-        block.putFloat(base + 64, 0.0f);
-        block.putFloat(base + 68, 0.0f);
-        block.putFloat(base + 72, 0.0f);
-        block.putFloat(base + 76, 0.0f);
+        MemoryUtil.memPutInt(addr + 60, 0);
+        MemoryUtil.memPutFloat(addr + 64, 0.0f);
+        MemoryUtil.memPutFloat(addr + 68, 0.0f);
+        MemoryUtil.memPutFloat(addr + 72, 0.0f);
+        MemoryUtil.memPutFloat(addr + 76, 0.0f);
+        // A/B only: a constant fragment colour that reaches the frame image says the geometry is rasterised.
+        MemoryUtil.memPutInt(addr + 80, SOLID_TERRAIN ? 1 : 0);
 
         return offset;
     }
@@ -1293,11 +1362,7 @@ public final class TerrainRenderer {
             if (mesh.parts != null) {
                 ByteBuffer vertices = mesh.parts.vertexBuffer().getDirectBuffer();
                 int vertexBytes = mesh.parts.vertexBuffer().getLength();
-                if (mesh.sectionFirstColor != null) {
-                    // One int per mesh: it feeds the colour census in logFirstVertex. The 32-byte head that used to be
-                    // copied here (with an order save/restore and a new byte[32] per mesh) only ever fed a bounded
-                    // diagnostic line; it is now built there, for the few meshes that are logged, from the same vertex
-                    // buffer - which is still alive at that point.
+                if (VulkanDiagnostics.enabled() && mesh.sectionFirstColor != null) {
                     mesh.sectionFirstColor[mesh.sectionIndex] = firstVertexColor(vertices);
                 }
                 if (TERRAIN_VERTEX_COLOUR_SAMPLES > 0 && colourSamples < TERRAIN_VERTEX_COLOUR_SAMPLES) {

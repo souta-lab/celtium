@@ -13526,8 +13526,6 @@ this.frameBufferOpen = false;
                     // named their depth texture, and no pair ever borrowed a shared depth.
                     int[] windowDepthRecord = celtium$depthTextureForTarget(chainIdentityValue);
                     int windowDepthTexture = windowDepthRecord == null ? 0 : windowDepthRecord[0];
-                    String depthTextureSource = windowDepthRecord == null || windowDepthRecord[3] == 0
-                            ? "record" : "stub-bound-" + windowDepthRecord[3];
                     long windowAttachedDepthImage = 0L;
                     if (windowDepthTexture != 0) {
                         int depthWidth = windowDepthRecord[1];
@@ -13542,6 +13540,8 @@ this.frameBufferOpen = false;
                             }
                             if (this.sharedDepthWindowLogs < 8) {
                                 this.sharedDepthWindowLogs++;
+                                String depthTextureSource = windowDepthRecord[3] == 0
+                                        ? "record" : "stub-bound-" + windowDepthRecord[3];
                                 System.out.println("[Celtium] CELTIUM_SHARED_DEPTH identity=0x"
                                         + Long.toHexString(chainIdentityValue) + " depthTexture="
                                         + windowDepthTexture + " via=" + depthTextureSource
@@ -16270,7 +16270,12 @@ this.frameBufferOpen = false;
         SectionRenderDataStorage.BatchCacheParams cacheParams =
                 new SectionRenderDataStorage.BatchCacheParams(useBlockFaceCulling, view);
         boolean indexBound = false;
-
+        LongBuffer regionVertexBuf = stack.mallocLong(1);
+        LongBuffer regionVertexOffset = stack.longs(0L);
+        LongBuffer regionDescSet = stack.mallocLong(1);
+        IntBuffer regionDynOffset = stack.mallocInt(1);
+        this.terrain.preparePassFog(pass);
+        try {
         while (iterator.hasNext()) {
             ChunkRenderList renderList = iterator.next();
             RenderRegion region;
@@ -16356,10 +16361,10 @@ this.frameBufferOpen = false;
             org.soutalab.celtium.vulkan.FramePassTimings.begin("recBind");
             long uniformStarted = System.nanoTime();
             long uniformOffset = this.terrain.writeUniforms(region, pass, camera);
-            this.terrainUniformNanos += System.nanoTime() - uniformStarted;
-            long bindStarted = System.nanoTime();
-            pipeline.bindDescriptors(this.commandBuffer, uniformOffset, this.frameSlot);
-            this.terrainBindNanos += System.nanoTime() - bindStarted;
+            long afterUniform = System.nanoTime();
+            this.terrainUniformNanos += afterUniform - uniformStarted;
+            pipeline.bindDescriptors(this.commandBuffer, uniformOffset, this.frameSlot, regionDescSet, regionDynOffset);
+            this.terrainBindNanos += System.nanoTime() - afterUniform;
             if (this.boundHandleLogs < 6 && this.atlasTexture != null) {
                 // Which pipeline and descriptor set the draw will actually use, next to the views the backend handed
                 // bindTextures. If the set printed here is not the one that was written, the terrain samples another
@@ -16396,7 +16401,7 @@ this.frameBufferOpen = false;
                 }
             }
 
-            this.terrain.bindVertexBuffer(this.commandBuffer, stack, resources);
+            this.terrain.bindVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset, resources);
             if (!indexBound) {
                 this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
                 indexBound = true;
@@ -16519,6 +16524,9 @@ this.frameBufferOpen = false;
                 this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
             }
             org.soutalab.celtium.vulkan.FramePassTimings.end("recDraw");
+        }
+        } finally {
+            this.terrain.clearPassFog();
         }
         endTerrainStatistics(statisticsQuery, pass);
 

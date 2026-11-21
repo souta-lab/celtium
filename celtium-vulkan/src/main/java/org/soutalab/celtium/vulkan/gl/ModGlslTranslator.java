@@ -72,9 +72,10 @@ public final class ModGlslTranslator {
     private static final Pattern LINE_COMMENT = Pattern.compile("//[^\\n]*");
     private static final Pattern VERSION = Pattern.compile("^\\s*#\\s*version[^\\n]*\\n?", Pattern.MULTILINE);
     private static final Pattern EXTENSION = Pattern.compile("^\\s*#\\s*extension[^\\n]*\\n?", Pattern.MULTILINE);
-    /** A global declaration with a storage qualifier: qualifier, optional precision, type, declarators. */
+    /** A global declaration with a storage qualifier: optional layout/interpolation, qualifier, optional precision, type, declarators. */
     private static final Pattern DECLARATION = Pattern.compile(
-            "(?<![\\w.])(attribute|varying|uniform)\\s+(?:(?:lowp|mediump|highp)\\s+)?(\\w+)\\s+([^;{}()]+);");
+            "(?<![\\w.])(?:layout\\s*\\([^)]*\\)\\s*)?(?:(flat|smooth|noperspective|centroid)\\s+)?"
+                    + "(attribute|varying|uniform)\\s+(?:(?:lowp|mediump|highp)\\s+)?(\\w+)\\s+([^;{}()]+);");
     private static final Pattern DECLARATOR = Pattern.compile("^\\s*(\\w+)\\s*(?:\\[\\s*(\\d+)\\s*\\])?\\s*(?:=.*)?$");
     /**
      * A modern global input/output declaration: an optional {@code layout(... location = N ...)}, an optional
@@ -106,7 +107,7 @@ public final class ModGlslTranslator {
     private static final Pattern TEXCOORD_BAD_PATTERN = Pattern.compile("(?s).*\\bgl_TexCoord\\s*\\[\\s*[1-9].*");
     private static final Pattern TEXCOORD0_PATTERN = Pattern.compile("\\bgl_TexCoord\\s*\\[\\s*0\\s*\\]");
     private static final Pattern GL_LEFTOVER_PATTERN = Pattern.compile(
-            "\\bgl_(?!Position\\b|FragColor\\b|FragData\\b|FragCoord\\b|FragDepth\\b|FrontFacing\\b|PointSize\\b|VertexIndex\\b|InstanceIndex\\b)(\\w+)");
+            "\\bgl_(?!Position\\b|FragColor\\b|FragData\\b|FragCoord\\b|FragDepth\\b|FrontFacing\\b|PointSize\\b|PointCoord\\b|ClipDistance\\b|PrimitiveID\\b|Layer\\b|VertexIndex\\b|InstanceIndex\\b)(\\w+)");
     private static final Pattern GL_VERTEX_ID_PATTERN = Pattern.compile("\\bgl_VertexID\\b");
     private static final Pattern GL_INSTANCE_ID_PATTERN = Pattern.compile("\\bgl_InstanceID\\b");
     private static final Pattern GL_VERTEX_PATTERN = Pattern.compile("\\bgl_Vertex\\b");
@@ -116,12 +117,19 @@ public final class ModGlslTranslator {
     private static final Pattern GL_MVP_PATTERN = Pattern.compile("\\bgl_ModelViewProjectionMatrix\\b");
     private static final Pattern GL_MV_PATTERN = Pattern.compile("\\bgl_ModelViewMatrix\\b");
     private static final Pattern GL_PROJ_PATTERN = Pattern.compile("\\bgl_ProjectionMatrix\\b");
+    private static final Pattern TEX1D_LOD_PATTERN = Pattern.compile("\\btexture1DLod\\s*\\(");
+    private static final Pattern TEX1D_PATTERN = Pattern.compile("\\btexture1D\\s*\\(");
     private static final Pattern TEX2D_PROJ_LOD_PATTERN = Pattern.compile("\\btexture2DProjLod\\s*\\(");
     private static final Pattern TEX2D_PROJ_PATTERN = Pattern.compile("\\btexture2DProj\\s*\\(");
     private static final Pattern TEX2D_LOD_PATTERN = Pattern.compile("\\btexture2DLod\\s*\\(");
+    private static final Pattern TEX2D_GRAD_ARB_PATTERN = Pattern.compile("\\btexture2DGradARB\\s*\\(");
+    private static final Pattern TEX2D_RECT_PROJ_PATTERN = Pattern.compile("\\btexture2DRectProj\\s*\\(");
+    private static final Pattern TEX2D_RECT_PATTERN = Pattern.compile("\\btexture2DRect\\s*\\(");
     private static final Pattern TEX2D_PATTERN = Pattern.compile("\\btexture2D\\s*\\(");
+    private static final Pattern TEX3D_LOD_PATTERN = Pattern.compile("\\btexture3DLod\\s*\\(");
     private static final Pattern TEX3D_PATTERN = Pattern.compile("\\btexture3D\\s*\\(");
     private static final Pattern TEXCUBE_LOD_PATTERN = Pattern.compile("\\btextureCubeLod\\s*\\(");
+    private static final Pattern TEXCUBE_GRAD_ARB_PATTERN = Pattern.compile("\\btextureCubeGradARB\\s*\\(");
     private static final Pattern TEXCUBE_PATTERN = Pattern.compile("\\btextureCube\\s*\\(");
 
     private ModGlslTranslator() {
@@ -236,7 +244,7 @@ public final class ModGlslTranslator {
         List<SamplerBinding> samplers = new ArrayList<>();
         int offset = 0;
         for (Declaration d : uniforms.values()) {
-            if (d.type.startsWith("sampler")) {
+            if (isSamplerType(d.type)) {
                 if (d.arrayLength != 0) {
                     throw new IllegalArgumentException("sampler arrays are not lowered: " + d.name);
                 }
@@ -497,15 +505,16 @@ public final class ModGlslTranslator {
         Matcher m = DECLARATION.matcher(source);
         StringBuilder rest = new StringBuilder();
         while (m.find()) {
-            String qualifier = m.group(1);
-            String type = m.group(2);
-            for (String declarator : m.group(3).split(",")) {
+            String interpolation = m.group(1) == null ? "" : m.group(1);
+            String qualifier = m.group(2);
+            String type = m.group(3);
+            for (String declarator : m.group(4).split(",")) {
                 Matcher d = DECLARATOR.matcher(declarator);
                 if (!d.matches()) {
                     throw new IllegalArgumentException("unparsed declaration: " + m.group(0).strip());
                 }
                 int length = d.group(2) == null ? 0 : Integer.parseInt(d.group(2));
-                out.add(new Declaration(qualifier, type, d.group(1), length));
+                out.add(new Declaration(qualifier, type, d.group(1), length, -1, interpolation));
             }
             m.appendReplacement(rest, "");
         }
@@ -597,13 +606,24 @@ public final class ModGlslTranslator {
         return m.replaceFirst("void celtium_user_main()");
     }
 
+    private static boolean isSamplerType(String type) {
+        return type.startsWith("sampler") || type.startsWith("isampler") || type.startsWith("usampler");
+    }
+
     private static String lowerTextureCalls(String s) {
+        s = TEX1D_LOD_PATTERN.matcher(s).replaceAll("textureLod(");
+        s = TEX1D_PATTERN.matcher(s).replaceAll("texture(");
         s = TEX2D_PROJ_LOD_PATTERN.matcher(s).replaceAll("textureProjLod(");
         s = TEX2D_PROJ_PATTERN.matcher(s).replaceAll("textureProj(");
         s = TEX2D_LOD_PATTERN.matcher(s).replaceAll("textureLod(");
+        s = TEX2D_GRAD_ARB_PATTERN.matcher(s).replaceAll("textureGrad(");
+        s = TEX2D_RECT_PROJ_PATTERN.matcher(s).replaceAll("textureProj(");
+        s = TEX2D_RECT_PATTERN.matcher(s).replaceAll("texture(");
         s = TEX2D_PATTERN.matcher(s).replaceAll("texture(");
+        s = TEX3D_LOD_PATTERN.matcher(s).replaceAll("textureLod(");
         s = TEX3D_PATTERN.matcher(s).replaceAll("texture(");
         s = TEXCUBE_LOD_PATTERN.matcher(s).replaceAll("textureLod(");
+        s = TEXCUBE_GRAD_ARB_PATTERN.matcher(s).replaceAll("textureGrad(");
         return TEXCUBE_PATTERN.matcher(s).replaceAll("texture(");
     }
 

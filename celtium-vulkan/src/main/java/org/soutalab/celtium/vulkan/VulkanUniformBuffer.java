@@ -43,6 +43,10 @@ final class VulkanUniformBuffer {
         return this.buffer;
     }
 
+    long mappedAddress() {
+        return this.mappedAddress;
+    }
+
     /** The mapped range. Writes through this view are visible to the GPU after the owning queue submission. */
     ByteBuffer mapped() {
         ByteBuffer view = this.mappedView;

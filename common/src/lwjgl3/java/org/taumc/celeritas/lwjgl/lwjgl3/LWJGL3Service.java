@@ -208,7 +208,17 @@ public record LWJGL3Service(
     private static final long glBindVertexArrayAPPLE = GL.getFunctionProvider().getFunctionAddress("glBindVertexArrayAPPLE");
 
     public static LWJGL3Service create() {
-        GLCapabilities caps = GL.getCapabilities();
+        GLCapabilities caps = null;
+        try {
+            caps = GL.getCapabilities();
+        } catch (IllegalStateException ignored) {
+            // GL-less Vulkan / worker-thread first initialization (e.g. ChunkBuilder worker calling MemoryUtil
+            // helpers after RenderAheadManager removal): no thread-local GLCapabilities exist.
+        }
+        if (caps == null) {
+            return new LWJGL3Service(VAOMode.NONE, TimerQueryMode.NONE, DebugMode.NONE,
+                    VertexAttribIMode.NONE, VertexAttribDivisorMode.NONE);
+        }
 
         VAOMode vaoMode;
 
