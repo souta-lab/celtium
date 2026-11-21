@@ -7,7 +7,10 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32B32A32_SFLOAT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32B32_SFLOAT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32_SFLOAT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
@@ -303,15 +306,8 @@ class ModProgramAttributeSourceTest {
 
     @Test
     void thePositionLayoutRefusesFieldsItDoesNotCarry() {
-        // The horizon's own program (Complementary's sky basic) also reads a colour, which GL supplies from the
-        // current generic attribute - the pipeline sets it to the fog colour just before the draw - not from the
-        // batch. Until the constant-attribute question is answered the refusal names the attribute, rather than
-        // the whole format as it did before the layout was mapped.
-        List<ModGlslTranslator.Attribute> skyBasic = List.of(
-                new ModGlslTranslator.Attribute("iris_Vertex", "vec4", 0),
-                new ModGlslTranslator.Attribute("iris_Color", "vec4", 1));
-        assertEquals("attribute iris_Color has no source in format " + VulkanImmediateFormats.POSITION,
-                VulkanModProgramPipeline.unsupportedAttributes(skyBasic, VulkanImmediateFormats.POSITION));
+        // A texture coordinate the batch does not carry is refused (the colour is the one field GL's current
+        // value answers on this layout: see theSkyProgramReadsTheCurrentColourAsAConstantAttribute).
         // A texture coordinate is refused the same way: offset 12 in a 12-byte vertex is the next vertex's
         // position, so answering the name with the UV field would read a neighbour's bytes.
         assertNull(VulkanModProgramPipeline.source(
@@ -325,5 +321,32 @@ class ModProgramAttributeSourceTest {
         assertNull(VulkanModProgramPipeline.source(
                 new ModGlslTranslator.Attribute("iris_MultiTexCoord1", "vec4", 3),
                 VulkanImmediateFormats.POSITION));
+    }
+
+    @Test
+    void theSkyProgramReadsTheCurrentColourAsAConstantAttribute() {
+        // The horizon's own program (Complementary's sky basic) also reads a colour, which GL supplies from the
+        // current generic attribute - the pipeline sets it to the fog colour just before the draw - not from the
+        // batch. The colour names answer it from the constant ring: four floats on binding 1 at stride 0.
+        List<ModGlslTranslator.Attribute> skyBasic = List.of(
+                new ModGlslTranslator.Attribute("iris_Vertex", "vec4", 0),
+                new ModGlslTranslator.Attribute("iris_Color", "vec4", 1));
+        assertNull(VulkanModProgramPipeline.unsupportedAttributes(skyBasic, VulkanImmediateFormats.POSITION));
+        assertEquals(VulkanModProgramPipeline.Source.CONSTANT_COLOR,
+                VulkanModProgramPipeline.source(skyBasic.get(1), VulkanImmediateFormats.POSITION));
+        assertEquals(VulkanModProgramPipeline.CONSTANT_BINDING,
+                VulkanModProgramPipeline.Source.CONSTANT_COLOR.binding());
+        assertEquals(0, VulkanModProgramPipeline.Source.POSITION.binding());
+        assertEquals(VK_FORMAT_R32G32B32A32_SFLOAT, VulkanModProgramPipeline.Source.CONSTANT_COLOR.format);
+        assertEquals(0, VulkanModProgramPipeline.Source.CONSTANT_COLOR.offset);
+        assertEquals(16, VulkanModProgramPipeline.CONSTANT_SLOT_BYTES);
+        assertTrue(VulkanModProgramPipeline.readsConstant(skyBasic, VulkanImmediateFormats.POSITION));
+        // The colour layout keeps its own field, and the UV layout still refuses a colour.
+        assertFalse(VulkanModProgramPipeline.readsConstant(skyBasic, VulkanImmediateFormats.POSITION_TEX_COLOR));
+        assertEquals(VulkanModProgramPipeline.Source.COLOR,
+                VulkanModProgramPipeline.source(skyBasic.get(1), VulkanImmediateFormats.POSITION_TEX_COLOR));
+        assertNull(VulkanModProgramPipeline.source(skyBasic.get(1), VulkanImmediateFormats.POSITION_TEX));
+        // A position-only program builds no ring.
+        assertFalse(VulkanModProgramPipeline.readsConstant(List.of(skyBasic.get(0)), VulkanImmediateFormats.POSITION));
     }
 }

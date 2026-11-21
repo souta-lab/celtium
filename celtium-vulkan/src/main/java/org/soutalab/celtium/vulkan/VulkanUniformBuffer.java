@@ -30,8 +30,21 @@ final class VulkanUniformBuffer {
     private ByteBuffer mappedView;
     private long deviceAlignment;
 
+    /** The buffer's Vulkan usage: uniform blocks by default, a vertex source for the constant-attribute ring. */
+    private final int usage;
+
     VulkanUniformBuffer(VulkanContext context, long initialSize) {
+        this(context, initialSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+    }
+
+    /**
+     * The same persistently mapped, host-coherent buffer with another usage - the mod-program pipeline's
+     * constant-attribute ring binds it as a stride-0 vertex buffer, which needs the vertex usage bit and nothing else
+     * this class does differently.
+     */
+    VulkanUniformBuffer(VulkanContext context, long initialSize, int usage) {
         this.context = context;
+        this.usage = usage;
         publish(create(alignToDevice(initialSize), "VulkanUniformBuffer:initial"));
     }
 
@@ -153,7 +166,7 @@ final class VulkanUniformBuffer {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkBufferCreateInfo create = VkBufferCreateInfo.calloc(stack).sType$Default()
                     .size(bytes)
-                    .usage(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)
+                    .usage(this.usage)
                     .sharingMode(VK_SHARING_MODE_EXCLUSIVE);
             LongBuffer handle = stack.mallocLong(1);
             check(vkCreateBuffer(this.context.device(), create, null, handle), "vkCreateBuffer(uniform)");

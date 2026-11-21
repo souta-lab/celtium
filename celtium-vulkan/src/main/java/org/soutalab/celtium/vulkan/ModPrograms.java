@@ -272,8 +272,15 @@ final class ModPrograms {
                         + " inputs=[" + trimmedInputs + "]";
             }
         }
+        // GL's current colour for a colour attribute the batch layout does not carry (the constant attribute):
+        // captured now, while the mirror holds the value the game set for this draw.
+        long constantOffset = pipeline.readsConstant()
+                ? pipeline.constantColorOffset(b.immediateState.colorRed(), b.immediateState.colorGreen(),
+                        b.immediateState.colorBlue(), b.immediateState.colorAlpha())
+                : -1L;
         return new PreparedImmediate(new VulkanModProgramPipeline.Draw(pipeline,
-                VulkanModProgramPipeline.packUniforms(program), set, label, textures, imageTextures), set, 0L);
+                VulkanModProgramPipeline.packUniforms(program), set, label, textures, imageTextures, constantOffset),
+                set, 0L);
     }
 
     /**
