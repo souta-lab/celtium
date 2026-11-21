@@ -16285,6 +16285,26 @@ this.frameBufferOpen = false;
     }
 
     /**
+     * {@return whether the depth half of a routed pass's owed clear may run in {@code frameSerial}}.
+     * <p>
+     * Two shapes of pair depth, two guards. A pair borrowing a shared depth image (a nonzero {@code depthKey}) is
+     * guarded by the shared rule, {@link GllessFrameTarget#celtium$sharedDepthClearNeeded}: once per frame per
+     * depth key, because the family of framebuffers attaching that texture shares the one image. A pair on its
+     * own depth (key 0) has no family to guard against - the image is this pair's alone - and the once-per-frame
+     * rule for its depth half is the per-identity one the consume has already passed
+     * ({@link #celtium$pairClearNeeded}). The shared rule answers {@code false} for key 0 by design ("nothing to
+     * guard"), so reading it directly here would strip the depth half of every private-depth pair's owed clear -
+     * and refuse its self-test arm with it - leaving that clear pending for a later window to land after the
+     * pass drew, which is the erasure item 384 measured on the bound-target route.
+     * <p>
+     * Package-private and static so the rule is pinned without a device, like the shared rule it extends.
+     */
+    static boolean celtium$routedDepthClearAllowed(long depthKey, long clearedFrameSerial, long frameSerial) {
+        return depthKey == 0L
+                || GllessFrameTarget.celtium$sharedDepthClearNeeded(depthKey, clearedFrameSerial, frameSerial);
+    }
+
+    /**
      * Consumes the clear a routed pass owes before its pass begins, outside the pass.
      * <p>
      * Same three arms as the window path's clear (self-test, latched game clear, ordinary once-per-frame clear) minus
@@ -16295,6 +16315,8 @@ this.frameBufferOpen = false;
      * one image here, so the depth is cleared <b>once per frame per depth key</b>. A second member whose pair was
      * created later in the same frame would otherwise clear what the first member already drew, and the depth copy
      * that follows would serve a cleared image. A refused depth clear is named, and the colour half still runs.
+     * A pair on its own depth (key 0) stands under the per-identity rule alone; the depth half's allowance for
+     * both shapes is {@link #celtium$routedDepthClearAllowed}.
      */
     private void celtium$consumeRoutedTargetClear(GllessFrameTarget owner, long identity, long depthKey) {
         if (!celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.CHAIN_PAIR, owner.chainPairAcquired(identity),
@@ -16304,7 +16326,7 @@ this.frameBufferOpen = false;
         boolean latched = this.targetRegistry.hasLatchedClear()
                 && this.targetRegistry.latchedIdentity() == identity;
         int mask = latched ? this.targetRegistry.latchedMask() : (0x4000 | 0x0100);
-        boolean depthAllowed = GllessFrameTarget.celtium$sharedDepthClearNeeded(depthKey,
+        boolean depthAllowed = celtium$routedDepthClearAllowed(depthKey,
                 owner.sharedDepthClearedFrameSerial(depthKey), celtium$frameSerial());
         if ((mask & 0x0100) != 0 && !depthAllowed) {
             mask &= ~0x0100;
@@ -16519,12 +16541,16 @@ this.frameBufferOpen = false;
                 long pairFramebuffer = ensureChainPairFramebuffer(renderPass);
                 if (pairFramebuffer != 0L) {
                     terrainFramebuffer = pairFramebuffer;
-                    if (boundDepthKey != 0L) {
-                        // A shared-depth member's owed clear is consumed here, in the depth route's order -
-                        // before this pass draws, not left for a later window of the same framebuffer to clear
-                        // over the terrain this pass is about to write.
-                        celtium$consumeRoutedTargetClear(pairOwner, identity, boundDepthKey);
-                    }
+                    // The owed clear is consumed here, in the depth route's order - before this pass draws,
+                    // not left for a later window of the same framebuffer to clear over the terrain this pass
+                    // is about to write. That later landing is what item 384 measured: while the consume ran
+                    // only for a shared-depth member, a pair on its own depth kept the deferred pair clear
+                    // pending past this pass, and the frame's first window after it consumed the clear over
+                    // the mask the pass had just drawn into the pair - every frame, so the chain read an
+                    // erased mask and no halo formed. Inside the consume, a shared-depth member's depth half
+                    // is guarded once per frame per depth key; a pair on its own depth is guarded by the
+                    // per-identity rule there.
+                    celtium$consumeRoutedTargetClear(pairOwner, identity, boundDepthKey);
                     pairOwner.recordChainPairAttachAcquire(identity, boundDepthKey, this.commandBuffer);
                     long routedBoundColor = pairOwner.chainPairColorImage(identity);
                     this.passAttachedColorImage = routedBoundColor;
