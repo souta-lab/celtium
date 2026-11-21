@@ -10084,6 +10084,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 // its own (`flush`, `winRecord`), so counting it here as well made the accept path look like the
                 // frame's largest item when a third of it was the window it triggered. This bracket is the split:
                 // acceptSpanSummary's flushMs is the part of the accept average that belongs to the flush.
+                // Item 312 P0: this size-triggered window drains the same queue, so a gui window that
+                // fires here is paired for the flush fit too; without it, a HUD large enough to trip
+                // the threshold would drain unsampled and the fit would see only the small windows.
+                // Same identification as the ordering flush: the groups it drains carry the stamp.
+                int hudP0WindowGroups = HUD_P0_FRAMES > 0 ? this.immediateGroups.size() : 0;
+                long hudP0WindowStartedNanos = hudP0WindowGroups > 0
+                        && HudP0Census.guiClosedGroups(this.immediateGroups) > 0 ? System.nanoTime() : 0L;
                 long acceptFlushStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
                 try {
                     FramePassTimings.begin("flush");
@@ -10134,6 +10141,11 @@ this.frameBufferOpen = false;
                     // Counted on both paths: a flush that threw still spent the time, and leaving it out would make
                     // the accept average look cheaper exactly on the legs where the flush is expensive.
                     if (acceptFlushStart != 0L) this.acceptFlushNanos += System.nanoTime() - acceptFlushStart;
+                    // The fit pair follows the same rule: the ordering flush's note is in its finally
+                    // too, so a window that threw is paired at both recording points or at neither.
+                    if (hudP0WindowStartedNanos != 0L) {
+                        this.hudP0FlushFit.note(hudP0WindowGroups, System.nanoTime() - hudP0WindowStartedNanos);
+                    }
                 }
             }
             if (this.immediateStatistics.immediateBatchesOffered() % 500 == 0 && VulkanDiagnostics.enabled()) {
@@ -12075,8 +12087,14 @@ this.frameBufferOpen = false;
         // Item 312 P0: the flush window's group count is the pending list's size at entry (the caller
         // closed the open group before this point), and its wall time is fitted against that count in
         // HudP0Census.FlushRegression. Only gui windows are paired; the world flushes are not the HUD's.
-        long hudP0FlushStartedNanos = HUD_P0_FRAMES > 0 && guiFlush ? System.nanoTime() : 0L;
+        // A window is a gui window when it drains groups the gui bracket closed, which the bracket's
+        // state at flush time (guiFlush) cannot identify: the HUD's own drain is the frame-boundary
+        // flush after the bracket closes, and gating on guiFlush left that window unsampled - measured
+        // by leg-hud312 as zero windows over 300 frames, so G1/G2 had no value rather than a wrong one.
         int hudP0FlushGroups = this.immediateGroups.size();
+        boolean hudP0GuiWindow = HUD_P0_FRAMES > 0 && hudP0FlushGroups > 0
+                && HudP0Census.guiClosedGroups(this.immediateGroups) > 0;
+        long hudP0FlushStartedNanos = hudP0GuiWindow ? System.nanoTime() : 0L;
         try {
             FramePassTimings.begin("flush");
             if (guiFlush) FramePassTimings.begin("guiFlush");
@@ -14824,6 +14842,12 @@ this.frameBufferOpen = false;
             ImmediateGroup group = ImmediateGroup.obtain(this.currentImmediateMesh, projection, modelView,
                     this.currentGroupFormatId, this.currentGroupTexture,
                     this.currentGroupStateKey, this.currentGroupState, this.currentGroupTarget);
+            // Item 312 P0: the flush fit identifies a gui window by this stamp, not by the bracket
+            // still being open when the window is flushed - the frame-boundary flush that drains the
+            // HUD's groups runs after the bracket closes (see ImmediateGroup.closedInGuiSection).
+            // Stamped beside the census note above, under the same bracket read, so the fit and the
+            // census count the same population; the fit is not frame-budget gated, so neither is this.
+            group.closedInGuiSection = HUD_P0_FRAMES > 0 && FramePassTimings.guiSectionActive();
             group.color = this.currentGroupColor;
             group.blendSrc = this.currentGroupBlendSrc;
             group.blendDst = this.currentGroupBlendDst;
