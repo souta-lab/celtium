@@ -13,8 +13,8 @@ import net.minecraft.entity.Entity;
  * {@code r7ent-amd} leg (render distance 18, 1 369 loaded chunks): {@code entGatherWalk} 146 us at the p99 rank, 100 %
  * tick-gated, which was 60 % of the settled tick frame's entity excess.
  * <p>
- * The cache is exact with respect to the same boundary the epoch already relies on: the four original {@code Chunk}
- * methods that add, remove or unload entities. {@code -Dceltium.vulkan.entityCacheAudit=true} re-counts each chunk's
+ * The cache is exact with respect to the same boundary the epoch already relies on: the original {@code Chunk}
+ * methods that add, remove, load or unload entities, as hooked by {@code ChunkEntityMembershipMixin}. {@code -Dceltium.vulkan.entityCacheAudit=true} re-counts each chunk's
  * sections on every gather and reports a mismatch, which is the positive control for that assumption - a mod that
  * mutates a chunk's entity maps directly would show up there instead of as an invisible entity.
  * <p>
