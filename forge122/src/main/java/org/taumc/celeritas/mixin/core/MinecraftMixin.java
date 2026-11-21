@@ -614,6 +614,26 @@ public class MinecraftMixin {
         // refused frames for the whole leg and the game never stopped - a black window waiting on a question nobody
         // can see. After a successful creation this is one latched return.
         celtium$ensureWindowRenderer();
+        // The swapchain's own bounded escalation, polled at the same outside-the-try point for the same
+        // reason: a surface that refuses swapchain creation forever otherwise keeps this loop presenting
+        // skipped frames - a black window, loading screen included - for the whole session, with the
+        // refusal's reasons sitting in the backend's log. The backend only latches the consecutive
+        // refusals (it cannot throw past the catch below, and celtium-vulkan cannot call
+        // displayCrashReport), so the report and the throw live here, in the renderer's shape.
+        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend installed =
+                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
+        if (installed instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkanBackend) {
+            String swapchainFailure = vulkanBackend.celtium$swapchainCreationFailure();
+            if (swapchainFailure != null) {
+                IllegalStateException failure = new IllegalStateException(swapchainFailure);
+                net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+                if (mc != null) {
+                    mc.displayCrashReport(net.minecraft.crash.CrashReport.makeCrashReport(failure,
+                            "Celtium could not create its Vulkan swapchain"));
+                }
+                throw failure;
+            }
+        }
         celtium$swapPointCalls++;
         if (celtium$swapPointCalls <= 3 || celtium$swapPointCalls % 300 == 0) {
             System.out.println("[Celtium] CELTIUM_SWAPPOINT calls=" + celtium$swapPointCalls);
