@@ -16,7 +16,7 @@ naming them. Remove them from the instance; Celtium provides the corresponding f
 | SmoothFont | The font renderer's glyph drawing (also a `VerifyError` against Celtium's text path) |
 | Gnetum | The HUD's drawing (its framebuffer kept the HUD out of the frame) |
 | Nothirium | The terrain renderer |
-| Naughthirium | The terrain renderer |
+| Naughthirium | Nothing of its own — a mixin patch layer over Nothirium (above) |
 | OptiFine | The terrain renderer, the GL/shader pipeline and the font renderer |
 | Vintagium | The terrain renderer |
 | Relictium | The terrain renderer |
