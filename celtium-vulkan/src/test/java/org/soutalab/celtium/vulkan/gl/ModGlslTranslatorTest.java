@@ -579,4 +579,30 @@ class ModGlslTranslatorTest {
             Shaderc.shaderc_compiler_release(compiler);
         }
     }
+
+    @Test
+    void anOldStyleLayoutLocationIsHonouredNotRenumbered() {
+        // The modern in/out spelling has always captured layout(location = N); the attribute/varying spelling
+        // read the layout and dropped it, so an explicitly laid out attribute was renumbered by declaration
+        // order and the vertex data landed in the wrong input.
+        String vertex = """
+                #version 120
+                layout(location = 2) attribute vec3 a_first;
+                attribute vec2 a_second;
+                void main(void) {
+                    gl_Position = vec4(a_first, 1.0) + vec4(a_second, 0.0, 1.0);
+                }
+                """;
+        String fragment = """
+                #version 120
+                void main() {
+                    gl_FragColor = vec4(1.0);
+                }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertEquals(List.of(
+                new ModGlslTranslator.Attribute("a_first", "vec3", 2),
+                new ModGlslTranslator.Attribute("a_second", "vec2", 0)), result.attributes());
+    }
 }
