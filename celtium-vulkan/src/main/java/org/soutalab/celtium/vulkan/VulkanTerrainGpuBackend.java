@@ -16467,21 +16467,33 @@ this.frameBufferOpen = false;
             int runElementCount = 0; // summed index count of the run
             int runBaseVertex = 0;   // the run's baseVertex (first command's)
             long runFirstIndex = 0;  // the resolved firstIndex of the run's first command
+            // Which index source is bound now: the region arena, or the shared quad buffer. The shared buffer is
+            // bound at this loop's entry (the pre-loop bind above, or the previous region's restore), and a bind is
+            // recorded only when a run opens on the other source - after the previous run has been drawn. The bind
+            // used to be recorded at the head of the terminating command's own processing, before the open run was
+            // drawn, so a shared run closed by an arena command was drawn out of the arena's index list from
+            // offset 0 instead of the quad pattern (bughunt 2026-11-21 lane 01, finding 3). The merge test below
+            // only ever joins commands of one source (a merge needs both firstIndex values 0, which on an unsorted
+            // pass means both shared and on a sorted pass both arena), so the bound source is always the open
+            // run's own when its draw is recorded.
+            boolean arenaBound = false;
             int command = 0;
             while (command < batch.size()) {
                 long byteOffset = batch.indexByteOffset(command);
                 int firstIndex;
+                boolean arena;
                 if (sortedPass) {
                     if (resources.indexArena == null) {
                         command++;
                         continue;
                     }
-                    this.terrain.bindIndexBuffer(this.commandBuffer, resources.indexArena.buffer());
+                    arena = true;
                     firstIndex = (int) (byteOffset / 4);
                 } else if (byteOffset == 0) {
+                    arena = false;
                     firstIndex = 0;
                 } else if (resources.indexArena != null) {
-                    this.terrain.bindIndexBuffer(this.commandBuffer, resources.indexArena.buffer());
+                    arena = true;
                     firstIndex = (int) (byteOffset / 4);
                 } else {
                     command++;
@@ -16490,6 +16502,11 @@ this.frameBufferOpen = false;
                 int elementCount = batch.elementCount(command);
                 int baseVertex = batch.baseVertex(command);
                 if (runStart < 0) {
+                    if (arena != arenaBound) {
+                        this.terrain.bindIndexBuffer(this.commandBuffer, arena
+                                ? resources.indexArena.buffer() : this.sharedIndexBuffers.get(primitiveType));
+                        arenaBound = arena;
+                    }
                     runStart = command; runElementCount = elementCount; runBaseVertex = baseVertex; runFirstIndex = firstIndex;
                 } else {
                     // Mergeable only on the shared index (firstIndex 0, the unsorted quad pattern): there an
@@ -16506,8 +16523,14 @@ this.frameBufferOpen = false;
                         command++;
                         continue;
                     }
-                    // The run ends: draw it, then open a new one at this command.
+                    // The run ends: draw it while its own source is still the bound one, then open a new run
+                    // at this command, binding this command's source first when it differs.
                     celtium$drawIndexedRun(runFirstIndex, runBaseVertex, runElementCount, resources);
+                    if (arena != arenaBound) {
+                        this.terrain.bindIndexBuffer(this.commandBuffer, arena
+                                ? resources.indexArena.buffer() : this.sharedIndexBuffers.get(primitiveType));
+                        arenaBound = arena;
+                    }
                     runStart = command; runElementCount = elementCount; runBaseVertex = baseVertex; runFirstIndex = firstIndex;
                 }
                 command++;
