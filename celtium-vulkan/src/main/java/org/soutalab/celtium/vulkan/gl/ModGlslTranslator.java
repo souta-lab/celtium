@@ -1,10 +1,13 @@
 package org.soutalab.celtium.vulkan.gl;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -48,6 +51,12 @@ import java.util.regex.Pattern;
  * {@code gl_ModelViewProjectionMatrix}, {@code gl_ModelViewMatrix}, {@code gl_ProjectionMatrix},
  * {@code ftransform()}, and the {@code gl_TexCoord[0]}/{@code gl_FrontColor} varyings. They become ordinary
  * attributes, uniforms and varyings with {@code celtium_} names, listed in the result like the mod's own.</li>
+ * <li>Declarations inside preprocessor conditionals are extracted from the branch the source's own
+ * {@code #define}s select: a declaration in a branch those defines certainly reject is not extracted (its text
+ * stays in the body inside its conditional, where shaderc's preprocessor drops it), so the two spellings of one
+ * name in exclusive branches - Complementary's {@code shadowtex0}, a plain sampler in the composite stage and a
+ * shadow sampler elsewhere - no longer read as one name declared with two types. A condition the source's own
+ * defines cannot decide keeps the extract-everything behaviour, collision refusal included.</li>
  * </ul>
  * The user {@code main} is renamed and called from a generated one, which is where the clip depth is remapped to
  * Vulkan's [0, 1]; y is left as GL has it, because the renderer keeps images in GL's row order.
@@ -632,7 +641,712 @@ public final class ModGlslTranslator {
         return i < offset && text.charAt(i) == '#';
     }
 
+    // ----- Extraction-side conditional evaluation ----------------------------------------------------
+    //
+    // Declaration extraction used to read every branch of every preprocessor conditional, so one name spelled
+    // with two types in exclusive branches (Complementary's shadowtex0: sampler2D under #ifdef COMPOSITE1,
+    // sampler2DShadow in the #else) merged into a single interface entry and refused as a type collision, even
+    // though the driver only ever compiles one of the spellings. The classification below follows the branch
+    // the source's own #defines select - the same text the driver's preprocessor sees, and glShaderSource has
+    // no other define route into it. Only extraction follows it: the body, conditional directives and rejected
+    // branches included, is emitted exactly as before, and shaderc's preprocessor makes the same selection
+    // there. A condition the source's own defines cannot decide (an implementation-reserved name, a
+    // function-like macro call, a non-integer token) classifies as REGION_UNKNOWN and keeps the
+    // extract-everything behaviour, collision refusal included.
+
+    /** A position is in a branch the enclosing conditionals certainly select. */
+    private static final byte REGION_ACTIVE = 0;
+    /** A position is in a branch the enclosing conditionals certainly reject. */
+    private static final byte REGION_INACTIVE = 1;
+    /** The enclosing conditionals cannot be decided from the source's own {@code #define}s. */
+    private static final byte REGION_UNKNOWN = 2;
+
+    private static final Pattern DIRECTIVE = Pattern.compile("^\\s*#\\s*([A-Za-z]+)\\s*(.*)$");
+    private static final Pattern DEFINE_HEAD = Pattern.compile("^([A-Za-z_]\\w*)(\\([^)]*\\))?\\s*(.*)$");
+    private static final Pattern IDENTIFIER_HEAD = Pattern.compile("^\\s*([A-Za-z_]\\w*)");
+
+    /** Control flow for "this condition is not decidable here"; never escapes {@link #evalCondition}. */
+    private static final class Undecidable extends RuntimeException {
+        private Undecidable() {
+            super(null, null, false, false);
+        }
+    }
+
+    private static final Undecidable UNDECIDABLE = new Undecidable();
+
+    private static byte and3(byte a, byte b) {
+        return a == REGION_INACTIVE || b == REGION_INACTIVE ? REGION_INACTIVE
+                : a == REGION_UNKNOWN || b == REGION_UNKNOWN ? REGION_UNKNOWN : REGION_ACTIVE;
+    }
+
+    private static byte or3(byte a, byte b) {
+        return a == REGION_ACTIVE || b == REGION_ACTIVE ? REGION_ACTIVE
+                : a == REGION_UNKNOWN || b == REGION_UNKNOWN ? REGION_UNKNOWN : REGION_INACTIVE;
+    }
+
+    private static byte not3(byte a) {
+        return a == REGION_ACTIVE ? REGION_INACTIVE : a == REGION_INACTIVE ? REGION_ACTIVE : REGION_UNKNOWN;
+    }
+
+    /** The {@code #define} state at one point of a stage source, applied in source order. */
+    private static final class DefineTable {
+        /** Object-like macros: name -> replacement text. */
+        private final Map<String, String> objectLike = new LinkedHashMap<>();
+        /** Function-like macros: name -> parameter list and replacement text (kept for redefinition checks). */
+        private final Map<String, String> functionLike = new LinkedHashMap<>();
+        /** Names whose defined-ness an undecidable region left open: defined on one possible path only. */
+        private final Set<String> poisoned = new HashSet<>();
+
+        /** {@return 1 when the name is certainly defined here, 0 when certainly not, -1 when undecidable}. */
+        private int definedness(String name) {
+            if (this.poisoned.contains(name)) {
+                return -1;
+            }
+            if (this.objectLike.containsKey(name) || this.functionLike.containsKey(name)) {
+                return 1;
+            }
+            // A name in the implementation's reserved space (GL_/__/gl_) may be predefined by the compiler
+            // itself, so the source's own text cannot settle it either way.
+            return name.startsWith("GL_") || name.startsWith("__") || name.startsWith("gl_") ? -1 : 0;
+        }
+
+        private void poison(String name) {
+            this.objectLike.remove(name);
+            this.functionLike.remove(name);
+            this.poisoned.add(name);
+        }
+
+        private void define(String name, String replacement, boolean function, byte region) {
+            if (region == REGION_INACTIVE) {
+                return;
+            }
+            if (region == REGION_UNKNOWN) {
+                poison(name);
+                return;
+            }
+            this.poisoned.remove(name);
+            boolean wasFunction = this.functionLike.containsKey(name);
+            boolean wasObject = this.objectLike.containsKey(name);
+            if (wasFunction || wasObject) {
+                String previous = wasFunction ? this.functionLike.get(name) : this.objectLike.get(name);
+                if (function != wasFunction || !replacement.equals(previous)) {
+                    // A redefinition with a different body: which value a later condition sees is not this
+                    // classification's to guess (GLSL calls it an error; drivers differ).
+                    poison(name);
+                }
+                return;
+            }
+            if (function) {
+                this.functionLike.put(name, replacement);
+            } else {
+                this.objectLike.put(name, replacement);
+            }
+        }
+
+        private void undef(String name, byte region) {
+            if (region == REGION_ACTIVE) {
+                this.objectLike.remove(name);
+                this.functionLike.remove(name);
+                this.poisoned.remove(name);
+            } else if (region == REGION_UNKNOWN) {
+                poison(name);
+            }
+        }
+    }
+
+    /** One open {@code #if} chain: the current branch's activity, and whether an earlier branch was taken. */
+    private static final class ConditionalFrame {
+        private byte branch;
+        private byte taken;
+        private boolean seenElse;
+
+        private ConditionalFrame(byte branch) {
+            this.branch = branch;
+            this.taken = branch;
+        }
+    }
+
+    private static byte regionOf(List<ConditionalFrame> frames) {
+        byte region = REGION_ACTIVE;
+        for (ConditionalFrame frame : frames) {
+            region = and3(region, frame.branch);
+        }
+        return region;
+    }
+
+    /**
+     * {@return the activity of every position of a stripped stage source} under the preprocessor conditionals
+     * enclosing it. Directive lines themselves classify {@link #REGION_UNKNOWN} (a declaration spelled inside a
+     * {@code #define} body is extracted exactly as before this classification existed), and a structurally
+     * broken conditional (an {@code #else} with no open chain, a second {@code #else}) makes everything after
+     * it unknown rather than risk following a chain that has lost its shape.
+     */
+    private static byte[] conditionalActivity(String source) {
+        byte[] activity = new byte[source.length()];
+        DefineTable defines = new DefineTable();
+        List<ConditionalFrame> frames = new ArrayList<>();
+        boolean broken = false;
+        int pos = 0;
+        while (pos < source.length()) {
+            int lineEnd = source.indexOf('\n', pos);
+            if (lineEnd < 0) {
+                lineEnd = source.length();
+            }
+            // A logical line: a trailing backslash splices the next physical line, as the preprocessor does.
+            StringBuilder logical = new StringBuilder(source.substring(pos, lineEnd));
+            int logicalEnd = lineEnd;
+            while (logical.length() > 0 && logical.charAt(logical.length() - 1) == '\\'
+                    && logicalEnd < source.length()) {
+                logical.setLength(logical.length() - 1);
+                int nextEnd = source.indexOf('\n', logicalEnd + 1);
+                if (nextEnd < 0) {
+                    nextEnd = source.length();
+                }
+                logical.append(' ').append(source, logicalEnd + 1, nextEnd);
+                logicalEnd = nextEnd;
+            }
+            int spanEnd = Math.min(logicalEnd + 1, source.length());
+            Matcher directive = DIRECTIVE.matcher(logical);
+            if (broken || !directive.find()) {
+                Arrays.fill(activity, pos, spanEnd, broken ? REGION_UNKNOWN : regionOf(frames));
+                pos = spanEnd;
+                continue;
+            }
+            Arrays.fill(activity, pos, spanEnd, REGION_UNKNOWN);
+            pos = spanEnd;
+            String rest = directive.group(2);
+            switch (directive.group(1)) {
+                case "if" -> frames.add(new ConditionalFrame(evalCondition(rest, defines)));
+                case "ifdef", "ifndef" -> {
+                    byte branch = REGION_UNKNOWN;
+                    Matcher id = IDENTIFIER_HEAD.matcher(rest);
+                    if (id.find()) {
+                        int defined = defines.definedness(id.group(1));
+                        branch = defined > 0 ? REGION_ACTIVE
+                                : defined == 0 ? REGION_INACTIVE : REGION_UNKNOWN;
+                        if ("ifndef".equals(directive.group(1))) {
+                            branch = not3(branch);
+                        }
+                    }
+                    frames.add(new ConditionalFrame(branch));
+                }
+                case "elif" -> {
+                    ConditionalFrame top = frames.isEmpty() ? null : frames.get(frames.size() - 1);
+                    if (top == null || top.seenElse) {
+                        broken = true;
+                    } else {
+                        top.branch = and3(not3(top.taken), evalCondition(rest, defines));
+                        top.taken = or3(top.taken, top.branch);
+                    }
+                }
+                case "else" -> {
+                    ConditionalFrame top = frames.isEmpty() ? null : frames.get(frames.size() - 1);
+                    if (top == null || top.seenElse) {
+                        broken = true;
+                    } else {
+                        top.branch = not3(top.taken);
+                        top.taken = or3(top.taken, top.branch);
+                        top.seenElse = true;
+                    }
+                }
+                case "endif" -> {
+                    if (frames.isEmpty()) {
+                        broken = true;
+                    } else {
+                        frames.remove(frames.size() - 1);
+                    }
+                }
+                case "define" -> {
+                    Matcher head = DEFINE_HEAD.matcher(rest);
+                    if (head.find()) {
+                        boolean function = head.group(2) != null;
+                        String replacement = function
+                                ? head.group(2) + " " + head.group(3).strip()
+                                : head.group(3).strip();
+                        defines.define(head.group(1), replacement, function, regionOf(frames));
+                    }
+                }
+                case "undef" -> {
+                    Matcher id = IDENTIFIER_HEAD.matcher(rest);
+                    if (id.find()) {
+                        defines.undef(id.group(1), regionOf(frames));
+                    }
+                }
+                default -> {
+                    // #pragma, #error, #line and friends carry no conditional state.
+                }
+            }
+        }
+        return activity;
+    }
+
+    /** {@return the branch activity a {@code #if}/{@code #elif} condition selects}, or unknown. */
+    private static byte evalCondition(String text, DefineTable defines) {
+        try {
+            List<CondToken> tokens = expandCondition(tokenizeCondition(text), defines, Set.of(), 0);
+            long value = new ConditionParser(tokens, defines).parse();
+            return value != 0 ? REGION_ACTIVE : REGION_INACTIVE;
+        } catch (Undecidable undecidable) {
+            return REGION_UNKNOWN;
+        }
+    }
+
+    private enum CondKind { NUMBER, IDENT, DEFINED, OP, LPAREN, RPAREN, QUESTION, COLON, END }
+
+    private record CondToken(CondKind kind, long value, String text) { }
+
+    private static List<CondToken> tokenizeCondition(String text) {
+        List<CondToken> tokens = new ArrayList<>();
+        int i = 0;
+        while (i < text.length()) {
+            char c = text.charAt(i);
+            if (Character.isWhitespace(c)) {
+                i++;
+                continue;
+            }
+            if (Character.isDigit(c)) {
+                int j = i + 1;
+                while (j < text.length()) {
+                    char d = text.charAt(j);
+                    if (!Character.isLetterOrDigit(d) && d != '.' && d != '\'') {
+                        break;
+                    }
+                    j++;
+                }
+                tokens.add(new CondToken(CondKind.NUMBER, conditionNumber(text.substring(i, j)), null));
+                i = j;
+                continue;
+            }
+            if (Character.isLetter(c) || c == '_') {
+                int j = i + 1;
+                while (j < text.length()
+                        && (Character.isLetterOrDigit(text.charAt(j)) || text.charAt(j) == '_')) {
+                    j++;
+                }
+                String word = text.substring(i, j);
+                tokens.add(new CondToken("defined".equals(word) ? CondKind.DEFINED : CondKind.IDENT, 0, word));
+                i = j;
+                continue;
+            }
+            if (i + 1 < text.length()) {
+                String pair = text.substring(i, i + 2);
+                if (List.of("<<", ">>", "<=", ">=", "==", "!=", "&&", "||").contains(pair)) {
+                    tokens.add(new CondToken(CondKind.OP, 0, pair));
+                    i += 2;
+                    continue;
+                }
+            }
+            switch (c) {
+                case '+', '-', '*', '/', '%', '<', '>', '&', '|', '^', '~', '!' ->
+                        tokens.add(new CondToken(CondKind.OP, 0, String.valueOf(c)));
+                case '(' -> tokens.add(new CondToken(CondKind.LPAREN, 0, null));
+                case ')' -> tokens.add(new CondToken(CondKind.RPAREN, 0, null));
+                case '?' -> tokens.add(new CondToken(CondKind.QUESTION, 0, null));
+                case ':' -> tokens.add(new CondToken(CondKind.COLON, 0, null));
+                default -> throw UNDECIDABLE;
+            }
+            i++;
+        }
+        tokens.add(new CondToken(CondKind.END, 0, null));
+        return tokens;
+    }
+
+    /** {@return an integer literal of a condition} (decimal, hex or octal, suffixes dropped), or undecidable. */
+    private static long conditionNumber(String raw) {
+        String core = raw.replaceAll("[uUlL]+$", "");
+        try {
+            if (core.startsWith("0x") || core.startsWith("0X")) {
+                String hex = core.substring(2);
+                if (hex.isEmpty() || !hex.matches("[0-9a-fA-F]+")) {
+                    throw UNDECIDABLE;
+                }
+                return Long.parseUnsignedLong(hex, 16);
+            }
+            if (core.length() > 1 && core.startsWith("0")) {
+                if (!core.matches("[0-7]+")) {
+                    throw UNDECIDABLE;
+                }
+                return Long.parseUnsignedLong(core, 8);
+            }
+            if (!core.matches("[0-9]+")) {
+                throw UNDECIDABLE;
+            }
+            return Long.parseUnsignedLong(core, 10);
+        } catch (NumberFormatException overflow) {
+            throw UNDECIDABLE;
+        }
+    }
+
+    /**
+     * Expands object-like macros in a condition's tokens. The operand of {@code defined} is copied verbatim
+     * (it is the one place expansion must not reach), a function-like macro invocation is undecidable, and a
+     * name already being expanded stays an identifier, which the parser then refuses as a cycle.
+     */
+    private static List<CondToken> expandCondition(List<CondToken> tokens, DefineTable defines,
+                                                   Set<String> expanding, int depth) {
+        if (depth > 32) {
+            throw UNDECIDABLE;
+        }
+        List<CondToken> out = new ArrayList<>();
+        for (int i = 0; i < tokens.size(); i++) {
+            CondToken token = tokens.get(i);
+            if (token.kind() == CondKind.DEFINED) {
+                out.add(token);
+                int j = i + 1;
+                if (j < tokens.size() && tokens.get(j).kind() == CondKind.LPAREN) {
+                    out.add(tokens.get(j++));
+                }
+                if (j < tokens.size() && tokens.get(j).kind() == CondKind.IDENT) {
+                    out.add(tokens.get(j++));
+                }
+                if (j < tokens.size() && tokens.get(j).kind() == CondKind.RPAREN) {
+                    out.add(tokens.get(j++));
+                }
+                i = j - 1;
+                continue;
+            }
+            if (token.kind() == CondKind.IDENT) {
+                String name = token.text();
+                if (defines.poisoned.contains(name)) {
+                    throw UNDECIDABLE;
+                }
+                String replacement = defines.objectLike.get(name);
+                if (replacement != null && !expanding.contains(name)) {
+                    Set<String> nested = new HashSet<>(expanding);
+                    nested.add(name);
+                    for (CondToken expanded : expandCondition(tokenizeCondition(replacement), defines, nested,
+                            depth + 1)) {
+                        if (expanded.kind() != CondKind.END) {
+                            out.add(expanded);
+                        }
+                    }
+                    continue;
+                }
+                if (defines.functionLike.containsKey(name) && i + 1 < tokens.size()
+                        && tokens.get(i + 1).kind() == CondKind.LPAREN) {
+                    throw UNDECIDABLE;
+                }
+            }
+            out.add(token);
+        }
+        return out;
+    }
+
+    /** A recursive-descent evaluator for a condition's integer expression, after macro expansion. */
+    private static final class ConditionParser {
+        private final List<CondToken> tokens;
+        private final DefineTable defines;
+        private int pos;
+
+        private ConditionParser(List<CondToken> tokens, DefineTable defines) {
+            this.tokens = tokens;
+            this.defines = defines;
+        }
+
+        private long parse() {
+            long value = parseTernary();
+            if (peek().kind() != CondKind.END) {
+                throw UNDECIDABLE;
+            }
+            return value;
+        }
+
+        private CondToken peek() {
+            return this.tokens.get(Math.min(this.pos, this.tokens.size() - 1));
+        }
+
+        private CondToken next() {
+            CondToken token = peek();
+            this.pos++;
+            return token;
+        }
+
+        private boolean atOp(String op) {
+            CondToken token = peek();
+            return token.kind() == CondKind.OP && op.equals(token.text());
+        }
+
+        private long parseTernary() {
+            long condition = parseOr();
+            if (peek().kind() != CondKind.QUESTION) {
+                return condition;
+            }
+            next();
+            long thenValue = 0;
+            boolean thenUnknown = false;
+            try {
+                thenValue = parseTernary();
+            } catch (Undecidable undecidable) {
+                thenUnknown = true;
+            }
+            if (peek().kind() != CondKind.COLON) {
+                throw UNDECIDABLE;
+            }
+            next();
+            long elseValue = 0;
+            boolean elseUnknown = false;
+            try {
+                elseValue = parseTernary();
+            } catch (Undecidable undecidable) {
+                elseUnknown = true;
+            }
+            if (condition != 0) {
+                if (thenUnknown) {
+                    throw UNDECIDABLE;
+                }
+                return thenValue;
+            }
+            if (elseUnknown) {
+                throw UNDECIDABLE;
+            }
+            return elseValue;
+        }
+
+        private long parseOr() {
+            long left = parseAnd();
+            while (atOp("||")) {
+                next();
+                long right = 0;
+                boolean unknown = false;
+                try {
+                    right = parseAnd();
+                } catch (Undecidable undecidable) {
+                    unknown = true;
+                }
+                if (left != 0) {
+                    left = 1;
+                } else if (unknown) {
+                    throw UNDECIDABLE;
+                } else {
+                    left = right != 0 ? 1 : 0;
+                }
+            }
+            return left;
+        }
+
+        private long parseAnd() {
+            long left = parseBitOr();
+            while (atOp("&&")) {
+                next();
+                long right = 0;
+                boolean unknown = false;
+                try {
+                    right = parseBitOr();
+                } catch (Undecidable undecidable) {
+                    unknown = true;
+                }
+                if (left == 0) {
+                    left = 0;
+                } else if (unknown) {
+                    throw UNDECIDABLE;
+                } else {
+                    left = right != 0 ? 1 : 0;
+                }
+            }
+            return left;
+        }
+
+        private long parseBitOr() {
+            long left = parseBitXor();
+            while (atOp("|")) {
+                next();
+                left |= parseBitXor();
+            }
+            return left;
+        }
+
+        private long parseBitXor() {
+            long left = parseBitAnd();
+            while (atOp("^")) {
+                next();
+                left ^= parseBitAnd();
+            }
+            return left;
+        }
+
+        private long parseBitAnd() {
+            long left = parseEquality();
+            while (atOp("&")) {
+                next();
+                left &= parseEquality();
+            }
+            return left;
+        }
+
+        private long parseEquality() {
+            long left = parseRelational();
+            while (true) {
+                if (atOp("==")) {
+                    next();
+                    left = left == parseRelational() ? 1 : 0;
+                } else if (atOp("!=")) {
+                    next();
+                    left = left != parseRelational() ? 1 : 0;
+                } else {
+                    return left;
+                }
+            }
+        }
+
+        private long parseRelational() {
+            long left = parseShift();
+            while (true) {
+                if (atOp("<")) {
+                    next();
+                    left = left < parseShift() ? 1 : 0;
+                } else if (atOp("<=")) {
+                    next();
+                    left = left <= parseShift() ? 1 : 0;
+                } else if (atOp(">")) {
+                    next();
+                    left = left > parseShift() ? 1 : 0;
+                } else if (atOp(">=")) {
+                    next();
+                    left = left >= parseShift() ? 1 : 0;
+                } else {
+                    return left;
+                }
+            }
+        }
+
+        private long parseShift() {
+            long left = parseAdditive();
+            while (true) {
+                if (atOp("<<")) {
+                    next();
+                    long count = parseAdditive();
+                    if (count < 0 || count > 63) {
+                        throw UNDECIDABLE;
+                    }
+                    left <<= count;
+                } else if (atOp(">>")) {
+                    next();
+                    long count = parseAdditive();
+                    if (count < 0 || count > 63) {
+                        throw UNDECIDABLE;
+                    }
+                    left >>= count;
+                } else {
+                    return left;
+                }
+            }
+        }
+
+        private long parseAdditive() {
+            long left = parseMultiplicative();
+            while (true) {
+                if (atOp("+")) {
+                    next();
+                    left += parseMultiplicative();
+                } else if (atOp("-")) {
+                    next();
+                    left -= parseMultiplicative();
+                } else {
+                    return left;
+                }
+            }
+        }
+
+        private long parseMultiplicative() {
+            long left = parseUnary();
+            while (true) {
+                if (atOp("*")) {
+                    next();
+                    left *= parseUnary();
+                } else if (atOp("/")) {
+                    next();
+                    long right = parseUnary();
+                    if (right == 0) {
+                        throw UNDECIDABLE;
+                    }
+                    left /= right;
+                } else if (atOp("%")) {
+                    next();
+                    long right = parseUnary();
+                    if (right == 0) {
+                        throw UNDECIDABLE;
+                    }
+                    left %= right;
+                } else {
+                    return left;
+                }
+            }
+        }
+
+        private long parseUnary() {
+            if (atOp("!")) {
+                next();
+                return parseUnary() == 0 ? 1 : 0;
+            }
+            if (atOp("~")) {
+                next();
+                return ~parseUnary();
+            }
+            if (atOp("-")) {
+                next();
+                return -parseUnary();
+            }
+            if (atOp("+")) {
+                next();
+                return parseUnary();
+            }
+            return parsePrimary();
+        }
+
+        private long parsePrimary() {
+            CondToken token = next();
+            switch (token.kind()) {
+                case NUMBER -> {
+                    return token.value();
+                }
+                case LPAREN -> {
+                    long value = parseTernary();
+                    if (next().kind() != CondKind.RPAREN) {
+                        throw UNDECIDABLE;
+                    }
+                    return value;
+                }
+                case DEFINED -> {
+                    String name;
+                    if (peek().kind() == CondKind.LPAREN) {
+                        next();
+                        CondToken id = next();
+                        if (id.kind() != CondKind.IDENT) {
+                            throw UNDECIDABLE;
+                        }
+                        name = id.text();
+                        if (next().kind() != CondKind.RPAREN) {
+                            throw UNDECIDABLE;
+                        }
+                    } else {
+                        CondToken id = next();
+                        if (id.kind() != CondKind.IDENT) {
+                            throw UNDECIDABLE;
+                        }
+                        name = id.text();
+                    }
+                    int defined = this.defines.definedness(name);
+                    if (defined < 0) {
+                        throw UNDECIDABLE;
+                    }
+                    return defined;
+                }
+                case IDENT -> {
+                    // An identifier that survived expansion: a macro cycle, or a name whose defined-ness the
+                    // source cannot settle, is undecidable; any other name was never defined, and the
+                    // preprocessor reads it as 0 (a bare function-like macro name included).
+                    if (this.defines.objectLike.containsKey(token.text())
+                            || this.defines.definedness(token.text()) < 0) {
+                        throw UNDECIDABLE;
+                    }
+                    return 0;
+                }
+                default -> throw UNDECIDABLE;
+            }
+        }    }
+
     private static String removeDeclarations(String source, List<Declaration> out, boolean vertexStage) {
+        byte[] activity = conditionalActivity(source);
         Matcher m = DECLARATION.matcher(source);
         StringBuilder rest = new StringBuilder();
         while (m.find()) {
@@ -643,6 +1357,11 @@ public final class ModGlslTranslator {
                 // left exactly as they are; an invocation's expansion is the compiler's, not this lowering's.
                 m.appendReplacement(rest, Matcher.quoteReplacement(m.group()));
                 continue;
+            }
+            if (activity[m.start()] == REGION_INACTIVE) {
+                // Certainly not compiled: the declaration stays in the body inside its conditional, where
+                // shaderc's preprocessor drops it; only the selected branch's declaration is hoisted.
+                m.appendReplacement(rest, Matcher.quoteReplacement(m.group(0)));                continue;
             }
             int explicit = m.group(1) == null ? -1 : Integer.parseInt(m.group(1));
             String interpolation = m.group(2) == null ? "" : m.group(2);
@@ -663,11 +1382,17 @@ public final class ModGlslTranslator {
         // The modern spelling of the same declarations. A built-in name (a gl_FragCoord redeclaration is the
         // sane case) is not user input/output: its text stays, and the leftover check below judges it as before.
         String restText = rest.toString();
+        // The conditional structure survives the first pass (directive lines are never removed), so the second
+        // pass classifies its own text the same way.
+        byte[] modernActivity = conditionalActivity(restText);
         Matcher io = IO_DECLARATION.matcher(restText);
         StringBuilder modern = new StringBuilder();
         while (io.find()) {
             if (onPreprocessorLine(restText, io.start())) {
                 io.appendReplacement(modern, Matcher.quoteReplacement(io.group(0)));
+                continue;
+            }
+            if (modernActivity[io.start()] == REGION_INACTIVE) {                io.appendReplacement(modern, Matcher.quoteReplacement(io.group(0)));
                 continue;
             }
             String type = io.group(4);
