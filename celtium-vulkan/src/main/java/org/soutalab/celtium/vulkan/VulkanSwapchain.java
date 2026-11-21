@@ -239,11 +239,75 @@ public final class VulkanSwapchain {
      * <p>
      * {@code VK_SUBOPTIMAL_KHR} and {@code VK_ERROR_OUT_OF_DATE_KHR} were accepted silently: the frame still went out and
      * nothing recorded that the swapchain needed rebuilding, which the audit's lifetime notes ask to exist. This is the
-     * signal it keys off, and since the backend already creates the swapchain lazily, dropping it and letting the next
-     * present ask for one is the whole rebuild.
+     * signal it keys off. It is reset at the start of every present, so it describes the most recent present only, and
+     * the backend reads it for its diagnostics line. The rebuild itself keys off {@link #rebuildNeeded}, which is
+     * sticky: this flag alone was read by no production code (bughunt LANE-05 #1), so a verdict that arrived between
+     * presents could be reset by the next present before anything acted on it.
      */
     private boolean outOfDate;
     private int acquireOutOfDate;
+    /**
+     * Whether this swapchain must be dropped and rebuilt before it can present again, and why.
+     * <p>
+     * Set by the verdicts that make the current swapchain unusable rather than merely stale: an out-of-date acquire
+     * or present, a surface extent the periodic capabilities check caught changing, the asynchronous presenter's
+     * failure, and an acquisition retired unpresented (whose image only a rebuild recovers, because core Vulkan has
+     * no way to hand an acquired image back). A plain {@code VK_SUBOPTIMAL_KHR} whose frame still went out does not
+     * set it: the backend's extent and present-mode checks already catch the persistent causes of suboptimality, and
+     * rebuilding on every suboptimal verdict would recreate the swapchain every frame on a driver that reports it
+     * persistently. Never reset by the present path; the backend's {@code ensureSwapchain} consumes it by dropping
+     * this wrapper, and a fresh wrapper starts clear.
+     */
+    private boolean rebuildNeeded;
+    /** Why {@link #rebuildNeeded} was first set, for the backend's rebuild record; the first cause is kept. */
+    private String rebuildReason;
+    /**
+     * Whether the surface itself was lost ({@code VK_ERROR_SURFACE_LOST_KHR} from an acquire or a present).
+     * <p>
+     * Kept apart from {@link #rebuildNeeded} because the recovery differs: a lost surface must not be handed over
+     * to the next swapchain the way a rebuild for a resize hands it over - the handle is dead, and rebuilding on it
+     * fails forever. The backend drops the wrapper without detaching the surface, so both are recreated.
+     */
+    private boolean surfaceLost;
+
+    /** Records that this swapchain must be rebuilt, keeping the first reason given. */
+    private void celtium$noteRebuildNeeded(String reason) {
+        if (!this.rebuildNeeded) {
+            this.rebuildNeeded = true;
+            this.rebuildReason = reason;
+        }
+    }
+
+    /** {@return whether the backend must drop and rebuild this swapchain before presenting again}. */
+    public boolean rebuildNeeded() {
+        return this.rebuildNeeded;
+    }
+
+    /** {@return why {@link #rebuildNeeded} was set, or null when it was not}. */
+    public String rebuildReason() {
+        return this.rebuildReason;
+    }
+
+    /** {@return whether the surface was lost, so the rebuild must recreate the surface as well}. */
+    public boolean surfaceLost() {
+        return this.surfaceLost;
+    }
+
+    /**
+     * {@return what the backend does with this swapchain at the next ensure}: {@code "recreate-surface"} when the
+     * surface was lost (it wins over a plain rebuild, because reusing a dead surface is the failure being avoided),
+     * {@code "rebuild"} when a rebuild was requested, {@code "keep"} otherwise. Pure and static so the decision the
+     * production path takes is the one a test can pin.
+     */
+    static String rebuildDecision(boolean surfaceLost, boolean rebuildNeeded) {
+        if (surfaceLost) {
+            return "recreate-surface";
+        }
+        if (rebuildNeeded) {
+            return "rebuild";
+        }
+        return "keep";
+    }
     /** Presents a solid marker colour instead of the frame, so the screen can be attributed to this path. */
     private static final boolean PRESENT_MARKER = Boolean.getBoolean("celtium.vulkan.presentMarker");
     /** Test-only ({@code -Dceltium.vulkan.forceOutOfDate=true}): report out-of-date once so the rebuild runs. */
@@ -475,7 +539,12 @@ public final class VulkanSwapchain {
         // The window can be resized between the last present and this read: the fields below are written when the
         // swapchain is created, and a resize that the driver never reports as OUT_OF_DATE leaves them stale, which is
         // how a 1280x720 dump came out of a window that had already become 1024x640. Ask the surface what the size is
-        // now and read back the image at that size instead of the remembered one.
+        // now and read back the image at that size instead of the remembered one. The size stays local to the dump:
+        // writing it into this.width/height rewrote the swapchain's own extent behind the present path's back, and
+        // the pre-recorded blit's key does not include the destination extent, so a re-record after a dump could
+        // embed a size the swapchain's images do not have (bughunt LANE-05 #4).
+        int dumpWidth = this.width;
+        int dumpHeight = this.height;
         try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkSurfaceCapabilitiesKHR current =
                     org.lwjgl.vulkan.VkSurfaceCapabilitiesKHR.calloc(stack);
@@ -484,18 +553,18 @@ public final class VulkanSwapchain {
                 int currentWidth = current.currentExtent().width();
                 int currentHeight = current.currentExtent().height();
                 if (currentWidth > 0 && currentHeight > 0
-                        && (currentWidth != this.width || currentHeight != this.height)) {
-                    this.width = currentWidth;
-                    this.height = currentHeight;
+                        && (currentWidth != dumpWidth || currentHeight != dumpHeight)) {
+                    dumpWidth = currentWidth;
+                    dumpHeight = currentHeight;
                 }
             }
         }
-        if (image == VK_NULL_HANDLE || this.width <= 0 || this.height <= 0) {
+        if (image == VK_NULL_HANDLE || dumpWidth <= 0 || dumpHeight <= 0) {
             return false;
         }
         long writeStartedNanos = System.nanoTime();
-        int[] pixels = readBackBlock(this.context, image, this.format, this.width, this.height, 0, 0, this.width,
-                this.height);
+        int[] pixels = readBackBlock(this.context, image, this.format, dumpWidth, dumpHeight, 0, 0, dumpWidth,
+                dumpHeight);
         presentDumpWrites++;
         if (presentDumpWrites <= 12 || presentDumpWrites % 50 == 0) {
             System.out.println("[Celtium] CELTIUM_DUMP_WRITE count=" + presentDumpWrites
@@ -507,8 +576,8 @@ public final class VulkanSwapchain {
         }
         try {
             java.awt.image.BufferedImage imageOut =
-                    new java.awt.image.BufferedImage(this.width, this.height, java.awt.image.BufferedImage.TYPE_INT_ARGB);
-            imageOut.setRGB(0, 0, this.width, this.height, pixels, 0, this.width);
+                    new java.awt.image.BufferedImage(dumpWidth, dumpHeight, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            imageOut.setRGB(0, 0, dumpWidth, dumpHeight, pixels, 0, dumpWidth);
             java.nio.file.Files.createDirectories(path.getParent());
             boolean written = javax.imageio.ImageIO.write(imageOut, "png", path.toFile());
             if (written) {
@@ -1122,6 +1191,11 @@ public final class VulkanSwapchain {
                     recordOutOfDateInjection();
                     result = VK_ERROR_OUT_OF_DATE_KHR;
                 }
+                if (result == VK_ERROR_SURFACE_LOST_KHR) {
+                    // Classified as in the frame path, so a probe that meets a dead surface still leaves the
+                    // verdict the backend's recovery keys off (bughunt LANE-05 #5).
+                    this.surfaceLost = true;
+                }
                 if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
                     replaceAcquireSemaphore(stack, acquire);
                     return "present probe: vkAcquireNextImageKHR returned " + result;
@@ -1169,6 +1243,9 @@ public final class VulkanSwapchain {
                         .pSwapchains(stack.longs(this.swapchain))
                         .pImageIndices(index);
                 int presented = vkQueuePresentKHR(this.context.queue(), present);
+                if (presented == VK_ERROR_SURFACE_LOST_KHR) {
+                    this.surfaceLost = true;
+                }
                 if (presented != VK_SUCCESS && presented != VK_SUBOPTIMAL_KHR) {
                     return "present probe: vkQueuePresentKHR returned " + presented;
                 }
@@ -1305,11 +1382,19 @@ public final class VulkanSwapchain {
             // present's verdict is applied here, one frame late, which is the only state that path defers.
             this.context.celtium$awaitPresenter();
             int previous = this.context.celtium$presenterResult();
-            if (previous == VK_SUBOPTIMAL_KHR || previous == VK_ERROR_OUT_OF_DATE_KHR) {
+            if (previous == VK_ERROR_SURFACE_LOST_KHR) {
+                // The worker's present met a dead surface; the recovery is the backend recreating both, which the
+                // surfaceLost flag keys (bughunt LANE-05 #5: the constant was classified nowhere).
+                this.surfaceLost = true;
+            } else if (previous == VK_SUBOPTIMAL_KHR || previous == VK_ERROR_OUT_OF_DATE_KHR) {
                 this.outOfDate = true;
+                if (previous == VK_ERROR_OUT_OF_DATE_KHR) {
+                    celtium$noteRebuildNeeded("the presenter reported the swapchain out of date");
+                }
             } else if (previous != VK_SUCCESS) {
                 this.asyncPresentFailures++;
                 this.outOfDate = true;
+                celtium$noteRebuildNeeded("the presenter failed with result " + previous);
             }
         }
         if (this.swapchain == VK_NULL_HANDLE || sourceImage == VK_NULL_HANDLE) {
@@ -1379,6 +1464,8 @@ public final class VulkanSwapchain {
                             && (currentWidth != this.width || currentHeight != this.height)) {
                         this.outOfDate = true;
                         this.acquireOutOfDate++;
+                        celtium$noteRebuildNeeded("the surface extent changed to " + currentWidth + "x"
+                                + currentHeight);
                     }
                 }
             }
@@ -1389,22 +1476,36 @@ public final class VulkanSwapchain {
             if (result == VK_SUBOPTIMAL_KHR || result == VK_ERROR_OUT_OF_DATE_KHR) {
                 if (result == VK_ERROR_OUT_OF_DATE_KHR) {
                     // The image the acquire handed back cannot be used, so nothing is submitted and nothing is
-                    // presented (audit S18). The caller sees success=false and outOfDate=true and rebuilds.
+                    // presented (audit S18). The caller sees the failure, and the sticky rebuild request makes the
+                    // next ensureSwapchain drop and rebuild this swapchain (bughunt LANE-05 #1: the outOfDate flag
+                    // alone had no production reader, so this return used to be the end of the recovery).
                     this.outOfDate = true;
                     this.acquireOutOfDate++;
+                    celtium$noteRebuildNeeded("the acquire reported the swapchain out of date");
                     return "present image: the swapchain is out of date at acquire";
                 }
-                // The frame can still be presented, but the swapchain no longer matches the surface; recording it lets
-                // the caller rebuild while this frame goes out.
+                // The frame can still be presented, but the swapchain no longer matches the surface. Only the
+                // verdict is recorded: a rebuild keys off the extent and present-mode checks, which catch the
+                // persistent causes, rather than off suboptimality itself (see rebuildNeeded).
                 this.outOfDate = true;
             }
             if (FORCE_OUT_OF_DATE && !this.forcedOutOfDate) {
                 // Test-only: the branch that rebuilds the swapchain cannot be reached on this harness, because the
-                // window never changes size and neither driver reports sub-optimal here. Injecting the trigger shows the
-                // mechanism - drop, then rebuild through the lazy ensureSwapchain() - rather than only compiling it.
+                // window never changes size and neither driver reports sub-optimal here. Injecting the trigger shows
+                // the mechanism - the same rebuild request a real out-of-date verdict sets, consumed by the lazy
+                // ensureSwapchain() - rather than only compiling it.
                 this.forcedOutOfDate = true;
                 this.outOfDate = true;
+                celtium$noteRebuildNeeded("the forced out-of-date injection");
                 recordOutOfDateInjection();
+            }
+            if (result == VK_ERROR_SURFACE_LOST_KHR) {
+                // The surface is gone, not merely stale: no swapchain-only rebuild recovers it, so the verdict is
+                // classified on its own flag and the backend recreates the surface with the swapchain (bughunt
+                // LANE-05 #5). The semaphore is replaced as for any failed acquire - it may be left signaled.
+                this.surfaceLost = true;
+                replaceAcquireSemaphore(stack, acquire);
+                return "present image: the surface was lost at acquire (VK_ERROR_SURFACE_LOST_KHR)";
             }
             if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
                 replaceAcquireSemaphore(stack, acquire);
@@ -1436,6 +1537,11 @@ public final class VulkanSwapchain {
                         || (initFlags != null && index.get(0) >= 0 && index.get(0) < initFlags.length
                                 && initFlags[index.get(0)]);
                 if (!initialized) {
+                    // The refusal must retire the acquisition like every other post-acquire failure does: core
+                    // Vulkan cannot hand an acquired image back, so returning without abandoning it leaked the
+                    // image for the swapchain's whole life, and a refusal per image ended in an acquire that
+                    // blocked forever (bughunt LANE-05 #6).
+                    abandonAcquiredImage("the no-record present refused an uninitialized image");
                     return "present image (no record): refused image " + index.get(0)
                             + " because it has not been initialized yet and a bare present cannot define"
                             + " its content (initialization happens only inside a recorded present blit)";
@@ -1475,20 +1581,27 @@ public final class VulkanSwapchain {
                     && bridgeDone == VK_NULL_HANDLE && !FLICKER_SAMPLE && !PRESENT_READBACK
                     && this.pendingDumpPaths.isEmpty() && this.presentTraces >= 4) {
                 long asyncStartedNanos = System.nanoTime();
-                this.context.celtium$presentAsync(recorded, acquire, renderFinished, this.swapchain, index.get(0));
+                boolean handedToPresenter = this.context.celtium$presentAsync(recorded, acquire, renderFinished,
+                        this.swapchain, index.get(0));
                 presentSubmitNanos += System.nanoTime() - asyncStartedNanos;
-                if (initVariant) {
-                    // Design section 3.6: on the async path the flag's confirmation point is the hand-off to
-                    // the presenter - the variant buffer is now the presenter's to submit, under the same
-                    // semaphore contract as any recorded present.
-                    markImageInitialized(index.get(0));
+                if (handedToPresenter) {
+                    if (initVariant) {
+                        // Design section 3.6: on the async path the flag's confirmation point is the hand-off to
+                        // the presenter - the variant buffer is now the presenter's to submit, under the same
+                        // semaphore contract as any recorded present.
+                        markImageInitialized(index.get(0));
+                    }
+                    presentStageCalls++;
+                    this.asyncPresents++;
+                    this.lastPresentSubmitDone = true;
+                    this.lastPresentSucceeded = true;
+                    return "present image: blitted " + width + "x" + height + " onto image " + index.get(0)
+                            + " (queued to the presenter)";
                 }
-                presentStageCalls++;
-                this.asyncPresents++;
-                this.lastPresentSubmitDone = true;
-                this.lastPresentSucceeded = true;
-                return "present image: blitted " + width + "x" + height + " onto image " + index.get(0)
-                        + " (queued to the presenter)";
+                // The presenter could not be started, so nothing was handed over (the contract celtium$presentAsync
+                // documents and now honours, bughunt LANE-05 #7): fall through to the synchronous submission below,
+                // which presents the same recorded buffer under the same semaphore contract instead of reporting a
+                // present that never happened.
             }
             long submitStartedNanos = System.nanoTime();
             this.presentWaitSemaphores[0] = acquire;
@@ -1698,6 +1811,14 @@ public final class VulkanSwapchain {
             presentStageCalls++;
             if (presented == VK_SUBOPTIMAL_KHR || presented == VK_ERROR_OUT_OF_DATE_KHR) {
                 this.outOfDate = true;
+                if (presented == VK_ERROR_OUT_OF_DATE_KHR) {
+                    celtium$noteRebuildNeeded("the present reported the swapchain out of date");
+                }
+            }
+            if (presented == VK_ERROR_SURFACE_LOST_KHR) {
+                // Classified like the acquire-side loss (bughunt LANE-05 #5): the frame is gone either way, and
+                // the backend recreates the surface with the swapchain instead of retrying on a dead handle.
+                this.surfaceLost = true;
             }
             if (presented != VK_SUCCESS && presented != VK_SUBOPTIMAL_KHR) {
                 return "present image: vkQueuePresentKHR returned " + presented;
@@ -2198,8 +2319,11 @@ public final class VulkanSwapchain {
                     + " (the swapchain is retired; the next frame rebuilds it)");
         }
         // The image cannot be presented, and core Vulkan cannot release it; retiring the swapchain recovers every image
-        // it handed out, which is the only recovery the 1.2 baseline offers.
+        // it handed out, which is the only recovery the 1.2 baseline offers. The retirement is a rebuild request the
+        // backend consumes at the next ensureSwapchain - the outOfDate flag alone was read by no production code, so
+        // the "next frame rebuilds it" line above used to describe a mechanism that did not exist (bughunt LANE-05 #1).
         this.outOfDate = true;
+        celtium$noteRebuildNeeded("an acquired image was retired unpresented");
         drainForCleanup("abandoned acquired image");
     }
 
@@ -2328,6 +2452,10 @@ public final class VulkanSwapchain {
         }
         if (this.surface != VK_NULL_HANDLE) {
             vkDestroySurfaceKHR(this.context.instance(), this.surface, null);
+            // Nulled like every other handle this method destroys: left set, a second delete() destroyed the same
+            // surface again and a detachSurface() after delete() handed the dead handle back as reusable
+            // (bughunt LANE-05 #2).
+            this.surface = VK_NULL_HANDLE;
         }
         discardPreRecorded();
     }

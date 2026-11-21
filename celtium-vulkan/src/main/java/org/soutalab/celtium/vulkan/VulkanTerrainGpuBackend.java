@@ -13827,6 +13827,19 @@ this.frameBufferOpen = false;
                 }
                 this.passAttachedColorImages = null;
                 this.passAttachedDepthImage = 0L;
+                // The rest of the pass state the routing reassigned goes back to the frame's with the
+                // framebuffer: passRenderPass (a frame framebuffer begun with the chain-pair pass clears and
+                // discards the world's depth, and a multi-target variant's attachment count does not match the
+                // frame framebuffer's one colour image), passAttachedColorImage (the sampling-side transition
+                // below skips the image this field names, so leaving it on the pair would move the frame image
+                // the fallback actually attaches to SHADER_READ_ONLY ahead of a pass declaring GENERAL -
+                // VUID-vkCmdBeginRenderPass-initialLayout-00900), and the pass extent (the pair's, smaller
+                // than the frame's, would clip the fallback window's draws to the pair's rectangle).
+                // Bughunt 2026-11-21 lane 01, finding 1.
+                this.passAttachedColorImage = this.frameTarget.colorImage();
+                passRenderPass = renderPass;
+                passWidth = this.targetWidth;
+                passHeight = this.targetHeight;
                 framebuffer = ensureFramebuffer(renderPass);
             }
             if (WINDOW_SPLIT) {
@@ -16213,12 +16226,46 @@ this.frameBufferOpen = false;
             GllessFrameTarget pairOwner = offTargetTarget();
             long identity = this.targetRegistry.currentIdentity();
             if (pairOwner != null && pairOwner.chainPairMatches(identity, this.targetWidth, this.targetHeight)) {
+                // The pair is attached whole - colour and depth - so it is acquired whole, the depth route's way:
+                // the frame pass declares the depth's initial layout as the attachment layout, and a pair depth
+                // left in SHADER_READ_ONLY by the sampling side (a borrowed shared depth above all) would begin
+                // the pass in the wrong layout (VUID-vkCmdBeginRenderPass-initialLayout-00900), while a pair on
+                // its first use holds colour in UNDEFINED against the pass' GENERAL declaration. The depth
+                // texture the bound framebuffer's record names is resolved the window path's way, and the borrow
+                // is settled before the framebuffer is fetched, because borrowing can rebuild the pair's depth
+                // view. Bughunt 2026-11-21 lane 01, finding 2.
+                int[] boundDepthRecord = celtium$depthTextureForTarget(identity);
+                int boundDepthTexture = boundDepthRecord == null ? 0 : boundDepthRecord[0];
+                long boundDepthKey = 0L;
+                long boundDepthImage = 0L;
+                if (boundDepthTexture != 0 && boundDepthRecord[1] > 0 && boundDepthRecord[2] > 0) {
+                    long candidateKey = RenderTargetRegistry.rawColorTextureIdentity(boundDepthTexture);
+                    if (pairOwner.ensureChainPairSharedDepth(identity, candidateKey,
+                            boundDepthRecord[1], boundDepthRecord[2])
+                            && pairOwner.chainPairUsesSharedDepth(identity, candidateKey)) {
+                        boundDepthKey = candidateKey;
+                        boundDepthImage = pairOwner.sharedDepthImage(candidateKey);
+                    }
+                }
                 long pairFramebuffer = ensureChainPairFramebuffer(renderPass);
                 if (pairFramebuffer != 0L) {
                     terrainFramebuffer = pairFramebuffer;
+                    if (boundDepthKey != 0L) {
+                        // A shared-depth member's owed clear is consumed here, in the depth route's order -
+                        // before this pass draws, not left for a later window of the same framebuffer to clear
+                        // over the terrain this pass is about to write.
+                        celtium$consumeRoutedTargetClear(pairOwner, identity, boundDepthKey);
+                    }
+                    pairOwner.recordChainPairAttachAcquire(identity, boundDepthKey, this.commandBuffer);
                     long routedBoundColor = pairOwner.chainPairColorImage(identity);
                     this.passAttachedColorImage = routedBoundColor;
-                    this.postChainBridge.celtium$transitionPublishedFrameTextures(true, routedBoundColor, 0L);
+                    this.passAttachedDepthImage = boundDepthImage;
+                    // The end-of-pass hand-back reads the routed state, so this pass leaves the pair's colour
+                    // and shared depth recorded in the layouts the pass leaves them in, like a depth-routed one.
+                    routedDepthIdentity = identity;
+                    routedDepthKey = boundDepthKey;
+                    this.postChainBridge.celtium$transitionPublishedFrameTextures(true, routedBoundColor,
+                            boundDepthImage);
                     this.terrainPassesToBoundTarget++;
                     if (this.terrainPassesToBoundTarget <= 4) {
                         System.out.println("[Celtium] CELTIUM_TERRAIN_BOUND_TARGET pass=" + pass.name() + " identity=0x"
@@ -16494,21 +16541,33 @@ this.frameBufferOpen = false;
             int runElementCount = 0; // summed index count of the run
             int runBaseVertex = 0;   // the run's baseVertex (first command's)
             long runFirstIndex = 0;  // the resolved firstIndex of the run's first command
+            // Which index source is bound now: the region arena, or the shared quad buffer. The shared buffer is
+            // bound at this loop's entry (the pre-loop bind above, or the previous region's restore), and a bind is
+            // recorded only when a run opens on the other source - after the previous run has been drawn. The bind
+            // used to be recorded at the head of the terminating command's own processing, before the open run was
+            // drawn, so a shared run closed by an arena command was drawn out of the arena's index list from
+            // offset 0 instead of the quad pattern (bughunt 2026-11-21 lane 01, finding 3). The merge test below
+            // only ever joins commands of one source (a merge needs both firstIndex values 0, which on an unsorted
+            // pass means both shared and on a sorted pass both arena), so the bound source is always the open
+            // run's own when its draw is recorded.
+            boolean arenaBound = false;
             int command = 0;
             while (command < batch.size()) {
                 long byteOffset = batch.indexByteOffset(command);
                 int firstIndex;
+                boolean arena;
                 if (sortedPass) {
                     if (resources.indexArena == null) {
                         command++;
                         continue;
                     }
-                    this.terrain.bindIndexBuffer(this.commandBuffer, resources.indexArena.buffer());
+                    arena = true;
                     firstIndex = (int) (byteOffset / 4);
                 } else if (byteOffset == 0) {
+                    arena = false;
                     firstIndex = 0;
                 } else if (resources.indexArena != null) {
-                    this.terrain.bindIndexBuffer(this.commandBuffer, resources.indexArena.buffer());
+                    arena = true;
                     firstIndex = (int) (byteOffset / 4);
                 } else {
                     command++;
@@ -16517,6 +16576,11 @@ this.frameBufferOpen = false;
                 int elementCount = batch.elementCount(command);
                 int baseVertex = batch.baseVertex(command);
                 if (runStart < 0) {
+                    if (arena != arenaBound) {
+                        this.terrain.bindIndexBuffer(this.commandBuffer, arena
+                                ? resources.indexArena.buffer() : this.sharedIndexBuffers.get(primitiveType));
+                        arenaBound = arena;
+                    }
                     runStart = command; runElementCount = elementCount; runBaseVertex = baseVertex; runFirstIndex = firstIndex;
                 } else {
                     // Mergeable only on the shared index (firstIndex 0, the unsorted quad pattern): there an
@@ -16533,8 +16597,14 @@ this.frameBufferOpen = false;
                         command++;
                         continue;
                     }
-                    // The run ends: draw it, then open a new one at this command.
+                    // The run ends: draw it while its own source is still the bound one, then open a new run
+                    // at this command, binding this command's source first when it differs.
                     celtium$drawIndexedRun(runFirstIndex, runBaseVertex, runElementCount, resources);
+                    if (arena != arenaBound) {
+                        this.terrain.bindIndexBuffer(this.commandBuffer, arena
+                                ? resources.indexArena.buffer() : this.sharedIndexBuffers.get(primitiveType));
+                        arenaBound = arena;
+                    }
                     runStart = command; runElementCount = elementCount; runBaseVertex = baseVertex; runFirstIndex = firstIndex;
                 }
                 command++;
@@ -17194,6 +17264,21 @@ this.frameBufferOpen = false;
         this.seenDumpWriteSerialByName.clear();
     }
 
+    /**
+     * Drops the swapchain WITHOUT handing its surface over to the next one.
+     * <p>
+     * The counterpart of {@link #releaseSwapchainForRebuild()} for a lost surface: the handover exists because a
+     * surface belongs to its window, but a lost surface is dead - adopting it would rebuild every new swapchain on
+     * the same dead handle and fail forever (bughunt LANE-05 #5). {@code delete()} destroys the surface with the
+     * swapchain, and the creation below builds a fresh one from the window.
+     */
+    private void dropSwapchainAndSurface() {
+        this.pendingPresentedDumps.addAll(this.swapchain.takePendingPresentedImageDumps());
+        this.swapchain.delete();
+        this.swapchain = null;
+        this.seenDumpWriteSerialByName.clear();
+    }
+
     private void forwardPendingPresentedDumps() {
         if (this.swapchain == null) {
             return;
@@ -17228,6 +17313,27 @@ this.frameBufferOpen = false;
                     + " previous=[" + this.swapchain.presentModeSummary() + "]");
             releaseSwapchainForRebuild();
             this.submissionStatistics.notePresentModeRebuilds();
+        }
+        // The swapchain's own verdicts, consumed here because this is the one place that runs before every present
+        // and owns the drop: an out-of-date acquire or present, a retired acquisition and a presenter failure all
+        // used to set a flag no production code read, so the rebuild they asked for never happened - an out-of-date
+        // whose cause was not an extent change presented-failed every frame forever, and retired acquisitions
+        // leaked an image each until the acquire blocked for good (bughunt LANE-05 #1). A lost surface is the
+        // stronger verdict and is decided first: its surface must not be handed over to the next swapchain.
+        if (this.swapchain != null) {
+            String decision = org.soutalab.celtium.vulkan.VulkanSwapchain.rebuildDecision(
+                    this.swapchain.surfaceLost(), this.swapchain.rebuildNeeded());
+            if ("recreate-surface".equals(decision)) {
+                record("the surface was lost (VK_ERROR_SURFACE_LOST_KHR): dropping the swapchain and its"
+                        + " surface so both are recreated");
+                dropSwapchainAndSurface();
+                this.submissionStatistics.noteSurfaceLostRebuilds();
+            } else if ("rebuild".equals(decision)) {
+                record("the swapchain asked for a rebuild (" + this.swapchain.rebuildReason()
+                        + "): dropping it so it is rebuilt");
+                releaseSwapchainForRebuild();
+                this.submissionStatistics.noteOutOfDateRebuilds();
+            }
         }
         // Under the GL-less window there is no current context to ask, so the handle comes from Display - the same
         // GLFW window either way. Reflective because celtium-vulkan does not depend on the lwjglxx shim.
@@ -19284,6 +19390,16 @@ this.frameBufferOpen = false;
                 return "the depth copy's destination texture " + destDepthTexture
                         + " is not in the shared depth store (its framebuffer's pair never borrowed it)";
             }
+        }
+        if (sourceImage == destImage) {
+            // A copy whose two names resolve to the one shared image - the same depth texture on both sides, or
+            // two names over one borrowed depth - is a feedback loop: the barrier below would carry two
+            // conflicting transitions for one image in a single call, vkCmdCopyImage would read and write the
+            // same image with possibly overlapping rectangles, and the store would end up with two different
+            // layouts recorded for it. Refused by name, like this method's other refusals.
+            // Bughunt 2026-11-21 lane 01, finding 4.
+            return "the depth copy's source texture " + sourceDepthTexture + " and destination texture "
+                    + destDepthTexture + " resolve to the same shared depth image";
         }
         int[] sourceExtent = target.sharedDepthExtent(sourceKey);
         int[] destExtent = target.sharedDepthExtent(destKey);
@@ -22493,22 +22609,25 @@ this.frameBufferOpen = false;
                     result = vkWaitForFences(this.context.device(), fences, true, IDLE_TIMEOUT_NANOS);
                 }
             }
-// An abandoned frame is not "the frame is still recording": the flag must not route the
-// next beginCommands into the buffer whose recording the abandon just discards.
-this.frameBufferOpen = false;
             if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
                 this.submissionStatistics.noteIdleWaitTimeouts();
                 this.noteStalled();
+                // An abandoned frame is not "the frame is still recording": the flag must not route the
+                // next beginCommands into the buffer whose recording the abandon just discards. Cleared on the
+                // abandon paths only - this clear used to run unconditionally before both checks, so a wait that
+                // merely succeeded while a frame was open (the immediate-window waitForIdle path) cleared the
+                // flag behind its owner's back and the next beginCommands took the new-begin path into a
+                // "nested begin" failure (bughunt LANE-05 #3).
+                this.frameBufferOpen = false;
                 this.frameTarget.abandonFrame("frame slot fence timed out");
                 return false;
             }
-// An abandoned frame is not "the frame is still recording": the flag must not route the
-// next beginCommands into the buffer whose recording the abandon just discards.
-this.frameBufferOpen = false;
             if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS
                     && result != org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
                 record("waitForSlot(" + slot + "): vkWaitForFences returned " + result);
                 this.noteStalled();
+                // The abandon-path flag clear, as in the timeout branch above (bughunt LANE-05 #3).
+                this.frameBufferOpen = false;
                 this.frameTarget.abandonFrame("frame slot fence failed: " + result);
                 return false;
             }

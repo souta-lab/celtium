@@ -666,7 +666,9 @@ final class BackendDiagnostics {
                 // Counted at the junction and in the stub; printed here so a leg answers with numbers.
                 + " targetFormats=[" + TargetFormatCensus.summary() + "]"
                 + " presentMode=[" + VulkanSwapchain.presentModeSummary()
-                + " rebuilds=" + b.submissionStatistics.presentModeRebuilds() + "]"
+                + " rebuilds=" + b.submissionStatistics.presentModeRebuilds()
+                + " outOfDateRebuilds=" + b.submissionStatistics.outOfDateRebuilds()
+                + " surfaceLostRebuilds=" + b.submissionStatistics.surfaceLostRebuilds() + "]"
                 + " quarantined=[buffers=" + VulkanContext.quarantinedResourceCounts()[0]
                 + " fences=" + VulkanContext.quarantinedResourceCounts()[1] + "]"
                 + " matrixChannels=persp:" + b.immediateStatistics.perspectiveCalls() + ",frustum:" + b.frustumCalls
