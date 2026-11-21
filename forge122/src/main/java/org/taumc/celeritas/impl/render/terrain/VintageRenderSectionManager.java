@@ -105,7 +105,12 @@ public class VintageRenderSectionManager extends RenderSectionManager {
 
     @Override
     protected boolean useRasterOcclusionCulling() {
-        return false;
+        // The option is the only input this seam has: the graph, lattice and culler all take
+        // the flag from here, and the raster occluder is only created when it is set. Returning
+        // a constant false (the shape this override had since the feature landed) left the GUI
+        // toggle bound and saved but with no effect. The field defaults to false, so reading it
+        // changes nothing unless the user opted in.
+        return CeleritasVintage.options().performance.useRasterOcclusionCulling;
     }
 
     @Override
