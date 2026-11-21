@@ -44,6 +44,25 @@ import org.taumc.celeritas.impl.world.cloned.ChunkRenderContext;
 import java.util.*;
 
 public class ChunkBuilderMeshingTask extends ChunkBuilderTask<ChunkBuildOutput> {
+    /**
+     * Whether section meshing uses the Sodium-style {@code VintageBlockRenderer} instead of the game's
+     * {@code BlockRendererDispatcher} (Forge's block-model pipeline). Off by default, as in upstream
+     * Celeritas: on the QMAGNET capture the dispatcher path matches the reference's face shades (pixels
+     * over 16 levels 0.97 % against 2.00 % with the fast renderer, whose smooth lighting put a concrete
+     * side 11 % and a quartz side 22 % brighter). It was turned on in October when the dispatcher path
+     * measured 0.66 of the reference's luminance; that darkness was this renderer's handling of the path
+     * and is gone.
+     * <p>
+     * This field is a binary-compatibility surface, not just a switch: Demonica's guard writes it from
+     * this class's initialiser to force the fast renderer off, and removing it (the first shape of the
+     * persisted-option fix) crashed a stock Demonica install with {@code NoSuchFieldError} before the
+     * world loaded. The persisted value lives in {@code performance.useFastBlockRenderer}; this static
+     * is seeded from it here - in this class's own initialiser, so a compat write injected at the end of
+     * that initialiser still lands after the seed and wins - and the options page's binding writes both,
+     * so a GUI change applies at once and persists. For a fresh config the persisted field is itself
+     * seeded from {@code -Dceleritas.useVintageFastBlockRenderer}, as this static originally was.
+     */
+    public static boolean USE_NEW_BLOCK_RENDERER = CeleritasVintage.options().performance.useFastBlockRenderer;
     private static final ProxyClassGenerator<WorldSlice, CeleritasBlockAccess> WORLD_SLICE_LOCAL_GENERATOR = new ProxyClassGenerator<>(WorldSlice.class, "WorldSliceLocal", CeleritasBlockAccess.class);
     private final RenderSection render;
     private final int buildTime;
@@ -133,7 +152,7 @@ public class ChunkBuilderMeshingTask extends ChunkBuilderTask<ChunkBuildOutput> 
                             if (block.canRenderInLayer(blockState, layer)) {
                                 ForgeHooksClient.setRenderLayer(layer);
                                 if (blockState.getRenderType() == EnumBlockRenderType.MODEL
-                                        && CeleritasVintage.options().performance.useFastBlockRenderer) {
+                                        && USE_NEW_BLOCK_RENDERER) {
                                     buildContext.getBlockRenderer().renderBlock(blockState, blockPos, slice, layer);
                                 } else {
                                     var buffer = buildContext.getBufferForLayer(layer);

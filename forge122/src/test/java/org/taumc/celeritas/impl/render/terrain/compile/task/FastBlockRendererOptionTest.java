@@ -15,37 +15,51 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Pins the fast block renderer toggle as a persisted option.
+ * Pins the fast block renderer toggle's three-way wiring.
  *
- * <p>The toggle used to read and write only a static field in {@code ChunkBuilderMeshingTask},
+ * <p>The toggle originally read and wrote only a static field in {@code ChunkBuilderMeshingTask},
  * initialised from {@code -Dceleritas.useVintageFastBlockRenderer}, so a change applied on the
- * options page was in no config file and silently reverted on the next launch. The option now
- * lives in {@code performance.useFastBlockRenderer} (config key {@code use_fast_block_renderer}),
- * seeded from the same property for a fresh config. These tests pin the two ends of the wiring -
- * the mesher must read the field, and the options page must bind it - plus the seeded default,
- * because a utf8 sweep cannot pin a lambda or a field read.
+ * options page was in no config file and silently reverted on the next launch. Persisting it by
+ * simply deleting the static broke a compat surface instead: Demonica's guard writes that field
+ * from the class's initialiser to force the fast renderer off, and a stock Demonica install then
+ * crashed with {@code NoSuchFieldError} before the world loaded. The settled shape keeps all three
+ * ends: the value persists in {@code performance.useFastBlockRenderer} (config key
+ * {@code use_fast_block_renderer}, seeded from the same property for a fresh config), the static
+ * {@code USE_NEW_BLOCK_RENDERER} is restored and seeded from the persisted value in the meshing
+ * task's own initialiser - so a compat write injected at the end of that initialiser lands after
+ * the seed and wins - the mesher reads the static, and the options page's binding writes both (a
+ * GUI change applies at once and persists) while its getter reads the static, the runtime truth.
+ * These tests pin the ends of that wiring, because a utf8 sweep cannot pin a lambda or a field read.
  */
 class FastBlockRendererOptionTest {
 
     private static final String OPTIONS_OWNER = "org/embeddedt/embeddium/impl/gui/SodiumGameOptions$PerformanceSettings";
     private static final String FIELD = "useFastBlockRenderer";
+    private static final String MESHER_OWNER = "org/taumc/celeritas/impl/render/terrain/compile/task/ChunkBuilderMeshingTask";
+    private static final String STATIC_FIELD = "USE_NEW_BLOCK_RENDERER";
 
     @Test
-    void mesherReadsTheOptionField() throws Exception {
+    void mesherSeedsTheStaticFromTheOptionFieldAndReadsTheStatic() throws Exception {
         List<String[]> fieldRefs = fieldReferences(readClassBytes(
                 "/org/taumc/celeritas/impl/render/terrain/compile/task/ChunkBuilderMeshingTask.class"));
         assertTrue(fieldRefs.stream().anyMatch(ref -> ref[0].equals(OPTIONS_OWNER) && ref[1].equals(FIELD)),
-                "ChunkBuilderMeshingTask must read SodiumGameOptions.performance.useFastBlockRenderer; "
-                        + "a static field leaves the GUI toggle unpersisted");
+                "ChunkBuilderMeshingTask's initialiser must seed USE_NEW_BLOCK_RENDERER from "
+                        + "SodiumGameOptions.performance.useFastBlockRenderer");
+        assertTrue(fieldRefs.stream().anyMatch(ref -> ref[0].equals(MESHER_OWNER) && ref[1].equals(STATIC_FIELD)),
+                "ChunkBuilderMeshingTask must carry and read USE_NEW_BLOCK_RENDERER itself: the field is a "
+                        + "binary-compat surface (Demonica's guard writes it), and the mesher reads it");
     }
 
     @Test
-    void optionsPageBindsTheOptionField() throws Exception {
+    void optionsPageBindsBothTheOptionFieldAndTheStatic() throws Exception {
         List<String[]> fieldRefs = fieldReferences(readClassBytes(
                 "/org/taumc/celeritas/impl/gui/SodiumGameOptionPages.class"));
         assertTrue(fieldRefs.stream().anyMatch(ref -> ref[0].equals(OPTIONS_OWNER) && ref[1].equals(FIELD)),
-                "SodiumGameOptionPages must bind the fast block renderer row to "
-                        + "SodiumGameOptions.performance.useFastBlockRenderer");
+                "SodiumGameOptionPages must write SodiumGameOptions.performance.useFastBlockRenderer "
+                        + "so the toggle persists");
+        assertTrue(fieldRefs.stream().anyMatch(ref -> ref[0].equals(MESHER_OWNER) && ref[1].equals(STATIC_FIELD)),
+                "SodiumGameOptionPages must also write/read ChunkBuilderMeshingTask.USE_NEW_BLOCK_RENDERER "
+                        + "so a GUI change applies at once and the row shows the runtime value");
     }
 
     @Test
