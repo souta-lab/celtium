@@ -87,6 +87,16 @@ public record LWJGL3Service(
         return Pointer.POINTER_SIZE;
     }
 
+    @Override
+    public boolean isDegraded() {
+        // The all-NONE instance create() builds when the creating thread has no GLCapabilities. A real
+        // context old enough to lack every one of these at once is not a target Celtium runs on, and if
+        // one ever appeared, re-probing it simply keeps producing this same answer.
+        return vaoMode == VAOMode.NONE && timerQueryMode == TimerQueryMode.NONE && debugMode == DebugMode.NONE
+                && vertexAttribIMode == VertexAttribIMode.NONE
+                && vertexAttribDivisorMode == VertexAttribDivisorMode.NONE;
+    }
+
     // ===================== BUFFER OPERATIONS =====================
 
     @Override

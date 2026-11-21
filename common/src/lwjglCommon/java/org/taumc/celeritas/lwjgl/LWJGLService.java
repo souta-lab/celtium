@@ -13,6 +13,17 @@ public interface LWJGLService {
 
     // ===================== CAPABILITIES =====================
 
+    /**
+     * Whether this instance was created without GL capabilities, so every capability-gated operation
+     * answers with its NONE mode. A degraded instance is a placeholder, not a verdict about the machine:
+     * the first thread to touch the service may have no GL context (a ChunkBuilder worker on the GL-less
+     * Vulkan path) while the render thread later has full capabilities, so a degraded instance must never
+     * be treated as the final answer for the process (BH10-01).
+     */
+    default boolean isDegraded() {
+        return false;
+    }
+
     boolean isOpenGLVersionSupported(int major, int minor);
     boolean isExtensionSupported(GLExtension extension);
     int getPointerSize();

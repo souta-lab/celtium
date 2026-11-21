@@ -2116,6 +2116,10 @@ public final class VulkanContext {
             System.err.println("[Celtium] CELTIUM_VULKAN_DEVICE_LOST: skipping Vulkan driver cleanup "
                     + "after a fatal native device loss; terminate the Minecraft process.");
             if (this.device != null) {
+                // The pipeline cache is not destroyed on this path (the device is not to be touched again), but its
+                // registry entry must not survive: a successor device reusing this address would otherwise be
+                // served this dead device's cache (BH10-06).
+                dropPipelineCache(this.device.address());
                 // The destructions this device still has queued can never run - the device is not to be touched
                 // again - so they are dropped and counted rather than left in the static queue, where a successor
                 // backend's drain would execute them against this dead handle (L06-01/BH10-09).
@@ -2169,7 +2173,9 @@ public final class VulkanContext {
                 System.err.println("[Celtium] CELTIUM_VULKAN_DEVICE_LOST: teardown wait reported "
                         + "device loss; skipping further native cleanup.");
                 // Same disposition as the deviceLost entry above: this device's queued destructions are dropped
-                // unexecuted, so no later drain can run them against the dead handle (L06-01/BH10-09).
+                // unexecuted, so no later drain can run them against the dead handle (L06-01/BH10-09). The
+                // pipeline cache registry entry is dropped for the same reason (BH10-06).
+                dropPipelineCache(deviceHandle);
                 int droppedRetirements = VulkanRetireQueue.dropFor(deviceHandle);
                 if (droppedRetirements > 0) {
                     System.err.println("[Celtium] CELTIUM_VULKAN_DEVICE_LOST: " + droppedRetirements
@@ -2266,21 +2272,46 @@ public final class VulkanContext {
     }
 
     /**
-     * The device's pipeline cache, shared by every pipeline the renderer creates, or {@code VK_NULL_HANDLE}.
+     * The pipeline caches of every live device, keyed by device address.
      * <p>
      * Every pipeline used to be created with no cache: each first use of a state combination compiled from scratch, in
      * every session, on the frame that needed it. The cache is seeded from {@code celtium/pipeline-cache.bin} under the
      * game directory and written back when the device is destroyed; the driver validates the header (vendor, device,
      * cache UUID) and ignores data from another device or driver version, so a stale file costs nothing.
+     * <p>
+     * A pipeline cache is a child object of the device that created it, so the registry is keyed by device: this used
+     * to be a single static slot holding the most recently created context's cache, and the static pipeline creation
+     * below paired it with whatever device the caller passed. With two contexts alive (the window backend beside a
+     * world backend, or a second terrain backend, which gets its own device) one device's pipelines were created
+     * through the other device's cache - a validation violation and undefined behaviour (BH10-06). Entries are
+     * registered at creation and removed on every teardown path, so a destroyed or device-lost context's cache is
+     * never served again, not even to a successor device that reuses the address.
      */
-    public static long sharedPipelineCache() {
-        return sharedPipelineCache;
+    private static final java.util.Map<Long, Long> PIPELINE_CACHES_BY_DEVICE =
+            new java.util.concurrent.ConcurrentHashMap<Long, Long>();
+
+    static void registerPipelineCache(long deviceAddress, long cacheHandle) {
+        PIPELINE_CACHES_BY_DEVICE.put(deviceAddress, cacheHandle);
     }
 
-    private static volatile long sharedPipelineCache = VK_NULL_HANDLE;
+    /** The pipeline cache created on {@code deviceAddress}, or {@code VK_NULL_HANDLE} if it has none. */
+    static long pipelineCacheFor(long deviceAddress) {
+        Long cache = PIPELINE_CACHES_BY_DEVICE.get(deviceAddress);
+        return cache != null ? cache.longValue() : VK_NULL_HANDLE;
+    }
+
+    /** Removes the entry for {@code deviceAddress} if it still names {@code cacheHandle}. */
+    static void unregisterPipelineCache(long deviceAddress, long cacheHandle) {
+        PIPELINE_CACHES_BY_DEVICE.remove(deviceAddress, cacheHandle);
+    }
+
+    /** Removes whatever entry {@code deviceAddress} has; for teardown paths that must not serve the device again. */
+    static void dropPipelineCache(long deviceAddress) {
+        PIPELINE_CACHES_BY_DEVICE.remove(deviceAddress);
+    }
 
     /**
-     * Creates graphics pipelines through the shared cache, and times it: a pipeline the cache does not hold is compiled
+     * Creates graphics pipelines through the cache of the device they are created on, and times it: a pipeline the cache does not hold is compiled
      * on the thread that asked, which is the client thread for every pipeline a new draw state needs - a hitch the
      * first time an effect appears. Each creation over 2 ms is logged (bounded by the log limiter) with the running
      * totals, which {@link #pipelineCreationSummary()} also reports.
@@ -2306,7 +2337,7 @@ public final class VulkanContext {
     public static int createGraphicsPipelines(org.lwjgl.vulkan.VkDevice device,
             org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo.Buffer info, java.nio.LongBuffer pipelines, String site) {
         long start = System.nanoTime();
-        int result = vkCreateGraphicsPipelines(device, sharedPipelineCache, info, null, pipelines);
+        int result = vkCreateGraphicsPipelines(device, pipelineCacheFor(device.address()), info, null, pipelines);
         long took = System.nanoTime() - start;
         long generation = ++pipelineCreations;
         pipelineCreationNanos += took;
@@ -2498,7 +2529,7 @@ public final class VulkanContext {
             }
             if (result == VK_SUCCESS) {
                 this.pipelineCache = handle.get(0);
-                sharedPipelineCache = this.pipelineCache;
+                registerPipelineCache(this.device.address(), this.pipelineCache);
                 System.out.println("[Celtium] CELTIUM_PIPELINE_CACHE created seedBytes=" + (seed == null ? 0 : seed.length));
             }
         } finally {
@@ -2538,9 +2569,7 @@ public final class VulkanContext {
             System.out.println("[Celtium] CELTIUM_PIPELINE_CACHE not saved: " + error);
         } finally {
             org.lwjgl.vulkan.VK10.vkDestroyPipelineCache(this.device, this.pipelineCache, null);
-            if (sharedPipelineCache == this.pipelineCache) {
-                sharedPipelineCache = VK_NULL_HANDLE;
-            }
+            unregisterPipelineCache(this.device.address(), this.pipelineCache);
             this.pipelineCache = VK_NULL_HANDLE;
         }
     }
