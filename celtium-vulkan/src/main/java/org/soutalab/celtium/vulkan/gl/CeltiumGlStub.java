@@ -5331,15 +5331,88 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final java.util.concurrent.atomic.AtomicInteger dispatchCount = new java.util.concurrent.atomic.AtomicInteger();
 
     /**
+     * Handler failures the dispatch boundary swallowed (audit-gl-deep G1). Both upcall entries end in native code
+     * that cannot receive a Java exception - an escape is a fatal JVM error on the FFM path and an unwritten
+     * result slot on the libffi path - so the boundary catches, counts by function name, and answers zero. The
+     * count is the point: a handler that throws on every call is a broken function, and it should read as a
+     * growing number with a name, not as silence.
+     */
+    private static final java.util.concurrent.atomic.AtomicLong DISPATCH_FAILURES =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> DISPATCH_FAILURES_BY_NAME =
+            new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
+    /** Full stack traces are printed for the first few failures only; the counters above carry the rest. */
+    private static final java.util.concurrent.atomic.AtomicInteger DISPATCH_FAILURE_LOGS =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static final int DISPATCH_FAILURE_LOG_LIMIT = 8;
+
+    private static void celtium$noteDispatchFailure(String name, Throwable failure) {
+        long total = DISPATCH_FAILURES.incrementAndGet();
+        java.util.concurrent.atomic.AtomicLong counter = DISPATCH_FAILURES_BY_NAME.get(name);
+        if (counter == null) {
+            java.util.concurrent.atomic.AtomicLong fresh = new java.util.concurrent.atomic.AtomicLong();
+            java.util.concurrent.atomic.AtomicLong raced = DISPATCH_FAILURES_BY_NAME.putIfAbsent(name, fresh);
+            counter = raced == null ? fresh : raced;
+        }
+        long forName = counter.incrementAndGet();
+        if (DISPATCH_FAILURE_LOGS.incrementAndGet() <= DISPATCH_FAILURE_LOG_LIMIT) {
+            System.out.println("[Celtium] CELTIUM_GL_DISPATCH_FAILURE fn=" + name + " count=" + forName
+                    + " total=" + total + " error=" + failure.getClass().getName() + ": " + failure.getMessage()
+                    + " (the call is answered with zero; a Java exception must not cross the upcall boundary)");
+            failure.printStackTrace(System.err);
+        }
+    }
+
+    /** {@return the table name for an id, or a bare id label when the id does not resolve}; for failure lines. */
+    private static String celtium$fnNameForId(int functionId) {
+        if (functionId >= 0 && functionId < TABLE.size()) {
+            return TABLE.get(functionId).name;
+        }
+        return "id=" + functionId;
+    }
+
+    /** {@return the dispatch failures so far: the total and the worst offenders by name}. */
+    public static String dispatchFailureSummary() {
+        long total = DISPATCH_FAILURES.get();
+        if (total == 0L) {
+            return "dispatchFailures=0";
+        }
+        java.util.List<java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong>> entries =
+                new java.util.ArrayList<>(DISPATCH_FAILURES_BY_NAME.entrySet());
+        entries.sort((a, b) -> Long.compare(b.getValue().get(), a.getValue().get()));
+        StringBuilder line = new StringBuilder("dispatchFailures=").append(total).append(" top=[");
+        for (int i = 0; i < entries.size() && i < 8; i++) {
+            if (i > 0) {
+                line.append(' ');
+            }
+            line.append(entries.get(i).getKey()).append('=').append(entries.get(i).getValue().get());
+        }
+        return line.append(']').toString();
+    }
+
+    /**
      * The legacy (libffi) entry. {@code args} is an array of pointers, one per C argument, each pointing at that
      * argument's storage: the value is read out of the storage by declared type, then the call goes through the
      * same {@link #dispatch} as the FFM entry. The CIF return is always a pointer, so the result slot is always
      * written - narrower C callers read its low bits.
      */
     void legacyDispatch(int functionId, long result, long args) {
+        long value;
+        try {
+            value = legacyDispatchBody(functionId, args);
+        } catch (Throwable failure) {
+            // The argument unpacking below reads caller memory directly, so a bad pointer throws here, before
+            // dispatchArgs' own guard. The closure's result slot is still owed an answer: an exception escaping
+            // into libffi leaves it unwritten and unwinds through native frames (audit-gl-deep G1).
+            celtium$noteDispatchFailure(celtium$fnNameForId(functionId), failure);
+            value = 0L;
+        }
+        APIUtil.apiClosureRetP(result, value);
+    }
+
+    private long legacyDispatchBody(int functionId, long args) {
         if (functionId < 0) {
-            APIUtil.apiClosureRetP(result, 0L);
-            return;
+            return 0L;
         }
         Fn fn = TABLE.get(functionId);
         long[] c = dispatchArgsScratch();
@@ -5366,7 +5439,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     break;
             }
         }
-        APIUtil.apiClosureRetP(result, dispatchArgs(fn, c));
+        return dispatchArgs(fn, c);
     }
 
     /**
@@ -5376,6 +5449,18 @@ public final class CeltiumGlStub implements FunctionProvider {
      * return value goes into the caller's result register; narrower results use the low bits.
      */
     private long dispatch(int functionId, long c0, long c1, long c2, long c3, long c4, long c5, long c6, long c7,
+            long c8, long c9, long c10, long c11) {
+        try {
+            return dispatchBody(functionId, c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11);
+        } catch (Throwable failure) {
+            // dispatchArgs guards the handlers; this guard covers the table probe and the scratch packing above
+            // them, so no Java exception crosses the FFM upcall boundary from this entry either (audit-gl-deep G1).
+            celtium$noteDispatchFailure(celtium$fnNameForId(functionId), failure);
+            return 0L;
+        }
+    }
+
+    private long dispatchBody(int functionId, long c0, long c1, long c2, long c3, long c4, long c5, long c6, long c7,
             long c8, long c9, long c10, long c11) {
         // The no-op class owns the call volume - glColor/glTexCoord/glVertex and the state setters nobody reads -
         // and nothing in its path touches the arguments: the two censuses it pays were per-call String lookups
@@ -5412,7 +5497,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * per owning thread cannot be corrupted by re-entry.
      */
     private final long[] dispatchScratch = new long[GlTrampolines.SLOTS];
-    private Thread dispatchScratchOwner;
+    private final java.util.concurrent.atomic.AtomicReference<Thread> dispatchScratchOwner =
+            new java.util.concurrent.atomic.AtomicReference<Thread>();
 
     /**
      * {@code -Dceltium.debug.fnCensus=true}: count arrivals per table entry and print the top producers at exit.
@@ -5426,11 +5512,18 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     private long[] dispatchArgsScratch() {
         Thread calling = Thread.currentThread();
-        if (calling == this.dispatchScratchOwner) {
+        if (calling == this.dispatchScratchOwner.get()) {
             return this.dispatchScratch;
         }
-        if (this.dispatchScratchOwner == null) {
-            this.dispatchScratchOwner = calling;
+        // The claim is a CAS, not a check-then-set: two threads arriving together used to both read null and
+        // both take the shared array, overwriting each other's arguments mid-dispatch, and the plain field gave
+        // no visibility guarantee to the loser either (audit-gl-deep G2). The loser of the race - and every later
+        // non-owner - keeps the fresh-array fallback, so the steady path is still one field read and an identity
+        // compare.
+        if (this.dispatchScratchOwner.compareAndSet(null, calling)) {
+            return this.dispatchScratch;
+        }
+        if (calling == this.dispatchScratchOwner.get()) {
             return this.dispatchScratch;
         }
         return new long[GlTrampolines.SLOTS];
@@ -5450,10 +5543,83 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
+     * The guarded dispatch every entry lands in. A handler that throws is answered with zero and counted by
+     * name ({@link #celtium$noteDispatchFailure}), because both upcall entries end in native code that cannot
+     * receive a Java exception (audit-gl-deep G1). While a display list is being compiled, the call's own
+     * additions to the compilation are rolled back first: before this guard, an exception out of
+     * {@code captureListPayload} or a handler left the compilation open with a half-recorded call in it, and
+     * every later call kept appending to the broken compilation.
+     * <p>
+     * The snapshot is three field reads plus two list sizes, and only while a list is open - with no list open
+     * there is nothing a failed call can leave half-recorded, and the wrapper costs the reads alone.
+     */
+    private long dispatchArgs(Fn fn, long[] c) {
+        List<Object[]> openAtEntry = this.openList;
+        int openSize = openAtEntry == null ? -1 : openAtEntry.size();
+        int payloadsSize = openAtEntry == null || this.openListPayloads == null ? -1 : this.openListPayloads.size();
+        int geometrySize = openAtEntry == null || this.openListGeometry == null ? -1 : this.openListGeometry.size();
+        long legacyRunBytesAtEntry = this.openListLegacyRunBytes;
+        try {
+            return dispatchArgsBody(fn, c);
+        } catch (Throwable failure) {
+            celtium$rollbackFailedCompile(fn, openAtEntry, openSize, payloadsSize, geometrySize,
+                    legacyRunBytesAtEntry);
+            celtium$noteDispatchFailure(fn.name, failure);
+            return 0L;
+        }
+    }
+
+    /**
+     * Undoes what one failed call appended to the list being compiled: recorded commands past the snapshot are
+     * dropped, payload buffers they owned are freed and geometry buffers closed - the same releases the
+     * list-abandonment path in SEM_NEW_LIST performs. The two delimiters own the compile state wholesale and
+     * are not rolled back, and neither is a compilation that was closed or replaced during the call (the
+     * identity check): rolling those back would resurrect state the delimiters already settled.
+     */
+    private void celtium$rollbackFailedCompile(Fn fn, List<Object[]> openAtEntry, int openSize, int payloadsSize,
+            int geometrySize, long legacyRunBytesAtEntry) {
+        if (openAtEntry == null || this.openList != openAtEntry) {
+            return;
+        }
+        if (fn.semantics == SEM_NEW_LIST || fn.semantics == SEM_END_LIST) {
+            return;
+        }
+        List<Object[]> open = this.openList;
+        while (open.size() > openSize) {
+            open.remove(open.size() - 1);
+        }
+        if (this.openListPayloads != null) {
+            int keep = Math.max(payloadsSize, 0);
+            for (int i = keep; i < this.openListPayloads.size(); i++) {
+                org.lwjgl.system.MemoryUtil.memFree(this.openListPayloads.get(i));
+            }
+            while (this.openListPayloads.size() > keep) {
+                this.openListPayloads.remove(this.openListPayloads.size() - 1);
+            }
+            if (payloadsSize < 0) {
+                this.openListPayloads = null;
+            }
+        }
+        if (this.openListGeometry != null) {
+            int keep = Math.max(geometrySize, 0);
+            for (int i = keep; i < this.openListGeometry.size(); i++) {
+                this.openListGeometry.get(i).close();
+            }
+            while (this.openListGeometry.size() > keep) {
+                this.openListGeometry.remove(this.openListGeometry.size() - 1);
+            }
+            if (geometrySize < 0) {
+                this.openListGeometry = null;
+            }
+        }
+        this.openListLegacyRunBytes = legacyRunBytesAtEntry;
+    }
+
+    /**
      * The dispatch with the table entry already looked up - the legacy entry needs the {@link Fn} for its arg-count
      * loop, so resolving it twice per call paid a second map probe on every GL call.
      */
-    private long dispatchArgs(Fn fn, long[] c) {
+    private long dispatchArgsBody(Fn fn, long[] c) {
         if (TRACE && this.dispatchCount.incrementAndGet() < TRACE_LIMIT) {
             System.out.println("[GLSTUB] #" + this.dispatchCount.get() + " " + fn.name
                     + " (" + Long.toHexString(c[0]) + "," + Long.toHexString(c[1]) + "," + Long.toHexString(c[2])

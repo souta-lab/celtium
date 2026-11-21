@@ -21,6 +21,32 @@ public final class ModShaderCompiler {
      */
     private static final long COMPILE_STACK_BYTES = 16L * 1024L * 1024L;
 
+    /**
+     * The longest one compile may hold its caller. glslang/shaderc has no internal deadline, so a pathological
+     * mod shader could otherwise park the calling (render) thread forever and take the worker and its shaderc
+     * handles with it (audit-gl-deep G3). A healthy compile of even a large program is seconds; thirty seconds
+     * separates "slow" from "stuck" with room to spare. {@code -Dceltium.shaderc.timeoutMs=<n>} overrides, and a
+     * value of 0 or less disables the deadline (the pre-fix behaviour, kept as a debugging escape hatch).
+     */
+    private static final long COMPILE_TIMEOUT_MS = Long.getLong("celtium.shaderc.timeoutMs", 30_000L).longValue();
+
+    /**
+     * Compiles in flight at once. Each worker carries a 16 MB stack reservation and its own shaderc compiler, and
+     * nothing bounded how many a burst of program links could start. Over the limit a compile is refused at once
+     * rather than queued - a queue would just move the unbounded wait to a different thread.
+     */
+    private static final int MAX_CONCURRENT_COMPILES =
+            Integer.getInteger("celtium.shaderc.maxConcurrent", 4).intValue();
+
+    private static final java.util.concurrent.atomic.AtomicInteger COMPILES_IN_FLIGHT =
+            new java.util.concurrent.atomic.AtomicInteger();
+    /** Compiles abandoned at the deadline; the worker's fate is named in {@link #compile}'s timeout branch. */
+    private static final java.util.concurrent.atomic.AtomicLong COMPILE_TIMEOUTS =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** Compiles refused because {@link #MAX_CONCURRENT_COMPILES} were already in flight. */
+    private static final java.util.concurrent.atomic.AtomicLong COMPILE_CONCURRENCY_REFUSALS =
+            new java.util.concurrent.atomic.AtomicLong();
+
     private ModShaderCompiler() {
     }
 
@@ -51,33 +77,72 @@ public final class ModShaderCompiler {
         return unavailableReason;
     }
 
-    /** {@return the SPIR-V words of one stage}; throws with shaderc's message when the stage does not compile. */
+    /**
+     * {@return the SPIR-V words of one stage}; throws with shaderc's message when the stage does not compile, and
+     * throws when the stage does not compile <em>in time</em> - the caller ({@code ModProgramRegistry}) already
+     * turns any {@code RuntimeException} from here into a refused program, so a stuck compile now fails the one
+     * program instead of the whole frame loop.
+     */
     public static byte[] compile(String source, boolean vertex) {
         if (!available()) {
             throw new IllegalStateException("shaderc unavailable: " + unavailableReason());
         }
-        byte[][] out = new byte[1][];
-        Throwable[] thrown = new Throwable[1];
-        Thread worker = new Thread(null, () -> {
-            try {
-                out[0] = Holder.compile(source, vertex);
-            } catch (Throwable failure) {
-                thrown[0] = failure;
-            }
-        }, "celtium-mod-shaderc", COMPILE_STACK_BYTES);
-        worker.setDaemon(true);
-        worker.start();
+        if (COMPILES_IN_FLIGHT.incrementAndGet() > MAX_CONCURRENT_COMPILES) {
+            COMPILES_IN_FLIGHT.decrementAndGet();
+            COMPILE_CONCURRENCY_REFUSALS.incrementAndGet();
+            throw new IllegalStateException("too many concurrent shader compiles (limit "
+                    + MAX_CONCURRENT_COMPILES + "); refusing this program rather than queueing");
+        }
         try {
-            worker.join();
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("interrupted while compiling", interrupted);
+            byte[][] out = new byte[1][];
+            Throwable[] thrown = new Throwable[1];
+            Thread worker = new Thread(null, () -> {
+                try {
+                    out[0] = Holder.compile(source, vertex);
+                } catch (Throwable failure) {
+                    thrown[0] = failure;
+                }
+            }, "celtium-mod-shaderc", COMPILE_STACK_BYTES);
+            worker.setDaemon(true);
+            worker.start();
+            try {
+                if (COMPILE_TIMEOUT_MS > 0L) {
+                    worker.join(COMPILE_TIMEOUT_MS);
+                } else {
+                    worker.join();
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("interrupted while compiling", interrupted);
+            }
+            if (worker.isAlive()) {
+                // The deadline passed with the worker still inside shaderc. Releasing its compiler from here
+                // would race the native compile it is running, so the worker is abandoned: it is a daemon (the
+                // process can still exit), and if it ever returns, its own finally releases the handles. What
+                // leaks for a truly stuck compile is one worker and one shaderc compiler until process exit -
+                // named and counted here, against the previous shape where the render thread itself never
+                // came back.
+                long timeouts = COMPILE_TIMEOUTS.incrementAndGet();
+                System.out.println("[Celtium] CELTIUM_MOD_SHADERC_TIMEOUT timeoutMs=" + COMPILE_TIMEOUT_MS
+                        + " vertex=" + vertex + " sourceChars=" + source.length() + " timeouts=" + timeouts
+                        + " (the worker is abandoned; the program is refused)");
+                throw new IllegalStateException("shaderc compile did not finish within " + COMPILE_TIMEOUT_MS
+                        + " ms; refusing the program (worker abandoned)");
+            }
+            if (thrown[0] != null) {
+                throw thrown[0] instanceof RuntimeException runtime ? runtime
+                        : new IllegalStateException("shaderc threw: " + thrown[0], thrown[0]);
+            }
+            return out[0];
+        } finally {
+            COMPILES_IN_FLIGHT.decrementAndGet();
         }
-        if (thrown[0] != null) {
-            throw thrown[0] instanceof RuntimeException runtime ? runtime
-                    : new IllegalStateException("shaderc threw: " + thrown[0], thrown[0]);
-        }
-        return out[0];
+    }
+
+    /** {@return the timeout and concurrency refusals so far}, in the census style of the stub's summaries. */
+    public static String compileRefusalSummary() {
+        return "shadercTimeouts=" + COMPILE_TIMEOUTS.get()
+                + " shadercConcurrencyRefusals=" + COMPILE_CONCURRENCY_REFUSALS.get();
     }
 
     /** The only class that names the binding; loaded after {@link #available()} succeeded. */
@@ -92,9 +157,19 @@ public final class ModShaderCompiler {
 
         static byte[] compile(String source, boolean vertex) {
             long compiler = org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_initialize();
-            long options = org.lwjgl.util.shaderc.Shaderc.shaderc_compile_options_initialize();
+            if (compiler == 0L) {
+                throw new IllegalStateException("shaderc_compiler_initialize returned null");
+            }
+            long options = 0L;
             long result = 0L;
             try {
+                options = org.lwjgl.util.shaderc.Shaderc.shaderc_compile_options_initialize();
+                if (options == 0L) {
+                    // probe() has always checked its compiler handle; compile() did not check either of its own,
+                    // so a native-side allocation failure would have been called through a null handle
+                    // (audit-gl-deep G5).
+                    throw new IllegalStateException("shaderc_compile_options_initialize returned null");
+                }
                 org.lwjgl.util.shaderc.Shaderc.shaderc_compile_options_set_target_env(options,
                         org.lwjgl.util.shaderc.Shaderc.shaderc_target_env_vulkan,
                         org.lwjgl.util.shaderc.Shaderc.shaderc_env_version_vulkan_1_2);
@@ -123,7 +198,9 @@ public final class ModShaderCompiler {
                 if (result != 0L) {
                     org.lwjgl.util.shaderc.Shaderc.shaderc_result_release(result);
                 }
-                org.lwjgl.util.shaderc.Shaderc.shaderc_compile_options_release(options);
+                if (options != 0L) {
+                    org.lwjgl.util.shaderc.Shaderc.shaderc_compile_options_release(options);
+                }
                 org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_release(compiler);
             }
         }
