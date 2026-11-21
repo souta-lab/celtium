@@ -2212,6 +2212,7 @@ public final class VulkanContext {
             System.out.println("[Celtium] CELTIUM_WAIT_CENSUS bootstrapQueueWaits=" + bootstrapQueueWaits
                     + " bootstrapQueueWaitMillis=" + bootstrapQueueWaitMillis
                     + " bootstrapQueueWaitWorstMillis=" + bootstrapQueueWaitWorstMillis
+                    + " submitWithSemaphoresCalls=" + submitWithSemaphoresCalls
                     + " submitTimeouts=" + submitTimeouts
                     + " " + waitOutcomeSummary()
                     + " " + uploadBatchSummary()
