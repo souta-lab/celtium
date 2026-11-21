@@ -329,9 +329,19 @@ public final class ModGlslTranslator {
         }
 
         List<Attribute> attributes = new ArrayList<>();
+        Map<String, Declaration> vertexAttributes = new LinkedHashMap<>();
         java.util.BitSet attributeLocations = new java.util.BitSet();
         for (Declaration d : vertexDecls) {
             if ("attribute".equals(d.qualifier)) {
+                Declaration prev = vertexAttributes.get(d.name);
+                if (prev != null) {
+                    if (!prev.type.equals(d.type)) {
+                        throw new IllegalArgumentException("attribute " + d.name + " is declared as " + prev.type
+                                + " and " + d.type);
+                    }
+                    continue;
+                }
+                vertexAttributes.put(d.name, d);
                 int width = locationsFor(d.type) * Math.max(1, d.arrayLength);
                 attributes.add(new Attribute(d.name, d.type,
                         claimLocation(attributeLocations, d.explicitLocation, width, "attribute " + d.name)));
