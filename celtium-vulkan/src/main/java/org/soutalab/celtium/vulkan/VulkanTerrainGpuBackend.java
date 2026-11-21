@@ -6974,6 +6974,27 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (framebuffer == 0) {
             return false;
         }
+        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferColorTexture(framebuffer)
+                != glTextureName) {
+            // The name fills an extra colour slot of the framebuffer, not slot 0: recording it through the
+            // slot-0 record below would evict the texture that does fill slot 0 from the census. Adopt by
+            // registering the framebuffer instead - registration binds the whole attachment tuple (and
+            // ensures the pair's slot images), the same late registration the depth publication makes when
+            // its store is empty.
+            celtium$registerRawFramebuffer(framebuffer, false);
+            boolean recorded = this.publishedTextures.identityForColorTexture(glTextureName) != Long.MIN_VALUE
+                    || this.publishedTextures.slotIdentityForColorTexture(glTextureName) != Long.MIN_VALUE;
+            if (recorded && this.rawFramebufferAdoptions < 8) {
+                this.rawFramebufferAdoptions++;
+                System.out.println("[Celtium] CELTIUM_RAW_FBO_ADOPTED framebuffer=" + framebuffer
+                        + " colorTexture=" + glTextureName
+                        + " slot=" + this.publishedTextures.slotIndexForColorTexture(glTextureName)
+                        + " identity=0x" + Long.toHexString(
+                                this.publishedTextures.slotIdentityForColorTexture(glTextureName))
+                        + " (a raw framebuffer's extra-slot colour texture, recorded by registering its tuple)");
+            }
+            return recorded;
+        }
         long identity = RenderTargetRegistry.rawTargetIdentity(framebuffer, glTextureName);
         int width = 0;
         int height = 0;
@@ -7088,10 +7109,25 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     boolean celtium$publishFramebufferColorTexture(int glTextureName) {
         long identity = celtium$framebufferIdentityForColorTexture(glTextureName);
-        if (identity == Long.MIN_VALUE) {
-            return false;
+        if (identity != Long.MIN_VALUE) {
+            return celtium$publishFramebufferColorTexture(glTextureName, identity,
+                    framebufferColorTexture(identity));
         }
-        return celtium$publishFramebufferColorTexture(glTextureName, identity, framebufferColorTexture(identity));
+        // The name fills an extra colour slot of a multi-target framebuffer, which the slot-0 record above
+        // cannot see: the image it stands for is the pair's image at that slot, published by the same call
+        // the drawing window makes for the tuple's other names. A sampling site is the caller that needs
+        // the guarantee - the colour half of the section 3.4 publication the depth route already makes at
+        // sampling time. The measured case is a shadow framebuffer's second colour target, sampled by the
+        // deferred programs and resolvable through no other route.
+        int slot = this.publishedTextures.slotIndexForColorTexture(glTextureName);
+        long slotIdentity = this.publishedTextures.slotIdentityForColorTexture(glTextureName);
+        if (slot > 0 && slotIdentity != Long.MIN_VALUE) {
+            int[] size = textureSize(glTextureName);
+            return celtium$publishFramebufferColorTextureAt(glTextureName, slotIdentity, slot,
+                    size != null && size.length >= 2 ? size[0] : 0,
+                    size != null && size.length >= 2 ? size[1] : 0);
+        }
+        return false;
     }
 
     /**
