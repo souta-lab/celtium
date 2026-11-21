@@ -955,4 +955,230 @@ class ModGlslTranslatorTest {
         assertNotNull(result.failure());
         assertTrue(result.failure().contains("attribute a_dup is declared as uvec4 and vec3"), result.failure());
     }
+
+    /**
+     * The shape Complementary's shared uniforms take (written for the test in that shape, not copied from the
+     * pack): one name spelled as two sampler types in exclusive branches. The pack's own defines select the
+     * branch - the composite stage defines COMPOSITE1 - so extraction follows the selection instead of merging
+     * both spellings into a collision. The rejected spelling's text stays in the body inside its conditional:
+     * the body is emitted unrewritten, and shaderc's preprocessor drops it there.
+     */
+    private static final String SHADOWTEX_COMPOSITE = """
+            #version 120
+            #define SHADOW_QUALITY 2
+            #define COMPOSITE1
+            uniform sampler2D colortex0;
+            #if SHADOW_QUALITY > -1 || defined LIGHTSHAFTS_ACTIVE || defined FF_BLOCKLIGHT
+            #ifdef COMPOSITE1
+            uniform sampler2D shadowtex0;
+            #else
+            uniform sampler2DShadow shadowtex0;
+            #endif
+            #endif
+            void main() { gl_FragColor = vec4(1.0); }
+            """;
+
+    private static final String SHADOWTEX_NO_COMPOSITE = """
+            #version 120
+            #define SHADOW_QUALITY 2
+            uniform sampler2D colortex0;
+            #if SHADOW_QUALITY > -1 || defined LIGHTSHAFTS_ACTIVE || defined FF_BLOCKLIGHT
+            #ifdef COMPOSITE1
+            uniform sampler2D shadowtex0;
+            #else
+            uniform sampler2DShadow shadowtex0;
+            #endif
+            #endif
+            void main() { gl_FragColor = vec4(1.0); }
+            """;
+
+    @Test
+    void exclusiveBranchesSelectTheDefinedSpelling() {
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, SHADOWTEX_COMPOSITE);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertEquals(List.of(new ModGlslTranslator.SamplerBinding("colortex0", "sampler2D", 0),
+                new ModGlslTranslator.SamplerBinding("shadowtex0", "sampler2D", 1)), result.samplers());
+        // The rejected spelling was not extracted, so its text is still in the body under its conditional.
+        assertTrue(result.fragment().contains("uniform sampler2DShadow shadowtex0;"));
+        assertTrue(result.fragment().contains("#ifdef COMPOSITE1"));
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void exclusiveBranchesSelectTheShadowSpellingWhenTheStageDefineIsAbsent() {
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, SHADOWTEX_NO_COMPOSITE);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertEquals(List.of(new ModGlslTranslator.SamplerBinding("colortex0", "sampler2D", 0),
+                new ModGlslTranslator.SamplerBinding("shadowtex0", "sampler2DShadow", 1)), result.samplers());
+        assertTrue(result.fragment().contains("uniform sampler2D shadowtex0;"));
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    /**
+     * A condition the source's own defines cannot decide - GL_ES may be predefined by the compiler itself -
+     * keeps the extract-everything behaviour: both spellings reach the interface and the collision refuses,
+     * exactly as before extraction learned to follow conditionals.
+     */
+    @Test
+    void anUndecidableConditionKeepsTheCollisionRefusal() {
+        String fragment = """
+                #version 120
+                #ifdef GL_ES
+                uniform float mode;
+                #else
+                uniform int mode;
+                #endif
+                void main() { gl_FragColor = vec4(1.0); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, fragment);
+        assertFalse(result.ok());
+        assertEquals("uniform mode is declared as float and int", result.failure());
+    }
+
+    @Test
+    void anUndecidableConditionStillMergesMatchingSpellings() {
+        String fragment = """
+                #version 120
+                #ifdef GL_ES
+                uniform float mode;
+                #else
+                uniform float mode;
+                #endif
+                void main() { gl_FragColor = vec4(mode); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertEquals(List.of(new ModGlslTranslator.UniformMember("mode", "float", 0, 0, 4)), result.uniforms());
+    }
+
+    @Test
+    void decidableIfExpressionsSelectByValue() {
+        String fragment = """
+                #version 120
+                #define QUALITY 2
+                #if QUALITY > 1
+                uniform float gain;
+                #else
+                uniform int gain;
+                #endif
+                #if QUALITY < 1
+                uniform int bias;
+                #else
+                uniform float bias;
+                #endif
+                void main() { gl_FragColor = vec4(gain + bias); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertEquals(List.of(new ModGlslTranslator.UniformMember("gain", "float", 0, 0, 4),
+                new ModGlslTranslator.UniformMember("bias", "float", 0, 4, 4)), result.uniforms());
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void anElifChainSelectsTheMatchingArm() {
+        String fragment = """
+                #version 120
+                #define TIER 2
+                #if TIER == 1
+                uniform int level;
+                #elif TIER == 2
+                uniform float level;
+                #else
+                uniform vec2 level;
+                #endif
+                void main() { gl_FragColor = vec4(level); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertEquals(List.of(new ModGlslTranslator.UniformMember("level", "float", 0, 0, 4)), result.uniforms());
+    }
+
+    @Test
+    void anUndefBetweenDefineAndBranchAppliesInSourceOrder() {
+        String fragment = """
+                #version 120
+                #define FLAG
+                #undef FLAG
+                #ifdef FLAG
+                uniform int value;
+                #else
+                uniform float value;
+                #endif
+                void main() { gl_FragColor = vec4(value); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertEquals(List.of(new ModGlslTranslator.UniformMember("value", "float", 0, 0, 4)), result.uniforms());
+    }
+
+    @Test
+    void aRejectedOuterBranchSilencesAnUndecidableInnerOne() {
+        String fragment = """
+                #version 120
+                #if 0
+                #ifdef GL_ES
+                uniform int deep;
+                #else
+                uniform float deep;
+                #endif
+                #endif
+                uniform float deep;
+                void main() { gl_FragColor = vec4(deep); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(QUAD_VERTEX, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertEquals(List.of(new ModGlslTranslator.UniformMember("deep", "float", 0, 0, 4)), result.uniforms());
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void anAttributeInTheRejectedBranchIsNotInTheInterface() {
+        String vertex = """
+                #version 120
+                #ifdef USE_VEC3_POS
+                attribute vec3 position;
+                #else
+                attribute vec2 position;
+                #endif
+                varying vec2 uv;
+                void main() {
+                    gl_Position = vec4(position, 0.0, 1.0);
+                    uv = position;
+                }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, COMBINE_FRAGMENT);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertEquals(List.of(new ModGlslTranslator.Attribute("position", "vec2", 0)), result.attributes());
+        assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+    }
+
+    @Test
+    void aModernInputInTheRejectedBranchIsNotInTheInterface() {
+        String vertex = """
+                #version 330 core
+                layout(location = 0) in vec2 a_Pos;
+                #ifdef WIDE
+                in vec3 a_Extra;
+                #else
+                in vec2 a_Extra;
+                #endif
+                out vec2 v_Uv;
+                void main() {
+                    v_Uv = a_Pos + a_Extra;
+                    gl_Position = vec4(a_Pos, 0.0, 1.0);
+                }
+                """;
+        String fragment = """
+                #version 330 core
+                in vec2 v_Uv;
+                out vec4 o_Color;
+                void main() { o_Color = vec4(v_Uv, 0.0, 1.0); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertEquals(List.of(new ModGlslTranslator.Attribute("a_Pos", "vec2", 0),
+                new ModGlslTranslator.Attribute("a_Extra", "vec2", 1)), result.attributes());
+        assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);    }
 }
