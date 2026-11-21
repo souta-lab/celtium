@@ -1273,6 +1273,21 @@ public final class CeltiumGllessHint {
                 width, height);
     }
 
+    /**
+     * Serves a texture-to-texture copy, as {@code glCopyImageSubData} does.
+     *
+     * <p>FoamFix's fast animation path copies the current frame from its own frame-strip texture into the atlas
+     * level this way every tick. Both textures are captured uploads in the stub, so unlike the framebuffer
+     * copies above this one is served in full; before the route existed the call was rewritten to a no-op and
+     * the animated sprites froze on their first frame.
+     */
+    public static void glCopyImageSubData(int srcName, int srcTarget, int srcLevel, int srcX, int srcY, int srcZ,
+            int dstName, int dstTarget, int dstLevel, int dstX, int dstY, int dstZ, int width, int height,
+            int depth) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$copyImageSubData(srcName, srcTarget, srcLevel, srcX,
+                srcY, srcZ, dstName, dstTarget, dstLevel, dstX, dstY, dstZ, width, height, depth);
+    }
+
     /** Serves a copy, as {@code glCopyTexImage2D(target, level, internalFormat, x, y, width, height, border)} does. */
     public static void glCopyTexImage2D(int target, int level, int internalFormat, int x, int y, int width, int height) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$copyTexImage2D(target, level, internalFormat, x, y, width,

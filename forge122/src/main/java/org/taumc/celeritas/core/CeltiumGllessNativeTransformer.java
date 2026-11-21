@@ -2725,6 +2725,23 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
+            // Texture-to-texture copies. FoamFix's fast animation path (txFasterAnimation=2) copies the current
+            // frame from its own frame-strip texture into the atlas level every tick through
+            // ARBCopyImage.glCopyImageSubData; both textures are captured uploads in the stub, so the stub
+            // serves the copy from its records. Without this route the call lands in the zero-writer below and
+            // the atlas keeps its first frame forever - water, lava and fire freeze with no crash and no log
+            // line. The descriptor guard keeps any same-named native of a different shape on the old path.
+            if (("glCopyImageSubData".equals(name) || "nglCopyImageSubData".equals(name))
+                    && "(IIIIIIIIIIIIIII)V".equals(descriptor)) {
+                // (IIIIIIIIIIIIIII)V - the natives are static, so the fifteen arguments are at slots 0..14.
+                for (int slot = 0; slot < 15; slot++) {
+                    method.visitVarInsn(Opcodes.ILOAD, slot);
+                }
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glCopyImageSubData", "(IIIIIIIIIIIIIII)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
             // glReadPixels is the readback half of the same framebuffer contract the copies serve: a mod reads the
             // bound read framebuffer's pixels into a client buffer (ScreenShotHelper's screenshots, the validation
             // fixture's format-2 readback). Without the route it lands in the zero-writer below and every caller's
