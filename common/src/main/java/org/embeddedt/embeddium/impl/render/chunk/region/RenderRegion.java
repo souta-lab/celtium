@@ -1,13 +1,7 @@
 package org.embeddedt.embeddium.impl.render.chunk.region;
 
-import it.unimi.dsi.fastutil.objects.Object2ReferenceOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
 import lombok.Getter;
-import org.embeddedt.embeddium.impl.gl.arena.GlBufferArena;
-import org.embeddedt.embeddium.impl.gl.arena.staging.StagingBuffer;
-import org.embeddedt.embeddium.impl.gl.buffer.GlBuffer;
-import org.embeddedt.embeddium.impl.gl.device.CommandList;
-import org.embeddedt.embeddium.impl.gl.tessellation.GlTessellation;
 import org.embeddedt.embeddium.impl.render.chunk.RenderPassConfiguration;
 import org.embeddedt.embeddium.impl.render.chunk.RenderSection;
 import org.embeddedt.embeddium.impl.render.chunk.data.SectionRenderDataStorage;
@@ -43,10 +37,6 @@ public class RenderRegion {
         }
     }
 
-    private static final int MINIMUM_GEOMETRY_ARENA_BYTES = 512 * 1024;
-    private static final int MINIMUM_INDEX_ARENA_BYTES = 64 * 1024;
-
-    private final StagingBuffer stagingBuffer;
     private final int commonVertexStride;
     private final int x, y, z;
 
@@ -63,9 +53,6 @@ public class RenderRegion {
 
     private final Map<TerrainRenderPass, SectionRenderDataStorage> sectionRenderData = new Reference2ReferenceOpenHashMap<>();
 
-    @Nullable
-    private DeviceResources resources;
-
     /**
      * Incremented each time the set of render passes in the region is changed.
      */
@@ -80,13 +67,12 @@ public class RenderRegion {
     @Getter
     private int dataRevision = 0;
 
-    RenderRegion(int x, int y, int z, int id, StagingBuffer stagingBuffer, int commonVertexStride) {
+    RenderRegion(int x, int y, int z, int id, int commonVertexStride) {
         this.x = x;
         this.y = y;
         this.z = z;
 
         this.id = id;
-        this.stagingBuffer = stagingBuffer;
         this.commonVertexStride = commonVertexStride;
     }
 
@@ -130,17 +116,12 @@ public class RenderRegion {
         return (this.getChunkZ() + REGION_LENGTH / 2) << 4;
     }
 
-    public void delete(CommandList commandList) {
+    public void delete() {
         for (var storage : this.sectionRenderData.values()) {
             storage.delete();
         }
 
         this.sectionRenderData.clear();
-
-        if (this.resources != null) {
-            this.resources.delete(commandList);
-            this.resources = null;
-        }
 
         Arrays.fill(this.sections, null);
         Arrays.fill(this.sectionLoadTimes, 0);
@@ -213,11 +194,7 @@ public class RenderRegion {
         return this.sectionRenderData.keySet();
     }
 
-    public void refresh(CommandList commandList) {
-        if (this.resources != null) {
-            this.resources.deleteTessellations(commandList);
-        }
-
+    public void onBufferResized() {
         for (var storage : this.sectionRenderData.values()) {
             storage.onBufferResized();
         }
@@ -272,116 +249,5 @@ public class RenderRegion {
     @Nullable
     public RenderSection getSection(int id) {
         return this.sections[id];
-    }
-
-    @Nullable
-    public DeviceResources getResources() {
-        return this.resources;
-    }
-
-    public DeviceResources createResources(CommandList commandList) {
-        if (this.resources == null) {
-            this.resources = new DeviceResources(commandList, this.stagingBuffer, this.commonVertexStride);
-        }
-
-        return this.resources;
-    }
-
-    public void update(CommandList commandList) {
-        var resources = this.resources;
-
-        if (resources == null) {
-            return;
-        }
-
-        if (resources.shouldDelete()) {
-            resources.delete(commandList);
-            this.resources = null;
-            this.invalidateCachedBatches();
-        } else if (resources.deleteIndexArenaIfPossible(commandList)) {
-            this.invalidateCachedBatches();
-        }
-    }
-
-    public static class DeviceResources {
-        private final GlBufferArena geometryArena;
-        private final StagingBuffer stagingBuffer;
-        private GlBufferArena indexArena;
-        private final Map<TerrainRenderPass.TessellationKey, GlTessellation> tessellations = new Object2ReferenceOpenHashMap<>();
-
-        public DeviceResources(CommandList commandList, StagingBuffer stagingBuffer, int commonVertexStride) {
-            this.geometryArena = new GlBufferArena(commandList, commonVertexStride, MINIMUM_GEOMETRY_ARENA_BYTES, stagingBuffer);
-            this.stagingBuffer = stagingBuffer;
-        }
-
-        public GlTessellation getTessellation(TerrainRenderPass.TessellationKey key) {
-            return this.tessellations.get(key);
-        }
-
-        public void updateTessellation(CommandList commandList, TerrainRenderPass.TessellationKey key, GlTessellation tessellation) {
-            var previous = this.tessellations.put(key, tessellation);
-
-            if (previous != null) {
-                previous.delete(commandList);
-            }
-        }
-
-        public void deleteTessellations(CommandList commandList) {
-            for (var tessellation : this.tessellations.values()) {
-                tessellation.delete(commandList);
-            }
-
-            this.tessellations.clear();
-        }
-
-        public GlBuffer getVertexBuffer() {
-            return this.geometryArena.getBufferObject();
-        }
-
-        public GlBuffer getIndexBuffer() {
-            if (this.indexArena == null) {
-                throw new IllegalStateException("Attempted to retrieve index buffer for a non-indexed region");
-            }
-            return this.indexArena.getBufferObject();
-        }
-
-        public void delete(CommandList commandList) {
-            this.deleteTessellations(commandList);
-            this.geometryArena.delete(commandList);
-            if (this.indexArena != null) {
-                this.indexArena.delete(commandList);
-            }
-        }
-
-        public GlBufferArena getGeometryArena() {
-            return this.geometryArena;
-        }
-
-        public GlBufferArena getIndexArena() {
-            return this.indexArena;
-        }
-
-        public GlBufferArena getOrCreateIndexArena(CommandList commandList) {
-            if (this.indexArena == null) {
-                this.indexArena = new GlBufferArena(commandList, 4, MINIMUM_INDEX_ARENA_BYTES, this.stagingBuffer);
-            }
-            return this.indexArena;
-        }
-
-        public boolean shouldDelete() {
-            return this.geometryArena.isEmpty();
-        }
-
-        public boolean deleteIndexArenaIfPossible(CommandList commandList) {
-            if (this.indexArena == null || !this.indexArena.isEmpty()) {
-                return false;
-            }
-
-            this.deleteTessellations(commandList);
-            this.indexArena.delete(commandList);
-            this.indexArena = null;
-
-            return true;
-        }
     }
 }

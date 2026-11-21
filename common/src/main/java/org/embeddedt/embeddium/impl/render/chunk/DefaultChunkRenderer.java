@@ -1,41 +1,26 @@
 package org.embeddedt.embeddium.impl.render.chunk;
 
-import it.unimi.dsi.fastutil.objects.Reference2ReferenceMap;
-import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
-import org.embeddedt.embeddium.impl.gl.array.GlVertexArray;
-import org.embeddedt.embeddium.impl.gl.attribute.GlVertexFormat;
-import org.embeddedt.embeddium.impl.gl.debug.GLDebug;
 import org.embeddedt.embeddium.impl.gl.device.CommandList;
 import org.embeddedt.embeddium.impl.gl.device.MultiDrawBatch;
 import org.embeddedt.embeddium.impl.gl.device.RenderDevice;
-import org.embeddedt.embeddium.impl.gl.tessellation.*;
-import org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveType;
+import org.embeddedt.embeddium.impl.gl.tessellation.GlPrimitiveType;
+import org.embeddedt.embeddium.impl.gl.tessellation.GlTessellation;
 import org.embeddedt.embeddium.impl.render.chunk.data.SectionRenderDataStorage;
 import org.embeddedt.embeddium.impl.render.chunk.fog.FogService;
 import org.embeddedt.embeddium.impl.render.chunk.lists.ChunkRenderListIterable;
-import org.embeddedt.embeddium.impl.render.chunk.lists.ChunkRenderList;
-import org.embeddedt.embeddium.impl.render.chunk.multidraw.BatchAssembler;
-import org.embeddedt.embeddium.impl.render.chunk.multidraw.CachedBatch;
-import org.embeddedt.embeddium.impl.render.chunk.region.RenderRegion;
 import org.embeddedt.embeddium.impl.render.chunk.shader.ChunkShaderInterface;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.embeddedt.embeddium.impl.render.viewport.CameraTransform;
-import org.jetbrains.annotations.Nullable;
 
-import java.util.Iterator;
-
+/**
+ * Minimal binary-compatibility shell retained for shader-mod / Demonica Tier A bytecode references.
+ * Celtium renders terrain exclusively through {@code VulkanTerrainGpuBackend} and does not instantiate
+ * Celeritas's OpenGL chunk renderer or GL tessellation pipeline.
+ */
 public abstract class DefaultChunkRenderer extends ShaderChunkRenderer {
-    private final Reference2ReferenceMap<ChunkPrimitiveType, SharedQuadIndexBuffer> sharedIndexBuffers;
-
-    private final BatchAssembler.TessellationProvider tessellationProvider = this::prepareTessellation;
-
-    private TerrainRenderPass currentRenderPass;
-    private GlVertexFormat currentVertexFormat;
 
     public DefaultChunkRenderer(RenderDevice device, RenderPassConfiguration<?> renderPassConfiguration, FogService fogService) {
         super(device, renderPassConfiguration, fogService);
-
-        this.sharedIndexBuffers = new Reference2ReferenceOpenHashMap<>();
     }
 
     @Override
@@ -43,34 +28,12 @@ public abstract class DefaultChunkRenderer extends ShaderChunkRenderer {
         return true;
     }
 
-    /**
-     * {@return the view being rendered} A view is one perspective the world is drawn from, such as the player camera
-     * or a shader pack's shadow camera. Each view keeps its own cached batches, so views that alternate within a frame
-     * do not rebuild each other's. Views are compared by identity and must come from a small fixed set, since every
-     * distinct view adds an entry to every region's batch cache. No consumer in this tree overrides this - there is
-     * no module here corresponding to upstream's {@code modern} - so the default always returns
-     * {@code DEFAULT_VIEW} (item 406).
-     */
     protected Object getRenderView() {
         return SectionRenderDataStorage.BatchCacheParams.DEFAULT_VIEW;
     }
 
-    /**
-     * {@return the cache key for a pass drawn with {@code useBlockFaceCulling}} Overridable so a platform whose
-     * renderer knows it draws another view can key its batches by that view; the default keys by
-     * {@link #getRenderView()}.
-     */
     protected SectionRenderDataStorage.BatchCacheParams batchCacheParams(boolean useBlockFaceCulling) {
         return new SectionRenderDataStorage.BatchCacheParams(useBlockFaceCulling, this.getRenderView());
-    }
-
-    protected final SharedQuadIndexBuffer getSharedIndexBuffer(ChunkPrimitiveType type, CommandList commandList) {
-        var buffer = this.sharedIndexBuffers.get(type);
-        if (buffer == null) {
-            buffer = new SharedQuadIndexBuffer(commandList, type);
-            this.sharedIndexBuffers.put(type, buffer);
-        }
-        return buffer;
     }
 
     protected abstract void configureShaderInterface(ChunkShaderInterface shader);
@@ -82,148 +45,15 @@ public abstract class DefaultChunkRenderer extends ShaderChunkRenderer {
                        TerrainRenderPass renderPass,
                        CameraTransform occlusionCamera,
                        CameraTransform camera) {
-        if (!renderLists.hasPass(renderPass)) {
-            return;
-        }
-
-        this.begin(renderPass);
-
-        // If there is no active program, shader compilation probably failed, and we can't render anything.
-        if (this.activeProgram != null) {
-            boolean useBlockFaceCulling = this.useBlockFaceCulling();
-
-            GLDebug.pushGroup(770, renderPass.name() + " terrain pass");
-
-            ChunkShaderInterface shader = this.activeProgram.getInterface();
-            shader.setProjectionMatrix(matrices.projection());
-            shader.setModelViewMatrix(matrices.modelView());
-
-            var primitiveType = shader.getPrimitiveType();
-
-            Iterator<ChunkRenderList> iterator = renderLists.iterator(renderPass.isReverseOrder());
-
-            this.currentRenderPass = renderPass;
-            this.currentVertexFormat = this.renderPassConfiguration.getVertexTypeForPass(this.currentRenderPass).getVertexFormat();
-
-            this.configureShaderInterface(shader);
-
-            long timestamp = System.nanoTime();
-
-            useBlockFaceCulling = useBlockFaceCulling && !renderPass.isSorted();
-            var cacheParams = this.batchCacheParams(useBlockFaceCulling);
-
-            while (iterator.hasNext()) {
-                ChunkRenderList renderList = iterator.next();
-
-                var region = renderList.getRegion();
-                var storage = region.getStorage(renderPass);
-
-                if (storage == null) {
-                    continue;
-                }
-
-                var cached = this.getRegionBatch(commandList, region, storage, renderList, occlusionCamera, renderPass,
-                        useBlockFaceCulling, cacheParams);
-
-                var batch = cached != null ? cached.getBatch() : null;
-
-                if (batch != null && !batch.isEmpty()) {
-                    if (!renderPass.isSorted()) {
-                        getSharedIndexBuffer(renderPassConfiguration.getPrimitiveTypeForPass(renderPass), commandList)
-                                .ensureCapacity(commandList, batch.getIndexBufferSize());
-                    }
-
-                    setModelMatrixUniforms(shader, region, camera);
-                    shader.setSectionAges(timestamp, region.getSectionLoadTimes());
-                    this.executeBatch(commandList, batch, cached.getTessellation(), primitiveType);
-                }
-            }
-
-            this.currentVertexFormat = null;
-            this.currentRenderPass = null;
-
-            GLDebug.popGroup();
-        }
-
-        this.end(renderPass);
-    }
-
-    protected @Nullable CachedBatch getRegionBatch(CommandList commandList,
-                                                   RenderRegion region,
-                                                   SectionRenderDataStorage storage,
-                                                   ChunkRenderList renderList,
-                                                   CameraTransform occlusionCamera,
-                                                   TerrainRenderPass renderPass,
-                                                   boolean useBlockFaceCulling,
-                                                   SectionRenderDataStorage.BatchCacheParams cacheParams) {
-        var cached = storage.getCachedMultiDrawBatch(cacheParams);
-
-        if (cached == null || !cached.isValidFor(renderList.getSectionsWithGeometry(), renderList.getSectionsWithGeometryCount(),
-                occlusionCamera.intX, occlusionCamera.intY, occlusionCamera.intZ)) {
-            // Retire the stale batch first, before its replacement is created (item 398): the store no longer
-            // has to delete the old batch inline with the new one already alive.
-            if (cached != null) {
-                storage.retireCachedMultiDrawBatch(cacheParams);
-            }
-
-            cached = BatchAssembler.createCachedBatch(region, storage, renderList, occlusionCamera, renderPass,
-                    useBlockFaceCulling, commandList, this.tessellationProvider);
-
-            storage.storeCachedMultiDrawBatch(cacheParams, cached);
-        }
-
-        return cached;
+        throw new UnsupportedOperationException("Celtium renders terrain exclusively through VulkanTerrainGpuBackend");
     }
 
     protected void executeBatch(CommandList commandList, MultiDrawBatch batch, GlTessellation tessellation, GlPrimitiveType primitiveType) {
-        batch.execute(commandList, tessellation, primitiveType);
-    }
-
-    private static void setModelMatrixUniforms(ChunkShaderInterface shader, RenderRegion region, CameraTransform camera) {
-        float x = getCameraTranslation(region.getOriginX(), camera.intX, camera.fracX);
-        float y = getCameraTranslation(region.getOriginY(), camera.intY, camera.fracY);
-        float z = getCameraTranslation(region.getOriginZ(), camera.intZ, camera.fracZ);
-
-        shader.setRegionOffset(x, y, z);
-    }
-
-    private static float getCameraTranslation(int chunkBlockPos, int cameraBlockPos, float cameraPos) {
-        return (chunkBlockPos - cameraBlockPos) - cameraPos;
-    }
-
-    protected GlTessellation prepareTessellation(CommandList commandList, RenderRegion region, TerrainRenderPass pass) {
-        var resources = region.getResources();
-        var key = pass.tessellationKey();
-
-        var tessellation = resources.getTessellation(key);
-
-        if (tessellation == null) {
-            tessellation = this.createRegionTessellation(commandList, resources);
-            resources.updateTessellation(commandList, key, tessellation);
-        }
-
-        return tessellation;
-    }
-
-    protected TessellationBinding[] makeTessellationBindingArray(CommandList commandList, RenderRegion.DeviceResources resources) {
-        return new TessellationBinding[] {
-                TessellationBinding.forVertexBuffer(resources.getVertexBuffer(), this.currentVertexFormat),
-                TessellationBinding.forElementBuffer(this.currentRenderPass.isSorted() ? resources.getIndexBuffer() : this.getSharedIndexBuffer(this.renderPassConfiguration.getPrimitiveTypeForPass(this.currentRenderPass), commandList).getBufferObject())
-        };
-    }
-
-    protected GlTessellation createRegionTessellation(CommandList commandList, RenderRegion.DeviceResources resources) {
-        var bindings = makeTessellationBindingArray(commandList, resources);
-        GlVertexArrayTessellation tessellation = new GlVertexArrayTessellation(new GlVertexArray(), bindings);
-        tessellation.init(commandList);
-
-        return tessellation;
+        throw new UnsupportedOperationException("Celtium renders terrain exclusively through VulkanTerrainGpuBackend");
     }
 
     @Override
     public void delete(CommandList commandList) {
         super.delete(commandList);
-
-        this.sharedIndexBuffers.values().forEach(buffer -> buffer.delete(commandList));
     }
 }
