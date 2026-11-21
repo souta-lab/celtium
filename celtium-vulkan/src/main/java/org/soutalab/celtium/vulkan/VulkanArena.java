@@ -249,7 +249,7 @@ public final class VulkanArena {
             // the free range in front of it keeps a length that is a multiple of that unit. Without this the remainder
             // of an unaligned capacity landed at the *start* of every later range, and getOffset()'s division dropped
             // it - the vertices were then read one field out of step.
-            int start = alignDownTo(free.end() - needed, this.alignUnit);
+            int start = splitStart(free.offset, free.length, needed, this.alignUnit);
             int alignedNeeded = free.end() - start;
             result = new Segment(this, start, alignedNeeded);
             result.prev = free;
@@ -746,8 +746,7 @@ public final class VulkanArena {
      * enough, so growth would never succeed.
      */
     private void grow(int needed) {
-        long target = Math.max(Math.max((long) this.capacity * 2L, (long) this.capacity + needed),
-                MINIMUM_GROWTH_BYTES);
+        long target = growthTarget(this.capacity, needed, this.alignUnit);
         if (target > Integer.MAX_VALUE) {
             throw new OutOfMemoryError("The Vulkan arena cannot grow beyond " + Integer.MAX_VALUE + " bytes (used "
                     + this.used + " bytes, requested " + needed + " bytes).");
@@ -757,6 +756,49 @@ public final class VulkanArena {
         // Read the real size back instead of assuming the request: VulkanBuffer owns the exact allocation size.
         this.capacity = (int) this.buffer.size();
         appendFreeTail(oldCapacity, this.capacity - oldCapacity);
+    }
+
+    /**
+     * The capacity a grow aims for: at least double, at least {@code capacity + needed}, at least the minimum
+     * growth - and rounded up to the arena's alignment unit.
+     * <p>
+     * The rounding is the point: {@link VulkanBuffer#ensureCapacity(long)} rounds only to 4 bytes, and
+     * {@link #MINIMUM_GROWTH_BYTES} is not a multiple of every stride's unit (524,288 mod 24 = 8, and likewise
+     * for 28 and 36), so the raw maximum could leave the capacity off the unit. The tail a grow appends then
+     * ends off the unit, and a later split of that tail derives a start below the range it splits - the
+     * allocator corruption {@link #splitStart} now refuses. BH-01's invariant ("every boundary is a multiple
+     * of the unit") held for the constructor's capacity but not for this one; it holds for both now.
+     */
+    static long growthTarget(int capacity, int needed, int alignUnit) {
+        long target = Math.max(Math.max((long) capacity * 2L, (long) capacity + needed),
+                MINIMUM_GROWTH_BYTES);
+        if (alignUnit > 1) {
+            target = (target + alignUnit - 1) / alignUnit * (long) alignUnit;
+        }
+        return target;
+    }
+
+    /**
+     * Where the split of a free range for {@code needed} bytes begins: the range's end pulled down to the
+     * alignment unit, so the handed-out segment starts on a whole element.
+     * <p>
+     * The start must stay inside the range. A start below the range's offset would make the new segment
+     * overlap the live segment in front of it and drive the remainder's length negative - allocator
+     * corruption that then propagates through every later merge. Growth and construction keep every boundary
+     * on the unit, which makes a below-range start unreachable; the check exists so a future break of that
+     * invariant fails loudly here instead of corrupting geometry silently.
+     *
+     * @throws IllegalStateException when the aligned start would fall below the free range's offset
+     */
+    static int splitStart(int freeOffset, int freeLength, int needed, int alignUnit) {
+        int start = alignDownTo(freeOffset + freeLength - needed, alignUnit);
+        if (start < freeOffset) {
+            throw new IllegalStateException("Vulkan arena split of the free range at " + freeOffset
+                    + " (" + freeLength + " bytes) for " + needed + " bytes would start at " + start
+                    + ", below the range: a boundary is off the arena's alignment unit " + alignUnit
+                    + ", so the segment would overlap its predecessor and the remainder would go negative.");
+        }
+        return start;
     }
 
     /**

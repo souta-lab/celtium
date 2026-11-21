@@ -1064,6 +1064,7 @@ public final class VulkanContext {
                 check(vkCreateFence(this.device, VkFenceCreateInfo.calloc(stack).sType$Default(), null, fenceHandle),
                         "vkCreateFence(bootstrap submit)");
                 long fence = fenceHandle.get(0);
+                boolean fenceHeld = false;
                 try {
                     VulkanContext.queueSubmitCalls++;
                         celtium$awaitPresenter();
@@ -1086,7 +1087,14 @@ public final class VulkanContext {
                                 + " rather than freed (submitTimeouts=" + submitTimeouts + ")");
                     } else if (waited == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
                         submitDeviceLost++;
-                        this.usable = false;
+                        // The lost-device rule the deferred path states: after a loss, no handle recycling or
+                        // destruction may be assumed. The fence is therefore not destroyed and the command
+                        // buffer is not recycled - both are quarantined for teardown - and the loss is thrown
+                        // so the caller stops instead of reusing the staging this copy was writing into.
+                        releasedToQueue = false;
+                        fenceHeld = true;
+                        quarantine(commandBuffer, fence);
+                        throw celtium$lostDevice("vkWaitForFences(bootstrap submit)");
                     } else {
                         queueWaitFailures++;
                         this.usable = false;
@@ -1097,7 +1105,9 @@ public final class VulkanContext {
                                 + queueWaitFailures + ")");
                     }
                 } finally {
-                    vkDestroyFence(this.device, fence, null);
+                    if (!fenceHeld) {
+                        vkDestroyFence(this.device, fence, null);
+                    }
                 }
             }
         } finally {
@@ -1236,6 +1246,11 @@ public final class VulkanContext {
             if (entry.batch.pending == 0) {
                 entry.fence = entry.batch.fence;
                 entry.batch = null;
+                if (this.quarantinedFences.contains(Long.valueOf(entry.fence))) {
+                    // A sibling entry of this batch timed out and quarantined the shared fence: the quarantine
+                    // set owns it until teardown's device-wide wait, so it is neither reset nor pooled here.
+                    entry.fence = VK_NULL_HANDLE;
+                }
             } else {
                 entry.fence = VK_NULL_HANDLE;
             }
@@ -1437,7 +1452,8 @@ public final class VulkanContext {
     /**
      * Submits a detached batch in one {@code vkQueueSubmit}, on whichever thread holds the queue.
      *
-     * @return the failure, or null; the caller's thread frees the entries through {@link #failBatch} on failure
+     * @return the failure, or null; on failure the caller quarantines the entries through
+     *         {@link #abandonFailedBatch} on its own thread
      */
     private Throwable submitBatch(SharedBatch batch, java.util.ArrayList<DeferredSubmit> entries) {
         // In chunks: a loading screen can queue hundreds of uploads in one batch (measured on Enigmatica 2 Expert's
@@ -1485,8 +1501,11 @@ public final class VulkanContext {
     }
 
     /**
-     * The queue never saw the batch: the entries leave the deferred queue and their resources free the same way the
-     * single-submit failure path frees them, and the shared fence goes with them. Runs on the owning thread.
+     * A batch whose submission failed: the entries leave the deferred queue and their resources are quarantined -
+     * never freed, because in a multi-chunk batch an earlier chunk may already be executing on the GPU - and the
+     * shared fence is quarantined with them. Each entry's {@link DeferredSubmit#slotReclaim} still runs, with the
+     * lost-device flag, exactly once: the callback's contract names this path alongside reclaim, and the frame
+     * coordinator's slot bookkeeping has no other completion event for a failed batch. Runs on the owning thread.
      */
     private void abandonFailedBatch(SharedBatch batch, java.util.ArrayList<DeferredSubmit> entries) {
         // In a multi-chunk batch, earlier chunks may have reached the GPU.
@@ -1503,7 +1522,10 @@ public final class VulkanContext {
                 this.quarantinedCommandBuffers.add(entry.commandBuffer);
             }
             entry.commandBuffer = null;
-            entry.slotReclaim = null;
+            if (entry.slotReclaim != null) {
+                entry.slotReclaim.accept(Boolean.TRUE);
+                entry.slotReclaim = null;
+            }
         }
         System.err.println("[Celtium] CELTIUM_VULKAN_DEVICE_LOST: quarantined "
                 + entries.size() + " deferred entries without calling the native driver.");
@@ -1871,6 +1893,16 @@ public final class VulkanContext {
         this.deferredSubmits.remove(entry);
         this.deferredSubmitsOutstanding--;
         quarantine(entry.commandBuffer, entry.fence);
+        if (entry.batch != null) {
+            // This entry never reclaims, so its share of the batch count leaves with it: the count then names
+            // only entries that can still reclaim. The fence itself stays the quarantine set's property -
+            // reclaimDeferred checks the set before it would pool the fence at the count's end, so a sibling
+            // reclaiming later cannot reset or pool a fence teardown owns.
+            entry.batch.pending--;
+            entry.batch = null;
+        }
+        // The slot confirmation is deliberately not run: the submission is unconfirmed, not lost, and this
+        // branch latches the context unusable, so the coordinator submits nothing further against the slot.
         entry.commandBuffer = null;
         entry.uploadSlotMask = 0L;
         if (waited == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
@@ -2203,16 +2235,56 @@ public final class VulkanContext {
             // Deferred submissions are under the same rule as the quarantine list: released only when the device
             // confirmed idle, otherwise counted as held. The fence pool itself is destroyed either way - on a
             // non-confirming wait the objects are already unreachable, which is what makes destroying them safe.
+            // The upload ring is decided here too, under the same rule: the batches read it, so it is destroyed
+            // only when a drain confirmed after the flush below makes "no batch is reading the ring" a fact.
+            boolean ringDrained = false;
             if (releaseQuarantined) {
                 try {
                     // Whatever is still queued was logically submitted already: push it to the queue so the drain
                     // below reclaims real completions rather than entries the GPU never saw.
                     celtium$flushBatchedSubmits();
                 } catch (RuntimeException | LinkageError ignored) {
-                    // Teardown already knows the device state; a failed flush frees the entries itself.
+                    // Teardown already knows the device state; a failed flush disposes of the entries itself.
                 }
-                while (!this.deferredSubmits.isEmpty()) {
-                    celtium$reclaimDeferred(this.deferredSubmits.poll(), false);
+                if (this.deviceLost) {
+                    // The flush itself reported the loss (its failure path quarantined the batch without
+                    // touching handles). The rule at the head of this method applies unchanged: no further
+                    // native cleanup.
+                    System.err.println("[Celtium] CELTIUM_VULKAN_DEVICE_LOST: teardown flush reported "
+                            + "device loss; skipping further native cleanup.");
+                    return;
+                }
+                // The flush armed real submissions AFTER the device-wide wait above, so that wait says nothing
+                // about them: reclaiming here without a second confirmation would recycle their command
+                // buffers, reset the batch fence and release the ring slots the queue may still be executing
+                // against. Wait again - the same "the queue is finished with them" fact the quarantine
+                // release above rests on.
+                ringDrained = true;
+                if (!this.deferredSubmits.isEmpty()) {
+                    int drained = vkDeviceWaitIdle(this.device);
+                    if (drained == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
+                        this.deviceLost = true;
+                        this.usable = false;
+                        System.err.println("[Celtium] CELTIUM_VULKAN_DEVICE_LOST: teardown drain reported "
+                                + "device loss; skipping further native cleanup.");
+                        return;
+                    }
+                    ringDrained = drained == VK_SUCCESS;
+                    if (!ringDrained) {
+                        deviceIdleFailures++;
+                        System.out.println("[Celtium] CELTIUM_WAIT_CENSUS vkDeviceWaitIdle did not confirm"
+                                + " the deferred submissions drained (result=" + drained + "): "
+                                + this.deferredSubmits.size() + " deferred submission(s) are NOT reclaimed"
+                                + " and the upload ring is NOT destroyed - the queue may still own them");
+                    }
+                }
+                if (ringDrained) {
+                    while (!this.deferredSubmits.isEmpty()) {
+                        celtium$reclaimDeferred(this.deferredSubmits.poll(), false);
+                    }
+                } else {
+                    this.deferredHeldAtTeardown = this.deferredSubmits.size();
+                    this.deferredSubmits.clear();
                 }
             } else {
                 this.deferredHeldAtTeardown = this.deferredSubmits.size();
@@ -2233,7 +2305,9 @@ public final class VulkanContext {
             }
             this.idleDeferredFences.clear();
             destroyStaging();
-            destroyUploadRing();
+            if (ringDrained) {
+                destroyUploadRing();
+            }
             savePipelineCache();
             for (Long ballast : EXPERIMENT_BALLAST) {
                 freeMemory(this.device, ballast.longValue());
@@ -3432,11 +3506,13 @@ public final class VulkanContext {
     }
 
     /**
-     * Releases the upload ring, its batch fence and its semaphore.
+     * Releases the upload ring.
      * <p>
-     * A batch still in flight is waited for first: its copies read the ring's staging bytes, so destroying the ring
-     * under it is exactly the use-after-free the batch's fence exists to prevent. The caller of this method has
-     * already waited for device idle, so this wait finds the batch complete and only confirms the epoch.
+     * This method does not wait: a batch still in flight reads the ring's staging bytes, so destroying the ring
+     * under it is exactly the use-after-free the batch's fence exists to prevent. The only caller, {@link #delete()},
+     * calls this solely after a device-wide wait that postdates the teardown flush confirmed the queue idle - the
+     * one point where "no batch is reading the ring" is a fact. When that confirmation fails, delete() leaves the
+     * ring to the process teardown instead of calling this.
      */
     private void destroyUploadRing() {
         this.uploadDroppedCopies += this.pendingUploads.size();
