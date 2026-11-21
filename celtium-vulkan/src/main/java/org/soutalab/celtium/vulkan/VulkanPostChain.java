@@ -214,6 +214,7 @@ public final class VulkanPostChain {
     private long mainFramebufferImage;
     private int mainFramebufferWidth;
     private int mainFramebufferHeight;
+    private long mainFramebufferGeneration;
     private int passesRecorded;
     private int chainsRun;
     /**
@@ -1716,8 +1717,14 @@ public final class VulkanPostChain {
 
     private long mainFramebuffer(int width, int height) {
         long image = this.frameTarget.colorImage();
+        // The generation is part of the key, not just the image handle (audit-vulkan-core F2): a
+        // frame target replaced at the same size can hand back the destroyed image's handle value
+        // while its view is a different object, and the cached framebuffer names the view, not the
+        // image. Every target move arrives through adoptFrameTarget with a fresh generation, so a
+        // generation change rebuilds against the live view.
         if (image != this.mainFramebufferImage || width != this.mainFramebufferWidth
-                || height != this.mainFramebufferHeight) {
+                || height != this.mainFramebufferHeight
+                || this.frameTargetGeneration != this.mainFramebufferGeneration) {
             if (this.mainFramebuffer != 0) {
                 // Retired, not destroyed: the frame's command buffer may already have recorded a pass into this
                 // framebuffer this frame, and a size change can arrive mid-recording. The validation layer named exactly
@@ -1739,6 +1746,7 @@ public final class VulkanPostChain {
                 this.mainFramebufferImage = image;
                 this.mainFramebufferWidth = width;
                 this.mainFramebufferHeight = height;
+                this.mainFramebufferGeneration = this.frameTargetGeneration;
             }
         }
         return this.mainFramebuffer;
