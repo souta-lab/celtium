@@ -858,6 +858,9 @@ final class PublishedFrameTextures {
             if (state == null) {
                 continue;
             }
+            // The published layout is the recorded head, not the confirmed layout: a barrier recorded
+            // later in the same recording chains from the layout the recording leaves the image in.
+            // The confirmed fact stays in the registry and catches up at commit.
             NamedTargetTexture next = new NamedTargetTexture(
                     spec.name(),
                     state.image(),
@@ -868,7 +871,7 @@ final class PublishedFrameTextures {
                     spec.formatClass().vkFormat(),
                     spec.kind().isDepth(),
                     spec.kind().usesComparisonSampler(),
-                    state.layout(),
+                    state.recordedLayout(),
                     state.generation());
             NamedTargetTexture prev = this.namedPublished.get(spec.name());
             if (!next.equals(prev)) {

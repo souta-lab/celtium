@@ -72,7 +72,7 @@ class PassExecutorFailureCleanupTest {
         int passClosed = failurePath.indexOf("vkCmdEndRenderPass(commandBuffer);");
         int noteGuard = failurePath.indexOf("if (outputTransitionRecorded) {");
         int notePaid = failurePath.indexOf(
-                "this.targetRegistry.noteNamedTargetLayout(output.name(), attachmentLayout);");
+                "this.targetRegistry.noteNamedTargetLayout(commandBuffer.address(), output.name(), attachmentLayout);");
         int refused = failurePath.indexOf("this.passRegistry.noteExecutionRefusal(");
         assertTrue(passGuard >= 0 && passClosed > passGuard,
                 "an open pass is closed on the failure path");

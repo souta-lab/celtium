@@ -70,6 +70,7 @@ public final class FrameCoordinator {
         FrameSubmissionScheduler scheduler();
         boolean submissionPending();
         SubmissionStatistics submissionStatistics();
+        RenderTargetRegistry targetRegistry();
         int failImmediateSubmits();
         void record(String message);
         void noteImmediateSubmitFailure();
@@ -315,6 +316,10 @@ public final class FrameCoordinator {
         // pending for the next beginCommands() to abandon - and the next ensureGeneralLayout/ensureSampledLayout
         // to re-record.
         VulkanGlTexture.commitLayoutRecording(this.host.commandBuffer());
+        // The named targets' recorded transitions become fact at the same point and by the same rule
+        // (audit-vulkan-core E2): their registry layout is what the last accepted submission left, never
+        // what a recording merely drew into a buffer that may still be abandoned.
+        this.host.targetRegistry().commitNamedTargetLayoutRecording(this.host.commandBuffer().address());
         this.host.setSubmissionPending(true);
         // OPT-08: the submission belongs to a slot and carries a sequence. The slot's fence is what makes its
         // buffer reusable, and the sequence watermark is what releases the resources this submission still names -

@@ -1010,6 +1010,7 @@ public final class RenderTargetRegistry {
         private int width;
         private int height;
         private int layout;
+        private int recordedLayout;
         private long generation;
         private long clearedFrame = -1L;
 
@@ -1022,6 +1023,7 @@ public final class RenderTargetRegistry {
             this.width = width;
             this.height = height;
             this.layout = layout;
+            this.recordedLayout = layout;
             this.generation = generation;
         }
 
@@ -1049,8 +1051,17 @@ public final class RenderTargetRegistry {
             return this.height;
         }
 
+        /** The confirmed layout: the one the last accepted submission left this image in. */
         public int layout() {
             return this.layout;
+        }
+
+        /**
+         * The layout the open recording leaves this image in - what a barrier recorded next must chain from.
+         * Equals {@link #layout()} while no open recording names this target.
+         */
+        public int recordedLayout() {
+            return this.recordedLayout;
         }
 
         public long generation() {
@@ -1106,6 +1117,9 @@ public final class RenderTargetRegistry {
         long nextGeneration = existing == null ? 1L : existing.generation + 1L;
         NamedTargetState state = new NamedTargetState(spec, image, view, sampler, width, height, layout, nextGeneration);
         this.namedTargetStates.put(name, state);
+        // The allocation fact replaces the image itself: a recorded transition that named the old image
+        // must not land on the new one at commit.
+        dropNamedTargetRecordings(name);
         return state;
     }
 
@@ -1113,10 +1127,98 @@ public final class RenderTargetRegistry {
         return name == null ? null : this.namedTargetStates.get(name);
     }
 
-    public void noteNamedTargetLayout(String name, int layout) {
+    /**
+     * Layout transitions recorded into one command buffer and not yet accepted by the queue, per named target:
+     * the layout the recording leaves the target in. This is the three-phase discipline
+     * {@code VulkanGlTexture} keeps for foreign images (note / commit / abandon), applied to named targets
+     * (audit-vulkan-core E2): {@link NamedTargetState#layout()} is the layout the last accepted submission
+     * left the image in, and a transition recorded into a buffer whose submission never happens - refused
+     * submit, buffer reset, a frame abandoned before submission - must not move it, or the next frame's
+     * barrier names an {@code oldLayout} the image is not in.
+     */
+    private final Map<Long, Map<String, Integer>> namedLayoutRecordings = new java.util.HashMap<>();
+
+    /**
+     * Opens the named-target layout recording for a command buffer, dropping any uncommitted recording the
+     * same handle still holds - which is exactly the reset/abandon case, as with
+     * {@code VulkanGlTexture.beginLayoutRecording}: the previous recording's barriers may never have executed,
+     * so its targets' recorded heads fall back to their confirmed layouts.
+     */
+    public void beginNamedTargetLayoutRecording(long commandBuffer) {
+        Map<String, Integer> previous = this.namedLayoutRecordings.remove(commandBuffer);
+        if (previous != null) {
+            settleNamedTargetRecordedLayouts(previous.keySet());
+        }
+    }
+
+    /**
+     * Notes that the recording into {@code commandBuffer} transitions the named target to {@code layout}.
+     * The target's recorded head moves now, so a later barrier in the same recording chains from it; its
+     * confirmed layout moves only at {@link #commitNamedTargetLayoutRecording(long)}.
+     */
+    public void noteNamedTargetLayout(long commandBuffer, String name, int layout) {
         NamedTargetState state = this.namedTargetStates.get(name);
-        if (state != null) {
-            state.layout = layout;
+        if (state == null) {
+            return;
+        }
+        this.namedLayoutRecordings
+                .computeIfAbsent(commandBuffer, key -> new java.util.LinkedHashMap<>())
+                .put(name, Integer.valueOf(layout));
+        state.recordedLayout = layout;
+    }
+
+    /**
+     * Makes every transition recorded into this command buffer fact: the submission that carries them was
+     * accepted by the queue. Called at the same point as {@code VulkanGlTexture.commitLayoutRecording} -
+     * immediately after the queue accepted the submission, never before it.
+     */
+    public void commitNamedTargetLayoutRecording(long commandBuffer) {
+        Map<String, Integer> recording = this.namedLayoutRecordings.remove(commandBuffer);
+        if (recording == null) {
+            return;
+        }
+        for (Map.Entry<String, Integer> entry : recording.entrySet()) {
+            NamedTargetState state = this.namedTargetStates.get(entry.getKey());
+            if (state != null) {
+                state.layout = entry.getValue().intValue();
+            }
+        }
+        settleNamedTargetRecordedLayouts(recording.keySet());
+    }
+
+    /**
+     * Drops the transitions recorded into a command buffer without applying them, because the submission
+     * that would have carried them was refused or its recording thrown away.
+     */
+    public void abandonNamedTargetLayoutRecording(long commandBuffer) {
+        Map<String, Integer> recording = this.namedLayoutRecordings.remove(commandBuffer);
+        if (recording != null) {
+            settleNamedTargetRecordedLayouts(recording.keySet());
+        }
+    }
+
+    /** Recomputes each named target's recorded head from the recordings still open, falling back to the confirmed layout. */
+    private void settleNamedTargetRecordedLayouts(java.util.Set<String> names) {
+        for (String name : names) {
+            NamedTargetState state = this.namedTargetStates.get(name);
+            if (state == null) {
+                continue;
+            }
+            int head = state.layout;
+            for (Map<String, Integer> recording : this.namedLayoutRecordings.values()) {
+                Integer noted = recording.get(name);
+                if (noted != null) {
+                    head = noted.intValue();
+                }
+            }
+            state.recordedLayout = head;
+        }
+    }
+
+    /** Drops any uncommitted recorded transitions naming a target whose allocation fact was just replaced or forgotten. */
+    private void dropNamedTargetRecordings(String name) {
+        for (Map<String, Integer> recording : this.namedLayoutRecordings.values()) {
+            recording.remove(name);
         }
     }
 
@@ -1129,17 +1231,20 @@ public final class RenderTargetRegistry {
 
     public void forgetNamedTargetAllocation(String name) {
         if (name != null) {
+            dropNamedTargetRecordings(name);
             this.namedTargetStates.remove(name);
         }
     }
 
     public void clearNamedTargetAllocations() {
         this.namedTargetStates.clear();
+        this.namedLayoutRecordings.clear();
     }
 
     public void clearNamedTargets() {
         this.namedTargetStates.clear();
         this.namedTargetSpecs.clear();
+        this.namedLayoutRecordings.clear();
     }
 
     private static String hex(long value) {
