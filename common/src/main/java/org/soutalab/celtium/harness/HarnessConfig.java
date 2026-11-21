@@ -147,7 +147,7 @@ public final class HarnessConfig {
     }
 
     /** The file's values, loaded once. Kept apart so the load order is the class-load order of this holder. */
-    private static final class FileValues {
+    static final class FileValues {
 
         private static final Properties VALUES = load();
 
@@ -159,24 +159,32 @@ public final class HarnessConfig {
         }
 
         private static Properties load() {
+            return loadFrom(Paths.get(System.getProperty("user.dir", ".")));
+        }
+
+        /**
+         * The two candidate files are one configuration kept in two places, so they merge: the
+         * {@code config} subdirectory's file is the base and the working directory's own file overrides
+         * it key by key. The earlier first-file-wins load silently dropped every key that lived only in
+         * the shadowed file - a template carrying entries under {@code config} lost them the moment a
+         * leg seeded a file of its own in the working directory, and nothing anywhere said so.
+         */
+        static Properties loadFrom(Path directory) {
             Properties properties = new Properties();
-            Path directory = Paths.get(System.getProperty("user.dir", "."));
-            Path[] candidates = {
-                    directory.resolve("celtium-harness.properties"),
-                    directory.resolve("config").resolve("celtium-harness.properties"),
-            };
-            for (Path candidate : candidates) {
-                if (!Files.isRegularFile(candidate)) {
-                    continue;
-                }
-                try (InputStream input = Files.newInputStream(candidate)) {
-                    properties.load(input);
-                } catch (IOException ignored) {
-                    // An unreadable harness file must not take the game down with it; the profile applies.
-                }
-                break;
-            }
+            loadInto(properties, directory.resolve("config").resolve("celtium-harness.properties"));
+            loadInto(properties, directory.resolve("celtium-harness.properties"));
             return properties;
+        }
+
+        private static void loadInto(Properties properties, Path candidate) {
+            if (!Files.isRegularFile(candidate)) {
+                return;
+            }
+            try (InputStream input = Files.newInputStream(candidate)) {
+                properties.load(input);
+            } catch (IOException ignored) {
+                // An unreadable harness file must not take the game down with it; the profile applies.
+            }
         }
     }
 }

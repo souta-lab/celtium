@@ -278,11 +278,29 @@ public final class FrameSubmissionScheduler {
         requireSlot(slot);
         List<Retirement> owed = this.slotRetirements.get(slot);
         int released = 0;
-        for (int i = 0; i < owed.size(); i++) {
-            owed.get(i).resource().release();
-            released++;
+        RuntimeException failure = null;
+        // Take each retirement off the list before releasing it. The earlier shape - release everything,
+        // then clear - broke both ways on a throwing release(): the resources already released stayed on
+        // the list and were released again by the next reset (a double destroy of a Vulkan handle), and
+        // the ones after the failure were stranded behind it. Now every retirement is released exactly
+        // once, a failure is collected rather than allowed to strand the rest, and the first failure is
+        // rethrown once the slot is drained.
+        while (!owed.isEmpty()) {
+            Retirement retirement = owed.remove(0);
+            try {
+                retirement.resource().release();
+                released++;
+            } catch (RuntimeException e) {
+                if (failure == null) {
+                    failure = e;
+                } else {
+                    failure.addSuppressed(e);
+                }
+            }
         }
-        owed.clear();
+        if (failure != null) {
+            throw failure;
+        }
         return released;
     }
 
@@ -292,8 +310,22 @@ public final class FrameSubmissionScheduler {
      */
     public int releaseAll() {
         int released = 0;
+        RuntimeException failure = null;
         for (int slot = 0; slot < FRAME_SLOTS; slot++) {
-            released += releaseOnSlotReset(slot);
+            try {
+                released += releaseOnSlotReset(slot);
+            } catch (RuntimeException e) {
+                // A failing slot must not strand the slots after it: teardown owes every slot its
+                // releases, and the first failure is reported once all of them have had theirs.
+                if (failure == null) {
+                    failure = e;
+                } else {
+                    failure.addSuppressed(e);
+                }
+            }
+        }
+        if (failure != null) {
+            throw failure;
         }
         return released;
     }
