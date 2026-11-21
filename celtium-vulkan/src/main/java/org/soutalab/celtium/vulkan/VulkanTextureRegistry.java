@@ -827,7 +827,7 @@ public final class VulkanTextureRegistry {
         this.mutations++;
         celtium$dropMemoFor(glTextureId);
         this.mirrorCount++;
-        java.nio.ByteBuffer zeros = org.lwjgl.system.MemoryUtil.memCalloc((long) width * (long) height, 4L);
+        java.nio.ByteBuffer zeros = org.lwjgl.system.MemoryUtil.memCalloc(width * height, 4);
         try {
             if (texture.uploadFromNamedImage(glTextureId, width, height, zeros)) {
                 this.imageUploads++;
