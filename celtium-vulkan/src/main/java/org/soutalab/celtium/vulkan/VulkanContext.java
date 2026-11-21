@@ -2278,9 +2278,17 @@ public final class VulkanContext {
                 if (this.deviceLost) {
                     // The flush itself reported the loss (its failure path quarantined the batch without
                     // touching handles). The rule at the head of this method applies unchanged: no further
-                    // native cleanup.
+                    // native cleanup. The rule's registry hygiene applies too: the pipeline cache entry and
+                    // any retirements queued since the drain above must not survive this device (BH10-06 /
+                    // L06-01), the same drops the other device-lost exits make.
                     System.err.println("[Celtium] CELTIUM_VULKAN_DEVICE_LOST: teardown flush reported "
                             + "device loss; skipping further native cleanup.");
+                    dropPipelineCache(deviceHandle);
+                    int droppedRetirements = VulkanRetireQueue.dropFor(deviceHandle);
+                    if (droppedRetirements > 0) {
+                        System.err.println("[Celtium] CELTIUM_VULKAN_DEVICE_LOST: " + droppedRetirements
+                                + " retired destruction(s) of this device were dropped unexecuted");
+                    }
                     return;
                 }
                 // The flush armed real submissions AFTER the device-wide wait above, so that wait says nothing
@@ -2296,6 +2304,15 @@ public final class VulkanContext {
                         this.usable = false;
                         System.err.println("[Celtium] CELTIUM_VULKAN_DEVICE_LOST: teardown drain reported "
                                 + "device loss; skipping further native cleanup.");
+                        // The same registry hygiene as the other device-lost exits: the dead device's
+                        // pipeline cache entry and queued retirements must not survive it (BH10-06 /
+                        // L06-01).
+                        dropPipelineCache(deviceHandle);
+                        int droppedRetirements = VulkanRetireQueue.dropFor(deviceHandle);
+                        if (droppedRetirements > 0) {
+                            System.err.println("[Celtium] CELTIUM_VULKAN_DEVICE_LOST: " + droppedRetirements
+                                    + " retired destruction(s) of this device were dropped unexecuted");
+                        }
                         return;
                     }
                     ringDrained = drained == VK_SUCCESS;
