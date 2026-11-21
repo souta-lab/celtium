@@ -101,7 +101,15 @@ class LandedFixGuardContractTest {
     @Test
     void theOffTargetFallbackRestoresTheWholePassState() throws IOException {
         String backend = read(BACKEND);
-        int fallback = backend.indexOf("this.passAttachedColorImages = null;");
+        // The anchor is the fallback's own assignment, found from its deferred-clear block: the
+        // same `= null` line also appears at the plain path's default and at the off-target
+        // attach, both before the fallback, and a bare indexOf anchors on the first of those -
+        // whose block restores nothing (the restore there precedes the assignment). Measured on
+        // the gate tree: the first occurrence's window held no restore and this test failed
+        // against a production block that restores all three.
+        int deferral = backend.indexOf("deferred clear has no consumer here");
+        assertTrue(deferral >= 0, "the fallback's deferred-clear block is present");
+        int fallback = backend.indexOf("this.passAttachedColorImages = null;", deferral);
         assertTrue(fallback >= 0, "the fallback framebuffer rebuild is present");
         String block = backend.substring(fallback, fallback + 3000);
         assertTrue(block.contains("this.passAttachedColorImage = this.frameTarget.colorImage();"),
