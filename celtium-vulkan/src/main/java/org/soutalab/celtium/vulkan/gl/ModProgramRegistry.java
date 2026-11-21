@@ -74,6 +74,21 @@ public final class ModProgramRegistry {
             return this.cachedPackedVersion == this.uniformVersion ? this.cachedPackedUniforms : null;
         }
 
+        /**
+         * Returns a reusable zero-cleared direct ByteBuffer of at least {@code bytes} capacity, avoiding a fresh
+         * {@code ByteBuffer.allocateDirect} (and Cleaner registration) on every uniform version change.
+         */
+        public ByteBuffer reusablePackedUniformBuffer(int bytes) {
+            ByteBuffer buf = this.cachedPackedUniforms;
+            if (buf == null || buf.capacity() < bytes) {
+                buf = ByteBuffer.allocateDirect(bytes).order(java.nio.ByteOrder.nativeOrder());
+            } else {
+                buf.clear();
+                MemoryUtil.memSet(MemoryUtil.memAddress(buf), 0, buf.capacity());
+            }
+            return buf;
+        }
+
         public void cachePackedUniforms(long version, ByteBuffer packed) {
             this.cachedPackedUniforms = packed;
             this.cachedPackedVersion = version;

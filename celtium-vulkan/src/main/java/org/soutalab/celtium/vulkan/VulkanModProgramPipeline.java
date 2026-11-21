@@ -137,7 +137,11 @@ public final class VulkanModProgramPipeline {
     private int uniformCursor;
     private long uniformEpoch = Long.MIN_VALUE;
     private int uniformClaimsThisEpoch;
-    private final Map<Long, Integer> uniformSlotsByVersion = new HashMap<>();
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap uniformSlotsByVersion =
+            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+    {
+        this.uniformSlotsByVersion.defaultReturnValue(-1);
+    }
     /** Whether the pass blends (its render state as built); the readback instrument looks for the blend-off copy. */
     boolean blends;
     private long setLayout = VK_NULL_HANDLE;
@@ -619,8 +623,8 @@ public final class VulkanModProgramPipeline {
             this.uniformClaimsThisEpoch = 0;
         }
         long version = program.uniformVersion();
-        Integer staged = this.uniformSlotsByVersion.get(version);
-        if (staged != null) {
+        int staged = this.uniformSlotsByVersion.get(version);
+        if (staged >= 0) {
             return staged;
         }
         if (this.uniformClaimsThisEpoch >= UNIFORM_RING_SLOTS) {
@@ -726,8 +730,7 @@ public final class VulkanModProgramPipeline {
         }
         long version = program.uniformVersion();
         ModGlslTranslator.Result lowered = program.lowered();
-        ByteBuffer block = ByteBuffer.allocateDirect(Math.max(16, lowered.uniformBlockSize()))
-                .order(java.nio.ByteOrder.nativeOrder());
+        ByteBuffer block = program.reusablePackedUniformBuffer(Math.max(16, lowered.uniformBlockSize()));
         for (ModGlslTranslator.UniformMember member : lowered.uniforms()) {
             float[] floats = program.floats(member.name());
             int[] ints = program.ints(member.name());
@@ -809,8 +812,10 @@ public final class VulkanModProgramPipeline {
         bindCache[5] = -1L;
         VulkanPushCache.SHARED.invalidate();
         if (samplerSet != 0L) {
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
-                    MemoryStack.stackGet().longs(samplerSet), null);
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
+                        stack.longs(samplerSet), null);
+            }
         }
         if (this.pushBytes > 0 && uniforms != null) {
             uniforms.position(0).limit(this.pushBytes);
