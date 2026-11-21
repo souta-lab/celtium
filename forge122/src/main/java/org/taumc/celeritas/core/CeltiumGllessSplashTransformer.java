@@ -6,6 +6,7 @@ import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
+import org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin;
 
 /**
  * Makes Forge's splash screen a no-op under the GL-less surface, by rewriting the class before it is defined.
@@ -45,75 +46,82 @@ public class CeltiumGllessSplashTransformer implements IClassTransformer {
         if (basicClass == null || !client && !TARGET.equals(name) && !TARGET.equals(transformedName)) {
             return basicClass;
         }
-        ClassReader reader = new ClassReader(basicClass);
-        ClassWriter writer = new ClassWriter(reader, 0);
-        reader.accept(new org.objectweb.asm.ClassVisitor(ASM_API, writer) {
-            @Override
-            public MethodVisitor visitMethod(int access, String methodName, String descriptor, String signature,
-                    String[] exceptions) {
-                MethodVisitor target = super.visitMethod(access, methodName, descriptor, signature, exceptions);
-                if (client) {
-                    if (!"processWindowMessages".equals(methodName) || !"()V".equals(descriptor)) return target;
-                    return new MethodVisitor(ASM_API, target) {
-                        @Override
-                        public void visitCode() {
-                            super.visitCode();
-                            super.visitMethodInsn(Opcodes.INVOKESTATIC,
-                                    "org/taumc/celeritas/core/CeltiumLoadingProgress", "refresh", "()V", false);
-                        }
-                    };
-                }
-                // The maximum texture size is measured by probing GL_PROXY_TEXTURE_2D and reading it back with
-                // glGetTexLevelParameteriv, which answers zero without a GL context, so Forge's own method returns
-                // -1 and TextureMap builds Stitcher(-1, -1) - measured on this same leg as
-                // "StitcherException: Unable to fit: immersiveengineering:blocks/metal_multiblock_crusher". The mixin
-                // that answered this never reached the class either, so the answer is given here, where the stubbing
-                // above proves this transformer is applied.
-                if ("getMaxTextureSize".equals(methodName) && "()I".equals(descriptor)) {
+        String targetName = transformedName != null ? transformedName : name;
+        try {
+            ClassReader reader = new ClassReader(basicClass);
+            ClassWriter writer = new ClassWriter(reader, 0);
+            reader.accept(new org.objectweb.asm.ClassVisitor(ASM_API, writer) {
+                @Override
+                public MethodVisitor visitMethod(int access, String methodName, String descriptor, String signature,
+                        String[] exceptions) {
+                    MethodVisitor target = super.visitMethod(access, methodName, descriptor, signature, exceptions);
+                    if (client) {
+                        if (!"processWindowMessages".equals(methodName) || !"()V".equals(descriptor)) return target;
+                        return new MethodVisitor(ASM_API, target) {
+                            @Override
+                            public void visitCode() {
+                                super.visitCode();
+                                super.visitMethodInsn(Opcodes.INVOKESTATIC,
+                                        "org/taumc/celeritas/core/CeltiumLoadingProgress", "refresh", "()V", false);
+                            }
+                        };
+                    }
+                    // The maximum texture size is measured by probing GL_PROXY_TEXTURE_2D and reading it back with
+                    // glGetTexLevelParameteriv, which answers zero without a GL context, so Forge's own method returns
+                    // -1 and TextureMap builds Stitcher(-1, -1) - measured on this same leg as
+                    // "StitcherException: Unable to fit: immersiveengineering:blocks/metal_multiblock_crusher". The mixin
+                    // that answered this never reached the class either, so the answer is given here, where the stubbing
+                    // above proves this transformer is applied.
+                    if ("getMaxTextureSize".equals(methodName) && "()I".equals(descriptor)) {
+                        target.visitCode();
+                        target.visitLdcInsn(Integer.valueOf(16384));
+                        target.visitInsn(Opcodes.IRETURN);
+                        target.visitMaxs(1, 0);
+                        target.visitEnd();
+                        System.out.println("[Celtium] CELTIUM_GLSTUB answered SplashProgress.getMaxTextureSize with 16384"
+                                + " (the proxy-texture probe cannot run without a GL context)");
+                        return null;
+                    }
+                    boolean splashEntryPoint = ("start".equals(methodName) || "finish".equals(methodName))
+                            && "()V".equals(descriptor);
+                    if (!splashEntryPoint) {
+                        return target;
+                    }
+                    // Replace the shared-GL-context thread with the native loading-screen lifetime.
                     target.visitCode();
-                    target.visitLdcInsn(Integer.valueOf(16384));
-                    target.visitInsn(Opcodes.IRETURN);
-                    target.visitMaxs(1, 0);
+                    if ("start".equals(methodName)) {
+                        // The original body hands the main thread a shared context here (create, then makeCurrent)
+                        // before the splash thread spawns. That context cannot exist on this surface, so the
+                        // hand-off is kept only as the guarded call: the field is null whenever this transformer
+                        // has run, the invoke never executes, and the injection point another mod anchors on
+                        // inside start() stays real (see the class javadoc). The merge point's frame is exact:
+                        // both paths arrive with an empty stack and this body uses no locals.
+                        Label noSharedContext = new Label();
+                        target.visitFieldInsn(Opcodes.GETSTATIC, TARGET_INTERNAL, "shared",
+                                "Lcom/cleanroommc/client/sdl/SharedGLContext;");
+                        target.visitJumpInsn(Opcodes.IFNULL, noSharedContext);
+                        target.visitFieldInsn(Opcodes.GETSTATIC, TARGET_INTERNAL, "shared",
+                                "Lcom/cleanroommc/client/sdl/SharedGLContext;");
+                        target.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                                "com/cleanroommc/client/sdl/SharedGLContext", "makeCurrent", "()V", false);
+                        target.visitLabel(noSharedContext);
+                        target.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+                    }
+                    target.visitMethodInsn(Opcodes.INVOKESTATIC,
+                            "org/taumc/celeritas/core/CeltiumLoadingProgress", methodName, "()V", false);
+                    target.visitInsn(Opcodes.RETURN);
+                    target.visitMaxs("start".equals(methodName) ? 1 : 0, 0);
                     target.visitEnd();
-                    System.out.println("[Celtium] CELTIUM_GLSTUB answered SplashProgress.getMaxTextureSize with 16384"
-                            + " (the proxy-texture probe cannot run without a GL context)");
+                    System.out.println("[Celtium] CELTIUM_GLSTUB stubbed SplashProgress." + methodName
+                            + " (the splash needs a shared GL context a GLFW_NO_API window cannot provide)");
                     return null;
                 }
-                boolean splashEntryPoint = ("start".equals(methodName) || "finish".equals(methodName))
-                        && "()V".equals(descriptor);
-                if (!splashEntryPoint) {
-                    return target;
-                }
-                // Replace the shared-GL-context thread with the native loading-screen lifetime.
-                target.visitCode();
-                if ("start".equals(methodName)) {
-                    // The original body hands the main thread a shared context here (create, then makeCurrent)
-                    // before the splash thread spawns. That context cannot exist on this surface, so the
-                    // hand-off is kept only as the guarded call: the field is null whenever this transformer
-                    // has run, the invoke never executes, and the injection point another mod anchors on
-                    // inside start() stays real (see the class javadoc). The merge point's frame is exact:
-                    // both paths arrive with an empty stack and this body uses no locals.
-                    Label noSharedContext = new Label();
-                    target.visitFieldInsn(Opcodes.GETSTATIC, TARGET_INTERNAL, "shared",
-                            "Lcom/cleanroommc/client/sdl/SharedGLContext;");
-                    target.visitJumpInsn(Opcodes.IFNULL, noSharedContext);
-                    target.visitFieldInsn(Opcodes.GETSTATIC, TARGET_INTERNAL, "shared",
-                            "Lcom/cleanroommc/client/sdl/SharedGLContext;");
-                    target.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
-                            "com/cleanroommc/client/sdl/SharedGLContext", "makeCurrent", "()V", false);
-                    target.visitLabel(noSharedContext);
-                    target.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
-                }
-                target.visitMethodInsn(Opcodes.INVOKESTATIC,
-                        "org/taumc/celeritas/core/CeltiumLoadingProgress", methodName, "()V", false);
-                target.visitInsn(Opcodes.RETURN);
-                target.visitMaxs("start".equals(methodName) ? 1 : 0, 0);
-                target.visitEnd();
-                System.out.println("[Celtium] CELTIUM_GLSTUB stubbed SplashProgress." + methodName
-                        + " (the splash needs a shared GL context a GLFW_NO_API window cannot provide)");
-                return null;
-            }
-        }, 0);
-        return writer.toByteArray();
+            }, 0);
+            return writer.toByteArray();
+        } catch (Throwable error) {
+            CeleritasVintageMixinPlugin.LOGGER.error(
+                    "GL-less splash transformer failed for {}; the class keeps its original bytes", targetName, error);
+            return basicClass;
+        }
     }
 }
