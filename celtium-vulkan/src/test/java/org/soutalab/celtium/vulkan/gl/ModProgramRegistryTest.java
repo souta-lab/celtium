@@ -70,7 +70,10 @@ class ModProgramRegistryTest {
     @Test
     void theRecordedStageWinsOverTheSourceText() {
         // The stages are recorded the other way round from what the sources suggest: the link must follow
-        // glCreateShader's arguments, so this pair fails instead of linking.
+        // glCreateShader's arguments, so the vertex-looking source is lowered as the fragment stage and the
+        // attribute it declares never becomes an attribute of the program. (The pair still lowers - a vertex
+        // stage that writes no gl_Position compiles - so the classification is pinned by the interface, not
+        // by a failure.)
         ModProgramRegistry.shaderStage(41, 0x8B30);
         ModProgramRegistry.shaderSource(41, "attribute vec2 position; varying vec2 uv;\n"
                 + "void main() { gl_Position = vec4(position, 0.0, 1.0); uv = position; }");
@@ -80,7 +83,8 @@ class ModProgramRegistryTest {
         ModProgramRegistry.attach(9, 41);
         ModProgramRegistry.attach(9, 40);
         ModProgramRegistry.Program program = ModProgramRegistry.link(9);
-        assertTrue(!program.lowered().ok());
+        assertTrue(program.lowered().ok(), program.lowered().failure());
+        assertTrue(program.lowered().attributes().isEmpty());
     }
 
     @Test
