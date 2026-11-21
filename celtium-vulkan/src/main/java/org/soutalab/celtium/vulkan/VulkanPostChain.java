@@ -1029,8 +1029,9 @@ public final class VulkanPostChain {
     private void celtium$returnSlotsOfAbandonedRecording() {
         int taken = this.setsThisRecording;
         if (taken <= 0) {
-            // The unsupplied-input refusal happens before anything is taken: nothing to return, and it is not an
-            // abandoned recording with a leak.
+            // The unsupplied-input refusal happens before anything is taken, and the accounting reset at the head
+            // of the recording guarantees this reads zero for it (it once read the previous recording's count -
+            // audit-vulkan-core F1): nothing to return, and it is not an abandoned recording with a leak.
             return;
         }
         for (int i = 0; i < taken; i++) {
@@ -1048,6 +1049,16 @@ public final class VulkanPostChain {
         RenderTargetRegistry.TargetFormatClass chainClass = chainFormatClass == null
                 ? RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM : chainFormatClass;
         long recordedUnder = this.frameTargetGeneration;
+        // The ring accounting is reset here, at the head of the recording, before every refusal this method can
+        // raise: the wrapper's abandon path (celtium$returnSlotsOfAbandonedRecording) reads these two fields for
+        // any throw, so a refusal raised before this point - the unsupplied-input refusal below is the one such
+        // point - would otherwise be handed the previous recording's count and start cursor and would "return"
+        // slots that recording legitimately took and may still have in flight (audit-vulkan-core F1). Resetting
+        // here makes the pre-prologue refusal see zero taken, which is the truth: it took nothing. Nothing between
+        // here and the pass loop advances the cursor - descriptorSet() is the only writer, and it pairs every
+        // advance with an increment of the count reset here.
+        this.setsThisRecording = 0;
+        this.recordingStartCursor = this.setCursor;
         String unsupplied = unsuppliedInput(passes);
         if (unsupplied != null) {
             // Nothing has been recorded yet, so there is nothing to roll back: the caller still owns a frame it can
@@ -1085,12 +1096,11 @@ public final class VulkanPostChain {
         this.pendingInit.clear();
         this.recordings++;
         this.pendingRecording = this.recordings;
-        // A recording starts here, so the ring budget is this recording's: what earlier recordings took is already
-        // behind a submitted (or abandoned) command buffer and plays no part in this one's safety.
-        this.setsThisRecording = 0;
+        // The ring budget was reset at the head of this method, before the unsupplied-input refusal: what earlier
+        // recordings took is already behind a submitted (or abandoned) command buffer and plays no part in this
+        // one's safety, and a refusal raised before this point must not be handed their accounting.
         // The completion epoch this recording starts at: what the ring's ownership rule compares against (audit B11).
         this.recordingEpochStart = VulkanContext.completedEpoch();
-        this.recordingStartCursor = this.setCursor;
 
         List<String> details = new ArrayList<>();
         boolean interesting = false;
