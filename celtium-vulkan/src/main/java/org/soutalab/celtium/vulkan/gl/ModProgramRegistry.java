@@ -280,6 +280,10 @@ public final class ModProgramRegistry {
                 try {
                     p.vertexSpirv = ModShaderCompiler.compile(p.lowered.vertex(), true);
                 } catch (RuntimeException failure) {
+                    // Spent like the fragment catch below spends it: on a re-link of a program that
+                    // compiled before, the old bytes must not survive beside the new failure -
+                    // compiled() reads the pair, and a stale vertex half would call this link compiled.
+                    p.vertexSpirv = null;
                     p.compileFailure = "vertex stage: " + failure.getMessage();
                 }
                 if (p.compileFailure == null) {
