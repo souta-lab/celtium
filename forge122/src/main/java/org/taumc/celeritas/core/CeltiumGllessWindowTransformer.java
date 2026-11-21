@@ -58,6 +58,7 @@ public class CeltiumGllessWindowTransformer implements IClassTransformer {
         try {
             ClassReader reader = new ClassReader(basicClass);
             ClassWriter writer = new ClassWriter(reader, 0);
+            int[] injected = {0};
             reader.accept(new ClassVisitor(ASM_API, writer) {
                 @Override
                 public MethodVisitor visitMethod(int access, String methodName, String descriptor, String signature,
@@ -69,6 +70,7 @@ public class CeltiumGllessWindowTransformer implements IClassTransformer {
                                                     boolean isInterface) {
                             if (opcode == Opcodes.INVOKESTATIC && GLFW.equals(owner) && CREATE_WINDOW.equals(calledName)) {
                                 super.visitMethodInsn(Opcodes.INVOKESTATIC, HINT_OWNER, HINT_METHOD, "()V", false);
+                                injected[0]++;
                             }
                             super.visitMethodInsn(opcode, owner, calledName, calledDescriptor, isInterface);
                         }
@@ -76,8 +78,8 @@ public class CeltiumGllessWindowTransformer implements IClassTransformer {
                 }
             }, 0);
             CeleritasVintageMixinPlugin.LOGGER.info(
-                    "CELTIUM_GLSTUB Display transformer installed on {} (hint injected before glfwCreateWindow)",
-                    target);
+                    "CELTIUM_GLSTUB Display transformer installed on {} (hint injections before glfwCreateWindow: {})",
+                    target, Integer.valueOf(injected[0]));
             return writer.toByteArray();
         } catch (Throwable error) {
             CeleritasVintageMixinPlugin.LOGGER.error(

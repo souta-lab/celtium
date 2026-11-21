@@ -5,6 +5,7 @@ import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
+import org.taumc.celeritas.mixin.CeleritasVintageMixinPlugin;
 
 /**
  * Makes Cleanroom's SDL window stop swapping a GL surface the GL-less renderer never owns.
@@ -27,27 +28,34 @@ public class CeltiumGllessSdlSwapTransformer implements IClassTransformer {
         if (basicClass == null || !TARGET.equals(name) && !TARGET.equals(transformedName)) {
             return basicClass;
         }
-        ClassReader reader = new ClassReader(basicClass);
-        ClassWriter writer = new ClassWriter(reader, 0);
-        reader.accept(new org.objectweb.asm.ClassVisitor(ASM_API, writer) {
-            @Override
-            public MethodVisitor visitMethod(int access, String methodName, String descriptor, String signature,
-                    String[] exceptions) {
-                MethodVisitor target = super.visitMethod(access, methodName, descriptor, signature, exceptions);
-                if (!"swapBuffers".equals(methodName) || !"()Lcom/cleanroommc/client/sdl/Window;".equals(descriptor)) {
-                    return target;
+        String targetName = transformedName != null ? transformedName : name;
+        try {
+            ClassReader reader = new ClassReader(basicClass);
+            ClassWriter writer = new ClassWriter(reader, 0);
+            reader.accept(new org.objectweb.asm.ClassVisitor(ASM_API, writer) {
+                @Override
+                public MethodVisitor visitMethod(int access, String methodName, String descriptor, String signature,
+                        String[] exceptions) {
+                    MethodVisitor target = super.visitMethod(access, methodName, descriptor, signature, exceptions);
+                    if (!"swapBuffers".equals(methodName) || !"()Lcom/cleanroommc/client/sdl/Window;".equals(descriptor)) {
+                        return target;
+                    }
+                    // Returns the window the way the original did (it answers itself), without touching SDL.
+                    target.visitCode();
+                    target.visitVarInsn(Opcodes.ALOAD, 0);
+                    target.visitInsn(Opcodes.ARETURN);
+                    target.visitMaxs(1, 1);
+                    target.visitEnd();
+                    System.out.println("[Celtium] CELTIUM_GLSTUB stubbed Window.swapBuffers (the Vulkan swapchain is the"
+                            + " only presenter on this wl_surface; SDL's own swap would attach a second buffer)");
+                    return null;
                 }
-                // Returns the window the way the original did (it answers itself), without touching SDL.
-                target.visitCode();
-                target.visitVarInsn(Opcodes.ALOAD, 0);
-                target.visitInsn(Opcodes.ARETURN);
-                target.visitMaxs(1, 1);
-                target.visitEnd();
-                System.out.println("[Celtium] CELTIUM_GLSTUB stubbed Window.swapBuffers (the Vulkan swapchain is the"
-                        + " only presenter on this wl_surface; SDL's own swap would attach a second buffer)");
-                return null;
-            }
-        }, 0);
-        return writer.toByteArray();
+            }, 0);
+            return writer.toByteArray();
+        } catch (Throwable error) {
+            CeleritasVintageMixinPlugin.LOGGER.error(
+                    "GL-less SDL swap transformer failed for {}; the class keeps its original bytes", targetName, error);
+            return basicClass;
+        }
     }
 }
