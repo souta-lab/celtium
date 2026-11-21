@@ -350,8 +350,10 @@ final class ModPrograms {
             // with this in place - only a lookup that does not repeat the publication.
             return texture;
         }
-        boolean unpublishedAttachment = texture != null && b.publishedFrameImages.get(name) == 0L
-                && b.celtium$framebufferIdentityForColorTexture(name) != Long.MIN_VALUE;
+        boolean unpublishedAttachment = texture != null && celtium$unpublishedColorAttachment(
+                b.publishedFrameImages.get(name) == 0L,
+                b.celtium$framebufferIdentityForColorTexture(name) != Long.MIN_VALUE,
+                b.publishedTextures.slotIdentityForColorTexture(name) != Long.MIN_VALUE);
         if (texture == null || !texture.hasFullContent() || unpublishedAttachment) {
             boolean published = b.celtium$publishFramebufferColorTexture(name);
             if (!published && b.celtium$adoptRawFramebufferColorTexture(name)) {
@@ -362,6 +364,20 @@ final class ModPrograms {
             }
         }
         return texture;
+    }
+
+    /**
+     * {@return whether a colour name the registry resolved is a framebuffer attachment no image has been
+     * published for yet}: either census record counts - the slot-0 record the identity lookup reads, or an
+     * extra slot's record, which the identity lookup cannot see. A multi-target framebuffer's second colour
+     * target carries only the second kind (the measured case is a shadow framebuffer's shadowcolor1), and
+     * before the extra-slot record counted here the name was treated as an ordinary texture: its empty
+     * mirror was returned and the program was refused for having no native image. Static and pure so the
+     * rule is pinned without a device.
+     */
+    static boolean celtium$unpublishedColorAttachment(boolean frameImageUnpublished, boolean slotZeroRecord,
+            boolean extraSlotRecord) {
+        return frameImageUnpublished && (slotZeroRecord || extraSlotRecord);
     }
 
     /**
@@ -578,9 +594,24 @@ final class ModPrograms {
         }
         int depthFramebuffer = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
                 .celtium$framebufferForDepthTexture(name);
+        // The colour half of the same question rides the same line, so one refusal line separates the
+        // colour cases too: which framebuffer the stub's record attaches the name to as a colour texture,
+        // which attachment slot the census carries it at (-1 fills none, 0 is the slot-0 record), and the
+        // identity that slot resolves to. A colour name refused with framebuffer=0x0 is not thereby
+        // unattached - the depth lookup is 0 for every colour texture by construction (shadowcolor1's case).
+        int colorFramebuffer = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                .celtium$framebufferForColorTexture(name);
+        int attachmentSlot = b.publishedTextures.attachmentSlotForTexture(name);
+        long colorIdentity = b.celtium$framebufferIdentityForColorTexture(name);
+        if (colorIdentity == Long.MIN_VALUE && attachmentSlot > 0) {
+            colorIdentity = b.publishedTextures.slotIdentityForColorTexture(name);
+        }
         System.out.println("[Celtium] CELTIUM_MOD_SAMPLER_DEPTH_ATTACH program=" + programId
                 + " sampler=" + samplerName + " unit=" + unit + " texture=" + name
-                + " framebuffer=0x" + Integer.toHexString(depthFramebuffer));
+                + " framebuffer=0x" + Integer.toHexString(depthFramebuffer)
+                + " colorFramebuffer=0x" + Integer.toHexString(colorFramebuffer)
+                + " attachmentSlot=" + attachmentSlot
+                + " colorIdentity=0x" + Long.toHexString(colorIdentity));
     }
 
     PreparedImmediate celtium$modFailure(int programId, String reason) {

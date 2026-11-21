@@ -8512,7 +8512,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             return 0;
         }
         int cached = stub.colorTextureFramebuffers.get(glTextureName);
-        if (cached != 0 && stub.framebufferColorTextures.get(cached) == glTextureName) {
+        if (cached != 0 && celtium$framebufferAttachesColor(stub, cached, glTextureName)) {
             return cached;
         }
         stub.colorTextureFramebuffers.remove(glTextureName);
@@ -8523,7 +8523,38 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return entry.getIntKey();
             }
         }
+        // The slot-0 map above is not the whole record: a multi-target framebuffer's other colour textures
+        // live only in its attachment tuple, and a name filling one of those slots belongs to that
+        // framebuffer just the same (the measured case is a shadow framebuffer's second colour target -
+        // the sampling publication's adoption asked this lookup and was told the texture belonged nowhere).
+        for (it.unimi.dsi.fastutil.ints.Int2ObjectMap.Entry<int[]> entry
+                : stub.framebufferColorAttachments.int2ObjectEntrySet()) {
+            int[] slots = entry.getValue();
+            for (int slot = 1; slot < slots.length; slot++) {
+                if (slots[slot] == glTextureName) {
+                    stub.colorTextureFramebuffers.put(glTextureName, entry.getIntKey());
+                    return entry.getIntKey();
+                }
+            }
+        }
         return 0;
+    }
+
+    /** {@return whether {@code framebuffer}'s recorded colour attachments name {@code glTextureName} at any slot}. */
+    private static boolean celtium$framebufferAttachesColor(CeltiumGlStub stub, int framebuffer,
+            int glTextureName) {
+        if (stub.framebufferColorTextures.get(framebuffer) == glTextureName) {
+            return true;
+        }
+        int[] slots = stub.framebufferColorAttachments.get(framebuffer);
+        if (slots != null) {
+            for (int slot = 1; slot < slots.length; slot++) {
+                if (slots[slot] == glTextureName) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
