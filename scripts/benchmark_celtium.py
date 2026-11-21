@@ -128,7 +128,19 @@ def resolve_celtium_jar():
     return chosen
 
 
-CELTIUM_JAR = resolve_celtium_jar()
+# Resolved lazily, not at import: scripts/cpu-contract/bench_controls_check.py imports controls_audit from
+# this module, and its contract is that a check which cannot run is not a check - an import-time SystemExit
+# here killed that check on every machine without a built jar (CI, a fresh clone) before its main() ran.
+# pin_jar is the only consumer of the jar path, so the resolution, and its SystemExit when no jar exists,
+# happens there instead, still before any run starts.
+CELTIUM_JAR = None
+
+
+def celtium_jar():
+    global CELTIUM_JAR
+    if CELTIUM_JAR is None:
+        CELTIUM_JAR = resolve_celtium_jar()
+    return CELTIUM_JAR
 BASELINE_JAR = (ROOT / ".celtium-work/upstream-baseline/forge122/build/libs/"
                        "celeritas-forge-mc12.2-2.5.12-upstream.989ebf2e.jar")
 
@@ -345,6 +357,8 @@ def pin_jar(config_key, args):
     that used the same bytes share one path and the hash is visible in the name.
     """
     source = CONFIGS[config_key]["jar"]
+    if source is None:
+        source = celtium_jar()
     if not source.is_file():
         raise SystemExit("jar for %s is missing: %s" % (config_key, source))
     source_sha = digest(source)

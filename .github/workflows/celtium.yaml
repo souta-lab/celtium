@@ -34,6 +34,11 @@ jobs:
           # Exercises compositor_capture.main with real child processes; a unittest module in
           # script form, stdlib-only, likewise previously unwired (bughunt 09-04).
           python3 scripts/cpu-contract/compositor_capture_check.py
+          # Guards the benchmark's control audit: a required control missing from every run must read as
+          # missing, not as the single distinct value "null" and therefore equal. Stdlib-only and jar-free
+          # (the benchmark module resolves its jar lazily); it was wired nowhere, and the import-time jar
+          # resolution meant it could not have run here even if it had been (roam-hunt-4).
+          python3 scripts/cpu-contract/bench_controls_check.py
           python3 scripts/check_agent_docs.py
           python3 scripts/check_patch_groups.py
           bash -n scripts/gv-leg.sh
