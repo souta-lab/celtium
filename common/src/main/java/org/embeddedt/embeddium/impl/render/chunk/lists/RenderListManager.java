@@ -200,23 +200,37 @@ public class RenderListManager {
 
     public void finishPreviousGraphUpdate() {
         if (currentOcclusionFuture != null) {
-            VisibleChunkCollector visitor = currentOcclusionFuture.join();
-
-            this.renderLists = visitor.createRenderLists();
-            this.rebuildLists = visitor.getRebuildLists();
-
-            // Publish the finished search's snapshot before advancing lastUpdatedFrame, so any concurrent
-            // reader that observes the new frame also observes the snapshot produced for it.
-            this.visibilitySnapshot = this.pendingVisibilitySnapshot;
-            this.pendingVisibilitySnapshot = null;
-
+            CompletableFuture<VisibleChunkCollector> future = this.currentOcclusionFuture;
             this.currentOcclusionFuture = null;
-            this.lastUpdatedFrame = this.pendingLastUpdatedFrame;
-            this.publishedViewport = this.pendingViewport;
 
-            this.debugStatistics = null;
+            try {
+                VisibleChunkCollector visitor = future.join();
 
-            this.graph.onSearchJoined();
+                this.renderLists = visitor.createRenderLists();
+                this.rebuildLists = visitor.getRebuildLists();
+
+                // Publish the finished search's snapshot before advancing lastUpdatedFrame, so any concurrent
+                // reader that observes the new frame also observes the snapshot produced for it.
+                this.visibilitySnapshot = this.pendingVisibilitySnapshot;
+                this.pendingVisibilitySnapshot = null;
+
+                this.lastUpdatedFrame = this.pendingLastUpdatedFrame;
+                this.publishedViewport = this.pendingViewport;
+
+                this.debugStatistics = null;
+            } catch (RuntimeException | Error e) {
+                // The search (or publishing its result) failed. Discard the unpublished
+                // snapshot and ask for a fresh search next frame, then rethrow: the
+                // failure surfaces exactly once, and the finally below returns the
+                // graph's in-flight count so one failed search cannot wedge the graph
+                // (previously the failed future stayed in the field, rethrowing the
+                // same exception every frame while inFlight leaked forever).
+                this.pendingVisibilitySnapshot = null;
+                this.needsUpdate = true;
+                throw e;
+            } finally {
+                this.graph.onSearchJoined();
+            }
         }
 
         // Run tasks deferred while searches were in flight. The join() above establishes happens-before,
@@ -227,9 +241,19 @@ public class RenderListManager {
 
     public void destroy() {
         if (currentOcclusionFuture != null) {
-            currentOcclusionFuture.join();
-            currentOcclusionFuture = null;
-            this.graph.onSearchJoined();
+            CompletableFuture<VisibleChunkCollector> future = this.currentOcclusionFuture;
+            this.currentOcclusionFuture = null;
+
+            try {
+                future.join();
+            } catch (RuntimeException | Error ignored) {
+                // Teardown discards the search result either way, and the graph is
+                // being destroyed with it: a failed search must not abort the rest
+                // of the teardown chain (the section manager's destroy continues
+                // on to the terrain backend from here).
+            } finally {
+                this.graph.onSearchJoined();
+            }
         }
     }
 
