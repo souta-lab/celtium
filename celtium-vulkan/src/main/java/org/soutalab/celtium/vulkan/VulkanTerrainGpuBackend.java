@@ -19328,6 +19328,16 @@ this.frameBufferOpen = false;
                         + " is not in the shared depth store (its framebuffer's pair never borrowed it)";
             }
         }
+        if (sourceImage == destImage) {
+            // A copy whose two names resolve to the one shared image - the same depth texture on both sides, or
+            // two names over one borrowed depth - is a feedback loop: the barrier below would carry two
+            // conflicting transitions for one image in a single call, vkCmdCopyImage would read and write the
+            // same image with possibly overlapping rectangles, and the store would end up with two different
+            // layouts recorded for it. Refused by name, like this method's other refusals.
+            // Bughunt 2026-11-21 lane 01, finding 4.
+            return "the depth copy's source texture " + sourceDepthTexture + " and destination texture "
+                    + destDepthTexture + " resolve to the same shared depth image";
+        }
         int[] sourceExtent = target.sharedDepthExtent(sourceKey);
         int[] destExtent = target.sharedDepthExtent(destKey);
         if (sourceExtent == null || destExtent == null
