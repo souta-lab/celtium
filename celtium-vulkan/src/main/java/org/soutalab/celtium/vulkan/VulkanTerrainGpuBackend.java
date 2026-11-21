@@ -19213,6 +19213,13 @@ this.frameBufferOpen = false;
 
 
 
+    /**
+     * GL name -> the slot of the owner's chain pair its published image fills (0 = the pair's own, absent = 0). A
+     * name over a tuple slot must be re-published over that slot's live image, not over slot 0's.
+     */
+    final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap publishedFrameImageSlots =
+            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+
     /** GL name -> the chain-pair identity its published image belongs to. MIN_VALUE/absent = not a chain image. */
     final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap publishedFrameImageIdentities =
             createPublishedFrameImageIdentities();

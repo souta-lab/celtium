@@ -485,8 +485,15 @@ b.frameBufferOpen = false;
             long owner = offTarget.chainPairIdentityForImage(image);
             if (owner != Long.MIN_VALUE) {
                 b.publishedFrameImageIdentities.put(glTextureName, owner);
+                int slot = offTarget.chainPairColorSlotForImage(owner, image);
+                if (slot > 0) {
+                    b.publishedFrameImageSlots.put(glTextureName, slot);
+                } else {
+                    b.publishedFrameImageSlots.remove(glTextureName);
+                }
             } else {
                 b.publishedFrameImageIdentities.remove(glTextureName);
+                b.publishedFrameImageSlots.remove(glTextureName);
             }
         }
     }
@@ -536,6 +543,7 @@ b.frameBufferOpen = false;
             b.celtium$registry().unpublishExternalImage(name);
             b.publishedTextures.removePublished(name);
             b.publishedFrameImages.remove(name);
+            b.publishedFrameImageSlots.remove(name);
             it.remove();
         }
         if (b.publishedChainOutput != null && b.publishedChainIdentity == identity) {
@@ -1104,7 +1112,9 @@ b.frameBufferOpen = false;
                 // same way a recreated pair re-points a colour name.
                 live = offTarget.sharedDepthImage(depthKey);
             } else if (owner != Long.MIN_VALUE) {
-                live = offTarget.chainPairColorImage(owner);
+                // The name stands for the slot it was published over: a tuple slot's live image is not slot 0's
+                // (comparing against slot 0 re-published colortex4/5 and shadowcolor1 over the pair's own image).
+                live = offTarget.chainPairColorImageAt(owner, b.publishedFrameImageSlots.get(name));
             } else if (image != 0L && (image == b.frameTarget.colorImage()
                     || image == offTarget.offTargetColorImage())) {
                 live = image;
@@ -1126,7 +1136,8 @@ b.frameBufferOpen = false;
                                             liveExtent[0], liveExtent[1], liveLayout);
                 } else {
                     republished = b.celtium$registry().publishExternalImage(name, live,
-                            offTarget.chainPairColorView(owner), b.targetWidth, b.targetHeight);
+                            offTarget.chainPairColorViewAt(owner, b.publishedFrameImageSlots.get(name)),
+                            b.targetWidth, b.targetHeight);
                     // A republished wrapper is a fresh wrapper: without the flag it declares SHADER_READ_ONLY over an
                     // image the pair keeps in GENERAL (09600/00344 colour form, 00900 on the next attach).
                     if (republished != null) {
@@ -1143,6 +1154,7 @@ b.frameBufferOpen = false;
             b.celtium$registry().unpublishExternalImage(name);
             b.publishedFrameImages.remove(name);
             b.publishedFrameImageIdentities.remove(name);
+            b.publishedFrameImageSlots.remove(name);
             b.publishedFrameDepthKeys.remove(name);
             b.publishedTextures.noteUnpublished();
             b.publishedTextures.noteStalePruned();
@@ -1214,16 +1226,21 @@ b.frameBufferOpen = false;
                 if (owner != identity) {
                     continue;
                 }
-                if (image != 0L && image == chainPairColorImage) {
+                int nameSlot = b.publishedFrameImageSlots.get(name);
+                long slotImage = nameSlot == 0 || liveTarget == null ? liveImage
+                        : liveTarget.chainPairColorImageAt(identity, nameSlot);
+                long slotView = nameSlot == 0 || liveTarget == null ? liveView
+                        : liveTarget.chainPairColorViewAt(identity, nameSlot);
+                if (image != 0L && image == (nameSlot == 0 ? chainPairColorImage : slotImage)) {
                     continue;
                 }
-                if (liveImage != 0L && liveView != 0L) {
+                if (slotImage != 0L && slotView != 0L) {
                     VulkanGlTexture republished = b.celtium$registry().publishExternalImage(name,
-                            liveImage, liveView, b.targetWidth, b.targetHeight);
+                            slotImage, slotView, b.targetWidth, b.targetHeight);
                 if (republished != null) {
                     republished.notePairImage(true);
                     b.publishedTextures.setPublishedValueAt(idx, republished);
-                    b.publishedFrameImages.put(name, liveImage);
+                    b.publishedFrameImages.put(name, slotImage);
                     b.publishedTextures.noteRepublished();
                     continue;
                 }
@@ -1231,6 +1248,7 @@ b.frameBufferOpen = false;
                 b.celtium$registry().unpublishExternalImage(name);
                 b.publishedFrameImages.remove(name);
                 b.publishedFrameImageIdentities.remove(name);
+                b.publishedFrameImageSlots.remove(name);
                 b.publishedTextures.noteUnpublished();
                 b.publishedTextures.removePublishedAt(idx);
             }
