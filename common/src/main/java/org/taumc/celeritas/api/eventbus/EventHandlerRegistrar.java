@@ -34,11 +34,18 @@ public class EventHandlerRegistrar<T extends EmbeddiumEvent> {
             }
         }
 
-        // Dispatch to the platform event bus as well (currently only used on Forge)
+        // Upstream also dispatches to the platform event bus here; Celtium never does (see below),
+        // so this call always contributes false.
         canceled |= postPlatformSpecificEvent(event);
         return canceled;
     }
 
+    /**
+     * Retained hook from upstream Embeddium/Celeritas, whose per-loader preprocessing posts the
+     * event to the (Neo)Forge event bus in this method. Celtium ships no preprocessing and its
+     * events do not extend the Forge event class, so nothing is dispatched anywhere: delivery
+     * happens only through the handlers registered on this registrar. Always returns false.
+     */
     private static <T extends EmbeddiumEvent> boolean postPlatformSpecificEvent(T event) {
         return false;
     }

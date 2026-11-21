@@ -859,9 +859,12 @@ public final class TerrainRenderer {
     /**
      * Gathers this frame's dynamic light sources into the current slot's buffer. Runs on the first
      * uniform write of the frame, which is the first call that knows the frame's camera. The positions
-     * the service returns are camera-relative while the terrain shader's worldPosition is absolute
-     * world space, so the header carries the camera position next to the count and the shader
-     * rebases the vertex position into the sources' frame before measuring distance.
+     * the service returns are camera-relative, and so is the terrain shader's worldPosition (it is
+     * built from u_RegionOffset, which {@link #writeUniforms} writes as region origin minus camera),
+     * so the shader measures distance directly in that shared frame. The header still carries the
+     * camera position next to the count, as provenance. (Item 430: the shader used to subtract the
+     * header camera from the already camera-relative position, counting the camera offset twice -
+     * about 64 blocks of it vertical - and the raise came to zero everywhere.)
      */
     private void gatherDynamicLights(CameraTransform camera) {
         VulkanUniformBuffer[] buffers = this.dynamicLightBuffers;

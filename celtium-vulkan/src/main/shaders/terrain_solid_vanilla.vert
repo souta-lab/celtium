@@ -222,16 +222,21 @@ vec4 _sample_lightmap(sampler2D lightMap, vec2 uv) {
 // The dynamic raise: per source, vanilla's own falloff (one light level per block of distance),
 // the maximum over sources. The result is a light LEVEL; main() turns it into a lightmap
 // coordinate so the raised light takes the game's own lightmap colour, exactly as a baked torch
-// does. The gather's contract (DynamicLightService in the common module): positions are
-// camera-relative; the header's yzw carries the camera position so the absolute world position
-// can be rebased into that frame.
+// does. The gather's contract (DynamicLightService in the common module): the sources are
+// camera-relative, and so is the position main() passes in - it is built from
+// u_RegionOffset, which the backend writes as region origin minus camera. Both sides
+// already share the camera-relative frame, so the distance is measured directly; the
+// header's yzw camera is provenance, not a rebase input. (Item 430: this function used
+// to subtract the header camera a second time, which pushed every measured distance
+// out by the camera's own offset - about 64 blocks of it vertical - and the raise
+// came to zero everywhere.)
 // --------------------------------------------------------------------------------------------
 float _dynamic_block_light(vec3 position) {
     float level = 0.0;
     int count = int(dynLights.u_DynamicLightInfo.x + 0.5);
-    // The sources are camera-relative; the header's yzw carries the camera position so this
-    // vertex's absolute world position can be measured in the same frame.
-    vec3 relativePosition = position - dynLights.u_DynamicLightInfo.yzw;
+    // Both the sources and this vertex's position are camera-relative (see above), so the
+    // position is used as-is; subtracting the header camera here would count it twice.
+    vec3 relativePosition = position;
     for (int i = 0; i < 32; i++) {
         if (i >= count) {
             break;

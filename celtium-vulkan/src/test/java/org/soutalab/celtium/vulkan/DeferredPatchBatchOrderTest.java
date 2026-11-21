@@ -24,6 +24,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code reserveStagingSlice} - submit before reuse - already had the order right; these tests pin all three
  * whole-write entries to it.
  * <p>
+ * The teardown entry {@code delete()} had the same hole in its sharpest form: it destroyed the staging buffer
+ * and the image with a batch still open, and its own wait only confirms submissions already made, so nothing
+ * ever submitted the batch at all. A late {@code endPatchBatch} would then record - or submit a command buffer
+ * recorded earlier - against the zeroed image and staging handles. Its guard therefore also covers a batch
+ * already flushed into its command buffer ({@code patchBatch != null}, no regions left pending), which the
+ * whole-write guards never face: they run while the texture lives and the next flush would record the regions
+ * first.
+ * <p>
  * The orderings live behind a live device, which the device-free drive cannot reach, so they are pinned as
  * source contracts in the shape {@code TextureUploadFaultTest} established.
  */
@@ -68,6 +76,25 @@ class DeferredPatchBatchOrderTest {
                 "the submission precedes the destroy, so the batch still lands on the image it was deferred"
                         + " against instead of being flushed onto its replacement");
         assertTrue(create > guard, "the submission precedes the replacement image's creation for the same reason");
+    }
+
+    @Test
+    void aDeleteSubmitsTheOpenBatchBeforeItDestroysWhatTheBatchNames() throws IOException {
+        String source = textureSource();
+        int entry = source.indexOf("    public void delete() {");
+        assertTrue(entry >= 0, "delete is declared");
+        int end = source.indexOf("    private static int mipLevelsFor(", entry);
+        assertTrue(end > entry, "mipLevelsFor is declared after delete");
+        String body = source.substring(entry, end);
+        int guard = body.indexOf("if (this.deferredCount > 0 || this.patchBatch != null) submitPatchBatch();");
+        int staging = body.indexOf("destroyStaging();");
+        int image = body.indexOf("destroyImageResources();");
+        assertTrue(guard >= 0,
+                "delete submits a pending deferred batch, including one already flushed into its command buffer");
+        assertTrue(staging > guard,
+                "the submission precedes destroyStaging, whose buffer the batch's copies still read");
+        assertTrue(image > guard,
+                "the submission precedes destroyImageResources, whose image the batch's copies still name");
     }
 
     @Test
