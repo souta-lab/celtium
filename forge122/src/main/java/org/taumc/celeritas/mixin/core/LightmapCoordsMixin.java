@@ -34,7 +34,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(OpenGlHelper.class)
 public class LightmapCoordsMixin {
 
-    @Inject(method = "setLightmapTextureCoords", at = @At("HEAD"), require = 0)
+    @Inject(method = {"setLightmapTextureCoords", "func_77475_a"}, at = @At("HEAD"), require = 0)
     private static void celtium$captureLightmapCoords(int target, float x, float y, CallbackInfo info) {
         try {
             if (target != OpenGlHelper.lightmapTexUnit) {

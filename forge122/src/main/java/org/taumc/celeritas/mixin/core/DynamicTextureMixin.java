@@ -31,7 +31,7 @@ public class DynamicTextureMixin {
     @Shadow @Final private int width;
     @Shadow @Final private int height;
 
-    @Inject(method = "updateDynamicTexture", at = @At("HEAD"), require = 0)
+    @Inject(method = {"updateDynamicTexture", "func_110564_a"}, at = @At("HEAD"), require = 0)
     private void celtium$announceDynamicTexture(CallbackInfo info) {
         try {
             TerrainGpuBackend backend = TerrainGpuBackends.current();

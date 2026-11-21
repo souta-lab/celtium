@@ -9,7 +9,7 @@ import org.taumc.celeritas.CeleritasVintage;
 
 @Mixin(GuiIngameForge.class)
 public class MixinGuiIngameForge {
-    @Redirect(method = "renderGameOverlay", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/Minecraft;isFancyGraphicsEnabled()Z"))
+    @Redirect(method = {"renderGameOverlay", "func_175180_a"}, at = @At(value = "INVOKE", target = "Lnet/minecraft/client/Minecraft;func_71375_t()Z"))
     private boolean celeritas$redirectVignette() {
         return CeleritasVintage.options().quality.enableVignette;
     }

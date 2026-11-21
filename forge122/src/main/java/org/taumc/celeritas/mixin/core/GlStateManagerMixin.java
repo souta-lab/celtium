@@ -735,7 +735,7 @@ public abstract class GlStateManagerMixin {
      * the stub and skip a set the backend needed. Reading the field is correct under the GL-less window (the field is
      * the only state there is) and under the bridge (every writer reaches the field the same way it reaches GL).
      */
-    @Inject(method = "matrixMode", at = @At("HEAD"), cancellable = true, require = 0)
+    @Inject(method = {"matrixMode", "func_179128_n"}, at = @At("HEAD"), cancellable = true, require = 0)
     private static void celtium$skipRedundantMatrixMode(int mode, CallbackInfo info) {
         try {
             if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$matrixModeIsCurrent(mode)) {
