@@ -15531,6 +15531,26 @@ this.frameBufferOpen = false;
         record("world teardown: terrain resources released, the window device and swapchain are kept");
     }
 
+    /**
+     * Takes this backend out of the current-backend registration and restores the GL batch factory, each only
+     * while what is installed is still this backend's own (BH10-13): when a second backend exists (the factory's
+     * own scenario, observed with modded RenderGlobals), the newer one is registered by the time the older one is
+     * deleted, and clearing unconditionally would erase the live backend's registration and leave the mixins with
+     * no Vulkan backend at all. uninstall() applies the same identity rule to the batch factory.
+     * <p>
+     * Every delete() exit that retires this instance runs this, including the stalled / settle-failed early
+     * returns (BH10-07): those paths deliberately leave the GPU resources for process exit, but the registration
+     * is plain Java state, and leaving it pointing at a backend its owner believes deleted keeps the mixins
+     * drawing into a stopped GPU backend until the factory happens to install a successor. The windowOwned exit
+     * is the one exception: that instance stays alive as the window backend, so its registration must stay.
+     */
+    private void celtium$detachRegistration() {
+        if (org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current() == this) {
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(null);
+        }
+        uninstall();
+    }
+
     public void delete() {
         if (this.cachedWindowBegin != null) {
             this.cachedWindowBegin.free();
@@ -15545,6 +15565,7 @@ this.frameBufferOpen = false;
             // references are still live. Destroying the frame target or its framebuffers here is what validation reported as
             // "in use by VkCommandBuffer": on this path the resources are left for process exit instead.
             this.submissionStatistics.noteStalledTeardownSkips();
+            celtium$detachRegistration();
             return;
         }
         // Nothing may be released while a submission is still reading it: the audit reproduced
@@ -15553,6 +15574,7 @@ this.frameBufferOpen = false;
         // pulling it out from under the GPU.
         if (!settleGpu("backend delete")) {
             // Stalled: releasing the backend here would destroy objects the recorded command buffer still references.
+            celtium$detachRegistration();
             return;
         }
         for (VulkanImmediateTexturePipeline records : this.indirectRuns.recordsPipelines.values()) {
@@ -15616,15 +15638,7 @@ this.frameBufferOpen = false;
         }
         this.textureCopyService.delete();
         releaseRetiredImmediateGroups();
-        // Only the backend that is actually installed may clear the registration: when a second backend exists
-        // (the factory's own scenario, observed with modded RenderGlobals), the newer one is registered by the
-        // time the older one is deleted, and clearing unconditionally would erase the live backend's
-        // registration and leave the mixins with no Vulkan backend at all (BH10-13). uninstall() applies the
-        // same identity rule to the batch factory.
-        if (org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current() == this) {
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(null);
-        }
-        uninstall();
+        celtium$detachRegistration();
         for (TerrainRenderer.RegionResources resources : this.terrain.regionResources()) {
             resources.delete();
         }
