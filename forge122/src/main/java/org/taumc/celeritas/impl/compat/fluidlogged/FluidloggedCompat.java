@@ -28,7 +28,7 @@ public class FluidloggedCompat {
             IBlockState renderState = fluidState.getState().getActualState(blockAccess, pos);
             var block = renderState.getBlock();
 
-            for (BlockRenderLayer layer : VintageChunkBuildContext.LAYERS) {
+            for (BlockRenderLayer layer : context.layers()) {
                 if (block.canRenderInLayer(renderState, layer)) {
                     ForgeHooksClient.setRenderLayer(layer);
                     var buffer = context.getBufferForLayer(layer);
