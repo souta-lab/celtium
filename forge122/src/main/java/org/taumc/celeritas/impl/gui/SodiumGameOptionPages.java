@@ -13,6 +13,7 @@ import org.embeddedt.embeddium.impl.gui.SodiumGameOptions;
 import org.embeddedt.embeddium.impl.gui.framework.TextComponent;
 import org.lwjgl.opengl.Display;
 import org.taumc.celeritas.CeleritasVintage;
+import org.taumc.celeritas.impl.render.terrain.compile.task.ChunkBuilderMeshingTask;
 import org.taumc.celeritas.api.options.structure.OptionFlag;
 import org.taumc.celeritas.api.options.structure.OptionGroup;
 import org.taumc.celeritas.api.options.structure.OptionImpact;
@@ -294,7 +295,10 @@ public class SodiumGameOptionPages {
                         .setTooltip(TextComponent.literal("Enables the backported faster block renderer from modern Celeritas versions, which has better performance but may look slightly different."))
                         .setControl(TickBoxControl::new)
                         .setImpact(OptionImpact.MEDIUM)
-                        .setBinding((opts, value) -> opts.performance.useFastBlockRenderer = value, opts -> opts.performance.useFastBlockRenderer)
+                        .setBinding((opts, value) -> {
+                            opts.performance.useFastBlockRenderer = value;
+                            ChunkBuilderMeshingTask.USE_NEW_BLOCK_RENDERER = value;
+                        }, opts -> ChunkBuilderMeshingTask.USE_NEW_BLOCK_RENDERER)
                         .setFlags(OptionFlag.REQUIRES_RENDERER_RELOAD)
                         .build())
                 .build());
