@@ -274,13 +274,25 @@ public final class ModProgramRegistry {
                             + ModShaderCompiler.unavailableReason());
                 }
             } else {
+                // Per stage, with the stage named: shaderc's message does not say which stage it was
+                // compiling (both stages go in under the same input name), so a single shared catch left
+                // the LINKED line unable to say whether the vertex or the fragment stage failed.
                 try {
                     p.vertexSpirv = ModShaderCompiler.compile(p.lowered.vertex(), true);
-                    p.fragmentSpirv = ModShaderCompiler.compile(p.lowered.fragment(), false);
                 } catch (RuntimeException failure) {
+                    // Spent like the fragment catch below spends it: on a re-link of a program that
+                    // compiled before, the old bytes must not survive beside the new failure -
+                    // compiled() reads the pair, and a stale vertex half would call this link compiled.
                     p.vertexSpirv = null;
-                    p.fragmentSpirv = null;
-                    p.compileFailure = failure.getMessage();
+                    p.compileFailure = "vertex stage: " + failure.getMessage();
+                }
+                if (p.compileFailure == null) {
+                    try {
+                        p.fragmentSpirv = ModShaderCompiler.compile(p.lowered.fragment(), false);
+                    } catch (RuntimeException failure) {
+                        p.vertexSpirv = null;
+                        p.compileFailure = "fragment stage: " + failure.getMessage();
+                    }
                 }
             }
         }

@@ -207,6 +207,10 @@ final class ModPrograms {
             org.soutalab.celtium.vulkan.gl.ModGlslTranslator.SamplerBinding sampler = pipeline.samplers().get(i);
             int[] unitValue = program.ints(sampler.name());
             int unit = unitValue == null || unitValue.length == 0 ? 0 : unitValue[0];
+            String unitRefusal = celtium$samplerUnitRefusal(sampler.name(), unit);
+            if (unitRefusal != null) {
+                return celtium$modFailure(programId, unitRefusal);
+            }
             int name = b.immediateState.boundTextureName(unit);
             VulkanGlTexture texture = name > 0 ? celtium$modSamplerTexture(name) : null;
             if (texture == null || texture.view() == 0L) {
@@ -370,6 +374,32 @@ final class ModPrograms {
                     + targets + " colour target" + (targets == 1 ? "" : "s");
         }
         return null;
+    }
+
+    /**
+     * {@return why a sampler naming {@code unit} cannot be resolved}, or null when it can. The binding ledger
+     * holds {@link NativeTextureBindings#UNIT_COUNT} units - the count the stub advertises per stage - and
+     * answers an out-of-range read with unit 0's texture, so a program whose sampler uniform names a unit past
+     * the ledger (or a negative one) would sample whatever the base unit holds and draw a plausible wrong
+     * picture, with no refusal anywhere. The image ledger answers the same situation with "not bound" and the
+     * prepare refuses on it; the sampler side refuses here instead, with the unit named. Static and pure so
+     * the rule is pinned without a device.
+     */
+    static String celtium$samplerUnitRefusal(String samplerName, int unit) {
+        if (unit < 0 || unit >= NativeTextureBindings.UNIT_COUNT) {
+            return "sampler " + samplerName + " names texture unit " + unit + ", outside the "
+                    + NativeTextureBindings.UNIT_COUNT + " units the binding ledger holds";
+        }
+        return null;
+    }
+
+    /** {@return the descriptor-set hash collisions every live mod-program pipeline has verified so far}. */
+    int celtium$descriptorSetKeyCollisions() {
+        int total = 0;
+        for (VulkanModProgramPipeline pipeline : this.modProgramPipelines.values()) {
+            total += pipeline.descriptorSetKeyCollisions();
+        }
+        return total;
     }
 
     /**

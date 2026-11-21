@@ -3,9 +3,11 @@ package org.soutalab.celtium.vulkan;
 /** Render-thread texture bindings shared by the native frontend and the mod adapter, independent of GL dispatch. */
 public final class NativeTextureBindings {
     private static final NativeTextureBindings CURRENT = new NativeTextureBindings(NativeRasterState.current());
+    /** The units this ledger holds; the same count the stub advertises per stage (TEXTURE_UNITS_PER_STAGE). */
+    public static final int UNIT_COUNT = 32;
     private final NativeRasterState boundaries;
-    private final int[] texture2d = new int[32];
-    private final boolean[] enabled2d = new boolean[32];
+    private final int[] texture2d = new int[UNIT_COUNT];
+    private final boolean[] enabled2d = new boolean[UNIT_COUNT];
     private int activeUnit;
 
     public NativeTextureBindings(NativeRasterState boundaries) {
