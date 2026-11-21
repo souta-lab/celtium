@@ -7686,6 +7686,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         long image = offTarget.chainPairColorImageAt(identity, slot);
         long view = offTarget.chainPairColorViewAt(identity, slot);
+        if ((image == 0L || view == 0L) && this.commandBuffer != null && !this.commandState.inRenderPass()) {
+            int allocWidth = width > 0 ? width
+                    : org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(glTextureName, 0, 0x1000);
+            int allocHeight = height > 0 ? height
+                    : org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(glTextureName, 0, 0x1001);
+            if (offTarget.ensureAndInitializeExtraColor(identity, slot, allocWidth, allocHeight, this.commandBuffer)) {
+                image = offTarget.chainPairColorImageAt(identity, slot);
+                view = offTarget.chainPairColorViewAt(identity, slot);
+            }
+        }
         if (image == 0L || view == 0L) {
             if (this.fboPublishRefusalLogs < 16) {
                 this.fboPublishRefusalLogs++;

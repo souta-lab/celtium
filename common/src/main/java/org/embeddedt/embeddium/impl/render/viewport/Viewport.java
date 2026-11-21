@@ -26,6 +26,11 @@ public final class Viewport {
         this(frustum, position, null);
     }
 
+    /** Demonica Tier C bridge ({@code CeleritasJoml.viewport}). */
+    public Viewport(Frustum frustum, org.embeddedt.embeddium.impl.shadow.joml.Vector3d position) {
+        this(frustum, position.toJoml(), null);
+    }
+
     public Viewport(Frustum frustum, Vector3d position, @Nullable Matrix4fc vpMatrix) {
         this(frustum, position, vpMatrix, null);
     }

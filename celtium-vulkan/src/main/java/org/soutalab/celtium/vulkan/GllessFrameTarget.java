@@ -1774,6 +1774,71 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return pair == null ? 0 : pair.colorCount();
     }
 
+    /**
+     * Ensures extra colour slot {@code slot} (1-based) exists on {@code identity}'s chain pair and initializes any
+     * newly allocated {@code UNDEFINED} slot to {@code (0, 0, 0, 1)} in {@code GENERAL} layout outside a render pass,
+     * so deferred/composite mod programs sampling an unwritten MRT slot (such as {@code shadowcolor1}) resolve a
+     * valid native image instead of failing with {@code slot-image-zero}.
+     */
+    public boolean ensureAndInitializeExtraColor(long identity, int slot, int width, int height,
+            VkCommandBuffer command) {
+        checkAlive();
+        if (slot <= 0 || slot >= 8 || width <= 0 || height <= 0 || command == null || command.address() == 0L) {
+            return false;
+        }
+        int needed = Math.max(chainPairColorCount(identity), slot + 1);
+        ensureChainPairColors(identity, needed, width, height);
+        Pair pair = existingChainPair(identity);
+        if (pair == null || pair.extraColorImages == null || slot - 1 >= pair.extraColorCount) {
+            return false;
+        }
+        int idx = slot - 1;
+        long extraImage = pair.extraColorImages[idx];
+        long extraView = pair.extraColorViews[idx];
+        if (extraImage == 0L || extraView == 0L) {
+            return false;
+        }
+        if (pair.extraColorLayouts[idx] == VK_IMAGE_LAYOUT_UNDEFINED) {
+            int queueFamily = this.context.queueFamilyIndex();
+            try (MemoryStack stack = stackPush()) {
+                VkImageMemoryBarrier.Buffer toClear = VkImageMemoryBarrier.calloc(1, stack);
+                toClear.get(0).sType$Default()
+                        .image(extraImage)
+                        .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED)
+                        .newLayout(COLOR_RENDER_LAYOUT)
+                        .srcQueueFamilyIndex(queueFamily)
+                        .dstQueueFamilyIndex(queueFamily)
+                        .srcAccessMask(0)
+                        .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+                toClear.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+                vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        0, null, null, toClear);
+
+                VkClearColorValue clear = VkClearColorValue.calloc(stack);
+                clear.float32(0, 0.0f).float32(1, 0.0f).float32(2, 0.0f).float32(3, 1.0f);
+                VkImageSubresourceRange range = VkImageSubresourceRange.calloc(stack)
+                        .set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+                vkCmdClearColorImage(command, extraImage, COLOR_RENDER_LAYOUT, clear, range);
+
+                VkImageMemoryBarrier.Buffer toRead = VkImageMemoryBarrier.calloc(1, stack);
+                toRead.get(0).sType$Default()
+                        .image(extraImage)
+                        .oldLayout(COLOR_RENDER_LAYOUT)
+                        .newLayout(COLOR_RENDER_LAYOUT)
+                        .srcQueueFamilyIndex(queueFamily)
+                        .dstQueueFamilyIndex(queueFamily)
+                        .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT
+                                | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+                toRead.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+                vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        0, null, null, toRead);
+            }
+            pair.extraColorLayouts[idx] = COLOR_RENDER_LAYOUT;
+        }
+        return true;
+    }
+
     /** The colour image at a slot of the identity's chain pair (0 = the pair's own), or 0 when it holds none. */
     public long chainPairColorImageAt(long identity, int slot) {
         checkAlive();
@@ -2792,7 +2857,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barrier);
-                depthLayout(DEPTH_RENDER_LAYOUT);
+                depthLayout(command, DEPTH_RENDER_LAYOUT);
             }
         }
 
@@ -3058,6 +3123,17 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.depthLayout = layout;
         }
 
+        /**
+         * Records where this pair's depth image has been moved to by a barrier in {@code command}, keeping both
+         * the shared depth store and any published {@link VulkanGlTexture} foreign-layout ledger in step.
+         */
+        private void depthLayout(VkCommandBuffer command, int layout) {
+            depthLayout(layout);
+            if (this.sharedDepthKey != 0L && this.depthImage != 0L) {
+                VulkanGlTexture.noteExternalForeignLayout(command, this.depthImage, layout);
+            }
+        }
+
         /** Whether the pair's colour sits in the clear's transfer layout. */
         private boolean colorInTransfer;
 
@@ -3111,7 +3187,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                                     : VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
                             .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
                     barrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
-                    depthLayout(DEPTH_TRANSFER_LAYOUT);
+                    depthLayout(command, DEPTH_TRANSFER_LAYOUT);
                 }
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                         0, null, null, barriers);
@@ -3174,7 +3250,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, depthBarriers);
                 // The barrier above is the move, so this is where the pair's own record of it belongs.
                 this.colorImageLayout = VK_IMAGE_LAYOUT_GENERAL;
-                depthLayout(DEPTH_TRANSFER_LAYOUT);
+                depthLayout(command, DEPTH_TRANSFER_LAYOUT);
             }
         }
 
@@ -3228,7 +3304,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barriers);
             }
             this.colorImageLayout = COLOR_RENDER_LAYOUT;
-            depthLayout(DEPTH_RENDER_LAYOUT);
+            depthLayout(command, DEPTH_RENDER_LAYOUT);
             this.acquired = true;
         }
 
@@ -3268,7 +3344,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
 
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                         0, null, null, barriers);
-                depthLayout(DEPTH_RENDER_LAYOUT);
+                depthLayout(command, DEPTH_RENDER_LAYOUT);
             }
         }
 
