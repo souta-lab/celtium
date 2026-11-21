@@ -5,6 +5,7 @@ import org.lwjgl.util.shaderc.Shaderc;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -514,6 +515,146 @@ class ModGlslTranslatorTest {
         assertTrue(result.fragment().contains("textureGrad("), result.fragment());
         assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
         assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void refusesAVaryingWhoseTypeDiffersAcrossStages() {
+        // GL fails this link; the lowering compiles the stages separately, so without the check the fragment
+        // stage would read a vec3 from a location the vertex stage wrote a vec2 into.
+        String vertex = """
+                #version 120
+                attribute vec2 position;
+                varying vec2 varyingData;
+                void main() { varyingData = position; gl_Position = vec4(position, 0.0, 1.0); }
+                """;
+        String fragment = """
+                #version 120
+                varying vec3 varyingData;
+                void main() { gl_FragColor = vec4(varyingData, 1.0); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertNotNull(result.failure());
+        assertTrue(result.failure().contains("varying varyingData"), result.failure());
+    }
+
+    @Test
+    void refusesAVaryingWhoseArrayLengthDiffersAcrossStages() {
+        String vertex = """
+                #version 120
+                attribute vec2 position;
+                varying float weights[2];
+                void main() { weights[0] = 1.0; weights[1] = 0.0; gl_Position = vec4(position, 0.0, 1.0); }
+                """;
+        String fragment = """
+                #version 120
+                varying float weights[3];
+                void main() { gl_FragColor = vec4(weights[0]); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertNotNull(result.failure());
+        assertTrue(result.failure().contains("varying weights"), result.failure());
+    }
+
+    @Test
+    void refusesAVaryingWhoseInterpolationDiffersAcrossStages() {
+        // An unqualified varying is smooth: flat against unqualified is a mismatch, not a match.
+        String vertex = """
+                #version 120
+                attribute vec2 position;
+                flat varying float shade;
+                void main() { shade = position.x; gl_Position = vec4(position, 0.0, 1.0); }
+                """;
+        String fragment = """
+                #version 120
+                varying float shade;
+                void main() { gl_FragColor = vec4(shade); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertNotNull(result.failure());
+        assertTrue(result.failure().contains("varying shade"), result.failure());
+        assertTrue(result.failure().contains("flat"), result.failure());
+    }
+
+    @Test
+    void lowersAMatchingFlatVaryingPair() {
+        String vertex = """
+                #version 120
+                attribute vec2 position;
+                flat varying float shade;
+                void main() { shade = position.x; gl_Position = vec4(position, 0.0, 1.0); }
+                """;
+        String fragment = """
+                #version 120
+                flat varying float shade;
+                void main() { gl_FragColor = vec4(shade); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void carriesAUniformConstructorInitializerAsItsDefault() {
+        // Before, the parentheses in the initializer made the declaration unparseable: the uniform never
+        // reached the interface and every write to it was dropped without a word.
+        String vertex = """
+                #version 120
+                uniform vec4 tint = vec4(0.25, 0.5, 0.75, 1.0);
+                attribute vec2 position;
+                void main() { gl_Position = tint * vec4(position, 0.0, 1.0); }
+                """;
+        String fragment = """
+                #version 120
+                void main() { gl_FragColor = vec4(1.0); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertEquals(List.of(new ModGlslTranslator.UniformMember("tint", "vec4", 0, 0, 16)), result.uniforms());
+        assertArrayEquals(new float[] {0.25f, 0.5f, 0.75f, 1.0f}, result.uniformDefaults().get("tint"));
+        assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void carriesScalarAndSiblingInitializers() {
+        String vertex = """
+                #version 120
+                uniform float gain = 2.0;
+                uniform vec4 a = vec4(1.0, 2.0, 3.0, 4.0), b;
+                attribute vec2 position;
+                void main() { gl_Position = (a + b) * gain * vec4(position, 0.0, 1.0); }
+                """;
+        String fragment = """
+                #version 120
+                void main() { gl_FragColor = vec4(1.0); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertEquals(List.of(new ModGlslTranslator.UniformMember("gain", "float", 0, 0, 4),
+                new ModGlslTranslator.UniformMember("a", "vec4", 0, 16, 16),
+                new ModGlslTranslator.UniformMember("b", "vec4", 0, 32, 16)), result.uniforms());
+        assertArrayEquals(new float[] {2.0f}, result.uniformDefaults().get("gain"));
+        assertArrayEquals(new float[] {1.0f, 2.0f, 3.0f, 4.0f}, result.uniformDefaults().get("a"));
+        assertNull(result.uniformDefaults().get("b"));
+        assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+    }
+
+    @Test
+    void refusesAUniformInitializerThatIsNotAConstant() {
+        String vertex = """
+                #version 120
+                uniform float t = computeT();
+                attribute vec2 position;
+                void main() { gl_Position = vec4(position * t, 0.0, 1.0); }
+                """;
+        String fragment = """
+                #version 120
+                void main() { gl_FragColor = vec4(1.0); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertNotNull(result.failure());
+        assertTrue(result.failure().contains("initializer this lowering does not evaluate"), result.failure());
     }
 
     /**

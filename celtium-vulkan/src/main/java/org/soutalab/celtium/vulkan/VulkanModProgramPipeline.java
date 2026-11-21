@@ -836,7 +836,11 @@ public final class VulkanModProgramPipeline {
         for (ModGlslTranslator.UniformMember member : lowered.uniforms()) {
             float[] floats = program.floats(member.name());
             int[] ints = floats == null ? program.ints(member.name()) : null;
-            if (floats == null && ints == null) {
+            // A member nobody wrote still has a value when its declaration carried an initializer: the lowering
+            // evaluated it into the defaults, and that is the value GL hands the shader until the first write.
+            float[] defaults = floats == null && ints == null
+                    ? lowered.uniformDefaults().get(member.name()) : null;
+            if (floats == null && ints == null && defaults == null) {
                 continue;
             }
             String type = member.type();
@@ -863,6 +867,12 @@ public final class VulkanModProgramPipeline {
                             } else {
                                 block.putFloat(at, ints[value]);
                             }
+                        } else if (defaults != null && value < defaults.length) {
+                            if (integerType) {
+                                block.putInt(at, (int) defaults[value]);
+                            } else {
+                                block.putFloat(at, defaults[value]);
+                            }
                         }
                     }
                 }
@@ -870,6 +880,26 @@ public final class VulkanModProgramPipeline {
         }
         program.cachePackedUniforms(version, block);
         return block;
+    }
+
+    /**
+     * {@return a private copy of the program's packed uniform block, frozen at this call}, for a prepared draw
+     * on the push route. {@link #packUniforms} returns the program's one reusable buffer, refilled in place
+     * whenever its uniforms change - and a prepared {@link Draw} is recorded later, at the window's flush, from
+     * whatever that buffer then holds. Preparing the same program twice in one window with different values
+     * (a two-pass blur whose direction uniform flips between passes) therefore pushed the second pass's values
+     * for both. The buffer route never had the defect: {@link #uniformSlot} copies into a ring slot at prepare
+     * time. This copy is the push route's counterpart, taken at the same moment.
+     */
+    public static ByteBuffer packUniformsSnapshot(ModProgramRegistry.Program program) {
+        ByteBuffer packed = packUniforms(program);
+        ByteBuffer copy = ByteBuffer.allocateDirect(packed.capacity())
+                .order(java.nio.ByteOrder.nativeOrder());
+        ByteBuffer view = packed.duplicate();
+        view.clear();
+        copy.put(view);
+        copy.clear();
+        return copy;
     }
 
     private static int componentsOf(String type) {

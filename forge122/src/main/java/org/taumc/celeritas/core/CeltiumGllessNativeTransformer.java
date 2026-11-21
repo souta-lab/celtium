@@ -769,6 +769,15 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
      */
     private static boolean celtium$routeModProgram(MethodVisitor method, String name, String descriptor) {
         String hint = "org/taumc/celeritas/core/CeltiumGllessHint";
+        // glCreateShader is routed, not generated: the hint records the stage with the name, so the registry's
+        // link classifies by the caller's argument instead of guessing from the source text. The ARB spelling
+        // returns a long handle, a different native shape, and stays with the generic generator.
+        if ((name.equals("nglCreateShader") || name.equals("glCreateShader")) && "(I)I".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, hint, "glCreateShader", "(I)I", false);
+            method.visitInsn(Opcodes.IRETURN);
+            return true;
+        }
         if ((name.equals("nglShaderSource") || name.equals("nglShaderSourceARB")) && "(IIJJ)V".equals(descriptor)) {
             method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
