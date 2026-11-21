@@ -1681,9 +1681,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
     /**
      * Makes the identity's chain pair exist at the requested size in {@code formatClass} (QUEUE 404, S3): the
      * pair is rebuilt when its live class differs, through the same retire path a resize takes. This is the
-     * one ensure that sets a pair's class - the registration junction is its only caller, so the class a pair
-     * carries is decided in exactly one place (rule R5: the window path never re-reads the request, it
-     * follows the pair).
+     * one ensure that sets a pair's class, and a pair's class is written in exactly one of two places: the
+     * registration junction, which resolves a raw pair's class from its GL request, and the off-target
+     * window path, which passes the resolved class for pairs no junction resolves (a ShaderGroup group
+     * pair has no GL request; see {@code VulkanTerrainGpuBackend.celtium$pairClassForWindow}). Every
+     * consumer only follows the pair's recorded class and never re-reads a request (rule R5).
      */
     public void ensureChainPair(long identity, int width, int height, TargetFormatClass formatClass) {
         Pair pair = chainPairFor(identity);
