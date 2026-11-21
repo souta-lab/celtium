@@ -10,7 +10,8 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 public class ChunkJobCollector {
-    private final Semaphore semaphore = new Semaphore(0);
+    // Visible for tests: the delivery-before-completion order is pinned against this semaphore.
+    final Semaphore semaphore = new Semaphore(0);
     private final Consumer<ChunkJobResult<? extends ChunkTaskOutput>> collector;
     private final List<ChunkJob> submitted = new ArrayList<>();
 
@@ -22,10 +23,14 @@ public class ChunkJobCollector {
     }
 
     public void onJobFinished(@Nullable ChunkJobResult<? extends ChunkTaskOutput> result) {
-        this.semaphore.release(1);
+        // Deliver before signalling completion: awaitCompletion returning must mean the results are
+        // already with the collector, not merely that the workers have finished producing them.
+        // Releasing first let a caller that consumes on completion race the delivery - the current
+        // caller polls the result queue later, so this was a trap for the next caller, not a live defect.
         if (result != null) {
             this.collector.accept(result);
         }
+        this.semaphore.release(1);
     }
 
     public void awaitCompletion(ChunkBuilder builder) {

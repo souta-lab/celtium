@@ -184,17 +184,17 @@ public record LWJGL3Service(
             @Override public int gen() {
                 try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
                     java.nio.IntBuffer buf = stack.callocInt(1);
-                    org.lwjgl.system.JNI.callPV(1, MemoryUtil.memAddress(buf), glGenVertexArraysAPPLE);
+                    org.lwjgl.system.JNI.callPV(1, MemoryUtil.memAddress(buf), AppleVaoAddresses.GEN_VERTEX_ARRAYS);
                     return buf.get(0);
                 }
             }
             @Override public void delete(int array) {
                 try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
                     java.nio.IntBuffer buf = stack.ints(array);
-                    org.lwjgl.system.JNI.callPV(1, MemoryUtil.memAddress(buf), glDeleteVertexArraysAPPLE);
+                    org.lwjgl.system.JNI.callPV(1, MemoryUtil.memAddress(buf), AppleVaoAddresses.DELETE_VERTEX_ARRAYS);
                 }
             }
-            @Override public void bind(int array) { org.lwjgl.system.JNI.callV(array, glBindVertexArrayAPPLE); }
+            @Override public void bind(int array) { org.lwjgl.system.JNI.callV(array, AppleVaoAddresses.BIND_VERTEX_ARRAY); }
         },
         NONE {
             @Override public int gen() { throw new UnsupportedOperationException("VAO not supported"); }
@@ -212,10 +212,21 @@ public record LWJGL3Service(
     private enum VertexAttribDivisorMode { CORE, ARB, NONE }
 
 
-    // Cached function addresses for APPLE VAO extensions
-    private static final long glGenVertexArraysAPPLE = GL.getFunctionProvider().getFunctionAddress("glGenVertexArraysAPPLE");
-    private static final long glDeleteVertexArraysAPPLE = GL.getFunctionProvider().getFunctionAddress("glDeleteVertexArraysAPPLE");
-    private static final long glBindVertexArrayAPPLE = GL.getFunctionProvider().getFunctionAddress("glBindVertexArrayAPPLE");
+    /**
+     * Cached function addresses for the APPLE VAO extensions, resolved lazily in a holder. Resolving
+     * them in this class's own static initializer dereferenced {@code GL.getFunctionProvider()} at
+     * class-initialization time; that provider is null until {@code GL.createCapabilities} has run
+     * (the getter returns the raw field - verified in the LWJGL 3.3.1 and 3.4.3 bytecode), so a
+     * GL-less thread touching this class first - a ChunkBuilder worker, the very case {@link #create()}'s
+     * no-capabilities guard exists for - killed the class for the whole JVM with an
+     * ExceptionInInitializerError before the guard could run. The holder initializes on first use,
+     * which only happens on paths that already hold capabilities.
+     */
+    private static final class AppleVaoAddresses {
+        static final long GEN_VERTEX_ARRAYS = GL.getFunctionProvider().getFunctionAddress("glGenVertexArraysAPPLE");
+        static final long DELETE_VERTEX_ARRAYS = GL.getFunctionProvider().getFunctionAddress("glDeleteVertexArraysAPPLE");
+        static final long BIND_VERTEX_ARRAY = GL.getFunctionProvider().getFunctionAddress("glBindVertexArrayAPPLE");
+    }
 
     public static LWJGL3Service create() {
         GLCapabilities caps = null;
@@ -236,7 +247,7 @@ public record LWJGL3Service(
             vaoMode = VAOMode.CORE;
         } else if (caps.GL_ARB_vertex_array_object) {
             vaoMode = VAOMode.ARB;
-        } else if (glBindVertexArrayAPPLE != 0) {
+        } else if (AppleVaoAddresses.BIND_VERTEX_ARRAY != 0) {
             vaoMode = VAOMode.APPLE;
         } else {
             vaoMode = VAOMode.NONE;

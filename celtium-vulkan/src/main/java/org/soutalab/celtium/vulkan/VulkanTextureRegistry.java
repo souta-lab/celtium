@@ -34,8 +34,13 @@ import org.lwjgl.vulkan.VkCommandBuffer;
  */
 public final class VulkanTextureRegistry {
 
-    /** Whether the skip decision above is logged; set with the mirror dump, which asks the same question of pixels. */
-    private static final String MIRROR_DUMP = System.getProperty("celtium.vulkan.mirrorDump");
+    /**
+     * Whether the skip decision above is logged; set with the mirror dump, which asks the same
+     * question of pixels. The gate is the mirror-dump family's one formula -
+     * {@link VulkanGlTexture#mirrorDumpConfigured()}, the property's value set and non-empty - not a
+     * second read of the property with its own semantics (bughunt 09-03).
+     */
+    private static final boolean MIRROR_DUMP_ON = VulkanGlTexture.mirrorDumpConfigured();
     private static int skipDecisionLogs;
     /** One mirrored texture: the Vulkan image plus the GL name and size it was created from. */
     private static final class Entry {
@@ -836,7 +841,7 @@ public final class VulkanTextureRegistry {
     }
 
     /**
-     * Names the decision above when {@code -Dceltium.vulkan.mirrorDump} is set.
+     * Names the decision above when the mirror dump is on ({@code -Dceltium.vulkan.mirrorDump=<dir>}).
      * <p>
      * This method is the gate every directly held texture's readback passes: a "true" here with an image whose whole
      * content never arrived is the defect that draws patches over undefined texels, and a "false" here is the defect
@@ -844,7 +849,7 @@ public final class VulkanTextureRegistry {
      * facts it was made from.
      */
     private void skipDecisionLog(int glTextureId, String why, boolean decision) {
-        if (MIRROR_DUMP == null || skipDecisionLogs >= 200) {
+        if (!MIRROR_DUMP_ON || skipDecisionLogs >= 200) {
             return;
         }
         skipDecisionLogs++;

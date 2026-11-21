@@ -3090,8 +3090,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final String FRAME_DUMP_DIR = HarnessConfig.path("frameDumpDir");
     private static final boolean DUMP_LOADING_PROGRESS =
             HarnessConfig.bool("dumpLoadingProgress", false);
-    /** On/off probes and the frame-dump cadence: consulted on present paths, so resolved once rather than per frame. */
-    private static final boolean MIRROR_DUMP_ON = System.getProperty("celtium.vulkan.mirrorDump") != null;
+    /**
+     * On/off probes and the frame-dump cadence: consulted on present paths, so resolved once rather
+     * than per frame. The mirror-dump family's one switch is {@code -Dceltium.vulkan.mirrorDump=<dir>}
+     * with the value semantics {@link VulkanGlTexture#mirrorDumpConfigured()} defines (set and
+     * non-empty); this field used to be an existence test on that property, so naming it at all - even
+     * {@code =false}, even empty - turned the splash and box probes' readbacks on while the dumps they
+     * feed wrote nothing (bughunt 09-03). The separate {@code -Dceltium.mirrorDump} key below is not a
+     * switch: it is the probe spec naming which mirrors {@code celtium$mirrorProbe} dumps.
+     */
+    private static final boolean MIRROR_DUMP_ON = VulkanGlTexture.mirrorDumpConfigured();
     private static final int FRAME_DUMP_EVERY = HarnessConfig.integer("frameDumpEvery", 60);
     private static final int FRAME_DUMP_COUNT = HarnessConfig.integer("frameDumpCount", 0);
     private static final String MIRROR_DUMP_SPEC = System.getProperty("celtium.mirrorDump");
@@ -6966,6 +6974,27 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         if (framebuffer == 0) {
             return false;
         }
+        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferColorTexture(framebuffer)
+                != glTextureName) {
+            // The name fills an extra colour slot of the framebuffer, not slot 0: recording it through the
+            // slot-0 record below would evict the texture that does fill slot 0 from the census. Adopt by
+            // registering the framebuffer instead - registration binds the whole attachment tuple (and
+            // ensures the pair's slot images), the same late registration the depth publication makes when
+            // its store is empty.
+            celtium$registerRawFramebuffer(framebuffer, false);
+            boolean recorded = this.publishedTextures.identityForColorTexture(glTextureName) != Long.MIN_VALUE
+                    || this.publishedTextures.slotIdentityForColorTexture(glTextureName) != Long.MIN_VALUE;
+            if (recorded && this.rawFramebufferAdoptions < 8) {
+                this.rawFramebufferAdoptions++;
+                System.out.println("[Celtium] CELTIUM_RAW_FBO_ADOPTED framebuffer=" + framebuffer
+                        + " colorTexture=" + glTextureName
+                        + " slot=" + this.publishedTextures.slotIndexForColorTexture(glTextureName)
+                        + " identity=0x" + Long.toHexString(
+                                this.publishedTextures.slotIdentityForColorTexture(glTextureName))
+                        + " (a raw framebuffer's extra-slot colour texture, recorded by registering its tuple)");
+            }
+            return recorded;
+        }
         long identity = RenderTargetRegistry.rawTargetIdentity(framebuffer, glTextureName);
         int width = 0;
         int height = 0;
@@ -7080,10 +7109,25 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
      */
     boolean celtium$publishFramebufferColorTexture(int glTextureName) {
         long identity = celtium$framebufferIdentityForColorTexture(glTextureName);
-        if (identity == Long.MIN_VALUE) {
-            return false;
+        if (identity != Long.MIN_VALUE) {
+            return celtium$publishFramebufferColorTexture(glTextureName, identity,
+                    framebufferColorTexture(identity));
         }
-        return celtium$publishFramebufferColorTexture(glTextureName, identity, framebufferColorTexture(identity));
+        // The name fills an extra colour slot of a multi-target framebuffer, which the slot-0 record above
+        // cannot see: the image it stands for is the pair's image at that slot, published by the same call
+        // the drawing window makes for the tuple's other names. A sampling site is the caller that needs
+        // the guarantee - the colour half of the section 3.4 publication the depth route already makes at
+        // sampling time. The measured case is a shadow framebuffer's second colour target, sampled by the
+        // deferred programs and resolvable through no other route.
+        int slot = this.publishedTextures.slotIndexForColorTexture(glTextureName);
+        long slotIdentity = this.publishedTextures.slotIdentityForColorTexture(glTextureName);
+        if (slot > 0 && slotIdentity != Long.MIN_VALUE) {
+            int[] size = textureSize(glTextureName);
+            return celtium$publishFramebufferColorTextureAt(glTextureName, slotIdentity, slot,
+                    size != null && size.length >= 2 ? size[0] : 0,
+                    size != null && size.length >= 2 ? size[1] : 0);
+        }
+        return false;
     }
 
     /**
@@ -15531,6 +15575,26 @@ this.frameBufferOpen = false;
         record("world teardown: terrain resources released, the window device and swapchain are kept");
     }
 
+    /**
+     * Takes this backend out of the current-backend registration and restores the GL batch factory, each only
+     * while what is installed is still this backend's own (BH10-13): when a second backend exists (the factory's
+     * own scenario, observed with modded RenderGlobals), the newer one is registered by the time the older one is
+     * deleted, and clearing unconditionally would erase the live backend's registration and leave the mixins with
+     * no Vulkan backend at all. uninstall() applies the same identity rule to the batch factory.
+     * <p>
+     * Every delete() exit that retires this instance runs this, including the stalled / settle-failed early
+     * returns (BH10-07): those paths deliberately leave the GPU resources for process exit, but the registration
+     * is plain Java state, and leaving it pointing at a backend its owner believes deleted keeps the mixins
+     * drawing into a stopped GPU backend until the factory happens to install a successor. The windowOwned exit
+     * is the one exception: that instance stays alive as the window backend, so its registration must stay.
+     */
+    private void celtium$detachRegistration() {
+        if (org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current() == this) {
+            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(null);
+        }
+        uninstall();
+    }
+
     public void delete() {
         if (this.cachedWindowBegin != null) {
             this.cachedWindowBegin.free();
@@ -15545,6 +15609,7 @@ this.frameBufferOpen = false;
             // references are still live. Destroying the frame target or its framebuffers here is what validation reported as
             // "in use by VkCommandBuffer": on this path the resources are left for process exit instead.
             this.submissionStatistics.noteStalledTeardownSkips();
+            celtium$detachRegistration();
             return;
         }
         // Nothing may be released while a submission is still reading it: the audit reproduced
@@ -15553,6 +15618,7 @@ this.frameBufferOpen = false;
         // pulling it out from under the GPU.
         if (!settleGpu("backend delete")) {
             // Stalled: releasing the backend here would destroy objects the recorded command buffer still references.
+            celtium$detachRegistration();
             return;
         }
         for (VulkanImmediateTexturePipeline records : this.indirectRuns.recordsPipelines.values()) {
@@ -15616,15 +15682,7 @@ this.frameBufferOpen = false;
         }
         this.textureCopyService.delete();
         releaseRetiredImmediateGroups();
-        // Only the backend that is actually installed may clear the registration: when a second backend exists
-        // (the factory's own scenario, observed with modded RenderGlobals), the newer one is registered by the
-        // time the older one is deleted, and clearing unconditionally would erase the live backend's
-        // registration and leave the mixins with no Vulkan backend at all (BH10-13). uninstall() applies the
-        // same identity rule to the batch factory.
-        if (org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current() == this) {
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.install(null);
-        }
-        uninstall();
+        celtium$detachRegistration();
         for (TerrainRenderer.RegionResources resources : this.terrain.regionResources()) {
             resources.delete();
         }

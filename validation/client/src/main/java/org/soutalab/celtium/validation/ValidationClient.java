@@ -1337,7 +1337,10 @@ public final class ValidationClient {
 
     /** The scene a dimension transfer lands in, or the terrain scene when the run stays where it starts. */
     private static Scene celtium$dimensionScene() {
-        int dimension = HarnessConfig.integer("dimension", 0);
+        // The default is the transfer field's own -1 (the Nether): a file that names only dimensionAtTick
+        // transfers to -1, so the scene must resolve to -1 too. This reader used to default to 0, which
+        // judged such a run as TERRAIN while the player stood in the Nether (bughunt 09-01).
+        int dimension = HarnessConfig.integer("dimension", -1);
         int atTick = HarnessConfig.integer("dimensionAtTick", 0);
         if (atTick <= 0 || dimension == 0) {
             return Scene.TERRAIN;
@@ -11979,7 +11982,9 @@ public final class ValidationClient {
 
     /** The scene's dimension as words, so a failure names the world the picture is of, not only the scene's name. */
     private static String celtium$sceneDimension() {
-        int dimension = HarnessConfig.integer("dimension", 0);
+        // Same default as the transfer field and celtium$dimensionScene (-1): with only dimensionAtTick
+        // named, a transfer to the Nether was requested, and this string used to say the opposite (09-01).
+        int dimension = HarnessConfig.integer("dimension", -1);
         int atTick = HarnessConfig.integer("dimensionAtTick", 0);
         if (atTick <= 0 || dimension == 0) {
             return "overworld (dimension 0), no transfer requested";

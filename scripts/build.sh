@@ -16,21 +16,71 @@ mkdir -p "$slot"
 lock="$slot/owner.pid"
 deadline=$(( $(date +%s) + ${CELTIUM_BUILD_WAIT:-1800} ))
 
+# The lock names a process *instance*, not just a pid. A pid alone is recycled by the kernel: if a build died
+# without cleaning up (kill -9, a dead VM) and its pid now belongs to an unrelated live process, a kill -0
+# check alone would wait out the whole CELTIUM_BUILD_WAIT for a slot that is actually free. The start time
+# from /proc/<pid>/stat (field 22) identifies the instance; where /proc is unavailable, or for lock files
+# written by older versions of this script (pid only), the check degrades to the pid alone.
+proc_start_time() {
+    local stat
+    stat="$(cat "/proc/$1/stat" 2>/dev/null)" || return 0
+    stat="${stat##*) }"
+    set -- $stat
+    if [ "$#" -ge 20 ]; then
+        echo "${20}"
+    fi
+}
+
+proc_state() {
+    local stat
+    stat="$(cat "/proc/$1/stat" 2>/dev/null)" || return 0
+    stat="${stat##*) }"
+    echo "${stat%% *}"
+}
+
+# Whether the recorded holder is still the process instance that took the lock. $1 is the lock file's
+# content: "pid [starttime]".
+holder_alive() {
+    local pid="${1%% *}" recorded=""
+    case "$1" in
+        *" "*) recorded="${1#* }" ;;
+    esac
+    if [ -z "$pid" ] || [ "$pid" = "0" ]; then
+        return 1
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+        return 1
+    fi
+    # A zombie is a finished build whose parent has not reaped it yet (a Python harness that is busy
+    # elsewhere, say): it runs nothing and holds nothing, but kill -0 still succeeds on it.
+    if [ "$(proc_state "$pid")" = "Z" ]; then
+        return 1
+    fi
+    if [ -n "$recorded" ]; then
+        local current
+        current="$(proc_start_time "$pid")"
+        if [ -n "$current" ] && [ "$current" != "$recorded" ]; then
+            return 1
+        fi
+    fi
+    return 0
+}
+
 while true; do
-    if ( set -o noclobber; echo "$$" > "$lock" ) 2>/dev/null; then
+    if ( set -o noclobber; echo "$$ $(proc_start_time $$)" > "$lock" ) 2>/dev/null; then
         break
     fi
     holder="$(cat "$lock" 2>/dev/null || echo 0)"
-    if [ -n "$holder" ] && [ "$holder" != "0" ] && ! kill -0 "$holder" 2>/dev/null; then
-        echo "Reclaiming the build slot from pid $holder, which is gone"
+    if ! holder_alive "$holder"; then
+        echo "Reclaiming the build slot from pid ${holder%% *}, which is gone or recycled"
         rm -f "$lock"
         continue
     fi
     if [ "$(date +%s)" -ge "$deadline" ]; then
-        echo "The build slot is held by pid ${holder:-unknown} and CELTIUM_BUILD_WAIT expired" >&2
+        echo "The build slot is held by pid ${holder%% *} and CELTIUM_BUILD_WAIT expired" >&2
         exit 1
     fi
-    echo "Waiting for the build slot (held by pid ${holder:-unknown}) ..."
+    echo "Waiting for the build slot (held by pid ${holder%% *}) ..."
     sleep 5
 done
 trap 'rm -f "$lock"' EXIT

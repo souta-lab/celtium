@@ -2649,7 +2649,10 @@ public final class VulkanGlTexture {
         if (parameterVersion == this.confirmedParameterVersion) {
             return;
         }
-        this.confirmedParameterVersion = parameterVersion;
+        // The version is consumed only once the rebuild below has actually happened (or turned out to be
+        // unnecessary). Consuming it here, before the rebuild, made a failed vkCreateSampler permanent:
+        // the version said "confirmed" and the parameter fields said "new", while the sampler itself was
+        // the 0 the retire had left behind, and no later lookup ever retried.
         // BH-23: this used to be a one-shot (`wrapConfirmed`), so a texture whose filter or wrap changed *after* its
         // first draw kept the old sampler for the rest of its life, and the full minification meaning never reached it.
         // It now re-consults on every lookup and rebuilds only when something actually differs, which is what makes
@@ -2710,29 +2713,52 @@ public final class VulkanGlTexture {
         if (repeatU == this.wrapRepeatU && repeatV == this.wrapRepeatV
                 && magNearest == this.nearestFilter && minNearest == this.nearestMinFilter
                 && mipmapNearest == this.mipmapNearest && !reachChanges) {
+            this.confirmedParameterVersion = parameterVersion;
             return;
         }
         String source = "mag=" + (magRecorded ? "record" : "inference") + " min=" + (minRecorded ? "record" : "inference");
         String was = "wasMag=" + (this.nearestFilter ? "NEAREST" : "LINEAR")
                 + " wasMin=" + (this.nearestMinFilter ? "NEAREST" : "LINEAR")
                 + " wasRepeatU=" + this.wrapRepeatU + " wasRepeatV=" + this.wrapRepeatV;
+        // The replacement is built before anything is mutated or retired. If vkCreateSampler fails, the
+        // exception leaves this texture exactly as it was - old sampler live, parameter fields and the
+        // confirmed version untouched - and the next lookup retries the rebuild, instead of the texture
+        // sampling through sampler 0 for the rest of its life.
+        boolean prevWrapRepeatU = this.wrapRepeatU;
+        boolean prevWrapRepeatV = this.wrapRepeatV;
+        boolean prevNearestFilter = this.nearestFilter;
+        boolean prevNearestMinFilter = this.nearestMinFilter;
+        boolean prevMipmapNearest = this.mipmapNearest;
+        int reachWas = this.samplerMaxLod;
         this.wrapRepeatU = repeatU;
         this.wrapRepeatV = repeatV;
         this.nearestFilter = magNearest;
         this.nearestMinFilter = minNearest;
         this.mipmapNearest = mipmapNearest;
+        if (reachChanges) {
+            this.samplerMaxLod = Math.max(0, Math.min(recordedMaxLevel, Math.max(1, this.mipLevels) - 1));
+        }
+        long createdSampler;
+        try {
+            createdSampler = createSamplerHandle();
+        } catch (RuntimeException failure) {
+            this.wrapRepeatU = prevWrapRepeatU;
+            this.wrapRepeatV = prevWrapRepeatV;
+            this.nearestFilter = prevNearestFilter;
+            this.nearestMinFilter = prevNearestMinFilter;
+            this.mipmapNearest = prevMipmapNearest;
+            this.samplerMaxLod = reachWas;
+            throw failure;
+        }
+        retireSampler();
+        this.sampler = createdSampler;
+        this.confirmedParameterVersion = parameterVersion;
         if (minRecorded) {
             SAMPLER_MIN_FROM_RECORD.incrementAndGet();
         }
         if (mipmapNearest) {
             SAMPLER_MIPMAP_NEAREST.incrementAndGet();
         }
-        int reachWas = this.samplerMaxLod;
-        if (reachChanges) {
-            this.samplerMaxLod = Math.max(0, Math.min(recordedMaxLevel, Math.max(1, this.mipLevels) - 1));
-        }
-        retireSampler();
-        createSampler();
         this.generation++;
         System.out.println("[Celtium] CELTIUM_SAMPLER_FILTER glTexture=" + glTextureId + " repeatU=" + repeatU
                 + " repeatV=" + repeatV + " mag=" + (this.nearestFilter ? "NEAREST" : "LINEAR")
@@ -2778,9 +2804,20 @@ public final class VulkanGlTexture {
         if (wanted <= this.samplerMaxLod) {
             return;
         }
+        int reachWas = this.samplerMaxLod;
         this.samplerMaxLod = wanted;
+        long createdSampler;
+        try {
+            createdSampler = createSamplerHandle();
+        } catch (RuntimeException failure) {
+            // Leave the reach at the value the live sampler was built with, so a later call retries
+            // instead of seeing wanted <= samplerMaxLod and concluding the work is already done - the
+            // shape that used to strand the texture on sampler 0 after one failed vkCreateSampler.
+            this.samplerMaxLod = reachWas;
+            throw failure;
+        }
         retireSampler();
-        createSampler();
+        this.sampler = createdSampler;
         // The sampler is one of the descriptor's inputs, and the descriptor caches key on key() - the view and the
         // generation. Without this bump a set written before the reach changed would keep naming the sampler just
         // destroyed, which validation reports and sampling reads as undefined. Bumped after the new sampler exists,
@@ -3040,6 +3077,15 @@ public final class VulkanGlTexture {
     }
 
     private void createSampler() {
+        this.sampler = createSamplerHandle();
+    }
+
+    /**
+     * Builds a sampler from the current parameter fields without touching {@link #sampler}. A caller
+     * recreating a live sampler builds the replacement first, so a vkCreateSampler failure leaves the
+     * old sampler in place instead of the 0 the descriptors would otherwise go on naming.
+     */
+    private long createSamplerHandle() {
         VkDevice device = context.device();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkSamplerCreateInfo create = VkSamplerCreateInfo.calloc(stack).sType$Default()
@@ -3103,7 +3149,7 @@ public final class VulkanGlTexture {
                     .unnormalizedCoordinates(false);
             LongBuffer handle = stack.mallocLong(1);
             check(vkCreateSampler(device, create, null, handle), "vkCreateSampler(mirrored texture)");
-            sampler = handle.get(0);
+            long createdSampler = handle.get(0);
             if (this.samplerMaxLod > samplerReachObserved) {
                 samplerReachObserved = this.samplerMaxLod;
             }
@@ -3117,6 +3163,7 @@ public final class VulkanGlTexture {
                         + " minLod=" + create.minLod() + " maxLod=" + create.maxLod()
                         + " bias=" + create.mipLodBias() + " nearest=" + this.nearestFilter);
             }
+            return createdSampler;
         }
     }
 
