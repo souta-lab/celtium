@@ -4,7 +4,6 @@ import lombok.Getter;
 import org.soutalab.celtium.harness.HarnessConfig;
 import org.embeddedt.embeddium.impl.common.util.NativeBuffer;
 import org.embeddedt.embeddium.impl.gl.device.CommandList;
-import org.embeddedt.embeddium.impl.gl.device.RenderDevice;
 import org.embeddedt.embeddium.impl.render.chunk.ChunkRenderMatrices;
 import org.embeddedt.embeddium.impl.render.chunk.RenderPassConfiguration;
 import org.embeddedt.embeddium.impl.render.chunk.RenderSection;
@@ -66,12 +65,9 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
     protected void loadWorld(WORLD world) {
         this.world = world;
 
-        System.out.println("[Celtium] CELTIUM_WORLD_LOAD loadWorld enter, creating a command list");
-        try (CommandList commandList = RenderDevice.INSTANCE.createCommandList()) {
-            System.out.println("[Celtium] CELTIUM_WORLD_LOAD command list created, initialising the renderer");
-            this.initRenderer(commandList);
-            System.out.println("[Celtium] CELTIUM_WORLD_LOAD renderer initialised");
-        }
+        // Celtium renders terrain exclusively through Vulkan; no Celeritas GL CommandList is opened here.
+        System.out.println("[Celtium] CELTIUM_WORLD_LOAD loadWorld enter, initialising the renderer");
+        this.initRenderer(null);
         System.out.println("[Celtium] CELTIUM_WORLD_LOAD loadWorld leave");
     }
 
@@ -274,9 +270,7 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
             return;
         }
 
-        try (CommandList commandList = RenderDevice.INSTANCE.createCommandList()) {
-            this.initRenderer(commandList);
-        }
+        this.initRenderer(null);
     }
 
     protected abstract SECTIONMANAGER createRenderSectionManager(CommandList commandList);

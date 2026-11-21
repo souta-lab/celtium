@@ -32,7 +32,8 @@ public class RenderRegionManager {
     private final int commonVertexStride;
 
     public RenderRegionManager(CommandList commandList, RenderPassConfiguration<?> renderPassConfiguration) {
-        this.stagingBuffer = createStagingBuffer(commandList);
+        // On Celtium's Vulkan-native path commandList is null: skip allocating Celeritas's dead OpenGL StagingBuffer.
+        this.stagingBuffer = commandList != null ? createStagingBuffer(commandList) : null;
         this.renderPassConfiguration = renderPassConfiguration;
         // The arena element size is the configuration's one computation of it; see
         // RenderPassConfiguration#commonVertexStride for why it is aligned to whole primitives.
@@ -40,6 +41,18 @@ public class RenderRegionManager {
     }
 
     public void update() {
+        if (this.stagingBuffer == null) {
+            Iterator<RenderRegion> it = this.regions.values().iterator();
+            while (it.hasNext()) {
+                RenderRegion region = it.next();
+                if (region.isEmpty()) {
+                    it.remove();
+                    this.regionIds.clear(region.getId());
+                    this.nextFreeId = Math.min(this.nextFreeId, region.getId());
+                }
+            }
+            return;
+        }
         this.stagingBuffer.flip();
 
         try (CommandList commandList = RenderDevice.INSTANCE.createCommandList()) {
@@ -193,11 +206,15 @@ public class RenderRegionManager {
 
     public void delete(CommandList commandList) {
         for (RenderRegion region : this.regions.values()) {
-            region.delete(commandList);
+            if (commandList != null) {
+                region.delete(commandList);
+            }
         }
 
         this.regions.clear();
-        this.stagingBuffer.delete(commandList);
+        if (this.stagingBuffer != null && commandList != null) {
+            this.stagingBuffer.delete(commandList);
+        }
     }
 
     public Collection<RenderRegion> getLoadedRegions() {

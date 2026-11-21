@@ -7,7 +7,6 @@ import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends;
 import org.embeddedt.embeddium.impl.render.chunk.fog.FogService;
 import org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService;
 import org.embeddedt.embeddium.impl.render.chunk.region.RenderRegionManager;
-import org.embeddedt.embeddium.impl.render.chunk.ShaderChunkRenderer;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -64,8 +63,7 @@ public final class VulkanTerrainFactory {
             return null;
         }
 
-        FogService fogService = renderer instanceof ShaderChunkRenderer
-                ? ((ShaderChunkRenderer) renderer).getFogService() : null;
+        FogService fogService = renderer != null ? renderer.getFogService() : null;
         if (fogService == null) {
             reasons.add("the renderer does not expose a fog service, so terrain would not match the OpenGL look");
             return null;
@@ -74,8 +72,7 @@ public final class VulkanTerrainFactory {
         // Dynamic light (item 326) is an enhancement, not part of the OpenGL look: a renderer that does
         // not expose a service gets the empty one and the terrain shades exactly as vanilla does,
         // where the fog service's absence above refuses the backend instead.
-        DynamicLightService dynamicLightService = renderer instanceof ShaderChunkRenderer
-                ? ((ShaderChunkRenderer) renderer).getDynamicLightService() : null;
+        DynamicLightService dynamicLightService = renderer != null ? renderer.getDynamicLightService() : null;
         if (dynamicLightService == null) {
             dynamicLightService = DynamicLightService.EMPTY;
         }
