@@ -837,6 +837,28 @@ public final class VulkanGlTexture {
     }
 
     /**
+     * Records a layout transition that an image's owner (such as {@link GllessFrameTarget} on a shared depth image)
+     * recorded directly into {@code commandBuffer}, so published wrappers over the same {@code VkImage} stay in step
+     * and do not emit a stale {@code oldLayout} barrier ({@code VUID-VkImageMemoryBarrier-oldLayout-01197}).
+     */
+    static void noteExternalForeignLayout(VkCommandBuffer commandBuffer, long image, int newLayout) {
+        if (commandBuffer == null || commandBuffer.address() == 0L || image == 0L) {
+            return;
+        }
+        synchronized (VulkanGlTexture.class) {
+            if (!FOREIGN_STATES.containsKey(image)) {
+                return;
+            }
+            long address = commandBuffer.address();
+            int oldLayout = recordingLayoutOf(address, image);
+            if (oldLayout == newLayout) {
+                return;
+            }
+            noteForeignTransition(address, image, oldLayout, newLayout);
+        }
+    }
+
+    /**
      * Whether the shared fact alone answers "the image is already in {@code wanted}".
      * <p>
      * True only when the accepted layout is {@code wanted} <em>and</em> no open recording holds a pending transition

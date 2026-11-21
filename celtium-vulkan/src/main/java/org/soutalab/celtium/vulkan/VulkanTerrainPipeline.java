@@ -1353,6 +1353,13 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
         }
     }
 
+    /** Multi-target load/store-depth render pass for shader-pack terrain passes (MRT gbuffers / shadow). */
+    static long createFrameRenderPass(VulkanContext context, int colorAttachments, int colorFormat) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            return buildFrameRenderPass(stack, context.device(), false, colorAttachments, colorFormat);
+        }
+    }
+
     /**
      * Builds the render pass a mod's own framebuffer draws through: the frame pass' attachments and subpass, with the
      * depth attachment cleared and discarded instead of loaded and stored.

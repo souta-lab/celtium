@@ -167,6 +167,10 @@ public final class VulkanModProgramPipeline {
     private final int uniformBlockBytes;
     /** Slots of {@link #uniformBuffer} the descriptor sets can name; the post chain's ring depth. */
     private static final int UNIFORM_RING_SLOTS = 32;
+    /** Ring depth of a shader-pack terrain pipeline: one claim per region per pass, and two frames in flight. */
+    private static final int TERRAIN_UNIFORM_RING_SLOTS = 2048;
+    /** This pipeline's ring depth: {@link #UNIFORM_RING_SLOTS}, or {@link #TERRAIN_UNIFORM_RING_SLOTS} for terrain. */
+    private int uniformRingSlots = UNIFORM_RING_SLOTS;
     private VulkanUniformBuffer uniformBuffer;
     /** The constant-attribute ring (binding 1, stride 0); null for a pipeline whose layout feeds every attribute. */
     private VulkanUniformBuffer constantRing;
@@ -471,6 +475,217 @@ public final class VulkanModProgramPipeline {
         return built;
     }
 
+    /**
+     * Builds a pipeline for a shader-pack terrain program ({@code gbuffers_terrain} / {@code gbuffers_water} /
+     * {@code shadow}) whose vertex attributes come directly from a Celeritas/Iris {@link org.embeddedt.embeddium.impl.gl.attribute.GlVertexFormat}
+     * (such as Demonica's 44-byte {@code ExtendedChunkVertexType}).
+     */
+    public static VulkanModProgramPipeline createForTerrain(
+            VulkanContext context,
+            ModProgramRegistry.Program program,
+            org.embeddedt.embeddium.impl.gl.attribute.GlVertexFormat vertexFormat,
+            long renderPass,
+            int cull,
+            boolean depthTest,
+            boolean depthWrite,
+            int depthCompareOp,
+            VulkanColorBlendState colorBlend,
+            int colorAttachments) {
+        if (program == null || !program.compiled() || program.lowered() == null) {
+            throw new IllegalArgumentException("terrain mod program is not compiled");
+        }
+        if (vertexFormat == null) {
+            throw new IllegalArgumentException("terrain vertexFormat must be non-null");
+        }
+        ModGlslTranslator.Result lowered = program.lowered();
+        boolean viaBuffer = lowered.uniformsViaBuffer();
+        VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, lowered.attributes(),
+                lowered.samplers(), lowered.images(), lowered.uniformBlockSize(), viaBuffer);
+        built.uniformRingSlots = TERRAIN_UNIFORM_RING_SLOTS;
+        try {
+            built.createLayouts();
+            built.createTerrainPipeline(program.vertexSpirv(), program.fragmentSpirv(), vertexFormat, renderPass,
+                    cull, depthTest, depthWrite, depthCompareOp,
+                    colorBlend != null ? colorBlend : VulkanColorBlendState.legacy(), colorAttachments);
+        } catch (RuntimeException | LinkageError failure) {
+            built.delete();
+            throw failure;
+        }
+        return built;
+    }
+
+    private void createTerrainPipeline(
+            byte[] vertexSpirv,
+            byte[] fragmentSpirv,
+            org.embeddedt.embeddium.impl.gl.attribute.GlVertexFormat vertexFormat,
+            long renderPass,
+            int cull,
+            boolean depthTest,
+            boolean depthWrite,
+            int depthCompareOp,
+            VulkanColorBlendState colorBlend,
+            int colorAttachments) {
+        ByteBuffer vertexCode = MemoryUtil.memAlloc(vertexSpirv.length).put(vertexSpirv).flip();
+        ByteBuffer fragmentCode = MemoryUtil.memAlloc(fragmentSpirv.length).put(fragmentSpirv).flip();
+        long vertexModule = VK_NULL_HANDLE;
+        long fragmentModule = VK_NULL_HANDLE;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            LongBuffer handle = stack.mallocLong(1);
+            VkShaderModuleCreateInfo moduleInfo = VkShaderModuleCreateInfo.calloc(stack).sType$Default().pCode(vertexCode);
+            check(vkCreateShaderModule(this.context.device(), moduleInfo, null, handle), "vkCreateShaderModule(terrain mod vertex)");
+            vertexModule = handle.get(0);
+            moduleInfo.pCode(fragmentCode);
+            check(vkCreateShaderModule(this.context.device(), moduleInfo, null, handle),
+                    "vkCreateShaderModule(terrain mod fragment)");
+            fragmentModule = handle.get(0);
+
+            VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
+            stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(vertexModule).pName(stack.UTF8("main"));
+            stages.get(1).sType$Default().stage(VK_SHADER_STAGE_FRAGMENT_BIT).module(fragmentModule)
+                    .pName(stack.UTF8("main"));
+
+            int stride = vertexFormat.getStride();
+            VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
+            binding.get(0).binding(0).stride(stride).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
+
+            List<ModGlslTranslator.Attribute> declared = this.attributes;
+            VkVertexInputAttributeDescription.Buffer attrs =
+                    VkVertexInputAttributeDescription.calloc(declared.size(), stack);
+            for (int i = 0; i < declared.size(); i++) {
+                ModGlslTranslator.Attribute attr = declared.get(i);
+                org.embeddedt.embeddium.impl.gl.attribute.GlVertexAttribute matched =
+                        matchTerrainAttribute(vertexFormat, attr.name());
+                if (matched == null) {
+                    throw new IllegalStateException("terrain attribute " + attr.name()
+                            + " has no source in vertex format (stride=" + stride + ")");
+                }
+                int vkFormat = vkFormatForTerrainAttribute(matched, attr.type());
+                attrs.get(i).location(attr.location()).binding(0).format(vkFormat).offset(matched.getPointer());
+            }
+
+            VkPipelineVertexInputStateCreateInfo vertexInput = VkPipelineVertexInputStateCreateInfo.calloc(stack)
+                    .sType$Default().pVertexBindingDescriptions(binding).pVertexAttributeDescriptions(attrs);
+            VkPipelineInputAssemblyStateCreateInfo assembly = VkPipelineInputAssemblyStateCreateInfo.calloc(stack)
+                    .sType$Default().topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+            VkPipelineViewportStateCreateInfo viewport = VkPipelineViewportStateCreateInfo.calloc(stack).sType$Default()
+                    .viewportCount(1).scissorCount(1);
+            VkPipelineRasterizationStateCreateInfo raster = VkPipelineRasterizationStateCreateInfo.calloc(stack)
+                    .sType$Default().polygonMode(VK_POLYGON_MODE_FILL).depthBiasEnable(true)
+                    .cullMode(VulkanCullState.vkCullMode(cull)).frontFace(VulkanCullState.vkFrontFace(cull))
+                    .lineWidth(1.0f);
+            VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo.calloc(stack)
+                    .sType$Default().rasterizationSamples(VK_SAMPLE_COUNT_1_BIT);
+            VkPipelineDepthStencilStateCreateInfo depth = VkPipelineDepthStencilStateCreateInfo.calloc(stack)
+                    .sType$Default().depthTestEnable(depthTest).depthWriteEnable(depthWrite)
+                    .depthCompareOp(depthCompareOp);
+
+            this.blends = colorBlend.blend();
+            int blendCount = Math.max(1, colorAttachments);
+            VkPipelineColorBlendAttachmentState.Buffer blendAttachment =
+                    VkPipelineColorBlendAttachmentState.calloc(blendCount, stack);
+            for (int i = 0; i < blendCount; i++) {
+                blendAttachment.get(i)
+                        .colorWriteMask(colorBlend.writeMask())
+                        .blendEnable(colorBlend.blend())
+                        .srcColorBlendFactor(colorBlend.srcColor())
+                        .dstColorBlendFactor(colorBlend.dstColor())
+                        .colorBlendOp(colorBlend.colorOp())
+                        .srcAlphaBlendFactor(colorBlend.srcAlpha())
+                        .dstAlphaBlendFactor(colorBlend.dstAlpha())
+                        .alphaBlendOp(colorBlend.alphaOp());
+            }
+            VkPipelineColorBlendStateCreateInfo blend = VkPipelineColorBlendStateCreateInfo.calloc(stack).sType$Default()
+                    .pAttachments(blendAttachment);
+            VkPipelineDynamicStateCreateInfo dynamic = VkPipelineDynamicStateCreateInfo.calloc(stack).sType$Default()
+                    .pDynamicStates(stack.ints(VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                            VK_DYNAMIC_STATE_DEPTH_BIAS));
+
+            VkGraphicsPipelineCreateInfo.Buffer info = VkGraphicsPipelineCreateInfo.calloc(1, stack);
+            info.get(0).sType$Default().pStages(stages).pVertexInputState(vertexInput).pInputAssemblyState(assembly)
+                    .pViewportState(viewport).pRasterizationState(raster).pMultisampleState(multisample)
+                    .pDepthStencilState(depth).pColorBlendState(blend).pDynamicState(dynamic)
+                    .layout(this.pipelineLayout).renderPass(renderPass).subpass(0);
+            check(vkCreateGraphicsPipelines(this.context.device(), VK_NULL_HANDLE, info, null, handle),
+                    "vkCreateGraphicsPipelines(terrain mod program)");
+            this.pipeline = handle.get(0);
+        } finally {
+            if (vertexModule != VK_NULL_HANDLE) vkDestroyShaderModule(this.context.device(), vertexModule, null);
+            if (fragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(this.context.device(), fragmentModule, null);
+            MemoryUtil.memFree(vertexCode);
+            MemoryUtil.memFree(fragmentCode);
+        }
+    }
+
+    private static org.embeddedt.embeddium.impl.gl.attribute.GlVertexAttribute matchTerrainAttribute(
+            org.embeddedt.embeddium.impl.gl.attribute.GlVertexFormat format, String shaderName) {
+        if (shaderName == null) {
+            return null;
+        }
+        for (var attr : format.getAttributes()) {
+            if (shaderName.equals(attr.getName())) {
+                return attr;
+            }
+        }
+        String alias = switch (shaderName) {
+            case "a_Pos", "iris_Pos", "vaPosition" -> "a_PosId";
+            case "iris_Color", "vaColor" -> "a_Color";
+            case "iris_UV0", "vaUV0" -> "a_TexCoord";
+            case "iris_UV2", "vaUV2" -> "a_LightCoord";
+            case "vaNormal" -> "iris_Normal";
+            default -> null;
+        };
+        if (alias != null) {
+            for (var attr : format.getAttributes()) {
+                if (alias.equals(attr.getName())) {
+                    return attr;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static int vkFormatForTerrainAttribute(
+            org.embeddedt.embeddium.impl.gl.attribute.GlVertexAttribute attr, String glslType) {
+        int glType = attr.getFormat().typeId();
+        int count = attr.getCount();
+        boolean norm = attr.isNormalized();
+        boolean intAttr = attr.isIntType() || (glslType != null && (glslType.startsWith("i") || glslType.startsWith("u")));
+        // GL constants: BYTE=0x1400, UNSIGNED_BYTE=0x1401, SHORT=0x1402, UNSIGNED_SHORT=0x1403,
+        // INT=0x1404, UNSIGNED_INT=0x1405, FLOAT=0x1406.
+        return switch (glType) {
+            case 0x1406 -> switch (count) {
+                case 1 -> VK_FORMAT_R32_SFLOAT;
+                case 2 -> VK_FORMAT_R32G32_SFLOAT;
+                case 3 -> VK_FORMAT_R32G32B32_SFLOAT;
+                default -> VK_FORMAT_R32G32B32A32_SFLOAT;
+            };
+            case 0x1401 -> intAttr ? VK_FORMAT_R8G8B8A8_UINT
+                    : (norm ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_R8G8B8A8_USCALED);
+            case 0x1400 -> intAttr ? VK_FORMAT_R8G8B8A8_SINT
+                    : (norm ? VK_FORMAT_R8G8B8A8_SNORM : VK_FORMAT_R8G8B8A8_SSCALED);
+            case 0x1403 -> count <= 2
+                    ? (intAttr ? VK_FORMAT_R16G16_UINT : (norm ? VK_FORMAT_R16G16_UNORM : VK_FORMAT_R16G16_USCALED))
+                    : (intAttr ? VK_FORMAT_R16G16B16A16_UINT : (norm ? VK_FORMAT_R16G16B16A16_UNORM : VK_FORMAT_R16G16B16A16_USCALED));
+            case 0x1402 -> count <= 2
+                    ? (intAttr ? VK_FORMAT_R16G16_SINT : (norm ? VK_FORMAT_R16G16_SNORM : VK_FORMAT_R16G16_SSCALED))
+                    : (intAttr ? VK_FORMAT_R16G16B16A16_SINT : (norm ? VK_FORMAT_R16G16B16A16_SNORM : VK_FORMAT_R16G16B16A16_SSCALED));
+            case 0x1405 -> switch (count) {
+                case 1 -> VK_FORMAT_R32_UINT;
+                case 2 -> VK_FORMAT_R32G32_UINT;
+                case 3 -> VK_FORMAT_R32G32B32_UINT;
+                default -> VK_FORMAT_R32G32B32A32_UINT;
+            };
+            case 0x1404 -> switch (count) {
+                case 1 -> VK_FORMAT_R32_SINT;
+                case 2 -> VK_FORMAT_R32G32_SINT;
+                case 3 -> VK_FORMAT_R32G32B32_SINT;
+                default -> VK_FORMAT_R32G32B32A32_SINT;
+            };
+            default -> throw new IllegalStateException("Unsupported terrain vertex GL type 0x"
+                    + Integer.toHexString(glType) + " count=" + count);
+        };
+    }
+
     /** Creates a prepared draw bound to this pipeline. */
     public Draw createDraw(ByteBuffer uniforms, long samplerSet, String label, VulkanGlTexture[] inputs) {
         return new Draw(this, uniforms, samplerSet, label, inputs, EMPTY_IMAGES);
@@ -532,7 +747,7 @@ public final class VulkanModProgramPipeline {
                 // never grown or replaced the way the terrain's own uniform buffer is.
                 this.uniformStride = uniformStride(this.context, this.uniformBlockBytes);
                 this.uniformBuffer = new VulkanUniformBuffer(this.context,
-                        (long) this.uniformStride * UNIFORM_RING_SLOTS);
+                        (long) this.uniformStride * this.uniformRingSlots);
             }
         }
     }
@@ -807,11 +1022,12 @@ public final class VulkanModProgramPipeline {
         if (staged >= 0) {
             return staged;
         }
-        if (this.uniformClaimsThisEpoch >= UNIFORM_RING_SLOTS) {
+        if (this.uniformClaimsThisEpoch >= (this.uniformRingSlots == TERRAIN_UNIFORM_RING_SLOTS
+                ? this.uniformRingSlots / 2 : this.uniformRingSlots)) {
             return -1;
         }
         int slot = this.uniformCursor;
-        this.uniformCursor = (this.uniformCursor + 1) % UNIFORM_RING_SLOTS;
+        this.uniformCursor = (this.uniformCursor + 1) % this.uniformRingSlots;
         ByteBuffer packed = packUniforms(program);
         MemoryUtil.memCopy(MemoryUtil.memAddress0(packed),
                 this.uniformBuffer.mappedAddress() + (long) slot * this.uniformStride,
@@ -1125,6 +1341,32 @@ public final class VulkanModProgramPipeline {
 
     public List<ModGlslTranslator.SamplerBinding> samplers() {
         return this.samplers;
+    }
+
+    public List<ModGlslTranslator.ImageBinding> images() {
+        return this.images;
+    }
+
+    /** Binds this pipeline for indexed terrain draws inside an open render pass. */
+    void bindTerrainPipeline(VkCommandBuffer commandBuffer) {
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipeline);
+        vkCmdSetDepthBias(commandBuffer, 0.0f, 0.0f, 0.0f);
+    }
+
+    /** Binds descriptor set and/or push constants for one region's terrain draws. */
+    void bindTerrainUniformsAndSet(VkCommandBuffer commandBuffer, ByteBuffer pushUniforms, long descriptorSet,
+                                   LongBuffer setScratch) {
+        if (descriptorSet != 0L) {
+            setScratch.put(0, descriptorSet);
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout,
+                    0, setScratch, null);
+        }
+        if (this.pushBytes > 0 && pushUniforms != null) {
+            pushUniforms.position(0).limit(this.pushBytes);
+            vkCmdPushConstants(commandBuffer, this.pipelineLayout,
+                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, pushUniforms);
+            VulkanPushCache.SHARED.invalidate();
+        }
     }
 
     /** Destroys the Vulkan objects; defers cleanup if a command buffer is currently recording. */
