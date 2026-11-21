@@ -133,11 +133,35 @@ public final class VulkanImmediateItemPipeline {
     private long descriptorSet = VK_NULL_HANDLE;
 
     // Primitive long keys, as in the texture family: one lookup per immediate batch.
+    /** Sets this pipeline has retired from its cache to make room; counted, never silently dropped. */
+    private int descriptorSetsRetired;
+    /** Sets this pipeline has handed back to their pools through the completion-gated free. */
+    private int descriptorSetsFreed;
     /**
-     * Sets the shadow-source change displaced, plus the count: they may still be referenced by recorded or pending command
-     * buffers, so they are released by the same completion-gated path that serves eviction rather than destroyed here.
+     * Retired sets with the pool each belongs to, awaiting the completion-gated free that returns them.
+     * <p>
+     * This list used to be dead weight: nothing ever added to it, the cache had no eviction at all, and pool
+     * consumption grew monotonically with distinct texture keys until the 64-pool ceiling refused every later
+     * item batch (audit-vulkan-core D2, the item family's shape of it). Now a cache miss evicts the eldest
+     * entries into this store, and a full batch is handed to {@link VulkanContext#celtium$retireCleanup} -
+     * OPT-04's completion basis. {@link #delete()} advances {@link #descriptorFreeGeneration} so a batch still
+     * queued when its pools are destroyed drops itself instead of freeing into a dead pool.
      */
-    private final java.util.List<Long> retiredSets = new java.util.ArrayList<Long>();
+    private final RetiredDescriptorSets retiredSets = new RetiredDescriptorSets();
+    /** The pool each live cached set was allocated from, so a retired set can be handed back to its own pool. */
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap poolByDescriptorSet =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    /** The pool the most recent successful allocation came from; read by the descriptor lookups once per miss. */
+    private long lastAllocationPool;
+    /** Advanced by {@link #delete()}; a queued descriptor free that sees a newer value owns nothing any more. */
+    private long descriptorFreeGeneration;
+    /** How many retired sets one completion-gated free hands back at a time. */
+    private static final int RETIRED_FREE_BATCH = 32;
+    /** Insertion order of the cached keys, so a miss can evict the eldest; the textured family's ring, same size. */
+    private final long[] insertionOrderRing = new long[DESCRIPTOR_CACHE_LIMIT * 2];
+    private int insertionOrderHead;
+    private int insertionOrderTail;
+    private int insertionOrderCount;
 
     /** The key and set of the last lookup, so a run of batches on one texture skips the map. */
     private long lastDescriptorKey = -1L;
@@ -444,6 +468,7 @@ public final class VulkanImmediateItemPipeline {
             this.lastDescriptorSet = cached;
             return cached;
         }
+        celtium$evictEldestDescriptorSets();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             long set = allocateDescriptorSet(stack);
             if (set == 0L) {
@@ -465,6 +490,8 @@ public final class VulkanImmediateItemPipeline {
             VulkanDescriptorWrites.note(write, "VulkanImmediateItemPipeline");
             vkUpdateDescriptorSets(this.context.device(), write, null);
             this.setsByTextureView.put(texture.key(), set);
+            this.poolByDescriptorSet.put(set, this.lastAllocationPool);
+            celtium$noteCachedKey(texture.key());
             this.lastDescriptorKey = texture.key();
             this.lastDescriptorSet = set;
             VulkanImmediateTexturePipeline.DESCRIPTOR_KEYS_CACHED.incrementAndGet();
@@ -523,6 +550,7 @@ public final class VulkanImmediateItemPipeline {
             this.lastLitDescriptorSet = cachedSet;
             return cachedSet;
         }
+        celtium$evictEldestDescriptorSets();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             long set = allocateDescriptorSet(stack);
             if (set == 0L) {
@@ -554,6 +582,8 @@ public final class VulkanImmediateItemPipeline {
             VulkanDescriptorWrites.note(write, "VulkanImmediateItemPipeline");
             vkUpdateDescriptorSets(this.context.device(), write, null);
             this.setsByTextureView.put(descriptorKey, set);
+            this.poolByDescriptorSet.put(set, this.lastAllocationPool);
+            celtium$noteCachedKey(descriptorKey);
             this.lastLitDescriptorKey = descriptorKey;
             this.lastLitDescriptorSet = set;
             VulkanImmediateTexturePipeline.DESCRIPTOR_KEYS_CACHED.incrementAndGet();
@@ -568,6 +598,91 @@ public final class VulkanImmediateItemPipeline {
 
     private long lastLitDescriptorKey = -1L;
     private long lastLitDescriptorSet;
+
+    /** Records a freshly cached key at the tail of the eviction ring; a full ring leaves the key unevictable. */
+    private void celtium$noteCachedKey(long key) {
+        if (this.insertionOrderCount < this.insertionOrderRing.length) {
+            this.insertionOrderRing[this.insertionOrderTail] = key;
+            this.insertionOrderTail = (this.insertionOrderTail + 1) % this.insertionOrderRing.length;
+            this.insertionOrderCount++;
+        }
+    }
+
+    /**
+     * Evicts the eldest cached sets until the cache is below its limit, retiring each with its pool.
+     * <p>
+     * A retired set is not freed here - the command buffers that recorded it may still be in flight, and OPT-04
+     * makes GPU completion the only basis for releasing a resource - so it goes on the retired store, and a
+     * full batch is handed to the completion-gated free. A slot cache naming an evicted set is dropped with it:
+     * serving a set that is on its way back to its pool would be a use after free.
+     */
+    private void celtium$evictEldestDescriptorSets() {
+        while (this.setsByTextureView.size() >= DESCRIPTOR_CACHE_LIMIT && this.insertionOrderCount > 0) {
+            long eldest = this.insertionOrderRing[this.insertionOrderHead];
+            this.insertionOrderHead = (this.insertionOrderHead + 1) % this.insertionOrderRing.length;
+            this.insertionOrderCount--;
+            long removed = this.setsByTextureView.remove(eldest);
+            if (removed != 0L) {
+                this.descriptorSetsRetired++;
+                if (removed == this.lastDescriptorSet) {
+                    this.lastDescriptorKey = -1L;
+                    this.lastDescriptorSet = 0L;
+                }
+                if (removed == this.lastLitDescriptorSet) {
+                    this.lastLitDescriptorKey = -1L;
+                    this.lastLitDescriptorSet = 0L;
+                }
+                long pool = this.poolByDescriptorSet.remove(removed);
+                if (pool != 0L) {
+                    this.retiredSets.add(pool, removed);
+                    if (this.retiredSets.size() >= RETIRED_FREE_BATCH) {
+                        celtium$handOffRetiredSets();
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Hands the retired sets to the completion-gated cleanup that frees them back into their pools.
+     * <p>
+     * A retired set's last recorded use belongs to a submission at or before the sequence current now, and
+     * {@link VulkanContext#celtium$retireCleanup} runs the free only once that sequence is confirmed complete -
+     * the same basis {@link #delete()} destroys whole pools on. If this pipeline is deleted first, the
+     * generation check drops the batch: its sets died with their pools and there is nothing left to free.
+     */
+    private void celtium$handOffRetiredSets() {
+        if (this.retiredSets.size() == 0) {
+            return;
+        }
+        final java.util.Map<Long, long[]> byPool = this.retiredSets.drainGrouped();
+        final long generation = this.descriptorFreeGeneration;
+        final VulkanContext context = this.context;
+        context.celtium$retireCleanup("item.descriptorFree", () -> {
+            if (generation != this.descriptorFreeGeneration) {
+                return;
+            }
+            int freed = 0;
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                for (java.util.Map.Entry<Long, long[]> entry : byPool.entrySet()) {
+                    int result = vkFreeDescriptorSets(context.device(), entry.getKey().longValue(),
+                            stack.longs(entry.getValue()));
+                    if (result == VK_SUCCESS) {
+                        freed += entry.getValue().length;
+                    }
+                }
+            }
+            this.descriptorSetsFreed += freed;
+        });
+    }
+
+    /** {@return the descriptor cache's live, retired and freed counts, in the textured family's census shape}. */
+    public String descriptorSetCensus() {
+        return "descriptorSetsLive=" + this.setsByTextureView.size()
+                + " descriptorSetsRetired=" + this.descriptorSetsRetired
+                + " descriptorSetsAwaitingCompletion=" + this.retiredSets.size()
+                + " descriptorSetsFreed=" + this.descriptorSetsFreed;
+    }
 
     /**
      * Creates one more pool and appends it to {@link #descriptorPools}; the item family shares the textured family's
@@ -587,6 +702,9 @@ public final class VulkanImmediateItemPipeline {
                     .descriptorCount(DESCRIPTOR_SETS_PER_POOL * 2);
             org.lwjgl.vulkan.VkDescriptorPoolCreateInfo poolInfo =
                     org.lwjgl.vulkan.VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
+                            // FREE so a retired set can be handed back individually once its last use has
+                            // completed; without it a pool only ever fills.
+                            .flags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT)
                             .maxSets(DESCRIPTOR_SETS_PER_POOL).pPoolSizes(poolSize);
             LongBuffer poolHandle = stack.mallocLong(1);
             if (vkCreateDescriptorPool(this.context.device(), poolInfo, null, poolHandle) != VK_SUCCESS) {
@@ -604,18 +722,28 @@ public final class VulkanImmediateItemPipeline {
         }
     }
 
-    /** {@return a descriptor set from the newest pool, growing the pool when it is full}, or 0 when it cannot. */
+    /**
+     * {@return a descriptor set from one of this pipeline's pools, growing the pool list when every pool is
+     * full}, or 0 when it cannot.
+     * <p>
+     * Pools are tried newest first, but every pool is tried: a retired set freed back into an older pool
+     * leaves a slot only an all-pools search can reuse, and without the search the completion-gated free
+     * would return slots nobody allocates from and the pool list would keep growing anyway.
+     */
     private long allocateDescriptorSet(MemoryStack stack) {
-        for (int attempt = 0; attempt < 2; attempt++) {
-            Long pool = this.descriptorPools.get(this.descriptorPools.size() - 1);
-            org.lwjgl.vulkan.VkDescriptorSetAllocateInfo allocate =
-                    org.lwjgl.vulkan.VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
-                            .descriptorPool(pool.longValue())
-                            .pSetLayouts(stack.longs(this.descriptorSetLayout));
-            LongBuffer handle = stack.mallocLong(1);
-            if (vkAllocateDescriptorSets(this.context.device(), allocate, handle) == VK_SUCCESS) {
-                DESCRIPTOR_SETS_ALLOCATED.incrementAndGet();
-                return handle.get(0);
+        for (int round = 0; round < 2; round++) {
+            for (int i = this.descriptorPools.size() - 1; i >= 0; i--) {
+                Long pool = this.descriptorPools.get(i);
+                org.lwjgl.vulkan.VkDescriptorSetAllocateInfo allocate =
+                        org.lwjgl.vulkan.VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
+                                .descriptorPool(pool.longValue())
+                                .pSetLayouts(stack.longs(this.descriptorSetLayout));
+                LongBuffer handle = stack.mallocLong(1);
+                if (vkAllocateDescriptorSets(this.context.device(), allocate, handle) == VK_SUCCESS) {
+                    DESCRIPTOR_SETS_ALLOCATED.incrementAndGet();
+                    this.lastAllocationPool = pool.longValue();
+                    return handle.get(0);
+                }
             }
             if (createDescriptorPool() == VK_NULL_HANDLE) {
                 break;
@@ -628,6 +756,8 @@ public final class VulkanImmediateItemPipeline {
     /** Sets one pool holds and how many pools a pipeline may grow to, shared with the textured family. */
     private static final int DESCRIPTOR_SETS_PER_POOL = VulkanImmediateTexturePipeline.DESCRIPTOR_SETS_PER_POOL;
     private static final int DESCRIPTOR_POOL_LIMIT = VulkanImmediateTexturePipeline.DESCRIPTOR_POOL_LIMIT;
+    /** How many live descriptor sets the cache keeps before evicting the eldest, shared with the textured family. */
+    private static final int DESCRIPTOR_CACHE_LIMIT = VulkanImmediateTexturePipeline.DESCRIPTOR_CACHE_LIMIT;
 
     public void delete() {
         // Capture: the deferred teardown below must not destroy a pipeline this object is rebuilt into.
@@ -641,12 +771,19 @@ public final class VulkanImmediateItemPipeline {
         this.descriptorSet = VK_NULL_HANDLE;
         this.descriptorPools.clear();
         this.setsByTextureView.clear();
+        this.poolByDescriptorSet.clear();
+        // Any descriptor free still queued against these pools drops itself on this generation change: the sets
+        // it names die with the pools destroyed below.
+        this.descriptorFreeGeneration++;
+        this.insertionOrderHead = 0;
+        this.insertionOrderTail = 0;
+        this.insertionOrderCount = 0;
         this.lastDescriptorKey = -1L;
         this.lastDescriptorSet = 0L;
         this.lastLitDescriptorKey = -1L;
         this.lastLitDescriptorSet = 0L;
-        // Retired sets are pools' to free: the pool teardown below releases them with every other set this pipeline
-        // allocated, which is why this list only has to keep them reachable until then.
+        // Retired sets still awaiting their free are the pools' to release: the pool teardown below releases
+        // them with every other set this pipeline allocated.
         this.retiredSets.clear();
         if (this.context.celtium$recordingOpen()) {
             // The open recording may have bound this pipeline and the sets of its pools; destroying either invalidates
