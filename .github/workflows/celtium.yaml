@@ -115,12 +115,19 @@ jobs:
         run: >-
           ./gradlew -p build-1122 :celtium-vulkan:test --console=plain --stacktrace
           "-Pglslang_validator=$(command -v glslangValidator)"
-      # The pure-class tests live in :common (forge122 has no test source set). :celtium-vulkan:test only
-      # consumes :common's modJar and never runs them, so without this step they are written but never
+      # The pure-class tests live in :common and :forge122. :celtium-vulkan:test only
+      # consumes :common's modJar and never runs them, so without these steps they are written but never
       # executed in CI (item 338 prerequisite P-B3).
       - name: Test common
         run: >-
           ./gradlew -p build-1122 :common:test --console=plain --stacktrace
+          "-Pglslang_validator=$(command -v glslangValidator)"
+      # forge122's test source set (the light-cache funnel, transformer-guard and option-wiring
+      # contracts) was added after an earlier version of the comment above claimed forge122 had no
+      # test source set, and CI was never updated to match: the suite ran only in manual PC gates.
+      - name: Test forge122
+        run: >-
+          ./gradlew -p build-1122 :forge122:test --console=plain --stacktrace
           "-Pglslang_validator=$(command -v glslangValidator)"
       # These contracts require full Git history and compiled celtium-vulkan classes.
       # Keep them after the real Forge build, not in the isolated probe job.
