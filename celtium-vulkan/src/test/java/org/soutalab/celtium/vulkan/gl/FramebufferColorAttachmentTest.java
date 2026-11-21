@@ -270,4 +270,54 @@ class FramebufferColorAttachmentTest {
       installed.set(null, previous);
     }
   }
+  @Test void aDepthTextureSharedByTwoFramebuffersStillResolvesAfterOneDetaches() throws Exception {
+    var ctor = CeltiumGlStub.class.getDeclaredConstructor();
+    ctor.setAccessible(true);
+    var installed = CeltiumGlStub.class.getDeclaredField("installed");
+    installed.setAccessible(true);
+    Object previous = installed.get(null);
+    installed.set(null, ctor.newInstance());
+    try {
+      // One depth texture attached to two framebuffers at once - the shape that raised the single-owner
+      // question about the reverse map (a shadow map shared between passes is the real-world form).
+      CeltiumGlStub.celtium$bindFramebuffer(0x8D40, 10);
+      CeltiumGlStub.celtium$framebufferTexture2D(0x8D40, 0x8D00, 0x0DE1, 300, 0);
+      CeltiumGlStub.celtium$bindFramebuffer(0x8D40, 20);
+      CeltiumGlStub.celtium$framebufferTexture2D(0x8D40, 0x8D00, 0x0DE1, 300, 0);
+      assertEquals(20, CeltiumGlStub.celtium$framebufferForDepthTexture(300),
+              "the last attach is the resolution's first answer");
+      // Detaching from one framebuffer drops the reverse hint even though the other still holds the
+      // texture. The resolution validates its hint against the forward record and rescans it on a miss,
+      // so the surviving owner is still found: the single-owner reverse map costs a rescan, not the answer.
+      CeltiumGlStub.celtium$framebufferTexture2D(0x8D40, 0x8D00, 0x0DE1, 0, 0);
+      assertEquals(10, CeltiumGlStub.celtium$framebufferForDepthTexture(300),
+              "the framebuffer that still holds the texture still resolves");
+      CeltiumGlStub.celtium$bindFramebuffer(0x8D40, 10);
+      CeltiumGlStub.celtium$framebufferTexture2D(0x8D40, 0x8D00, 0x0DE1, 0, 0);
+      assertEquals(0, CeltiumGlStub.celtium$framebufferForDepthTexture(300),
+              "with no owner left, the resolution is empty");
+    } finally {
+      installed.set(null, previous);
+    }
+  }
+  @Test void aMipLevelAttachmentIsRefusedByNameAndCounted() throws Exception {
+    var ctor = CeltiumGlStub.class.getDeclaredConstructor();
+    ctor.setAccessible(true);
+    var installed = CeltiumGlStub.class.getDeclaredField("installed");
+    installed.setAccessible(true);
+    var refusals = CeltiumGlStub.class.getDeclaredField("framebufferLevelRefusals");
+    refusals.setAccessible(true);
+    Object previous = installed.get(null);
+    installed.set(null, ctor.newInstance());
+    try {
+      CeltiumGlStub.celtium$bindFramebuffer(0x8D40, 10);
+      int before = refusals.getInt(null);
+      CeltiumGlStub.celtium$framebufferTexture2D(0x8D40, 0x8CE0, 0x0DE1, 400, 1);
+      assertEquals(0, CeltiumGlStub.celtium$framebufferColorTexture(10),
+              "a level-1 attachment is not recorded as the framebuffer's level-0 texture");
+      assertEquals(before + 1, refusals.getInt(null), "and the refusal is counted, not silent");
+    } finally {
+      installed.set(null, previous);
+    }
+  }
 }

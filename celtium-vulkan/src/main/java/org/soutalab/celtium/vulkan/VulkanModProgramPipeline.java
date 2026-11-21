@@ -153,6 +153,17 @@ public final class VulkanModProgramPipeline {
     private static final int[] EMPTY_INT = new int[0];
     private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap setsByKey =
             new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    /**
+     * The inputs each cached set was actually written from, packed by {@link #celtium$packSetInputs}, one per
+     * {@link #setsByKey} key. The key is a 64-bit hash with no equality check behind it, so a hit is verified
+     * against this snapshot before the set is handed out: a collision would otherwise bind another draw's
+     * textures for the rest of the pipeline's life.
+     */
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<long[]> setInputsByKey =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private long[] lastSamplerInputs;
+    /** Verified hash collisions on the set cache: counted, so a collision is visible rather than silent. */
+    private int descriptorSetKeyCollisions;
     private final long[] scratchViews;
     private final long[] scratchSamplers;
     private final int[] scratchLayouts;
@@ -650,29 +661,88 @@ public final class VulkanModProgramPipeline {
         if (this.samplerCount == 0 || count <= 0) {
             return 0L;
         }
+        // The set is written from all samplerCount entries, so the key covers all of them. Hashing only the
+        // caller's first count entries cached sets whose tail bindings - whatever the caller's scratch arrays
+        // still held there - the key never saw, and a later call with the same head but a different tail was
+        // handed that set as if it were its own.
+        return allocateOrReuseDescriptorSet(
+                samplerSetHash(views, samplers, layouts, generations, this.samplerCount),
+                views, samplers, layouts, EMPTY_LONG, -1);
+    }
+
+    /** The sampler-set key: a hash of exactly the entries the descriptor set is written from. */
+    static long samplerSetHash(long[] views, long[] samplers, int[] layouts, long[] generations, int samplerCount) {
         long hash = 0x9E3779B97F4A7C15L;
-        int n = Math.min(this.samplerCount, count);
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < samplerCount; i++) {
             hash = mix64(hash ^ views[i]) ^ mix64(samplers[i]) ^ mix64(generations[i] ^ ((long) layouts[i] << 32));
         }
-        if (hash == 0L) {
-            hash = 1L;
+        return hash == 0L ? 1L : hash;
+    }
+
+    /** Packs the inputs a descriptor set is written from, for the collision check behind the hash key. */
+    static long[] celtium$packSetInputs(long[] views, long[] samplers, int[] layouts, long[] imageViews,
+                                        int samplerCount, int imageCount, int uniformSlot) {
+        long[] snapshot = new long[1 + 3 * samplerCount + imageCount];
+        snapshot[0] = uniformSlot;
+        for (int i = 0; i < samplerCount; i++) {
+            snapshot[1 + i] = views[i];
+            snapshot[1 + samplerCount + i] = samplers[i];
+            snapshot[1 + 2 * samplerCount + i] = layouts[i];
         }
-        return allocateOrReuseDescriptorSet(hash, views, samplers, layouts, EMPTY_LONG, -1);
+        for (int i = 0; i < imageCount; i++) {
+            snapshot[1 + 3 * samplerCount + i] = imageViews[i];
+        }
+        return snapshot;
+    }
+
+    /** Whether a packed snapshot names exactly the inputs a set would be written from now. */
+    static boolean celtium$setInputsMatch(long[] snapshot, long[] views, long[] samplers, int[] layouts,
+                                          long[] imageViews, int samplerCount, int imageCount, int uniformSlot) {
+        if (snapshot == null || snapshot.length != 1 + 3 * samplerCount + imageCount || snapshot[0] != uniformSlot) {
+            return false;
+        }
+        for (int i = 0; i < samplerCount; i++) {
+            if (snapshot[1 + i] != views[i] || snapshot[1 + samplerCount + i] != samplers[i]
+                    || snapshot[1 + 2 * samplerCount + i] != layouts[i]) {
+                return false;
+            }
+        }
+        for (int i = 0; i < imageCount; i++) {
+            if (snapshot[1 + 3 * samplerCount + i] != imageViews[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    int descriptorSetKeyCollisions() {
+        return this.descriptorSetKeyCollisions;
     }
 
     private long allocateOrReuseDescriptorSet(long key, long[] views, long[] samplers, int[] layouts,
                                               long[] imageViews, int uniformSlot) {
-        if (key == this.lastSamplerKey && this.lastSamplerSet != 0L) {
+        if (key == this.lastSamplerKey && this.lastSamplerSet != 0L
+                && celtium$setInputsMatch(this.lastSamplerInputs, views, samplers, layouts, imageViews,
+                        this.samplerCount, this.imageCount, uniformSlot)) {
             return this.lastSamplerSet;
         }
         long cached = this.setsByKey.get(key);
         if (cached != 0L) {
-            this.lastSamplerKey = key;
-            this.lastSamplerSet = cached;
-            return cached;
+            long[] snapshot = this.setInputsByKey.get(key);
+            if (celtium$setInputsMatch(snapshot, views, samplers, layouts, imageViews,
+                    this.samplerCount, this.imageCount, uniformSlot)) {
+                this.lastSamplerKey = key;
+                this.lastSamplerSet = cached;
+                this.lastSamplerInputs = snapshot;
+                return cached;
+            }
+            // A hash collision: the cached set was written from different inputs and would sample another
+            // draw's textures for the rest of this pipeline's life. Count it and fall through to allocate a
+            // set for these inputs; the old set stays valid for whoever still holds it, it is just no longer
+            // this key's answer.
+            this.descriptorSetKeyCollisions++;
         }
-        if (this.setsByKey.size() >= MAX_SETS) {
+        if (cached == 0L && this.setsByKey.size() >= MAX_SETS) {
             return 0L;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -710,9 +780,13 @@ public final class VulkanModProgramPipeline {
                         .pBufferInfo(bufferInfo);
             }
             vkUpdateDescriptorSets(this.context.device(), writes, null);
+            long[] snapshot = celtium$packSetInputs(views, samplers, layouts, imageViews,
+                    this.samplerCount, this.imageCount, uniformSlot);
             this.setsByKey.put(key, set);
+            this.setInputsByKey.put(key, snapshot);
             this.lastSamplerKey = key;
             this.lastSamplerSet = set;
+            this.lastSamplerInputs = snapshot;
             return set;
         }
     }
@@ -869,8 +943,10 @@ public final class VulkanModProgramPipeline {
             this.setLayout = VK_NULL_HANDLE;
         }
         this.setsByKey.clear();
+        this.setInputsByKey.clear();
         this.lastSamplerKey = 0L;
         this.lastSamplerSet = 0L;
+        this.lastSamplerInputs = null;
     }
 
     private static void check(int result, String what) {

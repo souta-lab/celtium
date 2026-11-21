@@ -124,6 +124,12 @@ public final class ModProgramRegistry {
     private static final IntOpenHashSet DELETED_SHADERS = new IntOpenHashSet();
     /** Uniform writes to a location no linked program names: counted, so a lost value is visible. */
     private static int unmatchedUniformWrites;
+    /**
+     * Links where two different uniform names hashed to the same location, so one name's mapping silently
+     * replaced the other's: counted, so the loss is visible. The location is the name hash itself (the
+     * contract with {@code CeltiumGllessHint}), so a collision cannot be renumbered away - only reported.
+     */
+    private static int locationNameCollisions;
     private static boolean reportedUnavailable;
 
     private ModProgramRegistry() {
@@ -268,8 +274,14 @@ public final class ModProgramRegistry {
     }
 
     private static void mapName(Program p, String name) {
-        p.nameByLocation.put(location(name), name);
-        p.nameByLocation.put(location(name + "[0]"), name);
+        String replaced = p.nameByLocation.put(location(name), name);
+        if (replaced != null && !replaced.equals(name)) {
+            locationNameCollisions++;
+        }
+        replaced = p.nameByLocation.put(location(name + "[0]"), name);
+        if (replaced != null && !replaced.equals(name)) {
+            locationNameCollisions++;
+        }
     }
 
     /** The stub's location for a uniform name; must stay equal to {@code CeltiumGllessHint.glUniformLocation}. */
@@ -670,11 +682,16 @@ public final class ModProgramRegistry {
         return unmatchedUniformWrites;
     }
 
+    public static int locationNameCollisions() {
+        return locationNameCollisions;
+    }
+
     /** Test support: forget everything. */
     static void clear() {
         SHADER_SOURCES.clear();
         PROGRAMS.clear();
         DELETED_SHADERS.clear();
         unmatchedUniformWrites = 0;
+        locationNameCollisions = 0;
     }
 }

@@ -854,8 +854,11 @@ public final class CeltiumGlStub implements FunctionProvider {
                     return null;
                 }
                 pointerIndex = 8;
-                // GL's default GL_UNPACK_ALIGNMENT is 4: each row starts on a four-byte boundary.
-                bytes = (long) ((rowBytes + 3) & ~3) * height;
+                bytes = texUploadSpanBytes(rowBytes, width, height);
+                if (bytes < 0L) {
+                    this.listPayloadsUnsized++;
+                    return null;
+                }
                 break;
             }
             case SEM_TEXSUBIMAGE: {
@@ -871,7 +874,11 @@ public final class CeltiumGlStub implements FunctionProvider {
                     return null;
                 }
                 pointerIndex = 8;
-                bytes = (long) ((rowBytes + 3) & ~3) * height;
+                bytes = texUploadSpanBytes(rowBytes, width, height);
+                if (bytes < 0L) {
+                    this.listPayloadsUnsized++;
+                    return null;
+                }
                 break;
             }
             case SEM_BUFFER_DATA: {
@@ -924,6 +931,25 @@ public final class CeltiumGlStub implements FunctionProvider {
         args[pointerIndex] = org.lwjgl.system.MemoryUtil.memAddress(owned);
         this.listPayloadsOwned++;
         return owned;
+    }
+
+    /**
+     * {@return the bytes a texture upload spans in client memory under the current unpack state, or -1 when
+     * that state lays the rows out in a way this capture cannot mirror}.
+     *
+     * <p>The conversion that later reads the captured bytes pads each row to {@code GL_UNPACK_ALIGNMENT} and
+     * reads {@code (height - 1)} padded rows plus the last row unpadded, and it refuses a row length or a
+     * skip outright. Sizing the capture by a fixed alignment of 4 instead under-read the caller's memory at
+     * alignment 8 - and the conversion then read past the owned buffer at replay - and misaligned every row
+     * when a row length was in play, so the capture takes the same span and the same refusals as the
+     * conversion.
+     */
+    long texUploadSpanBytes(int rowBytes, int width, int height) {
+        if ((this.unpackRowLength != 0 && this.unpackRowLength != width)
+                || this.unpackSkipPixels != 0 || this.unpackSkipRows != 0) {
+            return -1L;
+        }
+        return (long) aligned(rowBytes, this.unpackAlignment) * (height - 1) + rowBytes;
     }
 
     /**
@@ -1247,6 +1273,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** How many compiled lists print their contents, so a session with thousands of compiles cannot flood the log. */
     private static int listCompileLogs;
     private static final int LIST_COMPILE_LOGS = 16;
+    /** How many abandoned compiles print, bounded like {@link #listCompileLogs}. */
+    private static int listAbandonedLogs;
     /**
      * The client-array pointer state: {@code glVertexPointer(size, type, stride, pointer)}. GL keeps exactly one of
      * these, and it is the only thing that says how the bound array buffer's bytes are to be read - the bytes alone
@@ -6189,6 +6217,34 @@ public final class CeltiumGlStub implements FunctionProvider {
             case SEM_NEW_LIST:
                 // A name of zero is not a list (the spec makes glNewList(0) GL_INVALID_VALUE), and recording under it
                 // would file calls where no glCallList can reach them - which is the state this stub started in.
+                // A glNewList that arrives while a compile is still open abandons that compile (GL has no nested
+                // compiles, and the other layer's report of this same call is dropped inside the capture, so this
+                // is the one place the abandonment shows). Close the abandoned session the way SEM_END_LIST closes
+                // a finished one: its geometry buffers hold native memory, and the payloads and legacy run bytes
+                // it collected would otherwise be filed under the new list's name at its glEndList.
+                if (this.openList != null || this.openListGeometry != null || this.openListPayloads != null
+                        || this.openListLegacyRunBytes > 0L) {
+                    if (this.openListGeometry != null) {
+                        for (NativeGeometryBuffer buffer : this.openListGeometry) {
+                            buffer.close();
+                        }
+                    }
+                    if (this.openListPayloads != null) {
+                        for (int i = 0; i < this.openListPayloads.size(); i++) {
+                            org.lwjgl.system.MemoryUtil.memFree(this.openListPayloads.get(i));
+                        }
+                    }
+                    if (listAbandonedLogs < 8) {
+                        listAbandonedLogs++;
+                        System.out.println("[Celtium] CELTIUM_LIST_ABANDONED list=" + this.compilingList
+                                + " payloads=" + (this.openListPayloads == null ? 0 : this.openListPayloads.size())
+                                + " legacyRunBytes=" + this.openListLegacyRunBytes);
+                    }
+                    this.openListGeometry = null;
+                    this.openListPayloads = null;
+                    this.openListLegacyRunBytes = 0L;
+                    this.closeCompileState();
+                }
                 this.openListGeometry = null;
                 this.compilingList = (int) c[0];
                 this.compilingListMode = (int) c[1]; // GL_LIST_MODE answers this, and the model capture asks for it
@@ -8340,7 +8396,20 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** The attachment record {@code glFramebufferTexture2D} writes and the backend reads. */
     private void framebufferTexture2D(int target, int attachment, int textarget, int texture, int level) {
         int framebuffer = target == 0x8CA8 ? this.readFbo : this.drawFbo;
-        if (framebuffer == 0 || level != 0) {
+        if (framebuffer == 0) {
+            return;
+        }
+        if (level != 0) {
+            // A mip-level attachment is not recorded: the backend resolves an attachment at level 0, so
+            // recording this one would publish the texture as if its level-0 pixels were the level the caller
+            // named. Refused by name and counted instead of silently dropped.
+            framebufferLevelRefusals++;
+            if (framebufferLevelRefusalLogs < 8) {
+                framebufferLevelRefusalLogs++;
+                System.out.println("[Celtium] CELTIUM_RAW_FBO_LEVEL framebuffer=" + framebuffer
+                        + " attachment=0x" + Integer.toHexString(attachment) + " texture=" + texture
+                        + " level=" + level + " refused=level-not-recorded");
+            }
             return;
         }
         // Depth attachments have their own record (see framebufferDepthTextures): they are not sampled as
@@ -8396,6 +8465,12 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Bounded companion to {@link #framebufferAttachmentLogs} for the depth record. */
     private static int framebufferDepthAttachmentLogs;
+
+    /** Attachments refused for naming a mip level the record does not hold: counted, so the loss is visible. */
+    private static int framebufferLevelRefusals;
+
+    /** Bounded companion to {@link #framebufferAttachmentLogs} for the level refusal. */
+    private static int framebufferLevelRefusalLogs;
 
     /**
      * One shared pair for every extent answer. The only caller reads width and height immediately and keeps neither;
@@ -11100,7 +11175,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         // quads with `reason=unknown-list list=0`, and the draw itself reached this no-op. Entities, the
         // player, held items, the sky, the stars and the horizon plane all arrive here.
         this.lastCalledList = listId;
-        List<Object[]> list = this.displayLists.get(this.lastCalledList);
+        List<Object[]> list = this.displayLists.get(listId);
         if (list == null) {
             // The spec: an undefined list is ignored, not an error. Counted so a silent miss is visible - and filed
             // under the id that missed, because "12 unresolved" says nothing about which lists a caller expected.
@@ -11119,7 +11194,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
         } else if (this.replayDepth < MAX_LIST_NESTING) {
             this.replayDepth++;
-            this.executingList = this.lastCalledList;
+            int outerExecutingList = this.executingList;
+            this.executingList = listId;
             try {
                 for (int i = 0; i < list.size(); i++) {
                     Object[] call = list.get(i);
@@ -11135,11 +11211,13 @@ public final class CeltiumGlStub implements FunctionProvider {
                 }
             } finally {
                 this.replayDepth--;
-                // Cleared on the way out so a quad drawn after the replay is not filed under the last list.
-                this.executingList = this.replayDepth == 0 ? 0 : this.executingList;
+                // Restored to the outer list on the way out, and cleared only at the outermost exit: a quad
+                // drawn after the replay is not filed under the last list, and a quad the outer list draws
+                // after an inner list returns is not filed under the inner one either.
+                this.executingList = this.replayDepth == 0 ? 0 : outerExecutingList;
             }
             this.displayListsReplayed++;
-            noteListReplayed(this.lastCalledList, list.size());
+            noteListReplayed(listId, list.size());
         } else {
             // The spec's floor for the nesting limit is 64 and this class stops there. A stopped replay used to be
             // counted nowhere at all - displayListsReplayed only counted the ones that ran - so a recursive list was
@@ -11170,10 +11248,14 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The cached mapping list, refreshed on a miss; volatile because the list is replaced, never mutated. */
     private volatile ReadableMemoryRanges.Range[] readableRanges;
-    /** How often the list has been re-read, and when the last read happened: a bound on the refresh rate. */
+    /**
+     * How often the list has been re-read, and when the last read happened. The count is a census; the only
+     * bound on refreshing is the interval below. A lifetime cap stood here before (64 reads): a long run
+     * churns its mappings - JIT code, arenas and file maps come and go - so the cap froze the list for good
+     * and the guard went on answering from a mapping layout the process no longer had.
+     */
     private int readableMappingRefreshes;
     private long readableMappingLastRefreshNanos;
-    private static final int READABLE_MAPPING_REFRESH_LIMIT = 64;
     /** Read once: addressFor runs for every GL entry point, and a property lookup there is a per-call map lookup. */
     private static final boolean TRACE_GL_CALLS = Boolean.getBoolean("celtium.glstub.trace");
     /** Same reasoning: the strict-symbol check is consulted on the unresolved-symbol path of every dispatch. */
@@ -11185,9 +11267,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             return new ReadableMemoryRanges.Range[0];
         }
         long now = System.nanoTime();
-        if (this.readableMappingRefreshes >= READABLE_MAPPING_REFRESH_LIMIT
-                || (this.readableMappingRefreshes > 0
-                        && now - this.readableMappingLastRefreshNanos < READABLE_MAPPING_REFRESH_INTERVAL_NANOS)) {
+        if (this.readableMappingRefreshes > 0
+                && now - this.readableMappingLastRefreshNanos < READABLE_MAPPING_REFRESH_INTERVAL_NANOS) {
             ReadableMemoryRanges.Range[] current = this.readableRanges;
             return current == null ? new ReadableMemoryRanges.Range[0] : current;
         }

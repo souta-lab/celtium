@@ -84,6 +84,8 @@ final class ModPrograms {
     private static final VulkanGlTexture[] EMPTY_TEXTURES = new VulkanGlTexture[0];
     final it.unimi.dsi.fastutil.ints.IntOpenHashSet modProgramReported =
             new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
+    /** Reports the census above did not print (full census, or the same line again): counted, and surfaced in aggregate. */
+    private int modProgramReportsSuppressed;
     /** Texture names whose depth-attach probe line has been printed: one line per name, ever (item 537 wall (b2)). */
     final it.unimi.dsi.fastutil.ints.IntOpenHashSet modSamplerDepthProbed =
             new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
@@ -628,6 +630,15 @@ final class ModPrograms {
                 && this.modProgramReported.add((drawn ? program : -program - 1) * 31 + detail.hashCode())) {
             System.out.println("[Celtium] CELTIUM_MOD_PROGRAM_" + (drawn ? "DRAWN" : "NOT_DRAWN") + " program=" + program
                     + " " + detail);
+            return;
+        }
+        // Not printed: the census is full, or this exact line already ran. Counted either way, and surfaced
+        // in aggregate as the count grows - a run whose sixty-fifth distinct refusal never appears anywhere
+        // reads exactly like a run that had sixty-four, which is the failure this census exists to prevent.
+        this.modProgramReportsSuppressed++;
+        if ((this.modProgramReportsSuppressed & 63) == 0) {
+            System.out.println("[Celtium] CELTIUM_MOD_PROGRAM_SUPPRESSED suppressed="
+                    + this.modProgramReportsSuppressed + " census=" + this.modProgramReported.size());
         }
     }
 }

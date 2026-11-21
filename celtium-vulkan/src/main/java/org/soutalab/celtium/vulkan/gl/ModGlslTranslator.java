@@ -72,9 +72,15 @@ public final class ModGlslTranslator {
     private static final Pattern LINE_COMMENT = Pattern.compile("//[^\\n]*");
     private static final Pattern VERSION = Pattern.compile("^\\s*#\\s*version[^\\n]*\\n?", Pattern.MULTILINE);
     private static final Pattern EXTENSION = Pattern.compile("^\\s*#\\s*extension[^\\n]*\\n?", Pattern.MULTILINE);
-    /** A global declaration with a storage qualifier: optional layout/interpolation, qualifier, optional precision, type, declarators. */
+    /**
+     * A global declaration with a storage qualifier: optional layout/interpolation, qualifier, optional precision,
+     * type, declarators. A {@code location = N} inside the layout is captured (group 1): the modern spelling
+     * ({@link #IO_DECLARATION}) already honours it, and dropping it here silently renumbered an explicitly laid
+     * out attribute or varying by declaration order instead.
+     */
     private static final Pattern DECLARATION = Pattern.compile(
-            "(?<![\\w.])(?:layout\\s*\\([^)]*\\)\\s*)?(?:(flat|smooth|noperspective|centroid)\\s+)?"
+            "(?<![\\w.])(?:layout\\s*\\((?:[^)]*?location\\s*=\\s*(\\d+))?[^)]*\\)\\s*)?"
+                    + "(?:(flat|smooth|noperspective|centroid)\\s+)?"
                     + "(attribute|varying|uniform)\\s+(?:(?:lowp|mediump|highp)\\s+)?(\\w+)\\s+([^;{}()]+);");
     private static final Pattern DECLARATOR = Pattern.compile("^\\s*(\\w+)\\s*(?:\\[\\s*(\\d+)\\s*\\])?\\s*(?:=.*)?$");
     /**
@@ -505,16 +511,17 @@ public final class ModGlslTranslator {
         Matcher m = DECLARATION.matcher(source);
         StringBuilder rest = new StringBuilder();
         while (m.find()) {
-            String interpolation = m.group(1) == null ? "" : m.group(1);
-            String qualifier = m.group(2);
-            String type = m.group(3);
-            for (String declarator : m.group(4).split(",")) {
+            int explicit = m.group(1) == null ? -1 : Integer.parseInt(m.group(1));
+            String interpolation = m.group(2) == null ? "" : m.group(2);
+            String qualifier = m.group(3);
+            String type = m.group(4);
+            for (String declarator : m.group(5).split(",")) {
                 Matcher d = DECLARATOR.matcher(declarator);
                 if (!d.matches()) {
                     throw new IllegalArgumentException("unparsed declaration: " + m.group(0).strip());
                 }
                 int length = d.group(2) == null ? 0 : Integer.parseInt(d.group(2));
-                out.add(new Declaration(qualifier, type, d.group(1), length, -1, interpolation));
+                out.add(new Declaration(qualifier, type, d.group(1), length, explicit, interpolation));
             }
             m.appendReplacement(rest, "");
         }
