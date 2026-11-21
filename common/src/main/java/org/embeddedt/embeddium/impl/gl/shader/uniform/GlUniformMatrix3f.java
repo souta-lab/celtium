@@ -2,6 +2,7 @@ package org.embeddedt.embeddium.impl.gl.shader.uniform;
 
 import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
 
+import org.joml.Matrix3f;
 import org.joml.Matrix3fc;
 import org.taumc.celeritas.lwjgl.MemoryStack;
 
@@ -13,6 +14,10 @@ import java.nio.FloatBuffer;
 public class GlUniformMatrix3f extends GlUniform<Matrix3fc> {
     public GlUniformMatrix3f(int index) {
         super(index);
+    }
+
+    public void set(Matrix3f value) {
+        set((Matrix3fc) value);
     }
 
     @Override
