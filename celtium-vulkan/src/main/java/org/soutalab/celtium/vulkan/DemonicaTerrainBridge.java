@@ -16,8 +16,49 @@ import java.lang.reflect.Method;
 final class DemonicaTerrainBridge {
     private static volatile boolean resolved;
     private static Method packProgramMethod;
+    private static volatile boolean shadowResolved;
+    private static Method shadowMethod;
 
     private DemonicaTerrainBridge() {
+    }
+
+    /**
+     * {@return whether Iris is currently rendering the shadow stage}, read from Iris's own
+     * {@code ShadowRenderingState} - the same state Demonica's {@code ShaderTerrain} consults when it picks
+     * the {@code shadow} program over {@code gbuffers_terrain}/{@code gbuffers_water}. The pack-tail-2
+     * brackets name a pack terrain execution by this signal, so the attribution follows the guest's own
+     * stage bookkeeping rather than a target-shape guess. Absent Iris (a vanilla run), the answer is false
+     * and the caller never reaches the bracket anyway: no pack program exists there.
+     */
+    static boolean shadowsBeingRendered() {
+        Method method = resolveShadow();
+        if (method == null) {
+            return false;
+        }
+        try {
+            return Boolean.TRUE.equals(method.invoke(null));
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static Method resolveShadow() {
+        if (shadowResolved) {
+            return shadowMethod;
+        }
+        synchronized (DemonicaTerrainBridge.class) {
+            if (!shadowResolved) {
+                try {
+                    Class<?> cls = Class.forName("net.coderbot.iris.shadows.ShadowRenderingState", false,
+                            DemonicaTerrainBridge.class.getClassLoader());
+                    shadowMethod = cls.getMethod("areShadowsCurrentlyBeingRendered");
+                } catch (Throwable ignored) {
+                    shadowMethod = null;
+                }
+                shadowResolved = true;
+            }
+            return shadowMethod;
+        }
     }
 
     @SuppressWarnings("unchecked")

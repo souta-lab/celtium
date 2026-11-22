@@ -108,6 +108,24 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         org.soutalab.celtium.vulkan.FramePassTimings.end("clouds");
     }
 
+    /**
+     * Chunk updates, timed inside the world pass (pack-tail-2). renderWorldPass calls updateChunks between
+     * setupTerrain and the terrain layers (passes 0 and 2): this is where the game's chunk machinery digests
+     * the frame's chunk events, and in a flight scene it is the world pass' largest unnamed span - it sat
+     * inside worldRest with the glue.
+     */
+    @Inject(method = "func_174967_a", at = @At("HEAD"), require = 0)
+    private void celtium$wpChunksTimedBegin(long finishTimeNano,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("wpChunks");
+    }
+
+    @Inject(method = "func_174967_a", at = @At("RETURN"), require = 0)
+    private void celtium$wpChunksTimedEnd(long finishTimeNano,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("wpChunks");
+    }
+
     /** Entities, measured inside the world pass and reported but never subtracted from the frame's residual. */
     @Inject(method = {"renderEntities", "func_180446_a"}, at = @At("HEAD"), require = 0)
     private void celtium$entitiesTimedBegin(net.minecraft.entity.Entity entityIn,

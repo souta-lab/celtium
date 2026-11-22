@@ -16990,6 +16990,10 @@ this.frameBufferOpen = false;
         boolean bound = false;
         boolean stateSetup = false;
         boolean stateCaptured = false;
+        // pack-tail-2: the stage bracket this execution files under, opened at the commit point below and
+        // closed in the finally; null while the execution has not committed (no program, not compiled), so
+        // a vanilla pass - which reaches this method on its way to the built-in path - files nothing.
+        String packStageBracket = null;
         try {
             packProgram.bind();
             bound = true;
@@ -17009,6 +17013,13 @@ this.frameBufferOpen = false;
                                 : "not-compiled:" + modProgram.compileFailure());
                 return false;
             }
+            // pack-tail-2: the execution is committed - target resolution, pair management and the region
+            // draw loop below are this stage's record cost inside terrainRecord. The stage is Iris's own
+            // (DemonicaTerrainBridge.shadowsBeingRendered): the shadow stage's record and the gbuffers
+            // stages' record file under separate names, so a terrainRecord spike names its owner.
+            packStageBracket = DemonicaTerrainBridge.shadowsBeingRendered()
+                    ? "packRecordShadow" : "packRecordGbuffers";
+            org.soutalab.celtium.vulkan.FramePassTimings.begin(packStageBracket);
             var vertexType = this.configuration.getVertexTypeForPass(pass);
             var vertexFormat = vertexType == null ? null : vertexType.getVertexFormat();
             if (vertexFormat == null) {
@@ -17415,6 +17426,9 @@ this.frameBufferOpen = false;
             celtium$reportPackTerrainRefused(pass, packProgram.handle(), "exception:" + describe(err));
             return false;
         } finally {
+            if (packStageBracket != null) {
+                org.soutalab.celtium.vulkan.FramePassTimings.end(packStageBracket);
+            }
             this.passAttachedColorImage = 0L;
             this.passAttachedColorImages = null;
             this.passAttachedDepthImage = 0L;

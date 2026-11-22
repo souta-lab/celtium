@@ -353,9 +353,21 @@ public final class FrameBudgetTimings {
         return resolved;
     }
 
-    /** Brackets inside {@code worldPass} that the split already names; the rest is worldRest. */
+    /**
+     * Brackets inside {@code worldPass} that the split already names; the rest is worldRest.
+     * <p>
+     * pack-tail-2 extended the set: {@code clouds} and {@code hand} always ran inside the pass but were
+     * missing here, so their means sat inside worldRest <em>and</em> in their own buckets (cloudsWeather,
+     * guiHand) - the split double-counted them, against its own disjoint-by-construction rule. {@code
+     * weather} joins now that its bracket actually opens (on renderRainSnow), and {@code wpCamera} / {@code
+     * wpChunks} / {@code wpRenderLast} are the remainder's real seams (camera+snapshot, chunk updates,
+     * Forge's RenderWorldLast dispatch). What is left in worldRest is the pass' own glue - clear, fog,
+     * frustum construction, outline, destroy progress, debug - plus the inside brackets no bucket names
+     * ({@code dyn*}, {@code anim*}, {@code chunkUpload}) when they fire inside the pass.
+     */
     private static final String[] WORLD_PASS_MEMBERS = {
-            "terrain", "setupTerrain", "entities", "particles", "particlesLit", "sky", "flush"};
+            "terrain", "setupTerrain", "entities", "particles", "particlesLit", "sky", "flush",
+            "clouds", "hand", "weather", "wpCamera", "wpChunks", "wpRenderLast"};
 
     private static final boolean PRESENT_INTERVAL = ENABLED
             || HarnessConfig.bool("presentInterval", false)
@@ -537,9 +549,9 @@ public final class FrameBudgetTimings {
      * a bracket's mean sits at its name-table index + 1). The buckets are disjoint by construction: {@code
      * terrain} contains its own sub-brackets (record, submit, prepare), {@code setupTerrain} contains the
      * {@code st*} family, {@code entities} the {@code ent*} family, and {@code worldRest} is what {@code
-     * worldPass} holds beyond those, {@code sky} and {@code flush} - the snapshot's remainder after the
-     * boundary, the render glue, and the inside brackets no bucket names ({@code dyn*}, {@code anim*},
-     * {@code chunkUpload}).
+     * worldPass} holds beyond every member of {@link #WORLD_PASS_MEMBERS} - after pack-tail-2 that is the
+     * pass' own render glue (clear, fog, frustum construction, outline, destroy progress, debug) and the
+     * inside brackets no bucket names ({@code dyn*}, {@code anim*}, {@code chunkUpload}).
      * <p>
      * {@code flushNet} is the one bucket that crosses the two instruments, and it exists because of a
      * containment chain the first leg of the census measured: the budget's {@code batch} span wraps the batch
