@@ -525,6 +525,16 @@ public final class VulkanContext {
     /** This context's generation, from {@link #CONTEXT_GENERATIONS}; 0 until {@link #create(String)} assigns it. */
     private long generation;
 
+    /**
+     * The most recent device-loss report in this process, in the form {@link #celtium$deviceCreationFailure}
+     * quotes (item 529, candidate (a)). Static because the reader is a <em>successor</em> context: after a
+     * loss, a renderer reload creates a new context whose {@code vkCreateDevice} refusal is the downstream
+     * of the loss the old context reported, and the two records used to live in different files. Written
+     * only by {@link #celtium$lostDevice(String)}, the one funnel every reported loss passes through, so a
+     * loss nobody reported is never claimed here.
+     */
+    private static volatile String lastDeviceLossReport;
+
     private VulkanContext() {
     }
 
@@ -1900,11 +1910,48 @@ public final class VulkanContext {
         CrashBreadcrumbs.dump(operation, "context generation=" + this.generation
                 + "\n" + celtium$describeDeferred().trim()
                 + "\n" + SubmitTrail.describe());
+        // Item 529, candidate (a): the process-level note a later vkCreateDevice refusal quotes, so the
+        // refusal's own record names the loss it is downstream of instead of leaving the join to a
+        // reporter's next submission.
+        lastDeviceLossReport = celtium$deviceLossReport(operation, this.generation,
+                System.currentTimeMillis());
         this.usable = false;
         this.deviceLost = true;
         return new IllegalStateException("CELTIUM_VULKAN_DEVICE_LOST at " + operation
                 + ": stop all GPU operations. Driver objects/fences are held for process teardown; "
                 + "a new Vulkan instance in this process cannot recover this device.");
+    }
+
+    /** The process-level loss note's one-line form: the reporting operation, its context generation, the wall time. */
+    static String celtium$deviceLossReport(String operation, long generation, long whenMillis) {
+        return operation + " (context generation " + generation + ", at " + whenMillis + ")";
+    }
+
+    /**
+     * The {@code vkCreateDevice} refusal's full sentence (item 529, candidate (a)): the result, the device,
+     * the parameters the creation was asked with, and - when this process already reported a device loss -
+     * that report, so the refusal reads as the loss's downstream rather than as an unrelated crash. Pure
+     * and static so the sentence is pinnable without a device.
+     */
+    static String celtium$deviceCreationFailure(int result, String deviceName,
+            java.util.List<String> enabledExtensions, String featureSummary, String priorLossReport) {
+        StringBuilder message = new StringBuilder(256);
+        message.append("vkCreateDevice(").append(deviceName).append(") returned VkResult ").append(result)
+                .append(". Enabled extensions: ").append(enabledExtensions)
+                .append(". Enabled features: ").append(featureSummary).append('.');
+        if (priorLossReport != null) {
+            message.append(" A device loss was already reported in this process: ").append(priorLossReport)
+                    .append(". This refusal is downstream of that loss - the device was already gone when the"
+                            + " reload asked for a new one - not a fresh refusal of a healthy device.");
+        } else {
+            message.append(" No device loss was reported earlier in this process.");
+        }
+        return message.toString();
+    }
+
+    /** {@return the most recent device-loss report in this process}, or {@code null} when none was reported. */
+    static String celtium$lastDeviceLossReport() {
+        return lastDeviceLossReport;
     }
 
     /**
@@ -3464,8 +3511,27 @@ public final class VulkanContext {
                 }
             }
             PointerBuffer handle = stack.mallocPointer(1);
-            check(vkCreateDevice(this.physicalDevice, createInfo, null, handle),
-                    "vkCreateDevice(" + this.deviceName + ")");
+            int createResult = vkCreateDevice(this.physicalDevice, createInfo, null, handle);
+            if (createResult != VK_SUCCESS) {
+                // Not the generic check() (item 529, candidate (a)): a creation refusal during a renderer
+                // reload reached the user as a bare "returned VkResult -3" in a crash report, while the
+                // device loss that caused it sat in a different file (the device-lost log), and joining
+                // the two cost a reporter round-trip. The failure therefore carries its own context: the
+                // parameters it was asked with, and the loss this process already reported, when it did.
+                throw new IllegalStateException(celtium$deviceCreationFailure(createResult, this.deviceName,
+                        deviceExtensions,
+                        "multiDrawIndirect=" + this.multiDrawIndirectSupported
+                                + " drawIndirectFirstInstance=" + this.drawIndirectFirstInstanceSupported
+                                + " shaderStorageImageReadWithoutFormat="
+                                + this.storageImageReadWithoutFormatSupported
+                                + " shaderStorageImageWriteWithoutFormat="
+                                + this.storageImageWriteWithoutFormatSupported
+                                + " pipelineStatisticsQuery=" + this.pipelineStatisticsQuerySupported
+                                + " shaderDrawParameters=" + this.shaderDrawParametersSupported
+                                + " dynamicRendering=" + this.dynamicRenderingSupported
+                                + " textureArray=" + this.textureArraySupported,
+                        lastDeviceLossReport));
+            }
             this.device = new VkDevice(handle.get(0), this.physicalDevice, createInfo);
             System.out.println("[Celtium] CELTIUM_DEVICE_FEATURES shaderDrawParameters="
                     + this.shaderDrawParametersSupported + " multiDrawIndirect=" + this.multiDrawIndirectSupported

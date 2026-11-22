@@ -1113,6 +1113,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int deleteCalls;
 
     /**
+     * Whether the full (non-window) teardown in {@link #celtium$deleteSettled()} ran to its end. A second
+     * {@link #delete()} after that has nothing left to release - every handle it would touch is already
+     * zeroed or destroyed - and re-running the settle and the release sequence over that state is the
+     * double teardown this flag exists to refuse (issue #425). The window-owned exit never sets it: that
+     * path is a per-world release and is called once per world by design, and the stalled / settle-failed
+     * exits do not set it either, because a later delete may still have the settle succeed.
+     */
+    private boolean fullyDeleted;
+
+    /**
      * {@return the name of the Vulkan device this renderer draws with}, or {@code null} when there is none.
      * <p>
      * The stub answers {@code GL_RENDERER} - which F3 shows and the fixture records as {@code glRenderer} - from this,
@@ -16135,6 +16145,13 @@ this.frameBufferOpen = false;
             this.groupScissorScratch.free();
             this.groupScissorScratch = null;
         }
+        if (this.fullyDeleted) {
+            // The full teardown already ran to its end once: nothing here is left to release, and running
+            // the settle again would wait on a device its owner may since have deleted. The registration
+            // detach is idempotent, so repeating it is the whole of a second delete (issue #425).
+            celtium$detachRegistration();
+            return;
+        }
         if (this.gpuStalled) {
             // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded
             // references are still live. Destroying the frame target or its framebuffers here is what validation reported as
@@ -16152,6 +16169,30 @@ this.frameBufferOpen = false;
             celtium$detachRegistration();
             return;
         }
+        try {
+            celtium$deleteSettled();
+        } catch (RuntimeException | LinkageError failure) {
+            // One failing release must not strand the rest or the registration (issue #425): before this
+            // catch, a throw out of the sequence skipped every later release AND the detach, leaving the
+            // current-backend registration pointing at a half-deleted backend the mixins kept drawing
+            // into (the state BH10-07 names). The failure is recorded, the registration is detached so
+            // nothing draws into this backend again, and what the sequence did not reach is left for the
+            // process teardown - the same disposition as the stalled and settle-failed exits above. The
+            // window-owned exit inside the sequence is a return, not a throw, and is unaffected.
+            record("teardown: the release sequence stopped early (" + describe(failure)
+                    + "); the resources it did not reach are left for the process teardown");
+            celtium$detachRegistration();
+        }
+    }
+
+    /**
+     * The release sequence {@link #delete()} runs once the device has settled: every resource this backend
+     * owns, in dependency order. Split from {@code delete()} so the caller can hold the whole sequence to
+     * one contract - a failure anywhere in it is recorded and ends the teardown, it does not propagate -
+     * while the window-owned exit in the middle stays a plain return. Reaching the end of this method is
+     * what {@link #fullyDeleted} records; the window-owned return deliberately does not reach it.
+     */
+    private void celtium$deleteSettled() {
         for (VulkanImmediateTexturePipeline records : this.indirectRuns.recordsPipelines.values()) {
             records.delete();
         }
@@ -16338,7 +16379,7 @@ this.frameBufferOpen = false;
         }
         // The teardown above queues as it goes: the texture registry's textures, the frame target and the
         // swapchain hand their handles to the retire queue instead of destroying them in place, and they do so
-        // after this method's own drain near its head. The device was settled at the head of this method and is
+        // after this sequence's own drain near its head. The device was settled at the head of delete() and is
         // still alive here, so this device's share can be destroyed now. Without this last drain those entries
         // outlive the device: nothing guarantees VulkanContext.delete() runs after this method, and a successor
         // backend's frame-path drain would otherwise execute them against a destroyed device (L06-01/BH10-09).
@@ -16348,6 +16389,7 @@ this.frameBufferOpen = false;
         }
         System.out.println("[Celtium] CELTIUM_TEARDOWN released " + released
                 + " backend resources (immediate mesh, groups, pipeline caches, UI, registry, swapchain)");
+        this.fullyDeleted = true;
     }
 
     // ------------------------------------------------------------------ upload path
