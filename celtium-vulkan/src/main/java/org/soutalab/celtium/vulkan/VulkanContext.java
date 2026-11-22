@@ -500,6 +500,15 @@ public final class VulkanContext {
     // The upload path's own phases, so the bracket it lands in can be taken apart per frame rather than guessed at.
     // Counting and timing only: no ordering, no ownership, nothing about when a copy runs changes.
     private long uploadReserveNanos;
+    /**
+     * The two parts of the reserve bracket that are not booking cost, timed separately so the bracket can be
+     * split after the fact (item 363 caveat 2, ITEM363-AUDIT §2.6): the one-time ring creation inside the first
+     * reserve, and the ring-pressure waits (the early flush, the deferred-submit poll and the fence waits) that
+     * the bracket absorbs when the ring is full. {@code reserveBook} is derived, never timed directly:
+     * {@code uploadReserveNanos - uploadRingInitNanos - uploadReserveWaitNanos}.
+     */
+    private long uploadRingInitNanos;
+    private long uploadReserveWaitNanos;
     private long uploadCopyNanos;
     private long uploadCopyBytes;
     /** Upload copies and bytes by producer: 0 = VulkanArena (terrain/immediate meshes), 1 = VulkanBuffer. */
@@ -3703,7 +3712,14 @@ public final class VulkanContext {
         if (bytes > UPLOAD_SLOT_BYTES) {
             return -1L;
         }
+        // The ring's one-time creation lands inside this first reserve's bracket; time it into its own
+        // counter (only when this call actually creates it) so it can be split back out (item 363).
+        boolean ringAbsent = this.uploadRingBuffer == VK_NULL_HANDLE;
+        long ringInitStarted = System.nanoTime();
         celtium$ensureUploadRing();
+        if (ringAbsent) {
+            this.uploadRingInitNanos += System.nanoTime() - ringInitStarted;
+        }
         int slot = celtium$writableSlot(bytes);
         if (slot < 0 && !this.pendingUploads.isEmpty()) {
             // The batch being recorded has filled the ring. It goes out now (one submission, no wait) and its slots
@@ -3712,14 +3728,18 @@ public final class VulkanContext {
             // the settled one-copy path - 1546 of 2419 copies on the layered leg, each paying its own submission and
             // fence wait, which is exactly the cost this unit exists to remove.
             this.uploadEarlyFlushesForRingPressure++;
+            long flushWaitStarted = System.nanoTime();
             flushUploads();
+            this.uploadReserveWaitNanos += System.nanoTime() - flushWaitStarted;
             slot = celtium$writableSlot(bytes);
         }
         if (slot < 0) {
             // Every slot is owned by a batch that has been submitted. A batch whose fence has already signalled frees
             // its slots for the cost of one fence query, so the queue is polled before anything is waited for - the
             // wait below is then only for a batch the GPU is genuinely still reading.
+            long pollWaitStarted = System.nanoTime();
             int reclaimed = celtium$pollDeferredSubmits();
+            this.uploadReserveWaitNanos += System.nanoTime() - pollWaitStarted;
             if (reclaimed > 0) {
                 this.uploadRingPressurePollsReclaimed += reclaimed;
                 slot = celtium$writableSlot(bytes);
@@ -3730,7 +3750,9 @@ public final class VulkanContext {
             // cheapest wait that can open one, because the queue completes in submission order. Counted separately
             // from the polls above, so a leg can say which of the two the ring needed.
             this.uploadRingPressureWaits++;
+            long awaitWaitStarted = System.nanoTime();
             celtium$awaitOldestDeferredSubmit("upload ring pressure");
+            this.uploadReserveWaitNanos += System.nanoTime() - awaitWaitStarted;
             slot = celtium$writableSlot(bytes);
         }
         if (slot < 0) {
@@ -4247,6 +4269,26 @@ public final class VulkanContext {
         celtium$settleDeferredSubmits();
     }
 
+    /**
+     * The canonical reserve figure (item 363 caveat 2, adjudicated in ITEM363-AUDIT §2.6): the reserve
+     * bracket's pure booking cost - slot selection and cursor updates - per 1,000 copies. The raw cumulative
+     * {@code uploadPhaseMicros[reserve]} mixes three things that move independently (run length, copy count,
+     * ring-pressure fence waits) plus the one-time ring creation, which is why cross-record comparisons of
+     * the raw value kept failing to reproduce; the two non-booking parts are timed separately
+     * ({@code uploadRingInitNanos}, {@code uploadReserveWaitNanos}) and subtracted here. Reservation calls
+     * are exactly {@code uploadCopiesBatched + uploadFallbackCopies}: every reserve ends in one or the other.
+     * Nanoseconds per copy is the same number as microseconds per 1,000 copies.
+     *
+     * @return the derived figure, or 0 when no copy has been reserved yet
+     */
+    static long celtium$reserveBookMicrosPerKCopy(long reserveNanos, long ringInitNanos,
+            long reserveWaitNanos, long copies) {
+        if (copies <= 0L) {
+            return 0L;
+        }
+        return (reserveNanos - ringInitNanos - reserveWaitNanos) / copies;
+    }
+
     /** {@return the batched upload path's census, for the run report}. */
     public String uploadBatchSummary() {
         return "commandBufferAllocations=" + commandBufferAllocations + " commandBufferReuses=" + commandBufferReuses
@@ -4262,6 +4304,9 @@ public final class VulkanContext {
                 + " submit=" + (this.uploadSubmitNanos / 1000L) + "]"
                 + " uploadPhaseMillisTotal=" + ((this.uploadReserveNanos + this.uploadCopyNanos + this.uploadPollNanos
                         + this.uploadRecordNanos + this.uploadSubmitNanos) / 1000000L)
+                + " reserveBookMicrosPerKCopy=" + celtium$reserveBookMicrosPerKCopy(this.uploadReserveNanos,
+                        this.uploadRingInitNanos, this.uploadReserveWaitNanos,
+                        this.uploadCopiesBatched + this.uploadFallbackCopies)
                 + " uploadCopyBytesTotal=" + this.uploadCopyBytes
                 + " uploadPendingCopies=" + this.pendingUploads.size()
                 + " uploadRingBytes=" + this.uploadRingCapacity
