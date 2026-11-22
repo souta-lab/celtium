@@ -229,6 +229,10 @@ Celtium retains Celeritas' **LGPL-3.0** licensing and upstream history. See [COP
 The fixed source reference is
 [GTNewHorizons/Celeritas at `989ebf2e52ceed052ec112a569e0c1d172095756`](https://github.com/GTNewHorizons/Celeritas/tree/989ebf2e52ceed052ec112a569e0c1d172095756).
 
+The 0.3.0 release also incorporates knowledge derived from
+[VLOD-ZDOV/VulkanMod-Next](https://github.com/VLOD-ZDOV/VulkanMod-Next) (LGPL-3.0), the successor to VulkanMod;
+code taken from it is credited in code comments.
+
 ## 🔗 External optimization references
 
 Optimizations are also derived from — or cross-checked against — the following projects. The design is re-implemented
@@ -244,6 +248,7 @@ license first.**
 | [GTNewHorizons/Hodgepodge](https://github.com/GTNewHorizons/Hodgepodge) | LGPL-3.0 | concept reference: renderer memoization, leak fixes |
 | [embeddedt/ArchaicFix](https://github.com/embeddedt/ArchaicFix) | LGPL-3.0 — **occlusion module excluded** (not LGPL) | concept reference: cache lifetime, world-change freeing |
 | [xCollateral/VulkanMod](https://github.com/xCollateral/VulkanMod) | LGPL-3.0 | closest architecture analogue (Vulkan replaces GL) |
+| [VLOD-ZDOV/VulkanMod-Next](https://github.com/VLOD-ZDOV/VulkanMod-Next) | LGPL-3.0 | VulkanMod successor; optimization knowledge referenced in the 0.3.0 release |
 | [embeddedt/ModernFix](https://github.com/embeddedt/ModernFix) | LGPL-3.0 | concept reference: dynamic/lazy model loading, faster startup, memory reduction |
 | [malte0811/FerriteCore](https://github.com/malte0811/FerriteCore) | MIT | concept reference: dedup blockstate property maps, multipart model instances |
 | [MoePus/Flerovium](https://github.com/MoePus/Flerovium) | LGPL-3.0 | modern (1.21): item render backface culling / fast math / LOD |
