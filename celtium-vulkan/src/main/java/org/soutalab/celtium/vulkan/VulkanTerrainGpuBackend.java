@@ -8985,6 +8985,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // is this renderer's per-batch work rather than the game's. One static-field read when the HUD is not drawing.
         boolean guiBatch = org.soutalab.celtium.vulkan.FramePassTimings.guiSectionActive();
         if (guiBatch) org.soutalab.celtium.vulkan.FramePassTimings.begin("guiBatch");
+        // The screen's share of the same accept path, and the HUD census' offer count over both UI
+        // brackets: an open screen's batches were in no HUD population before the screen bracket.
+        boolean screenBatch = org.soutalab.celtium.vulkan.FramePassTimings.screenSectionActive();
+        if (screenBatch) org.soutalab.celtium.vulkan.FramePassTimings.begin("screenBatch");
+        if (HudCensus.enabled() && (guiBatch || screenBatch)) {
+            HudCensus.noteOffer(this.frameId);
+        }
         long submitStart = timeBatch ? System.nanoTime() : 0L;
         this.submitFlushesAtEntry = this.immediateStatistics.immediateGroupsFlushed();
         this.submitSuppliesAtEntry = this.lazyMirrorSupplies;
@@ -9000,6 +9007,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             return taken;
         } finally {
             if (guiBatch) org.soutalab.celtium.vulkan.FramePassTimings.end("guiBatch");
+            if (screenBatch) org.soutalab.celtium.vulkan.FramePassTimings.end("screenBatch");
             if (timeBatch) {
                 long submitNanos = System.nanoTime() - submitStart;
                 this.immediateSubmitNanos += submitNanos;
@@ -12274,6 +12282,10 @@ this.frameBufferOpen = false;
         // this call whether or not this call turns out to hold any groups.
         int flushEntryKind = this.pendingFlushEntryKind;
         this.pendingFlushEntryKind = org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_OTHER;
+        // The HUD census' call count: every entry, with the UI bracket state at the entry. The
+        // facade is one static-final read while the census is off, the rule this hook's own
+        // early-out below already follows.
+        HudCensus.noteFlushCall(this.frameId, FramePassTimings.uiSectionActive());
         if (this.immediateWindowBusy) return;
         // This hook runs on every GL draw call (1.35e8 in one measured session). With no group open, no geometry lease,
         // no held glyph run and no pre-closed groups queued, closing has nothing to do but take two timing brackets and
@@ -12340,9 +12352,20 @@ this.frameBufferOpen = false;
         boolean hudP0GuiWindow = HUD_P0_FRAMES > 0 && hudP0FlushGroups > 0
                 && HudP0Census.guiClosedGroups(this.immediateGroups) > 0;
         long hudP0FlushStartedNanos = hudP0GuiWindow ? System.nanoTime() : 0L;
+        // The HUD census' window attribution, on the same rule as the P0 fit but over both UI
+        // brackets: entered while a UI bracket is open, or draining groups a UI bracket closed.
+        // The screen's flush time gets its own bracket beside guiFlush, for the same reason its
+        // batches did: before the screen bracket, an open screen's flushes were in no HUD name.
+        boolean screenFlush = FramePassTimings.screenSectionActive();
+        boolean hudCensusUiWindow = guiFlush || screenFlush;
+        int hudCensusUiGroups = HudCensus.enabled()
+                ? (hudCensusUiWindow ? hudP0FlushGroups : HudCensus.uiClosedGroups(this.immediateGroups))
+                : 0;
+        long hudCensusFlushStartedNanos = HudCensus.enabled() ? System.nanoTime() : 0L;
         try {
             FramePassTimings.begin("flush");
             if (guiFlush) FramePassTimings.begin("guiFlush");
+            if (screenFlush) FramePassTimings.begin("screenFlush");
             try {
                 if (this.commandState != null && this.commandState.inRenderPass()) {
                     // An ordering flush: the batch that is about to be refused is drawn by GL, so what is already
@@ -12358,9 +12381,14 @@ this.frameBufferOpen = false;
                 }
             } finally {
                 if (guiFlush) FramePassTimings.end("guiFlush");
+                if (screenFlush) FramePassTimings.end("screenFlush");
                 FramePassTimings.end("flush");
                 if (hudP0FlushStartedNanos != 0L) {
                     this.hudP0FlushFit.note(hudP0FlushGroups, System.nanoTime() - hudP0FlushStartedNanos);
+                }
+                if (hudCensusFlushStartedNanos != 0L) {
+                    HudCensus.noteActualFlush(this.frameId, hudCensusUiWindow, hudCensusUiGroups,
+                            System.nanoTime() - hudCensusFlushStartedNanos);
                 }
             }
             this.immediateStatistics.noteOrderPreservingFlushes();
@@ -15175,6 +15203,13 @@ this.frameBufferOpen = false;
             // Stamped beside the census note above, under the same bracket read, so the fit and the
             // census count the same population; the fit is not frame-budget gated, so neither is this.
             group.closedInGuiSection = HUD_P0_FRAMES > 0 && FramePassTimings.guiSectionActive();
+            // The HUD census' wider stamp: either UI bracket (the overlay, or an open screen) open
+            // at the close. Separate from the gui stamp because the item-312 population is the gui
+            // bracket alone and must not widen under it; stamped only while the census runs.
+            group.closedInUiSection = HudCensus.enabled() && FramePassTimings.uiSectionActive();
+            if (group.closedInUiSection) {
+                HudCensus.noteGroupClosed(this.frameId);
+            }
             group.color = this.currentGroupColor;
             group.blendSrc = this.currentGroupBlendSrc;
             group.blendDst = this.currentGroupBlendDst;
@@ -16188,6 +16223,12 @@ this.frameBufferOpen = false;
         // read frames=0 while the periodic lines in the same log reached frames=960. The fixture is the component
         // that knows the run is ending while the log is alive, so the last summary is the one it asks for.
         FrameBudgetTimings.printSummary();
+        // The HUD census' final line, printed with the other summaries for the same reason: its
+        // periodic lines stop at the frame bound, and a leg that ends before the bound still has a
+        // census to read.
+        if (HudCensus.enabled()) {
+            System.out.println("[Celtium] " + HudCensus.summary());
+        }
         return true;
     }
 

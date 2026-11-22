@@ -299,6 +299,7 @@ public final class FrameBudgetTimings {
             {"sky"},
             {"clouds", "weather"},
             {"gui", "hand"},
+            {"screen"},
     };
 
     /** Bracket indices of {@link #OTHER_BUCKETS}' members, resolved lazily from the shared name table. */

@@ -249,6 +249,11 @@ public final class PatchGroups {
               "core.DemonicaPipelineBeginTimingMixin",
               "core.DemonicaShadowPhaseTimingMixin"
         );
+        group("hud_census_instrument", "hud census instrument", false,
+              "the screen bracket stops, so the pass census no longer separates the screen section from the frame residual; rendering itself is untouched because every injector is require=0 and read-only",
+              "core.GuiScreenDrawMixin",
+              "core.GuiContainerDrawMixin"
+        );
         group("text", "text", false,
               "the font batcher stops and glyphs fall back to the generic recording through the GL stub (unmeasured)",
               "core.FontRendererMixin",

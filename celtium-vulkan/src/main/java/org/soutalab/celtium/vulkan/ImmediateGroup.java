@@ -134,6 +134,16 @@ public final class ImmediateGroup {
     public boolean closedInGuiSection;
 
     /**
+     * Whether this group was closed while a UI bracket (the HUD overlay or an open screen) was open.
+     * <p>
+     * The {@link HudCensus} counterpart of {@link #closedInGuiSection}: the wider stamp exists
+     * because the screen bracket postdates the item-312 census, whose population is the {@code gui}
+     * bracket alone and must not change under it. Stamped only while the HUD census runs, beside the
+     * gui stamp, under the same close-site bracket read.
+     */
+    public boolean closedInUiSection;
+
+    /**
      * {@return a hash of the group's viewport and scissor state}.
      * <p>
      * Two groups whose rectangles match can share one {@code vkCmdSetViewport}/{@code vkCmdSetScissor}, which is what
@@ -344,6 +354,7 @@ public final class ImmediateGroup {
         this.scissorEnabled = false;
         this.probePoisoned = false;
         this.closedInGuiSection = false;
+        this.closedInUiSection = false;
         this.polygonOffsetFactor = 0.0f;
         this.polygonOffsetUnits = 0.0f;
         this.polygonOffsetEnabled = false;

@@ -16,7 +16,7 @@ import java.util.Arrays;
  * own rather than reading the profiler's tree.
  * <p>
  * Pass times are inclusive. Minecraft calls hand/clouds/weather inside renderWorld, so summing those times
- * double-counts their overlap. The residual subtracts the <b>union</b> of world/hand/clouds/weather/gui brackets,
+ * double-counts their overlap. The residual subtracts the <b>union</b> of world/hand/clouds/weather/gui/screen brackets,
  * not their sum. Auxiliary brackets are reported for attribution and do not change that coverage. This is deliberately
  * not comparable with the profiler's self-time sum, which is 4.01x the frame time because {@code frame}, {@code root}
  * and {@code gameRenderer} each hold all of it; the two must never be added together.
@@ -28,7 +28,7 @@ import java.util.Arrays;
 public final class FramePassTimings {
 
     /** Named inclusive passes whose union is subtracted from the frame. */
-    private static final String[] TOP_LEVEL = {"world", "hand", "clouds", "weather", "gui"};
+    private static final String[] TOP_LEVEL = {"world", "hand", "clouds", "weather", "gui", "screen"};
     /**
      * Measured inside {@code world}; reported, never subtracted.
      * <p>
@@ -124,6 +124,12 @@ public final class FramePassTimings {
             // `gui` bracket is 0.4 ms of the frame, and without these two names "the HUD costs 0.4 ms" cannot be split
             // into the game's own HUD work and ours - measured, ours is 0.1 of it.
             "guiBatch", "guiFlush",
+            // The screen's share of the same two paths, measured while the `screen` bracket is open:
+            // an open inventory or container screen is the HUD-heavy case (a screenful of item icons,
+            // tooltips and status effects), and before this bracket existed its batches and flushes
+            // were in no HUD population at all - `GuiScreen.drawScreen` is not the overlay's
+            // renderGameOverlay, so `guiBatch`/`guiFlush` never saw them.
+            "screenBatch", "screenFlush",
             // The client tick's own names. The tick runs between frames, so these are recorded by TickTimings (the
             // frame brackets return early while no frame is open); they live in this table so one name has one index
             // and the tick report can print them beside the frame's. `anim` is TextureMap.updateAnimations - the whole
@@ -592,6 +598,26 @@ public final class FramePassTimings {
 
     private static boolean guiActive;
 
+    /**
+     * Whether the {@code screen} bracket is open right now: a {@code GuiScreen} (or a
+     * {@code GuiContainer}, whose draw nests the base class' draw inside its own) is being drawn.
+     * <p>
+     * A depth, not a flag, for the nesting the GUI bracket never has: {@code GuiContainer.drawScreen}
+     * calls {@code super.drawScreen}, so the base bracket opens and closes inside the container's,
+     * and a plain flag would read closed for the container's own item rendering after the super call
+     * returns - which is the heaviest part of the screen to attribute.
+     */
+    public static boolean screenSectionActive() {
+        return screenDepth > 0;
+    }
+
+    /** {@return whether either UI bracket - the HUD overlay or an open screen - is open}. */
+    public static boolean uiSectionActive() {
+        return guiActive || screenDepth > 0;
+    }
+
+    private static int screenDepth;
+
     /** {@return every bracket's open count, as {@code name=count} pairs}, so no name has to be guessed. */
     public static String passBeginCallsSummary() {
         StringBuilder text = new StringBuilder();
@@ -610,6 +636,9 @@ public final class FramePassTimings {
         // are off.
         if (pass == "gui") {
             guiActive = true;
+        }
+        if (pass == "screen") {
+            screenDepth++;
         }
         // The call counts used to run on every bracket whether the timings were enabled or not - 1.1% of the render
         // thread in a steady-state JFR, spent on a hash lookup per bracket. The question they answer ("was the bracket
@@ -648,6 +677,11 @@ public final class FramePassTimings {
         // HashMap tree-bin lookups, because every bracket close in the frame went through the map.
         if (pass == GUI_PASS || (guiActive && GUI_PASS.equals(pass))) {
             guiActive = false;
+        }
+        if (pass == SCREEN_PASS || (screenDepth > 0 && SCREEN_PASS.equals(pass))) {
+            if (screenDepth > 0) {
+                screenDepth--;
+            }
         }
         if (!enabled()) return;
         // Off the context thread the close pairs with a count-only open: see contextThread.
@@ -712,6 +746,9 @@ public final class FramePassTimings {
 
     /** The GUI bracket's name: {@link #end} compares it directly so the disabled path pays no map lookup. */
     private static final String GUI_PASS = "gui";
+
+    /** The screen bracket's name, compared directly in {@link #end} for the same reason as {@link #GUI_PASS}. */
+    private static final String SCREEN_PASS = "screen";
 
     /**
      * Whether per-bracket call counts are kept while the timings are disabled.
