@@ -648,6 +648,57 @@ b.frameBufferOpen = false;
      */
     private long publishedCacheVersion = Long.MIN_VALUE;
     private long publishedCachePairs = Long.MIN_VALUE;
+
+    /**
+     * Item 673's lab switch: {@code -Dceltium.vulkan.terrainPreparePublishWalkOnce=true} lets a sampling-side
+     * walk be skipped when it is provably a repeat of the walk that already ran for this frame.
+     * <p>
+     * The terrain prepare runs the sampling walk once per terrain pass (three or more passes a frame), and
+     * each pass re-walks every published name only to find every image already in the layout the walk wants
+     * (the settled fast path in {@code VulkanGlTexture}). The repeat is redundant exactly while nothing has
+     * moved since the walk that settled them: the key below therefore carries the frame, the publication
+     * version, the pair generation, the attach context (the images the pass attaches, which the walk skips)
+     * and {@link VulkanGlTexture#foreignLayoutTransitionCount()} - the count of foreign layout barriers
+     * actually recorded anywhere, which is what a hand-back between the two walks would advance. An
+     * attach-side (general) walk always invalidates the memo, and a walk over an explicit attach-image array
+     * (the multi-target window shape) neither uses nor fills it. Off by default: with the switch off the
+     * walk runs exactly as before, every pass, every name.
+     */
+    private static final boolean PUBLISH_WALK_ONCE =
+            Boolean.getBoolean("celtium.vulkan.terrainPreparePublishWalkOnce");
+    private long samplingWalkFrame = Long.MIN_VALUE;
+    private long samplingWalkPublications = Long.MIN_VALUE;
+    private long samplingWalkPairs = Long.MIN_VALUE;
+    private long samplingWalkTransitions = Long.MIN_VALUE;
+    private long samplingWalkAttachColor;
+    private long samplingWalkAttachDepth;
+    private long samplingWalkPassColor;
+    private long samplingWalkPassDepth;
+    /** How many sampling walks the memo answered instead of walking, with the switch on. */
+    private long samplingWalkSkips;
+
+    /** {@return how many sampling-side walks the item-673 memo skipped}, for a leg's census line. */
+    long celtium$samplingWalkSkips() {
+        return this.samplingWalkSkips;
+    }
+
+    /**
+     * {@return whether a sampling-side walk with this key is a repeat of the walk the memo holds}.
+     * Pure, so the key's shape is pinned without a device: every component must match, and the switch,
+     * the attach-side direction and the array-attach shape each refuse on their own.
+     */
+    static boolean celtium$samplingWalkRedundant(boolean enabled, boolean general, boolean hasAttachImages,
+            long frame, long memoFrame, long publications, long memoPublications,
+            long pairs, long memoPairs, long transitions, long memoTransitions,
+            long attachColor, long memoAttachColor, long attachDepth, long memoAttachDepth,
+            long passColor, long memoPassColor, long passDepth, long memoPassDepth) {
+        return enabled && !general && !hasAttachImages
+                && memoFrame != Long.MIN_VALUE
+                && frame == memoFrame && publications == memoPublications && pairs == memoPairs
+                && transitions == memoTransitions
+                && attachColor == memoAttachColor && attachDepth == memoAttachDepth
+                && passColor == memoPassColor && passDepth == memoPassDepth;
+    }
     private int[] cachedNames = new int[0];
     private VulkanGlTexture[] cachedWrappers = new VulkanGlTexture[0];
     private long[] cachedImages = new long[0];
@@ -895,6 +946,20 @@ b.frameBufferOpen = false;
         long publications = b.publishedTextures.publishedVersion();
         GllessFrameTarget cachePairsOwner = b.offTargetTarget();
         long pairs = cachePairsOwner == null ? -1L : cachePairsOwner.chainPairGenerationTotal();
+        if (general) {
+            // A hand-back moves images toward the attach layouts: whatever the sampling memo settled no
+            // longer holds, whatever this walk itself does.
+            this.samplingWalkFrame = Long.MIN_VALUE;
+        } else if (celtium$samplingWalkRedundant(PUBLISH_WALK_ONCE, false, attachImages != null,
+                b.frameId, this.samplingWalkFrame, publications, this.samplingWalkPublications,
+                pairs, this.samplingWalkPairs,
+                VulkanGlTexture.foreignLayoutTransitionCount(), this.samplingWalkTransitions,
+                attachColor, this.samplingWalkAttachColor, attachDepth, this.samplingWalkAttachDepth,
+                b.passAttachedColorImage, this.samplingWalkPassColor,
+                b.passAttachedDepthImage, this.samplingWalkPassDepth)) {
+            this.samplingWalkSkips++;
+            return;
+        }
         if (publications != this.publishedCacheVersion || pairs != this.publishedCachePairs) {
             // The prune re-publishes a name whose pair image was recreated; it is the reason a stale resolution cannot
             // simply be cached forever, and the generation is part of the key for exactly that case.
@@ -997,6 +1062,19 @@ b.frameBufferOpen = false;
             if (depthKey != 0L && pairOwner != null) {
                 pairOwner.noteSharedDepthLayout(depthKey, entryValue.foreignLayoutIn(b.commandBuffer));
             }
+        }
+        if (!general && attachImages == null && PUBLISH_WALK_ONCE) {
+            // The memo holds the state this walk just established, with the transition count read after
+            // the walk: a name this walk itself had to move advances the count, and the next identical
+            // walk must compare against the settled total, not the one from before this walk ran.
+            this.samplingWalkFrame = b.frameId;
+            this.samplingWalkPublications = publications;
+            this.samplingWalkPairs = pairs;
+            this.samplingWalkTransitions = VulkanGlTexture.foreignLayoutTransitionCount();
+            this.samplingWalkAttachColor = attachColor;
+            this.samplingWalkAttachDepth = attachDepth;
+            this.samplingWalkPassColor = b.passAttachedColorImage;
+            this.samplingWalkPassDepth = b.passAttachedDepthImage;
         }
     }
 

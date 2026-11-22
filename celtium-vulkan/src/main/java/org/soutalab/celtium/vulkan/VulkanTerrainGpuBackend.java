@@ -17685,6 +17685,8 @@ this.frameBufferOpen = false;
         try {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("prepDescriptors");
         try {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("prepUniformCap");
+        try {
         // Before anything this pass records: the model meshes are built once, from geometry captured while Minecraft
         // compiled its display lists. Guarded by a lab switch, so the default path is untouched until the draw lands.
         celtium$buildModelMeshes();
@@ -17706,6 +17708,9 @@ this.frameBufferOpen = false;
             record("pass skipped: uniform preparation failed: " + error);
             return;
         }
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("prepUniformCap");
+        }
         // The descriptor set points at the atlas, the lightmap and the uniform buffer for this pass. It is rewritten
         // once per pass per frame, which is a few descriptor writes and removes any staleness after a re-upload.
         if (LIGHT_BIND_DIAGNOSTICS && this.lightBindPrints < 3) {
@@ -17722,7 +17727,12 @@ this.frameBufferOpen = false;
         // where this one has 128), and a set bound under one layout is not compatible with the other - measured in leg
         // shadowTerrain4 as VUID-vkCmdDrawIndexedIndirect-None-08600.
         VulkanUniformBuffer slotUniforms = this.terrain.uniforms(this.frameSlot);
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("prepDescBind");
+        try {
         pipeline.bindTextures(this.atlasTexture, this.lightmapTexture, slotUniforms.buffer(), slotUniforms.size(), this.terrain.dynamicLightBufferHandle(this.frameSlot), this.terrain.regionOffsetBufferHandle(this.frameSlot), this.terrain.regionOffsetBufferSize(this.frameSlot), this.frameSlot);
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("prepDescBind");
+        }
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("prepDescriptors");
         }
@@ -17733,9 +17743,19 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("prepBarriers");
         try {
         gpuMark("pre-acq4");
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("prepAcquire");
+        try {
         this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("prepAcquire");
+        }
         gpuMark("acq4");
 
+        // Straight-line bracket, no try/finally: the routed values declared below (renderPass, the
+        // framebuffer, the shadow map) are read after this section closes, so they cannot live inside a
+        // try block's scope. A throw inside the section leaves the bracket open until beginFrame resets
+        // the starts table, which costs that one frame's prepRoute value and nothing else.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("prepRoute");
         long renderPass = pipeline.renderPass();
         long terrainFramebuffer = ensureFramebuffer(renderPass);
         this.passAttachedColorImage = this.frameTarget.colorImage();
@@ -17857,6 +17877,7 @@ this.frameBufferOpen = false;
                 }
             }
         }
+        org.soutalab.celtium.vulkan.FramePassTimings.end("prepRoute");
         begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
                 .renderPass(renderPass)
                 .framebuffer(terrainFramebuffer);
@@ -17869,6 +17890,7 @@ this.frameBufferOpen = false;
             vkCmdWriteTimestamp(this.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, this.timestampPool,
                     timestampSlot * 2);
         }
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("prepPublish");
         if (this.publishedChainOutput != null
                 // This pass's own target: activeImmediateTarget is assigned only where the pass begins, below, so here it
                 // still named the previous pass's target (found 2026-11-05 through the mod-program read barrier).
@@ -17885,6 +17907,7 @@ this.frameBufferOpen = false;
         // exactly the VUID-vkCmdDraw-None-09600 the vsync leg reported on three distinct images at vkQueueSubmit. The
         // transition is recorded outside the pass, before the draw, like the outline's.
         this.postChainBridge.celtium$transitionPublishedFrameTextures(false);
+        org.soutalab.celtium.vulkan.FramePassTimings.end("prepPublish");
         if (terrainShadowMap != null) {
             // The shadow depth is sampled by this pass' fragment stage: in its sampling layout before the pass
             // begins (idempotent after the published walk above), then the shadow variant of the set and the
@@ -17914,6 +17937,8 @@ this.frameBufferOpen = false;
 
         org.soutalab.celtium.vulkan.FramePassTimings.begin("prepBegin");
         try {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("prepBeginPass");
+        try {
         long passBeginStarted = System.nanoTime();
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         this.terrainPassBeginNanos += System.nanoTime() - passBeginStarted;
@@ -17922,15 +17947,23 @@ this.frameBufferOpen = false;
         this.passAreaHeight = passAreaHeight;
         this.commandState.beginPass(this.activeImmediateTarget);
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(true);
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("prepBeginPass");
+        }
 
         // The pre-terrain groups, recorded into this pass rather than a window of their own (see the head of
         // celtium$renderPass). They go before the viewport and the terrain pipeline: each group carries its own
         // rectangle, and the terrain draws need the pass's full-target one, so setViewportAndScissor has to run
         // after the last group has set its own.
         celtium$preflushBeforeTerrain();
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("prepViewportBind");
+        try {
         setViewportAndScissor(stack, passAreaWidth, passAreaHeight);
         pipeline.bindPipeline(this.commandBuffer);
         pipeline.pushMatrices(this.commandBuffer, vulkanProjection(matrices.projection()), matrices.modelView());
+        } finally {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("prepViewportBind");
+        }
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("prepBegin");
         }
