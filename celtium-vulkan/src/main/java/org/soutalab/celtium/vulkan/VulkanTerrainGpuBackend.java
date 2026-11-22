@@ -23039,6 +23039,39 @@ this.frameBufferOpen = false;
     long modelBoundTextureSet = -1L;
 
     /**
+     * {@return whether the descriptor a queued item, block or particle group was prepared with is no longer
+     * the set its pipeline's cache holds for the group's key} - the sibling families' shape of the textured
+     * family's eviction case in {@link #drawPendingImmediate}.
+     * <p>
+     * Their caches are keyed by the pair key {@code (texture key * 31) + light map key} - the item family's
+     * unlit variant by the texture key alone - because the light map is refreshed every few frames and a set
+     * written against its previous view must not be served for the new one. The key is therefore recomputed
+     * from the wrappers current at the draw, which makes the query answer "evicted" in the two cases that both
+     * need the rebuild it gates: the entry was evicted and its set retired (the completion-gated free does not
+     * count the group's still unrecorded use, so the flush would bind a freed set), or the light map moved
+     * since the group was prepared and the cache under the current pair key names a different set, or none.
+     * The map stays the single authority, exactly as for the textured family.
+     */
+    private boolean celtium$siblingSetEvicted(PreparedImmediate prepared, VulkanGlTexture currentTexture) {
+        long lightmapKey = this.lightmapTexture == null ? 0L : this.lightmapTexture.key();
+        if (prepared.pipeline instanceof VulkanImmediateItemPipeline itemPipeline) {
+            long cacheKey = itemPipeline.lit()
+                    ? (currentTexture.key() * 31L) + lightmapKey
+                    : currentTexture.key();
+            return !itemPipeline.celtium$setStillCached(prepared.descriptor, cacheKey);
+        }
+        if (prepared.pipeline instanceof VulkanImmediateBlockPipeline blockPipeline) {
+            return !blockPipeline.celtium$setStillCached(prepared.descriptor,
+                    (currentTexture.key() * 31L) + lightmapKey);
+        }
+        if (prepared.pipeline instanceof VulkanImmediateParticlePipeline particlePipeline) {
+            return !particlePipeline.celtium$setStillCached(prepared.descriptor,
+                    (currentTexture.key() * 31L) + lightmapKey);
+        }
+        return false;
+    }
+
+    /**
      * Draws the pending groups, optionally only those belonging to one render target.
      * <p>
      * The filter is what makes an off-target pass possible: a Vulkan render pass cannot be begun inside another, so those
@@ -23398,11 +23431,14 @@ this.frameBufferOpen = false;
                     // unrecorded use, so the flush would bind a freed set - the flush-boundary crash a
                     // reporter's pack reproduces through Xaero's raw framebuffer registration. The cache map
                     // is the authority on whether the prepared set is still the live one for its key, so an
-                    // evicted set takes the same rebuild path as a moved key.
+                    // evicted set takes the same rebuild path as a moved key. The item, block and particle
+                    // families keep the same cache shape behind their own maps, so the same question is asked
+                    // of them through celtium$siblingSetEvicted, with the pair key their caches are keyed by.
                     boolean evicted = !forced && currentTexture != null
                             && currentTexture.key() == prepared.textureKey
-                            && prepared.pipeline instanceof VulkanImmediateTexturePipeline evictionPipeline
-                            && !evictionPipeline.celtium$setStillCached(prepared.descriptor, prepared.textureKey);
+                            && ((prepared.pipeline instanceof VulkanImmediateTexturePipeline evictionPipeline
+                                    && !evictionPipeline.celtium$setStillCached(prepared.descriptor, prepared.textureKey))
+                                || celtium$siblingSetEvicted(prepared, currentTexture));
                     if (currentTexture != null && (forced || evicted || currentTexture.key() != prepared.textureKey)) {
                         // The rebuild has to know which family the group belongs to. The textured family needs only its
                         // own texture; a lit ITEM group - the model path's batch - declares a second binding for the
@@ -23418,6 +23454,10 @@ this.frameBufferOpen = false;
                             rebuilt = itemPipeline.lit()
                                     ? itemPipeline.descriptorSetFor(currentTexture, this.lightmapTexture)
                                     : itemPipeline.descriptorSetFor(currentTexture);
+                        } else if (prepared.pipeline instanceof VulkanImmediateBlockPipeline blockPipeline) {
+                            rebuilt = blockPipeline.descriptorSetFor(currentTexture, this.lightmapTexture);
+                        } else if (prepared.pipeline instanceof VulkanImmediateParticlePipeline particlePipeline) {
+                            rebuilt = particlePipeline.descriptorSetFor(currentTexture, this.lightmapTexture);
                         } else {
                             rebuilt = 0L;
                         }

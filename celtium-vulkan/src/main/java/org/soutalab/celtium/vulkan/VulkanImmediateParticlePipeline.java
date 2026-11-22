@@ -301,6 +301,24 @@ public final class VulkanImmediateParticlePipeline {
         }
     }
 
+    /**
+     * {@return whether {@code set} is still the descriptor set the cache holds for {@code key}}.
+     * <p>
+     * The textured family's query, asked of this family's own cache: a queued group's key can stand still while
+     * its set dies - a run of misses on other textures evicts the entry, the set is retired, and the
+     * completion-gated free hands it back to the pool once the submissions recorded so far complete, a gate that
+     * does not count the group's still unrecorded use. The map is the authority: an evicted key is absent, and a
+     * key that missed again since names the replacement set, never the retired one. This cache is keyed by the
+     * pair key {@code (texture.key() * 31) + lightmap.key()}, so the query is asked with the pair key recomputed
+     * from the wrappers current at the draw: a light map refresh since the group was prepared also answers
+     * false, which is correct - that set samples the previous light map and has to be rebuilt too. The cache's
+     * limit is 2048 rather than the textured family's 64, so eviction here takes a long session's accumulation
+     * of distinct pairs; the structure the query guards is the same.
+     */
+    public boolean celtium$setStillCached(long set, long key) {
+        return set != 0L && this.setsByTextureView.get(key) == set;
+    }
+
     private long lastDescriptorKey = -1L;
     private long lastDescriptorSet;
 
