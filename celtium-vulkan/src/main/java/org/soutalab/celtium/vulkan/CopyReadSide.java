@@ -192,6 +192,8 @@ final class CopyReadSide {
             return "the depth copy rectangle " + x + "," + y + " " + width + "x" + height + " -> "
                     + xoffset + "," + yoffset + " is not inside the shared depth images";
         }
+        // The copy's ordering flush, not a draw boundary (the window census' stamp).
+        this.backend.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
         this.backend.flushPendingBeforeGlDraw();
         int sourceFrom = target.sharedDepthLayout(sourceKey);
         int destFrom = target.sharedDepthLayout(destKey);
@@ -521,6 +523,9 @@ final class CopyReadSide {
 
         @Override
         public void flushPendingBeforeGlDraw() {
+            // The copy host's flush is the copy path's ordering contract (TextureCopyService's own
+            // statement of it), not a draw boundary: stamp it so its windows count as order.
+            CopyReadSide.this.backend.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
             CopyReadSide.this.backend.flushPendingBeforeGlDraw();
         }
 

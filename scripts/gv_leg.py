@@ -165,6 +165,7 @@ HARNESS_KEYS = {
     "celtium.vulkan.tickSplit2": "tickSplit2",
     "celtium.vulkan.tickTimingsCpu": "tickTimingsCpu",
     "celtium.vulkan.passSplit": "passSplit",
+    "celtium.vulkan.acceptFlush": "acceptFlush",
     "celtium.vulkan.passSplitCpu": "passSplitCpu",
     "celtium.vulkan.passSplitMicros": "passSplitMicros",
     "celtium.vulkan.brackets": "brackets",
