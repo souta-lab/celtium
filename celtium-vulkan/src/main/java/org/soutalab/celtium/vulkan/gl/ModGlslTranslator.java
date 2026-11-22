@@ -49,7 +49,7 @@ import java.util.regex.Pattern;
  * to has a comparing sampler is a property of that texture, checked by the prepare path, not here.</li>
  * <li>The fixed-function inputs mods still read: {@code gl_Vertex}, {@code gl_Color}, {@code gl_MultiTexCoord0},
  * {@code gl_ModelViewProjectionMatrix}, {@code gl_ModelViewMatrix}, {@code gl_ProjectionMatrix},
- * {@code ftransform()}, and the {@code gl_TexCoord[0]}/{@code gl_FrontColor} varyings. They become ordinary
+ * {@code gl_NormalScale}, {@code ftransform()}, and the {@code gl_TexCoord[0]}/{@code gl_FrontColor} varyings. They become ordinary
  * attributes, uniforms and varyings with {@code celtium_} names, listed in the result like the mod's own.</li>
  * <li>Declarations inside preprocessor conditionals are extracted from the branch the source's own
  * {@code #define}s select: a declaration in a branch those defines certainly reject is not extracted (its text
@@ -149,6 +149,7 @@ public final class ModGlslTranslator {
     private static final Pattern GL_MVP_PATTERN = Pattern.compile("\\bgl_ModelViewProjectionMatrix\\b");
     private static final Pattern GL_MV_PATTERN = Pattern.compile("\\bgl_ModelViewMatrix\\b");
     private static final Pattern GL_PROJ_PATTERN = Pattern.compile("\\bgl_ProjectionMatrix\\b");
+    private static final Pattern GL_NORMAL_SCALE_PATTERN = Pattern.compile("\\bgl_NormalScale\\b");
     private static final Pattern TEX1D_LOD_PATTERN = Pattern.compile("\\btexture1DLod\\s*\\(");
     private static final Pattern TEX1D_PROJ_PATTERN = Pattern.compile("\\btexture1DProj\\s*\\(");
     private static final Pattern TEX1D_PATTERN = Pattern.compile("\\btexture1D\\s*\\(");
@@ -319,6 +320,16 @@ public final class ModGlslTranslator {
                 uniformDefaults.put(glName(d.name), constantInitializer(d));
             }
             offset += layout[1];
+        }
+        // A lowered gl_NormalScale carries a default of 1.0, the value GL presents when neither
+        // GL_RESCALE_NORMAL nor GL_NORMALIZE is enabled: nothing in the stub records either enable, so
+        // that is the only value a draw here can have. It travels in the defaults map, so a value a
+        // program is actually written under the name replaces it, as a first glUniform write replaces
+        // a declared initializer's default.
+        for (UniformMember member : members) {
+            if (member.name().equals("celtium_NormalScale")) {
+                uniformDefaults.putIfAbsent(member.name(), new float[] {1.0f});
+            }
         }
         int blockSize = align(offset, 16);
         // The block travels as push constants while it fits, and as a uniform buffer when it does not: the limit
@@ -1446,6 +1457,7 @@ public final class ModGlslTranslator {
         s = replaceBuiltinPattern(s, GL_MVP_PATTERN, "celtium_ModelViewProjectionMatrix", "uniform", "mat4", decls);
         s = replaceBuiltinPattern(s, GL_MV_PATTERN, "celtium_ModelViewMatrix", "uniform", "mat4", decls);
         s = replaceBuiltinPattern(s, GL_PROJ_PATTERN, "celtium_ProjectionMatrix", "uniform", "mat4", decls);
+        s = replaceBuiltinPattern(s, GL_NORMAL_SCALE_PATTERN, "celtium_NormalScale", "uniform", "float", decls);
         Matcher leftover = GL_LEFTOVER_PATTERN.matcher(s);
         if (leftover.find()) {
             throw new IllegalArgumentException("built-in gl_" + leftover.group(1) + " is not lowered");
