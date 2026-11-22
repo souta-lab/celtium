@@ -20,12 +20,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * <p>
  * The target is a Demonica class, named by string so this mixin carries no compile-time dependency
  * on Demonica, and {@code @Pseudo} keeps it silently off in a run without Demonica. The target's
- * second parameter is Angelica's Camera type, which is not on this project's classpath either; the
- * handlers therefore declare only the leading {@code EntityRenderer} parameter. An {@code @Inject}
- * handler's declared parameters must be an exact prefix of the target's - widening the Camera
- * parameter to {@code Object} is rejected by the injector as an invalid descriptor (measured in the
- * item 648 WR1 leg, where that mistake quarantined this whole group), while omitting it is fine
- * because the bracket never reads it.
+ * second parameter is Angelica's Camera type; an {@code @Inject} handler must declare every
+ * parameter with its exact type - widening Camera to {@code Object} and omitting the parameter
+ * were both rejected by the injector as an invalid descriptor (measured in the item 648 WR1/F1
+ * legs, where the first mistake quarantined this whole group and the second crashed the apply).
+ * The Camera type is therefore declared for real, compiled against the {@code stubs} source
+ * set's compile-time-only stub of it; the bracket never reads the value.
  */
 @Pseudo
 @Mixin(targets = "net.coderbot.iris.pipeline.ShadowRenderer")
@@ -33,13 +33,13 @@ public abstract class DemonicaShadowPhaseTimingMixin {
 
     @Inject(method = "renderShadows", at = @At("HEAD"), require = 0)
     private void celtium$wpShadowPhaseTimedBegin(net.minecraft.client.renderer.EntityRenderer renderer,
-            CallbackInfo info) {
+            com.gtnewhorizons.angelica.compat.mojang.Camera camera, CallbackInfo info) {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("wpShadowPhase");
     }
 
     @Inject(method = "renderShadows", at = @At("RETURN"), require = 0)
     private void celtium$wpShadowPhaseTimedEnd(net.minecraft.client.renderer.EntityRenderer renderer,
-            CallbackInfo info) {
+            com.gtnewhorizons.angelica.compat.mojang.Camera camera, CallbackInfo info) {
         org.soutalab.celtium.vulkan.FramePassTimings.end("wpShadowPhase");
     }
 }

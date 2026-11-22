@@ -275,6 +275,17 @@ val validation = sourceSets.create("validation") {
     }
     compileClasspath += sourceSets.main.get().compileClasspath
 }
+
+// Compile-time-only stubs of optional-mod types whose exact descriptors @Pseudo mixin
+// handlers must declare (item 648: Demonica/Angelica timing brackets). The stubs output is
+// on main's compile classpath only; none of it is part of Celtium's distributable, and at
+// runtime the real mod classes supply the types.
+val stubs = sourceSets.create("stubs") {
+    java.srcDir("src/stubs/java")
+}
+sourceSets.named("main") {
+    compileClasspath += stubs.output
+}
 dependencies {
     // Same exact opt-in jar as the plugin's source set, so the compiled API and the
     // tested HEI/JEI runtime cannot silently differ.
