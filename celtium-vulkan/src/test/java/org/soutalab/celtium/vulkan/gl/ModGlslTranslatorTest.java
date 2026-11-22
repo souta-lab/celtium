@@ -303,6 +303,57 @@ class ModGlslTranslatorTest {
     }
 
     @Test
+    void lowersNormalScaleWithTheNoRescaleDefault() {
+        // Twilight Forest 3.15.1's standard_texcoord2.vert, verbatim: the vertex stage of the firefly /
+        // aurora / spiral / pulsing / starburst / shield programs. It reads gl_NormalScale into a varying,
+        // and until this lowering the leftover check refused the link ("built-in gl_NormalScale is not
+        // lowered", measured in the Nostalgic Hardcore pack's session A log, item 643).
+        String vertex = """
+                #version 120
+
+                varying vec3 position;
+                varying vec3 worldPos;
+                varying vec2 texCoord0;
+                varying float scale;
+                varying vec4 colorIn;
+
+                void main() {
+                    gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
+                    position = (gl_ModelViewMatrix * gl_Vertex).xyz;
+
+                    worldPos = gl_Vertex.xyz;
+                    scale = gl_NormalScale;
+
+                    texCoord0 = vec2(gl_MultiTexCoord0);
+
+                    colorIn = gl_Color;
+                }
+                """;
+        // The fragment half in the shape of firefly.frag: the varyings it declares and reads.
+        String fragment = """
+                #version 120
+                uniform sampler2D zero;
+                uniform float time;
+                varying vec3 position;
+                varying vec3 worldPos;
+                varying vec2 texCoord0;
+                void main() {
+                    vec4 color = texture2D(zero, texCoord0);
+                    gl_FragColor = vec4(color.xyz, color.a * sin(time + worldPos.x + position.y));
+                }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertTrue(result.uniforms().stream().anyMatch(u -> u.name().equals("celtium_NormalScale")
+                && u.type().equals("float") && u.size() == 4));
+        assertArrayEquals(new float[] {1.0f}, result.uniformDefaults().get("celtium_NormalScale"));
+        assertTrue(result.vertex().contains("celtium_NormalScale"));
+        assertFalse(result.vertex().contains("gl_NormalScale"));
+        assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
     void reportsWhatItDoesNotLowerInsteadOfGuessing() {
         String fragment = """
                 #version 120

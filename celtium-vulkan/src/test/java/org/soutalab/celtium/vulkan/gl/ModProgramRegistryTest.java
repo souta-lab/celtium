@@ -195,6 +195,33 @@ class ModProgramRegistryTest {
     }
 
     @Test
+    void aLoweredNormalScalePacksOneUntilWritten() {
+        // Item 643: gl_NormalScale lowers to a block member whose default is GL's no-rescale value, so a
+        // program nobody writes it for (Twilight Forest's shape) packs 1.0, and a write under the lowered
+        // name replaces the default like any other uniform's first write.
+        ModProgramRegistry.shaderSource(91,
+                "varying vec2 uv; void main() { gl_FragColor = vec4(1.0); }");
+        ModProgramRegistry.shaderSource(90, "varying vec2 uv; varying float scale;"
+                + " void main() { gl_Position = vec4(0.0, 0.0, 0.0, 1.0); uv = vec2(0.0);"
+                + " scale = gl_NormalScale; }");
+        ModProgramRegistry.attach(31, 91);
+        ModProgramRegistry.attach(31, 90);
+        ModProgramRegistry.Program program = ModProgramRegistry.link(31);
+        assertTrue(program.lowered().ok(), program.lowered().failure());
+        int offset = program.lowered().uniforms().stream()
+                .filter(u -> u.name().equals("celtium_NormalScale")).findFirst().orElseThrow().offset();
+
+        java.nio.ByteBuffer packed = org.soutalab.celtium.vulkan.VulkanModProgramPipeline.packUniforms(program);
+        assertEquals(1.0f, packed.getFloat(offset));
+
+        ModProgramRegistry.uniformFloats(31, ModProgramRegistry.location("celtium_NormalScale"),
+                new float[] {2.5f});
+        java.nio.ByteBuffer rewritten = org.soutalab.celtium.vulkan.VulkanModProgramPipeline
+                .packUniforms(program);
+        assertEquals(2.5f, rewritten.getFloat(offset));
+    }
+
+    @Test
     void aProgramWithoutAFragmentStageSaysSo() {
         ModProgramRegistry.shaderSource(20, "void main() { gl_Position = vec4(0.0); }");
         ModProgramRegistry.attach(7, 20);
