@@ -87,6 +87,17 @@ public abstract class ForgeCloudCellsMixin {
     private void celtium$noteFrame(int cloudTicks, float partialTicks, CallbackInfoReturnable<Boolean> info) {
         this.celtium$cloudTicks = cloudTicks;
         this.celtium$partialTicks = partialTicks;
+        // R3 census: cloudForge brackets Forge's whole render - the DynamicTexture update, the texture
+        // matrix and the state setup are the per-frame fixed part the census reads it for. Inclusive and
+        // report-only: the replaced draws (cloudAccept) and any rebuild (cloudBuild/cloudUpload) sit
+        // inside it and are netted offline, never subtracted by the instruments themselves.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("cloudForge");
+    }
+
+    @Inject(method = "render", at = @At("RETURN"), remap = false, require = 0)
+    private void celtium$cloudForgeEnd(int cloudTicks, float partialTicks,
+            CallbackInfoReturnable<Boolean> info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("cloudForge");
     }
 
     @Inject(method = "onResourceManagerReload", at = @At("HEAD"), remap = false, require = 0)
@@ -105,7 +116,13 @@ public abstract class ForgeCloudCellsMixin {
             return;
         }
         cells.bindBuffer();
+        // R3 census: cloudAccept is the cell VBO's retained acceptance - drawArrays on a native
+        // VertexBuffer is the submitRetainedGeometry call. Two of these fire per frame (Forge's two
+        // colour-mask passes) and the bracket sums them. Forge's own mesh draw above is not bracketed:
+        // it is not the cell path.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("cloudAccept");
         cells.drawArrays(GL11.GL_QUADS);
+        org.soutalab.celtium.vulkan.FramePassTimings.end("cloudAccept");
         // Forge's mesh stays the bound one for the rest of its render, which unbinds it.
         forgeMesh.bindBuffer();
     }
@@ -174,6 +191,10 @@ public abstract class ForgeCloudCellsMixin {
 
     @Unique
     private void celtium$build(int offU, int offV, int scale) {
+        // R3 census: cloudBuild is the whole rebuild (grid scan, quad emission, upload). It fires only
+        // on offset/mode/distance changes, so its per-frame mean against its call count is the burst
+        // price cloud-cell-672's desk split predicts is not the cloudsWeather p50 body.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("cloudBuild");
         boolean fancy = this.cloudMode == 2;
         // Forge's range: sections out to ceilToScale(renderDistance * 32) blocks either side of the camera.
         int extent = (int) Math.ceil((this.renderDistance * 2 * 16) / (float) scale);
@@ -223,7 +244,11 @@ public abstract class ForgeCloudCellsMixin {
         if (this.celtium$cells == null) {
             this.celtium$cells = new VertexBuffer(DefaultVertexFormats.POSITION_TEX_COLOR);
         }
+        // R3 census: cloudUpload is the build's VBO re-upload (VertexBuffer.bufferData, native side
+        // NativeGeometryBuffer.replaceStorage), read as cloudBuild's inner number.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("cloudUpload");
         this.celtium$cells.bufferData(buffer.getByteBuffer());
+        org.soutalab.celtium.vulkan.FramePassTimings.end("cloudUpload");
         this.celtium$builtU = offU;
         this.celtium$builtV = offV;
         this.celtium$builtMode = this.cloudMode;
@@ -233,6 +258,7 @@ public abstract class ForgeCloudCellsMixin {
             System.out.println("[Celtium] CELTIUM_CLOUD_CELLS build=" + celtium$builds + " boxes=" + boxes
                     + " extent=" + extent + " scale=" + scale + " fancy=" + fancy + " offset=" + offU + "," + offV);
         }
+        org.soutalab.celtium.vulkan.FramePassTimings.end("cloudBuild");
     }
 
     @Unique
