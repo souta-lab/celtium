@@ -96,4 +96,29 @@ class FrameBudgetTimingsTest {
 
         assertEquals(33_000_000L, sample[9], "all of it is unattributed, which is the honest answer");
     }
+
+    @Test
+    void loopSpanIsOptInLikeTheCadence() {
+        // The harness's loopSpan=true turns the pairing on; a normal run must not pay for it.
+        assertFalse(FrameBudgetTimings.loopSpanEnabled(), "the loop span must stay opt-in");
+    }
+
+    @Test
+    void outsideSpanIsPresentToBoundary() {
+        assertEquals(7_000_000L, FrameBudgetTimings.outsideSpan(10_000_000L, 3_000_000L),
+                "boundary minus the present that preceded it");
+        assertEquals(0L, FrameBudgetTimings.outsideSpan(3_000_000L, 3_000_000L), "a zero span is a measurement");
+        assertEquals(-1L, FrameBudgetTimings.outsideSpan(10_000_000L, 0L), "no present to pair against");
+        assertEquals(-1L, FrameBudgetTimings.outsideSpan(3_000_000L, 10_000_000L),
+                "a boundary before its present is not a pair");
+    }
+
+    @Test
+    void tailSpanIsBoundaryToPresent() {
+        assertEquals(2_000_000L, FrameBudgetTimings.tailSpan(5_000_000L, 3_000_000L),
+                "present minus the boundary that preceded it");
+        assertEquals(-1L, FrameBudgetTimings.tailSpan(5_000_000L, 0L), "no boundary to pair against");
+        assertEquals(-1L, FrameBudgetTimings.tailSpan(3_000_000L, 5_000_000L),
+                "a present before its boundary is not a pair");
+    }
 }

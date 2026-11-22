@@ -58,6 +58,16 @@ import java.util.Locale;
  * {@link FramePassTimings} (which attributes the frame to the game's own passes, and needs its brackets on) and
  * {@code CELTIUM_BOUNDARY_SPLIT} (which reports submit/slot means every 600 frames with no per-frame record). This
  * one is per frame and opt-in; it costs seven clock reads a frame and nothing else when it is off.
+ * <p>
+ * The loop span ({@code loopSpan=true}) reuses this class's two clocks - the frame boundary's and the present
+ * mark's - to name the one interval none of the spans above cover: from a frame's present to the next frame's
+ * boundary. That interval holds the rest of {@code Display.update} after the swap point (the event pump), the
+ * game loop itself, and whatever the next frame does before the renderer's boundary - on a tick frame it also
+ * holds the tick, which {@code TickTimings} names separately, so the two are read together. Its pair is the
+ * tail: boundary to the present that follows it, the renderer's own end-of-frame. Boundary to boundary is the
+ * frame column above; outside + the renderer's spans + tail is what that column is made of, and the split says
+ * which side of the boundary an unexplained remainder sits on. It costs one clock read at each mark it pairs
+ * and nothing when it is off.
  */
 public final class FrameBudgetTimings {
 
@@ -141,10 +151,18 @@ public final class FrameBudgetTimings {
      * there is no previous frame to file.
      */
     public static void frameBoundary() {
-        if (!ENABLED) {
+        if (!ENABLED && !LOOP_SPAN) {
             return;
         }
         long now = System.nanoTime();
+        if (LOOP_SPAN) {
+            loopBoundary(now);
+        }
+        if (!ENABLED) {
+            // The loop span still needs this clock: the tail is measured from the boundary it follows.
+            lastBoundaryNanos = now;
+            return;
+        }
         long previous = lastBoundaryNanos;
         lastBoundaryNanos = now;
         if (previous == 0L) {
@@ -243,8 +261,12 @@ public final class FrameBudgetTimings {
      * number it is trying to measure) turns this on with the harness's {@code presentInterval=true} and pays
      * nothing for the split.
      */
+    /** The harness's {@code loopSpan=true}: pair the present mark with the frame boundary (see the class comment). */
+    private static final boolean LOOP_SPAN = HarnessConfig.bool("loopSpan", false);
+
     private static final boolean PRESENT_INTERVAL = ENABLED
-            || HarnessConfig.bool("presentInterval", false);
+            || HarnessConfig.bool("presentInterval", false)
+            || LOOP_SPAN;
 
     /**
      * Marks one presented frame: the cadence where no frame boundary runs.
@@ -260,6 +282,9 @@ public final class FrameBudgetTimings {
             return;
         }
         long now = System.nanoTime();
+        if (LOOP_SPAN) {
+            loopPresent(now);
+        }
         long previous = lastPresentMarkNanos;
         lastPresentMarkNanos = now;
         if (previous == 0L || now <= previous) {
@@ -275,6 +300,90 @@ public final class FrameBudgetTimings {
                     + " intervalMs[" + triple(presentIntervalRing, count, presentIntervals) + "]"
                     + " fps=" + presentRate(presentIntervalRing, count, presentIntervals));
         }
+    }
+
+    /** Loop-span samples: present mark to the next frame boundary. */
+    private static final long[] loopOutsideRing = new long[CAPACITY];
+    /** Loop-span samples: a frame boundary to the present that follows it. */
+    private static final long[] loopTailRing = new long[CAPACITY];
+    private static int loopOutsideSamples;
+    private static int loopTailSamples;
+    /** Loop-span lines printed, against the same {@link #MAX_LINES} budget. */
+    private static int loopSpanLines;
+    /** Clock of the most recent present mark not yet paired with a boundary, or 0 when none is waiting. */
+    private static long loopLastPresentNanos;
+    /** Clock of the most recent frame boundary not yet paired with a present, or 0 when none is waiting. */
+    private static long loopBoundaryNanos;
+
+    /** {@return whether the loop span is being measured}, for the same opt-in assertion the cadence carries. */
+    public static boolean loopSpanEnabled() {
+        return LOOP_SPAN;
+    }
+
+    /**
+     * Pairs a frame boundary with the present that preceded it: the interval between them is one outside
+     * sample. A present with no boundary after it (a menu frame) is not lost - it stays the anchor until a
+     * boundary arrives, because the time it spans is outside the renderer's frame either way. Only the most
+     * recent present anchors: earlier unpaired presents are inside the same outside interval.
+     */
+    private static void loopBoundary(long now) {
+        if (loopLastPresentNanos != 0L) {
+            long outside = outsideSpan(now, loopLastPresentNanos);
+            if (outside >= 0L) {
+                loopOutsideRing[loopOutsideSamples % CAPACITY] = outside;
+                loopOutsideSamples++;
+            }
+            loopLastPresentNanos = 0L;
+        }
+        loopBoundaryNanos = now;
+        if (loopOutsideSamples > 0 && loopOutsideSamples % REPORT_EVERY_FRAMES == 0
+                && loopSpanLines < MAX_LINES) {
+            loopSpanLines++;
+            printLoopSpanWindow();
+        }
+    }
+
+    /**
+     * Pairs a present with the boundary that preceded it (the tail), then becomes the anchor the next
+     * boundary pairs against. Only the first present after a boundary is that frame's tail; a later one
+     * belongs to a frame the boundary never saw.
+     */
+    private static void loopPresent(long now) {
+        if (loopBoundaryNanos != 0L) {
+            long tail = tailSpan(now, loopBoundaryNanos);
+            if (tail >= 0L) {
+                loopTailRing[loopTailSamples % CAPACITY] = tail;
+                loopTailSamples++;
+            }
+            loopBoundaryNanos = 0L;
+        }
+        loopLastPresentNanos = now;
+    }
+
+    /** {@return the outside span, or -1 when the pair cannot be measured} (no present, or a clock step back). */
+    static long outsideSpan(long boundaryNanos, long presentNanos) {
+        if (presentNanos == 0L || boundaryNanos < presentNanos) {
+            return -1L;
+        }
+        return boundaryNanos - presentNanos;
+    }
+
+    /** {@return the tail span, or -1 when the pair cannot be measured} (no boundary, or a clock step back). */
+    static long tailSpan(long presentNanos, long boundaryNanos) {
+        if (boundaryNanos == 0L || presentNanos < boundaryNanos) {
+            return -1L;
+        }
+        return presentNanos - boundaryNanos;
+    }
+
+    /** Prints the loop span's window line, in the same triple form as the frame budget's. */
+    private static void printLoopSpanWindow() {
+        int outsideCount = Math.min(loopOutsideSamples, CAPACITY);
+        int tailCount = Math.min(loopTailSamples, CAPACITY);
+        System.out.println("[Celtium] CELTIUM_LOOP_SPAN boundaries=" + loopOutsideSamples
+                + " ms[outside=" + triple(loopOutsideRing, outsideCount, loopOutsideSamples)
+                + " tail=" + (tailCount == 0 ? "0.0/0.0/0.0"
+                        : triple(loopTailRing, tailCount, loopTailSamples)) + "]");
     }
 
     /** {@return} frames per second implied by a window's median interval as {@code p50}}. */
@@ -370,6 +479,14 @@ public final class FrameBudgetTimings {
                     + " window=" + presentCount
                     + " intervalMs[" + triple(presentIntervalRing, presentCount, presentIntervals) + "]"
                     + " fps=" + presentRate(presentIntervalRing, presentCount, presentIntervals));
+        }
+        if (LOOP_SPAN && loopOutsideSamples > 0) {
+            int outsideCount = Math.min(loopOutsideSamples, CAPACITY);
+            int tailCount = Math.min(loopTailSamples, CAPACITY);
+            System.out.println("[Celtium] CELTIUM_LOOP_SPAN_SUMMARY boundaries=" + loopOutsideSamples
+                    + " ms[outside=" + triple(loopOutsideRing, outsideCount, loopOutsideSamples)
+                    + " tail=" + (tailCount == 0 ? "0.0/0.0/0.0"
+                            : triple(loopTailRing, tailCount, loopTailSamples)) + "]");
         }
         if (!ENABLED) {
             return;
