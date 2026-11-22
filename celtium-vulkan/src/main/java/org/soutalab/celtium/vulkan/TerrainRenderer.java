@@ -1899,7 +1899,7 @@ public final class TerrainRenderer {
                 }
 
                 SectionRenderDataStorage storage = storageForPass(region, mesh.pass, storageByPass);
-                storage.setMeshes(mesh.sectionIndex, vertexSegment, indexSegment, mesh.parts.ranges(), mesh.parts.shelfCumulative());
+                storage.setMeshes(mesh.sectionIndex, vertexSegment, indexSegment, mesh.parts.ranges());
             } else if (mesh.sorted != null) {
                 ByteBuffer indices = mesh.sorted.indexData().getDirectBuffer();
                 int indexBytes = mesh.sorted.indexData().getLength();

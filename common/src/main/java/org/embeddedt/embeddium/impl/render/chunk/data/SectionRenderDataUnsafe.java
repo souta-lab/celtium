@@ -4,7 +4,6 @@ import org.embeddedt.embeddium.impl.gl.util.VertexRange;
 import org.embeddedt.embeddium.impl.model.quad.properties.ModelQuadFacing;
 import org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveType;
 import org.embeddedt.embeddium.impl.render.chunk.region.RenderRegion;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
 
@@ -110,8 +109,7 @@ public class SectionRenderDataUnsafe {
 
             @Override
             protected int writeMeshes(long ptr, int vertexOffset, int indexOffset,
-                                      Map<ModelQuadFacing, VertexRange> ranges, ChunkPrimitiveType primitiveType,
-                                      @Nullable Map<ModelQuadFacing, int[]> shelfCumulative) {
+                                      Map<ModelQuadFacing, VertexRange> ranges, ChunkPrimitiveType primitiveType) {
                 int sliceMask = 0;
 
                 for (int facing = 0; facing < NUM_FACINGS; facing++) {
@@ -172,31 +170,9 @@ public class SectionRenderDataUnsafe {
                 return ptr + ((long) post << 2);
             }
 
-            // The ±Y level shelf block (item 671) sits behind the posts: the NEG_Y cumulative table
-            // (17 x u32) followed by the POS_Y one. The values are section-relative vertex counts, so
-            // rebase never touches them. The block exists only with the shelves flag on; off, the row is
-            // exactly the posts, as before.
-            private static long pNegShelf(long ptr, int k) {
-                return ptr + POSTS_SIZE + ((long) k << 2);
-            }
-
-            private static long pPosShelf(long ptr, int k) {
-                return ptr + POSTS_SIZE + ((long) (YLevelShelves.CUM_ENTRIES + k) << 2);
-            }
-
             @Override
             public long getStride() {
-                return YLevelShelves.ENABLED ? POSTS_SIZE + (Integer.BYTES * (long) YLevelShelves.SHELF_INTS) : POSTS_SIZE;
-            }
-
-            @Override
-            public int getNegShelfCumulative(long ptr, int k) {
-                return YLevelShelves.ENABLED ? LWJGL.memGetInt(pNegShelf(ptr, k)) : 0;
-            }
-
-            @Override
-            public int getPosShelfCumulative(long ptr, int k) {
-                return YLevelShelves.ENABLED ? LWJGL.memGetInt(pPosShelf(ptr, k)) : 0;
+                return POSTS_SIZE;
             }
 
             @Override
@@ -240,8 +216,7 @@ public class SectionRenderDataUnsafe {
 
             @Override
             protected int writeMeshes(long ptr, int vertexOffset, int indexOffset,
-                                      Map<ModelQuadFacing, VertexRange> ranges, ChunkPrimitiveType primitiveType,
-                                      @Nullable Map<ModelQuadFacing, int[]> shelfCumulative) {
+                                      Map<ModelQuadFacing, VertexRange> ranges, ChunkPrimitiveType primitiveType) {
                 int sliceMask = 0;
 
                 for (int facing = 0; facing < NUM_FACINGS; facing++) {
@@ -257,19 +232,6 @@ public class SectionRenderDataUnsafe {
                 }
 
                 LWJGL.memPutInt(pPost(ptr, NUM_FACINGS), vertexOffset);
-
-                if (YLevelShelves.ENABLED) {
-                    // A bucket with no table (empty, or left unsorted at build time) gets an all-zero table,
-                    // which the assembler reads as "never trim": the NEG_Y start does not move, and the POS_Y
-                    // end computation returns the whole bucket.
-                    int[] negCum = shelfCumulative != null ? shelfCumulative.get(ModelQuadFacing.NEG_Y) : null;
-                    int[] posCum = shelfCumulative != null ? shelfCumulative.get(ModelQuadFacing.POS_Y) : null;
-
-                    for (int k = 0; k < YLevelShelves.CUM_ENTRIES; k++) {
-                        LWJGL.memPutInt(pNegShelf(ptr, k), negCum != null ? negCum[k] : 0);
-                        LWJGL.memPutInt(pPosShelf(ptr, k), posCum != null ? posCum[k] : 0);
-                    }
-                }
 
                 return sliceMask;
             }
@@ -327,24 +289,7 @@ public class SectionRenderDataUnsafe {
          *                     shared index buffer ignore this
          */
         protected abstract int writeMeshes(long ptr, int vertexOffset, int indexOffset,
-                                           Map<ModelQuadFacing, VertexRange> ranges, ChunkPrimitiveType primitiveType,
-                                           @Nullable Map<ModelQuadFacing, int[]> shelfCumulative);
-
-        /**
-         * {@return the NEG_Y shelf cumulative at boundary {@code k} (vertices in inside quads with level
-         * {@code < k}), or zero for layouts and configurations without a shelf block — which the assembler
-         * reads as "never trim"}
-         */
-        public int getNegShelfCumulative(long ptr, int k) {
-            return 0;
-        }
-
-        /**
-         * {@return the POS_Y shelf cumulative at boundary {@code k}; see {@link #getNegShelfCumulative}}
-         */
-        public int getPosShelfCumulative(long ptr, int k) {
-            return 0;
-        }
+                                           Map<ModelQuadFacing, VertexRange> ranges, ChunkPrimitiveType primitiveType);
 
         /**
          * Rewrites every facing's index offset against a newly allocated index buffer, preserving element counts.
@@ -404,13 +349,7 @@ public class SectionRenderDataUnsafe {
          */
         public final void writeMeshesAndSliceMask(long heap, int index, int vertexOffset, int indexOffset,
                                                   Map<ModelQuadFacing, VertexRange> ranges, ChunkPrimitiveType primitiveType) {
-            this.writeMeshesAndSliceMask(heap, index, vertexOffset, indexOffset, ranges, primitiveType, null);
-        }
-
-        public final void writeMeshesAndSliceMask(long heap, int index, int vertexOffset, int indexOffset,
-                                                  Map<ModelQuadFacing, VertexRange> ranges, ChunkPrimitiveType primitiveType,
-                                                  @Nullable Map<ModelQuadFacing, int[]> shelfCumulative) {
-            int sliceMask = this.writeMeshes(this.heapPointer(heap, index), vertexOffset, indexOffset, ranges, primitiveType, shelfCumulative);
+            int sliceMask = this.writeMeshes(this.heapPointer(heap, index), vertexOffset, indexOffset, ranges, primitiveType);
 
             this.setSliceMask(heap, index, sliceMask);
         }

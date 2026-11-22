@@ -3,7 +3,6 @@ package org.embeddedt.embeddium.impl.render.chunk.compile.buffers;
 import lombok.Getter;
 import org.embeddedt.embeddium.impl.model.quad.properties.ModelQuadFacing;
 import org.embeddedt.embeddium.impl.render.chunk.data.BuiltRenderSectionData;
-import org.embeddedt.embeddium.impl.render.chunk.data.YLevelShelves;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.embeddedt.embeddium.impl.render.chunk.vertex.builder.ChunkMeshBufferBuilder;
 import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkVertexEncoder;
@@ -22,11 +21,7 @@ public class BakedChunkModelBuilder implements ChunkModelBuilder {
         var vertexBuffers = new ChunkMeshBufferBuilder[ModelQuadFacing.COUNT];
 
         for (int facing = 0; facing < ModelQuadFacing.COUNT; facing++) {
-            // The ±Y level shelves (item 671) need per-quad levels for the two Y buckets of unsorted passes;
-            // sorted passes hold only UNASSIGNED and never collect.
-            boolean collectQuadLevels = YLevelShelves.ENABLED && !pass.isSorted()
-                    && (facing == ModelQuadFacing.POS_Y.ordinal() || facing == ModelQuadFacing.NEG_Y.ordinal());
-            vertexBuffers[facing] = new ChunkMeshBufferBuilder(encoder, stride, 64 * 1024, pass.isSorted() && facing == ModelQuadFacing.UNASSIGNED.ordinal(), collectQuadLevels);
+            vertexBuffers[facing] = new ChunkMeshBufferBuilder(encoder, stride, 64 * 1024, pass.isSorted() && facing == ModelQuadFacing.UNASSIGNED.ordinal());
         }
 
         this.encoder = encoder;
