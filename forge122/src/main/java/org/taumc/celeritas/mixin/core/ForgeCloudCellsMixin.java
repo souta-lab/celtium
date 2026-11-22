@@ -42,6 +42,15 @@ public abstract class ForgeCloudCellsMixin {
     @Unique
     private static final boolean CELTIUM_CELLS = !"false".equalsIgnoreCase(
             System.getProperty("celtium.native.cloudCells"));
+    /**
+     * Item 672: sample the mask through axis indices wrapped once per build ({@link CloudCellIndex})
+     * instead of two {@code floorMod} divisions per sample. The loop order, the quads emitted and
+     * the uploaded bytes are unchanged; only the index arithmetic differs. Default off, so the
+     * shipped path stays the per-sample form until a same-protocol A/B leg adopts it.
+     */
+    @Unique
+    private static final boolean CELTIUM_FAST_BUILD = Boolean.getBoolean(
+            "celtium.native.cloudCellsFastBuild");
     @Unique
     private static final float CELTIUM_PX = 1 / 256F;
     @Unique
@@ -165,8 +174,22 @@ public abstract class ForgeCloudCellsMixin {
         }
     }
 
+    /** Wrapped column indices of the current fast build, or null outside one. Indexed by {@code i + extent + 1}. */
+    @Unique
+    private int[] celtium$fastColumns;
+    /** Wrapped row bases ({@code wrappedRow * maskW}) of the current fast build, or null. Indexed by {@code j + extent + 1}. */
+    @Unique
+    private int[] celtium$fastRowBases;
+    /** Extent of the current fast build, for the {@link CloudCellIndex#occupied} indexing. */
+    @Unique
+    private int celtium$fastExtent;
+
     @Unique
     private boolean celtium$cloudAt(int offU, int offV, int i, int j) {
+        if (this.celtium$fastColumns != null) {
+            return CloudCellIndex.occupied(this.celtium$mask, this.celtium$fastColumns,
+                    this.celtium$fastRowBases, this.celtium$fastExtent, i, j);
+        }
         int u = Math.floorMod(offU + i, this.celtium$maskW);
         int v = Math.floorMod(offV + j, this.celtium$maskH);
         return this.celtium$mask[v * this.celtium$maskW + u];
@@ -177,6 +200,19 @@ public abstract class ForgeCloudCellsMixin {
         boolean fancy = this.cloudMode == 2;
         // Forge's range: sections out to ceilToScale(renderDistance * 32) blocks either side of the camera.
         int extent = (int) Math.ceil((this.renderDistance * 2 * 16) / (float) scale);
+        if (CELTIUM_FAST_BUILD) {
+            // One wrapped index per grid position per axis (plus the neighbour overhang), instead
+            // of two floorMod divisions per mask sample in celtium$cloudAt.
+            this.celtium$fastColumns = CloudCellIndex.axisIndices(offU, -extent - 1,
+                    2 * extent + 2, this.celtium$maskW);
+            int[] rows = CloudCellIndex.axisIndices(offV, -extent - 1,
+                    2 * extent + 2, this.celtium$maskH);
+            for (int k = 0; k < rows.length; k++) {
+                rows[k] *= this.celtium$maskW;
+            }
+            this.celtium$fastRowBases = rows;
+            this.celtium$fastExtent = extent;
+        }
         float bottom = fancy ? 0.7F : 1.0F;
         BufferBuilder buffer = Tessellator.getInstance().getBuffer();
         buffer.begin(GL11.GL_QUADS, DefaultVertexFormats.POSITION_TEX_COLOR);
@@ -220,6 +256,8 @@ public abstract class ForgeCloudCellsMixin {
         }
         buffer.finishDrawing();
         buffer.reset();
+        this.celtium$fastColumns = null;
+        this.celtium$fastRowBases = null;
         if (this.celtium$cells == null) {
             this.celtium$cells = new VertexBuffer(DefaultVertexFormats.POSITION_TEX_COLOR);
         }
