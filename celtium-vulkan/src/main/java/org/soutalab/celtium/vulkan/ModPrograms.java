@@ -187,7 +187,7 @@ final class ModPrograms {
             this.lastModPipeline = pipeline;
         }
         int samplerCount = pipeline.samplerCount();
-        boolean retainInputs = MOD_READBACK || !this.chainInputPatchReported;
+        boolean retainInputs = MOD_READBACK || this.celtium$chainInputPatchPending();
         VulkanGlTexture[] textures;
         if (samplerCount == 0) {
             textures = EMPTY_TEXTURES;
@@ -533,6 +533,84 @@ final class ModPrograms {
     static final boolean MOD_READ_BARRIER =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.modReadBarrier", "true"));
 
+    /**
+     * {@code -Dceltium.debug.chainInputPatchFrames=55,62,100-104}: the frames at which the chain-input patch
+     * line (see {@link #celtium$reportChainInputPatch}) is sampled, instead of once at the first chain input.
+     * Unset - or a value naming no valid frame - keeps the one-shot behaviour, unchanged.
+     * <p>
+     * The one-shot reads the pair at the chain's first input, which precedes the first routed terrain draw
+     * into the pair (frame 55 in the bloom acceptance leg b644, frame 62 in leg x384c), so it can only ever
+     * read the pair before any mask reached it. Sampling at named frames at and after the routed pass start
+     * separates "the mask never arrives in the pair" from "the mask is in the pair and the chain still makes
+     * no halo" per frame, and the identity and image each line names are the pair generation that frame
+     * actually read (item 384 section 7's handover: follow the pair's generation frame by frame).
+     */
+    static final long[] CHAIN_INPUT_PATCH_FRAMES =
+            celtium$parseChainInputPatchFrames(System.getProperty("celtium.debug.chainInputPatchFrames"));
+
+    /** The most frames one schedule may name; a wider value is truncated at the cap, not honoured without bound. */
+    static final int CHAIN_INPUT_PATCH_FRAME_CAP = 1024;
+
+    /**
+     * Parses a frame schedule: comma-separated frames and inclusive ranges ({@code 55,62,100-104}). Blank
+     * items, non-numbers, negative frames and reversed ranges name nothing and are skipped; the result is
+     * sorted, de-duplicated and capped at {@link #CHAIN_INPUT_PATCH_FRAME_CAP}. {@code null} - unset, blank,
+     * or nothing valid - selects the one-shot behaviour. Static and pure so the table is pinned without a
+     * device.
+     */
+    static long[] celtium$parseChainInputPatchFrames(String spec) {
+        if (spec == null || spec.isBlank()) {
+            return null;
+        }
+        java.util.TreeSet<Long> frames = new java.util.TreeSet<>();
+        for (String item : spec.split(",")) {
+            String trimmed = item.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            int dash = trimmed.indexOf('-', 1);
+            try {
+                if (dash < 0) {
+                    long frame = Long.parseLong(trimmed);
+                    if (frame >= 0L) {
+                        frames.add(frame);
+                    }
+                } else {
+                    long from = Long.parseLong(trimmed.substring(0, dash).trim());
+                    long to = Long.parseLong(trimmed.substring(dash + 1).trim());
+                    for (long frame = from; frame >= 0L && frame <= to
+                            && frames.size() < CHAIN_INPUT_PATCH_FRAME_CAP; frame++) {
+                        frames.add(frame);
+                    }
+                }
+            } catch (NumberFormatException invalid) {
+                // An item that names no frame is skipped; the rest of the schedule still stands.
+            }
+            if (frames.size() >= CHAIN_INPUT_PATCH_FRAME_CAP) {
+                break;
+            }
+        }
+        if (frames.isEmpty()) {
+            return null;
+        }
+        long[] parsed = new long[frames.size()];
+        int i = 0;
+        for (Long frame : frames) {
+            parsed[i++] = frame.longValue();
+        }
+        return parsed;
+    }
+
+    /**
+     * {@return whether the schedule's next unclaimed frame has been reached at {@code frameId}: a scheduled
+     * frame becomes due at its own frame, never before it, and stays due until claimed; an exhausted or
+     * absent schedule is never due. Static and pure so the boundary table is pinned without a device.
+     */
+    static boolean celtium$chainInputPatchDue(long[] schedule, int nextIndex, long frameId) {
+        return schedule != null && nextIndex >= 0 && nextIndex < schedule.length
+                && frameId >= schedule[nextIndex];
+    }
+
     /** {@return whether a queued group for {@code target} is a mod program's draw}. */
     boolean celtium$queuedForTargetHasModProgram(long target) {
         for (int i = 0, n = b.immediateGroups.size(); i < n; i++) {
@@ -547,8 +625,17 @@ final class ModPrograms {
 
     VulkanHostBuffer modReadbackBuffer;
     int modReadbackProbeLines;
-    /** Whether the chain-input patch line has been printed this run. */
+    /** Whether the chain-input patch line has been printed this run (one-shot mode). */
     boolean chainInputPatchReported;
+    /** Index of the next unclaimed frame in {@link #CHAIN_INPUT_PATCH_FRAMES}; unused in one-shot mode. */
+    int chainInputPatchScheduleNext;
+
+    /** {@return whether a chain-input patch line is still to be printed, so draw inputs must be retained}. */
+    boolean celtium$chainInputPatchPending() {
+        return CHAIN_INPUT_PATCH_FRAMES != null
+                ? this.chainInputPatchScheduleNext < CHAIN_INPUT_PATCH_FRAMES.length
+                : !this.chainInputPatchReported;
+    }
 
     long celtium$firstModGroupTarget() {
         for (int i = 0, n = b.immediateGroups.size(); i < n; i++) {
@@ -635,9 +722,11 @@ final class ModPrograms {
     }
 
     /**
-     * One line per run, at the first window whose queued mod-program passes sample a chain pair image: the mean
-     * of the pair over the bloom halo's band, read before the pass begins - the pair as the chain's first input
-     * actually sees it.
+     * The mean of the chain pair over the bloom halo's band, read before the pass begins - the pair as the
+     * chain input actually sees it. In one-shot mode (no {@link #CHAIN_INPUT_PATCH_FRAMES}) one line per run,
+     * at the first window whose queued mod-program passes sample a chain pair image. In schedule mode one
+     * line per named frame, at the first such window at or after that frame; a window carrying no chain pair
+     * input claims nothing, so a named frame is never spent on a window with nothing to read.
      * <p>
      * The halo's recorded state is "the mask is empty", which has two gates the end-of-frame picture cannot
      * separate: the terrain pass never routed into the pair (or routed after the chain read it), or the mask was
@@ -648,7 +737,12 @@ final class ModPrograms {
      * count from the bottom (see {@code TextureCopyService.readImageRectangle}), so the band's y is flipped here.
      */
     void celtium$reportChainInputPatch(long target) {
-        if (this.chainInputPatchReported) {
+        long[] schedule = CHAIN_INPUT_PATCH_FRAMES;
+        if (schedule != null) {
+            if (!celtium$chainInputPatchDue(schedule, this.chainInputPatchScheduleNext, b.frameId)) {
+                return;
+            }
+        } else if (this.chainInputPatchReported) {
             return;
         }
         GllessFrameTarget pairs = b.offTargetTarget();
@@ -679,7 +773,11 @@ final class ModPrograms {
                     int y = height - (230 + 265) / 2 * height / 720 - size / 2;
                     x = Math.max(0, Math.min(x, width - size));
                     y = Math.max(0, Math.min(y, height - size));
-                    this.chainInputPatchReported = true;
+                    if (schedule != null) {
+                        this.chainInputPatchScheduleNext++;
+                    } else {
+                        this.chainInputPatchReported = true;
+                    }
                     System.out.println("[Celtium] CELTIUM_CHAIN_INPUT_PATCH frame=" + b.frameId
                             + " identity=0x" + Long.toHexString(identity.longValue())
                             + " pairImage=0x" + Long.toHexString(input.image())
