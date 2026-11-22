@@ -378,6 +378,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.packTerrainPrograms", "true"));
     private int packTerrainDrawnLogs;
     private int packTerrainRefusedLogs;
+    private int packTerrainHandoffLogs;
     private long packTerrainSkippedRegions;
     /** The reverse of {@link #chainPairVariantPasses}: a variant pass handle to its colour count. */
     final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap chainPairVariantColorCounts =
@@ -14042,10 +14043,14 @@ this.frameBufferOpen = false;
         // The off-target routing's own start, so its total is accumulated once at the end of the branch rather than
         // at the publish site (which a window with no reported colour texture never reaches).
         long wsOffTargetStart = WINDOW_SPLIT ? this.wsMark : 0L;
+        long windowChainIdentity = 0L;
+        long windowDepthKey = 0L;
+        boolean windowSharedDepthUsed = false;
         if (offTarget != null) {
             try {
                 if (chainIdentity) {
                     long chainIdentityValue = this.targetRegistry.currentIdentity();
+                    windowChainIdentity = chainIdentityValue;
                     // The pair's extent is the framebuffer's own: a mod's 256x256 target keeps a 256x256 image, and
                     // the publish path's ensure agrees with this one so the two never fight over a size.
                     long[] fboExtent = framebufferColorTexture(chainIdentityValue);
@@ -14086,12 +14091,13 @@ this.frameBufferOpen = false;
                         int depthWidth = windowDepthRecord[1];
                         int depthHeight = windowDepthRecord[2];
                         if (depthWidth > 0 && depthHeight > 0) {
-                            long windowDepthKey = RenderTargetRegistry.rawColorTextureIdentity(windowDepthTexture);
+                            windowDepthKey = RenderTargetRegistry.rawColorTextureIdentity(windowDepthTexture);
                             boolean sharedDepth = offTarget.ensureChainPairSharedDepth(chainIdentityValue,
                                     windowDepthKey,
                                     depthWidth, depthHeight);
                             if (sharedDepth) {
                                 windowAttachedDepthImage = offTarget.sharedDepthImage(windowDepthKey);
+                                windowSharedDepthUsed = true;
                             }
                             if (this.sharedDepthWindowLogs < 8) {
                                 this.sharedDepthWindowLogs++;
@@ -14158,58 +14164,118 @@ this.frameBufferOpen = false;
                         this.wsOffTransitionNanos += now - this.wsMark;
                         this.wsMark = now;
                     }
-                    if (celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
+                    long windowHandoffSource = 0L;
+                    if (RenderTargetRegistry.isRawColorDepthIdentity(chainIdentityValue)
+                            && fboExtent != null && fboExtent[0] != 0L) {
+                        int winColor0Tex = (int) fboExtent[0];
+                        long existingOwner = this.publishedFrameImageIdentities.get(winColor0Tex);
+                        boolean ownerExists = existingOwner != Long.MIN_VALUE && existingOwner != 0L
+                                && offTarget.chainPairExists(existingOwner);
+                        boolean ownerSizeMatches = ownerExists
+                                && offTarget.chainPairWidth(existingOwner) == pairWidth
+                                && offTarget.chainPairHeight(existingOwner) == pairHeight;
+                        boolean ownerDepthMatches = ownerExists
+                                && (windowDepthKey == 0L || offTarget.chainPairUsesSharedDepth(existingOwner, windowDepthKey));
+                        windowHandoffSource = celtium$resolvePackTerrainColorHandoffSource(chainIdentityValue,
+                                chainIdentityValue, existingOwner,
+                                this.targetRegistry.mainIdentity(), this.gameFramebufferIdentity,
+                                ownerExists, ownerSizeMatches, ownerDepthMatches,
+                                ownerExists && offTarget.chainPairAcquired(existingOwner));
+                    }
+                    boolean explicitWinColorClear = this.targetRegistry.hasLatchedClear()
+                            && this.targetRegistry.latchedIdentity() == chainIdentityValue
+                            && (this.targetRegistry.latchedMask() & 0x4000) != 0;
+                    boolean windowHandoffApplied = false;
+                    if (windowHandoffSource != 0L && !explicitWinColorClear) {
+                        int copied = celtium$copyChainPairHandoffColors(offTarget, chainIdentityValue,
+                                chainIdentityValue, windowHandoffSource, windowColorCount);
+                        if (copied > 0) {
+                            windowHandoffApplied = true;
+                            if (celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
+                                    offTarget.chainPairAcquired(chainIdentityValue),
+                                    this.targetRegistry.chainPairClearContentIdentity(chainIdentityValue),
+                                    chainIdentityValue)
+                                    && windowSharedDepthUsed && windowDepthKey != 0L
+                                    && celtium$routedDepthClearAllowed(windowDepthKey,
+                                            offTarget.sharedDepthClearedFrameSerial(windowDepthKey),
+                                            celtium$frameSerial())) {
+                                double depthVal = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth();
+                                if (offTarget.applyGameClearToChainPair(chainIdentityValue, this.commandBuffer,
+                                        0x0100, new float[4], depthVal)) {
+                                    offTarget.noteSharedDepthCleared(windowDepthKey, celtium$frameSerial());
+                                }
+                            }
+                            this.targetRegistry.noteChainPairCleared(chainIdentityValue,
+                                    celtium$frameSerial(), chainIdentityValue);
+                            if (windowSharedDepthUsed && windowDepthKey != 0L) {
+                                offTarget.recordChainPairAttachAcquire(chainIdentityValue, windowDepthKey,
+                                        this.commandBuffer);
+                            }
+                        }
+                    }
+                    if (!windowHandoffApplied && celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
                             offTarget.chainPairAcquired(chainIdentityValue),
                             this.targetRegistry.chainPairClearContentIdentity(chainIdentityValue),
                             chainIdentityValue)) {
-                        // Outside the pass, which is where the clear and its first-use barrier belong, and once per
-                        // frame per content identity: the game clears a framebuffer when it binds it, and clearing per
-                        // window would erase what an earlier window of the same frame already drew there. The acquire
-                        // state is asked of the pair as well as the frame, because a pair recreated after this frame's
-                        // clear is UNDEFINED again while the frame flag still says otherwise - which is the layout
-                        // error a dimension change produced.
-                        if (offTarget.chainPairNeedsSelfTest(chainIdentityValue)) {
-                            // The one legal-use sequence of the images this pair now holds, recorded through the
-                            // validation layer and reported once per creation: it is the same clear the ordinary path
-                            // records, so it is the pair's first clear rather than an extra one.
-                            record(offTarget.chainPairSelfTest(chainIdentityValue, this.commandBuffer));
-                        } else if (this.targetRegistry.hasLatchedClear()
-                                && this.targetRegistry.latchedIdentity() == chainIdentityValue) {
-                            // A glClear the game issued for this framebuffer before it ever queued a draw - the
-                            // queue-marker route found no group to carry it, so it latched here instead. It clears
-                            // with the colour and depth the game latched, not whatever the stub reads now.
-                            int latchedMask = this.targetRegistry.latchedMask();
-                            float[] latchedColour = this.targetRegistry.latchedColour();
-                            double latchedDepth = this.targetRegistry.latchedDepth();
-                            this.targetRegistry.noteClear(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
-                                    (latchedMask & 0x4000) != 0, true);
-                            offTarget.applyGameClearToChainPair(chainIdentityValue, this.commandBuffer,
-                                    latchedMask, latchedColour, latchedDepth);
-                        } else if (offTarget.deferChainPairClear(chainIdentityValue, this.commandBuffer)) {
-                            // The clear is recorded inside the pass below, as one vkCmdClearAttachments: the two
-                            // barriers and the two vkCmdClear*Image calls it replaces are the window's largest named
-                            // item (see GllessFrameTarget.Pair.PAIR_CLEAR_IN_PASS). The pass that follows always
-                            // begins - this method records it unconditionally after the routing - so the deferral has
-                            // exactly one consumer, and the fallback branch below records the ordinary clear if the
-                            // routing fails before that pass is begun.
-                            this.pendingChainPairClear = chainIdentityValue;
-                            this.pendingChainPairClearColors = windowColorCount;
+                        if (windowSharedDepthUsed && windowDepthKey != 0L) {
+                            // Shared-depth immediate pass: route through the shared-depth clear guard so a second
+                            // member sharing depthtex0/shadowtex0 cannot wipe depth written earlier in the frame.
+                            celtium$consumeRoutedTargetClear(offTarget, chainIdentityValue, windowDepthKey);
+                            offTarget.recordChainPairAttachAcquire(chainIdentityValue, windowDepthKey,
+                                    this.commandBuffer);
                         } else {
-                            offTarget.clearChainPair(chainIdentityValue, this.commandBuffer);
+                            // Outside the pass, which is where the clear and its first-use barrier belong, and once per
+                            // frame per content identity: the game clears a framebuffer when it binds it, and clearing per
+                            // window would erase what an earlier window of the same frame already drew there. The acquire
+                            // state is asked of the pair as well as the frame, because a pair recreated after this frame's
+                            // clear is UNDEFINED again while the frame flag still says otherwise - which is the layout
+                            // error a dimension change produced.
+                            if (offTarget.chainPairNeedsSelfTest(chainIdentityValue)) {
+                                // The one legal-use sequence of the images this pair now holds, recorded through the
+                                // validation layer and reported once per creation: it is the same clear the ordinary path
+                                // records, so it is the pair's first clear rather than an extra one.
+                                record(offTarget.chainPairSelfTest(chainIdentityValue, this.commandBuffer));
+                            } else if (this.targetRegistry.hasLatchedClear()
+                                    && this.targetRegistry.latchedIdentity() == chainIdentityValue) {
+                                // A glClear the game issued for this framebuffer before it ever queued a draw - the
+                                // queue-marker route found no group to carry it, so it latched here instead. It clears
+                                // with the colour and depth the game latched, not whatever the stub reads now.
+                                int latchedMask = this.targetRegistry.latchedMask();
+                                float[] latchedColour = this.targetRegistry.latchedColour();
+                                double latchedDepth = this.targetRegistry.latchedDepth();
+                                this.targetRegistry.noteClear(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
+                                        (latchedMask & 0x4000) != 0, true);
+                                offTarget.applyGameClearToChainPair(chainIdentityValue, this.commandBuffer,
+                                        latchedMask, latchedColour, latchedDepth);
+                            } else if (offTarget.deferChainPairClear(chainIdentityValue, this.commandBuffer)) {
+                                // The clear is recorded inside the pass below, as one vkCmdClearAttachments: the two
+                                // barriers and the two vkCmdClear*Image calls it replaces are the window's largest named
+                                // item (see GllessFrameTarget.Pair.PAIR_CLEAR_IN_PASS). The pass that follows always
+                                // begins - this method records it unconditionally after the routing - so the deferral has
+                                // exactly one consumer, and the fallback branch below records the ordinary clear if the
+                                // routing fails before that pass is begun.
+                                this.pendingChainPairClear = chainIdentityValue;
+                                this.pendingChainPairClearColors = windowColorCount;
+                            } else {
+                                offTarget.clearChainPair(chainIdentityValue, this.commandBuffer);
+                            }
+                            this.targetRegistry.noteChainPairCleared(chainIdentityValue,
+                                    celtium$frameSerial(), chainIdentityValue);
+                            this.chainPairClears++;
+                            // Order against the faces' own pass: the copy reads this pair and the faces drew into it, so
+                            // a clear that lands after their DRAW_SITE is what leaves the copy white.
+                            if (this.chainPairClearLogs < 6) {
+                                this.chainPairClearLogs++;
+                                System.out.println("[Celtium] CELTIUM_CHAIN_PAIR_CLEAR frame=" + this.frameId
+                                        + " site=" + this.immediateDrawSite
+                                        + " drawsSoFar=" + this.immediateStatistics.immediateGroupsDrawn()
+                                        + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame());
+                            }
+                            celtium$noteChainPairClear("first-non-main-pass");
                         }
-                        this.targetRegistry.noteChainPairCleared(chainIdentityValue,
-                                celtium$frameSerial(), chainIdentityValue);
-                        this.chainPairClears++;
-                        // Order against the faces' own pass: the copy reads this pair and the faces drew into it, so
-                        // a clear that lands after their DRAW_SITE is what leaves the copy white.
-                        if (this.chainPairClearLogs < 6) {
-                            this.chainPairClearLogs++;
-                            System.out.println("[Celtium] CELTIUM_CHAIN_PAIR_CLEAR frame=" + this.frameId
-                                    + " site=" + this.immediateDrawSite
-                                    + " drawsSoFar=" + this.immediateStatistics.immediateGroupsDrawn()
-                                    + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame());
-                        }
-                        celtium$noteChainPairClear("first-non-main-pass");
+                    } else if (!windowHandoffApplied && windowSharedDepthUsed && windowDepthKey != 0L) {
+                        offTarget.recordChainPairAttachAcquire(chainIdentityValue, windowDepthKey,
+                                this.commandBuffer);
                     }
                     if (WINDOW_SPLIT) {
                         long now = System.nanoTime();
@@ -14229,9 +14295,13 @@ this.frameBufferOpen = false;
                         // The multi-target pass for this tuple: attachment count is part of render-pass
                         // compatibility, so neither the frame pass nor the one-colour chain pass can stand in
                         // for it, and the pipelines that draw here are the ones built against it (the
-                        // mod-program cache keys on the render pass). The tuple's acquire belongs before the
-                        // begin: the pass declares GENERAL for every colour attachment it attaches.
-                        passRenderPass = chainPairRenderPass(windowColorCount, pairClass);
+                        // mod-program cache keys on the render pass). When this framebuffer also carries a
+                        // depth attachment (such as Iris G-buffer/shadow MRT passes), preserve depth with the
+                        // load/store frame variant instead of the discard-depth chain pass, which would clear
+                        // and discard depthtex0/shadowtex0.
+                        passRenderPass = celtium$preserveWindowDepth(TERRAIN_TO_DEPTH_TARGET, windowDepthRecord != null)
+                                ? frameVariantRenderPass(windowColorCount, pairClass)
+                                : chainPairRenderPass(windowColorCount, pairClass);
                         offTarget.recordChainPairColorAcquire(chainIdentityValue, this.commandBuffer);
                         framebuffer = framebufferCache().chainPairMulti(passRenderPass, offTarget,
                                 windowColorCount, this.targetWidth, this.targetHeight);
@@ -14372,6 +14442,7 @@ this.frameBufferOpen = false;
                 }
                 this.passAttachedColorImages = null;
                 this.passAttachedDepthImage = 0L;
+                windowSharedDepthUsed = false;
                 // The rest of the pass state the routing reassigned goes back to the frame's with the
                 // framebuffer: passRenderPass (a frame framebuffer begun with the chain-pair pass clears and
                 // discards the world's depth, and a multi-target variant's attachment count does not match the
@@ -14609,6 +14680,9 @@ this.frameBufferOpen = false;
         vkCmdEndRenderPass(this.commandBuffer);
         this.commandState.endPass();
         org.soutalab.celtium.vulkan.VulkanDisplayListCensus.setRenderPassOpen(false);
+        if (offTarget != null && windowSharedDepthUsed && windowDepthKey != 0L) {
+            offTarget.recordChainPairAttachRelease(windowChainIdentity, windowDepthKey);
+        }
         FramePassTimings.end("winPassEnd");
         gpuMark("win-end");
         if (windowSlot >= 0) {
@@ -16935,6 +17009,7 @@ this.frameBufferOpen = false;
                         && depthRecord[1] > 0 && depthRecord[2] > 0)
                         ? RenderTargetRegistry.rawColorTextureIdentity(depthRecord[0]) : 0L;
                 int color0Tex = colorRecord != null ? (int) colorRecord[0] : 0;
+                long handoffSource = 0L;
                 if (color0Tex != 0) {
                     long existingOwner = this.publishedFrameImageIdentities.get(color0Tex);
                     boolean ownerExists = existingOwner != Long.MIN_VALUE && existingOwner != 0L
@@ -16950,7 +17025,17 @@ this.frameBufferOpen = false;
                     if (drawIdentity != identity) {
                         pairClass = pairOwner.chainPairFormatClass(drawIdentity);
                         targetRenderPass = frameVariantRenderPass(targetColors, pairClass);
+                    } else {
+                        handoffSource = celtium$resolvePackTerrainColorHandoffSource(identity, drawIdentity,
+                                existingOwner, this.targetRegistry.mainIdentity(), this.gameFramebufferIdentity,
+                                ownerExists, ownerSizeMatches, ownerDepthMatches,
+                                ownerExists && pairOwner.chainPairAcquired(existingOwner));
                     }
+                }
+                if (handoffSource != 0L && !celtium$renderListsHaveGeometry(renderLists, pass)) {
+                    // Nothing to draw in this pass (e.g. empty gbuffers_water): leave the published colour
+                    // owner (deferred1) untouched instead of allocating, clearing, or hijacking color0Tex.
+                    return true;
                 }
                 int pairColors = celtium$packTerrainPairColorCount(targetColors,
                         pairOwner.chainPairColorCount(drawIdentity));
@@ -16969,6 +17054,42 @@ this.frameBufferOpen = false;
                 attachedColorImages[0] = pairOwner.chainPairColorImage(drawIdentity);
                 for (int s = 1; s < targetColors; s++) {
                     attachedColorImages[s] = pairOwner.chainPairColorImageAt(drawIdentity, s);
+                }
+                this.postChainBridge.celtium$transitionPublishedFrameTextures(true, 0L, routedDepthImage, attachedColorImages);
+                boolean explicitColorClear = this.targetRegistry.hasLatchedClear()
+                        && this.targetRegistry.latchedIdentity() == drawIdentity
+                        && (this.targetRegistry.latchedMask() & 0x4000) != 0;
+                boolean handoffApplied = false;
+                if (handoffSource != 0L && !explicitColorClear) {
+                    int copied = celtium$copyChainPairHandoffColors(pairOwner, identity, drawIdentity,
+                            handoffSource, targetColors);
+                    if (copied > 0) {
+                        handoffApplied = true;
+                        if (celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
+                                pairOwner.chainPairAcquired(drawIdentity),
+                                this.targetRegistry.chainPairClearContentIdentity(drawIdentity), drawIdentity)
+                                && celtium$routedDepthClearAllowed(routedDepthKey,
+                                        pairOwner.sharedDepthClearedFrameSerial(routedDepthKey),
+                                        celtium$frameSerial())) {
+                            double depthVal = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth();
+                            if (pairOwner.applyGameClearToChainPair(drawIdentity, this.commandBuffer,
+                                    0x0100, new float[4], depthVal) && routedDepthKey != 0L) {
+                                pairOwner.noteSharedDepthCleared(routedDepthKey, celtium$frameSerial());
+                            }
+                        }
+                        this.targetRegistry.noteChainPairCleared(drawIdentity, celtium$frameSerial(), drawIdentity);
+                        if (this.packTerrainHandoffLogs < 8) {
+                            this.packTerrainHandoffLogs++;
+                            System.out.println("[Celtium] pack-terrain-handoff pass=" + pass.name()
+                                    + " from=0x" + Long.toHexString(handoffSource)
+                                    + " to=0x" + Long.toHexString(drawIdentity)
+                                    + " color0Tex=" + color0Tex + " colors=" + targetColors
+                                    + " copied=" + copied + " frame=" + this.frameId);
+                        }
+                    }
+                }
+                if (!handoffApplied) {
+                    celtium$consumeRoutedTargetClear(pairOwner, drawIdentity, routedDepthKey);
                 }
                 if (color0Tex != 0) {
                     if (drawIdentity == identity) {
@@ -16990,9 +17111,10 @@ this.frameBufferOpen = false;
                         }
                     }
                 }
-                this.postChainBridge.celtium$transitionPublishedFrameTextures(true, 0L, routedDepthImage, attachedColorImages);
-                celtium$consumeRoutedTargetClear(pairOwner, drawIdentity, routedDepthKey);
                 pairOwner.recordChainPairAttachAcquire(drawIdentity, routedDepthKey, this.commandBuffer);
+                if (targetColors > 1) {
+                    pairOwner.recordChainPairColorAcquire(drawIdentity, this.commandBuffer);
+                }
                 framebuffer = ensureChainPairFramebuffer(drawIdentity, targetRenderPass, targetColors);
                 if (framebuffer == 0L) {
                     celtium$reportPackTerrainRefused(pass, programId, "no-chain-framebuffer");
@@ -17270,6 +17392,86 @@ this.frameBufferOpen = false;
             return existingPublishedOwner;
         }
         return boundIdentity;
+    }
+
+    /**
+     * {@return the chain-pair identity whose colour contents should be handed off (copied) into {@code drawIdentity}}
+     * before drawing, or {@code 0L} when no handoff applies.
+     * <p>
+     * Applies when {@code drawIdentity} could not directly reuse {@code existingPublishedOwner} solely because their
+     * depth attachments differ (e.g. depth-free {@code deferred1} wrote {@code colortex0} ALT, and depth-attached
+     * {@code gbuffers_water} / {@code gbuffers_hand} now draws onto the same {@code colortex0} ALT with
+     * {@code depthtex0}). Without handing off colour, {@code drawIdentity}'s per-frame clear erases {@code deferred1}.
+     */
+    static long celtium$resolvePackTerrainColorHandoffSource(long boundIdentity,
+                                                             long drawIdentity,
+                                                             long existingPublishedOwner,
+                                                             long mainIdentity,
+                                                             long gameFramebufferIdentity,
+                                                             boolean ownerPairExists,
+                                                             boolean ownerSizeMatches,
+                                                             boolean ownerDepthMatches,
+                                                             boolean ownerAcquired) {
+        if (drawIdentity == boundIdentity
+                && existingPublishedOwner != Long.MIN_VALUE && existingPublishedOwner != 0L
+                && existingPublishedOwner != drawIdentity
+                && existingPublishedOwner != mainIdentity
+                && existingPublishedOwner != gameFramebufferIdentity
+                && ownerPairExists && ownerSizeMatches && !ownerDepthMatches && ownerAcquired) {
+            return existingPublishedOwner;
+        }
+        return 0L;
+    }
+
+    /** {@return whether an off-target immediate window must use the load/store depth render pass}. */
+    static boolean celtium$preserveWindowDepth(boolean terrainToDepthTarget, boolean hasDepthRecord) {
+        return terrainToDepthTarget && hasDepthRecord;
+    }
+
+    /** {@return whether {@code renderLists} has at least one section with geometry ready for {@code pass}}. */
+    private boolean celtium$renderListsHaveGeometry(ChunkRenderListIterable renderLists, TerrainRenderPass pass) {
+        Iterator<ChunkRenderList> it = renderLists.iterator(pass.isReverseOrder());
+        while (it.hasNext()) {
+            ChunkRenderList renderList = it.next();
+            if (renderList.getSectionsWithGeometryCount() <= 0) {
+                continue;
+            }
+            RenderRegion region = renderList.getRegion();
+            if (this.terrain.resourcesIfPresent(region) != null && region.getStorage(pass) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Copies slot 0 from {@code handoffSource} and any matching extra MRT slots from their current published
+     * chain-pair owners into {@code drawIdentity}, returning the number of slots copied.
+     */
+    private int celtium$copyChainPairHandoffColors(GllessFrameTarget pairOwner,
+                                                   long boundIdentity,
+                                                   long drawIdentity,
+                                                   long handoffSource,
+                                                   int targetColors) {
+        int copied = 0;
+        if (pairOwner.copyChainPairColorSlot(handoffSource, 0, drawIdentity, 0, this.commandBuffer)) {
+            copied++;
+        }
+        for (int s = 1; s < targetColors; s++) {
+            int slotName = this.publishedTextures.colorTextureAt(boundIdentity, s);
+            if (slotName == 0) {
+                continue;
+            }
+            long srcOwner = this.publishedFrameImageIdentities.get(slotName);
+            int srcSlot = this.publishedFrameImageSlots.get(slotName);
+            if (srcOwner != Long.MIN_VALUE && srcOwner != 0L && srcOwner != drawIdentity
+                    && pairOwner.chainPairExists(srcOwner) && pairOwner.chainPairAcquired(srcOwner)) {
+                if (pairOwner.copyChainPairColorSlot(srcOwner, srcSlot, drawIdentity, s, this.commandBuffer)) {
+                    copied++;
+                }
+            }
+        }
+        return copied;
     }
 
     /** {@return whether an immediate group may bake {@code glModelView} into its vertices}. */
@@ -20799,6 +21001,12 @@ this.frameBufferOpen = false;
             org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commands,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, back);
+
+            int sourceFinalLayout = sourceFrom == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED
+                    ? GllessFrameTarget.DEPTH_RENDER_LAYOUT : sourceFrom;
+            VulkanGlTexture.noteExternalForeignLayout(commands, sourceImage, sourceFinalLayout);
+            VulkanGlTexture.noteExternalForeignLayout(commands, destImage,
+                    org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
             org.lwjgl.vulkan.VkCommandBuffer submitted = commands;
             commands = null;

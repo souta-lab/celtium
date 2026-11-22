@@ -90,4 +90,38 @@ class PackTerrainColorPublishTest {
         assertEquals(1, VulkanTerrainGpuBackend.celtium$leadingColorAttachmentCount(new int[] {128, 0, 134}));
         assertEquals(3, VulkanTerrainGpuBackend.celtium$leadingColorAttachmentCount(new int[] {128, 132, 134, 0}));
     }
+
+    @Test
+    void handsOffColorFromDepthFreePublishedOwnerWhenDepthAttachedPassCannotDirectlyReusePair() {
+        long translucent = 0x40008300005L;
+        long deferred1 = 0x100000000bfL;
+        long mainId = 0x3abe1c9eL;
+        // Depth-free deferred1 owns colortex0 ALT (tex 131); depth-attached gbuffers_water cannot reuse
+        // 0x100000000bf directly (ownerDepthMatches=false) so it must hand off colour from deferred1.
+        assertEquals(deferred1, VulkanTerrainGpuBackend.celtium$resolvePackTerrainColorHandoffSource(
+                translucent, translucent, deferred1, mainId, mainId, true, true, false, true));
+
+        // No handoff when depth already matched (direct reuse), when owner was not yet acquired,
+        // when size mismatches, or when owner is main/self/absent.
+        assertEquals(0L, VulkanTerrainGpuBackend.celtium$resolvePackTerrainColorHandoffSource(
+                translucent, deferred1, deferred1, mainId, mainId, true, true, true, true));
+        assertEquals(0L, VulkanTerrainGpuBackend.celtium$resolvePackTerrainColorHandoffSource(
+                translucent, translucent, deferred1, mainId, mainId, true, true, false, false));
+        assertEquals(0L, VulkanTerrainGpuBackend.celtium$resolvePackTerrainColorHandoffSource(
+                translucent, translucent, deferred1, mainId, mainId, true, false, false, true));
+        assertEquals(0L, VulkanTerrainGpuBackend.celtium$resolvePackTerrainColorHandoffSource(
+                translucent, translucent, mainId, mainId, mainId, true, true, false, true));
+        assertEquals(0L, VulkanTerrainGpuBackend.celtium$resolvePackTerrainColorHandoffSource(
+                translucent, translucent, translucent, mainId, mainId, true, true, false, true));
+        assertEquals(0L, VulkanTerrainGpuBackend.celtium$resolvePackTerrainColorHandoffSource(
+                translucent, translucent, Long.MIN_VALUE, mainId, mainId, true, true, false, true));
+    }
+
+    @Test
+    void preservesDepthForMultiTargetImmediateWindowsWithDepthAttachment() {
+        assertTrue(VulkanTerrainGpuBackend.celtium$preserveWindowDepth(true, true));
+        assertFalse(VulkanTerrainGpuBackend.celtium$preserveWindowDepth(true, false));
+        assertFalse(VulkanTerrainGpuBackend.celtium$preserveWindowDepth(false, true));
+        assertFalse(VulkanTerrainGpuBackend.celtium$preserveWindowDepth(false, false));
+    }
 }
