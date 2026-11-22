@@ -66,6 +66,17 @@ class TerrainFrameBudgetTest {
     }
 
     @Test
+    void defaultBudgetDoesNotDropHighRenderDistanceTerrainPasses() {
+        // Issue #422 (c)/(d): default caps must be unlimited (0) so RD 32+ never drops CUTOUT_MIPPED leaves or
+        // TRANSLUCENT water batches after SOLID crosses 4M vertices.
+        TerrainFrameBudget budget = new TerrainFrameBudget();
+        budget.beginFrame(1L);
+        assertTrue(budget.tryConsumeDraw(4_500_000L, 8_000), "SOLID at RD 32 must not hit a 4M default cap");
+        assertTrue(budget.tryConsumeDraw(3_500_000L, 12_000), "CUTOUT_MIPPED + TRANSLUCENT must not drop");
+        assertEquals(0, budget.droppedBatches());
+    }
+
+    @Test
     void theWindowRollsOncePerFrameAndPassesShareIt() {
         TerrainFrameBudget budget = new TerrainFrameBudget(1_000L, 16_384, 128, 2_000_000L);
         budget.beginFrame(7L);

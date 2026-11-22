@@ -16138,10 +16138,7 @@ this.frameBufferOpen = false;
         }
         this.sharedIndexBuffers.clear();
         this.sharedIndexPrimitives.clear();
-        if (this.terrain.uniforms() != null) {
-            this.terrain.uniforms().delete();
-            this.terrain.releaseUniforms();
-        }
+        this.terrain.releaseUniforms();
         // OPT-05: the frame arena's buffers are released here, not left for the next world. Every group that held a
         // slice has been retired above (this path runs after a wait for device idle that succeeded), so nothing the
         // queue may still read is inside them; keeping them would carry one world's immediate memory into the next.
@@ -16352,10 +16349,7 @@ this.frameBufferOpen = false;
         }
         this.sharedIndexBuffers.clear();
         this.sharedIndexPrimitives.clear();
-        if (this.terrain.uniforms() != null) {
-            this.terrain.uniforms().delete();
-            this.terrain.releaseUniforms();
-        }
+        this.terrain.releaseUniforms();
         if (this.postChain != null) {
             this.postChain.delete();
             this.postChain = null;
@@ -17368,7 +17362,8 @@ this.frameBufferOpen = false;
         // pipelineFor(lastUiPass) can return a different instance (the vanilla-format variant has a 208-byte push range
         // where this one has 128), and a set bound under one layout is not compatible with the other - measured in leg
         // shadowTerrain4 as VUID-vkCmdDrawIndexedIndirect-None-08600.
-        pipeline.bindTextures(this.atlasTexture, this.lightmapTexture, this.terrain.uniforms().buffer(), this.terrain.uniforms().size(), this.terrain.dynamicLightBufferHandle(this.frameSlot), this.frameSlot);
+        VulkanUniformBuffer slotUniforms = this.terrain.uniforms(this.frameSlot);
+        pipeline.bindTextures(this.atlasTexture, this.lightmapTexture, slotUniforms.buffer(), slotUniforms.size(), this.terrain.dynamicLightBufferHandle(this.frameSlot), this.frameSlot);
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("prepDescriptors");
         }
@@ -24256,17 +24251,15 @@ this.frameBufferOpen = false;
     }
 
     private void ensureUniformCapacity(int regions) {
-        int blocks = Math.max(16, regions + 1);
-        long required = blocks * this.terrain.uniformStride();
-        if (this.terrain.uniforms() != null && this.terrain.uniforms().size() >= required) {
+        long stride = this.terrain.uniformStride();
+        long baseRequired = (long) Math.max(16, regions + 1) * stride;
+        long cursorRequired = this.terrain.uniformWriteCursor() + (long) Math.max(1, regions + 1) * stride;
+        long required = Math.max(baseRequired, cursorRequired);
+        VulkanUniformBuffer active = this.terrain.uniforms(this.frameSlot);
+        if (active != null && active.size() >= required) {
             return;
         }
-        if (this.terrain.uniforms() == null) {
-            this.terrain.ensureUniformCapacity(this.context, required);
-        } else {
-            this.terrain.uniforms().ensureCapacity(required);
-        }
-        this.terrain.setUniformBlocks(blocks);
+        this.terrain.ensureUniformCapacity(this.context, this.frameSlot, required);
     }
 
     private int alignmentFromDevice() {

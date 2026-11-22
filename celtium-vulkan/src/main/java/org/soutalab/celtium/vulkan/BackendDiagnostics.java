@@ -72,7 +72,7 @@ final class BackendDiagnostics {
                 + " frameFenceWaitCount=" + b.submissionStatistics.frameFenceWaitCount()
                 + " frameFenceWaitWorstMillis=" + b.submissionStatistics.frameFenceWaitWorstMillis()
                 + " " + VulkanHostBuffer.allocationSummary()
-                + " uniform" + (b.terrain.uniforms() == null ? "=none" : b.terrain.uniforms().growthSummary())
+                + " uniform" + b.terrain.uniformGrowthSummary()
                 + " readResolvedFromLastDrawnTarget=" + b.textureCopyService.readResolvedFromLastDrawnTarget()
                 + " offerStages=[" + offerStageSummary() + "]"
                 + " windowOpenSites=[" + b.windowOpenSiteSummary() + "]"
