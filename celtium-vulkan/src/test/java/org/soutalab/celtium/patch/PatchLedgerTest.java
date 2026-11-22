@@ -45,7 +45,7 @@ class PatchLedgerTest {
         assertEquals(List.of(), ledger.skippedGroups());
         assertEquals(List.of(), ledger.ignoredLines());
         assertFalse(ledger.unreadable());
-        assertEquals("CELTIUM_PATCH_TABLE groups=10 essential=4 quarantinable=6 off=0 quarantined=0 mixins=86/86",
+        assertEquals("CELTIUM_PATCH_TABLE groups=11 essential=4 quarantinable=7 off=0 quarantined=0 mixins=86/86",
                 ledger.tableLine(86, 86));
     }
 

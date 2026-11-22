@@ -182,7 +182,24 @@ public final class FramePassTimings {
             // call, i.e. the retained acceptance (submitRetainedGeometry) of one of the two cell passes;
             // cloudBuild is celtium$build whole (the burst-side mesh rebuild); cloudUpload is the build's
             // VBO re-upload inside it, read as cloudBuild's inner number.
-            "cloudForge", "cloudAccept", "cloudBuild", "cloudUpload"};
+            "cloudForge", "cloudAccept", "cloudBuild", "cloudUpload",
+            // Item 648 (the pack-tail-2 section 5.2 follow-up): the last two vanilla call sites inside
+            // renderWorldPass that still ran unnamed - drawBlockDamageTexture (the destroy-progress tail,
+            // after the outline and debug sections) and renderWorldBorder (right after the weather).
+            // Both are disjoint vanilla sub-spans like the wp* seams above, so they join
+            // FrameBudgetTimings' WORLD_PASS_MEMBERS and what they measure leaves worldRest.
+            "wpDestroyProgress", "wpWorldBorder",
+            // Item 648: the pack side of the pass, bracketed inside Demonica/Iris itself. wpPackPrepare is
+            // PipelineManager.preparePipeline and wpPackBegin is the deferred pipeline's
+            // beginLevelRendering - the frame-begin phase Demonica's own EntityRenderer handler runs at
+            // the head of the pass, before any vanilla bracket opens. wpShadowPhase is
+            // ShadowRenderer.renderShadows whole: the shadow stage's setup (frustum, matrices, target
+            // preparation) plus everything it renders. These three are inclusive containers - the shadow
+            // phase holds packRecordShadow and the terrain span inside it - so they stay out of
+            // WORLD_PASS_MEMBERS on purpose: subtracting them would subtract their contents twice. The
+            // census reads them off the per-frame profiles and nets the contained names out by hand, the
+            // same offline reconstruction pack-tail-2 used for its terrainRecord split.
+            "wpPackPrepare", "wpPackBegin", "wpShadowPhase"};
 
     private static final int CAPACITY = 512;
 

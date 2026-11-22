@@ -364,10 +364,18 @@ public final class FrameBudgetTimings {
      * Forge's RenderWorldLast dispatch). What is left in worldRest is the pass' own glue - clear, fog,
      * frustum construction, outline, destroy progress, debug - plus the inside brackets no bucket names
      * ({@code dyn*}, {@code anim*}, {@code chunkUpload}) when they fire inside the pass.
+     * <p>
+     * Item 648 names the last two vanilla call sites of that glue: {@code wpDestroyProgress} (the
+     * destroy-progress tail) and {@code wpWorldBorder}. The pack-phase names ({@code wpPackPrepare},
+     * {@code wpPackBegin}, {@code wpShadowPhase}) deliberately stay out of this set: they are inclusive
+     * containers that hold member spans (the shadow phase holds {@code packRecordShadow} and the terrain
+     * span), so subtracting them here would subtract their contents twice. They are read off the
+     * per-frame profiles instead.
      */
     private static final String[] WORLD_PASS_MEMBERS = {
             "terrain", "setupTerrain", "entities", "particles", "particlesLit", "sky", "flush",
-            "clouds", "hand", "weather", "wpCamera", "wpChunks", "wpRenderLast"};
+            "clouds", "hand", "weather", "wpCamera", "wpChunks", "wpRenderLast",
+            "wpDestroyProgress", "wpWorldBorder"};
 
     private static final boolean PRESENT_INTERVAL = ENABLED
             || HarnessConfig.bool("presentInterval", false)
