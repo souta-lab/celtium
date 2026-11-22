@@ -29,8 +29,8 @@ class PatchGroupsTest {
                 assertTrue(seen.add(member), member + " is listed twice");
             }
         }
-        assertEquals(93, members);
-        assertEquals(93, seen.size());
+        assertEquals(94, members);
+        assertEquals(94, seen.size());
     }
 
     @Test
