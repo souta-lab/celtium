@@ -11746,12 +11746,15 @@ this.frameBufferOpen = false;
      * readable as a cost per upload rather than a bare count (task-51).
      */
     long celtium$arenaUploadCount() {
+        // The arenas are shared by every region (agera-kpi-4): the pair is read once, not summed per region.
         long total = 0;
-        for (TerrainRenderer.RegionResources resources : this.terrain.regionResources()) {
-            total += resources.vertexArena.uploadCount();
-            if (resources.indexArena != null) {
-                total += resources.indexArena.uploadCount();
-            }
+        VulkanArena vertex = this.terrain.sharedVertexArenaIfPresent();
+        if (vertex != null) {
+            total += vertex.uploadCount();
+        }
+        VulkanArena index = this.terrain.sharedIndexArenaIfPresent();
+        if (index != null) {
+            total += index.uploadCount();
         }
         return total;
     }
@@ -11759,11 +11762,13 @@ this.frameBufferOpen = false;
     /** {@return the bytes those uploads carried}, the other half of the same cost pair (task-51). */
     long celtium$arenaUploadedBytes() {
         long total = 0;
-        for (TerrainRenderer.RegionResources resources : this.terrain.regionResources()) {
-            total += resources.vertexArena.uploadedBytes();
-            if (resources.indexArena != null) {
-                total += resources.indexArena.uploadedBytes();
-            }
+        VulkanArena vertex = this.terrain.sharedVertexArenaIfPresent();
+        if (vertex != null) {
+            total += vertex.uploadedBytes();
+        }
+        VulkanArena index = this.terrain.sharedIndexArenaIfPresent();
+        if (index != null) {
+            total += index.uploadedBytes();
         }
         return total;
     }
@@ -15833,14 +15838,18 @@ this.frameBufferOpen = false;
 
     @Override
     public void collectMemoryStats(RenderSectionManager.DeviceMemoryStats destination) {
-        for (TerrainRenderer.RegionResources resources : this.terrain.regionResources()) {
-            destination.deviceUsed += resources.vertexArena.deviceUsedMemoryL();
-            destination.deviceAllocated += resources.vertexArena.deviceAllocatedMemoryL();
-            if (resources.indexArena != null) {
-                destination.indexUsed += resources.indexArena.deviceUsedMemoryL();
-                destination.indexAllocated += resources.indexArena.deviceAllocatedMemoryL();
-            }
-            destination.bufferCount += resources.bufferCount();
+        // The arenas are shared by every region (agera-kpi-4): the pair is counted once, not once per region.
+        VulkanArena vertex = this.terrain.sharedVertexArenaIfPresent();
+        if (vertex != null) {
+            destination.deviceUsed += vertex.deviceUsedMemoryL();
+            destination.deviceAllocated += vertex.deviceAllocatedMemoryL();
+            destination.bufferCount += 1;
+        }
+        VulkanArena index = this.terrain.sharedIndexArenaIfPresent();
+        if (index != null) {
+            destination.indexUsed += index.deviceUsedMemoryL();
+            destination.indexAllocated += index.deviceAllocatedMemoryL();
+            destination.bufferCount += 1;
         }
     }
 
@@ -17814,7 +17823,6 @@ this.frameBufferOpen = false;
         // javadoc); the audit's answer is this one (item 337, ITEM337-AUDIT-2026-11-18 §4.1).
         SectionRenderDataStorage.BatchCacheParams cacheParams =
                 new SectionRenderDataStorage.BatchCacheParams(useBlockFaceCulling, view);
-        boolean indexBound = false;
         LongBuffer regionVertexBuf = stack.mallocLong(1);
         LongBuffer regionVertexOffset = stack.longs(0L);
         LongBuffer regionDescSet = stack.mallocLong(1);
@@ -17835,6 +17843,12 @@ this.frameBufferOpen = false;
         pipeline.bindDescriptors(this.commandBuffer, passUniformOffset, this.frameSlot, regionDescSet, regionDynOffset);
         this.terrainBindNanos += System.nanoTime() - passAfterUniform;
         org.soutalab.celtium.vulkan.FramePassTimings.end("recBind");
+        // One vertex bind and one indirect chain for the whole pass (agera-kpi-4): every region's geometry
+        // lives in the shared arena, so the pass binds its buffer once here and the region loop offers its
+        // batches to the chain instead of recording a draw call - and a vertex bind - per region. A batch
+        // the chain refuses is flushed out first and drawn directly, in the pass' order.
+        this.terrain.bindSharedVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset);
+        this.terrain.beginTerrainChain();
         try {
         while (iterator.hasNext()) {
             ChunkRenderList renderList = iterator.next();
@@ -17962,12 +17976,6 @@ this.frameBufferOpen = false;
                 }
             }
 
-            this.terrain.bindVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset, resources);
-            if (!indexBound) {
-                this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
-                indexBound = true;
-            }
-
             if (this.terrainStatistics.lastDrawCommands() == 0 && command0Logged < 6) {
                 command0Logged++;
                 StringBuilder colors = new StringBuilder("drawn section colours:");
@@ -18012,12 +18020,19 @@ this.frameBufferOpen = false;
             // is drawn directly with the reason counted. BH-02's rule decides which source that is.
             boolean indirect = false;
             if (TERRAIN_INDIRECT_ENABLED) {
-                indirect = this.terrain.tryIndirectBatch(this.context, this.commandBuffer, stack, this.sharedIndexBuffers, resources, batch, sortedPass, primitiveType, regionIndex);
+                indirect = this.terrain.offerChainedBatch(this.context, this.commandBuffer, this.sharedIndexBuffers, resources, batch, sortedPass, primitiveType, regionIndex);
             } else {
                 this.terrain.noteTerrainIndirectFallback();
                 this.terrain.setLastTerrainIndirectFallback("the indirect path is off (-Dceltium.vulkan.indirectTerrain)");
             }
             if (!indirect) {
+            // The chain's open run precedes this batch in the pass' order, so it is recorded before the
+            // direct draws below; the direct path then starts from the state it has always assumed on
+            // entry - the region's vertex buffer bound (the shared arena's, as at every region) and the
+            // shared index buffer bound, which the merge-run logic's initial arenaBound=false encodes.
+            this.terrain.flushTerrainChain(this.commandBuffer);
+            this.terrain.bindVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset, resources);
+            this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
             // Draw-command combining (the upstream #2421 result): two consecutive commands that read the same index
             // source and the *adjacent* vertex range draw the same geometry as one command with their counts added -
             // the shared quad-index pattern repeats, so an unsorted command's firstIndex is always 0 and a merged draw
@@ -18109,6 +18124,9 @@ this.frameBufferOpen = false;
             }
             org.soutalab.celtium.vulkan.FramePassTimings.end("recDraw");
         }
+        // The pass' last chained run is recorded before the pass' tail (the immediate groups below draw
+        // into this same pass and must follow the terrain), and before the render pass ends.
+        this.terrain.endTerrainChain(this.commandBuffer);
         } finally {
             this.terrain.clearPassFog();
         }
@@ -24468,8 +24486,13 @@ this.frameBufferOpen = false;
      */
     private void ensureSharedIndexBuffer(ChunkPrimitiveType primitiveType) {
         int maxVertices = 0;
-        for (TerrainRenderer.RegionResources resources : this.terrain.regionResources()) {
-            long bytes = resources.vertexArena.deviceAllocatedMemoryL();
+        // The bound used to be the largest region arena's capacity - a loose upper bound for the largest
+        // single draw, since a section cannot outgrow the arena holding it. With one shared arena
+        // (agera-kpi-4) the same bound reads the shared arena's capacity; it is looser still, and the
+        // pattern buffer it sizes is one allocation, regenerated rarely.
+        VulkanArena sharedVertex = this.terrain.sharedVertexArenaIfPresent();
+        if (sharedVertex != null) {
+            long bytes = sharedVertex.deviceAllocatedMemoryL();
             maxVertices = Math.max(maxVertices, (int) (bytes / this.commonVertexStride));
         }
         int primitives = (maxVertices / primitiveType.getVerticesPerPrimitive()) + 1;

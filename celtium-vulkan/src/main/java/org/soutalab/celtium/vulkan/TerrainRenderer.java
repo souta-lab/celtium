@@ -42,32 +42,34 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class TerrainRenderer {
 
-    /** One region's arenas: the vertex arena always, the index arena once the region has indices. */
+    /**
+     * One region's resources: the renderer's shared arenas (agera-kpi-4), plus this region's own first-vertex
+     * records. The arenas used to be per-region - one vertex buffer and one index buffer per region - which is
+     * what capped the indirect path at one call per region batch: vkCmdDrawIndexedIndirect reads only the one
+     * bound vertex/index buffer pair, so commands from two regions could never share a call. With every region
+     * allocating from the same pair of arenas, segment offsets are unique across the whole world and a pass can
+     * bind the pair once and chain every region's commands into a handful of calls.
+     */
     static final class RegionResources {
+        /** The renderer's shared vertex arena; not owned by this region. */
         final VulkanArena vertexArena;
         final int[] sectionFirstColor = new int[RenderRegion.REGION_SIZE];
         /** The first 32 bytes of the first vertex of each section, as the upload saw them. */
         final byte[][] sectionFirstVertex = new byte[RenderRegion.REGION_SIZE][];
+        /** The renderer's shared index arena once any region has indices; not owned by this region. */
         VulkanArena indexArena;
 
-        RegionResources(VulkanContext context, int vertexStride) {
-            // Four megabytes, not half of one. A region holds a fraction of the world; the half-megabyte start was grown
-            // through a chain of reallocations during the first chunk load, and a reallocation is a new Vulkan buffer, a
-            // copy and a destroy - paid mid-frame, which is where the world-load stutter comes from. The arena's own
-            // accounting still grows when a region really needs more.
-            this.vertexArena = new VulkanArena(context, 4 * 1024 * 1024, VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertexStride);
+        RegionResources(VulkanArena sharedVertexArena) {
+            this.vertexArena = sharedVertexArena;
         }
 
         int bufferCount() {
             return 1 + (this.indexArena != null ? 1 : 0);
         }
 
+        /** The arenas are shared and outlive the region; only the region's own reference is dropped. */
         void delete() {
-            this.vertexArena.delete();
-            if (this.indexArena != null) {
-                this.indexArena.delete();
-                this.indexArena = null;
-            }
+            this.indexArena = null;
         }
     }
 
@@ -123,6 +125,48 @@ public final class TerrainRenderer {
     private final Map<RenderRegion, RegionResources> regionResources = new ConcurrentHashMap<RenderRegion, RegionResources>();
 
     /**
+     * The one vertex arena every region allocates from (agera-kpi-4), created on first use. The starting
+     * capacity covers a render-distance scene's live geometry in one allocation - the per-region arenas it
+     * replaces started at 4 MiB each and grew through chains of reallocations during chunk load - and the
+     * arena's own doubling growth still applies past it. The stride is the one current at creation, exactly
+     * as a per-region arena's was; a stride change across worlds is settled by {@link #releaseAll()}.
+     */
+    private VulkanArena sharedVertexArena;
+    /** The one index arena every region allocates from, created on first use. */
+    private VulkanArena sharedIndexArena;
+
+    private static final int SHARED_VERTEX_ARENA_INITIAL_BYTES = 64 * 1024 * 1024;
+    private static final int SHARED_INDEX_ARENA_INITIAL_BYTES = 16 * 1024 * 1024;
+
+    /** {@return the shared vertex arena, creating it on first use}. */
+    VulkanArena sharedVertexArena(VulkanContext context) {
+        if (this.sharedVertexArena == null) {
+            this.sharedVertexArena = new VulkanArena(context, SHARED_VERTEX_ARENA_INITIAL_BYTES,
+                    VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertexStride());
+        }
+        return this.sharedVertexArena;
+    }
+
+    /** {@return the shared index arena, creating it on first use}. */
+    VulkanArena sharedIndexArena(VulkanContext context) {
+        if (this.sharedIndexArena == null) {
+            this.sharedIndexArena = new VulkanArena(context, SHARED_INDEX_ARENA_INITIAL_BYTES,
+                    VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 4);
+        }
+        return this.sharedIndexArena;
+    }
+
+    /** {@return the shared vertex arena when it exists, or null}. */
+    VulkanArena sharedVertexArenaIfPresent() {
+        return this.sharedVertexArena;
+    }
+
+    /** {@return the shared index arena when it exists, or null}. */
+    VulkanArena sharedIndexArenaIfPresent() {
+        return this.sharedIndexArena;
+    }
+
+    /**
      * Sections whose geometry the last {@code uploadMeshes} could not put on the GPU (BH-25).
      * <p>
      * Filled when a region's upload throws and drained by {@link VulkanTerrainGpuBackend#consumeFailedUploads()} on the caller's next line, so
@@ -142,7 +186,7 @@ public final class TerrainRenderer {
     RegionResources resourcesFor(VulkanContext context, RenderRegion region, int vertexStride) {
         RegionResources resources = this.regionResources.get(region);
         if (resources == null) {
-            resources = new RegionResources(context, vertexStride);
+            resources = new RegionResources(sharedVertexArena(context));
             this.regionResources.put(region, resources);
         }
         return resources;
@@ -153,10 +197,10 @@ public final class TerrainRenderer {
         return this.regionResources.get(region);
     }
 
-    /** {@return the region's index arena, creating it on first use}. */
+    /** {@return the shared index arena, named on the region's resources from first use}. */
     VulkanArena indexArena(VulkanContext context, RegionResources resources) {
         if (resources.indexArena == null) {
-            resources.indexArena = new VulkanArena(context, 512 * 1024, VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 4);
+            resources.indexArena = sharedIndexArena(context);
         }
         return resources.indexArena;
     }
@@ -211,22 +255,26 @@ public final class TerrainRenderer {
         return this.regionResources.size();
     }
 
-    /** {@return how many arenas the regions hold}. */
+    /** {@return how many arenas the regions hold: the shared pair, counted once}. */
     int arenaCount() {
-        int total = 0;
-        for (RegionResources resources : this.regionResources.values()) {
-            total += resources.bufferCount();
-        }
-        return total;
+        return (this.sharedVertexArena != null ? 1 : 0) + (this.sharedIndexArena != null ? 1 : 0);
     }
 
-    /** Releases every region's arenas. Called when the world or the renderer goes away. */
+    /** Releases every region's resources and the shared arenas. Called when the world or the renderer goes away. */
     void releaseAll() {
         for (RegionResources resources : this.regionResources.values()) {
             resources.delete();
         }
         this.regionResources.clear();
         this.failedUploads.clear();
+        if (this.sharedVertexArena != null) {
+            this.sharedVertexArena.delete();
+            this.sharedVertexArena = null;
+        }
+        if (this.sharedIndexArena != null) {
+            this.sharedIndexArena.delete();
+            this.sharedIndexArena = null;
+        }
     }
 
     /**
@@ -245,6 +293,21 @@ public final class TerrainRenderer {
     void bindVertexBuffer(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, java.nio.LongBuffer buffers,
             java.nio.LongBuffer offsets, RegionResources resources) {
         buffers.put(0, resources.vertexArena.buffer().buffer());
+        org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, buffers, offsets);
+    }
+
+    /**
+     * Binds the shared vertex arena once for a whole pass (agera-kpi-4): with every region's geometry in the
+     * one buffer, the per-region bind the draw loop used to record is the same handle every time, so the pass
+     * binds it at its head and the chained indirect calls below read it throughout. A pass over a world with
+     * no uploads has no arena and nothing to bind - and no batches to draw either.
+     */
+    void bindSharedVertexBuffer(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, java.nio.LongBuffer buffers,
+            java.nio.LongBuffer offsets) {
+        if (this.sharedVertexArena == null) {
+            return;
+        }
+        buffers.put(0, this.sharedVertexArena.buffer().buffer());
         org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers(commandBuffer, 0, buffers, offsets);
     }
 
@@ -603,19 +666,41 @@ public final class TerrainRenderer {
             VulkanMultiDrawBatch batch, boolean sortedPass,
             ChunkPrimitiveType primitiveType, int firstInstance) {
         long batchStarted = System.nanoTime();
-        long finishedAt = indirectBatchBody(context, commandBuffer, stack, sharedIndexBuffers, resources, batch,
-                sortedPass, primitiveType, batchStarted, firstInstance);
-        if (finishedAt != Long.MIN_VALUE) {
-            this.indirectBatchNanos += finishedAt - batchStarted;
-            return true;
+        if (!prepareIndirectPackets(context, sharedIndexBuffers, resources, batch, sortedPass, primitiveType,
+                batchStarted, firstInstance)) {
+            this.indirectBatchNanos += System.nanoTime() - batchStarted;
+            return false;
         }
-        this.indirectBatchNanos += System.nanoTime() - batchStarted;
-        return false;
+        long afterSetup = System.nanoTime();
+        if (this.preparedIndexBuffer == null || this.preparedIndexBuffer != this.indexBufferBelief) {
+            this.bindIndexBuffer(commandBuffer, this.preparedIndexBuffer);
+        } else {
+            this.terrainIndirectBindSkips++;
+        }
+        this.indirectBindNanos += System.nanoTime() - afterSetup;
+        long afterDraw = recordIndirectDraws(commandBuffer, this.indirectBuffer.buffer(), this.indirectBatchOffset,
+                batch.size(), this.preparedMaxDraws, afterSetup);
+        this.indirectBatchNanos += afterDraw - batchStarted;
+        return true;
     }
 
-    /** Returns the final {@code System.nanoTime()} timestamp on success, or {@code Long.MIN_VALUE} on fallback. */
-    private long indirectBatchBody(VulkanContext context, org.lwjgl.vulkan.VkCommandBuffer commandBuffer,
-            org.lwjgl.system.MemoryStack stack,
+    /** The index buffer the last successful {@link #prepareIndirectPackets} decided its batch reads. */
+    private VulkanBuffer preparedIndexBuffer;
+    /** The device draw-count limit the last successful preparation read, for the draw loop's clamping. */
+    private long preparedMaxDraws;
+
+    /**
+     * The front half of an indirect offer, shared by the one-call-per-batch path above and the pass chain
+     * below: the fallback checks, the packet-page reservation, and the copy of the batch's retained packets
+     * into the page with this region's firstInstance stamped. On success the batch's commands sit in
+     * {@link #indirectBuffer} at {@link #indirectBatchOffset} and {@link #preparedIndexBuffer} names the index
+     * buffer they read; nothing has been recorded yet, so the caller decides when the bind and the draw are
+     * recorded. The bind's own nanos are the caller's (the chain defers it to the flush), so the setup/packet
+     * split here is measured up to the copy instead of up to the bind.
+     *
+     * @return false when the batch must be drawn directly, with the fallback counted and named as before
+     */
+    private boolean prepareIndirectPackets(VulkanContext context,
             java.util.Map<org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveType, VulkanBuffer> sharedIndexBuffers,
             RegionResources resources,
             VulkanMultiDrawBatch batch, boolean sortedPass,
@@ -624,7 +709,7 @@ public final class TerrainRenderer {
         if (!context.multiDrawIndirectEnabled()) {
             this.terrainIndirectFallbacks++;
             this.lastTerrainIndirectFallback = "the device was not created with multiDrawIndirect";
-            return Long.MIN_VALUE;
+            return false;
         }
         // Unsigned, because the limit is a uint32: RADV reports 0xFFFFFFFF ("no small bound"), which reads as -1 as a
         // signed int and is not a negative draw count. Only a true 0 means "not reported", and then the direct path is
@@ -633,11 +718,11 @@ public final class TerrainRenderer {
         if (maxDraws == 0L) {
             this.terrainIndirectFallbacks++;
             this.lastTerrainIndirectFallback = "maxDrawIndirectCount is unknown (0)";
-            return Long.MIN_VALUE;
+            return false;
         }
         int size = batch.size();
         if (size <= 0) {
-            return Long.MIN_VALUE;
+            return false;
         }
         // BH-02's rule, applied to the whole batch this time: one indirect call binds one index buffer, so a batch whose
         // commands do not all read the same one is drawn directly.
@@ -649,35 +734,29 @@ public final class TerrainRenderer {
             if (!offsetsClean) {
                 this.terrainIndirectFallbacks++;
                 this.lastTerrainIndirectFallback = "unsorted batch with a non-zero index offset (mixed sources)";
-                return Long.MIN_VALUE;
+                return false;
             }
         }
         if (regionIndex && resources.indexArena == null) {
             this.terrainIndirectFallbacks++;
             this.lastTerrainIndirectFallback = "sorted batch with no region index arena";
-            return Long.MIN_VALUE;
+            return false;
         }
         if (size > Integer.MAX_VALUE / INDIRECT_COMMAND_BYTES) {
             this.terrainIndirectFallbacks++;
             this.lastTerrainIndirectFallback = "the indirect packet byte count exceeds the supported range";
-            return Long.MIN_VALUE;
+            return false;
         }
         int needed = size * INDIRECT_COMMAND_BYTES;
         if (!this.reserveIndirectPacketBytes(context, needed)) {
             this.terrainIndirectFallbacks++;
-            return Long.MIN_VALUE;
+            return false;
         }
         long afterSetup = System.nanoTime();
         this.indirectSetupNanos += afterSetup - setupStarted;
-        VulkanBuffer wantedIndexBuffer = regionIndex ? resources.indexArena.buffer()
+        this.preparedIndexBuffer = regionIndex ? resources.indexArena.buffer()
                 : sharedIndexBuffers.get(primitiveType);
-        if (wantedIndexBuffer == null || wantedIndexBuffer != this.indexBufferBelief) {
-            this.bindIndexBuffer(commandBuffer, wantedIndexBuffer);
-        } else {
-            this.terrainIndirectBindSkips++;
-        }
-        long afterBind = System.nanoTime();
-        this.indirectBindNanos += afterBind - afterSetup;
+        this.preparedMaxDraws = maxDraws;
         // Write the packets directly into the mapped page at the draw's offset: the HOST_COHERENT memory needs no
         // flush, and vkQueueSubmit's host-side ordering guarantee publishes these record-time writes to the
         // submission that carries the draw. The per-batch staging snapshot + vkCmdCopyBuffer + deferred upload this
@@ -698,7 +777,7 @@ public final class TerrainRenderer {
             MemoryUtil.memPutInt(packets + (long) i * INDIRECT_COMMAND_BYTES + 16, firstInstance);
         }
         long afterPacket = System.nanoTime();
-        this.indirectPacketNanos += afterPacket - afterBind;
+        this.indirectPacketNanos += afterPacket - afterSetup;
         if (TERRAIN_INDIRECT_COMPARE) {
             // Compare the encoded CPU packet with the direct enumeration, not the same CPU values twice. This is
             // an encoder check, not a GPU readback or proof of the packet's resource lifetime.
@@ -716,19 +795,28 @@ public final class TerrainRenderer {
                         MemoryUtil.memGetInt(packet + 12),
                         MemoryUtil.memGetInt(packet + 16));
             }
-            afterPacket = System.nanoTime();
         }
+        return true;
+    }
+
+    /**
+     * Records the draw calls for {@code size} prepared commands starting at {@code startOffsetBytes} in
+     * {@code pageBuffer}, clamped to the device limit exactly as the one-call-per-batch path always did.
+     *
+     * @return the timestamp after the last call
+     */
+    private long recordIndirectDraws(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, long pageBuffer,
+            long startOffsetBytes, int size, long maxDraws, long startedAt) {
         int first = 0;
-        long drawStarted = afterPacket;
-        long afterDraw = afterPacket;
+        long drawStarted = startedAt;
+        long afterDraw = startedAt;
         while (first < size) {
             int count = (int) Math.min(maxDraws, (long) (size - first));
             if (count != size - first) {
                 this.terrainIndirectClampEvents++;
             }
-            long offsetBytes = this.indirectBatchOffset + (long) first * INDIRECT_COMMAND_BYTES;
-            vkCmdDrawIndexedIndirect(commandBuffer, this.indirectBuffer.buffer(), offsetBytes, count,
-                    INDIRECT_COMMAND_BYTES);
+            long offsetBytes = startOffsetBytes + (long) first * INDIRECT_COMMAND_BYTES;
+            vkCmdDrawIndexedIndirect(commandBuffer, pageBuffer, offsetBytes, count, INDIRECT_COMMAND_BYTES);
             afterDraw = System.nanoTime();
             this.indirectDrawNanos += afterDraw - drawStarted;
             drawStarted = afterDraw;
@@ -740,6 +828,96 @@ public final class TerrainRenderer {
         return afterDraw;
     }
 
+    // ---------------------------------------------------------------- pass chain (agera-kpi-4)
+
+    /**
+     * The open chain run: a maximal run of offered batches whose packets lie contiguously in one page and
+     * read the same index buffer, so one vkCmdDrawIndexedIndirect can carry them all. The run is recorded
+     * only at the flush, which is what makes the recorded order identical to the offer order: a batch that
+     * cannot join (another index buffer, or a reservation that landed on a new page) flushes the run ahead
+     * of its own commands, and a batch refused by the preparation flushes it from the caller before the
+     * direct draws that replace it. The vertex buffer is the shared arena's, bound once at the pass' head,
+     * so nothing between offers needs recording at all.
+     */
+    private boolean chainOpen;
+    private VulkanHostBuffer chainPage;
+    private long chainStartOffset;
+    private int chainCount;
+    private VulkanBuffer chainIndexBuffer;
+    private long chainMaxDraws;
+
+    /** Opens a chain for the pass being recorded. No draw state is touched until the first flush. */
+    void beginTerrainChain() {
+        this.chainOpen = true;
+        this.chainPage = null;
+        this.chainStartOffset = 0;
+        this.chainCount = 0;
+        this.chainIndexBuffer = null;
+    }
+
+    /**
+     * Offers one batch to the pass' chain: prepares its packets exactly as {@link #tryIndirectBatch} does
+     * and appends them to the open run, flushing the run first when this batch cannot extend it.
+     *
+     * @return false when the batch must be drawn directly (the preparation's fallback accounting applies);
+     *         the caller flushes the chain before recording those direct draws, preserving order
+     */
+    boolean offerChainedBatch(VulkanContext context, org.lwjgl.vulkan.VkCommandBuffer commandBuffer,
+            java.util.Map<org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveType, VulkanBuffer> sharedIndexBuffers,
+            RegionResources resources,
+            VulkanMultiDrawBatch batch, boolean sortedPass,
+            ChunkPrimitiveType primitiveType, int firstInstance) {
+        long batchStarted = System.nanoTime();
+        if (!prepareIndirectPackets(context, sharedIndexBuffers, resources, batch, sortedPass, primitiveType,
+                batchStarted, firstInstance)) {
+            this.indirectBatchNanos += System.nanoTime() - batchStarted;
+            return false;
+        }
+        boolean contiguous = this.chainOpen && this.chainCount > 0
+                && this.chainPage == this.indirectBuffer
+                && this.chainStartOffset + (long) this.chainCount * INDIRECT_COMMAND_BYTES == this.indirectBatchOffset
+                && this.chainIndexBuffer == this.preparedIndexBuffer;
+        if (this.chainCount > 0 && !contiguous) {
+            flushTerrainChain(commandBuffer);
+        }
+        if (this.chainCount == 0) {
+            this.chainPage = this.indirectBuffer;
+            this.chainStartOffset = this.indirectBatchOffset;
+            this.chainIndexBuffer = this.preparedIndexBuffer;
+            this.chainMaxDraws = this.preparedMaxDraws;
+        }
+        this.chainCount += batch.size();
+        this.indirectBatchNanos += System.nanoTime() - batchStarted;
+        return true;
+    }
+
+    /** Records the open run, if any: binds its index buffer when the belief names another, then draws it whole. */
+    void flushTerrainChain(org.lwjgl.vulkan.VkCommandBuffer commandBuffer) {
+        if (this.chainCount <= 0) {
+            this.chainPage = null;
+            this.chainIndexBuffer = null;
+            return;
+        }
+        long flushStarted = System.nanoTime();
+        if (this.chainIndexBuffer == null || this.chainIndexBuffer != this.indexBufferBelief) {
+            this.bindIndexBuffer(commandBuffer, this.chainIndexBuffer);
+            this.indirectBindNanos += System.nanoTime() - flushStarted;
+            flushStarted = System.nanoTime();
+        }
+        recordIndirectDraws(commandBuffer, this.chainPage.buffer(), this.chainStartOffset, this.chainCount,
+                this.chainMaxDraws, flushStarted);
+        this.chainPage = null;
+        this.chainStartOffset = 0;
+        this.chainCount = 0;
+        this.chainIndexBuffer = null;
+    }
+
+    /** Flushes the open run and closes the pass' chain. */
+    void endTerrainChain(org.lwjgl.vulkan.VkCommandBuffer commandBuffer) {
+        flushTerrainChain(commandBuffer);
+        this.chainOpen = false;
+    }
+
     /** Called after this command slot's prior fence completed and its command buffer was reset successfully. */
     void beginIndirectRecording(int slot) {
         if (slot < 0 || slot >= FrameSubmissionScheduler.FRAME_SLOTS) {
@@ -747,6 +925,13 @@ public final class TerrainRenderer {
         }
         // A new recording starts from a reset command buffer: nothing is bound on it yet.
         this.invalidateIndexBufferBelief();
+        // A chain belongs to one pass' recording; a pass that ended without its endTerrainChain (an
+        // exceptional exit) must not leak its open run into this frame - the run's commands were never
+        // recorded, and the new frame's chain starts empty rather than appending to a dead pass' state.
+        this.chainOpen = false;
+        this.chainPage = null;
+        this.chainCount = 0;
+        this.chainIndexBuffer = null;
         while (this.indirectSlotPages.size() <= slot) {
             this.indirectSlotPages.add(new ArrayList<>());
         }
