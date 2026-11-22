@@ -1758,6 +1758,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     public int celtium$flushPendingForChainInput() {
+        // The chain input's flush orders the pending work before the chain reads it; it is an
+        // ordering flush, not a draw boundary (the window census' stamp).
+        this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
         return this.postChainBridge.celtium$flushPendingForChainInput();
     }
 
@@ -5045,7 +5048,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /** Called by the upload hook with the image the game is uploading, so the mirror need not read GL back. */
     public void announceTextureUpload(int glTextureId, java.awt.image.BufferedImage image) {
-        if (!this.immediateWindowBusy && queuedGroupUsesTexture(glTextureId)) flushPendingBeforeGlDraw();
+        // A queued group sampling this texture is drawn before its mirror changes: an ordering
+        // flush, not a draw boundary (the window census' stamp).
+        if (!this.immediateWindowBusy && queuedGroupUsesTexture(glTextureId)) {
+            this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
+            flushPendingBeforeGlDraw();
+        }
         if (this.textureRegistry == null) {
             this.textureRegistry = celtium$registry();
         }
@@ -6153,6 +6161,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.immediateStatistics.noteClearOrderFlushes();
             return;
         }
+        // The clear-order flush is an ordering flush, not a draw boundary (the window census' stamp).
+        this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
         flushPendingBeforeGlDraw();
         this.immediateStatistics.noteClearOrderFlushes();
     }
@@ -10307,6 +10317,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 long hudP0WindowStartedNanos = hudP0WindowGroups > 0
                         && HudP0Census.guiClosedGroups(this.immediateGroups) > 0 ? System.nanoTime() : 0L;
                 long acceptFlushStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
+                // The flight-c4 census (flight-c3-desk section 4): this firing is a size trip, counted
+                // with the pending count it crossed at, and when the acceptance that tripped it is a
+                // retained one the flush it forces is timed under the acceptance's own bracket, so
+                // cloudAccept can be split into the acceptance and the window it tripped. The trip is
+                // counted either way; the bracket wraps only the retained case, and it closes in the
+                // finally below so a flush that threw still closes it.
+                FramePassTimings.noteSizeFlushTrip(retained != null, this.pendingImmediateIndices);
+                this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_SIZE;
+                boolean retainedTrip = retained != null;
+                if (retainedTrip) FramePassTimings.begin("acceptFlushRetained");
                 try {
                     FramePassTimings.begin("flush");
                     try { flushImmediateWindow(); }
@@ -10356,6 +10376,8 @@ this.frameBufferOpen = false;
                     // Counted on both paths: a flush that threw still spent the time, and leaving it out would make
                     // the accept average look cheaper exactly on the legs where the flush is expensive.
                     if (acceptFlushStart != 0L) this.acceptFlushNanos += System.nanoTime() - acceptFlushStart;
+                    // The retained trip's bracket closes on both paths too, for the same reason.
+                    if (retainedTrip) FramePassTimings.end("acceptFlushRetained");
                     // The fit pair follows the same rule: the ordering flush's note is in its finally
                     // too, so a window that threw is paired at both recording points or at neither.
                     if (hudP0WindowStartedNanos != 0L) {
@@ -10419,6 +10441,7 @@ this.frameBufferOpen = false;
             record("immediate batch refused: " + describe(error));
             // Order (S10): what is already accepted is drawn before this batch goes to GL.
             celtium$noteFlushSite(1);
+            this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
             this.flushPendingBeforeGlDraw();
             return false;
         }
@@ -12142,6 +12165,8 @@ this.frameBufferOpen = false;
     private void celtium$flushPendingAtFrameBoundaryBody(long flushStartedNanos) {
         this.fog.tracePeriodically(this.frameId);
         try {
+            // The boundary's own flush is the frame-end trigger for the window census.
+            this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_FRAME_END;
             flushPendingBeforeGlDraw();
             celtium$applyPendingRawWrites();
             // After the frame's own recording and inside the still-open frame buffer: N bind+draw calls on a real mesh,
@@ -12217,6 +12242,18 @@ this.frameBufferOpen = false;
     private int flushEntryHint = org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_OTHER;
     private int pendingFlushEntryKind = org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_OTHER;
 
+    /**
+     * The flight-c4 window trigger stamp, kept on the entry kind's discipline directly above: an
+     * entrance whose flush is not a draw boundary (the accept path's size bound, the frame boundary,
+     * the present drain, a refusal / clear / copy ordering call) stamps this just before it flushes,
+     * {@link #flushPendingBeforeGlDraw} takes and resets it at its head, and {@link #flushImmediateWindow}
+     * takes it again at its own entry - so a stamp is spent by the first flush that follows it and
+     * cannot leak onto a later, unrelated window. An entrance that stamps nothing reads as the gl-draw
+     * trigger, which is what the unstamped entrances are: the draw and bind boundaries
+     * {@link #flushPendingBeforeGlDraw} is named for.
+     */
+    int pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_GL_DRAW;
+
     /** Binds a target on behalf of {@code celtium$registerRawFramebuffer}, marking the flush it may open. */
     private void celtium$bindFromRawRegister(long identity, boolean isMain) {
         int previous = this.flushEntryHint;
@@ -12271,6 +12308,8 @@ this.frameBufferOpen = false;
      */
     private void celtium$flushBeforeRefusal() {
         if (!IMMEDIATE_DRAWING_ENABLED) {
+            // The refusal handoff is an ordering flush, not a draw boundary (the window census' stamp).
+            this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
             this.flushPendingBeforeGlDraw();
         }
     }
@@ -12287,6 +12326,9 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("terrainPreflush");
         try {
             this.preflushGroupsDrained += this.immediateGroups.size() + (this.currentImmediateMesh == null ? 0 : 1);
+            // The pre-terrain drain orders the queued work ahead of the pass: an ordering flush,
+            // not a draw boundary (the window census' stamp).
+            this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
             flushPendingBeforeGlDraw();
             this.preflushFrames++;
         } finally {
@@ -12313,6 +12355,13 @@ this.frameBufferOpen = false;
         // this call whether or not this call turns out to hold any groups.
         int flushEntryKind = this.pendingFlushEntryKind;
         this.pendingFlushEntryKind = org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_OTHER;
+        // The window trigger stamp follows the same discipline: taken and reset here, then handed to
+        // flushImmediateWindow below so the window this call opens is counted under its real trigger.
+        // An unstamped entrance reads as the gl-draw trigger - the draw and bind boundaries this
+        // method is named for. The in-pass branch draws without opening a window and simply spends
+        // the stamp.
+        int windowTrigger = this.pendingWindowTrigger;
+        this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_GL_DRAW;
         // The HUD census' call count: every entry, with the UI bracket state at the entry. The
         // facade is one static-final read while the census is off, the rule this hook's own
         // early-out below already follows.
@@ -12406,6 +12455,7 @@ this.frameBufferOpen = false;
                 } else {
                     // The window's own census, taken before the window so a failure still names its caller.
                     celtium$noteWindowOpenSite();
+                    this.pendingWindowTrigger = windowTrigger;
                     flushImmediateWindow();
                     // The window's groups are in the command buffer now; copies ordered after them can be recorded.
                     celtium$applyPendingRawWrites();
@@ -12458,6 +12508,12 @@ this.frameBufferOpen = false;
 
     /** Synchronous same-target LOAD window; no draw command is emitted outside this backend's pass. */
     private void flushImmediateWindow() {
+        // The trigger stamp is taken at the entry, on the entry kind's discipline: spent by this call
+        // whether or not this call turns out to open a window. The count itself is filed only once the
+        // window is committed (below, where the busy flag is set), so an entry that returns early -
+        // busy, an empty queue, a stalled device, no group for this target - counts no window.
+        int windowTrigger = this.pendingWindowTrigger;
+        this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_GL_DRAW;
         if (this.immediateWindowBusy) return;
         if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
             org.soutalab.celtium.vulkan.CrashBreadcrumbs.note(org.soutalab.celtium.vulkan.CrashBreadcrumbs.WINDOW,
@@ -12540,6 +12596,8 @@ this.frameBufferOpen = false;
                 || gllessTarget.frameImageAcquireNeeded();
         this.windowFrameImageAttached = frameImageAttached;
         this.immediateWindowBusy = true;
+        // The window is committed: count it under the trigger that opened it (flight-c4 census).
+        FramePassTimings.noteWindowTrigger(windowTrigger);
         // One snapshot instance serves every window flush; its chain arrays grow only when more pairs appear.
         org.soutalab.celtium.vulkan.FramePassTimings.begin("windowSetup");
         GllessFrameTarget.RecordingSnapshot recordingSnapshot;
@@ -20693,6 +20751,8 @@ this.frameBufferOpen = false;
                     // Same rule as the reallocated path: a queued group that samples the canvas is drawn before the
                     // mirror it names is forgotten.
                     if (!this.immediateWindowBusy && queuedGroupUsesTexture(id)) {
+                        // An ordering flush (draw before the mirror is forgotten), not a draw boundary.
+                        this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
                         flushPendingBeforeGlDraw();
                     }
                     this.textureRegistry.forgetTexture(id);
@@ -20952,6 +21012,8 @@ this.frameBufferOpen = false;
             try {
                 FramePassTimings.begin("flush");
                 try {
+                    // The swap-point drain is the frame-end trigger for the window census.
+                    this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_FRAME_END;
                     flushPendingBeforeGlDraw();
                 } finally {
                     FramePassTimings.end("flush");
@@ -21391,6 +21453,8 @@ this.frameBufferOpen = false;
             return "the depth copy rectangle " + x + "," + y + " " + width + "x" + height + " -> "
                     + xoffset + "," + yoffset + " is not inside the shared depth images";
         }
+        // The copy's ordering flush, not a draw boundary (the window census' stamp).
+        this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
         flushPendingBeforeGlDraw();
         int sourceFrom = target.sharedDepthLayout(sourceKey);
         int destFrom = target.sharedDepthLayout(destKey);
@@ -21720,6 +21784,9 @@ this.frameBufferOpen = false;
 
         @Override
         public void flushPendingBeforeGlDraw() {
+            // The copy host's flush is the copy path's ordering contract (TextureCopyService's own
+            // statement of it), not a draw boundary: stamp it so its windows count as order.
+            VulkanTerrainGpuBackend.this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
             VulkanTerrainGpuBackend.this.flushPendingBeforeGlDraw();
         }
 
