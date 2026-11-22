@@ -730,6 +730,65 @@ public final class FramePassTimings {
     }
 
     /**
+     * {@return how many frames the ring window currently holds}, for {@link FrameBudgetTimings}' other-split:
+     * the two instruments' windows are compared, so each side must say how many frames its numbers cover.
+     */
+    static int windowFrameCount() {
+        return Math.min(written, CAPACITY);
+    }
+
+    /**
+     * {@return the ring window's per-bracket means in nanoseconds}: index 0 is the frame itself, then
+     * {@link #TOP_LEVEL}, then {@link #INSIDE} - the same order {@link #indexOfName} numbers the brackets in.
+     * <p>
+     * Means, not percentiles, because the consumer adds them: {@link FrameBudgetTimings}' other-split decomposes
+     * one mean (the budget's {@code other}) into bracket means over the same steady window, and percentiles of
+     * different brackets describe frames that never happened. The ring's slots hold the window's frames in
+     * scrambled order once it wraps, which a mean does not care about; before it wraps, the unwritten slots are
+     * exactly the ones past {@code written} and are excluded by the same count.
+     */
+    static long[] windowMeansNanos() {
+        int n = windowFrameCount();
+        long[] means = new long[1 + TOP_LEVEL.length + INSIDE.length];
+        if (n == 0) {
+            return means;
+        }
+        long frameSum = 0L;
+        for (int s = 0; s < n; s++) {
+            frameSum += frameTotals[s];
+        }
+        means[0] = frameSum / n;
+        for (int i = 0; i < TOP_LEVEL.length; i++) {
+            long sum = 0L;
+            for (int s = 0; s < n; s++) {
+                sum += topLevel[i][s];
+            }
+            means[1 + i] = sum / n;
+        }
+        for (int i = 0; i < INSIDE.length; i++) {
+            long sum = 0L;
+            for (int s = 0; s < n; s++) {
+                sum += inside[i][s];
+            }
+            means[1 + TOP_LEVEL.length + i] = sum / n;
+        }
+        return means;
+    }
+
+    /** {@return the ring window's mean per-frame residual} (frame minus the union of the top-level brackets). */
+    static long windowResidualMeanNanos() {
+        int n = windowFrameCount();
+        if (n == 0) {
+            return 0L;
+        }
+        long sum = 0L;
+        for (int s = 0; s < n; s++) {
+            sum += residuals[s];
+        }
+        return sum / n;
+    }
+
+    /**
      * {@return the per-pass split of the frames measured so far}, as p50/p95/worst milliseconds plus the residual.
      * <p>
      * The residual is per frame ({@code frame - union(named brackets)}) and then summarised, not a difference of

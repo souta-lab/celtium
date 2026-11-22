@@ -154,6 +154,7 @@ HARNESS_KEYS = {
     "celtium.vulkan.frameBudgetLines": "frameBudgetLines",
     "celtium.vulkan.gpuPassTimings": "gpuPassTimings",
     "celtium.vulkan.loopSpan": "loopSpan",
+    "celtium.vulkan.otherSplit": "otherSplit",
     "celtium.vulkan.presentInterval": "presentInterval",
     "celtium.vulkan.frameDumpDir": "frameDumpDir",
     "celtium.vulkan.frameDumpEvery": "frameDumpEvery",
