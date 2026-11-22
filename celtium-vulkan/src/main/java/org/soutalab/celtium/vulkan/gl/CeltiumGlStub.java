@@ -7227,6 +7227,11 @@ public final class CeltiumGlStub implements FunctionProvider {
         return GlTextureCaptures.carriesPixels(pixels, unpackBuffer);
     }
 
+    /** Converts one upload's pixels to RGBA8; see {@link GlTextureCaptures}. */
+    private ByteBuffer uploadToRgba8(int width, int height, int format, int type, long pixels) {
+        return this.textureCaptures.uploadToRgba8(this, width, height, format, type, pixels);
+    }
+
     /** Arms the one-shot skip for the patch an announcement just applied; see {@link GlTextureCaptures}. */
     public static void celtium$noteAnnouncedPatch(int level, int x, int y, int width, int height) {
         GlTextureCaptures.celtium$noteAnnouncedPatch(level, x, y, width, height);
