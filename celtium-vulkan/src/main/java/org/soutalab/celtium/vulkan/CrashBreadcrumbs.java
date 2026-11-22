@@ -25,6 +25,12 @@ public final class CrashBreadcrumbs {
      * index left there; {@link #describe} reads it only for the codes that record one.
      */
     private static final long[] THIRD = new long[CAPACITY];
+    /**
+     * The fourth number, for the one code that needs it ({@link #WINDOW_PASS}'s framebuffer generation). Only
+     * {@link #note4} writes it, on the same terms as {@link #THIRD}: a slot held by a note that records fewer
+     * numbers keeps a stale value here, and {@link #describe} reads it only for {@link #WINDOW_PASS}.
+     */
+    private static final long[] FOURTH = new long[CAPACITY];
     private static int cursor;
     private static boolean dumped;
 
@@ -72,6 +78,31 @@ public final class CrashBreadcrumbs {
      * {@link #packBatchComposition} (item 529, instrument I3).
      */
     public static final int BATCH_SUBMIT = 21;
+    /**
+     * A descriptor set was about to be bound by the immediate texture pipeline's draw: the set handle, the
+     * set's generation (the allocation serial the pipeline stamps each allocation with), and the texture key
+     * the set was handed out for - the key itself is view ^ texture generation, so the record names both the
+     * set's lifetime and the texture generation it was written for (hs_err triage, pid14920: the faulting call
+     * was vkCmdBindDescriptorSets, and the draw's only guards were "set is not 0" and "pipeline is not null" -
+     * nothing recorded which generation of the set was bound).
+     */
+    public static final int DESCRIPTOR_BIND = 22;
+    /**
+     * A flush of pending immediate groups actually ran: which entrance opened it, how many groups it held,
+     * and the target identity current at the flush. The entrance kinds are {@link #FLUSH_ENTRY_OTHER},
+     * {@link #FLUSH_ENTRY_VANILLA_BIND} and {@link #FLUSH_ENTRY_RAW_REGISTER} - the hs_err cluster's two
+     * measured entrances are a vanilla Framebuffer bind (TheBetweenLands' GeometryBuffer creating its FBO
+     * mid-render) and a raw framebuffer registration (Xaero's ImprovedFramebuffer), and the per-site census
+     * the backend already keeps is a run total, not a record next to the window that faulted.
+     */
+    public static final int FLUSH_ENTRY = 23;
+
+    /** Flush entrance: a caller that is neither of the two named bind entrances. */
+    public static final int FLUSH_ENTRY_OTHER = 0;
+    /** Flush entrance: {@code bindFramebuffer} on the ordinary (vanilla / game) bind route. */
+    public static final int FLUSH_ENTRY_VANILLA_BIND = 1;
+    /** Flush entrance: a bind that arrived through {@code celtium$registerRawFramebuffer}. */
+    public static final int FLUSH_ENTRY_RAW_REGISTER = 2;
 
     /**
      * Packs a batch's composition for a {@link #BATCH_SUBMIT} note: the entry total, the frame-slot entries and
@@ -119,7 +150,30 @@ public final class CrashBreadcrumbs {
         THIRD[index] = third;
         cursor++;
         if (code == WINDOW_PASS) {
-            celtium$writeThroughWindowPass(first, second, third);
+            celtium$writeThroughWindowPass(first, second, third, 0L);
+        }
+    }
+
+    /**
+     * Records one operation that needs four numbers. Only {@link #WINDOW_PASS} uses it: the begin's three
+     * numbers plus the generation of the framebuffer being begun - the serial {@code FramebufferCache}
+     * stamped the handle with at creation (0 when the handle did not come from that cache). A handle value
+     * alone cannot say whether the begin named the live framebuffer or a destroyed one whose value the
+     * driver had already recycled; the generation can, which is the hs_err triage's instrument (i).
+     */
+    public static void note4(int code, long first, long second, long third, long fourth) {
+        if (!ENABLED) {
+            return;
+        }
+        int index = cursor % CAPACITY;
+        CODES[index] = code;
+        FIRST[index] = first;
+        SECOND[index] = second;
+        THIRD[index] = third;
+        FOURTH[index] = fourth;
+        cursor++;
+        if (code == WINDOW_PASS) {
+            celtium$writeThroughWindowPass(first, second, third, fourth);
         }
     }
 
@@ -145,16 +199,22 @@ public final class CrashBreadcrumbs {
     private static long windowPassWrittenFirst;
     private static long windowPassWrittenSecond;
     private static long windowPassWrittenThird;
+    private static long windowPassWrittenFourth;
     private static long windowPassLastWriteNanos;
     /** Test hook: where the write-through line goes instead of beside the game. */
     static volatile java.nio.file.Path windowPassFileForTest;
 
-    private static void celtium$writeThroughWindowPass(long renderPass, long framebuffer, long extentPacked) {
+    private static void celtium$writeThroughWindowPass(long renderPass, long framebuffer, long extentPacked,
+            long framebufferGeneration) {
         windowPassSeq++;
+        // The generation is part of the tuple: a framebuffer destroyed and recreated at the same handle value
+        // and extent is a different window for this file's purpose - it is exactly the stale-handle case the
+        // generation was added to identify - so it must rewrite the line, not ride the heartbeat interval.
         boolean changed = !windowPassLineWritten
                 || renderPass != windowPassWrittenFirst
                 || framebuffer != windowPassWrittenSecond
-                || extentPacked != windowPassWrittenThird;
+                || extentPacked != windowPassWrittenThird
+                || framebufferGeneration != windowPassWrittenFourth;
         long now = System.nanoTime();
         if (!changed && now - windowPassLastWriteNanos < WINDOW_PASS_WRITE_INTERVAL_NANOS) {
             return;
@@ -163,13 +223,14 @@ public final class CrashBreadcrumbs {
         windowPassWrittenFirst = renderPass;
         windowPassWrittenSecond = framebuffer;
         windowPassWrittenThird = extentPacked;
+        windowPassWrittenFourth = framebufferGeneration;
         windowPassLastWriteNanos = now;
         try {
             java.nio.file.Path path = windowPassFileForTest != null
                     ? windowPassFileForTest
                     : java.nio.file.Paths.get("celtium-last-window-pass.log");
-            java.nio.file.Files.write(path, windowPassLine(windowPassSeq, renderPass, framebuffer, extentPacked)
-                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            java.nio.file.Files.write(path, windowPassLine(windowPassSeq, renderPass, framebuffer, extentPacked,
+                    framebufferGeneration).getBytes(java.nio.charset.StandardCharsets.UTF_8));
         } catch (RuntimeException | java.io.IOException ignored) {
             // A diagnostic that cannot be written must not change how the pass is recorded.
         }
@@ -181,6 +242,20 @@ public final class CrashBreadcrumbs {
                 + " renderPass=0x" + Long.toHexString(renderPass)
                 + " framebuffer=0x" + Long.toHexString(framebuffer)
                 + " extent=" + (extentPacked >>> 32) + "x" + (extentPacked & 0xffffffffL) + "\n";
+    }
+
+    /**
+     * The write-through line with the framebuffer's generation appended (hs_err triage instrument (i)).
+     * A separate overload rather than a changed format: the four-number line above is pinned by its test
+     * and may already sit in reporters' folders; a line carrying a generation says so by having the field.
+     */
+    static String windowPassLine(long seq, long renderPass, long framebuffer, long extentPacked,
+            long framebufferGeneration) {
+        return "celtium last window-pass seq=" + seq
+                + " renderPass=0x" + Long.toHexString(renderPass)
+                + " framebuffer=0x" + Long.toHexString(framebuffer)
+                + " extent=" + (extentPacked >>> 32) + "x" + (extentPacked & 0xffffffffL)
+                + " fbGen=" + framebufferGeneration + "\n";
     }
 
     /** Prints the ring once, oldest first, naming each operation; the first device loss is the one that matters. */
@@ -215,7 +290,7 @@ public final class CrashBreadcrumbs {
         }
         for (int i = 0; i < count; i++) {
             int index = Math.floorMod(cursor - count + i, CAPACITY);
-            String line = describe(CODES[index], FIRST[index], SECOND[index], THIRD[index]);
+            String line = describe(CODES[index], FIRST[index], SECOND[index], THIRD[index], FOURTH[index]);
             System.out.println("[Celtium] CELTIUM_CRUMB #" + i + " " + line);
             report.append('#').append(i).append(' ').append(line).append('\n');
         }
@@ -232,6 +307,11 @@ public final class CrashBreadcrumbs {
 
     /** Package-private for the format pin in {@code CrashBreadcrumbsTest}, like the limiter's test hooks. */
     static String describe(int code, long first, long second, long third) {
+        return describe(code, first, second, third, 0L);
+    }
+
+    /** The five-number form: only {@link #WINDOW_PASS} reads the fourth number (its framebuffer generation). */
+    static String describe(int code, long first, long second, long third, long fourth) {
         switch (code) {
             case WINDOW:
                 return "window target=0x" + Long.toHexString(first) + " groups=" + second;
@@ -251,10 +331,19 @@ public final class CrashBreadcrumbs {
                 return "framebuffer-bind identity=0x" + Long.toHexString(first) + " main=" + (second != 0L);
             case WINDOW_PASS:
                 // The handles a begin is made of, so a loss inside vkCmdBeginRenderPass can say which one may have
-                // been dead: the pass, the framebuffer, and the extent the render area was declared at.
+                // been dead: the pass, the framebuffer, and the extent the render area was declared at. The
+                // generation says which creation of that framebuffer handle this was (0 = not a handle the
+                // FramebufferCache stamped), so a recycled handle value is not mistaken for the live one.
                 return "window-pass renderPass=0x" + Long.toHexString(first)
                         + " framebuffer=0x" + Long.toHexString(second)
-                        + " extent=" + (third >>> 32) + "x" + (third & 0xffffffffL);
+                        + " extent=" + (third >>> 32) + "x" + (third & 0xffffffffL)
+                        + " fbGen=" + fourth;
+            case DESCRIPTOR_BIND:
+                return "descriptor-bind set=0x" + Long.toHexString(first)
+                        + " setGen=" + second + " textureKey=0x" + Long.toHexString(third);
+            case FLUSH_ENTRY:
+                return "flush-entry kind=" + flushEntryKindName(first)
+                        + " groups=" + second + " target=0x" + Long.toHexString(third);
             case PIPELINE_CREATE:
                 return "pipeline-create generation=" + first + " pipeline=0x" + Long.toHexString(second)
                         + " renderPass=0x" + Long.toHexString(third);
@@ -297,5 +386,19 @@ public final class CrashBreadcrumbs {
             default:
                 return "op=" + code + " a=" + first + " b=" + second;
         }
+    }
+
+    /** Names a {@link #FLUSH_ENTRY} kind for the dump; an unknown kind prints as its number. */
+    private static String flushEntryKindName(long kind) {
+        if (kind == FLUSH_ENTRY_VANILLA_BIND) {
+            return "vanilla-bind";
+        }
+        if (kind == FLUSH_ENTRY_RAW_REGISTER) {
+            return "raw-register";
+        }
+        if (kind == FLUSH_ENTRY_OTHER) {
+            return "other";
+        }
+        return "kind-" + kind;
     }
 }

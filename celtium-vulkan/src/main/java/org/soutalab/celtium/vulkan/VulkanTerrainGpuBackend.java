@@ -6624,7 +6624,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     public void celtium$registerRawFramebuffer(int framebuffer, boolean selectTarget) {
         if (framebuffer < 0 || this.gpuStalled || this.context.celtium$isDeviceLost()) return;
         if (framebuffer == 0) {
-            if (selectTarget) bindFramebuffer(0L, false);
+            if (selectTarget) celtium$bindFromRawRegister(0L, false);
             return;
         }
         int color = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferColorTexture(framebuffer);
@@ -6633,7 +6633,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             if (game != Long.MIN_VALUE) {
                 // A raw bind of the game framebuffer draws into the main target: report the game identity, not a
                 // raw one (the hint's report made the same call; this is its alias branch, relocated).
-                if (selectTarget) bindFramebuffer(game, true);
+                if (selectTarget) celtium$bindFromRawRegister(game, true);
                 if (this.rawBindGameLogs < 4) {
                     this.rawBindGameLogs++;
                     System.out.println("[Celtium] CELTIUM_RAW_BIND_GAME_FRAMEBUFFER framebuffer=" + framebuffer
@@ -6653,7 +6653,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     org.soutalab.celtium.vulkan.CrashBreadcrumbs.RAW_FBO, identity, color, depth);
         }
         if (selectTarget) {
-            bindFramebuffer(identity, false);
+            celtium$bindFromRawRegister(identity, false);
             // The latch has its own bounded line, separate from the tuple-gated depth-register print: leg 16
             // (item 333) carried the shadow copy on attach registration alone while its bind census showed no
             // raw identity ever becoming current, and whether a bind-side registration latched at all could not
@@ -7883,6 +7883,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (!this.immediateWindowBusy && targetIdentity != this.targetRegistry.currentIdentity() && !this.targetRegistry.replacementInProgress()) {
             // Framebuffer.bind HEAD: the OLD framebuffer is still bound, so complete its accepted draws before switching.
             celtium$noteFlushSite(6);
+            this.pendingFlushEntryKind = this.flushEntryHint
+                    == org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_RAW_REGISTER
+                    ? org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_RAW_REGISTER
+                    : org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_VANILLA_BIND;
             flushPendingBeforeGlDraw();
         }
         if (targetIdentity != this.targetRegistry.currentIdentity() && this.currentImmediateMesh != null) {
@@ -12135,6 +12139,28 @@ this.frameBufferOpen = false;
     long flushBeforeGlDrawCalls;
     long flushBeforeGlDrawWithGroups;
 
+    /**
+     * The entrance the next flush arrives through, for the {@code FLUSH_ENTRY} breadcrumb (hs_err triage).
+     * {@link #bindFramebuffer} stamps {@link #pendingFlushEntryKind} from {@link #flushEntryHint} just before
+     * it flushes: the hint is raised only around the binds {@code celtium$registerRawFramebuffer} makes, so a
+     * flush the raw registration caused reads RAW_REGISTER and any other bind flush reads VANILLA_BIND.
+     * {@link #flushPendingBeforeGlDraw} takes the pending kind at its head and resets it, so a kind is spent
+     * by the first flush that follows its bind and cannot leak onto a later, unrelated flush.
+     */
+    private int flushEntryHint = org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_OTHER;
+    private int pendingFlushEntryKind = org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_OTHER;
+
+    /** Binds a target on behalf of {@code celtium$registerRawFramebuffer}, marking the flush it may open. */
+    private void celtium$bindFromRawRegister(long identity, boolean isMain) {
+        int previous = this.flushEntryHint;
+        this.flushEntryHint = org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_RAW_REGISTER;
+        try {
+            bindFramebuffer(identity, isMain);
+        } finally {
+            this.flushEntryHint = previous;
+        }
+    }
+
     /** Per-site flush counts: which refusal/order path opened the windows, by id. */
     private final long[] flushSiteCounts = new long[16];
     private static final String[] FLUSH_SITE_NAMES = {
@@ -12216,6 +12242,10 @@ this.frameBufferOpen = false;
 
     void flushPendingBeforeGlDraw() {
         this.flushBeforeGlDrawCalls++;
+        // The entrance kind the bind that led here stamped; taken and reset at the head so it is spent by
+        // this call whether or not this call turns out to hold any groups.
+        int flushEntryKind = this.pendingFlushEntryKind;
+        this.pendingFlushEntryKind = org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_OTHER;
         if (this.immediateWindowBusy) return;
         // This hook runs on every GL draw call (1.35e8 in one measured session). With no group open, no geometry lease,
         // no held glyph run and no pre-closed groups queued, closing has nothing to do but take two timing brackets and
@@ -12237,6 +12267,13 @@ this.frameBufferOpen = false;
             if (this.immediateGroups.isEmpty()) return;
         }
         this.flushBeforeGlDrawWithGroups++;
+        if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
+            // One record per flush that actually holds groups: which entrance opened it, how much it held,
+            // and the target the groups were offered under - the context the hs_err cluster's windows lacked.
+            org.soutalab.celtium.vulkan.CrashBreadcrumbs.note3(
+                    org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY, flushEntryKind,
+                    this.immediateGroups.size(), this.targetRegistry.currentIdentity());
+        }
         // Counted here, not at the entry: the open group is appended to the list by closeCurrentImmediateGroup above,
         // so at the entry almost every call looked empty and the census attributed only the loading phase.
         celtium$noteFlushReason();
@@ -14562,9 +14599,10 @@ this.frameBufferOpen = false;
             // address-only fault inside vkCmdBeginRenderPass cannot say whether the pass, the framebuffer or one of its
             // views was dead, and these numbers plus the frame cache's own note are what identify it (#423, item 372
             // audit section 5). The extent is the render area's, which a framebuffer too small for would also fault on.
-            org.soutalab.celtium.vulkan.CrashBreadcrumbs.note3(
+            org.soutalab.celtium.vulkan.CrashBreadcrumbs.note4(
                     org.soutalab.celtium.vulkan.CrashBreadcrumbs.WINDOW_PASS, passRenderPass, framebuffer,
-                    ((long) passWidth << 32) | (passHeight & 0xffffffffL));
+                    ((long) passWidth << 32) | (passHeight & 0xffffffffL),
+                    celtium$framebufferGeneration(framebuffer));
         }
         org.lwjgl.vulkan.VkRenderPassBeginInfo begin =
                 celtium$windowBeginInfo(passRenderPass, framebuffer, passWidth, passHeight);
@@ -18339,6 +18377,16 @@ this.frameBufferOpen = false;
         this.vulkanProjection.m22(c2z);
         this.vulkanProjection.m32(c3z);
         return this.vulkanProjection;
+    }
+
+    /**
+     * {@return the creation generation the framebuffer cache stamped this handle with} (0 when the cache
+     * holds no stamp for it - a handle from another creator, or already destroyed). Read by the window-pass
+     * breadcrumb at begin time; every framebuffer {@code recordImmediateOnlyPass} begins is resolved through
+     * the cache's {@code ensure*} routes, so a 0 there is itself a finding.
+     */
+    private long celtium$framebufferGeneration(long framebuffer) {
+        return this.framebufferCache == null ? 0L : this.framebufferCache.framebufferGeneration(framebuffer);
     }
 
     /** The frame target's framebuffer for a render pass; see {@link FramebufferCache#frame}. */

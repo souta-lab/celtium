@@ -47,12 +47,32 @@ final class FramebufferCache {
     private final Long2LongOpenHashMap chainPairGenerations = new Long2LongOpenHashMap();
     /** Per identity, the colour-tuple generation its cached multi-target framebuffers were built over. */
     private final Long2LongOpenHashMap chainPairTupleGenerations = new Long2LongOpenHashMap();
+    /**
+     * The creation serial of every live handle this cache built, by handle (hs_err triage instrument (i)).
+     * A handle value alone cannot distinguish the live framebuffer from a destroyed one whose value the
+     * driver recycled; the serial can, and the window-pass breadcrumb records it at every begin. An entry
+     * lives as long as its handle does: retirement keeps it (a retired handle can still be named by an open
+     * recording, and its begin is exactly what the instrument exists to judge), and the entry is dropped
+     * only when the handle is actually destroyed - in the retire queue's destroy lambda, or in
+     * {@link #destroyAll()}.
+     */
+    private final Long2LongOpenHashMap framebufferGenerations = new Long2LongOpenHashMap();
+    private long nextFramebufferGeneration;
 
     FramebufferCache(VulkanContext context, RenderTargetRegistry registry) {
         this.context = context;
         this.registry = registry;
         this.chainPairGenerations.defaultReturnValue(-1L);
         this.chainPairTupleGenerations.defaultReturnValue(-1L);
+        this.framebufferGenerations.defaultReturnValue(0L);
+    }
+
+    /**
+     * {@return the creation serial {@link #create} stamped this handle with}, or 0 when the handle did not
+     * come from this cache (or was already destroyed). Read by the window-pass breadcrumb at begin time.
+     */
+    long framebufferGeneration(long handle) {
+        return handle == 0L ? 0L : this.framebufferGenerations.get(handle);
     }
 
     /**
@@ -338,6 +358,7 @@ final class FramebufferCache {
             vkDestroyFramebuffer(device, entry.handle, null);
         }
         this.frameFramebuffers.clear();
+        this.framebufferGenerations.clear();
         this.lastFramePass = Long.MIN_VALUE;
         this.lastFrameEntry = null;
     }
@@ -347,7 +368,13 @@ final class FramebufferCache {
         VkDevice device = this.context.device();
         for (Long handle : handles) {
             final long framebuffer = handle.longValue();
-            VulkanRetireQueue.retire(device.address(), () -> vkDestroyFramebuffer(device, framebuffer, null));
+            // The generation entry is dropped inside the destroy lambda, not here: until the queue actually
+            // destroys the handle it still exists, and a begin against it in that window must still resolve
+            // to the generation it was created with.
+            VulkanRetireQueue.retire(device.address(), () -> {
+                vkDestroyFramebuffer(device, framebuffer, null);
+                this.framebufferGenerations.remove(framebuffer);
+            });
         }
     }
 
@@ -385,7 +412,9 @@ final class FramebufferCache {
             LongBuffer handle = stack.mallocLong(1);
             VulkanTerrainGpuBackend.check(vkCreateFramebuffer(this.context.device(), create, null, handle),
                     what == null ? "vkCreateFramebuffer" : "vkCreateFramebuffer(" + what + ")");
-            return handle.get(0);
+            long created = handle.get(0);
+            this.framebufferGenerations.put(created, ++this.nextFramebufferGeneration);
+            return created;
         }
     }
 }

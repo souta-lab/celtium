@@ -202,6 +202,21 @@ public final class VulkanImmediateTexturePipeline {
             new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
     /** The pool the most recent successful allocation came from; read by {@link #descriptorSetFor} once per miss. */
     private long lastAllocationPool;
+    /**
+     * The generation of every set this pipeline has allocated, and the texture key each set was last handed
+     * out for (hs_err triage instrument (ii)). A set handle is unique only within its pool and is recycled by
+     * the completion-gated free, so the handle a draw binds cannot say whether it is the set the group was
+     * queued with or a later allocation that reused the value; the generation - a serial stamped at each
+     * allocation, including a reallocation of a recycled handle - can, and the descriptor-bind breadcrumb
+     * records it beside the texture key (itself view ^ texture generation) at the bind. Entries are kept for
+     * the pipeline's lifetime: the set count is pool-bounded, and dropping an entry at retirement would make
+     * a still-queued bind of a retired set read as generation 0 rather than as its own, older generation.
+     */
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap descriptorSetGenerations =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap descriptorSetTextureKeys =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    private long nextDescriptorSetGeneration;
     /** Advanced by {@link #delete()}; a queued descriptor free that sees a newer value owns nothing any more. */
     private long descriptorFreeGeneration;
     /** How many retired sets one completion-gated free hands back at a time. */
@@ -518,6 +533,14 @@ public final class VulkanImmediateTexturePipeline {
         // "VUID-vkCmdBindDescriptorSets-pDescriptorSets-06563: pDescriptorSets[0] (VkDescriptorSet 0x0) is not a
         // valid VkDescriptorSet", ten times - and leaving a statically unused set unbound is legal.
         if (descriptorSetToBind != 0L && bindCache[5] != descriptorSetToBind) {
+            if (CrashBreadcrumbs.enabled()) {
+                // The bind this note stands in front of is the hs_err pid14920 fault site: the record says
+                // which generation of the set is being bound and which texture key it was handed out for,
+                // so a bind of a retired-and-recycled set reads as its generation, not just its handle.
+                CrashBreadcrumbs.note3(CrashBreadcrumbs.DESCRIPTOR_BIND, descriptorSetToBind,
+                        this.descriptorSetGenerations.get(descriptorSetToBind),
+                        this.descriptorSetTextureKeys.get(descriptorSetToBind));
+            }
             long descriptorStart = BIND_TIMINGS ? System.nanoTime() : 0L;
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout, 0,
                     org.lwjgl.system.MemoryStack.stackGet().longs(descriptorSetToBind), null);
@@ -866,6 +889,7 @@ public final class VulkanImmediateTexturePipeline {
         if (key == this.lastDescriptorKey && this.lastDescriptorSet != 0L) {
             DESCRIPTOR_HITS++;
             this.descriptorSlotHits++;
+            this.descriptorSetTextureKeys.put(this.lastDescriptorSet, key);
             return this.lastDescriptorSet;
         }
         long cachedSet = this.setsByTextureView.get(key);
@@ -873,6 +897,7 @@ public final class VulkanImmediateTexturePipeline {
             DESCRIPTOR_HITS++;
             this.lastDescriptorKey = key;
             this.lastDescriptorSet = cachedSet;
+            this.descriptorSetTextureKeys.put(cachedSet, key);
             return cachedSet;
         }
         censusTexture(texture);
@@ -930,6 +955,7 @@ public final class VulkanImmediateTexturePipeline {
             celtium$noteDescWrite(write);
             vkUpdateDescriptorSets(this.context.device(), write, null);
             this.setsByTextureView.put(key, set);
+            this.descriptorSetTextureKeys.put(set, key);
             this.poolByDescriptorSet.put(set, this.lastAllocationPool);
             if (this.insertionOrderCount < this.insertionOrderRing.length) {
                 this.insertionOrderRing[this.insertionOrderTail] = key;
@@ -1062,7 +1088,9 @@ public final class VulkanImmediateTexturePipeline {
                     this.descriptorSetsAllocated++;
                     DESCRIPTOR_SETS_ALLOCATED.incrementAndGet();
                     this.lastAllocationPool = pool.longValue();
-                    return handle.get(0);
+                    long allocated = handle.get(0);
+                    this.descriptorSetGenerations.put(allocated, ++this.nextDescriptorSetGeneration);
+                    return allocated;
                 }
                 lastResult = allocationResult;
                 if (descriptorResultIsDeviceLost(allocationResult)) {
@@ -1274,6 +1302,7 @@ public final class VulkanImmediateTexturePipeline {
             check(vkAllocateDescriptorSets(this.context.device(), allocate, setHandle),
                     "vkAllocateDescriptorSets(immediate textured)");
             this.descriptorSet = setHandle.get(0);
+            this.descriptorSetGenerations.put(this.descriptorSet, ++this.nextDescriptorSetGeneration);
             this.descriptorSetsAllocated++;
             DESCRIPTOR_SETS_ALLOCATED.incrementAndGet();
             VkPipelineLayoutCreateInfo create = VkPipelineLayoutCreateInfo.calloc(stack).sType$Default();
