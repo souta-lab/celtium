@@ -1654,7 +1654,33 @@ public final class GllessFrameTarget implements FrameImageTarget {
         if (pair.sharedDepthKey == depthKey && pair.depthImage == shared[0]) {
             return true;
         }
-        pair.ensure(pair.width, pair.height, depthKey, shared);
+        int prevColorCount = pair.colorCount();
+        long oldColor = pair.colorImage;
+        long[] oldExtras = pair.extraColorImageSnapshot();
+        if (oldColor != 0L) {
+            this.chainPairOwners.remove(oldColor);
+        }
+        if (oldExtras != null) {
+            for (long extra : oldExtras) {
+                this.chainPairOwners.remove(extra);
+            }
+        }
+        try {
+            pair.ensure(pair.width, pair.height, depthKey, shared);
+            if (prevColorCount > 1) {
+                pair.ensureExtras(prevColorCount);
+            }
+        } finally {
+            if (pair.colorImage != 0L) {
+                this.chainPairOwners.put(pair.colorImage, identity);
+            }
+            long[] newExtras = pair.extraColorImageSnapshot();
+            if (newExtras != null) {
+                for (long extra : newExtras) {
+                    this.chainPairOwners.put(extra, identity);
+                }
+            }
+        }
         return true;
     }
 
@@ -1787,7 +1813,28 @@ public final class GllessFrameTarget implements FrameImageTarget {
             return false;
         }
         int needed = Math.max(chainPairColorCount(identity), slot + 1);
-        ensureChainPairColors(identity, needed, width, height);
+        ensureChainPairColors(identity, needed, width, height, chainPairFormatClass(identity));
+        Pair pair = existingChainPair(identity);
+        if (pair == null || pair.extraColorImages == null || slot - 1 >= pair.extraColorCount) {
+            return false;
+        }
+        return initializeExtraColorIfUndefined(identity, slot, command);
+    }
+
+    /**
+     * Initializes extra colour slot {@code slot} (1-based) of an <em>existing</em> pair to {@code (0, 0, 0, 1)} in
+     * the colour render layout when it is still {@code UNDEFINED}, without allocating or resizing anything. Extras
+     * are allocated at framebuffer registration (outside any command buffer), so a slot that no pass has written yet
+     * (e.g. {@code shadowcolor1}) is still {@code UNDEFINED} when a later pass samples it as {@code GENERAL}.
+     * Must be called outside a render pass.
+     *
+     * @return whether the slot holds a live image (initialized now or before)
+     */
+    public boolean initializeExtraColorIfUndefined(long identity, int slot, VkCommandBuffer command) {
+        checkAlive();
+        if (slot <= 0 || slot >= 8 || command == null || command.address() == 0L) {
+            return false;
+        }
         Pair pair = existingChainPair(identity);
         if (pair == null || pair.extraColorImages == null || slot - 1 >= pair.extraColorCount) {
             return false;
