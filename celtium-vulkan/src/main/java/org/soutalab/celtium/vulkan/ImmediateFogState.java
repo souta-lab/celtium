@@ -115,8 +115,6 @@ public final class ImmediateFogState implements org.embeddedt.embeddium.impl.ren
     private String lastLogged = "";
     private int periodicLines;
     private long periodicNanos;
-    /** Scratch for {@link #movedFrom}: eight floats reused instead of allocated ~280 times a frame. */
-    private final float[] compareScratch = new float[8];
 
     /** {@return whether the game's own fog state has reached this mirror at least once, with the feature on}. */
     boolean available() {
