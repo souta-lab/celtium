@@ -1517,6 +1517,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 if (DRAWARRAY_CALLS.get() > 0L) {
                     celtium$printAtExit("CELTIUM_DRAWARRAYS " + drawArraySummary());
                 }
+                if (DrawElementCensus.CALLS.get() > 0L) {
+                    celtium$printAtExit("CELTIUM_DRAWELEMENTS " + drawElementSummary());
+                }
                 if (installed != null && (installed.textureParameters.calls() > 0 || installed.textureParameters.queries() > 0)) {
                     // The texture-parameter record's own census: what the game set, and what the queries were answered
                     // from. Printed only when something was recorded or asked, so a run that never touches it stays
@@ -6870,6 +6873,72 @@ public final class CeltiumGlStub implements FunctionProvider {
                 + " refusedByReason=[" + (reasons.length() == 0 ? "none" : reasons.toString()) + "]";
     }
 
+    // ---- the glDrawElements census --------------------------------------------------------------------------------
+    //
+    // The indexed decoder kept no census at all while the unindexed one did, and that asymmetry is how a whole
+    // route stayed invisible: Demonica's GLSM streaming renderer draws every GUI batch it reroutes through here,
+    // its layouts were refused for want of the VAO half of the layout decision, and no counter anywhere moved.
+    // The counters below separate arrivals, draws handed to the backend, and refusals with their reasons - read
+    // them together, like the glDrawArrays ones; none of them alone is evidence.
+
+    /**
+     * Holds the indexed-draw census state, in its own class initializer for the same reason as
+     * {@link NoopDrawingNames}: this class's own {@code <clinit>} is at HotSpot's HugeMethodLimit.
+     */
+    private static final class DrawElementCensus {
+        /** Arrivals at the indexed decoder since the process started. */
+        static final java.util.concurrent.atomic.AtomicLong CALLS = new java.util.concurrent.atomic.AtomicLong();
+        /** Draws assembled and handed to the immediate path. */
+        static final java.util.concurrent.atomic.AtomicLong DRAWN = new java.util.concurrent.atomic.AtomicLong();
+        /** Draws this decoder would not serve; each one names its reason below. */
+        static final java.util.concurrent.atomic.AtomicLong REFUSED = new java.util.concurrent.atomic.AtomicLong();
+        /** Refusals by reason, bounded by the number of distinct reasons this decoder can produce. */
+        static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> REFUSALS =
+                new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
+    }
+
+    private static void celtium$noteDrawElementRefusal(String reason) {
+        DrawElementCensus.REFUSED.incrementAndGet();
+        java.util.concurrent.atomic.AtomicLong counter = DrawElementCensus.REFUSALS.get(reason);
+        if (counter == null) {
+            counter = new java.util.concurrent.atomic.AtomicLong();
+            java.util.concurrent.atomic.AtomicLong existing = DrawElementCensus.REFUSALS.putIfAbsent(reason, counter);
+            if (existing != null) {
+                counter = existing;
+            }
+        }
+        counter.incrementAndGet();
+    }
+
+    /** Prints the indexed census line at powers of two of the arrival count, like the unindexed one. */
+    private static void celtium$reportDrawElements() {
+        long calls = DrawElementCensus.CALLS.get();
+        if (!org.soutalab.celtium.vulkan.VulkanDiagnostics.enabled()) {
+            // The powers-of-two lines are the repeating half of this instrument; the exit line is not gated.
+            return;
+        }
+        if (calls > 0L && (calls & (calls - 1L)) == 0L) {
+            System.out.println("[Celtium] CELTIUM_DRAWELEMENTS " + drawElementSummary());
+        }
+    }
+
+    /** {@return the indexed census as one line: arrivals, drawn, refused and why}. */
+    public static String drawElementSummary() {
+        StringBuilder reasons = new StringBuilder();
+        for (java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong> entry
+                : new java.util.TreeMap<String, java.util.concurrent.atomic.AtomicLong>(
+                        DrawElementCensus.REFUSALS).entrySet()) {
+            if (reasons.length() > 0) {
+                reasons.append("; ");
+            }
+            reasons.append(entry.getKey()).append('=').append(entry.getValue().get());
+        }
+        return "glDrawElementsCalls=" + DrawElementCensus.CALLS.get()
+                + " drawn=" + DrawElementCensus.DRAWN.get()
+                + " refused=" + DrawElementCensus.REFUSED.get()
+                + " refusedByReason=[" + (reasons.length() == 0 ? "none" : reasons.toString()) + "]";
+    }
+
     private static void celtium$noteMirrorMiss(String name) {
         Integer id = IDS.get(name);
         if (id != null) {
@@ -10306,17 +10375,24 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
-     * Indexed draws, decoded like {@link #drawArrays}: float3 positions with stride 12 and no pointer offset from the
-     * bound array buffer, indices in a mirrored element buffer. Anything else is left alone rather than guessed - the
-     * same rule the unindexed decoder follows, and the reason a refused draw stays blank instead of drawing garbage.
+     * Indexed draws, decoded like {@link #drawArrays}: the layout comes from the vertex pointer's stride and the
+     * enabled arrays - the legacy client enables OR the placements the bound VAO's attribute records prove
+     * ({@link #celtium$vaoArrayMask(VaoAttrib[], int)}) - and the indices from a mirrored element buffer.
+     * Anything else is refused by name in the indexed census rather than guessed - the same rule the unindexed
+     * decoder follows, and the reason a refused draw stays blank instead of drawing garbage.
      */
     private void drawElementsNow(int mode, int count, int type, long indices, int baseVertex) {
         if (count <= 0 || count > (1 << 20) || (mode != 4 && mode != 5 && mode != 7)) {
             return;
         }
+        DrawElementCensus.CALLS.incrementAndGet();
         int stride = this.vertexPointerStride;
         if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT
                 || (stride != 12 && stride != 16 && stride != 20 && stride != 24 && stride != 32)) {
+            celtium$noteDrawElementRefusal("vertex pointer size=" + this.vertexPointerSize + " type=0x"
+                    + Integer.toHexString(this.vertexPointerType) + " stride=" + stride
+                    + " is not a float3 layout this decode serves");
+            celtium$reportDrawElements();
             return;
         }
         NativeGeometryBuffer bound = NativeGeometryBuffer.bound();
@@ -10328,8 +10404,24 @@ public final class CeltiumGlStub implements FunctionProvider {
         } catch (RuntimeException error) {
             return;
         }
+        // A VAO-carried draw names its vertex buffer through attribute 0's record, not through the binding the
+        // setup left behind - the resolution drawArrays already performs for the same reason (the fullscreen
+        // quad's renderer unbinds its VBO before drawing). A VAO renderer's draw - Demonica's GLSM streaming
+        // renderer is the measured one - reaches this decoder with the association recorded only there.
+        VaoAttrib[] attribs = boundAttribs();
+        VaoAttrib positionAttrib = attribs[0];
+        if (positionAttrib.pointerSet && positionAttrib.buffer != 0 && positionAttrib.buffer != boundName) {
+            bound = NativeGeometryBuffer.find(positionAttrib.buffer);
+            boundName = positionAttrib.buffer;
+            try {
+                vertices = bound != null ? bound.compatibilityView() : this.bufferStore.get(boundName);
+            } catch (RuntimeException error) {
+                return;
+            }
+        }
         boolean clientVertices = boundName == 0;
         if (!clientVertices && vertices == null) {
+            celtium$noteDrawElementRefusal("the bound array buffer " + boundName + " has no mirrored storage");
             return;
         }
         long vertexBase;
@@ -10338,6 +10430,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             // No array buffer bound: the pointer glVertexPointer was given is a client address, the legacy spelling.
             vertexBase = this.vertexPointerOffset;
             if (vertexBase == 0L) {
+                celtium$noteDrawElementRefusal(
+                        "the client vertex pointer is null, so there is no vertex array to read");
                 return;
             }
             vertexCapacity = 0;
@@ -10346,22 +10440,31 @@ public final class CeltiumGlStub implements FunctionProvider {
                     : this.logicalSizeOf(boundName, vertices.capacity());
             long offset = this.vertexPointerOffset;
             if (offset < 0L || offset > logicalVertexSize) {
+                celtium$noteDrawElementRefusal("the vertex pointer offset " + offset + " is outside the "
+                        + logicalVertexSize + "-byte buffer");
                 return;
             }
             // A VBO pointer offset is part of the description, not a client address: the batch starts at it.
             vertexBase = memAddress(vertices, 0) + offset;
             vertexCapacity = logicalVertexSize - (int) offset;
         }
-        // The same layout decision the unindexed decoder makes: the format id and the refusal reason.
+        // The same layout decision the unindexed decoder makes: the format id and the refusal reason. The mask
+        // is the legacy client-array enables OR the layout the bound VAO's own attribute records prove - the
+        // unindexed path reads those records through celtium$genericArrayMask, and a VAO renderer that never
+        // touches the legacy enables (GLSM's streaming renderer) was refused here for layouts its records
+        // describe exactly, which is the silence this census now names.
         String[] layoutRefusal = new String[1];
         int formatId;
         try {
-            formatId = celtium$drawArrayFormat(stride, celtium$otherArrayMask(), count, 0, clientVertices,
+            formatId = celtium$drawArrayFormat(stride,
+                    celtium$otherArrayMask() | celtium$vaoArrayMask(attribs, stride), count, 0, clientVertices,
                     clientVertices ? 0L : vertexBase, vertexCapacity, layoutRefusal);
         } catch (RuntimeException error) {
             return;
         }
         if (layoutRefusal[0] != null) {
+            celtium$noteDrawElementRefusal(layoutRefusal[0]);
+            celtium$reportDrawElements();
             return;
         }
         int elementName = boundBuffer(0x8893); // GL_ELEMENT_ARRAY_BUFFER
@@ -10375,11 +10478,15 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return;
             }
             if (elementView == null) {
+                celtium$noteDrawElementRefusal(
+                        "the bound element buffer " + elementName + " has no mirrored storage");
                 return;
             }
         }
         int indexSize = type == 0x1401 ? 1 : type == 0x1403 ? 2 : type == 0x1405 ? 4 : 0;
         if (indexSize == 0 || indices < 0) {
+            celtium$noteDrawElementRefusal(
+                    "index type 0x" + Integer.toHexString(type) + " is not a decodable index type");
             return;
         }
         long indexBytes = (long) count * indexSize;
@@ -10387,15 +10494,21 @@ public final class CeltiumGlStub implements FunctionProvider {
             int elementLogicalSize = elements != null ? elementView.capacity()
                     : this.logicalSizeOf(elementName, elementView.capacity());
             if (mapRangeOffset(indices, indexBytes, elementLogicalSize) < 0L) {
+                celtium$noteDrawElementRefusal("the draw reads offset " + indices + " + " + indexBytes
+                        + " bytes of a " + elementLogicalSize + "-byte element buffer");
                 return;
             }
         } else if (!celtium$readableMapping(indices, indexBytes)) {
             // No element buffer bound: the GL meaning of the pointer is client memory, read only when the range is
             // mapped - the same guard the client vertex path uses.
+            celtium$noteDrawElementRefusal("the client index pointer 0x" + Long.toHexString(indices) + " + "
+                    + indexBytes + " bytes is not inside a readable mapping of this process");
             return;
         }
         int vertexCount = clientVertices ? Integer.MAX_VALUE : vertexCapacity / stride;
         if (stride == 32 && formatId != 8 && formatId != 9) {
+            celtium$noteDrawElementRefusal("stride 32 decoded as format " + formatId
+                    + ", which the indexed repack does not carry");
             return;
         }
         java.nio.ByteBuffer elementReader = elementView == null ? null
@@ -10419,6 +10532,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                 }
                 long resolvedIndex = (type == 0x1405 ? Integer.toUnsignedLong(index) : index) + (long) baseVertex;
                 if (resolvedIndex < 0L || resolvedIndex >= vertexCount) {
+                    celtium$noteDrawElementRefusal(
+                            "an index names vertex " + resolvedIndex + " of " + vertexCount);
                     return;
                 }
                 int resolved = (int) resolvedIndex;
@@ -10429,6 +10544,9 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
             if (clientVertices && maxIndex >= 0
                     && !celtium$readableMapping(vertexBase, (long) (maxIndex + 1) * stride)) {
+                celtium$noteDrawElementRefusal("the client vertex range 0x" + Long.toHexString(vertexBase)
+                        + " + " + (long) (maxIndex + 1) * stride
+                        + " bytes is not inside a readable mapping of this process");
                 return;
             }
             for (int i = 0; i < count; i++) {
@@ -10448,9 +10566,14 @@ public final class CeltiumGlStub implements FunctionProvider {
             if (backend != null) {
                 backend.submitImmediateBatch(null, submitStride, formatId,
                         org.lwjgl.system.MemoryUtil.memAddress(packed != null ? packed : expanded), count, mode);
+                DrawElementCensus.DRAWN.incrementAndGet();
+                celtium$reportDrawElements();
+            } else {
+                celtium$noteDrawElementRefusal("no terrain backend is current, so the batch has nowhere to go");
             }
         } catch (RuntimeException | LinkageError error) {
             // A malformed batch draws nothing; a half-built one must not reach the backend either.
+            celtium$noteDrawElementRefusal("the decode threw " + error.getClass().getSimpleName());
         } finally {
             if (packed != null) {
                 org.lwjgl.system.MemoryUtil.memFree(packed);
@@ -10872,6 +10995,40 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
         }
         return 0;
+    }
+
+    /**
+     * The layout mask a VAO's generic attributes prove for the indexed decoder, in
+     * {@link #celtium$otherArrayMask()}'s numbering. {@link #celtium$genericArrayMask(VaoAttrib[])} can only
+     * name the texture bit - it accepts any enabled float attribute past position - which leaves a VAO
+     * renderer whose colour rides in a normalized byte attribute (Demonica's GLSM streaming renderer is the
+     * measured one) undecodable even though its records describe the layout exactly. Here a bit is granted
+     * only when a record confirms the field's canonical placement for a row the layout table knows - type,
+     * size, normalization and offset all have to match that row - so a VAO interleaved differently keeps
+     * the refusal instead of being decoded as a layout it is not.
+     */
+    static int celtium$vaoArrayMask(VaoAttrib[] attribs, int stride) {
+        int mask = 0;
+        for (int i = 1; i < attribs.length; i++) {
+            VaoAttrib attrib = attribs[i];
+            if (!attrib.enabled || !attrib.pointerSet) {
+                continue;
+            }
+            if (attrib.type == GL_FLOAT && attrib.size == 2 && attrib.offset == 12L) {
+                // The texture coordinates: at byte 12 in every interleaved layout the table knows.
+                mask |= 4;
+            } else if (attrib.type == GL_UNSIGNED_BYTE && attrib.size == 4 && attrib.normalized
+                    && attrib.offset == (stride == 16 ? 12L : 20L)) {
+                // The vertex colour: after the position alone at stride 16, after position+texture above it.
+                mask |= 2;
+            } else if (attrib.type == GL_BYTE_VALUE && attrib.size == 3 && attrib.normalized
+                    && attrib.offset == (stride == 16 ? 12L : stride == 24 ? 20L : 24L)) {
+                // The byte normal: after the position at stride 16, after position+texture at 24, and after
+                // position+texture+colour at 32.
+                mask |= 1;
+            }
+        }
+        return mask;
     }
 
     /** The same mask as text, for the refusal and layout lines. */
