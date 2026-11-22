@@ -8,6 +8,7 @@ import static org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT;
+import static org.lwjgl.vulkan.VK10.VK_FILTER_NEAREST;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_D32_SFLOAT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
@@ -33,9 +34,11 @@ import static org.lwjgl.vulkan.VK10.VK_SHARING_MODE_EXCLUSIVE;
 import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
 import static org.lwjgl.vulkan.VK10.vkAllocateMemory;
 import static org.lwjgl.vulkan.VK10.vkBindImageMemory;
+import static org.lwjgl.vulkan.VK10.vkCmdBlitImage;
 import static org.lwjgl.vulkan.VK10.vkCmdClearAttachments;
 import static org.lwjgl.vulkan.VK10.vkCmdClearColorImage;
 import static org.lwjgl.vulkan.VK10.vkCmdClearDepthStencilImage;
+import static org.lwjgl.vulkan.VK10.vkCmdCopyImage;
 import static org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier;
 import static org.lwjgl.vulkan.VK10.vkCreateImage;
 import static org.lwjgl.vulkan.VK10.vkCreateImageView;
@@ -1987,6 +1990,114 @@ public final class GllessFrameTarget implements FrameImageTarget {
         if (pair != null) {
             pair.recordExtrasAcquire(command);
         }
+    }
+
+    /**
+     * Copies one colour slot from {@code srcIdentity}'s chain pair into {@code dstIdentity}'s chain pair outside
+     * a render pass, keeping both images in {@link #COLOR_RENDER_LAYOUT} ({@code GENERAL}).
+     * <p>
+     * Used when a depth-attached framebuffer (such as Iris {@code gbuffers_water} / {@code gbuffers_hand} attaching
+     * {@code colortex0} ALT + {@code depthtex0}) draws on top of a colour texture whose most recent writer was a
+     * different chain pair (such as depth-free {@code deferred1}) and therefore cannot directly share the pair
+     * without destroying its colour image. Uses {@code vkCmdCopyImage} when both pairs share a format class and
+     * {@code vkCmdBlitImage} otherwise.
+     *
+     * @return whether the copy was recorded
+     */
+    public boolean copyChainPairColorSlot(long srcIdentity, int srcSlot, long dstIdentity, int dstSlot,
+            VkCommandBuffer command) {
+        checkAlive();
+        if (command == null || command.address() == 0L || srcIdentity == dstIdentity || srcSlot < 0 || dstSlot < 0) {
+            return false;
+        }
+        Pair src = existingChainPair(srcIdentity);
+        Pair dst = existingChainPair(dstIdentity);
+        if (src == null || dst == null || !src.exists() || !dst.exists()) {
+            return false;
+        }
+        if (src.width <= 0 || src.height <= 0 || src.width != dst.width || src.height != dst.height) {
+            return false;
+        }
+        long srcImage = src.colorImageAt(srcSlot);
+        long dstImage = dst.colorImageAt(dstSlot);
+        if (srcImage == 0L || dstImage == 0L || srcImage == dstImage) {
+            return false;
+        }
+        int srcLayout = srcSlot == 0 ? src.colorLayout()
+                : (src.extraColorLayouts != null && srcSlot - 1 < src.extraColorCount
+                        ? src.extraColorLayouts[srcSlot - 1] : VK_IMAGE_LAYOUT_UNDEFINED);
+        if (srcLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
+            return false;
+        }
+        int dstLayout = dstSlot == 0 ? dst.colorLayout()
+                : (dst.extraColorLayouts != null && dstSlot - 1 < dst.extraColorCount
+                        ? dst.extraColorLayouts[dstSlot - 1] : VK_IMAGE_LAYOUT_UNDEFINED);
+        int queueFamily = this.context.queueFamilyIndex();
+        try (MemoryStack stack = stackPush()) {
+            VkImageMemoryBarrier.Buffer pre = VkImageMemoryBarrier.calloc(2, stack);
+            pre.get(0).sType$Default()
+                    .image(srcImage)
+                    .oldLayout(srcLayout).newLayout(COLOR_RENDER_LAYOUT)
+                    .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                    .srcAccessMask(celtium$layoutSourceAccess(srcLayout))
+                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT);
+            pre.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            pre.get(1).sType$Default()
+                    .image(dstImage)
+                    .oldLayout(dstLayout).newLayout(COLOR_RENDER_LAYOUT)
+                    .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                    .srcAccessMask(dstLayout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : celtium$layoutSourceAccess(dstLayout))
+                    .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+            pre.get(1).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0, null, null, pre);
+
+            if (src.formatClass == dst.formatClass) {
+                org.lwjgl.vulkan.VkImageCopy.Buffer region = org.lwjgl.vulkan.VkImageCopy.calloc(1, stack);
+                region.get(0).srcSubresource().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1);
+                region.get(0).srcOffset().set(0, 0, 0);
+                region.get(0).dstSubresource().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1);
+                region.get(0).dstOffset().set(0, 0, 0);
+                region.get(0).extent().set(dst.width, dst.height, 1);
+                vkCmdCopyImage(command, srcImage, COLOR_RENDER_LAYOUT, dstImage, COLOR_RENDER_LAYOUT, region);
+            } else {
+                org.lwjgl.vulkan.VkImageBlit.Buffer region = org.lwjgl.vulkan.VkImageBlit.calloc(1, stack);
+                region.get(0).srcSubresource().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1);
+                region.get(0).srcOffsets(0).set(0, 0, 0);
+                region.get(0).srcOffsets(1).set(src.width, src.height, 1);
+                region.get(0).dstSubresource().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1);
+                region.get(0).dstOffsets(0).set(0, 0, 0);
+                region.get(0).dstOffsets(1).set(dst.width, dst.height, 1);
+                vkCmdBlitImage(command, srcImage, COLOR_RENDER_LAYOUT, dstImage, COLOR_RENDER_LAYOUT,
+                        region, VK_FILTER_NEAREST);
+            }
+
+            VkImageMemoryBarrier.Buffer post = VkImageMemoryBarrier.calloc(1, stack);
+            post.get(0).sType$Default()
+                    .image(dstImage)
+                    .oldLayout(COLOR_RENDER_LAYOUT).newLayout(COLOR_RENDER_LAYOUT)
+                    .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                    .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT
+                            | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                            | VK_ACCESS_SHADER_READ_BIT);
+            post.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    0, null, null, post);
+        }
+        if (srcSlot == 0) {
+            src.noteColorLayout(COLOR_RENDER_LAYOUT);
+        } else {
+            src.noteExtraColorLayout(srcSlot, COLOR_RENDER_LAYOUT);
+        }
+        if (dstSlot == 0) {
+            dst.noteColorLayout(COLOR_RENDER_LAYOUT);
+        } else {
+            dst.noteExtraColorLayout(dstSlot, COLOR_RENDER_LAYOUT);
+        }
+        VulkanGlTexture.noteExternalForeignLayout(command, srcImage, COLOR_RENDER_LAYOUT);
+        VulkanGlTexture.noteExternalForeignLayout(command, dstImage, COLOR_RENDER_LAYOUT);
+        return true;
     }
 
     /** Records a layout an extra colour image of the identity's pair has been moved to by the sampling side. */
