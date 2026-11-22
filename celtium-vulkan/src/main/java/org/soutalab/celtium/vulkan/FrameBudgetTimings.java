@@ -336,6 +336,21 @@ public final class FrameBudgetTimings {
         return worldPassIndex;
     }
 
+    /** Indices of {@link #WORLD_PASS_MEMBERS}, resolved with {@link #otherBucketIndex()}. */
+    private static int[] worldPassMemberIndex;
+
+    private static int[] worldPassMemberIndex() {
+        int[] resolved = worldPassMemberIndex;
+        if (resolved == null) {
+            resolved = new int[WORLD_PASS_MEMBERS.length];
+            for (int i = 0; i < WORLD_PASS_MEMBERS.length; i++) {
+                resolved[i] = FramePassTimings.indexOfName(WORLD_PASS_MEMBERS[i]);
+            }
+            worldPassMemberIndex = resolved;
+        }
+        return resolved;
+    }
+
     /** Brackets inside {@code worldPass} that {@link #OTHER_BUCKETS} already names; the rest is worldRest. */
     private static final String[] WORLD_PASS_MEMBERS = {
             "terrain", "setupTerrain", "entities", "particles", "particlesLit", "sky"};
@@ -512,6 +527,10 @@ public final class FrameBudgetTimings {
      * <p>
      * Pure arithmetic over the two instruments' window means, kept static and separate from the printing for
      * the same reason {@link #split} is: the unit test asserts the production arithmetic, not a copy of it.
+     * The bracket indices arrive as parameters, resolved by the printing path from the shared name table, so
+     * the arithmetic itself never loads {@link FramePassTimings}: that class latches its harness switches at
+     * initialisation, and a caller that loaded it early (a test class, say) would pin them at the wrong values
+     * for whoever came later.
      * {@code bracketMeans} is {@link FramePassTimings#windowMeansNanos()} (index 0 is the pass frame itself, so
      * a bracket's mean sits at its name-table index + 1). The buckets are disjoint by construction: {@code
      * terrain} contains its own sub-brackets (record, submit, prepare), {@code setupTerrain} contains the
@@ -524,8 +543,8 @@ public final class FrameBudgetTimings {
      * count (see {@link #OTHER_SPLIT}) showing itself, and printing it is how the reader knows the size of
      * that bias.
      */
-    static long[] otherSplit(long otherMean, long outsideMean, long[] bracketMeans, long passResidualMean) {
-        int[][] bucketIndex = otherBucketIndex();
+    static long[] otherSplit(long otherMean, long outsideMean, long[] bracketMeans, long passResidualMean,
+            int[][] bucketIndex, int worldPassIndex, int[] worldPassMembers) {
         long[] buckets = new long[bucketIndex.length];
         for (int b = 0; b < bucketIndex.length; b++) {
             long sum = 0L;
@@ -537,13 +556,11 @@ public final class FrameBudgetTimings {
             buckets[b] = sum;
         }
         long worldRest = 0L;
-        int wpIndex = worldPassIndex();
-        if (wpIndex >= 0 && wpIndex + 1 < bracketMeans.length) {
-            long rest = bracketMeans[wpIndex + 1];
-            for (String member : WORLD_PASS_MEMBERS) {
-                int index = FramePassTimings.indexOfName(member);
-                if (index >= 0 && index + 1 < bracketMeans.length) {
-                    rest -= bracketMeans[index + 1];
+        if (worldPassIndex >= 0 && worldPassIndex + 1 < bracketMeans.length) {
+            long rest = bracketMeans[worldPassIndex + 1];
+            for (int member : worldPassMembers) {
+                if (member >= 0 && member + 1 < bracketMeans.length) {
+                    rest -= bracketMeans[member + 1];
                 }
             }
             worldRest = Math.max(0L, rest);
@@ -589,7 +606,8 @@ public final class FrameBudgetTimings {
         long outsideMean = LOOP_SPAN ? ringMean(loopOutsideRing, loopOutsideSamples) : -1L;
         long otherMean = ringMean(otherRing, written);
         long[] split = otherSplit(otherMean, Math.max(0L, outsideMean), means,
-                FramePassTimings.windowResidualMeanNanos());
+                FramePassTimings.windowResidualMeanNanos(), otherBucketIndex(), worldPassIndex(),
+                worldPassMemberIndex());
         int lightmap = FramePassTimings.indexOfName("lightmap");
         int mouseOver = FramePassTimings.indexOfName("mouseOver");
         int winRecord = FramePassTimings.indexOfName("winRecord");

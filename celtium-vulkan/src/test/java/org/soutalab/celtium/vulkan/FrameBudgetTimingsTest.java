@@ -122,17 +122,33 @@ class FrameBudgetTimingsTest {
                 "a present before its boundary is not a pair");
     }
 
-    /** A means row in {@link FramePassTimings#windowMeansNanos()} order: frame, then the name table + 1. */
-    private static long[] meansWith(String name, long nanos) {
-        long[] means = new long[FramePassTimings.bracketCount() + 1];
-        means[FramePassTimings.indexOfName(name) + 1] = nanos;
+    // The split's index tables, as literals: the production printing path resolves these from
+    // FramePassTimings' name table, but resolving them here would initialise that class - it latches its
+    // harness switches at initialisation, and PassTimingCoverageTest depends on setting the properties
+    // before that happens. The layout is windowMeansNanos': a bracket's mean sits at its index + 1.
+    private static final int TERRAIN = 10;
+    private static final int SETUP = 11;
+    private static final int ENTITIES = 12;
+    private static final int PARTICLES = 13;
+    private static final int PARTICLES_LIT = 14;
+    private static final int SKY = 15;
+    private static final int WORLD_PASS = 20;
+    private static final int[][] BUCKETS = {
+            {TERRAIN}, {SETUP}, {ENTITIES}, {PARTICLES, PARTICLES_LIT}, {SKY}, {16, 17}, {18, 19}};
+    private static final int[] WORLD_MEMBERS = {TERRAIN, SETUP, ENTITIES, PARTICLES, PARTICLES_LIT, SKY};
+
+    /** A means row in {@link FramePassTimings}' window layout: index 0 is the frame, bracket i sits at i + 1. */
+    private static long[] meansWith(int bracket, long nanos) {
+        long[] means = new long[40];
+        means[bracket + 1] = nanos;
         return means;
     }
 
     @Test
-    void otherSplitNamesEachBucketFromTheSharedTable() {
-        long[] means = meansWith("terrain", 2_000_000L);
-        long[] split = FrameBudgetTimings.otherSplit(5_800_000L, 500_000L, means, 300_000L);
+    void otherSplitNamesEachBucketFromTheGivenTable() {
+        long[] means = meansWith(TERRAIN, 2_000_000L);
+        long[] split = FrameBudgetTimings.otherSplit(5_800_000L, 500_000L, means, 300_000L,
+                BUCKETS, WORLD_PASS, WORLD_MEMBERS);
         assertEquals(500_000L, split[0], "outside passes through");
         assertEquals(2_000_000L, split[1], "the terrain bucket is the terrain bracket's mean");
         assertEquals(300_000L, split[9], "the pass residual passes through");
@@ -142,29 +158,32 @@ class FrameBudgetTimingsTest {
 
     @Test
     void otherSplitWorldRestIsWorldPassMinusTheNamedInsideBrackets() {
-        long[] means = meansWith("worldPass", 4_000_000L);
-        means[FramePassTimings.indexOfName("terrain") + 1] = 1_500_000L;
-        means[FramePassTimings.indexOfName("entities") + 1] = 1_000_000L;
-        long[] split = FrameBudgetTimings.otherSplit(5_800_000L, 0L, means, 0L);
+        long[] means = meansWith(WORLD_PASS, 4_000_000L);
+        means[TERRAIN + 1] = 1_500_000L;
+        means[ENTITIES + 1] = 1_000_000L;
+        long[] split = FrameBudgetTimings.otherSplit(5_800_000L, 0L, means, 0L,
+                BUCKETS, WORLD_PASS, WORLD_MEMBERS);
         assertEquals(1_500_000L, split[8],
                 "worldRest keeps only what worldPass holds beyond the bucketed brackets");
     }
 
     @Test
     void otherSplitWorldRestNeverGoesNegativeWhenBracketsOverlap() {
-        long[] means = meansWith("worldPass", 1_000_000L);
-        means[FramePassTimings.indexOfName("terrain") + 1] = 1_500_000L;
-        long[] split = FrameBudgetTimings.otherSplit(5_800_000L, 0L, means, 0L);
+        long[] means = meansWith(WORLD_PASS, 1_000_000L);
+        means[TERRAIN + 1] = 1_500_000L;
+        long[] split = FrameBudgetTimings.otherSplit(5_800_000L, 0L, means, 0L,
+                BUCKETS, WORLD_PASS, WORLD_MEMBERS);
         assertEquals(0L, split[8], "an overlap artefact is floored, not reported as negative time");
     }
 
     @Test
     void otherSplitSumsMultiMemberBuckets() {
-        long[] means = meansWith("particles", 400_000L);
-        means[FramePassTimings.indexOfName("particlesLit") + 1] = 100_000L;
-        means[FramePassTimings.indexOfName("gui") + 1] = 700_000L;
-        means[FramePassTimings.indexOfName("hand") + 1] = 200_000L;
-        long[] split = FrameBudgetTimings.otherSplit(5_800_000L, 0L, means, 0L);
+        long[] means = meansWith(PARTICLES, 400_000L);
+        means[PARTICLES_LIT + 1] = 100_000L;
+        means[18 + 1] = 700_000L;
+        means[19 + 1] = 200_000L;
+        long[] split = FrameBudgetTimings.otherSplit(5_800_000L, 0L, means, 0L,
+                BUCKETS, WORLD_PASS, WORLD_MEMBERS);
         assertEquals(500_000L, split[4], "particles and its lit half are one bucket");
         assertEquals(900_000L, split[7], "gui and hand are one bucket");
     }
