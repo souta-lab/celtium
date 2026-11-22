@@ -205,7 +205,16 @@ public final class FramePassTimings {
             // WORLD_PASS_MEMBERS on purpose: subtracting them would subtract their contents twice. The
             // census reads them off the per-frame profiles and nets the contained names out by hand, the
             // same offline reconstruction pack-tail-2 used for its terrainRecord split.
-            "wpPackPrepare", "wpPackBegin", "wpShadowPhase"};
+            "wpPackPrepare", "wpPackBegin", "wpShadowPhase",
+            // flight-c4 (flight-c3-desk section 4): the window flush a retained acceptance trips
+            // inside itself, timed under the acceptance's own name. cloudAccept sums the two cell-VBO
+            // acceptances whole - the acceptance body and any flush the acceptance forces - and the
+            // desk's elimination left the flush as the only code home for the remaining ~1.45 ms, with
+            // its count and price unmeasured. This bracket is that measurement: it wraps only the
+            // flush call a retained acceptance makes, so its share of cloudAccept is read directly.
+            // Inclusive and report-only like every INSIDE name; nothing subtracts it, and the plain
+            // `flush` bracket keeps counting the same interval as before.
+            "acceptFlushRetained"};
 
     private static final int CAPACITY = 512;
 
@@ -279,14 +288,17 @@ public final class FramePassTimings {
         // the frame being judged paid for the instrument judging it. A run that wants the brackets asks for them.
         // TICK_PERCENTILES asks for the same brackets: the report is a split of them, so a leg that sets only the
         // report switch would otherwise print nothing and read as "the instrument measured nothing".
-        return PASS_SPLIT_ENABLED || BRACKETS_ENABLED || TICK_PERCENTILES || TickTimings.enabled();
+        // ACCEPT_FLUSH is in the same position: its bracket is one of these names, so the census switch
+        // alone has to wake the tables or its own leg would measure nothing.
+        return PASS_SPLIT_ENABLED || BRACKETS_ENABLED || TICK_PERCENTILES || ACCEPT_FLUSH
+                || TickTimings.enabled();
     }
 
     /**
-     * (Re-)resolves every harness switch this class keeps, through {@link HarnessConfig}: the eight answers the
+     * (Re-)resolves every harness switch this class keeps, through {@link HarnessConfig}: the nine answers the
      * bracket path reads as fields ({@link #PASS_SPLIT_ENABLED}, {@link #BRACKETS_ENABLED}, {@link #CPU_CLOCK},
-     * {@link #TICK_SPLIT_FRAMES}, {@link #TICK_PERCENTILES} with {@link #PERCENTILE_FRAMES}, {@link #COUNT_CALLS}
-     * and {@link #MICROS}).
+     * {@link #TICK_SPLIT_FRAMES}, {@link #TICK_PERCENTILES} with {@link #PERCENTILE_FRAMES}, {@link #COUNT_CALLS},
+     * {@link #MICROS} and {@link #ACCEPT_FLUSH}).
      * <p>
      * Called once when this class initialises, so a run that never opens a frame observes exactly the old
      * class-init resolution, and again at every {@link #beginFrame()} - once a frame, never per bracket, so the
@@ -309,6 +321,7 @@ public final class FramePassTimings {
         PERCENTILE_FRAMES = Math.max(64, HarnessConfig.integer("tickPercentileFrames", 4096));
         COUNT_CALLS = HarnessConfig.bool("passCounts", false);
         MICROS = HarnessConfig.bool("passSplitMicros", false);
+        ACCEPT_FLUSH = HarnessConfig.bool("acceptFlush", false);
     }
 
     static {
@@ -804,6 +817,112 @@ public final class FramePassTimings {
         if (written < 200 || written - lastReportedFrames < 200) return;
         lastReportedFrames = written;
         System.out.println("[Celtium] CELTIUM_FRAME_PASS_SPLIT " + summary());
+        if (ACCEPT_FLUSH) {
+            System.out.println("[Celtium] CELTIUM_ACCEPT_FLUSH " + acceptFlushSummary());
+            sizeFlushTripsWindow = 0L;
+            sizeFlushTripsByRetainedWindow = 0L;
+            sizeFlushTripPendingSumWindow = 0L;
+            Arrays.fill(windowsByTriggerWindow, 0L);
+        }
+    }
+
+    /**
+     * The flight-c4 accept-flush census (flight-c3-desk section 4): the harness's {@code acceptFlush=true}.
+     * <p>
+     * The desk's elimination put cloudAccept's unexplained ~1.45 ms in exactly one code home - the
+     * size-driven window flush an acceptance trips inside itself once the pending index count crosses
+     * the window bound - but the trip count and the flush's price inside the acceptance were unmeasured,
+     * and a reduction built on an unmeasured dominant term is the order flight-c2 section 4 warned
+     * against. This census is the measurement, in three parts: the {@code acceptFlushRetained} bracket
+     * (the flush's time, attributed to the retained acceptance that tripped it), the size-trip counter
+     * below (how often the bound is crossed, by a retained acceptance or not, and how full the counter
+     * stood when it crossed), and the window trigger counts (what opens the frame's windows at all, so
+     * a later change can show the size share of the window population directly). All three are
+     * report-only: no name here joins a subtraction set, and with the switch off the note methods are
+     * one field read each on their call sites.
+     */
+    private static volatile boolean ACCEPT_FLUSH;
+
+    /** {@return whether the accept-flush census is on} (the harness's {@code acceptFlush}). */
+    public static boolean acceptFlushEnabled() {
+        return ACCEPT_FLUSH;
+    }
+
+    /** A window opened by the accept path's size bound: the acceptance's pending indices crossed it. */
+    public static final int WINDOW_TRIGGER_SIZE = 0;
+    /**
+     * A window opened by an ordering-only flush: a refusal handoff, a clear order, or a copy / chain /
+     * model-replay ordering call - entrances that flush to preserve order before an operation that is
+     * not itself a draw.
+     */
+    public static final int WINDOW_TRIGGER_ORDER = 1;
+    /** A window opened at the frame's end: the frame-boundary flush or the present path's drain. */
+    public static final int WINDOW_TRIGGER_FRAME_END = 2;
+    /**
+     * A window opened by the ordering flush at a GL draw or bind boundary - the entrances
+     * {@code flushPendingBeforeGlDraw} is named for, and the reading an unstamped entrance gets.
+     */
+    public static final int WINDOW_TRIGGER_GL_DRAW = 3;
+
+    private static final String[] WINDOW_TRIGGER_NAMES = {"size", "order", "frameEnd", "glDraw"};
+
+    // The window counters cover the frames since the previous report print, matching the split line
+    // they ride beside; the totals beside them cover the whole run, so a reader of any single print
+    // can tell a window's local shape from the run's.
+    private static long sizeFlushTripsWindow;
+    private static long sizeFlushTripsByRetainedWindow;
+    private static long sizeFlushTripPendingSumWindow;
+    private static final long[] windowsByTriggerWindow = new long[WINDOW_TRIGGER_NAMES.length];
+    private static long sizeFlushTripsTotal;
+    private static long sizeFlushTripsByRetainedTotal;
+    private static final long[] windowsByTriggerTotal = new long[WINDOW_TRIGGER_NAMES.length];
+
+    /**
+     * Counts one size-driven flush trip at the accept path's firing point: whether the acceptance that
+     * crossed the bound is a retained one, and the pending index count it crossed at. Called on every
+     * trip, retained or not - the retained share of the trips is the number the design's premise needs,
+     * and a counter that only counted retained trips could not give it.
+     */
+    public static void noteSizeFlushTrip(boolean retained, int pendingIndices) {
+        if (!ACCEPT_FLUSH) return;
+        sizeFlushTripsWindow++;
+        sizeFlushTripsTotal++;
+        if (retained) {
+            sizeFlushTripsByRetainedWindow++;
+            sizeFlushTripsByRetainedTotal++;
+        }
+        sizeFlushTripPendingSumWindow += pendingIndices;
+    }
+
+    /** Counts one opened window under the trigger that opened it; see the {@code WINDOW_TRIGGER_*} kinds. */
+    public static void noteWindowTrigger(int trigger) {
+        if (!ACCEPT_FLUSH) return;
+        if (trigger < 0 || trigger >= WINDOW_TRIGGER_NAMES.length) return;
+        windowsByTriggerWindow[trigger]++;
+        windowsByTriggerTotal[trigger]++;
+    }
+
+    /** {@return the accept-flush census line for the report print}: window counts, then run totals. */
+    private static String acceptFlushSummary() {
+        StringBuilder text = new StringBuilder("window[sizeTrips=").append(sizeFlushTripsWindow)
+                .append(" sizeTripsByRetained=").append(sizeFlushTripsByRetainedWindow)
+                .append(" meanPendingAtTrip=")
+                .append(sizeFlushTripsWindow == 0L ? 0L : sizeFlushTripPendingSumWindow / sizeFlushTripsWindow)
+                .append(" windows=");
+        appendTriggerCounts(text, windowsByTriggerWindow);
+        text.append("] total[sizeTrips=").append(sizeFlushTripsTotal)
+                .append(" sizeTripsByRetained=").append(sizeFlushTripsByRetainedTotal)
+                .append(" windows=");
+        appendTriggerCounts(text, windowsByTriggerTotal);
+        text.append(']');
+        return text.toString();
+    }
+
+    private static void appendTriggerCounts(StringBuilder text, long[] counts) {
+        for (int i = 0; i < WINDOW_TRIGGER_NAMES.length; i++) {
+            if (i > 0) text.append(',');
+            text.append(WINDOW_TRIGGER_NAMES[i]).append('=').append(counts[i]);
+        }
     }
 
     /**
