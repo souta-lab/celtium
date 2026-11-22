@@ -165,7 +165,17 @@ public final class FramePassTimings {
             // RenderWorldLast dispatch, where mod handlers run inside the pass. All three join
             // FrameBudgetTimings' WORLD_PASS_MEMBERS, so what they measure leaves worldRest instead of
             // sitting inside it unnamed.
-            "wpCamera", "wpChunks", "wpRenderLast"};
+            "wpCamera", "wpChunks", "wpRenderLast",
+            // flight-census R3: the cloudsWeather bucket's inside, which was a leaf. All four are inclusive
+            // and report-only - none joins TOP_LEVEL, FrameBudgetTimings' OTHER_BUCKETS or its
+            // WORLD_PASS_MEMBERS, so nothing here is subtracted anywhere (the kpi-8 v1 double-count rule:
+            // containment is read offline by subtracting the inner names from the outer ones). cloudForge is
+            // Forge CloudRenderer.render whole (DynamicTexture update, texture matrix, state setup - the
+            // per-frame fixed part - around the replaced draws); cloudAccept is one cell-VBO drawArrays
+            // call, i.e. the retained acceptance (submitRetainedGeometry) of one of the two cell passes;
+            // cloudBuild is celtium$build whole (the burst-side mesh rebuild); cloudUpload is the build's
+            // VBO re-upload inside it, read as cloudBuild's inner number.
+            "cloudForge", "cloudAccept", "cloudBuild", "cloudUpload"};
 
     private static final int CAPACITY = 512;
 
