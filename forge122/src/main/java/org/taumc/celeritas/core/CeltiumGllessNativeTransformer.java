@@ -1202,16 +1202,18 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.RETURN);
             return;
         }
-        // The info-log natives: the stub reports shader and program success, so the log is empty. Left unrouted, the
+        // The info-log natives: the object is forwarded with the call, so a program whose recorded link failed
+        // answers with that failure as its log; anything else answers the empty log. Left unrouted, the
         // caller's buffer was never written and LWJGL built a String out of uninitialised memory.
         if (returnType.equals("V") && "(IIJJ)V".equals(descriptor)
                 && ("nglGetShaderInfoLog".equals(name) || "nglGetProgramInfoLog".equals(name))) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
             method.visitVarInsn(Opcodes.LLOAD, 2);
             method.visitVarInsn(Opcodes.LLOAD, 4);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "nglGetProgramInfoLog".equals(name) ? "glGetProgramInfoLog" : "glGetShaderInfoLog",
-                    "(IJJ)V", false);
+                    "(IIJJ)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
@@ -1330,23 +1332,28 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         }
         // Shader and program status queries: the caller reads the buffer (iv forms) or the return value (i forms), and
         // vanilla decides from them whether a shader is usable. Same family as glGetIntegerv, same reason. LWJGL 3's
-        // natives carry the object first - nglGetShaderiv(int shader, int pname, long params), (IIJ)V - so the answer
-        // is chosen by the second argument. Matching "(IJ)" here, as this did before, never matched a real native:
+        // natives carry the object first - nglGetShaderiv(int shader, int pname, long params), (IIJ)V - and the object
+        // is forwarded with the call: the answer is the stub's shared one, which reports a recorded link's truth for
+        // the program named. Matching "(IJ)" here, as this did before, never matched a real native:
         // the generic fallback wrote 0 for GL_COMPILE_STATUS and every vanilla post shader failed to load
         // ("Invalid shaders/program/sobel.vsh: Couldn't compile vertex program", leg split4-creeper-amd-1).
+        // That failure stays impossible: the shared answer's COMPILE_STATUS is true unconditionally, because
+        // compilation here happens at link, per program - only LINK_STATUS and VALIDATE_STATUS carry a record.
         if ("(IIJ)V".equals(descriptor) && (name.endsWith("nglGetShaderiv") || name.endsWith("nglGetProgramiv")
                 || name.endsWith("nglGetObjectParameterivARB"))) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
             method.visitVarInsn(Opcodes.LLOAD, 2);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
-                    "glGetShaderProgramiv", "(IJ)V", false);
+                    "glGetShaderProgramiv", "(IIJ)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
         if ("(II)I".equals(descriptor) && (name.endsWith("nglGetShaderi") || name.endsWith("nglGetProgrami"))) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
             method.visitVarInsn(Opcodes.ILOAD, 1);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
-                    "glGetShaderProgrami", "(I)I", false);
+                    "glGetShaderProgrami", "(II)I", false);
             method.visitInsn(Opcodes.IRETURN);
             return;
         }

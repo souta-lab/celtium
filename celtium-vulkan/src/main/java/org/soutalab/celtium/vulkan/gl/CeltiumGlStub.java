@@ -4672,6 +4672,15 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
+     * The cross-module entry to {@link #shaderProgramQueryAnswer(int, int)}: the GL-less hint answers
+     * the LWJGL3 native queries through it, so the recorded link's truth is stated in exactly one
+     * place and the transformer's route cannot drift from the dispatch's.
+     */
+    public static int celtium$shaderProgramQueryAnswer(int object, int pname) {
+        return shaderProgramQueryAnswer(object, pname);
+    }
+
+    /**
      * Writes the recorded link failure of a program as its info log, bounded by the caller's buffer size,
      * and {@return the characters written}, excluding the NUL. With no recorded failure the log is the empty
      * string, as before. The failure text is the registry's own reason string, which is ASCII; a non-ASCII

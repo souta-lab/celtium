@@ -235,6 +235,24 @@ class ModProgramRegistryTest {
     }
 
     @Test
+    void theCrossModuleFacadeAnswersTheSameTruth() {
+        // The LWJGL3 native route reaches the shared answer only through the public facade the hint
+        // calls; it must state the same truth as the package answer for an unrecorded id and for a
+        // recorded failure alike, or the route a caller actually takes would drift from the dispatch.
+        assertEquals(1, CeltiumGlStub.celtium$shaderProgramQueryAnswer(4242, 0x8B82));
+        assertEquals(0, CeltiumGlStub.celtium$shaderProgramQueryAnswer(4242, 0x8B84));
+        ModProgramRegistry.shaderSource(20, "void main() { gl_Position = vec4(0.0); }");
+        ModProgramRegistry.attach(7, 20);
+        ModProgramRegistry.link(7);
+        String log = ModProgramRegistry.linkInfoLog(7);
+        assertTrue(log != null && log.contains("no fragment stage"), String.valueOf(log));
+        assertEquals(0, CeltiumGlStub.celtium$shaderProgramQueryAnswer(7, 0x8B82));
+        assertEquals(0, CeltiumGlStub.celtium$shaderProgramQueryAnswer(7, 0x8B83));
+        assertEquals(log.length() + 1, CeltiumGlStub.celtium$shaderProgramQueryAnswer(7, 0x8B84));
+        assertEquals(1, CeltiumGlStub.celtium$shaderProgramQueryAnswer(7, 0x8B81));
+    }
+
+    @Test
     void aRecordedLinkAnswersConsistentlyWithItsCompiledState() {
         ModProgramRegistry.shaderSource(11, "varying vec2 uv;\n"
                 + "void main() { gl_FragColor = vec4(1.0); }");
