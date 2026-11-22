@@ -15597,6 +15597,18 @@ this.frameBufferOpen = false;
         }
         FrameBudgetTimings.setTerrainTimingCensus(this.timingSnapshotsRead,
                 this.timingReadback.droppedOverwritten(), this.timingSlotsUnavailable);
+        if (consumed) {
+            // The pass report belongs to the frame its timings describe. The boundary call site
+            // (celtium$finishFrameBuffer) keys on the live frame id and only runs while the frame
+            // buffer is still open, which the swap-point and present paths mostly leave already
+            // closed - so the line stayed silent even with the timings in hand (proof leg PTF1:
+            // the terrain column filed real values, CELTIUM_PASS_GPU never printed). Printing here,
+            // keyed on the snapshot's own frame id, pairs each report with the frame it measures.
+            // The marks timeline is not the snapshot's own string, so it is left to the boundary site.
+            GpuPassTimingReport.printIfDue(snapshot.frameId, this.passTimings, this.immediatePassGpuNanos,
+                    this.frameGpuNanos, this.frameHeadNanos, this.frameTailNanos, this.windowGpuCount,
+                    this.windowGpuMainNanos, this.windowGpuOffNanos, this.windowGpuMaxNanos, null);
+        }
     }
 
     /**
