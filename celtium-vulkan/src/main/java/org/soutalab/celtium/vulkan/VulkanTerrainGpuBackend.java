@@ -23371,7 +23371,18 @@ this.frameBufferOpen = false;
                     // Vulkan has no API for.
                     boolean forced = REBUILD_DESCRIPTORS_AT_DRAW
                             && prepared.pipeline instanceof VulkanImmediateTexturePipeline;
-                    if (currentTexture != null && (forced || currentTexture.key() != prepared.textureKey)) {
+                    // The key can stand still while the set dies: a run of misses on other textures evicts this
+                    // group's entry from the pipeline's descriptor cache, the set is retired, and the
+                    // completion-gated free returns it to its pool without counting this group's still
+                    // unrecorded use, so the flush would bind a freed set - the flush-boundary crash a
+                    // reporter's pack reproduces through Xaero's raw framebuffer registration. The cache map
+                    // is the authority on whether the prepared set is still the live one for its key, so an
+                    // evicted set takes the same rebuild path as a moved key.
+                    boolean evicted = !forced && currentTexture != null
+                            && currentTexture.key() == prepared.textureKey
+                            && prepared.pipeline instanceof VulkanImmediateTexturePipeline evictionPipeline
+                            && !evictionPipeline.celtium$setStillCached(prepared.descriptor, prepared.textureKey);
+                    if (currentTexture != null && (forced || evicted || currentTexture.key() != prepared.textureKey)) {
                         // The rebuild has to know which family the group belongs to. The textured family needs only its
                         // own texture; a lit ITEM group - the model path's batch - declares a second binding for the
                         // light map, so rebuilding it with the one-texture call would produce a set the pipeline cannot
@@ -23392,6 +23403,9 @@ this.frameBufferOpen = false;
                         if (rebuilt != 0L) {
                             prepared = new PreparedImmediate(prepared.pipeline, rebuilt, currentTexture.key());
                             this.immediateStatistics.noteStaleGroupDescriptorsRebuilt();
+                            if (evicted) {
+                                this.immediateStatistics.noteEvictedSetDescriptorsRebuilt();
+                            }
                         } else {
                             // No rebuild available (a lit item group needs its light map as well): refusing by name is
                             // still better than binding a descriptor whose view has been destroyed.

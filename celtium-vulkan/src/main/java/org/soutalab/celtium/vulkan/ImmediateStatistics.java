@@ -135,6 +135,8 @@ public final class ImmediateStatistics {
     private long snapshotServedCaptures;
     /** Groups whose sampled texture wrapper had been replaced between prepare and draw, and were re-prepared. */
     private long staleGroupDescriptorsRebuilt;
+    /** Groups whose descriptor set had been evicted from the texture cache with the key unchanged, and were re-resolved. */
+    private long evictedSetDescriptorsRebuilt;
     /** Groups refused because their texture wrapper had moved and no rebuild was available for their pipeline. */
     private long staleGroupRefusals;
     private long stateSkipsDepthBias;
@@ -1192,6 +1194,21 @@ public final class ImmediateStatistics {
     /** Records one staleGroupDescriptorsRebuilt. */
     void noteStaleGroupDescriptorsRebuilt() {
         this.staleGroupDescriptorsRebuilt++;
+    }
+
+    /** Records one evictedSetDescriptorsRebuilt. */
+    void noteEvictedSetDescriptorsRebuilt() {
+        this.evictedSetDescriptorsRebuilt++;
+    }
+
+    /** Sets evictedSetDescriptorsRebuilt. */
+    void setEvictedSetDescriptorsRebuilt(long value) {
+        this.evictedSetDescriptorsRebuilt = value;
+    }
+
+    /** {@return evictedSetDescriptorsRebuilt}. */
+    long evictedSetDescriptorsRebuilt() {
+        return this.evictedSetDescriptorsRebuilt;
     }
 
     /** Sets staleGroupDescriptorsRebuilt. */

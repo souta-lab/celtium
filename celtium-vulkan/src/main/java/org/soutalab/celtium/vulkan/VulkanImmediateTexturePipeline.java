@@ -974,6 +974,19 @@ public final class VulkanImmediateTexturePipeline {
         }
     }
 
+    /**
+     * {@return whether {@code set} is still the descriptor set the cache holds for {@code key}}.
+     * <p>
+     * A queued group's key can stand still while its set dies: a run of misses on other textures evicts the
+     * entry, the set is retired, and the completion-gated free hands it back to its pool once the submissions
+     * recorded so far complete - a use the group has not recorded yet, because it is still queued for a later
+     * flush, is not counted by that gate. The map is the authority: an evicted key is absent, and a key that
+     * missed again since names the replacement set, never the retired one.
+     */
+    public boolean celtium$setStillCached(long set, long key) {
+        return set != 0L && this.setsByTextureView.get(key) == set;
+    }
+
     // ---- the descriptor pool: one per 64 sets, grown on demand (audit B03) ----------------------------------------
 
     /** A pool smaller than this cannot hold the one set allocated at pipeline creation. */

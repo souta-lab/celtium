@@ -499,6 +499,7 @@ final class BackendDiagnostics {
                 // group is refused. Both are counted because "the picture lost a batch" and "the device was lost" are
                 // different outcomes and only the counter says which happened.
                 + " staleGroupDescriptorsRebuilt=" + b.immediateStatistics.staleGroupDescriptorsRebuilt()
+                + " evictedSetDescriptorsRebuilt=" + b.immediateStatistics.evictedSetDescriptorsRebuilt()
                 + " staleGroupRefusals=" + b.immediateStatistics.staleGroupRefusals()
                 + " stalledTeardownSkips=" + b.submissionStatistics.stalledTeardownSkips()
                 + " idleWaits=" + b.submissionStatistics.idleWaits() + " injectedIdleFailures=" + b.submissionStatistics.injectedIdleFailures()
