@@ -37,7 +37,7 @@ class PatchGateTest {
 
         assertEquals(snapshot, registered);
         assertEquals(snapshot, discovered, "the input list is not modified");
-        assertEquals(93, registered.size());
+        assertEquals(94, registered.size());
     }
 
     @Test
