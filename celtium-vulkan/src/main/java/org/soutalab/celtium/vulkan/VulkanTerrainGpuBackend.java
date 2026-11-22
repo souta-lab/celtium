@@ -4444,6 +4444,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return this.context.maxImageDimension2D();
     }
 
+    /**
+     * {@return the highest line width the device can draw}, which the stub's line-width range answers
+     * (GL_LINE_WIDTH_RANGE / GL_ALIASED_LINE_WIDTH_RANGE) report as the range's max. The range has to be
+     * the device's: the stub answered the width currently set, so GLSM read the range as [1, 1] even on
+     * devices whose range is wider and enabled its geometry-shader wide-line emulation - a stage the
+     * mod-program lowering does not carry - and the first wide FFP line draw failed its link and GLSM
+     * threw (demonica-gui-3, finding (c)).
+     */
+    public float celtium$lineWidthRangeMax() {
+        return celtium$maxLineWidth();
+    }
+
     /** {@return the alpha comparison the game last set}, as a GL enum. */
     public int celtium$alphaTestFuncGl() {
         return this.immediateState.alphaFunc();

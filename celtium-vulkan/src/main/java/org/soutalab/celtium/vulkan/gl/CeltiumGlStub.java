@@ -7976,7 +7976,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return;
             case 0x0B22: // GL_LINE_WIDTH_RANGE - two values, not the point size
                 putFloatOrDouble(out, 0, 1.0f, asDouble);
-                putFloatOrDouble(out, 1, 1.0f, asDouble);
+                putFloatOrDouble(out, 1, celtium$lineWidthRangeMax(), asDouble);
                 return;
             case 0x0D3A: { // GL_MAX_VIEWPORT_DIMS - 0x0D3A is the viewport limit, not the line-width range
                 int dimension = 16384;
@@ -7997,9 +7997,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 putFloatOrDouble(out, 1, 0.0f, asDouble);
                 putFloatOrDouble(out, 2, 0.0f, asDouble);
                 return;
-            case 0x846E: // GL_ALIASED_LINE_WIDTH_RANGE
+            case 0x846E: // GL_ALIASED_LINE_WIDTH_RANGE - the device's range, not the width currently set
                 putFloatOrDouble(out, 0, 1.0f, asDouble);
-                putFloatOrDouble(out, 1, this.lineWidth, asDouble);
+                putFloatOrDouble(out, 1, celtium$lineWidthRangeMax(), asDouble);
                 return;
             default:
                 putFloatOrDouble(out, 0, 0.0f, asDouble);
@@ -8129,6 +8129,18 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkanBackend() {
         Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         return backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan ? vulkan : null;
+    }
+
+    /**
+     * {@return the max of the line-width range the queries answer}: the device's limit, read through the
+     * backend, or 1.0 before a backend exists - the only width drawn by then, and the truthful range of a
+     * device without wide lines. Answering the width currently set instead (the previous shape of the
+     * 0x846E case) made the range read as [1, 1] on wider devices; see the backend's
+     * {@code celtium$lineWidthRangeMax} for what that cost.
+     */
+    private static float celtium$lineWidthRangeMax() {
+        org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
+        return vulkan != null ? vulkan.celtium$lineWidthRangeMax() : 1.0f;
     }
 
     /**
