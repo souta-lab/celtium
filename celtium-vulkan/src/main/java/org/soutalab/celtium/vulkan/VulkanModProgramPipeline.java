@@ -1068,13 +1068,39 @@ public final class VulkanModProgramPipeline {
         }
         int slot = this.uniformCursor;
         this.uniformCursor = (this.uniformCursor + 1) % this.uniformRingSlots;
-        ByteBuffer packed = packUniforms(program);
+        ByteBuffer packed;
+        if (this.uniformRingSlots == TERRAIN_UNIFORM_RING_SLOTS) {
+            // Item 678 pack site (a): the terrain pipeline's ring-slot staging pack, bracketed and
+            // counted as PackUniformCensus' packUniformPack / packWalks. The post chain's pipelines
+            // keep the unbracketed call - the instrument prices the terrain span only.
+            FramePassTimings.begin("packUniformPack");
+            try {
+                packed = packUniforms(program);
+            } finally {
+                FramePassTimings.end("packUniformPack");
+            }
+            PackUniformCensus.notePack(program, packed, this.samplerCount, this.imageCount);
+        } else {
+            packed = packUniforms(program);
+        }
         MemoryUtil.memCopy(MemoryUtil.memAddress0(packed),
                 this.uniformBuffer.mappedAddress() + (long) slot * this.uniformStride,
                 this.uniformBlockBytes);
         this.uniformSlotsByVersion.put(version, slot);
         this.uniformClaimsThisEpoch++;
+        if (this.uniformRingSlots == TERRAIN_UNIFORM_RING_SLOTS) {
+            PackUniformCensus.noteSlotClaim();
+        }
         return slot;
+    }
+
+    /**
+     * Files the backend's push-route pack (item 678 pack site (b)) with the census, with this
+     * pipeline's sampler / image counts - the fields the backend cannot read. The pack itself stays
+     * the caller's: it brackets the call, this only counts it.
+     */
+    public void celtium$notePushPack(ModProgramRegistry.Program program, ByteBuffer packed) {
+        PackUniformCensus.notePack(program, packed, this.samplerCount, this.imageCount);
     }
 
     /** Allocates or reuses a descriptor set binding explicit image views, samplers and layouts. */
@@ -1146,9 +1172,15 @@ public final class VulkanModProgramPipeline {
 
     private long allocateOrReuseDescriptorSet(long key, long[] views, long[] samplers, int[] layouts,
                                               long[] imageViews, int uniformSlot) {
+        // Item 678: the census counts this lookup's outcome for terrain pipelines only - the set
+        // population the pack record span pays for. Other pipelines keep the bare returns.
+        boolean censusTerrain = this.uniformRingSlots == TERRAIN_UNIFORM_RING_SLOTS;
         if (key == this.lastSamplerKey && this.lastSamplerSet != 0L
                 && celtium$setInputsMatch(this.lastSamplerInputs, views, samplers, layouts, imageViews,
                         this.samplerCount, this.imageCount, uniformSlot)) {
+            if (censusTerrain) {
+                PackUniformCensus.noteSetHit();
+            }
             return this.lastSamplerSet;
         }
         long cached = this.setsByKey.get(key);
@@ -1159,6 +1191,9 @@ public final class VulkanModProgramPipeline {
                 this.lastSamplerKey = key;
                 this.lastSamplerSet = cached;
                 this.lastSamplerInputs = snapshot;
+                if (censusTerrain) {
+                    PackUniformCensus.noteSetHit();
+                }
                 return cached;
             }
             // A hash collision: the cached set was written from different inputs and would sample another
@@ -1168,7 +1203,17 @@ public final class VulkanModProgramPipeline {
             this.descriptorSetKeyCollisions++;
         }
         if (cached == 0L && this.setsByKey.size() >= MAX_SETS * MAX_POOLS) {
+            if (censusTerrain) {
+                PackUniformCensus.noteSetMiss();
+            }
             return 0L;
+        }
+        // Item 678: everything below is the miss path - allocate, write, update, register - and the
+        // packUniformSetAlloc bracket covers exactly it, so the lookup's hash and snapshot-check cost
+        // stays in packRecordUniform's residue instead of inflating the allocate share.
+        if (censusTerrain) {
+            PackUniformCensus.noteSetMiss();
+            FramePassTimings.begin("packUniformSetAlloc");
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             long set = allocateDescriptorSet(stack);
@@ -1209,7 +1254,14 @@ public final class VulkanModProgramPipeline {
             this.lastSamplerKey = key;
             this.lastSamplerSet = set;
             this.lastSamplerInputs = snapshot;
+            if (censusTerrain) {
+                PackUniformCensus.noteSetAlloc();
+            }
             return set;
+        } finally {
+            if (censusTerrain) {
+                FramePassTimings.end("packUniformSetAlloc");
+            }
         }
     }
 

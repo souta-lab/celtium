@@ -17550,10 +17550,30 @@ this.frameBufferOpen = false;
                     ByteBuffer pushUniforms;
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("packRecordUniform");
                     try {
-                        iface.setRegionOffset(regionOffsetX, regionOffsetY, regionOffsetZ);
+                        // Item 678: the span's three priced seams. The offset write is bracketed alone
+                        // (packUniformOffset); the pack at this push-route site is pack site (b) for
+                        // packUniformPack (site (a) is the pipeline's ring-slot staging); the set claim
+                        // between them brackets and counts itself inside the pipeline. The census
+                        // counts the region here, where its stage is known.
+                        org.soutalab.celtium.vulkan.PackUniformCensus.noteRegion(shadowStage);
+                        org.soutalab.celtium.vulkan.FramePassTimings.begin("packUniformOffset");
+                        try {
+                            iface.setRegionOffset(regionOffsetX, regionOffsetY, regionOffsetZ);
+                        } finally {
+                            org.soutalab.celtium.vulkan.FramePassTimings.end("packUniformOffset");
+                        }
                         descSet = modPipeline.samplersAndImages(samplerTextures, imageTextures, modProgram, this.frameId);
-                        pushUniforms = modPipeline.uniformsViaBuffer() ? null
-                                : VulkanModProgramPipeline.packUniforms(modProgram);
+                        if (modPipeline.uniformsViaBuffer()) {
+                            pushUniforms = null;
+                        } else {
+                            org.soutalab.celtium.vulkan.FramePassTimings.begin("packUniformPack");
+                            try {
+                                pushUniforms = VulkanModProgramPipeline.packUniforms(modProgram);
+                            } finally {
+                                org.soutalab.celtium.vulkan.FramePassTimings.end("packUniformPack");
+                            }
+                            modPipeline.celtium$notePushPack(modProgram, pushUniforms);
+                        }
                     } finally {
                         org.soutalab.celtium.vulkan.FramePassTimings.end("packRecordUniform");
                     }
@@ -17561,6 +17581,7 @@ this.frameBufferOpen = false;
                         // Ring or pool exhausted: a draw without its own set would read the previous region's
                         // uniforms (wrong region offset), so the region is skipped and counted instead.
                         this.packTerrainSkippedRegions++;
+                        org.soutalab.celtium.vulkan.PackUniformCensus.noteSkippedRegion();
                         continue;
                     }
                     modPipeline.bindTerrainUniformsAndSet(this.commandBuffer, pushUniforms, descSet, setScratch);

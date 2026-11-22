@@ -50,6 +50,11 @@ public final class ModProgramRegistry {
             this.id = id;
         }
 
+        /** {@return the GL program id this record is registered under}. */
+        public int id() {
+            return this.id;
+        }
+
         public ModGlslTranslator.Result lowered() {
             return this.lowered;
         }

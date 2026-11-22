@@ -205,7 +205,19 @@ public final class FramePassTimings {
             // WORLD_PASS_MEMBERS on purpose: subtracting them would subtract their contents twice. The
             // census reads them off the per-frame profiles and nets the contained names out by hand, the
             // same offline reconstruction pack-tail-2 used for its terrainRecord split.
-            "wpPackPrepare", "wpPackBegin", "wpShadowPhase"};
+            "wpPackPrepare", "wpPackBegin", "wpShadowPhase",
+            // Item 678 (shadow-diff Layer B, first stage): the inside of packRecordUniform, split at its
+            // three priced seams so the census can name which of them owns the per-region uniform span
+            // before anyone optimises it. packUniformOffset is the backend's region-offset write;
+            // packUniformPack is one packUniforms execution at the two pack sites only (the terrain
+            // pipeline's ring-slot staging and the backend's push-route call - the post chain's packs
+            // deliberately stay out, so the name prices the terrain span and nothing else);
+            // packUniformSetAlloc is the descriptor-set miss path only (allocate + update + snapshot
+            // registration), so packRecordUniform minus these three reads as the hash / snapshot-check /
+            // slot-claim residue by containment. All three are inclusive and report-only: none joins
+            // TOP_LEVEL, FrameBudgetTimings' OTHER_BUCKETS or its WORLD_PASS_MEMBERS, so nothing here is
+            // subtracted anywhere.
+            "packUniformOffset", "packUniformPack", "packUniformSetAlloc"};
 
     private static final int CAPACITY = 512;
 
@@ -802,8 +814,12 @@ public final class FramePassTimings {
     /** Prints a one-line split every 200 frames, so a running session shows the shape without a report. */
     private static void maybeReport() {
         if (written < 200 || written - lastReportedFrames < 200) return;
+        long windowFrames = written - lastReportedFrames;
         lastReportedFrames = written;
         System.out.println("[Celtium] CELTIUM_FRAME_PASS_SPLIT " + summary());
+        // Item 678: the pack-uniform census prints on this same window cadence (its counters only
+        // accumulate while an instrument here is enabled, so the ride costs nothing when off).
+        PackUniformCensus.reportWindow(windowFrames);
     }
 
     /**
