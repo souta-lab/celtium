@@ -3,6 +3,7 @@ package org.soutalab.celtium.vulkan;
 import java.util.Map;
 
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
+import org.soutalab.celtium.harness.HarnessConfig;
 
 /**
  * The one place that decides how GPU pass timings are reported.
@@ -10,7 +11,11 @@ import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
  * <p>The timings were collected from the timestamp pool and never printed, so the question they answer - whether a frame
  * is GPU-bound or waiting on the present - could not be asked; the present counter alone reads as GPU-bound without
  * being proof. This class owns the answer's shape: microseconds per pass, every {@value #EVERY_FRAME} frames, silent
- * unless {@code -Dceltium.gpuPassTimings=true}.
+ * unless {@code -Dceltium.gpuPassTimings=true} or the harness file sets {@code gpuPassTimings=true}. The harness route
+ * exists because the Cleanroom relauncher does not forward {@code -D} flags to the game JVM (measured on
+ * koenigsegg-agera, 2026-11-22: the flag was present in the launcher JVM's command line and absent from the game
+ * JVM's), so a {@code -D}-only switch can never fire in a fixture leg - the same failure the pass split's harness
+ * route fixed for {@code FramePassTimings}.
  *
  * <p>It lives outside the renderer because reporting is not rendering. The backend calls one method and keeps no format
  * knowledge of its own, which is the extraction rule the project set for that class: it may lose responsibilities, not
@@ -21,7 +26,8 @@ public final class GpuPassTimingReport {
     /** How often the line is printed, in frames. */
     private static final int EVERY_FRAME = 200;
 
-    private static final boolean ENABLED = Boolean.getBoolean("celtium.gpuPassTimings");
+    private static final boolean ENABLED =
+            Boolean.getBoolean("celtium.gpuPassTimings") || HarnessConfig.bool("gpuPassTimings", false);
 
     /** {@return whether the GPU pass report is collecting}, which is also when its extra timestamps are written. */
     public static boolean enabled() {
