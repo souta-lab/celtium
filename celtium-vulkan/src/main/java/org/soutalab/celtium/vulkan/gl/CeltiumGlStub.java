@@ -1106,10 +1106,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                         || installed.blendEquationCalls.get() > 0L || installed.colorMaskCalls.get() > 0L)) {
                     celtium$printAtExit("CELTIUM_BLEND_CENSUS " + blendCensusSummary());
                 }
-                if (DRAWARRAY_CALLS.get() > 0L) {
+                if (GlDrawCensus.DRAWARRAY_CALLS.get() > 0L) {
                     celtium$printAtExit("CELTIUM_DRAWARRAYS " + drawArraySummary());
                 }
-                if (DrawElementCensus.CALLS.get() > 0L) {
+                if (GlDrawCensus.DrawElementCensus.CALLS.get() > 0L) {
                     celtium$printAtExit("CELTIUM_DRAWELEMENTS " + drawElementSummary());
                 }
                 if (installed != null && (installed.textureParameters.calls() > 0 || installed.textureParameters.queries() > 0)) {
@@ -5944,10 +5944,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                 }
                 return 0L;
             case SEM_BEGIN:
-                celtium$noteImmediateBegin((int) c[0]);
+                GlDrawCensus.celtium$noteImmediateBegin((int) c[0]);
                 return 0L;
             case SEM_END:
-                BEGIN_END_CALLS.incrementAndGet();
+                GlDrawCensus.BEGIN_END_CALLS.incrementAndGet();
                 return 0L;
             case SEM_COMPILED_ARRAYS:
                 replayCompiledArrays(c);
@@ -6330,206 +6330,30 @@ public final class CeltiumGlStub implements FunctionProvider {
                 + " top=[" + String.join(" ", noopCensus(15)) + "]";
     }
 
-    // ---- the glDrawArrays census ---------------------------------------------------------------------------------
+    // ---- the glDrawArrays / glDrawElements census lives in GlDrawCensus -------------------------------------
     //
-    // glDrawArrays left the no-op census because it is now drawn, and that is a claim the run has to be able to
-    // check: "no longer in the no-op list" is also what a draw that was refused everywhere would look like. The
-    // counters below separate the three outcomes - drawn, empty, refused with a named reason - and the accepted
-    // count is the one that says the geometry reached the frame. Read them together; none of them alone is evidence.
+    // Extracted (giant-split seam 5, QUEUE 653): the counters, refusal records, the immediate-begin
+    // notes and both summary bodies moved to GlDrawCensus, which owns them now. The two public doors
+    // below keep their names and exact output; drawArraySummary passes the client-array decode
+    // counters this class still owns (they are written by the decode paths, not by the census).
 
-    /** Arrivals at {@code glDrawArrays} since the process started. */
-    private static final java.util.concurrent.atomic.AtomicLong DRAWARRAY_CALLS =
-            new java.util.concurrent.atomic.AtomicLong();
-    /** Draws assembled from the mirrored array buffer and handed to the immediate path (accepted by it). */
-    private static final java.util.concurrent.atomic.AtomicLong DRAWARRAY_DRAWN =
-            new java.util.concurrent.atomic.AtomicLong();
-    /** Draws with no vertices at all: legitimate, and nothing is dropped because there was nothing to draw. */
-    private static final java.util.concurrent.atomic.AtomicLong DRAWARRAY_EMPTY =
-            new java.util.concurrent.atomic.AtomicLong();
-    /** Draws this class would not decode, or the backend would not take. Each one names its reason below. */
-    private static final java.util.concurrent.atomic.AtomicLong DRAWARRAY_REFUSED =
-            new java.util.concurrent.atomic.AtomicLong();
-    /** Vertices in the draws that were handed over, so "drawn" is a quantity and not only a call count. */
-    private static final java.util.concurrent.atomic.AtomicLong DRAWARRAY_VERTICES =
-            new java.util.concurrent.atomic.AtomicLong();
-    /** Refusals by reason, bounded by the number of distinct reasons this class can produce. */
-    private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> DRAWARRAY_REFUSALS =
-            new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
-    /** The first accepted draw, in one line: the evidence that the layout decoded as position-only really did. */
-    private static volatile String drawArrayFirst = "none";
-
-    /** glBegin/glEnd arrivals, and the distinct (mode, site) pairs already named, bounded to eight. */
-    private static final java.util.concurrent.atomic.AtomicLong BEGIN_END_CALLS =
-            new java.util.concurrent.atomic.AtomicLong();
-    private static final java.util.Set<String> IMMEDIATE_SITES =
-            java.util.concurrent.ConcurrentHashMap.newKeySet();
-
-    /**
-     * Names the site that opens a legacy immediate-mode run, once per (mode, site).
-     * <p>
-     * Bounded to eight lines and deduplicated, so a menu frame that opens thousands of runs adds eight lines rather
-     * than thousands. The point is attribution, not volume: the loading screen's three {@code glBegin(GL_QUADS)}
-     * sites in Forge's {@code SplashProgress} have to be visible as callers before the recording and submit steps
-     * can be judged - the no-op census's {@code glBegin=38115} says how many, not who.
-     */
-    private static void celtium$noteImmediateBegin(int mode) {
-        BEGIN_END_CALLS.incrementAndGet();
-        if (IMMEDIATE_SITES.size() >= 8) {
-            return;
-        }
-        String site = mode + "@" + celtium$callSite(6);
-        if (IMMEDIATE_SITES.add(site)) {
-            System.out.println("[Celtium] CELTIUM_IMMEDIATE_BEGIN mode=" + mode + "(" + immediateModeName(mode)
-                    + ") calls=" + BEGIN_END_CALLS.get() + " site=[" + celtium$callSite(6) + "]");
-        }
-    }
-
-    /** {@return the GL primitive mode's name}, so the census line is readable without the enum. */
-    private static String immediateModeName(int mode) {
-        switch (mode) {
-            case 0x0000: return "GL_POINTS";
-            case 0x0001: return "GL_LINES";
-            case 0x0003: return "GL_LINE_STRIP";
-            case 0x0004: return "GL_TRIANGLES";
-            case 0x0005: return "GL_TRIANGLE_STRIP";
-            case 0x0006: return "GL_TRIANGLE_FAN";
-            case 0x0007: return "GL_QUADS";
-            case 0x0008: return "GL_QUAD_STRIP";
-            case 0x0009: return "GL_POLYGON";
-            default: return "mode" + mode;
-        }
-    }
-
-    private static void celtium$noteDrawArrayRefusal(String reason) {
-        DRAWARRAY_REFUSED.incrementAndGet();
-        java.util.concurrent.atomic.AtomicLong counter = DRAWARRAY_REFUSALS.get(reason);
-        if (counter == null) {
-            counter = new java.util.concurrent.atomic.AtomicLong();
-            java.util.concurrent.atomic.AtomicLong existing = DRAWARRAY_REFUSALS.putIfAbsent(reason, counter);
-            if (existing != null) {
-                counter = existing;
-            }
-        }
-        counter.incrementAndGet();
-    }
-
-    /**
-     * Prints the census line at powers of two of the arrival count, in addition to the line at exit.
-     * <p>
-     * The exit line is the complete one and the one to read. This exists because a run can end without reaching it -
-     * the process is torn down, or the fixture exits - and "the counter has no value" was the shape of a previous
-     * mistake here. Powers of two bound the output to about twenty lines for any run length, and put the first line
-     * in the log after the very first draw rather than after the last.
-     */
-    private static void celtium$reportDrawArrays() {
-        long calls = DRAWARRAY_CALLS.get();
-        if (!org.soutalab.celtium.vulkan.VulkanDiagnostics.enabled()) {
-            // The powers-of-two lines are the repeating half of this instrument; the exit line below is not gated, so
-            // a support log still carries the census once. See VulkanDiagnostics for why the gate exists.
-            return;
-        }
-        if (calls > 0L && (calls & (calls - 1L)) == 0L) {
-            System.out.println("[Celtium] CELTIUM_DRAWARRAYS " + drawArraySummary());
-        }
-    }
-
-    /**
-     * {@return the {@code glDrawArrays} census as one line: arrivals, drawn, empty, refused and why}.
-     * <p>
-     * The refusals are listed with their reasons rather than counted, because the reasons are the point: a draw this
-     * class does not decode is a named gap, and a bare number would leave the next reader to guess which layout or
-     * which mode it was. Sorted, so two runs of the same scene compare line by line.
-     */
+    /** {@return the {@code glDrawArrays} census as one line: arrivals, drawn, empty, refused and why}. */
     public static String drawArraySummary() {
-        StringBuilder reasons = new StringBuilder();
-        for (java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong> entry
-                : new java.util.TreeMap<String, java.util.concurrent.atomic.AtomicLong>(DRAWARRAY_REFUSALS).entrySet()) {
-            if (reasons.length() > 0) {
-                reasons.append("; ");
-            }
-            reasons.append(entry.getKey()).append('=').append(entry.getValue().get());
-        }
-        return "glDrawArraysCalls=" + DRAWARRAY_CALLS.get()
-                + " drawn=" + DRAWARRAY_DRAWN.get()
-                + " vertices=" + DRAWARRAY_VERTICES.get()
-                + " empty=" + DRAWARRAY_EMPTY.get()
-                + " refused=" + DRAWARRAY_REFUSED.get()
-                + " pureBlueGroups=" + DRAWARRAY_PURE_BLUE.get()
-                + " clientMemoryDecoded=" + clientPointerAccepted
-                + " ownedBufferDecoded=" + ownedClientBufferDecoded
-                + " pointerOnlyDecoded=" + pointerOnlyDecoded
-                + " ownedBufferMismatch=" + ownedClientBufferMismatch
-                + " readableRanges=" + readableMappingRanges
-                + " mappingFailure=" + readableMappingFailure
-                + " first=[" + drawArrayFirst + "]"
-                + " refusedByReason=[" + (reasons.length() == 0 ? "none" : reasons.toString()) + "]";
-    }
-
-    // ---- the glDrawElements census --------------------------------------------------------------------------------
-    //
-    // The indexed decoder kept no census at all while the unindexed one did, and that asymmetry is how a whole
-    // route stayed invisible: Demonica's GLSM streaming renderer draws every GUI batch it reroutes through here,
-    // its layouts were refused for want of the VAO half of the layout decision, and no counter anywhere moved.
-    // The counters below separate arrivals, draws handed to the backend, and refusals with their reasons - read
-    // them together, like the glDrawArrays ones; none of them alone is evidence.
-
-    /**
-     * Holds the indexed-draw census state, in its own class initializer for the same reason as
-     * {@link NoopDrawingNames}: this class's own {@code <clinit>} is at HotSpot's HugeMethodLimit.
-     */
-    private static final class DrawElementCensus {
-        /** Arrivals at the indexed decoder since the process started. */
-        static final java.util.concurrent.atomic.AtomicLong CALLS = new java.util.concurrent.atomic.AtomicLong();
-        /** Draws assembled and handed to the immediate path. */
-        static final java.util.concurrent.atomic.AtomicLong DRAWN = new java.util.concurrent.atomic.AtomicLong();
-        /** Draws this decoder would not serve; each one names its reason below. */
-        static final java.util.concurrent.atomic.AtomicLong REFUSED = new java.util.concurrent.atomic.AtomicLong();
-        /** Refusals by reason, bounded by the number of distinct reasons this decoder can produce. */
-        static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> REFUSALS =
-                new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
-    }
-
-    private static void celtium$noteDrawElementRefusal(String reason) {
-        DrawElementCensus.REFUSED.incrementAndGet();
-        java.util.concurrent.atomic.AtomicLong counter = DrawElementCensus.REFUSALS.get(reason);
-        if (counter == null) {
-            counter = new java.util.concurrent.atomic.AtomicLong();
-            java.util.concurrent.atomic.AtomicLong existing = DrawElementCensus.REFUSALS.putIfAbsent(reason, counter);
-            if (existing != null) {
-                counter = existing;
-            }
-        }
-        counter.incrementAndGet();
-    }
-
-    /** Prints the indexed census line at powers of two of the arrival count, like the unindexed one. */
-    private static void celtium$reportDrawElements() {
-        long calls = DrawElementCensus.CALLS.get();
-        if (!org.soutalab.celtium.vulkan.VulkanDiagnostics.enabled()) {
-            // The powers-of-two lines are the repeating half of this instrument; the exit line is not gated.
-            return;
-        }
-        if (calls > 0L && (calls & (calls - 1L)) == 0L) {
-            System.out.println("[Celtium] CELTIUM_DRAWELEMENTS " + drawElementSummary());
-        }
+        return GlDrawCensus.drawArraySummary(clientPointerAccepted, ownedClientBufferDecoded,
+                pointerOnlyDecoded, ownedClientBufferMismatch, readableMappingRanges, readableMappingFailure);
     }
 
     /** {@return the indexed census as one line: arrivals, drawn, refused and why}. */
     public static String drawElementSummary() {
-        StringBuilder reasons = new StringBuilder();
-        for (java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong> entry
-                : new java.util.TreeMap<String, java.util.concurrent.atomic.AtomicLong>(
-                        DrawElementCensus.REFUSALS).entrySet()) {
-            if (reasons.length() > 0) {
-                reasons.append("; ");
-            }
-            reasons.append(entry.getKey()).append('=').append(entry.getValue().get());
-        }
-        return "glDrawElementsCalls=" + DrawElementCensus.CALLS.get()
-                + " drawn=" + DrawElementCensus.DRAWN.get()
-                + " refused=" + DrawElementCensus.REFUSED.get()
-                + " refusedByReason=[" + (reasons.length() == 0 ? "none" : reasons.toString()) + "]";
+        return GlDrawCensus.drawElementSummary();
     }
+
+    /** Prints the glDrawArrays census line at powers of two, through the census that owns the counters. */
+    private static void celtium$reportDrawArrays() {
+        GlDrawCensus.celtium$reportDrawArrays(clientPointerAccepted, ownedClientBufferDecoded,
+                pointerOnlyDecoded, ownedClientBufferMismatch, readableMappingRanges, readableMappingFailure);
+    }
+
 
     private static void celtium$noteMirrorMiss(String name) {
         Integer id = IDS.get(name);
@@ -9989,14 +9813,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (count <= 0 || count > (1 << 20) || (mode != 4 && mode != 5 && mode != 7)) {
             return;
         }
-        DrawElementCensus.CALLS.incrementAndGet();
+        GlDrawCensus.DrawElementCensus.CALLS.incrementAndGet();
         int stride = this.vertexPointerStride;
         if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT
                 || (stride != 12 && stride != 16 && stride != 20 && stride != 24 && stride != 32)) {
-            celtium$noteDrawElementRefusal("vertex pointer size=" + this.vertexPointerSize + " type=0x"
+            GlDrawCensus.celtium$noteDrawElementRefusal("vertex pointer size=" + this.vertexPointerSize + " type=0x"
                     + Integer.toHexString(this.vertexPointerType) + " stride=" + stride
                     + " is not a float3 layout this decode serves");
-            celtium$reportDrawElements();
+            GlDrawCensus.celtium$reportDrawElements();
             return;
         }
         NativeGeometryBuffer bound = NativeGeometryBuffer.bound();
@@ -10025,7 +9849,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         boolean clientVertices = boundName == 0;
         if (!clientVertices && vertices == null) {
-            celtium$noteDrawElementRefusal("the bound array buffer " + boundName + " has no mirrored storage");
+            GlDrawCensus.celtium$noteDrawElementRefusal("the bound array buffer " + boundName + " has no mirrored storage");
             return;
         }
         long vertexBase;
@@ -10034,7 +9858,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             // No array buffer bound: the pointer glVertexPointer was given is a client address, the legacy spelling.
             vertexBase = this.vertexPointerOffset;
             if (vertexBase == 0L) {
-                celtium$noteDrawElementRefusal(
+                GlDrawCensus.celtium$noteDrawElementRefusal(
                         "the client vertex pointer is null, so there is no vertex array to read");
                 return;
             }
@@ -10044,7 +9868,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     : this.logicalSizeOf(boundName, vertices.capacity());
             long offset = this.vertexPointerOffset;
             if (offset < 0L || offset > logicalVertexSize) {
-                celtium$noteDrawElementRefusal("the vertex pointer offset " + offset + " is outside the "
+                GlDrawCensus.celtium$noteDrawElementRefusal("the vertex pointer offset " + offset + " is outside the "
                         + logicalVertexSize + "-byte buffer");
                 return;
             }
@@ -10067,8 +9891,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         if (layoutRefusal[0] != null) {
-            celtium$noteDrawElementRefusal(layoutRefusal[0]);
-            celtium$reportDrawElements();
+            GlDrawCensus.celtium$noteDrawElementRefusal(layoutRefusal[0]);
+            GlDrawCensus.celtium$reportDrawElements();
             return;
         }
         int elementName = boundBuffer(0x8893); // GL_ELEMENT_ARRAY_BUFFER
@@ -10082,14 +9906,14 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return;
             }
             if (elementView == null) {
-                celtium$noteDrawElementRefusal(
+                GlDrawCensus.celtium$noteDrawElementRefusal(
                         "the bound element buffer " + elementName + " has no mirrored storage");
                 return;
             }
         }
         int indexSize = type == 0x1401 ? 1 : type == 0x1403 ? 2 : type == 0x1405 ? 4 : 0;
         if (indexSize == 0 || indices < 0) {
-            celtium$noteDrawElementRefusal(
+            GlDrawCensus.celtium$noteDrawElementRefusal(
                     "index type 0x" + Integer.toHexString(type) + " is not a decodable index type");
             return;
         }
@@ -10098,20 +9922,20 @@ public final class CeltiumGlStub implements FunctionProvider {
             int elementLogicalSize = elements != null ? elementView.capacity()
                     : this.logicalSizeOf(elementName, elementView.capacity());
             if (mapRangeOffset(indices, indexBytes, elementLogicalSize) < 0L) {
-                celtium$noteDrawElementRefusal("the draw reads offset " + indices + " + " + indexBytes
+                GlDrawCensus.celtium$noteDrawElementRefusal("the draw reads offset " + indices + " + " + indexBytes
                         + " bytes of a " + elementLogicalSize + "-byte element buffer");
                 return;
             }
         } else if (!celtium$readableMapping(indices, indexBytes)) {
             // No element buffer bound: the GL meaning of the pointer is client memory, read only when the range is
             // mapped - the same guard the client vertex path uses.
-            celtium$noteDrawElementRefusal("the client index pointer 0x" + Long.toHexString(indices) + " + "
+            GlDrawCensus.celtium$noteDrawElementRefusal("the client index pointer 0x" + Long.toHexString(indices) + " + "
                     + indexBytes + " bytes is not inside a readable mapping of this process");
             return;
         }
         int vertexCount = clientVertices ? Integer.MAX_VALUE : vertexCapacity / stride;
         if (stride == 32 && formatId != 8 && formatId != 9) {
-            celtium$noteDrawElementRefusal("stride 32 decoded as format " + formatId
+            GlDrawCensus.celtium$noteDrawElementRefusal("stride 32 decoded as format " + formatId
                     + ", which the indexed repack does not carry");
             return;
         }
@@ -10136,7 +9960,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 }
                 long resolvedIndex = (type == 0x1405 ? Integer.toUnsignedLong(index) : index) + (long) baseVertex;
                 if (resolvedIndex < 0L || resolvedIndex >= vertexCount) {
-                    celtium$noteDrawElementRefusal(
+                    GlDrawCensus.celtium$noteDrawElementRefusal(
                             "an index names vertex " + resolvedIndex + " of " + vertexCount);
                     return;
                 }
@@ -10148,7 +9972,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
             if (clientVertices && maxIndex >= 0
                     && !celtium$readableMapping(vertexBase, (long) (maxIndex + 1) * stride)) {
-                celtium$noteDrawElementRefusal("the client vertex range 0x" + Long.toHexString(vertexBase)
+                GlDrawCensus.celtium$noteDrawElementRefusal("the client vertex range 0x" + Long.toHexString(vertexBase)
                         + " + " + (long) (maxIndex + 1) * stride
                         + " bytes is not inside a readable mapping of this process");
                 return;
@@ -10170,14 +9994,14 @@ public final class CeltiumGlStub implements FunctionProvider {
             if (backend != null) {
                 backend.submitImmediateBatch(null, submitStride, formatId,
                         org.lwjgl.system.MemoryUtil.memAddress(packed != null ? packed : expanded), count, mode);
-                DrawElementCensus.DRAWN.incrementAndGet();
-                celtium$reportDrawElements();
+                GlDrawCensus.DrawElementCensus.DRAWN.incrementAndGet();
+                GlDrawCensus.celtium$reportDrawElements();
             } else {
-                celtium$noteDrawElementRefusal("no terrain backend is current, so the batch has nowhere to go");
+                GlDrawCensus.celtium$noteDrawElementRefusal("no terrain backend is current, so the batch has nowhere to go");
             }
         } catch (RuntimeException | LinkageError error) {
             // A malformed batch draws nothing; a half-built one must not reach the backend either.
-            celtium$noteDrawElementRefusal("the decode threw " + error.getClass().getSimpleName());
+            GlDrawCensus.celtium$noteDrawElementRefusal("the decode threw " + error.getClass().getSimpleName());
         } finally {
             if (packed != null) {
                 org.lwjgl.system.MemoryUtil.memFree(packed);
@@ -10189,14 +10013,14 @@ public final class CeltiumGlStub implements FunctionProvider {
     private void drawArrays(int mode, int first, int count) { drawArrays(mode, first, count, false); }
 
     private void drawArrays(int mode, int first, int count, boolean compile) {
-        DRAWARRAY_CALLS.incrementAndGet();
+        GlDrawCensus.DRAWARRAY_CALLS.incrementAndGet();
         // The owned-buffer publication is consumed by every draw, matched or not: one publication belongs to the one
         // glDrawArrays that follows it, and a publication left behind would otherwise be read as the next draw's
         // ownership claim - which is the mistake this entry point exists to remove.
         long[] owned = celtium$consumeOwnedClientBuffer();
         if (count <= 0) {
             // GL draws nothing for an empty range, and so does this: counting it as a gap would be a lie.
-            DRAWARRAY_EMPTY.incrementAndGet();
+            GlDrawCensus.DRAWARRAY_EMPTY.incrementAndGet();
             celtium$reportDrawArrays();
             return;
         }
@@ -10253,7 +10077,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             reason = "draw mode " + mode + " is not handled (quads/triangles/fans/strips/polygons/lines only)";
         } else if (mode == 6 && count < 3) {
             // A fan with fewer than three vertices has no triangles to present.
-            DRAWARRAY_EMPTY.incrementAndGet();
+            GlDrawCensus.DRAWARRAY_EMPTY.incrementAndGet();
             celtium$reportDrawArrays();
             return;
         } else if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT) {
@@ -10338,7 +10162,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 long bytes = (long) count * decodedStride;
                 if (bytes > MAX_LIST_PAYLOAD_BYTES) {
                     this.listPayloadsUnsized++;
-                    DRAWARRAY_REFUSED.incrementAndGet();
+                    GlDrawCensus.DRAWARRAY_REFUSED.incrementAndGet();
                     return;
                 }
                 ByteBuffer snapshot = celtium$copyClientVerticesForDraw(address, count, pointerStride, formatId);
@@ -10422,8 +10246,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                     reason = "the backend threw: " + error;
                 }
                 if (taken) {
-                    DRAWARRAY_DRAWN.incrementAndGet();
-                    DRAWARRAY_VERTICES.addAndGet(count);
+                    GlDrawCensus.DRAWARRAY_DRAWN.incrementAndGet();
+                    GlDrawCensus.DRAWARRAY_VERTICES.addAndGet(count);
                     celtium$noteAcceptedColor(backend, buffer, count);
                     celtium$noteParticleTexCoords(formatId, address, count);
                     if (celtium$noteDrawArrayLayout(buffer) || DRAWARRAY_PROBE_LINES.getAndDecrement() > 0) {
@@ -10492,7 +10316,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                                 + celtium$mirroredMatrices(backend)
                                 + " texture2dEnabled=" + (this.enables[GL_TEXTURE_2D] != 0)
                                 + " site=[" + celtium$callSite(10) + "]");
-                        drawArrayFirst = "mode=" + mode + " first=" + first + " count=" + count + " stride="
+                        GlDrawCensus.drawArrayFirst = "mode=" + mode + " first=" + first + " count=" + count + " stride="
                                 + stride + " format=" + formatId + " buffer=" + buffer
                                 + " pointerOffset=" + offset + " address=0x" + Long.toHexString(address);
                     }
@@ -10507,7 +10331,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
         }
         celtium$noteDrawArrayRefusalContext(reason);
-        celtium$noteDrawArrayRefusal(reason);
+        GlDrawCensus.celtium$noteDrawArrayRefusal(reason);
         celtium$reportDrawArrays();
     }
 
@@ -11096,12 +10920,12 @@ public final class CeltiumGlStub implements FunctionProvider {
                     : backend.submitImmediateBatch(null, lit ? ITEM_STRIDE : (int) c[1], lit ? ITEM_FORMAT : (int) c[2],
                             geometry.address(), (int) c[3], (int) c[4]));
             if (taken) {
-                DRAWARRAY_DRAWN.incrementAndGet();
-                DRAWARRAY_VERTICES.addAndGet(c[3]);
-            } else celtium$noteDrawArrayRefusal("compiled client arrays: "
+                GlDrawCensus.DRAWARRAY_DRAWN.incrementAndGet();
+                GlDrawCensus.DRAWARRAY_VERTICES.addAndGet(c[3]);
+            } else GlDrawCensus.celtium$noteDrawArrayRefusal("compiled client arrays: "
                     + (backend == null ? "no backend" : backend.lastRefusal()));
         } catch (RuntimeException | LinkageError error) {
-            celtium$noteDrawArrayRefusal("compiled client arrays: " + error);
+            GlDrawCensus.celtium$noteDrawArrayRefusal("compiled client arrays: " + error);
         }
     }
 
@@ -11262,8 +11086,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * the accepted draws is what tells "the immediate path drew it in that colour" from "the immediate path displaced
      * something else that drew it". One number, and the first three sites when it is not zero.
      */
-    private static final java.util.concurrent.atomic.AtomicLong DRAWARRAY_PURE_BLUE =
-            new java.util.concurrent.atomic.AtomicLong();
+    // DRAWARRAY_PURE_BLUE itself is owned by GlDrawCensus now (giant-split seam 5, QUEUE 653).
     private static final java.util.concurrent.atomic.AtomicInteger DRAWARRAY_PURE_BLUE_LOGGED =
             new java.util.concurrent.atomic.AtomicInteger();
 
@@ -11327,7 +11150,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             if (!vulkan.celtium$mirroredColorRedGreenZero()) {
                 return;
             }
-            DRAWARRAY_PURE_BLUE.incrementAndGet();
+            GlDrawCensus.DRAWARRAY_PURE_BLUE.incrementAndGet();
             if (DRAWARRAY_PURE_BLUE_LOGGED.incrementAndGet() <= 3) {
                 float[] colour = vulkan.celtium$mirroredColor();
                 System.out.println("[Celtium] CELTIUM_DRAWARRAY_PUREBLUE buffer=" + buffer + " count=" + count
@@ -11477,7 +11300,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * callers with three different strides, and "the sky" and "a chunk list" are told apart by the site, not by the
      * shape of the call.
      */
-    private static String celtium$callSite(int limit) {
+    static String celtium$callSite(int limit) {
         StackTraceElement[] stack = new Throwable().getStackTrace();
         StringBuilder frames = new StringBuilder();
         int taken = 0;
