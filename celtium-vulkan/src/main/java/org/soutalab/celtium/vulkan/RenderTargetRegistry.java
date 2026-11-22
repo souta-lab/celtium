@@ -60,13 +60,44 @@ public final class RenderTargetRegistry {
         return (1L << 41) | (colorTexture & 0xFFFFFFFFL);
     }
 
+    /**
+     * Canonical identity for a raw GL framebuffer that attaches both a colour texture and a depth texture
+     * (such as Iris/Demonica G-buffer and shadow FBOs). Multiple GL FBOs attaching the same {@code (colorTexture,
+     * depthTexture)} pair (e.g. {@code gbuffers_skybasic}, {@code gbuffers_terrain}, {@code gbuffers_entities},
+     * {@code gbuffers_translucent}) target the same GL storage and share one Vulkan chain pair, while depth-free
+     * composite FBOs ({@code depthTexture == 0}) keep their per-FBO identity so they never share a depth attachment
+     * with G-buffer passes.
+     */
+    public static long rawColorDepthIdentity(int colorTexture, int depthTexture) {
+        return (1L << 42) | (((long) (colorTexture & 0xFFFFF)) << 20) | (depthTexture & 0xFFFFFL);
+    }
+
+    /** {@return whether {@code identity} was synthesized by {@link #rawColorDepthIdentity(int, int)}}. */
+    public static boolean isRawColorDepthIdentity(long identity) {
+        return (identity & (1L << 42)) != 0L;
+    }
+
     /** {@return the identity a raw framebuffer's draws go to}: its colour texture's under the switch, else its own. */
     public static long rawTargetIdentity(int framebuffer, int colorTexture) {
+        return rawTargetIdentity(framebuffer, colorTexture, 0);
+    }
+
+    /**
+     * {@return the identity a raw framebuffer's draws go to}, unifying depth-attached raw FBOs that share the same
+     * {@code (colorTexture, depthTexture)} pair into one canonical chain pair while keeping depth-free FBOs isolated
+     * per framebuffer name.
+     */
+    public static long rawTargetIdentity(int framebuffer, int colorTexture, int depthTexture) {
         if (framebuffer == 0) {
             return 0L;
         }
-        return RAW_TEXTURE_IDENTITY && colorTexture != 0 ? rawColorTextureIdentity(colorTexture)
-                : rawFramebufferIdentity(framebuffer);
+        if (RAW_TEXTURE_IDENTITY && colorTexture != 0) {
+            return rawColorTextureIdentity(colorTexture);
+        }
+        if (colorTexture != 0 && depthTexture != 0) {
+            return rawColorDepthIdentity(colorTexture, depthTexture);
+        }
+        return rawFramebufferIdentity(framebuffer);
     }
 
     /** The four real images a framebuffer identity can be drawn into. */

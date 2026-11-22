@@ -59,4 +59,35 @@ class PackTerrainColorPublishTest {
         assertFalse(VulkanTerrainGpuBackend.celtium$allowPreTransform(true, false, true));
         assertFalse(VulkanTerrainGpuBackend.celtium$allowPreTransform(false, false, false));
     }
+
+    @Test
+    void unifiesDepthAttachedRawFbosByColorAndDepthWhileKeepingDepthFreeCompositeIsolated() {
+        // gbuffers_entities (fbo 228), gbuffers_terrain (fbo 635), gbuffers_translucent (fbo 637)
+        // all attach (colortex0=128, depthtex0=5) and must share one canonical chain pair.
+        long entitiesId = RenderTargetRegistry.rawTargetIdentity(228, 128, 5);
+        long terrainId = RenderTargetRegistry.rawTargetIdentity(635, 128, 5);
+        long translucentId = RenderTargetRegistry.rawTargetIdentity(637, 128, 5);
+        assertEquals(entitiesId, terrainId);
+        assertEquals(terrainId, translucentId);
+        assertTrue(RenderTargetRegistry.isRawColorDepthIdentity(terrainId));
+
+        // Depth-free composite FBO (fbo 193) attaching colortex0=128 without depth stays per-FBO.
+        long compositeId = RenderTargetRegistry.rawTargetIdentity(193, 128, 0);
+        assertFalse(RenderTargetRegistry.isRawColorDepthIdentity(compositeId));
+        assertEquals(RenderTargetRegistry.rawFramebufferIdentity(193), compositeId);
+
+        // Shadow FBOs attaching (shadowcolor0=180, shadowtex0=178) share a distinct canonical pair.
+        long shadowId = RenderTargetRegistry.rawTargetIdentity(632, 180, 178);
+        assertTrue(RenderTargetRegistry.isRawColorDepthIdentity(shadowId));
+        assertFalse(shadowId == terrainId);
+    }
+
+    @Test
+    void countsLeadingContiguousColorAttachments() {
+        assertEquals(0, VulkanTerrainGpuBackend.celtium$leadingColorAttachmentCount(null));
+        assertEquals(0, VulkanTerrainGpuBackend.celtium$leadingColorAttachmentCount(new int[0]));
+        assertEquals(0, VulkanTerrainGpuBackend.celtium$leadingColorAttachmentCount(new int[] {0, 132}));
+        assertEquals(1, VulkanTerrainGpuBackend.celtium$leadingColorAttachmentCount(new int[] {128, 0, 134}));
+        assertEquals(3, VulkanTerrainGpuBackend.celtium$leadingColorAttachmentCount(new int[] {128, 132, 134, 0}));
+    }
 }

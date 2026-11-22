@@ -6595,13 +6595,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 return;
             }
         }
-        long identity = RenderTargetRegistry.rawTargetIdentity(framebuffer, color);
+        int depth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferDepthTexture(framebuffer);
+        long identity = RenderTargetRegistry.rawTargetIdentity(framebuffer, color, depth);
+        boolean sharedColorDepth = RenderTargetRegistry.isRawColorDepthIdentity(identity);
         if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
             // A raw framebuffer's registration is its creation-side record: item 414's window created two of them
             // (a mod's own FBO chain) with no breadcrumb code that could name the operation at all.
-            int crumbDepth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferDepthTexture(framebuffer);
             org.soutalab.celtium.vulkan.CrashBreadcrumbs.note3(
-                    org.soutalab.celtium.vulkan.CrashBreadcrumbs.RAW_FBO, identity, color, crumbDepth);
+                    org.soutalab.celtium.vulkan.CrashBreadcrumbs.RAW_FBO, identity, color, depth);
         }
         if (selectTarget) {
             bindFramebuffer(identity, false);
@@ -6615,7 +6616,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                         + " identity=0x" + Long.toHexString(identity) + " via=bind (identity latched current)");
             }
         }
-        int depth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferDepthTexture(framebuffer);
         int[] colorExtent = color != 0 ? textureSize(color) : null;
         int[] depthExtent = depth != 0 ? textureSize(depth) : null;
         if (color != 0 && colorExtent != null && colorExtent.length >= 2 && colorExtent[0] > 0 && colorExtent[1] > 0) {
@@ -6623,8 +6623,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         // Reported on every registration, not only when filled, as the hint's report did: a framebuffer that
         // detached an attachment clears the record it no longer has (a zero depth name clears the depth record).
-        bindFramebufferColorAttachments(identity,
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferColorAttachments(framebuffer));
+        // For a shared (color, depth) canonical G-buffer/shadow target, never shrink the extra colour slot tuple
+        // when a fewer-target FBO (e.g. gbuffers_skybasic or gbuffers_hand) binds the same (colortex0, depthtex0).
+        int[] rawColorAttachments = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferColorAttachments(framebuffer);
+        if (!sharedColorDepth
+                || celtium$leadingColorAttachmentCount(rawColorAttachments)
+                        >= this.publishedTextures.colorAttachmentCount(identity)) {
+            bindFramebufferColorAttachments(identity, rawColorAttachments);
+        }
         bindFramebufferDepthTexture(identity, depth);
         // The pair and the shared-depth borrow, done here rather than at the next window: a window only engages
         // them for an identity that is already current, and the shadow pass's draws happen in the frame between
@@ -6635,6 +6641,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         // rather than re-reading the request (rule R5).
         TargetFormatCensus.Resolution formatResolution = celtium$resolvePairFormat(identity, color, colorCount);
         TargetFormatClass pairClass = formatResolution.chosen();
+        GllessFrameTarget target = offTargetTarget();
+        if (sharedColorDepth && target != null && target.chainPairExists(identity)) {
+            pairClass = VulkanColorFormat.widest(target.chainPairFormatClass(identity), pairClass);
+            colorCount = Math.max(colorCount, target.chainPairColorCount(identity));
+        }
         long[] previous = this.rawRegisteredTargets.get(framebuffer);
         boolean tupleChanged = previous == null || previous.length != 8 || previous[0] != color
                 || previous[1] != depth
@@ -6643,7 +6654,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
                 || previous[4] != (depthExtent == null ? 0 : depthExtent[0])
                 || previous[5] != (depthExtent == null ? 0 : depthExtent[1])
                 || previous[7] != pairClass.ordinal();
-        GllessFrameTarget target = offTargetTarget();
         if (tupleChanged && target != null && color != 0 && colorExtent != null && colorExtent.length >= 2
                 && colorExtent[0] > 0 && colorExtent[1] > 0) {
             target.ensureChainPairColors(identity, colorCount, colorExtent[0], colorExtent[1], pairClass);
@@ -7262,7 +7272,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             }
             return recorded;
         }
-        long identity = RenderTargetRegistry.rawTargetIdentity(framebuffer, glTextureName);
+        int depth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferDepthTexture(framebuffer);
+        long identity = RenderTargetRegistry.rawTargetIdentity(framebuffer, glTextureName, depth);
         int width = 0;
         int height = 0;
         int[] size = textureSize(glTextureName);
@@ -7727,6 +7738,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
         }
         long image = offTarget.chainPairColorImageAt(identity, slot);
         long view = offTarget.chainPairColorViewAt(identity, slot);
+        if (image != 0L && view != 0L && this.commandBuffer != null && !this.commandState.inRenderPass()) {
+            // Registered (allocated) but possibly never written: the pair declares GENERAL, so an UNDEFINED slot
+            // sampled by a later pass (shadowcolor1) trips VUID-vkCmdDraw-None-09600.
+            offTarget.initializeExtraColorIfUndefined(identity, slot, this.commandBuffer);
+        }
         if ((image == 0L || view == 0L) && this.commandBuffer != null && !this.commandState.inRenderPass()) {
             int allocWidth = width > 0 ? width
                     : org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(glTextureName, 0, 0x1000);
@@ -14041,7 +14057,10 @@ this.frameBufferOpen = false;
                     // object hash with no GL request behind it) is where the forced class of QUEUE 404 rule
                     // R8 lands - before this, such a pair kept its initial default class and the forced arm
                     // of a leg could not be walked on the chains a fixture actually runs (QUEUE 395, 5.1).
-                    offTarget.ensureChainPairColors(chainIdentityValue, windowColorCount, pairWidth, pairHeight,
+                    int ensureColorCount = RenderTargetRegistry.isRawColorDepthIdentity(chainIdentityValue)
+                            ? Math.max(windowColorCount, offTarget.chainPairColorCount(chainIdentityValue))
+                            : windowColorCount;
+                    offTarget.ensureChainPairColors(chainIdentityValue, ensureColorCount, pairWidth, pairHeight,
                             celtium$pairClassForWindow(chainIdentityValue, offTarget));
                     // The depth half of the same window: when the bound framebuffer's record names a depth
                     // texture, the pair borrows the shared depth image for that texture, so every framebuffer
@@ -17186,6 +17205,18 @@ this.frameBufferOpen = false;
     /** {@return the chain-pair colour slot count to ensure without shrinking existing MRT slots}. */
     static int celtium$packTerrainPairColorCount(int targetColors, int existingPairColors) {
         return Math.max(Math.max(1, targetColors), existingPairColors);
+    }
+
+    /** {@return the leading contiguous run of non-zero GL colour attachment texture names}. */
+    static int celtium$leadingColorAttachmentCount(int[] attachments) {
+        if (attachments == null || attachments.length == 0 || attachments[0] == 0) {
+            return 0;
+        }
+        int count = 1;
+        while (count < attachments.length && attachments[count] != 0) {
+            count++;
+        }
+        return count;
     }
 
     private void celtium$reportPackTerrainRefused(TerrainRenderPass pass, int programId, String reason) {
