@@ -10,6 +10,7 @@ import org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveT
 import org.embeddedt.embeddium.impl.render.chunk.LocalSectionIndex;
 import org.embeddedt.embeddium.impl.render.chunk.data.SectionRenderDataStorage;
 import org.embeddedt.embeddium.impl.render.chunk.data.SectionRenderDataUnsafe;
+import org.embeddedt.embeddium.impl.render.chunk.data.YLevelShelves;
 import org.embeddedt.embeddium.impl.render.chunk.lists.ChunkRenderList;
 import org.embeddedt.embeddium.impl.render.chunk.region.RenderRegion;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
@@ -28,6 +29,9 @@ public final class BatchAssembler {
 
     private BatchAssembler() {
     }
+
+    /** ±Y level shelves (item 671): when on, Y buckets are emitted per facing so their spans can be trimmed. */
+    private static final boolean SHELVES = YLevelShelves.ENABLED;
 
     private static volatile MultiDrawBatchFactory batchFactory = DirectMultiDrawBatch::new;
 
@@ -74,10 +78,17 @@ public final class BatchAssembler {
             return batch;
         }
 
+        // With shelves on, a run containing a Y bucket can split into up to one command per facing, so the
+        // batch is sized for that worst case instead of the merged-run counts below.
+        int shelvedCapacity = sectionCount * ModelQuadFacing.COUNT;
+        int cameraY = camera.intY;
+        int regionMinBlockY = region.getChunkY() << 4;
+
         if (!useBlockFaceCulling) {
             // Every facing visible everywhere: one run (and command) covering the whole section.
-            var batch = createBatch(sectionCount);
-            fillSingleRun(batch, storage, sections, sectionCount, reverse, primitiveType, 0, ModelQuadFacing.COUNT - 1);
+            var batch = createBatch(SHELVES ? shelvedCapacity : sectionCount);
+            fillSingleRun(batch, storage, sections, sectionCount, reverse, primitiveType, 0, ModelQuadFacing.COUNT - 1,
+                    cameraY, regionMinBlockY);
             return batch;
         }
 
@@ -98,12 +109,13 @@ public final class BatchAssembler {
             return null;
         }
 
-        var batch = createBatch(sectionCount * runCount);
+        var batch = createBatch(SHELVES ? shelvedCapacity : sectionCount * runCount);
         if (runCount == 1) {
             fillSingleRun(batch, storage, sections, sectionCount, reverse, primitiveType,
-                    runFirst(runs, 0), runLast(runs, 0));
+                    runFirst(runs, 0), runLast(runs, 0), cameraY, regionMinBlockY);
         } else {
-            fillUniformRuns(batch, storage, sections, sectionCount, reverse, primitiveType, runs, runCount);
+            fillUniformRuns(batch, storage, sections, sectionCount, reverse, primitiveType, runs, runCount,
+                    cameraY, regionMinBlockY);
         }
         return batch;
     }
@@ -141,6 +153,17 @@ public final class BatchAssembler {
             intervalZ = cameraValidityInterval(camera.intZ, region.getChunkZ(), RenderRegion.REGION_LENGTH);
         } else {
             intervalX = intervalY = intervalZ = (Integer.MIN_VALUE & 0xFFFFFFFFL) | ((long) Integer.MAX_VALUE << 32);
+        }
+
+        if (SHELVES && !pass.isSorted()) {
+            // The shelf trim changes as the camera crosses level boundaries inside the region, on a finer
+            // grain than the face-culling interval above. Intersecting the two keeps a cached batch from
+            // outliving the trim it was assembled with (item 671, design note §3-3); without this a cached
+            // batch would keep drawing a stale trim until the coarser interval lapsed.
+            long shelfInterval = YLevelShelves.shelfValidityIntervalY(camera.intY, region.getChunkY() << 4);
+            int min = Math.max(intervalMin(intervalY), intervalMin(shelfInterval));
+            int max = Math.min(intervalMax(intervalY), intervalMax(shelfInterval));
+            intervalY = (min & 0xFFFFFFFFL) | ((long) max << 32);
         }
 
         return new CachedBatch(batch, tessellation,
@@ -349,7 +372,8 @@ public final class BatchAssembler {
                                       SectionRenderDataStorage storage,
                                       byte[] sections, int sectionCount, boolean reverse,
                                       ChunkPrimitiveType primitiveType,
-                                      int firstFacing, int lastFacing) {
+                                      int firstFacing, int lastFacing,
+                                      int cameraY, int regionMinBlockY) {
         final long pBase = storage.getRowBasePointer();
         final long stride = SectionRenderDataUnsafe.Strategy.COMPACT.getStride();
 
@@ -357,7 +381,14 @@ public final class BatchAssembler {
         final int step = reverse ? -1 : 1;
 
         for (int i = 0; i < sectionCount; i++, cursor += step) {
-            long pMeshData = pBase + ((sections[cursor] & 0xFF) * stride);
+            int sectionIndex = sections[cursor] & 0xFF;
+            long pMeshData = pBase + (sectionIndex * stride);
+
+            if (SHELVES) {
+                emitRunShelved(batch, pMeshData, firstFacing, lastFacing, primitiveType,
+                        batch.size(), 0, shelfLevel(cameraY, regionMinBlockY, sectionIndex));
+                continue;
+            }
 
             int start = SectionRenderDataUnsafe.Strategy.COMPACT.getVertexOffset(pMeshData, firstFacing);
             int end = SectionRenderDataUnsafe.Strategy.COMPACT.getRunVertexEnd(pMeshData, lastFacing, primitiveType);
@@ -373,7 +404,8 @@ public final class BatchAssembler {
                                         SectionRenderDataStorage storage,
                                         byte[] sections, int sectionCount, boolean reverse,
                                         ChunkPrimitiveType primitiveType,
-                                        long runs, int runCount) {
+                                        long runs, int runCount,
+                                        int cameraY, int regionMinBlockY) {
         final long pBase = storage.getRowBasePointer();
         final long stride = SectionRenderDataUnsafe.Strategy.COMPACT.getStride();
 
@@ -381,13 +413,24 @@ public final class BatchAssembler {
         final int step = reverse ? -1 : 1;
 
         for (int i = 0; i < sectionCount; i++, cursor += step) {
-            long pMeshData = pBase + ((sections[cursor] & 0xFF) * stride);
+            int sectionIndex = sections[cursor] & 0xFF;
+            long pMeshData = pBase + (sectionIndex * stride);
             int sectionStart = batch.size();
             int previousEnd = 0;
+
+            // The cull mask is uniform across the region, but the shelf trim is not: it depends on the
+            // section's own Y row, so the shelved path recomputes the level per section even here.
+            int level = SHELVES ? shelfLevel(cameraY, regionMinBlockY, sectionIndex) : 0;
 
             for (int run = 0; run < runCount; run++) {
                 int firstFacing = runFirst(runs, run);
                 int lastFacing = runLast(runs, run);
+
+                if (SHELVES) {
+                    previousEnd = emitRunShelved(batch, pMeshData, firstFacing, lastFacing, primitiveType,
+                            sectionStart, previousEnd, level);
+                    continue;
+                }
 
                 int start = SectionRenderDataUnsafe.Strategy.COMPACT.getVertexOffset(pMeshData, firstFacing);
                 int end = SectionRenderDataUnsafe.Strategy.COMPACT.getRunVertexEnd(pMeshData, lastFacing, primitiveType);
@@ -431,21 +474,65 @@ public final class BatchAssembler {
             int sectionStart = batch.size();
             int previousEnd = 0;
 
+            int level = SHELVES ? shelfLevel(cameraY, originY << 4, sectionIndex) : 0;
+
             // A do-while loop is chosen because UNASSIGNED is always marked as visible by getVisibleFaces, so the mask
             // is never zero and there is always an attempt to emit at least one run.
             do {
                 int firstFacing = Integer.numberOfTrailingZeros(mask);
                 int lastFacing = firstFacing + Integer.numberOfTrailingZeros(~(mask >>> firstFacing)) - 1;
 
-                int start = SectionRenderDataUnsafe.Strategy.COMPACT.getVertexOffset(pMeshData, firstFacing);
-                int end = SectionRenderDataUnsafe.Strategy.COMPACT.getRunVertexEnd(pMeshData, lastFacing, primitiveType);
+                if (SHELVES) {
+                    previousEnd = emitRunShelved(batch, pMeshData, firstFacing, lastFacing, primitiveType,
+                            sectionStart, previousEnd, level);
+                } else {
+                    int start = SectionRenderDataUnsafe.Strategy.COMPACT.getVertexOffset(pMeshData, firstFacing);
+                    int end = SectionRenderDataUnsafe.Strategy.COMPACT.getRunVertexEnd(pMeshData, lastFacing, primitiveType);
 
-                previousEnd = writeUnsorted(batch, start, end, primitiveType, sectionStart, previousEnd);
+                    previousEnd = writeUnsorted(batch, start, end, primitiveType, sectionStart, previousEnd);
+                }
 
                 // Runs are found in ascending order, so clear all bits below what we just consumed.
                 mask &= -1 << (lastFacing + 1);
             } while (mask != 0);
         }
+    }
+
+    /**
+     * {@return the camera's Y level relative to a section: the argument of the shelf trim formulas}
+     */
+    private static int shelfLevel(int cameraY, int regionMinBlockY, int sectionIndex) {
+        return cameraY - (regionMinBlockY + (LocalSectionIndex.unpackY(sectionIndex) << 4));
+    }
+
+    /**
+     * Emits one run facing by facing, trimming the Y buckets against the section's shelf tables. A merged run
+     * cannot be trimmed in place — trimming a bucket inside it would punch a hole in the run — so a Y bucket
+     * becomes its own command and the rest of the run is emitted around it (item 671, design note §3-1).
+     * {@link #writeUnsorted} still merges any neighbours the trim left contiguous, so a section whose camera
+     * level trims nothing assembles into the same commands as the unshelved path.
+     */
+    private static int emitRunShelved(MultiDrawBatch batch, long pMeshData, int firstFacing, int lastFacing,
+                                      ChunkPrimitiveType primitiveType, int sectionStart, int previousEnd, int level) {
+        var strategy = SectionRenderDataUnsafe.Strategy.COMPACT;
+
+        for (int facing = firstFacing; facing <= lastFacing; facing++) {
+            int start = strategy.getVertexOffset(pMeshData, facing);
+            int end = strategy.getRunVertexEnd(pMeshData, facing, primitiveType);
+
+            if (facing == MODEL_NEG_Y) {
+                start = YLevelShelves.negTrimmedStart(start,
+                        strategy.getNegShelfCumulative(pMeshData, YLevelShelves.below(level)));
+            } else if (facing == MODEL_POS_Y) {
+                end = YLevelShelves.posTrimmedEnd(start, end,
+                        strategy.getPosShelfCumulative(pMeshData, YLevelShelves.LEVELS),
+                        strategy.getPosShelfCumulative(pMeshData, YLevelShelves.above(level)));
+            }
+
+            previousEnd = writeUnsorted(batch, start, end, primitiveType, sectionStart, previousEnd);
+        }
+
+        return previousEnd;
     }
 
     /**

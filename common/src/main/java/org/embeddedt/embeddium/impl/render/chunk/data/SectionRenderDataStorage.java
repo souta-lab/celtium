@@ -79,6 +79,12 @@ public class SectionRenderDataStorage {
 
     public void setMeshes(int localSectionIndex,
                           MeshBufferSegment allocation, @Nullable MeshBufferSegment indexAllocation, Map<ModelQuadFacing, VertexRange> ranges) {
+        this.setMeshes(localSectionIndex, allocation, indexAllocation, ranges, null);
+    }
+
+    public void setMeshes(int localSectionIndex,
+                          MeshBufferSegment allocation, @Nullable MeshBufferSegment indexAllocation, Map<ModelQuadFacing, VertexRange> ranges,
+                          @Nullable Map<ModelQuadFacing, int[]> shelfCumulative) {
         if (this.allocations[localSectionIndex] != null) {
             this.allocations[localSectionIndex].delete();
             this.allocations[localSectionIndex] = null;
@@ -97,7 +103,7 @@ public class SectionRenderDataStorage {
         int vertexOffset = allocation.getOffset() * this.verticesPerArenaElement;
         int indexOffset = indexAllocation != null ? indexAllocation.getOffset() * 4 : 0;
 
-        this.storageStrategy.writeMeshesAndSliceMask(this.pMeshDataArray, localSectionIndex, vertexOffset, indexOffset, ranges, this.primitiveType);
+        this.storageStrategy.writeMeshesAndSliceMask(this.pMeshDataArray, localSectionIndex, vertexOffset, indexOffset, ranges, this.primitiveType, shelfCumulative);
 
         this.invalidateCachedBatches();
     }

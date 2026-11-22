@@ -1,5 +1,6 @@
 package org.embeddedt.embeddium.impl.render.chunk.vertex.builder;
 
+import org.embeddedt.embeddium.impl.render.chunk.data.YLevelShelves;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.material.Material;
 import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkVertexEncoder;
 import org.embeddedt.embeddium.impl.render.chunk.sorting.SortState;
@@ -7,6 +8,7 @@ import org.embeddedt.embeddium.impl.render.chunk.sorting.TranslucentQuadRecorder
 import org.jetbrains.annotations.Nullable;
 import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 
 public class ChunkMeshBufferBuilder {
     private final ChunkVertexEncoder encoder;
@@ -15,12 +17,27 @@ public class ChunkMeshBufferBuilder {
     private final int initialCapacity;
     private final TranslucentQuadRecorder analyzer;
 
+    /**
+     * Whether this buffer records the Y level of each pushed quad for the ±Y level shelves (item 671). Only the
+     * POS_Y / NEG_Y buffers of unsorted passes ever collect, and only with the shelves flag on; the recorded
+     * levels let {@code ChunkBuildBuffers} reorder the encoded quads without depending on a vertex format's
+     * position encoding.
+     */
+    private final boolean collectQuadLevels;
+    private int[] quadLevels;
+    private int quadLevelCount;
+
     private ByteBuffer buffer;
     private int count;
     private int capacity;
     private int sectionIndex;
 
     public ChunkMeshBufferBuilder(ChunkVertexEncoder encoder, int stride, int initialCapacity, boolean collectSortState) {
+        this(encoder, stride, initialCapacity, collectSortState, false);
+    }
+
+    public ChunkMeshBufferBuilder(ChunkVertexEncoder encoder, int stride, int initialCapacity, boolean collectSortState,
+                                  boolean collectQuadLevels) {
         this.encoder = encoder;
         this.stride = stride;
 
@@ -30,6 +47,7 @@ public class ChunkMeshBufferBuilder {
         this.initialCapacity = initialCapacity;
 
         this.analyzer = collectSortState ? new TranslucentQuadRecorder() : null;
+        this.collectQuadLevels = collectQuadLevels;
     }
 
     public void push(ChunkVertexEncoder.Vertex[] vertices, Material material) {
@@ -57,6 +75,29 @@ public class ChunkMeshBufferBuilder {
         }
 
         this.count += vertices.length;
+
+        if (this.collectQuadLevels) {
+            if (this.quadLevelCount == (this.quadLevels == null ? 0 : this.quadLevels.length)) {
+                this.quadLevels = this.quadLevels == null ? new int[256] : Arrays.copyOf(this.quadLevels, this.quadLevels.length * 2);
+            }
+            // One entry per push. A push that is not a quad cannot be shelf-sorted; recording an outside level
+            // for it keeps the entry count honest, and ChunkBuildBuffers refuses to sort a buffer whose pushes
+            // were not all quads (the level count then disagrees with the vertex count).
+            this.quadLevels[this.quadLevelCount++] = vertices.length == YLevelShelves.VERTICES_PER_QUAD
+                    ? YLevelShelves.levelOf(vertices[0].y)
+                    : Integer.MIN_VALUE;
+        }
+    }
+
+    /**
+     * {@return the per-quad Y levels recorded for this buffer, one per push in push order, or null if this buffer
+     * does not collect them}
+     */
+    public @Nullable int[] getQuadLevels() {
+        if (!this.collectQuadLevels) {
+            return null;
+        }
+        return this.quadLevels == null ? new int[0] : Arrays.copyOf(this.quadLevels, this.quadLevelCount);
     }
 
     private static final byte[] BILINEAR_LUT = new byte[1021];
@@ -115,6 +156,7 @@ public class ChunkMeshBufferBuilder {
 
     public void start(int sectionIndex) {
         this.count = 0;
+        this.quadLevelCount = 0;
         this.sectionIndex = sectionIndex;
         if(this.analyzer != null) {
             this.analyzer.clear();

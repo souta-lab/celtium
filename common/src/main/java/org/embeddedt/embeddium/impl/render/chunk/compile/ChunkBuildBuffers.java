@@ -10,11 +10,14 @@ import org.embeddedt.embeddium.impl.render.chunk.compile.buffers.BakedChunkModel
 import org.embeddedt.embeddium.impl.render.chunk.compile.buffers.ChunkModelBuilder;
 import org.embeddedt.embeddium.impl.render.chunk.data.BuiltRenderSectionData;
 import org.embeddedt.embeddium.impl.render.chunk.data.BuiltSectionMeshParts;
+import org.embeddedt.embeddium.impl.render.chunk.data.YLevelShelves;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.material.Material;
 import org.embeddedt.embeddium.impl.common.util.NativeBuffer;
 import org.embeddedt.embeddium.impl.render.chunk.sorting.SortState;
 import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkVertexEncoder;
+
+import static org.taumc.celeritas.lwjgl.LWJGLServiceProvider.LWJGL;
 
 import java.nio.ByteBuffer;
 import java.util.*;
@@ -85,9 +88,14 @@ public final class ChunkBuildBuffers {
         }
 
         List<ByteBuffer> vertexBuffers = new ArrayList<>();
+        List<ByteBuffer> permutedBuffers = new ArrayList<>();
         var vertexRanges = new EnumMap<ModelQuadFacing, VertexRange>(ModelQuadFacing.class);
+        Map<ModelQuadFacing, int[]> shelfCumulative = null;
 
         int vertexCount = 0;
+
+        var vertexType = renderPassConfiguration.getVertexTypeForPass(pass);
+        int vertexStride = vertexType.getVertexFormat().getStride();
 
         ModelQuadFacing[] facingsToUpload = pass.isSorted() ? ONLY_UNASSIGNED : ModelQuadFacing.VALUES;
         SortState sortState = pass.isSorted() ? builder.getVertexBuffer(ModelQuadFacing.UNASSIGNED).getSortState() : null;
@@ -99,7 +107,32 @@ public final class ChunkBuildBuffers {
                 continue;
             }
 
-            vertexBuffers.add(buffer.slice());
+            ByteBuffer uploadBuffer = buffer.slice();
+
+            // ±Y level shelves (item 671): reorder the Y buckets into shelf order and keep their cumulative
+            // tables for the section row. The levels were recorded at push time, so this does not depend on
+            // the vertex format. A bucket whose pushes were not all quads (level count disagreeing with the
+            // vertex count) is left unsorted with no table, which the assembler reads as "never trim".
+            if (!pass.isSorted() && YLevelShelves.ENABLED
+                    && (facing == ModelQuadFacing.POS_Y || facing == ModelQuadFacing.NEG_Y)) {
+                int[] levels = buffer.getQuadLevels();
+
+                if (levels != null && levels.length * YLevelShelves.VERTICES_PER_QUAD == buffer.count()) {
+                    int[] order = YLevelShelves.sortOrder(levels, facing == ModelQuadFacing.POS_Y);
+
+                    if (!isIdentity(order)) {
+                        uploadBuffer = permuteQuads(uploadBuffer, order, vertexStride);
+                        permutedBuffers.add(uploadBuffer);
+                    }
+
+                    if (shelfCumulative == null) {
+                        shelfCumulative = new EnumMap<>(ModelQuadFacing.class);
+                    }
+                    shelfCumulative.put(facing, YLevelShelves.cumulative(levels));
+                }
+            }
+
+            vertexBuffers.add(uploadBuffer);
             vertexRanges.put(facing, new VertexRange(vertexCount, buffer.count()));
 
             vertexCount += buffer.count();
@@ -109,7 +142,6 @@ public final class ChunkBuildBuffers {
             return null;
         }
 
-        var vertexType = renderPassConfiguration.getVertexTypeForPass(pass);
         var primitiveType = renderPassConfiguration.getPrimitiveTypeForPass(pass);
 
         var mergedBuffer = new NativeBuffer(vertexCount * vertexType.getVertexFormat().getStride());
@@ -117,6 +149,10 @@ public final class ChunkBuildBuffers {
 
         for (var buffer : vertexBuffers) {
             mergedBufferBuilder.put(buffer);
+        }
+
+        for (var permuted : permutedBuffers) {
+            LWJGL.memFree(permuted);
         }
 
         mergedBufferBuilder.flip();
@@ -135,7 +171,35 @@ public final class ChunkBuildBuffers {
         }
 
         // Uncompacted: the consumer needs the sorting level before it throws away the data behind it.
-        return new BuiltSectionMeshParts(mergedBuffer, mergedIndexBuffer, sortState, vertexRanges);
+        return new BuiltSectionMeshParts(mergedBuffer, mergedIndexBuffer, sortState, vertexRanges, shelfCumulative);
+    }
+
+    private static boolean isIdentity(int[] order) {
+        for (int i = 0; i < order.length; i++) {
+            if (order[i] != i) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Copies the quads of {@code source} into a new buffer in the order given by {@code order}
+     * ({@code order[i]} is the source quad placed at position {@code i}). The caller owns the returned
+     * buffer and must free it with {@code LWJGL.memFree} once its contents are consumed.
+     */
+    private static ByteBuffer permuteQuads(ByteBuffer source, int[] order, int vertexStride) {
+        int quadBytes = vertexStride * YLevelShelves.VERTICES_PER_QUAD;
+        ByteBuffer target = LWJGL.memAlloc(source.remaining());
+
+        long src = LWJGL.memAddress(source);
+        long dst = LWJGL.memAddress(target);
+
+        for (int i = 0; i < order.length; i++) {
+            LWJGL.memCopy(src + ((long) order[i] * quadBytes), dst + ((long) i * quadBytes), quadBytes);
+        }
+
+        return target;
     }
 
     public void destroy() {
