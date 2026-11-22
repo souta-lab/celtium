@@ -282,9 +282,11 @@ public final class FrameBudgetTimings {
      * means, because means add and percentiles of different brackets describe frames that never happened. The
      * buckets are chosen disjoint by construction (see {@link #otherSplit}); what no bucket covers - the swap
      * point's flush outside the pass frame, the loop glue, the two instruments' phase offset - is printed as
-     * {@code unexplained} rather than silently absorbed, and it is biased low: {@code batch} is inside the
-     * entities and gui brackets as well as in the budget's own accounted sum, so those two buckets are
-     * subtracted once too often by up to the whole of {@code batch}.
+     * {@code unexplained} rather than silently absorbed, and it is biased low: {@code batch} wraps work inside
+     * several region buckets as well as sitting in the budget's own accounted sum, so those buckets carry up
+     * to the whole of {@code batch} a second time. The one containment that is exact - {@code winRecord} is
+     * the {@code record} span's own interval, inside {@code flush} - is netted in {@code flushNet} instead of
+     * left to the bias.
      */
     private static final boolean OTHER_SPLIT = HarnessConfig.bool("otherSplit", false);
 
@@ -351,9 +353,9 @@ public final class FrameBudgetTimings {
         return resolved;
     }
 
-    /** Brackets inside {@code worldPass} that {@link #OTHER_BUCKETS} already names; the rest is worldRest. */
+    /** Brackets inside {@code worldPass} that the split already names; the rest is worldRest. */
     private static final String[] WORLD_PASS_MEMBERS = {
-            "terrain", "setupTerrain", "entities", "particles", "particlesLit", "sky"};
+            "terrain", "setupTerrain", "entities", "particles", "particlesLit", "sky", "flush"};
 
     private static final boolean PRESENT_INTERVAL = ENABLED
             || HarnessConfig.bool("presentInterval", false)
@@ -523,7 +525,7 @@ public final class FrameBudgetTimings {
 
     /**
      * {@return the decomposition of one {@code other} mean}, in this order: outside, terrain, setup, entities,
-     * particles, sky, cloudsWeather, guiHand, worldRest, passResidual, unexplained.
+     * particles, sky, cloudsWeather, guiHand, flushNet, worldRest, passResidual, unexplained.
      * <p>
      * Pure arithmetic over the two instruments' window means, kept static and separate from the printing for
      * the same reason {@link #split} is: the unit test asserts the production arithmetic, not a copy of it.
@@ -535,16 +537,26 @@ public final class FrameBudgetTimings {
      * a bracket's mean sits at its name-table index + 1). The buckets are disjoint by construction: {@code
      * terrain} contains its own sub-brackets (record, submit, prepare), {@code setupTerrain} contains the
      * {@code st*} family, {@code entities} the {@code ent*} family, and {@code worldRest} is what {@code
-     * worldPass} holds beyond those four and {@code sky} - the snapshot's remainder after the boundary, the
-     * render glue, and the inside brackets no bucket names ({@code dyn*}, {@code anim*}, {@code chunkUpload},
-     * the window machinery when it runs inside the world pass). {@code worldRest} is floored at zero: nested
-     * brackets can overlap at the edges, and a negative remainder would be an artefact of the overlap, not a
-     * measurement. {@code unexplained} is not floored - a small negative there is the {@code batch} double
-     * count (see {@link #OTHER_SPLIT}) showing itself, and printing it is how the reader knows the size of
-     * that bias.
+     * worldPass} holds beyond those, {@code sky} and {@code flush} - the snapshot's remainder after the
+     * boundary, the render glue, and the inside brackets no bucket names ({@code dyn*}, {@code anim*},
+     * {@code chunkUpload}).
+     * <p>
+     * {@code flushNet} is the one bucket that crosses the two instruments, and it exists because of a
+     * containment chain the first leg of the census measured: the budget's {@code batch} span wraps the batch
+     * accept, the accept triggers {@code flush} (the window flush) from inside itself, and the flush's window
+     * pass contains {@code winRecord}, whose interval is exactly what the budget's {@code record} span times.
+     * The flush therefore has to be named as a bucket of its own - left inside {@code worldRest} it inflates
+     * the remainder by work the budget already subtracted - and it is printed net of {@code record}:
+     * {@code max(0, flush - record)}. The part of {@code batch} that wraps a flush is not netted anywhere:
+     * it stays inside whichever region bucket the batch was accepted from (sky, clouds, entities, gui), which
+     * biases {@code unexplained} low by at most the {@code batch} mean; the memo fields print both spans so
+     * the reader can bound it. {@code worldRest} is floored at zero: nested brackets can overlap at the
+     * edges, and a negative remainder would be an artefact of the overlap, not a measurement. {@code
+     * unexplained} is not floored - a small negative there is the remaining double count showing itself, and
+     * printing it is how the reader knows the size of that bias.
      */
     static long[] otherSplit(long otherMean, long outsideMean, long[] bracketMeans, long passResidualMean,
-            int[][] bucketIndex, int worldPassIndex, int[] worldPassMembers) {
+            int[][] bucketIndex, int worldPassIndex, int[] worldPassMembers, int flushIndex, long recordMean) {
         long[] buckets = new long[bucketIndex.length];
         for (int b = 0; b < bucketIndex.length; b++) {
             long sum = 0L;
@@ -554,6 +566,10 @@ public final class FrameBudgetTimings {
                 }
             }
             buckets[b] = sum;
+        }
+        long flushNet = 0L;
+        if (flushIndex >= 0 && flushIndex + 1 < bracketMeans.length) {
+            flushNet = Math.max(0L, bracketMeans[flushIndex + 1] - recordMean);
         }
         long worldRest = 0L;
         if (worldPassIndex >= 0 && worldPassIndex + 1 < bracketMeans.length) {
@@ -565,12 +581,12 @@ public final class FrameBudgetTimings {
             }
             worldRest = Math.max(0L, rest);
         }
-        long explained = outsideMean + passResidualMean + worldRest;
+        long explained = outsideMean + passResidualMean + worldRest + flushNet;
         for (long bucket : buckets) {
             explained += bucket;
         }
         return new long[] {outsideMean, buckets[0], buckets[1], buckets[2], buckets[3], buckets[4], buckets[5],
-                buckets[6], worldRest, passResidualMean, otherMean - explained};
+                buckets[6], flushNet, worldRest, passResidualMean, otherMean - explained};
     }
 
     /** {@return the mean of a ring's window in nanoseconds}, read through the ring's own write cursor. */
@@ -605,9 +621,11 @@ public final class FrameBudgetTimings {
         long[] means = FramePassTimings.windowMeansNanos();
         long outsideMean = LOOP_SPAN ? ringMean(loopOutsideRing, loopOutsideSamples) : -1L;
         long otherMean = ringMean(otherRing, written);
+        long recordMean = ringMean(recordRing, written);
+        int flush = FramePassTimings.indexOfName("flush");
         long[] split = otherSplit(otherMean, Math.max(0L, outsideMean), means,
                 FramePassTimings.windowResidualMeanNanos(), otherBucketIndex(), worldPassIndex(),
-                worldPassMemberIndex());
+                worldPassMemberIndex(), flush, recordMean);
         int lightmap = FramePassTimings.indexOfName("lightmap");
         int mouseOver = FramePassTimings.indexOfName("mouseOver");
         int winRecord = FramePassTimings.indexOfName("winRecord");
@@ -622,11 +640,13 @@ public final class FrameBudgetTimings {
                 + " sky=" + ms(split[5])
                 + " cloudsWeather=" + ms(split[6])
                 + " guiHand=" + ms(split[7])
-                + " worldRest=" + ms(split[8])
-                + " passResidual=" + ms(split[9])
-                + " unexplained=" + ms(split[10]) + "]"
+                + " flushNet=" + ms(split[8])
+                + " worldRest=" + ms(split[9])
+                + " passResidual=" + ms(split[10])
+                + " unexplained=" + ms(split[11]) + "]"
                 + " memoMs[batch=" + ms(ringMean(batchRing, written))
-                + " record=" + ms(ringMean(recordRing, written))
+                + " record=" + ms(recordMean)
+                + " flush=" + ms(flush >= 0 ? means[flush + 1] : 0L)
                 + " lightmap=" + ms(lightmap >= 0 ? means[lightmap + 1] : 0L)
                 + " mouseOver=" + ms(mouseOver >= 0 ? means[mouseOver + 1] : 0L)
                 + " winRecord=" + ms(winRecord >= 0 ? means[winRecord + 1] : 0L) + "]");
