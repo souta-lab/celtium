@@ -7222,6 +7222,11 @@ public final class CeltiumGlStub implements FunctionProvider {
         return GlTextureCaptures.aligned(bytes, alignment);
     }
 
+    /** Whether a texture upload's {@code pixels} argument names data; see {@link GlTextureCaptures}. */
+    static boolean carriesPixels(long pixels, int unpackBuffer) {
+        return GlTextureCaptures.carriesPixels(pixels, unpackBuffer);
+    }
+
     /** Arms the one-shot skip for the patch an announcement just applied; see {@link GlTextureCaptures}. */
     public static void celtium$noteAnnouncedPatch(int level, int x, int y, int width, int height) {
         GlTextureCaptures.celtium$noteAnnouncedPatch(level, x, y, width, height);
