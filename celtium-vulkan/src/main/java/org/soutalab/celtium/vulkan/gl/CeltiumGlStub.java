@@ -164,7 +164,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     static final int SEM_BIND_IMAGE_TEXTURE = 77; // full GL image-unit tuple -> native ledger
 
     /** One function-table row: name, return type, arg types, semantics. */
-    private static final class Fn {
+    static final class Fn {
         final String name;
         final byte ret;
         final byte[] args;
@@ -253,14 +253,14 @@ public final class CeltiumGlStub implements FunctionProvider {
     // set", which is the same answer the maps gave for absent keys: GL treats an unqueried capability as disabled
     // and an unbound target as name 0.
     private static final int FLAT_MAP_SIZE = 0x10000;
-    private final byte[] enables = new byte[FLAT_MAP_SIZE];
+    final byte[] enables = new byte[FLAT_MAP_SIZE];
     // A false value may be an observed disable or simply an untouched provider default. Native replacements
     // can bypass callbacks, so the latter must never erase state captured through Minecraft's API.
     private final boolean[] capabilityObserved = new boolean[FLAT_MAP_SIZE];
     private final int[] bufferBindings = new int[FLAT_MAP_SIZE];
     /** Bound texture name per (active unit, target). The game uses one unit; the key keeps the option open. A read
      * of an unbound (unit,target) returns -1 - never a valid GL name. */
-    private final it.unimi.dsi.fastutil.longs.Long2IntMap textureBindings =
+    final it.unimi.dsi.fastutil.longs.Long2IntMap textureBindings =
             new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
     /**
      * First caller each texture name was bound through, either route - a bound-but-never-uploaded name cannot have
@@ -352,18 +352,18 @@ public final class CeltiumGlStub implements FunctionProvider {
      * The unpack state {@code glPixelStorei} set. Conversion reads rows where GL would read them: assuming tight rows
      * while the game asked for a row length or a row skip would store a sheared image instead of a missing one.
      */
-    private volatile int unpackAlignment = 4;
-    private volatile int unpackRowLength;
-    private volatile int unpackSkipPixels, unpackSkipRows;
+    volatile int unpackAlignment = 4;
+    volatile int unpackRowLength;
+    volatile int unpackSkipPixels, unpackSkipRows;
     /* The per-name logical sizes that used to sit here live in BufferStorageRecord, which operates on the store below. */
-    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ByteBuffer> bufferStore =
+    final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ByteBuffer> bufferStore =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
-    private long getStringAddress;
-    private ByteBuffer getStringBuffer;
-    private volatile int viewportX, viewportY;
-    private volatile int viewportW = 1280, viewportH = 720;
+    long getStringAddress;
+    ByteBuffer getStringBuffer;
+    volatile int viewportX, viewportY;
+    volatile int viewportW = 1280, viewportH = 720;
     /** GL_DRAW_FRAMEBUFFER / GL_READ_FRAMEBUFFER bindings; GL_FRAMEBUFFER sets both. */
-    private volatile int drawFbo, readFbo;
+    volatile int drawFbo, readFbo;
     /** The colour and depth glClear will use, and the buffers it was asked to clear and nobody consumed yet. */
     private volatile float clearRed, clearGreen, clearBlue = 0.0f, clearAlpha = 1.0f;
     private volatile double clearDepth = 1.0;
@@ -439,17 +439,17 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final java.util.concurrent.atomic.AtomicInteger pendingClears =
             new java.util.concurrent.atomic.AtomicInteger();
     /** Fixed-pipeline state the getters answer from, at the values a fresh GL context starts them at. */
-    private volatile float currentRed = 1.0f, currentGreen = 1.0f, currentBlue = 1.0f, currentAlpha = 1.0f;
+    volatile float currentRed = 1.0f, currentGreen = 1.0f, currentBlue = 1.0f, currentAlpha = 1.0f;
     /** Scratch the clear-value query fills through {@link #mainClearValues(float[])}. */
-    private final float[] clearValueScratch = new float[4];
+    final float[] clearValueScratch = new float[4];
 
     /** GL's initial light-model ambient, answered when no backend mirror exists. */
-    private final float[] lightAmbientDefault = {0.2f, 0.2f, 0.2f, 1.0f};
-    private volatile float lineWidth = 1.0f;
+    final float[] lightAmbientDefault = {0.2f, 0.2f, 0.2f, 1.0f};
+    volatile float lineWidth = 1.0f;
     /** The last {@code glPointSize} request. Points are not rasterized, so this exists for the query only. */
-    private volatile float pointSize = 1.0f;
+    volatile float pointSize = 1.0f;
     /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
-    private volatile int currentProgram, compilingList, boundVertexArray, lastCalledList, listBase;
+    volatile int currentProgram, compilingList, boundVertexArray, lastCalledList, listBase;
 
     /**
      * The programs a draw has been decoded under, so the first draw of each is reported once.
@@ -469,7 +469,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * all, and by whom". They are different findings and the GTCEu bloom investigation needed both: the draw census was
      * empty because the bind itself never reached the stub.
      */
-    private final it.unimi.dsi.fastutil.ints.IntOpenHashSet celtium$programBinds =
+    final it.unimi.dsi.fastutil.ints.IntOpenHashSet celtium$programBinds =
             new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     /** The last name {@code GlStateManager.bindTexture} named. See {@link #celtium$noteBoundTexture}. */
     private volatile int lastBoundTexture = -1;
@@ -736,7 +736,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** The mode glNewList was given for {@link #compilingList}: GL_COMPILE or GL_COMPILE_AND_EXECUTE. */
-    private volatile int compilingListMode;
+    volatile int compilingListMode;
     /**
      * The list {@code glCallList} is replaying right now, 0 outside a replay.
      *
@@ -982,7 +982,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private int texColorRepacks, texColorRepackDumps;
 
     /** The installed stub - one per process; GL capabilities are process-global so this is a singleton. */
-    private static CeltiumGlStub installed;
+    static CeltiumGlStub installed;
 
     /**
      * Gives LWJGL3's own GL bindings addresses from this stub, so a mod that calls them does not abort the JVM.
@@ -1655,10 +1655,10 @@ public final class CeltiumGlStub implements FunctionProvider {
     static final int GL_PIXEL_UNPACK_BUFFER = 0x88EC;
 
     /** The bound pixel pack buffer, 0 when none is bound. */
-    private int pixelPackBuffer;
+    int pixelPackBuffer;
 
     /** The bound pixel unpack buffer, 0 when none is bound. */
-    private int pixelUnpackBuffer;
+    int pixelUnpackBuffer;
 
     /**
      * {@return why a readback or upload must be refused when a pixel buffer is bound}, or null when it may proceed.
@@ -2309,7 +2309,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             this.attribDepthFunc = snapshot.depthFunc;
             // GL_DEPTH_WRITEMASK is answered from the enable record when no backend mirror exists, and the restore has
             // to land there too or the query keeps reporting the pushed block's value.
-            this.enables[GL_DEPTH_WRITEMASK_CAP] = (byte) (snapshot.depthWrites ? 1 : 0);
+            this.enables[GlStateQueries.GL_DEPTH_WRITEMASK_CAP] = (byte) (snapshot.depthWrites ? 1 : 0);
             if (backend != null) {
                 backend.setDepthMask(snapshot.depthWrites);
                 backend.depthFunc(snapshot.depthFunc);
@@ -2430,16 +2430,16 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int MAX_ATTRIB_MASKS = 8;
     /** {@code GL_DEPTH_WRITEMASK}, {@code GL_DEPTH_FUNC} and the alpha test as this stub last heard them. */
     private volatile boolean attribDepthWrites = true;
-    private volatile int attribDepthFunc = 0x0201;
-    private volatile int attribAlphaFunc = 0x0207;
-    private volatile float attribAlphaReference;
+    volatile int attribDepthFunc = 0x0201;
+    volatile int attribAlphaFunc = 0x0207;
+    volatile float attribAlphaReference;
 
     /** The stub's record of a raw or managed {@code glDepthMask}, for the push snapshot and the query fallback. */
     public static void celtium$noteDepthMask(boolean mask) {
         CeltiumGlStub stub = installed;
         if (stub != null) {
             stub.attribDepthWrites = mask;
-            stub.enables[GL_DEPTH_WRITEMASK_CAP] = (byte) (mask ? 1 : 0);
+            stub.enables[GlStateQueries.GL_DEPTH_WRITEMASK_CAP] = (byte) (mask ? 1 : 0);
         }
     }
 
@@ -2460,7 +2460,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
-    private boolean attribDepthWrites() {
+    boolean attribDepthWrites() {
         var vulkan = vulkanBackend();
         return vulkan != null ? vulkan.celtium$depthWritesLive() : this.attribDepthWrites;
     }
@@ -2572,13 +2572,13 @@ public final class CeltiumGlStub implements FunctionProvider {
     private final java.util.ArrayDeque<long[]> clientAttribStack = new java.util.ArrayDeque<long[]>();
 
     /** {@return the name bound to a texture target on the active unit, or zero when unbound}. */
-    private int textureBindingOrZero(int target) {
+    int textureBindingOrZero(int target) {
         int bound = target == GL_TEXTURE_2D ? this.textures.texture2d() : this.textureBindings.get(texBindKey(target));
         return bound < 0 ? 0 : bound;
     }
 
     /** Bound renderbuffer name and its recorded extent. */
-    private int boundRenderbuffer;
+    int boundRenderbuffer;
     private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]> renderbufferDims =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]>();
 
@@ -3477,14 +3477,14 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** GL_SCISSOR_TEST: the enable bit that says whether the recorded rectangle clips. */
-    private static final int GL_SCISSOR_TEST = 0x0C11;
+    static final int GL_SCISSOR_TEST = 0x0C11;
 
     /**
      * GL_DEPTH_TEST: one of the capabilities a deferred draw can outlive. See the native state boundary.
      */
-    private static final int GL_DEPTH_TEST = 0x0B71;
+    static final int GL_DEPTH_TEST = 0x0B71;
     /** GL_ALPHA_TEST: the capability glAlphaFunc's comparison only applies while it is enabled. */
-    private static final int GL_ALPHA_TEST = 0x0BC0;
+    static final int GL_ALPHA_TEST = 0x0BC0;
 
     /** Compatibility registration; the callback belongs to the native state owner. */
     public static void celtium$setDrawStateBoundaryHook(Runnable hook) {
@@ -3502,7 +3502,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** GL_POLYGON_OFFSET_FILL: the enable bit that says whether the recorded offset applies to filled polygons. */
-    private static final int GL_POLYGON_OFFSET_FILL = 0x8037;
+    static final int GL_POLYGON_OFFSET_FILL = 0x8037;
 
     /** glPolygonOffset's two arguments, in GL's own convention (factor first, then units). */
     /** How many glPolygonOffset calls this process made; 0 means the call never reached the stub. */
@@ -3543,7 +3543,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
     // BH-08: the cull capability and the two face constants, spelled here the way this class spells GL_SCISSOR_TEST -
     // it deliberately carries no org.lwjgl.opengl import, so the numbers are named where they are used.
-    private static final int GL_CULL_FACE = 0x0B44;
+    static final int GL_CULL_FACE = 0x0B44;
     private static final int GL_BACK = 0x0405;
     private static final int GL_CCW = 0x0901;
 
@@ -3646,7 +3646,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     // likewise), equation FUNC_ADD and every colour channel writable. That matters because the game's own wrappers
     // are cached: a wrapper that never called GL leaves the real state at these values, and a mirror that started
     // somewhere else would report a blend the device is not applying.
-    private static final int GL_BLEND = 0x0BE2;
+    static final int GL_BLEND = 0x0BE2;
     /** {@code GL_FUNC_ADD}, the equation GL starts with and the only one the pipeline bakes besides the mapped set. */
     private static final int GL_FUNC_ADD = 0x8006;
     private static final int GL_SRC_ALPHA = 0x0302;
@@ -4986,8 +4986,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         return new long[] { levels, bytes };
     }
 
-    private final org.soutalab.celtium.vulkan.NativeRasterState raster;
-    private final org.soutalab.celtium.vulkan.NativeTextureBindings textures;
+    final org.soutalab.celtium.vulkan.NativeRasterState raster;
+    final org.soutalab.celtium.vulkan.NativeTextureBindings textures;
     private final ReadableMemoryRanges.Provider readableRangeProvider;
 
     private CeltiumGlStub() {
@@ -5024,7 +5024,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         this.textureBindings.defaultReturnValue(-1);
         // GL's initial GL_DEPTH_WRITEMASK is GL_TRUE. The record existed but started at zero, so a query before any
         // glDepthMask answered "writes disabled" - the opposite of the context's initial state.
-        this.enables[GL_DEPTH_WRITEMASK_CAP] = 1;
+        this.enables[GlStateQueries.GL_DEPTH_WRITEMASK_CAP] = 1;
     }
 
     // ---- FunctionProvider ------------------------------------------------------------
@@ -6055,7 +6055,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** {@return the first few frames above the caller}, so an unmodelled arrival carries its origin. */
-    private static String celtium$callSite() {
+    static String celtium$callSite() {
         StackTraceElement[] stack = new Throwable().getStackTrace();
         StringBuilder frames = new StringBuilder();
         int shown = 0;
@@ -6421,7 +6421,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int GL_PROJECTION = 0x1701;
     private static final int GL_TEXTURE_MATRIX_MODE = 0x1702;
     /** The stack the stub last saw selected; GL starts in MODELVIEW. */
-    private volatile int matrixMode = GL_MODELVIEW;
+    volatile int matrixMode = GL_MODELVIEW;
 
     /**
      * {@return whether the stub already believes {@code mode} is current}, for the GlStateManager mixin's redundant-
@@ -6716,965 +6716,127 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     // ---- state queries ---------------------------------------------------------------
+    //
+    // Extracted (giant-split seam 6, QUEUE 674): the glGet* answer bodies moved to
+    // GlStateQueries, which owns them now. The doors below keep their names and exact
+    // answers; the implementations read this stub's recorded state through the stub
+    // reference they are handed, so the state itself stays here.
 
-    /**
-     * {@return the live Vulkan driver identity for {@code GL_RENDERER}}, or {@code "unavailable"} when no device
-     * exists.
-     * <p>
-     * Resolved through {@code TerrainGpuBackends.current()} rather than cached: the window renderer is created at
-     * display creation and adopted by the world renderer later, so the answer appears as soon as a device exists and
-     * never goes stale across a world change. The string is the one the driver itself reports
-     * ({@code VulkanContext.driverSummary()}: driverName/driverID/driverInfo/driverVersion and the device), because
-     * the user's F3 request was for the Vulkan driver, not for this stub's name.
-     * <p>
-     * The fallback is {@code "unavailable"} and deliberately not a stub string: presenting "Celtium stub GL" where a
-     * driver name is expected is how the overlay came to claim a driver that was not rendering. A configuration with
-     * no device has no driver to name, and says so.
-     */
-    private static String celtium$nativeRendererName() {
-        try {
-            org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend current =
-                    org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-            if (current instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) {
-                String driver = org.soutalab.celtium.vulkan.VulkanContext.driverSummary();
-                if (driver != null && !driver.isEmpty() && !"unavailable".equals(driver)) {
-                    return driver + " via Celtium Vulkan";
-                }
-            }
-        } catch (RuntimeException | LinkageError error) {
-            // No renderer, or one that cannot answer: the caller gets "unavailable" rather than a stub name.
-        }
-        return "unavailable";
-    }
-
+    /** {@return the stub's answer to a GL string pname}, answered by {@link GlStateQueries}. */
     private long stringFor(int pname) {
-        String value;
-        switch (pname) {
-            case 0x1F00: // GL_VENDOR
-                value = "Celtium";
-                break;
-            case 0x1F01: // GL_RENDERER
-                // The live Vulkan driver the frames are actually drawn on, not this stub's own name: F3 shows this
-                // string, and the fixture records it as glRenderer. Before the renderer exists there is no device to
-                // name yet, and a configuration without Vulkan has none at all - both answer "unavailable" rather
-                // than a stub name standing in for a driver. GL_VENDOR stays "Celtium" so a GL-less leg remains
-                // identifiable in a report.
-                value = celtium$nativeRendererName();
-                break;
-            case 0x1F02: // GL_VERSION
-                // BH-35: what is advertised is the version whose gates are all backed, enumerated rather than guessed
-                // (docs/history/scope-and-limits.md, the compatibility-boundary table). The floor is 3.0, and it is a floor
-                // because vanilla reads it through LWJGL's capability flags:
-                //   OpenGlHelper.initializeShaders needs framebufferSupported =
-                //     openGL14 && (ARB_framebuffer_object || EXT_framebuffer_object || OpenGL30); this stub advertises
-                //     no extensions at all, so OpenGL30 is the only term that can make it true; and
-                //     shadersAvailable = openGL21 || (ARB shaders), so OpenGL21 is needed too. OpenGL15 (VBOs) and
-                //     OpenGL20 (GuiMainMenu) follow from 3.0. Advertising less than 3.0 turns shadersSupported off and
-                //     with it the outline/spectator and post-process paths (EntityRenderer:195/219/290,
-                //     RenderGlobal:216/565). Advertising more than 3.0 claims entry points this stub answers with
-                //     recorded no-ops, which is the lie BH-35 names.
-                // The string comes from GlContextTerms, the one set of terms for the created context: the
-                // floor above is its default (the compatibility promise), and the only other terms it can
-                // hold are the core terms a core-profile creation request at 3.3 or above earns - a core
-                // context promises only the programmable surface, which is the surface this renderer
-                // executes natively. See GlContextTerms and GLVERSION-DESIGN-2026-11-17.md.
-                value = GlContextTerms.versionString();
-                break;
-            case 0x1F03: // GL_EXTENSIONS
-                // The one named extension is backed by the native image binding and storage-image pipeline.
-                value = "GL_ARB_shader_image_load_store";
-                noteExtensionAnswer("lwjgl2", value, 1);
-                break;
-            case 0x8B8C: // GL_SHADING_LANGUAGE_VERSION
-                // Decided separately from GL_VERSION and by the same rule: the shaders this renderer actually takes are
-                // vanilla's, which are #version 120 (ShaderGroup, the outline and the post chains). Nothing in the
-                // vanilla sources or the mod cohort gates on this string (Fugue's only glGetString is GL_RENDERER,
-                // HEI inherits vanilla's OpenGlHelper gate, flare/scalar/LagSpikeProfiler never query a GL string), so
-                // 1.20 is the highest version whose shaders are backed rather than the highest number available.
-                value = "1.20";
-                break;
-            default:
-                value = "";
-        }
-        return intern(value);
+        return GlStateQueries.stringFor(this, pname);
     }
 
     private long stringIndexed(int pname, int index) {
-        return pname == 0x1F03 && index == 0 ? intern("GL_ARB_shader_image_load_store") : 0L;
+        return GlStateQueries.stringIndexed(this, pname, index);
     }
 
-    private long intern(String ascii) {
-        // One buffer is enough: the game compares/prints, it does not keep the pointer. Grow it only when the
-        // string is larger than what is already interned.
-        byte[] bytes = (ascii + "\0").getBytes(StandardCharsets.US_ASCII);
-        if (this.getStringBuffer == null || this.getStringBuffer.capacity() < bytes.length) {
-            this.getStringBuffer = ByteBuffer.allocateDirect(bytes.length);
-            this.getStringAddress = memAddress(this.getStringBuffer);
-        }
-        this.getStringBuffer.clear();
-        this.getStringBuffer.put(bytes);
-        return this.getStringAddress;
-    }
+    /** The native image binding ledger size, under its established public name; the constant lives in {@link GlStateQueries}. */
+    public static final int IMAGE_UNITS_PER_PROGRAM = GlStateQueries.IMAGE_UNITS_PER_PROGRAM;
 
-    /**
-     * The texture-unit limits this renderer advertises, as one story across every query surface
-     * (TEXUNIT-DESIGN-2026-11-17). Per stage, the count is the size of the binding ledger itself
-     * ({@code NativeTextureBindings} holds 32 units) and the same number the leg GPU's own GL driver
-     * reports per stage (radeonsi on the RX 6400, measured 2026-11-17); the mod-program pipeline
-     * allocates one descriptor per declared sampler, so no smaller native cap exists. Combined is the
-     * per-stage count times the two stages whose sampler descriptors the pipeline binds (vertex and
-     * fragment) - not the driver's 160, which prices per-stage binding points that this renderer's
-     * single shared unit table does not have. Combined is answered on both pnames that carry the
-     * question: 0x8F39, and 0x8B4D - the value LWJGL2's GL20 assigns to
-     * GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS (35661, javap-verified on the game's 2.9.4 jar), which is
-     * the pname GLSM's sampler-cache sizing actually sends. The geometry limit's own pname (0x8C29)
-     * stays unanswered, geometry not being a lowered stage. The bootstrap hint carries the same
-     * numbers as literals for the window before this provider is installed.
-     */
-    static final int TEXTURE_UNITS_PER_STAGE = 32;
-    static final int TEXTURE_UNITS_COMBINED = 64;
-    /** The native image binding ledger and descriptor model both have eight per-program image slots. */
-    public static final int IMAGE_UNITS_PER_PROGRAM = org.soutalab.celtium.vulkan.NativeImageBindings.IMAGE_UNITS_PER_PROGRAM;
-
-    /** Pnames whose answers {@link #noteTextureUnitAnswer} reports once: the texture-unit limit family. */
-    private static final java.util.Set<Integer> TEXUNIT_ANSWER_LOGGED =
-            java.util.concurrent.ConcurrentHashMap.newKeySet();
-
-    /**
-     * Reports the first answer this JVM gives for each texture-unit limit pname. The answers are load-bearing
-     * and were invisible: Iris sizes its sampler budget and GLSM sizes its texture-unit arrays from
-     * {@code GL_MAX_TEXTURE_IMAGE_UNITS}, and GLSM's RenderSystem sizes its sampler-object cache from
-     * {@code GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS} - a pname this stub answered nowhere, so the value that
-     * arrived was the getInts default of 0 and the cache was allocated empty (measured as a latent failure
-     * during the leg-5 Demonica diagnosis, 2026-11-17; see TEXUNIT-DESIGN-2026-11-17). One line per pname
-     * per JVM, so the census stays bounded; the family check is four int compares on a hot path.
-     */
+    /** Reports the first answer this JVM gives for each texture-unit limit pname; see {@link GlStateQueries}. */
     public static void noteTextureUnitAnswer(int pname, int value) {
-        if (pname != 0x8872 && pname != 0x8B4C && pname != 0x8B4D && pname != 0x8F39) {
-            return;
-        }
-        if (TEXUNIT_ANSWER_LOGGED.add(Integer.valueOf(pname))) {
-            System.out.println("[Celtium] CELTIUM_TEXUNIT_ANSWER pname=0x" + Integer.toHexString(pname)
-                    + " value=" + value);
-        }
+        GlStateQueries.noteTextureUnitAnswer(pname, value);
     }
 
-    /** Image-unit query census: one line for the sole pname, regardless of scalar or array query surface. */
-    private static final java.util.Set<Integer> IMGUNIT_ANSWER_LOGGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
-    /** Image bind census: at most 32 distinct (unit, texture) first sightings for the life of this JVM. */
-    private static final java.util.Set<String> IMAGE_BINDS_LOGGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
-    private static final java.util.Set<String> EXT_ANSWER_LOGGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
     public static void noteExtensionAnswer(String surface, String extensions, int count) {
-        if (EXT_ANSWER_LOGGED.add(surface))
-            System.out.println("[Celtium] CELTIUM_EXT_ANSWER surface=" + surface + " extensions=" + extensions + " count=" + count);
+        GlStateQueries.noteExtensionAnswer(surface, extensions, count);
     }
+
     public static void noteImageUnitAnswer(int pname, int value) {
-        if (pname == 0x8F38 && IMGUNIT_ANSWER_LOGGED.add(Integer.valueOf(pname)))
-            System.out.println("[Celtium] CELTIUM_IMGUNIT_ANSWER pname=0x8f38 value=" + value);
+        GlStateQueries.noteImageUnitAnswer(pname, value);
     }
+
     private static void noteImageBind(int unit, int texture) {
-        String key = unit + ":" + texture;
-        if (IMAGE_BINDS_LOGGED.size() < 32 && IMAGE_BINDS_LOGGED.add(key))
-            System.out.println("[Celtium] CELTIUM_IMAGE_BIND unit=" + unit + " texture=" + texture);
+        GlStateQueries.noteImageBind(unit, texture);
     }
 
-    /**
-     * {@return the stub's answer to {@code glGetInteger(pname)} for the tracked scalar parameters}, or
-     * {@link Integer#MIN_VALUE} when the pname is array-valued or untracked - the same values {@link #getInts} writes,
-     * exposed so a caller inside the JVM can ask the stub directly instead of paying a trampoline round trip for a
-     * field it already holds. The fn-census measurement that motivated it: 72% of all glGetIntegerv arrivals were
-     * GL_TEXTURE_BINDING_2D, most of them this project's own capture and mirror code re-reading state the stub tracks.
-     */
+    /** {@return the stub's answer to {@code glGetInteger(pname)} for the tracked scalar parameters}; see {@link GlStateQueries}. */
     public static int celtium$getInteger(int pname) {
-        CeltiumGlStub stub = installed;
-        if (stub == null) {
-            return Integer.MIN_VALUE;
-        }
-        int value = stub.getIntegerValue(pname);
-        noteTextureUnitAnswer(pname, value);
-        noteImageUnitAnswer(pname, value);
-        return value;
+        return GlStateQueries.celtium$getInteger(pname);
     }
 
-    /**
-     * {@return the program the stub last bound}, or {@link Integer#MIN_VALUE} when no stub is installed.
-     * <p>
-     * The batch preflight asks this once per offered batch, and it was going through the general pname switch a few
-     * hundred times a frame.
-     */
+    /** {@return the program the stub last bound}, or {@link Integer#MIN_VALUE} when no stub is installed. */
     public static int celtium$currentProgram() {
-        CeltiumGlStub stub = installed;
-        return stub == null ? Integer.MIN_VALUE : stub.currentProgram;
+        return GlStateQueries.celtium$currentProgram();
     }
 
-    /**
-     * Records the program {@code glUseProgram} bound, and names the first bind of each program.
-     * <p>
-     * This is the setter the transformer's route calls. It exists because the field was dead in the shipped path: the
-     * stub's own table has answered {@code glUseProgram} with {@code SEM_USE_PROGRAM} since the table was written, but
-     * the transformer rewrites every GL native and answers the ones no route claims with a bare return - so the
-     * trampoline was never reached and {@code currentProgram} stayed 0 for the whole session. The consequence is not
-     * cosmetic: the backend refuses a batch offered while a custom program is bound (it cannot run the program), and
-     * with the field stuck at 0 that refusal could never fire, so a mod's shader-drawn full-screen quad was accepted
-     * and drawn by the immediate pipeline with the world projection instead of being refused and counted. Measured on
-     * the GTCEu scene: {@code CELTIUM_SHADER_PROGRAM_REFUSED} and {@code CELTIUM_PROGRAM_DRAW} both printed zero lines
-     * while GTCEu's bloom composite demonstrably ran.
-     * <p>
-     * The first bind of each program is reported with its call site, because the id alone does not say whose program it
-     * is and the stack does.
-     */
+    /** Records the program {@code glUseProgram} bound; see {@link GlStateQueries}. */
     public static void celtium$useProgram(int program) {
-        CeltiumGlStub stub = installed;
-        if (stub == null) {
-            return;
-        }
-        stub.currentProgram = program;
-        if (program != 0 && stub.celtium$programBinds.add(program)) {
-            System.out.println("[Celtium] CELTIUM_PROGRAM_BOUND program=" + program
-                    + " site=[" + celtium$callSite() + "]");
-        }
+        GlStateQueries.celtium$useProgram(program);
     }
 
-    /** The buffer-object query: GL_BUFFER_SIZE answers the recorded or native size, everything else 0. */
     private void getBufferParameterQuery(String name, int target, int pname, long out) {
-        if (pname == 0x8764) { // GL_BUFFER_SIZE - LWJGL needs this to size glMapBuffer results
-            int bound = boundBuffer(target);
-            NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(bound);
-            ByteBuffer storage = bound == 0 ? null : this.bufferStore.get(bound);
-            int size = nativeBuffer != null ? nativeBuffer.byteSize()
-                    : logicalSizeOf(bound, storage == null ? 0 : storage.capacity());
-            if ("glGetBufferParameteri64v".equals(name)) {
-                memPutLong(out, size);
-            } else {
-                memPutInt(out, size);
-            }
-            return;
-        }
-        memPutInt(out, 0);
+        GlStateQueries.getBufferParameterQuery(this, name, target, pname, out);
     }
 
-    /** LWJGL3's buffer-parameter query natives; see {@link #getBufferParameterQuery}. */
+    /** LWJGL3's buffer-parameter query natives; see {@link GlStateQueries}. */
     public static void celtium$getBufferParameter(String name, int target, int pname, long out) {
-        CeltiumGlStub stub = installed;
-        if (stub != null && out != 0L) {
-            stub.getBufferParameterQuery(name, target, pname, out);
-        }
+        GlStateQueries.celtium$getBufferParameter(name, target, pname, out);
     }
 
-    /** The non-DSA tex-parameter query: (target, pname, out) on the texture bound to that target's active unit. */
     private void getTexParameterQuery(String name, int target, int paramPname, long out) {
-        int textureName = 0;
-        if (!isProxyTarget(target)) {
-            int bound = (target == GL_TEXTURE_2D ? this.textures.texture2d() : this.textureBindings.get(texBindKey(target)));
-            textureName = bound < 0 ? 0 : bound;
-        }
-        int value = textureParameterValue(textureName, paramPname);
-        celtium$noteTextureParameterQuery(name, textureName, paramPname, value,
-                textureParameterRecorded(textureName, paramPname));
-        if (name.endsWith("fv")) {
-            if (paramPname == 0x1004) { // GL_TEXTURE_BORDER_COLOR - four components, GL's initial zero
-                for (int i = 0; i < 4; i++) {
-                    MemoryUtil.memPutFloat(out + (long) i * 4L, 0.0f);
-                }
-                return;
-            }
-            MemoryUtil.memPutFloat(out, value);
-        } else {
-            memPutInt(out, value);
-        }
+        GlStateQueries.getTexParameterQuery(this, name, target, paramPname, out);
     }
 
-    /** LWJGL3's tex-parameter query natives, which bypass the dispatch path; see {@link #getTexParameterQuery}. */
+    /** LWJGL3's tex-parameter query natives, which bypass the dispatch path; see {@link GlStateQueries}. */
     public static void celtium$getTexParameter(String name, int target, int pname, long out) {
-        CeltiumGlStub stub = installed;
-        if (stub != null && out != 0L) {
-            stub.getTexParameterQuery(name, target, pname, out);
-        }
+        GlStateQueries.celtium$getTexParameter(name, target, pname, out);
     }
 
-    /** The scalar half of {@link #getInts}; {@link Integer#MIN_VALUE} means "not a tracked scalar pname". */
-    private int getIntegerValue(int pname) {
-        switch (pname) {
-            case 0x0BE1: // GL_BLEND_SRC
-            case 0x80C9: return this.raster.blendSrcRgb(); // GL_BLEND_SRC_RGB
-            case 0x0BE0: // GL_BLEND_DST
-            case 0x80C8: return this.raster.blendDstRgb(); // GL_BLEND_DST_RGB
-            case 0x80CB: return this.raster.blendSrcAlpha();
-            case 0x80CA: return this.raster.blendDstAlpha();
-            case 0x8009: return this.raster.blendEquationRgb();
-            case 0x883D: return this.raster.blendEquationAlpha();
-            case 0x0B45: return this.raster.cullFace();
-            case 0x0B46: return this.raster.frontFace();
-
-            case 0x8068: // GL_TEXTURE_BINDING_1D
-                return textureBindingOrZero(0x0DE0);
-            case 0x806A: // GL_TEXTURE_BINDING_3D
-                return textureBindingOrZero(0x806F);
-            case 0x8514: // GL_TEXTURE_BINDING_CUBE_MAP
-                return textureBindingOrZero(0x8513);
-            case 0x8CA7: // GL_RENDERBUFFER_BINDING
-                return this.boundRenderbuffer;
-            case 0x8919: // GL_SAMPLER_BINDING - sampler objects are not modelled
-                return 0;
-            case 0x8A28: { // GL_UNIFORM_BUFFER_BINDING - the generic binding record
-                int bound = boundBuffer(0x8A11);
-                return bound < 0 ? 0 : bound;
-            }
-            case 0x8F36: { // GL_COPY_READ_BUFFER_BINDING
-                int bound = boundBuffer(0x8F36);
-                return bound < 0 ? 0 : bound;
-            }
-            case 0x8F37: { // GL_COPY_WRITE_BUFFER_BINDING
-                int bound = boundBuffer(0x8F37);
-                return bound < 0 ? 0 : bound;
-            }
-            case 0x8895: // GL_ELEMENT_ARRAY_BUFFER_BINDING - the binding the indexed decode reads
-                return boundBuffer(0x8893);
-            case 0x88ED: // GL_PIXEL_PACK_BUFFER_BINDING
-                return this.pixelPackBuffer;
-            case 0x88EF: // GL_PIXEL_UNPACK_BUFFER_BINDING
-                return this.pixelUnpackBuffer;
-            case 0x8894: // GL_ARRAY_BUFFER_BINDING, including a native API resource's opaque identity
-                return NativeGeometryBuffer.boundId();
-            case 0x8069: { // GL_TEXTURE_BINDING_2D - the name bound to TEXTURE_2D on the active unit
-                return this.textures.texture2d();
-            }
-            case 0x84E0: // GL_ACTIVE_TEXTURE
-                return 0x84C0 + this.textures.activeUnit();
-            case 0x8CA6: // GL_DRAW_FRAMEBUFFER_BINDING / GL_FRAMEBUFFER_BINDING
-                return this.drawFbo;
-            case 0x8CAA: // GL_READ_FRAMEBUFFER_BINDING
-                return this.readFbo;
-            case 0x8CA5: // GL_STENCIL_BACK_WRITEMASK - no stencil state is kept; GL's default makes every bit writable
-                return 0xFF;
-            case 0x0B33: // GL_LIST_INDEX - the display list being compiled, which the model path keys on
-                return this.compilingList;
-            case 0x8B8D: // GL_CURRENT_PROGRAM
-                return this.currentProgram;
-            case 0x0BC1: { // GL_ALPHA_TEST_FUNC
-                // The mirror is the authority while a backend exists; without one the stub's own record is, which is
-                // what the attribute stack puts back and what a mod's raw glAlphaFunc reported here.
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                return vulkan != null ? vulkan.celtium$alphaTestFuncGl() : this.attribAlphaFunc;
-            }
-            case 0x0BC2: { // GL_ALPHA_TEST_REF
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                float reference = vulkan != null ? vulkan.celtium$alphaTestReference() : this.attribAlphaReference;
-                return reference >= 0.5f ? 1 : 0;
-            }
-            case 0x0B50: return enabledCap(0x0B50) ? 1 : 0; // GL_LIGHTING
-            case 0x0B60: return enabledCap(GL_FOG) ? 1 : 0; // GL_FOG
-            case 0x0B71: return enabledCap(GL_DEPTH_TEST) ? 1 : 0; // GL_DEPTH_TEST
-            case 0x0BC0: return enabledCap(GL_ALPHA_TEST) ? 1 : 0; // GL_ALPHA_TEST
-            case 0x0C11: return enabledCap(GL_SCISSOR_TEST) ? 1 : 0; // GL_SCISSOR_TEST
-            // The delivered frame is RGBA8 colour with D24 depth and no stencil. Mods probe these to pick a format or
-            // a shadow path; the old answer was zero for every one of them, which reads as "no colour bits at all".
-            // The colour answers describe the frame, so while a non-default chain pair is the current target
-            // they are stale for the target actually being drawn into - QUEUE 405 (S6) counts that mismatch
-            // (targetFormatBitsAnsweredStale) rather than changing an answer mods pick formats by.
-            case 0x0D52: celtium$noteBitsAnswer(0x0D52, 8); return 8; // GL_RED_BITS
-            case 0x0D53: celtium$noteBitsAnswer(0x0D53, 8); return 8; // GL_GREEN_BITS
-            case 0x0D54: celtium$noteBitsAnswer(0x0D54, 8); return 8; // GL_BLUE_BITS
-            case 0x0D55: celtium$noteBitsAnswer(0x0D55, 8); return 8; // GL_ALPHA_BITS
-            case 0x0D56: return 24; // GL_DEPTH_BITS
-            case 0x0D57: return 0; // GL_STENCIL_BITS - this renderer keeps no stencil
-            // Display/format probes: the window is double buffered, not stereo, and the delivered frame has no MSAA.
-            case 0x0C32: return 1; // GL_DOUBLEBUFFER
-            case 0x0C33: return 0; // GL_STEREO
-            case 0x80A8: return 0; // GL_SAMPLE_BUFFERS
-            case 0x80A9: return 0; // GL_SAMPLES
-            case 0x8D57: return 0; // GL_MAX_SAMPLES
-            case 0x0B40: // GL_POLYGON_MODE - the rasterizer only fills, and glPolygonMode is a recorded no-op
-                return 0x1B02; // GL_FILL
-            case 0x0C40: // GL_RENDER_MODE - no feedback or selection mode is ever entered
-                return 0x1C00; // GL_RENDER
-            case 0x0D50: // GL_SUBPIXEL_BITS - the 8-bit subpixel precision Vulkan rasterization reports
-                return 8;
-            case 0x0B54: // GL_SHADE_MODEL - the shaders interpolate the vertex colour, which is GL_SMOOTH
-                return 0x1D01;
-            case 0x0B52: // GL_LIGHT_MODEL_TWO_SIDE - the shader lights one side of every face
-                return 0;
-            case 0x0C01: // GL_DRAW_BUFFER - the window's back buffer, or the colour attachment when a framebuffer is bound
-                return this.drawFbo == 0 ? 0x0405 : 0x8CE0;
-            case 0x0C02: // GL_READ_BUFFER
-                return this.readFbo == 0 ? 0x0405 : 0x8CE0;
-            case 0x0BA0: // GL_MATRIX_MODE - the stack glMatrixMode selected, as GL reports it
-                return this.matrixMode;
-            case 0x0B74: { // GL_DEPTH_FUNC
-                // Answered from the mirror: raw glDepthFunc and GlStateManager both feed it, and neither necessarily
-                // touches this stub's own enable record. With no backend the stub's record is the answer, the same one
-                // glPushAttrib(GL_DEPTH_BUFFER_BIT) saves and glPopAttrib puts back.
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                return vulkan != null ? vulkan.celtium$depthFuncGl() : this.attribDepthFunc;
-            }
-            case 0x0D05: // GL_PACK_ALIGNMENT
-                return 4;
-            case 0x0CF5: // GL_UNPACK_ALIGNMENT - the recorded value the upload conversion reads rows with
-                return this.unpackAlignment;
-            case 0x0CF2: // GL_UNPACK_ROW_LENGTH
-                return this.unpackRowLength;
-            case 0x0CF3: // GL_UNPACK_SKIP_ROWS - the same pnames the pixelStore setter uses
-                return this.unpackSkipRows;
-            case 0x0CF4: // GL_UNPACK_SKIP_PIXELS
-                return this.unpackSkipPixels;
-            case 0x0D02: // GL_PACK_ROW_LENGTH - the readback paths write tightly packed rows
-            case 0x0D03: // GL_PACK_SKIP_ROWS
-            case 0x0D04: // GL_PACK_SKIP_PIXELS
-                return 0;
-            case 0x0B65: // GL_FOG_MODE
-                return org.soutalab.celtium.vulkan.ImmediateFogState.current().glMode();
-            case 0x0D3B: // GL_MAX_CLIENT_ATTRIB_STACK_DEPTH - the bounded stack the push/pop routes use
-                return 16;
-            case 0x85B5: // GL_VERTEX_ARRAY_BINDING
-                return this.boundVertexArray;
-            case 0x8CDF: // GL_MAX_COLOR_ATTACHMENTS - the MRT ledger size: a chain target holds a colour image
-                // per slot up to COLOR_ATTACHMENT_SLOTS, and a pass is built with that many attachments
-                return COLOR_ATTACHMENT_SLOTS;
-            case 0x8824: // GL_MAX_DRAW_BUFFERS - the same ledger: a program's outputs lower to that many
-                // per-location fragment outputs (ModGlslTranslator's MAX_FRAG_OUTPUTS)
-                return COLOR_ATTACHMENT_SLOTS;
-            case 0x84E8: { // GL_MAX_RENDERBUFFER_SIZE
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                return vulkan != null ? vulkan.celtium$maxTextureSize() : 16384;
-            }
-            case 0x0D33: { // GL_MAX_TEXTURE_SIZE
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                return vulkan != null ? vulkan.celtium$maxTextureSize() : 16384;
-            }
-            case 0x8869: // GL_MAX_VERTEX_ATTRIBS
-                return 16;
-            case 0x8DFB: // GL_MAX_VERTEX_UNIFORM_VECTORS - a quarter of the component count
-                return 1024;
-            case 0x8DFD: // GL_MAX_FRAGMENT_UNIFORM_VECTORS
-                return 1024;
-            case 0x821B: // GL_MAJOR_VERSION
-                // Kept consistent with the version string this stub advertises ("3.0.0 Celtium", see the
-                // GL_VERSION case below). The two used to disagree - the string said 3.0 while these said 4.6 -
-                // and the disagreement was not harmless: MappedStagingBuffer.isSupported asks
-                // LWJGL.isOpenGLVersionSupported(4, 4), got true from these numbers, and took the persistent
-                // mapping path, whose constructor maps 16 MB through commandList.mapBuffer. Measured
-                // 2026-10-15 (leg gv-cohort-fix151): the client stalls inside that construction, in
-                // RenderRegionManager's createStagingBuffer, with the world loaded and no player ever created.
-                // A capability claim has to be one story: with 3.0 the support test is false and the fallback
-                // staging buffer is used instead, which creates a plain mutable buffer. The numbers now
-                // come from the same GlContextTerms as the string; under both term sets the (4, 4) test
-                // above stays false, because the core cap is 3.3, not a 4.x claim.
-                return GlContextTerms.current().major();
-            case 0x821C: // GL_MINOR_VERSION
-                return GlContextTerms.current().minor();
-            case 0x9126: { // GL_CONTEXT_PROFILE_MASK
-                // Answered only when the latched terms make a profile claim - a core-profile creation
-                // request (GlContextTerms). The default terms predate the profile concept, so the query
-                // keeps falling through to the MIN_VALUE answer it has always had.
-                int mask = GlContextTerms.current().profileMask();
-                return mask >= 0 ? mask : Integer.MIN_VALUE;
-            }
-            case 0x821D: // GL_NUM_EXTENSIONS
-                noteExtensionAnswer("lwjgl2", "GL_ARB_shader_image_load_store", 1);
-                return 1;
-            case 0x8F38: // GL_MAX_IMAGE_UNITS - the native image binding ledger size
-                return IMAGE_UNITS_PER_PROGRAM;
-            case 0x84FF: // GL_MAX_TEXTURE_MAX_ANISOTROPY - the sampler path does not filter anisotropically
-                return 1;
-            case 0x8872: // GL_MAX_TEXTURE_IMAGE_UNITS - the per-stage count the binding ledger backs
-                return TEXTURE_UNITS_PER_STAGE;
-            case 0x8B4C: // GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS - the pipeline binds vertex-stage samplers too
-                return TEXTURE_UNITS_PER_STAGE;
-            case 0x8F39: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS - per-stage x the two stages served
-                return TEXTURE_UNITS_COMBINED;
-            case 0x8B4D: // GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS as LWJGL2 names it: GL20's constant is
-                // 35661 (javap-verified on the game's 2.9.4 jar), so this is the pname the combined
-                // query actually arrives on - GLSM sizes its sampler-object cache from it, and the 16
-                // this case used to return (a geometry label the value never measured) sized that
-                // cache to 16 and overflowed it on the first deferred pass (leg 10, 2026-11-17). The
-                // geometry limit's own pname is 0x8C29, which stays unanswered (0): geometry is not
-                // a lowered stage. The value is the combined backing, as on 0x8F39 above.
-                return TEXTURE_UNITS_COMBINED;
-            default:
-                return Integer.MIN_VALUE;
-        }
-    }
-
-    /**
-     * Answers tracked integer state for LWJGL3's replaced native query. Untracked capability limits are
-     * left to the bootstrap helper, which can also answer them before this provider is installed.
-     */
+    /** Answers tracked integer state for LWJGL3's replaced native query; see {@link GlStateQueries}. */
     public static boolean celtium$getIntegers(int pname, long out) {
-        CeltiumGlStub stub = installed;
-        if (stub == null || out == 0L) {
-            return false;
-        }
-        if (pname != 0x0BA2 && pname != 0x0C10 && stub.getIntegerValue(pname) == Integer.MIN_VALUE) {
-            return false;
-        }
-        stub.getInts(pname, out, null);
-        return true;
+        return GlStateQueries.celtium$getIntegers(pname, out);
     }
 
     private void getInts(int pname, long out, Fn fn) {
-        if (out == 0L) {
-            return;
-        }
-        int value;
-        switch (pname) {
-            case 0x0D3A: { // GL_MAX_VIEWPORT_DIMS - two limits
-                int dimension = 16384;
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                if (vulkan != null) {
-                    dimension = vulkan.celtium$maxTextureSize();
-                }
-                memPutInt(out, dimension);
-                memPutInt(out + 4, dimension);
-                return;
-            }
-            case 0x0BA2: // GL_VIEWPORT
-                memPutInt(out, this.viewportX);
-                memPutInt(out + 4, this.viewportY);
-                memPutInt(out + 8, this.viewportW);
-                memPutInt(out + 12, this.viewportH);
-                return;
-            case 0x0C23: { // GL_COLOR_WRITEMASK - four integers, R,G,B,A
-                int mask = this.raster.colorMask();
-                for (int i = 0; i < 4; i++) {
-                    memPutInt(out + (long) i * 4L, (mask >>> i) & 1);
-                }
-                return;
-            }
-            case 0x0C10: // GL_SCISSOR_BOX - independent of the viewport, even when scissor is disabled
-                memPutInt(out, this.raster.scissorX());
-                memPutInt(out + 4, this.raster.scissorY());
-                memPutInt(out + 8, this.raster.scissorWidth());
-                memPutInt(out + 12, this.raster.scissorHeight());
-                return;
-            case 0x8872: // GL_MAX_TEXTURE_IMAGE_UNITS - the per-stage count the binding ledger backs
-                value = TEXTURE_UNITS_PER_STAGE;
-                break;
-            case 0x8F38: // GL_MAX_IMAGE_UNITS - the native image binding ledger size
-                value = IMAGE_UNITS_PER_PROGRAM;
-                break;
-            case 0x0B33: // GL_LIST_INDEX - the list glNewList opened, 0 when none is open
-                // This is the answer the model capture reads to decide whether a quad belongs to a list. It asked the
-                // driver and got 0, refused the quad with `reason=unknown-list`, and nothing drew the model - so the
-                // recording side of display lists was never reached even after the lists were implemented. The stub
-                // already tracked the open list; it simply did not answer the question about it.
-                value = this.compilingList;
-                break;
-            case 0x0B30: // GL_LIST_MODE - GL_COMPILE (0x1300) or GL_COMPILE_AND_EXECUTE (0x1301); 0 when none is open
-                value = this.compilingList == 0 ? 0 : this.compilingListMode;
-                break;
-            default:
-                value = getIntegerValue(pname);
-                if (value == Integer.MIN_VALUE) {
-                    value = 0;
-                }
-        }
-        noteTextureUnitAnswer(pname, value);
-        noteImageUnitAnswer(pname, value);
-        memPutInt(out, value);
+        GlStateQueries.getInts(this, pname, out, fn);
     }
 
     private void getLongs(int pname, long out, Fn fn) {
-        if (out != 0L) {
-            memPutLong(out, 0L);
-        }
+        GlStateQueries.getLongs(this, pname, out, fn);
     }
 
-    /**
-     * Answers a float query with the number of components its pname has.
-     * <p>
-     * One float was written for every pname before this, which left the rest of the caller's buffer uninitialised: a
-     * sixteen-float matrix read produced one zero and fifteen words of whatever the allocation held, and every
-     * transform built from it was garbage. Matrices read the renderer's live state mirror (identity only before a
-     * backend exists); scalar and vector queries write exactly the number of components implied by their pname.
-     */
     private void getFloats(int pname, long out, Fn fn) {
-        getFloats(pname, out, "glGetDoublev".equals(fn.name));
+        GlStateQueries.getFloats(this, pname, out, fn);
     }
 
     /** {@return whether the boolean query was answered}; the caller's buffer receives one byte per component. */
     public static boolean celtium$getBooleans(int pname, long out) {
-        CeltiumGlStub stub = installed;
-        if (stub == null || out == 0L) {
-            return false;
-        }
-        stub.getBooleans(pname, out, null);
-        return true;
+        return GlStateQueries.celtium$getBooleans(pname, out);
     }
 
     /** {@return whether the capability is enabled}, answered from the same record {@code glIsEnabled} reads. */
     public static boolean celtium$isEnabled(int capability) {
-        CeltiumGlStub stub = installed;
-        return stub != null && stub.enabledCap(capability);
+        return GlStateQueries.celtium$isEnabled(capability);
     }
 
     /** The same state-query implementation for callback dispatch and LWJGL3's replaced native entry points. */
     public static void celtium$getFloats(int pname, long out, boolean asDouble) {
-        if (out == 0L) {
-            return;
-        }
-        CeltiumGlStub stub = installed;
-        if (stub != null) {
-            stub.getFloats(pname, out, asDouble);
-        } else {
-            putFloatOrDouble(out, 0, 0.0f, asDouble);
-        }
+        GlStateQueries.celtium$getFloats(pname, out, asDouble);
     }
 
     private void getFloats(int pname, long out, boolean asDouble) {
-        org.soutalab.celtium.vulkan.ImmediateFogState fog = org.soutalab.celtium.vulkan.ImmediateFogState.current();
-        if (out != 0L && pname >= 0x0B62 && pname <= 0x0B66) {
-            if (pname == 0x0B66) {
-                float[] color = fog.getFogColor();
-                for (int i = 0; i < 4; i++) putFloatOrDouble(out, i, i == 3 ? fog.colorAlpha() : color[i], asDouble);
-            } else {
-                float value = pname == 0x0B62 ? fog.getFogDensity() : pname == 0x0B63 ? fog.getFogStart()
-                        : pname == 0x0B64 ? fog.getFogEnd() : fog.glMode();
-                putFloatOrDouble(out, 0, value, asDouble);
-            }
-            return;
-        }
-
-        if (out == 0L) {
-            return;
-        }
-        switch (pname) {
-            case 0x8038: { // GL_POLYGON_OFFSET_FACTOR
-                putFloatOrDouble(out, 0, this.raster.polygonOffsetFactor(), asDouble);
-                return;
-            }
-            case 0x2A00: { // GL_POLYGON_OFFSET_UNITS
-                putFloatOrDouble(out, 0, this.raster.polygonOffsetUnits(), asDouble);
-                return;
-            }
-            case 0x0BA2: { // GL_VIEWPORT
-                putFloatOrDouble(out, 0, this.viewportX, asDouble);
-                putFloatOrDouble(out, 1, this.viewportY, asDouble);
-                putFloatOrDouble(out, 2, this.viewportW, asDouble);
-                putFloatOrDouble(out, 3, this.viewportH, asDouble);
-                return;
-            }
-            case 0x0C10: { // GL_SCISSOR_BOX
-                putFloatOrDouble(out, 0, this.raster.scissorX(), asDouble);
-                putFloatOrDouble(out, 1, this.raster.scissorY(), asDouble);
-                putFloatOrDouble(out, 2, this.raster.scissorWidth(), asDouble);
-                putFloatOrDouble(out, 3, this.raster.scissorHeight(), asDouble);
-                return;
-            }
-            case 0x0C23: { // GL_COLOR_WRITEMASK, as glGetFloatv reports the four channels
-                int mask = this.raster.colorMask();
-                for (int i = 0; i < 4; i++) {
-                    putFloatOrDouble(out, i, ((mask >>> i) & 1), asDouble);
-                }
-                return;
-            }
-            case 0x0B72: { // GL_DEPTH_WRITEMASK, the same boolean state through the float query
-                // GL answers boolean-state parameters through every glGet* width; this case was missing, so a
-                // save/restore that reads the depth mask with glGetFloatv got the generic zero - which reads as
-                // "depth writes are off" and is exactly the state a pop is supposed to have restored.
-                putFloatOrDouble(out, 0, attribDepthWrites() ? 1.0f : 0.0f, asDouble);
-                return;
-            }
-            case 0x0C22: { // GL_COLOR_CLEAR_VALUE
-                mainClearValues(this.clearValueScratch);
-                for (int i = 0; i < 4; i++) {
-                    putFloatOrDouble(out, i, this.clearValueScratch[i], asDouble);
-                }
-                return;
-            }
-            case 0x0B73: { // GL_DEPTH_CLEAR_VALUE
-                putFloatOrDouble(out, 0, (float) clearDepth(), asDouble);
-                return;
-            }
-            case 0x0B91: { // GL_STENCIL_CLEAR_VALUE - no stencil state is recorded, GL's default is 0
-                putFloatOrDouble(out, 0, 0.0f, asDouble);
-                return;
-            }
-            case 0x0BC1: { // GL_ALPHA_TEST_FUNC, as a float as glGetFloatv reports enums
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                float func = vulkan != null ? vulkan.celtium$alphaTestFuncGl() : (float) 0x0207;
-                putFloatOrDouble(out, 0, func, asDouble);
-                return;
-            }
-            case 0x0BC2: { // GL_ALPHA_TEST_REF
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                float reference = vulkan != null ? vulkan.celtium$alphaTestReference() : 0.0f;
-                putFloatOrDouble(out, 0, reference, asDouble);
-                return;
-            }
-            case 0x0BA6: // GL_MODELVIEW_MATRIX
-            case 0x0BA7: // GL_PROJECTION_MATRIX
-            case 0x0BA8: // GL_TEXTURE_MATRIX
-                // The renderer's own mirror when it has one. Vanilla reads the terrain's projection and model-view
-                // through exactly this call (ActiveRenderInfo.updateRenderInfo -> GlStateManager.getFloat), and it
-                // builds the frustum the chunk traversal culls with from the same two reads (ClippingHelperImpl). An
-                // identity here therefore does two things at once: every section but the camera's own is culled, and
-                // the surviving geometry is drawn with clip coordinates equal to camera-relative world coordinates -
-                // measured as 1-2 sections instead of 13-17, and as a two-block window of stretched atlas instead of a
-                // terrain plane.
-                float[] mirrored = mirroredMatrix(pname);
-                for (int i = 0; i < 16; i++) {
-                    putFloatOrDouble(out, i, mirrored != null ? mirrored[i] : (i % 5 == 0 ? 1.0f : 0.0f), asDouble);
-                }
-                return;
-            case 0x0B00: // GL_CURRENT_COLOR
-                putFloatOrDouble(out, 0, this.currentRed, asDouble);
-                putFloatOrDouble(out, 1, this.currentGreen, asDouble);
-                putFloatOrDouble(out, 2, this.currentBlue, asDouble);
-                putFloatOrDouble(out, 3, this.currentAlpha, asDouble);
-                return;
-            case 0x0B70: // GL_DEPTH_RANGE
-                putFloatOrDouble(out, 0, 0.0f, asDouble);
-                putFloatOrDouble(out, 1, 1.0f, asDouble);
-                return;
-            case 0x0B21: // GL_LINE_WIDTH
-                putFloatOrDouble(out, 0, this.lineWidth, asDouble);
-                return;
-            case 0x0B11: // GL_POINT_SIZE
-                putFloatOrDouble(out, 0, this.pointSize, asDouble);
-                return;
-            case 0x8005: // GL_BLEND_COLOR - the constant blend colour is never recorded; GL's initial value is black
-                putFloatOrDouble(out, 0, 0.0f, asDouble);
-                putFloatOrDouble(out, 1, 0.0f, asDouble);
-                putFloatOrDouble(out, 2, 0.0f, asDouble);
-                putFloatOrDouble(out, 3, 0.0f, asDouble);
-                return;
-            case 0x84FF: // GL_MAX_TEXTURE_MAX_ANISOTROPY - the float spelling of the int answer
-                putFloatOrDouble(out, 0, 1.0f, asDouble);
-                return;
-            case 0x0B53: { // GL_LIGHT_MODEL_AMBIENT - the ambient the shader lighting uses
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                float[] ambient = vulkan == null ? this.lightAmbientDefault : vulkan.celtium$lightAmbient();
-                for (int i = 0; i < 4; i++) {
-                    putFloatOrDouble(out, i, ambient != null && i < ambient.length ? ambient[i] : 0.0f, asDouble);
-                }
-                return;
-            }
-            case 0x0B12: // GL_POINT_SIZE_RANGE - points are not rasterized, so the one supported size is one
-                putFloatOrDouble(out, 0, 1.0f, asDouble);
-                putFloatOrDouble(out, 1, 1.0f, asDouble);
-                return;
-            case 0x0B13: // GL_POINT_SIZE_GRANULARITY
-                putFloatOrDouble(out, 0, 1.0f, asDouble);
-                return;
-            case 0x0B23: // GL_LINE_WIDTH_GRANULARITY
-                putFloatOrDouble(out, 0, 1.0f, asDouble);
-                return;
-            case 0x0B22: // GL_LINE_WIDTH_RANGE - two values, not the point size
-                putFloatOrDouble(out, 0, 1.0f, asDouble);
-                putFloatOrDouble(out, 1, celtium$lineWidthRangeMax(), asDouble);
-                return;
-            case 0x0D3A: { // GL_MAX_VIEWPORT_DIMS - 0x0D3A is the viewport limit, not the line-width range
-                int dimension = 16384;
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                if (vulkan != null) {
-                    dimension = vulkan.celtium$maxTextureSize();
-                }
-                putFloatOrDouble(out, 0, dimension, asDouble);
-                putFloatOrDouble(out, 1, dimension, asDouble);
-                return;
-            }
-            case 0x846D: // GL_ALIASED_POINT_SIZE_RANGE - points are not rasterized; one supported size
-                putFloatOrDouble(out, 0, 1.0f, asDouble);
-                putFloatOrDouble(out, 1, 1.0f, asDouble);
-                return;
-            case 0x8129: // GL_POINT_DISTANCE_ATTENUATION - GL's initial value, in all three components
-                putFloatOrDouble(out, 0, 1.0f, asDouble);
-                putFloatOrDouble(out, 1, 0.0f, asDouble);
-                putFloatOrDouble(out, 2, 0.0f, asDouble);
-                return;
-            case 0x846E: // GL_ALIASED_LINE_WIDTH_RANGE - the device's range, not the width currently set
-                putFloatOrDouble(out, 0, 1.0f, asDouble);
-                putFloatOrDouble(out, 1, celtium$lineWidthRangeMax(), asDouble);
-                return;
-            default:
-                putFloatOrDouble(out, 0, 0.0f, asDouble);
-        }
-    }
-
-    /**
-     * The matrix the renderer's mirror holds for a GL matrix pname, or null when no mirror is published.
-     * <p>
-     * The stub is the only thing that can answer these reads, and answering the identity is not a neutral choice -
-     * it is a culling frustum and a camera transform. The backend publishes what its own hooks observed, so the two
-     * agree on what the frame's matrices are.
-     */
-    private static float[] mirroredMatrix(int pname) {
-        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-        if (!(backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend)) {
-            return null;
-        }
-        org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan =
-                (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) backend;
-        // Peeked, not copied: the caller writes the sixteen values out at once, and vanilla asks per entity.
-        switch (pname) {
-            case 0x0BA6:
-                return vulkan.celtium$peekMirroredMatrix(org.soutalab.celtium.vulkan.VulkanGlState.MATRIX_MODE_MODELVIEW);
-            case 0x0BA7:
-                return vulkan.celtium$peekMirroredMatrix(org.soutalab.celtium.vulkan.VulkanGlState.MATRIX_MODE_PROJECTION);
-            case 0x0BA8:
-                return vulkan.celtium$peekMirroredMatrix(org.soutalab.celtium.vulkan.VulkanGlState.MATRIX_MODE_TEXTURE);
-            default:
-                return null;
-        }
-    }
-
-    private static void putFloatOrDouble(long out, int index, float value, boolean asDouble) {
-        if (asDouble) {
-            MemoryUtil.memPutDouble(out + (long) index * 8L, value);
-        } else {
-            MemoryUtil.memPutFloat(out + (long) index * 4L, value);
-        }
+        GlStateQueries.getFloats(this, pname, out, asDouble);
     }
 
     private void getBooleans(int pname, long out, Fn fn) {
-        if (out == 0L) {
-            return;
-        }
-        // The query used to write a single false byte and nothing else, whatever was asked. Callers that save and restore
-        // GL state read the whole vector: glColorMask(true,true,true,true) is recorded here, and the readback answered
-        // [0,85,85,85] because only the first byte was written and it was false (#388).
-        switch (pname) {
-            case 0x0C23: { // GL_COLOR_WRITEMASK
-                int mask = this.raster.colorMask();
-                for (int i = 0; i < 4; i++) {
-                    MemoryUtil.memPutByte(out + i, (byte) (((mask >>> i) & 1) != 0 ? 1 : 0));
-                }
-                return;
-            }
-            case 0x0B72: { // GL_DEPTH_WRITEMASK
-                // GL's default is enabled. The mirror is the authority: glDepthMask goes through the hint to the backend
-                // and never reaches this stub's enable record.
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                boolean mask = vulkan != null ? vulkan.celtium$depthWritesLive()
-                        : enabledCap(GL_DEPTH_WRITEMASK_CAP);
-                MemoryUtil.memPutByte(out, (byte) (mask ? 1 : 0));
-                return;
-            }
-            case 0x0BD0: { // GL_DITHER
-                // GL's default is enabled and dithering has no effect in this renderer, so the answer stays true; the
-                // case used to carry GL_DEPTH_TEST's label and return the depth test's state.
-                MemoryUtil.memPutByte(out, (byte) 1);
-                return;
-            }
-            case 0x0BE2: { // GL_BLEND
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_BLEND) ? 1 : 0));
-                return;
-            }
-            case 0x0B90: { // GL_STENCIL_TEST
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(0x0B90) ? 1 : 0));
-                return;
-            }
-            case 0x0B71: { // GL_DEPTH_TEST
-                // The label here used to name the scissor test while the case answered 0x0B71 (the depth test), so a
-                // save/restore of the GL state read the depth test as whatever the scissor test was.
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_DEPTH_TEST) ? 1 : 0));
-                return;
-            }
-            case 0x0C11: { // GL_SCISSOR_TEST
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_SCISSOR_TEST) ? 1 : 0));
-                return;
-            }
-            case 0x8037: { // GL_POLYGON_OFFSET_FILL
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_POLYGON_OFFSET_FILL) ? 1 : 0));
-                return;
-            }
-            case 0x0B44: { // GL_CULL_FACE
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_CULL_FACE) ? 1 : 0));
-                return;
-            }
-            case 0x0B50: { // GL_LIGHTING
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(0x0B50) ? 1 : 0));
-                return;
-            }
-            case 0x0B60: { // GL_FOG
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_FOG) ? 1 : 0));
-                return;
-            }
-            case 0x0BC0: { // GL_ALPHA_TEST
-                // 0x3000 is GL_CLIP_PLANE0, not the alpha test: the query answered "disabled" every time alpha testing
-                // was on, and a mod restoring the state it read turned the test off.
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_ALPHA_TEST) ? 1 : 0));
-                return;
-            }
-            case 0x0DE1: { // GL_TEXTURE_2D
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(GL_TEXTURE_2D) ? 1 : 0));
-                return;
-            }
-            default:
-                // A query this stub has no record for: the spec says the value is undefined, and writing false over the
-                // caller's whole destination would destroy whatever it had laid out next. One byte stays, as before.
-                MemoryUtil.memPutByte(out, (byte) 0);
-        }
+        GlStateQueries.getBooleans(this, pname, out, fn);
     }
 
-    /** The index the stub uses in {@link #enables} for {@code glDepthMask}, which GL has no capability for. */
-    private static final int GL_DEPTH_WRITEMASK_CAP = 0x0B72;
-
-    /** {@return the live Vulkan backend, or null when another renderer (or none) is installed. */
+    /** {@return the live Vulkan backend, or null when another renderer (or none) is installed}. */
     private static org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkanBackend() {
-        Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-        return backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan ? vulkan : null;
+        return GlStateQueries.vulkanBackend();
     }
 
-    /**
-     * {@return the max of the line-width range the queries answer}: the device's limit, read through the
-     * backend, or 1.0 before a backend exists - the only width drawn by then, and the truthful range of a
-     * device without wide lines. Answering the width currently set instead (the previous shape of the
-     * 0x846E case) made the range read as [1, 1] on wider devices; see the backend's
-     * {@code celtium$lineWidthRangeMax} for what that cost.
-     */
-    private static float celtium$lineWidthRangeMax() {
-        org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-        return vulkan != null ? vulkan.celtium$lineWidthRangeMax() : 1.0f;
-    }
-
-    /**
-     * Hands one framebuffer bit-count answer to the format census (QUEUE 405, S6): the answer is this
-     * stub's flat value for the delivered frame, and the backend counts it when the current target's
-     * pair class carries different bits. Without a Vulkan backend there is no pair class to disagree
-     * with, so nothing is counted.
-     */
-    private void celtium$noteBitsAnswer(int pname, int answeredBits) {
-        org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-        if (vulkan != null) {
-            vulkan.celtium$noteTargetFormatBitsAnswer(pname, answeredBits);
-        }
-    }
-
-    /** {@return whether a capability this stub records is enabled}. */
     private boolean enabledCap(int cap) {
-        switch (cap) {
-            case GL_FOG: return org.soutalab.celtium.vulkan.ImmediateFogState.current().enabled();
-            case GL_BLEND: return this.raster.blendEnabled();
-            case GL_CULL_FACE: return this.raster.cullEnabled();
-            case GL_SCISSOR_TEST: return this.raster.scissorTest();
-            case GL_POLYGON_OFFSET_FILL: return this.raster.polygonOffsetFillEnabled();
-            case GL_TEXTURE_2D: return this.textures.enabled2d(this.textures.activeUnit());
-            // The mirror is the authority for these three: vanilla's GlStateManager cache can skip the native
-            // glEnable/glDisable entirely, so this stub's own enable record never sees the change - the model state
-            // probe measured glIsEnabled(GL_DEPTH_TEST)=false against a captured depthTest=1.
-            case GL_DEPTH_TEST: {
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                return vulkan != null ? vulkan.celtium$depthTestEnabled() : this.enables[GL_DEPTH_TEST] != 0;
-            }
-            case GL_ALPHA_TEST: {
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                return vulkan != null ? vulkan.celtium$alphaTestEnabled() : this.enables[GL_ALPHA_TEST] != 0;
-            }
-            case 0x0B50: { // GL_LIGHTING
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                return vulkan != null ? vulkan.celtium$lightingEnabled() : this.enables[0x0B50] != 0;
-            }
-            default: break;
-        }
-        return cap >= 0 && cap < this.enables.length && this.enables[cap] != 0;
+        return GlStateQueries.enabledCap(this, cap);
     }
 
-    /** Pixel/semantic routing - the layer the texture path plugs into. Nothing routes yet: calls no-op. */
+    /** Pixel/semantic routing - the layer the texture path plugs into; the body lives in {@link GlStateQueries}. */
     private void route(Fn fn, long[] c) {
-        // Intentionally empty.
+        GlStateQueries.route(fn, c);
     }
-
     // ---- texture image extents: what glGetTexLevelParameter answers from ---------------------------------
 
     /** GL_FRAMEBUFFER (0x8D40) binds both slots; GL_DRAW/READ_FRAMEBUFFER (0x8CA9/0x8CA8) bind one each. */
@@ -8166,12 +7328,12 @@ public final class CeltiumGlStub implements FunctionProvider {
         this.capabilityObserved[capability] = true;
     }
 
-    private static boolean isProxyTarget(int target) {
+    static boolean isProxyTarget(int target) {
         // GL_PROXY_TEXTURE_1D/2D/3D/CUBE_MAP - uploads to these carry no pixels and bind to nothing.
         return target == 0x8063 || target == 0x8064 || target == 0x8070 || target == 0x851B;
     }
 
-    private long texBindKey(int target) {
+    long texBindKey(int target) {
         return ((long) this.textures.activeUnit() << 16) | (target & 0xFFFFL);
     }
 
@@ -9087,7 +8249,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * The buffer whose storage an operation applies to: the bound name for {@code glBufferData}, or the name arg
      * itself for {@code glNamedBufferData}.
      */
-    private int boundBuffer(int target) {
+    int boundBuffer(int target) {
         // The pixel buffers keep their own binding fields (celtium$bindBuffer stores them there), so a buffer-data or
         // map call against GL_PIXEL_UNPACK_BUFFER has to read them here; it used to read the generic table, which never
         // holds them, and dropped Xaero's Minimap's PBO allocation on the floor.
@@ -9115,7 +8277,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** {@return the size GL last gave this buffer}; the semantics live in {@link BufferStorageRecord#logicalSizeOf}. */
-    private int logicalSizeOf(int name, int capacity) {
+    int logicalSizeOf(int name, int capacity) {
         return this.bufferStorage.logicalSizeOf(name, capacity);
     }
 
@@ -9301,7 +8463,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * texture, otherwise GL's own initial state. The semantics live in {@link TextureParameterRecord#valueOrDefault};
      * this door stays because the transformer-facing query entry points above answer through it.
      */
-    private static int textureParameterValue(int textureName, int pname) {
+    static int textureParameterValue(int textureName, int pname) {
         CeltiumGlStub stub = installed;
         return stub == null ? TextureParameterRecord.defaultValue(pname)
                 : stub.textureParameters.valueOrDefault(textureName, pname);
@@ -9384,7 +8546,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** One query answer, named once per distinct shape so a run's log says what the mirror actually asked for. */
-    private void celtium$noteTextureParameterQuery(String name, int textureName, int pname, int value, boolean recorded) {
+    void celtium$noteTextureParameterQuery(String name, int textureName, int pname, int value, boolean recorded) {
         this.textureParameters.noteQuery(name, textureName, pname, value, recorded, () -> celtium$callSite(6));
     }
 
@@ -9703,13 +8865,13 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** GL_FLOAT, the only vertex-pointer element type this path decodes. */
     private static final int GL_FLOAT = 0x1406;
     /** GL_TEXTURE_2D, whose enable bit is reported beside each layout: an untextured pipeline needs it off. */
-    private static final int GL_TEXTURE_2D = 0x0DE1;
+    static final int GL_TEXTURE_2D = 0x0DE1;
     /**
      * GL_FOG: the enable bit {@code RenderGlobal.renderSky} sets around the sky dome (RenderGlobal.java:1337-1345) and
      * around the horizon plane (:1478-1471) and clears before the stars (:1354). It is read at draw time, because the
      * immediate path's fog is per batch, not per frame.
      */
-    private static final int GL_FOG = 0x0B60;
+    static final int GL_FOG = 0x0B60;
     /** GL_QUADS: every {@code VertexBuffer.drawArrays} caller in the 1.12.2 sources passes 7. */
     private static final int GL_QUADS = 7;
     /**
