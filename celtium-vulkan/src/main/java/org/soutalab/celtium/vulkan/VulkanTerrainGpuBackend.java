@@ -961,6 +961,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private int timestampSlots;
 
     private final Reference2ReferenceMap<Integer, TerrainRenderPass> timestampPasses = new Reference2ReferenceOpenHashMap<>();
+    /**
+     * Per-submission snapshots of the timing state above, and which of them a readback may consume.
+     * The live accumulators are moved into a snapshot at submit time and restart empty; the readback
+     * consumes a snapshot only once the scheduler confirms its submission. See TerrainTimingReadback
+     * for why reading the live state instead filed zero for every frame.
+     */
+    private final TerrainTimingReadback timingReadback = new TerrainTimingReadback();
+    /** The readback's census: snapshots consumed, and timestamp slots a consumed read found unavailable. */
+    private long timingSnapshotsRead;
+    private long timingSlotsUnavailable;
     private TerrainRenderer.RegionResources readbackRegion;
     private boolean readbackPending;
     private boolean readbackDone;
@@ -15430,23 +15440,44 @@ this.frameBufferOpen = false;
 
     /** The original timing update, called once per frame from the wrapper above. */
     private void updateTimingsBody() {
-        if (this.timestampPool == 0 || !this.timestampsUsable
-                || (this.timestampSlots == 0 && !this.immediatePassTimed && !this.frameGpuTimed)) {
+        if (this.timestampPool == 0 || !this.timestampsUsable) {
             return;
         }
+        // The state a readback may consume is a confirmed submission's snapshot, never the live
+        // accumulators: at this point in the frame those describe the newest recorded frame, whose
+        // submission has usually not completed - which is why this method used to file zero for
+        // every frame (see TerrainTimingReadback). Nothing confirmed yet, nothing to read; the
+        // snapshot waits, and the terrain column keeps its filed zero for the frame rather than a
+        // sum measured against a submission that has not run.
+        TerrainTimingReadback.Snapshot snapshot =
+                this.timingReadback.peekReadable(this.scheduler.completedSubmitSequence());
+        if (snapshot == null) {
+            return;
+        }
+        boolean consumed = false;
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            int queries = (this.immediatePassTimed || this.frameGpuTimed) ? TIMESTAMP_SLOTS : this.timestampSlots * 2;
+            int queries = (snapshot.immediateTimed || snapshot.frameTimed)
+                    ? TIMESTAMP_SLOTS : snapshot.passSlots * 2;
             LongBuffer data = stack.mallocLong(queries * 2);
             int result = vkGetQueryPoolResults(this.context.device(), this.timestampPool, 0, queries, data,
                     Long.BYTES * 2, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
             if (result != VK_SUCCESS && result != VK_NOT_READY) {
+                // The snapshot stays queued, as the live state used to stay uncleared: the next
+                // begin retries the read, unless a newer confirmation drops it as overwritten.
+                FrameBudgetTimings.setTerrainTimingCensus(this.timingSnapshotsRead,
+                        this.timingReadback.droppedOverwritten(), this.timingSlotsUnavailable);
                 return;
             }
+            consumed = true;
             long terrainGpuNanos = 0L;
-            for (int slot = 0; slot < this.timestampSlots; slot++) {
+            for (int slot = 0; slot < snapshot.passSlots; slot++) {
                 long startAvailable = data.get((slot * 2 * 2) + 1);
                 long endAvailable = data.get((slot * 2 * 2) + 3);
                 if (startAvailable == 0 || endAvailable == 0) {
+                    // Counted rather than silent: the submission was confirmed, so its writes should
+                    // be in the pool. An unavailable slot here is the signature of a read that lost
+                    // its generation, and the census line is where that loss shows.
+                    this.timingSlotsUnavailable++;
                     // Keep whatever was measured for this pass last time instead of reporting "?? ms".
                     continue;
                 }
@@ -15454,7 +15485,7 @@ this.frameBufferOpen = false;
                 long end = data.get((slot * 2 * 2) + 2);
                 if (end >= start) {
                     long passNanos = (long) ((end - start) * this.timestampPeriod);
-                    this.passTimings.put(this.timestampPasses.get(slot), passNanos);
+                    this.passTimings.put(snapshot.passes.get(slot), passNanos);
                     // The frame budget's terrain column is this frame's passes summed fresh from the readback:
                     // the map above keeps a pass's last measured value across frames, so summing it would file
                     // stale durations for passes whose readback has not landed yet.
@@ -15462,7 +15493,7 @@ this.frameBufferOpen = false;
                 }
             }
             FrameBudgetTimings.setTerrainGpuPass(terrainGpuNanos);
-            if (this.frameGpuTimed) {
+            if (snapshot.frameTimed) {
                 long startAvailable = data.get(FRAME_TIMESTAMP_SLOT * 2 * 2 + 1);
                 long endAvailable = data.get(FRAME_TIMESTAMP_SLOT * 2 * 2 + 3);
                 if (startAvailable != 0 && endAvailable != 0) {
@@ -15472,13 +15503,12 @@ this.frameBufferOpen = false;
                         this.frameGpuNanos = (long) ((end - start) * this.timestampPeriod);
                     }
                 }
-                this.frameGpuTimed = false;
             }
-            if (this.frameGpuNanos > 0L && !this.timestampPasses.isEmpty()) {
+            if (this.frameGpuNanos > 0L && !snapshot.passes.isEmpty()) {
                 // The first and last pass of this frame, by the slot they were recorded in: slot order is recording order.
                 int firstSlot = Integer.MAX_VALUE;
                 int lastSlot = -1;
-                for (Integer slot : this.timestampPasses.keySet()) {
+                for (Integer slot : snapshot.passes.keySet()) {
                     firstSlot = Math.min(firstSlot, slot.intValue());
                     lastSlot = Math.max(lastSlot, slot.intValue());
                 }
@@ -15493,7 +15523,7 @@ this.frameBufferOpen = false;
                     }
                 }
             }
-            if (this.immediatePassTimed) {
+            if (snapshot.immediateTimed) {
                 // Every window of the frame, summed and split by target: main-target windows against the off-target
                 // (mod and post-chain framebuffer) ones, plus the largest single window.
                 long main = 0L;
@@ -15501,7 +15531,7 @@ this.frameBufferOpen = false;
                 long max = 0L;
                 int counted = 0;
                 long mainIdentity = this.targetRegistry.mainIdentity();
-                for (int w = 0; w < this.windowTimestampCount; w++) {
+                for (int w = 0; w < snapshot.windowCount; w++) {
                     int slot = WINDOW_SLOT_BASE + w;
                     if (data.get(slot * 2 * 2 + 1) == 0 || data.get(slot * 2 * 2 + 3) == 0) {
                         continue;
@@ -15512,7 +15542,7 @@ this.frameBufferOpen = false;
                         continue;
                     }
                     long nanos = (long) ((end - start) * this.timestampPeriod);
-                    long target = this.windowTimestampTargets[w];
+                    long target = snapshot.windowTargets[w];
                     if (target == mainIdentity || target == 0L) {
                         main += nanos;
                     } else {
@@ -15527,27 +15557,26 @@ this.frameBufferOpen = false;
                 this.windowGpuOffNanos = off;
                 this.windowGpuMaxNanos = max;
                 this.windowGpuCount = counted;
-                this.immediatePassTimed = false;
             }
         }
-        if (this.gpuMarkCount > 1) {
+        if (consumed && snapshot.markCount > 1) {
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                LongBuffer marks = stack.mallocLong(this.gpuMarkCount * 2);
+                LongBuffer marks = stack.mallocLong(snapshot.markCount * 2);
                 int result = vkGetQueryPoolResults(this.context.device(), this.timestampPool, MARK_BASE,
-                        this.gpuMarkCount, marks, Long.BYTES * 2,
+                        snapshot.markCount, marks, Long.BYTES * 2,
                         VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
                 if (result == VK_SUCCESS || result == VK_NOT_READY) {
                     // Summed per label: the delta before each mark is charged to that mark's label (the commands
                     // recorded since the previous mark), so "g2=310us/48" reads as 48 format-2 groups costing 310 us.
                     java.util.Map<String, long[]> byLabel = new java.util.LinkedHashMap<String, long[]>();
                     long previous = -1L;
-                    for (int m = 0; m < this.gpuMarkCount; m++) {
+                    for (int m = 0; m < snapshot.markCount; m++) {
                         if (marks.get(m * 2 + 1) == 0) {
                             continue;
                         }
                         long at = marks.get(m * 2);
                         if (previous >= 0L && at >= previous) {
-                            long[] sum = byLabel.computeIfAbsent(this.gpuMarkLabels[m], k -> new long[2]);
+                            long[] sum = byLabel.computeIfAbsent(snapshot.markLabels[m], k -> new long[2]);
                             sum[0] += (long) ((at - previous) * this.timestampPeriod);
                             sum[1]++;
                         }
@@ -15562,8 +15591,12 @@ this.frameBufferOpen = false;
                 }
             }
         }
-        this.timestampPasses.clear();
-        this.timestampSlots = 0;
+        if (consumed) {
+            this.timingReadback.consume(snapshot);
+            this.timingSnapshotsRead++;
+        }
+        FrameBudgetTimings.setTerrainTimingCensus(this.timingSnapshotsRead,
+                this.timingReadback.droppedOverwritten(), this.timingSlotsUnavailable);
     }
 
     /**
@@ -23951,6 +23984,38 @@ this.frameBufferOpen = false;
         this.slotDeferredFences[slot] = this.context.celtium$submitDeferredFrame(
                 commandBuffer, waitSemaphores, waitStages, signalSemaphores, slot,
                 lost -> celtium$noteSlotConfirmed(slot, lost.booleanValue()));
+        celtium$snapshotTimingState();
+    }
+
+    /**
+     * Moves this frame's accumulated timestamp state into a per-submission snapshot, at the one point
+     * where the state is final: the frame's buffer has ended and its submission is queued. The live
+     * accumulators restart empty for the next recording, and the readback consumes the snapshot only
+     * once the scheduler confirms this submission - the wait the old read-the-live-state shape could
+     * not make, because by the next begin the accumulators already described a newer, still
+     * unconfirmed frame and were cleared either way. The sequence is the one the coordinator's
+     * bookkeeping is about to stamp for this submission: the same {@code submitSequence() + 1} the
+     * arena's in-flight marking reads in that bookkeeping. A frame that timed nothing queues no
+     * snapshot and files nothing, which is what keeps its terrain column at zero rather than at a
+     * stale sum.
+     */
+    private void celtium$snapshotTimingState() {
+        if (this.timestampSlots == 0 && !this.immediatePassTimed && !this.frameGpuTimed) {
+            return;
+        }
+        this.timingReadback.offer(new TerrainTimingReadback.Snapshot(
+                this.scheduler.submitSequence() + 1L, this.frameId,
+                this.timestampSlots, new java.util.HashMap<>(this.timestampPasses),
+                this.windowTimestampCount,
+                java.util.Arrays.copyOf(this.windowTimestampTargets, this.windowTimestampCount),
+                this.immediatePassTimed, this.frameGpuTimed,
+                this.gpuMarkCount, java.util.Arrays.copyOf(this.gpuMarkLabels, this.gpuMarkCount)));
+        this.timestampPasses.clear();
+        this.timestampSlots = 0;
+        this.windowTimestampCount = 0;
+        this.immediatePassTimed = false;
+        this.frameGpuTimed = false;
+        this.gpuMarkCount = 0;
     }
 
     /** Stamps the direct (non-deferred) submit path, which the frame coordinator drives itself. */

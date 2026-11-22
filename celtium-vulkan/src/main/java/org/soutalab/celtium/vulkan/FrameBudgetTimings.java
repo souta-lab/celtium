@@ -208,6 +208,34 @@ public final class FrameBudgetTimings {
         if (ENABLED) currentTerrainGpu = nanos;
     }
 
+    /** The terrain readback's census, as last pushed by the backend; see {@link #setTerrainTimingCensus}. */
+    private static long terrainTimingRead;
+    private static long terrainTimingDropped;
+    private static long terrainTimingUnavailable;
+
+    /**
+     * Records the terrain timestamp readback's census: how many submitted frames' snapshots it has
+     * consumed, how many confirmed snapshots it dropped unread because a newer confirmed submission
+     * had already overwritten the shared pool, and how many timestamp slots a consumed read found
+     * unavailable. The terrain column alone cannot distinguish "the passes cost nothing" from "the
+     * readback never landed" - this census is what separates them on the printed lines, and it is
+     * the number that proves the readback fires in a real run rather than merely compiling.
+     */
+    public static void setTerrainTimingCensus(long read, long dropped, long unavailable) {
+        if (ENABLED) {
+            terrainTimingRead = read;
+            terrainTimingDropped = dropped;
+            terrainTimingUnavailable = unavailable;
+        }
+    }
+
+    /** The census as a line suffix, shared by the window line and the summary. */
+    private static String terrainTimingCensusText() {
+        return " tsRead=" + terrainTimingRead
+                + " tsDrop=" + terrainTimingDropped
+                + " tsUnavail=" + terrainTimingUnavailable;
+    }
+
     /**
      * Whether the present cadence is measured. It is cheap enough to ask for on its own: the world-frame sample costs
      * four clock reads and a timestamp query per window, while the cadence costs one clock read per present. A leg
@@ -317,6 +345,7 @@ public final class FrameBudgetTimings {
                 + " other=" + triple(otherRing, count) + "]"
                 + " gpuShare=" + share(gpuRing, frameRing, count)
                 + " worstFrame=" + worstFrameText()
+                + terrainTimingCensusText()
                 + (lines >= MAX_LINES ? " (line budget reached; the teardown summary still prints)" : ""));
     }
 
@@ -363,7 +392,8 @@ public final class FrameBudgetTimings {
                 + " terrainGpu=" + triple(terrainGpuRing, count)
                 + " other=" + triple(otherRing, count) + "]"
                 + " gpuShare=" + share(gpuRing, frameRing, count)
-                + " worstFrame=" + worstFrameText());
+                + " worstFrame=" + worstFrameText()
+                + terrainTimingCensusText());
     }
 
     /**
