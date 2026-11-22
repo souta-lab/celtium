@@ -115,6 +115,48 @@ public final class VulkanColorBlendState {
         return this.writeMask;
     }
 
+    /**
+     * Content equality over all eight fields. This is load-bearing, not housekeeping: the pack terrain
+     * pipeline key ({@code VulkanTerrainGpuBackend}) carries {@code colorBlend.hashCode()}, and with the
+     * identity hash the blend-disabled shape - which that site builds fresh via {@link #of} on every
+     * execution - produced a new key every time, so the pipeline cache missed on every opaque pass
+     * execution and re-created the pipeline (measured by the bsl-wedge-7 census: created on every sampled
+     * execution, while the blend-enabled shape, which goes through the {@link #legacy()} singleton and so
+     * had a stable identity, created once and hit). Two states with the same fields bake the same Vulkan
+     * blend state, so they are the same state.
+     */
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (!(other instanceof VulkanColorBlendState that)) {
+            return false;
+        }
+        return this.blend == that.blend
+                && this.srcColor == that.srcColor
+                && this.dstColor == that.dstColor
+                && this.srcAlpha == that.srcAlpha
+                && this.dstAlpha == that.dstAlpha
+                && this.colorOp == that.colorOp
+                && this.alphaOp == that.alphaOp
+                && this.writeMask == that.writeMask;
+    }
+
+    /** The content hash {@link #equals} promises: all eight fields, in declaration order. */
+    @Override
+    public int hashCode() {
+        int h = this.blend ? 1 : 0;
+        h = 31 * h + this.srcColor;
+        h = 31 * h + this.dstColor;
+        h = 31 * h + this.srcAlpha;
+        h = 31 * h + this.dstAlpha;
+        h = 31 * h + this.colorOp;
+        h = 31 * h + this.alphaOp;
+        h = 31 * h + this.writeMask;
+        return h;
+    }
+
     /** {@return the four alpha factors as one comparable number}, so a census can group batches by them. */
     public long alphaPairKey() {
         return (((long) this.srcAlpha) << 32) | (this.dstAlpha & 0xFFFFFFFFL);
