@@ -40,6 +40,64 @@ class CrashBreadcrumbsTest {
     }
 
     @Test
+    void hsGenCodesDescribeWithTheirOwnFields() {
+        // hs-gen-1: the descriptor set bound by the immediate texture pipeline names its allocation
+        // generation and the texture key it was handed out for; a flush that actually ran names its
+        // entrance kind, its group count and the target current at the flush.
+        assertEquals("descriptor-bind set=0x2a setGen=7 textureKey=0x10",
+                CrashBreadcrumbs.describe(CrashBreadcrumbs.DESCRIPTOR_BIND, 0x2aL, 7L, 0x10L));
+        assertEquals("flush-entry kind=vanilla-bind groups=5 target=0x10",
+                CrashBreadcrumbs.describe(CrashBreadcrumbs.FLUSH_ENTRY,
+                        CrashBreadcrumbs.FLUSH_ENTRY_VANILLA_BIND, 5L, 0x10L));
+        assertEquals("flush-entry kind=raw-register groups=5 target=0x10",
+                CrashBreadcrumbs.describe(CrashBreadcrumbs.FLUSH_ENTRY,
+                        CrashBreadcrumbs.FLUSH_ENTRY_RAW_REGISTER, 5L, 0x10L));
+        assertEquals("flush-entry kind=other groups=5 target=0x10",
+                CrashBreadcrumbs.describe(CrashBreadcrumbs.FLUSH_ENTRY,
+                        CrashBreadcrumbs.FLUSH_ENTRY_OTHER, 5L, 0x10L));
+        assertEquals("flush-entry kind=kind-99 groups=5 target=0x10",
+                CrashBreadcrumbs.describe(CrashBreadcrumbs.FLUSH_ENTRY, 99L, 5L, 0x10L));
+        // The window-pass describe carries the framebuffer's creation generation as its fourth number;
+        // the three-number form reads the generation as 0 (not a cache-stamped handle).
+        long extent = (3440L << 32) | 1369L;
+        assertEquals("window-pass renderPass=0x2a framebuffer=0x10 extent=3440x1369 fbGen=3",
+                CrashBreadcrumbs.describe(CrashBreadcrumbs.WINDOW_PASS, 0x2aL, 0x10L, extent, 3L));
+        assertEquals("window-pass renderPass=0x2a framebuffer=0x10 extent=3440x1369 fbGen=0",
+                CrashBreadcrumbs.describe(CrashBreadcrumbs.WINDOW_PASS, 0x2aL, 0x10L, extent));
+    }
+
+    @Test
+    void windowPassLineWithGenerationCarriesFbGen() {
+        // hs-gen-1: the five-number write-through line appends the framebuffer generation to the pinned
+        // four-number form, so a recycled handle value is distinguishable from the live framebuffer.
+        assertEquals("celtium last window-pass seq=7 renderPass=0x2a framebuffer=0x10 extent=3440x1369 fbGen=3\n",
+                CrashBreadcrumbs.windowPassLine(7L, 0x2aL, 0x10L, (3440L << 32) | 1369L, 3L));
+    }
+
+    @Test
+    void windowPassGenerationOnlyChangeRewritesTheLine(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
+            throws Exception {
+        // hs-gen-1: the generation is part of the write-through tuple - the same handle value and extent
+        // at a new generation is a different window and must rewrite immediately, not ride the heartbeat.
+        java.nio.file.Path file = dir.resolve("celtium-last-window-pass.log");
+        CrashBreadcrumbs.windowPassFileForTest = file;
+        try {
+            long extent = (1920L << 32) | 1080L;
+            CrashBreadcrumbs.note4(CrashBreadcrumbs.WINDOW_PASS, 0xaaaaL, 0xbbbbL, extent, 1L);
+            String first = java.nio.file.Files.readString(file);
+            assertTrue(first.contains("fbGen=1"), first);
+            CrashBreadcrumbs.note4(CrashBreadcrumbs.WINDOW_PASS, 0xaaaaL, 0xbbbbL, extent, 1L);
+            assertEquals(first, java.nio.file.Files.readString(file),
+                    "an unchanged tuple inside the interval is not rewritten");
+            CrashBreadcrumbs.note4(CrashBreadcrumbs.WINDOW_PASS, 0xaaaaL, 0xbbbbL, extent, 2L);
+            String changed = java.nio.file.Files.readString(file);
+            assertTrue(changed.contains("fbGen=2"), changed);
+        } finally {
+            CrashBreadcrumbs.windowPassFileForTest = null;
+        }
+    }
+
+    @Test
     void windowPassLineCarriesTheBeginArguments() {
         // Item 536: the write-through line is read next to an hs_err after a native AV, so it names the same
         // three numbers the ring's WINDOW_PASS describe does, plus the sequence of the window in the session.
@@ -85,7 +143,7 @@ class CrashBreadcrumbsTest {
                 CrashBreadcrumbs.RAW_FBO, CrashBreadcrumbs.DEFERRED_UPLOAD,
                 CrashBreadcrumbs.DEFERRED_UPLOAD_PATCHED_LEVELS, CrashBreadcrumbs.DEFERRED_TRANSITION,
                 CrashBreadcrumbs.DEFERRED_UPLOAD_LEVEL, CrashBreadcrumbs.DEFERRED_UPLOAD_IMAGE,
-                CrashBreadcrumbs.BATCH_SUBMIT};
+                CrashBreadcrumbs.BATCH_SUBMIT, CrashBreadcrumbs.DESCRIPTOR_BIND, CrashBreadcrumbs.FLUSH_ENTRY};
         java.util.Set<Integer> seen = new java.util.HashSet<Integer>();
         for (int code : codes) {
             assertTrue(seen.add(Integer.valueOf(code)), "duplicate breadcrumb code " + code);
