@@ -47,20 +47,64 @@ import java.util.Arrays;
  */
 public final class TickTimings {
 
-    private static final boolean ENABLED = HarnessConfig.bool("tickTimings", false);
-    /** TickSplit2 (item 407): independent of the legacy switch, so a leg can take either split alone. */
-    private static final boolean SPLIT2 = HarnessConfig.bool("tickSplit2", false);
     /**
-     * The tick clock's CPU form (item 407, layer 3). Resolved once, like {@link FramePassTimings}' clock switch:
-     * a property lookup per bracket is exactly the tax that class's history records.
+     * The legacy split's switch, resolved through {@link HarnessConfig} and re-taken at every
+     * {@link #beginTick(boolean)}; see {@link #resolveSwitches()} for why the re-take exists. The answers stay
+     * field reads on the bracket path: a property lookup per bracket is exactly the tax
+     * {@link FramePassTimings}' history records.
      */
-    private static final boolean CPU_CLOCK_TICK = HarnessConfig.bool("tickTimingsCpu", false);
+    private static volatile boolean ENABLED;
+    /** TickSplit2 (item 407): independent of the legacy switch, so a leg can take either split alone. */
+    private static volatile boolean SPLIT2;
+    /**
+     * The tick clock's CPU form (item 407, layer 3), re-resolved with the other switches rather than once, the
+     * same move {@link FramePassTimings}' clock switch made: {@link #now()} reads the field, never a property,
+     * so the bracket path still pays no lookup.
+     */
+    private static volatile boolean CPU_CLOCK_TICK;
     private static final java.lang.management.ThreadMXBean THREAD_BEAN =
             java.lang.management.ManagementFactory.getThreadMXBean();
     private static final boolean THREAD_CPU_SUPPORTED = THREAD_BEAN.isCurrentThreadCpuTimeSupported();
-    private static final int FROM = HarnessConfig.integer("tickTimingsFrom", 400);
-    private static final int TO = HarnessConfig.integer("tickTimingsTo", 600);
-    private static final int CAPACITY = Math.max(64, TO - FROM + 8);
+    /** The measured window's first tick (inclusive), re-resolved with the switches. */
+    private static volatile int FROM;
+    /** The measured window's end tick (exclusive), re-resolved with the switches. */
+    private static volatile int TO;
+    /**
+     * The row capacity the storage is allocated with, derived from the window at each resolution. The arrays
+     * themselves are allocated once, at the first measured tick ({@link #ensure()}), with the capacity then in
+     * force, and {@link #endTick()} files against the allocated length - so a later resolution that widens the
+     * window cannot write past them.
+     */
+    private static volatile int CAPACITY;
+
+    /**
+     * (Re-)resolves every harness switch this class keeps, through {@link HarnessConfig}: the two split
+     * switches, the clock switch and the window ({@link #FROM} / {@link #TO}, with the {@link #CAPACITY}
+     * derived from them).
+     * <p>
+     * Called once when this class initialises, so a run that never opens a tick observes exactly the old
+     * class-init resolution, and again at every {@link #beginTick(boolean)} - once a tick, never per bracket,
+     * so the property walk stays off the bracket path. The tick open is the moment the configuration of the
+     * tick being recorded is taken, and taking it there is what makes the resolution robust against this class
+     * being initialised earlier by an unrelated touch: {@link FramePassTimings#enabled()} asks this class's
+     * switches, so any touch of the frame timings - a production path a unit test exercises, ahead of the
+     * harness configuration - initialises this class too, and a resolution fixed at that moment used to hold
+     * for the whole JVM. This is the same latch {@link FramePassTimings} carried until its own fix, whose
+     * record named this class as the remaining carrier (item 689). A player's run fixes its configuration
+     * before launch, so the re-take reads the same values every tick and changes nothing there.
+     */
+    private static void resolveSwitches() {
+        ENABLED = HarnessConfig.bool("tickTimings", false);
+        SPLIT2 = HarnessConfig.bool("tickSplit2", false);
+        CPU_CLOCK_TICK = HarnessConfig.bool("tickTimingsCpu", false);
+        FROM = HarnessConfig.integer("tickTimingsFrom", 400);
+        TO = HarnessConfig.integer("tickTimingsTo", 600);
+        CAPACITY = Math.max(64, TO - FROM + 8);
+    }
+
+    static {
+        resolveSwitches();
+    }
 
     /** {@return whether either tick split is switched on}. */
     public static boolean enabled() {
@@ -215,6 +259,8 @@ public final class TickTimings {
      *                 window's tick numbers mean the same thing the fixture's {@code worldTicks} mean
      */
     public static void beginTick(boolean hasWorld) {
+        // The tick's configuration is taken here, once per tick: see resolveSwitches().
+        resolveSwitches();
         if (!ENABLED && !SPLIT2) {
             return;
         }
@@ -249,7 +295,9 @@ public final class TickTimings {
         open = false;
         long tickEnd = now();
         long total = tickEnd - tickStart;
-        if (recorded < CAPACITY) {
+        // The allocated length, not the current CAPACITY: a re-resolution may have widened the window
+        // after ensure() allocated the rows (see the CAPACITY field note).
+        if (recorded < totals.length) {
             totals[recorded] = total;
             for (int i = 0; i < current.length; i++) {
                 sums[i][recorded] = current[i];
