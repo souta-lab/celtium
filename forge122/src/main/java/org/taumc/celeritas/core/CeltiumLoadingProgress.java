@@ -105,11 +105,16 @@ public final class CeltiumLoadingProgress {
                 totals[i] = bar.getSteps();
             }
             int angle = (int) ((System.nanoTime() - startedNanos) / 10_000_000L);
-            backend.presentLoadingProgress(mc.displayWidth, mc.displayHeight, colors, showMemory, rotate, logoOffset,
-                    logo, forge, font, titles, messages, steps, totals, angle);
+            int[] presentedSize = backend.presentLoadingProgress(mc.displayWidth, mc.displayHeight, colors,
+                    showMemory, rotate, logoOffset, logo, forge, font, titles, messages, steps, totals, angle);
             if (presented++ == 0) {
+                // The size the frame was actually laid out at, not the requested size this passes in: the two
+                // differ whenever the window did not get the size the game asked for, and the log line is the
+                // record a reader compares against the swapchain's own extent records.
+                int sizeWidth = presentedSize != null ? presentedSize[0] : mc.displayWidth;
+                int sizeHeight = presentedSize != null ? presentedSize[1] : mc.displayHeight;
                 System.out.println("[Celtium] CELTIUM_LOADING_SCREEN first Forge splash frame presented, bars="
-                        + bars.size() + " size=" + mc.displayWidth + "x" + mc.displayHeight);
+                        + bars.size() + " size=" + sizeWidth + "x" + sizeHeight);
             }
         } catch (Exception | LinkageError error) {
             failures++;
