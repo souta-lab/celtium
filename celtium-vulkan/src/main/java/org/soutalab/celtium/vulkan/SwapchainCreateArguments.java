@@ -75,6 +75,14 @@ public final class SwapchainCreateArguments {
         public String extentNote = "";
         /** Null when the surface is usable; otherwise the sentence that refuses it, and nothing may be created. */
         public String refusal;
+        /**
+         * True only for the pinned-extent refusal: the surface has not reported a size to create against
+         * (a minimised window pins {@code currentExtent} at 0x0), so the attempt is a wait, not a verdict on
+         * the surface. Creation is retried once a size is reported, and the caller must not count the wait
+         * toward the swapchain creation escalation, which counts refused creations - a wait is a creation
+         * no surface could have accepted, however long the window stays without a size.
+         */
+        public boolean awaitingSurfaceSize;
 
         /** {@return the offer beside the choice, one line, for a leg's console and for the diagnostics}. */
         public String describe() {
@@ -154,6 +162,12 @@ public final class SwapchainCreateArguments {
             // 0x0 current extent - a minimised window on some platforms - would otherwise flow unprocessed into
             // vkCreateSwapchainKHR and fail there every frame until the window settles (bughunt LANE-05 #8).
             // Refusing by name lets the caller skip the frame and retry creation once the surface reports a size.
+            // The refusal is flagged as that wait (awaitingSurfaceSize), because counting it as a refusal is
+            // what killed a healthy shipped v0.3.0 session: the surface pinned 0x0 while a world loaded, the
+            // loading screen's present loop retried unthrottled, and 120 waits in about two seconds reached
+            // the creation escalation's limit on a surface that created its swapchain as soon as it reported
+            // a size again.
+            result.awaitingSurfaceSize = true;
             result.refusal = "the surface pins a current extent of " + result.width + "x" + result.height
                     + ", so no swapchain can be created until it reports a size";
             return result;
