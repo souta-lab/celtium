@@ -3371,12 +3371,26 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private int currentGroupTexture;
     private long currentGroupStateKey;
     /**
-     * {@code -Dceltium.vulkan.terrainToBoundTarget=true}: draw a terrain pass into the bound mod framebuffer's chain pair
-     * instead of the game's framebuffer when a non-main framebuffer is bound (GTCEu's Bloom layer). Off by default until
-     * a leg compares it with the GL reference; the pair's depth is its own, not the game's, so a bloom block behind a
-     * wall still enters the mask.
+     * {@code -Dceltium.vulkan.terrainToBoundTarget=false} opts out of drawing a terrain pass into the bound mod
+     * framebuffer's chain pair instead of the game's framebuffer when a non-main framebuffer is bound (GTCEu's Bloom
+     * layer). The route is the default (item 644): it stayed opt-in while the pair's deferred clear could land after
+     * the pass and erase the mask the pass had just drawn - the routing half of item 384's bloom-halo verdict. That
+     * erasure is fixed (the owed clear is consumed before the pass for both shapes of pair depth, 30854465a, and the
+     * pair is acquired whole, abf094ae2; neither was in the verdict leg's build), so the gate the opt-in was holding
+     * is the only thing left between the default build and the mask. The pair's depth is its own, not the game's, so
+     * a bloom block behind a wall still enters the mask.
      */
-    private static final boolean TERRAIN_TO_BOUND_TARGET = Boolean.getBoolean("celtium.vulkan.terrainToBoundTarget");
+    private static final boolean TERRAIN_TO_BOUND_TARGET =
+            celtium$terrainToBoundTargetEnabled(System.getProperty("celtium.vulkan.terrainToBoundTarget", "true"));
+
+    /**
+     * {@return whether the bound-target terrain route is on for the property's value}: on unless the value reads
+     * "false", the mod-programs rule ({@code ModPrograms#MOD_PROGRAMS}). Package-private and static so the default
+     * is pinned without a device.
+     */
+    static boolean celtium$terrainToBoundTargetEnabled(String property) {
+        return !"false".equalsIgnoreCase(property);
+    }
     private long terrainPassesToBoundTarget;
 
     /** Item 384: read by BackendDiagnostics so the count reaches the summary line a leg actually surfaces. */
@@ -10297,7 +10311,6 @@ this.frameBufferOpen = false;
                         + " keptForOtherTargets=" + this.immediateStatistics.immediateGroupsKeptForOtherTargets()
                         + " noPipeline=" + this.immediateFlushNoPipeline
                         + " deferredNextFrame=" + this.immediateStatistics.immediateDeferredNextFrame()
-                        + " refusedWindowBudget=" + this.immediateStatistics.immediateRefusedWindowBudget()
                         + " lastError=" + this.immediateLastFlushError);
             }
             if (formatId >= 0 && formatId < this.immediateAcceptedByFormat.length) {
