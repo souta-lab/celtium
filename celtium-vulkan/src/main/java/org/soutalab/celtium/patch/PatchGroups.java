@@ -243,6 +243,12 @@ public final class PatchGroups {
               "core.model.BlockModelShapesPhaseMixin",
               "features.textures.TextureMapStitchPhaseMixin"
         );
+        group("pack_phase_instrument", "pack phase instrument", false,
+              "the wpPackPrepare / wpPackBegin / wpShadowPhase census brackets (item 648) stop; rendering itself is untouched because every injector is require=0 and read-only, and the mixins are @Pseudo so they are silently off without Demonica anyway",
+              "core.DemonicaPipelinePrepareTimingMixin",
+              "core.DemonicaPipelineBeginTimingMixin",
+              "core.DemonicaShadowPhaseTimingMixin"
+        );
         group("text", "text", false,
               "the font batcher stops and glyphs fall back to the generic recording through the GL stub (unmeasured)",
               "core.FontRendererMixin",
