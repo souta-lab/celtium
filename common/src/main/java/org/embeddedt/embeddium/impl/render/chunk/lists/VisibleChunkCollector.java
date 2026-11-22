@@ -38,7 +38,106 @@ public class VisibleChunkCollector implements OcclusionCuller.Visitor {
     private boolean hasAdditionalUpdates;
     private boolean rebuildListsFinished;
 
+    /*
+     * Present census (item 683): an exclusive decomposition of the visible set by build state, so a
+     * "visible count is normal but the screen shows fragments" report can be attributed instead of
+     * argued. CELTIUM_VISIBLE counts traversed cells whether or not they hold built geometry; this
+     * census separates the cells that can draw (visuals set) from the ones that cannot, and splits
+     * the latter by why not: still queued, build in flight, in flight with the cancellation token
+     * already gone (the wedge signature), or terminal with no pending update - split by whether the
+     * section was ever built. A mirror/body pending disagreement is counted alongside.
+     *
+     * Enabled only when -Dceltium.debug.presentCensus is set; the value bounds the session's printed
+     * lines (default 24 when set without a usable value). A line is printed when the anomaly sum
+     * (wedged + terminalBuilt + terminalUnbuilt + mirrorMismatch) changes, so a settled scene prints
+     * once and a stuck one prints as its composition shifts. The classification of the in-flight and
+     * terminal cells reads the section body (token, built state) on the search thread; those reads
+     * are advisory in the same way the existing in-flight check in visit() is - a concurrent commit
+     * can move a cell between categories, but cannot invent a wedge that persists across searches.
+     */
+    private static int presentCensusPrintedLines;
+    private static long presentCensusLastPrintedAnomaly = -1L;
+
+    private static int presentCensusLimit() {
+        if (System.getProperty("celtium.debug.presentCensus") == null) {
+            return 0;
+        }
+
+        return Math.max(0, Integer.getInteger("celtium.debug.presentCensus", 24));
+    }
+
+    private final int presentCensusLimit;
+    private final boolean presentCensusEnabled;
+    private int censusVisible;
+    private int censusDrawn;
+    private int censusQueued;
+    private int censusBuilding;
+    private int censusWedged;
+    private int censusTerminalBuilt;
+    private int censusTerminalUnbuilt;
+    private int censusMirrorMismatch;
+
+    /** The build-state categories a visible cell falls into; see the census note above. */
+    enum PresentCensusCategory {
+        DRAWN,
+        QUEUED,
+        BUILDING,
+        WEDGED,
+        TERMINAL_BUILT,
+        TERMINAL_UNBUILT
+    }
+
+    /**
+     * Classifies one visible cell from its compact mirror metadata. The body is consulted only for
+     * the categories the mirror cannot decide (in-flight token presence, ever-built state); a null
+     * body - a cell uninstalled between traversal and classification - reads as still building /
+     * never built, never as wedged or terminal-built, so a teardown race cannot fabricate the
+     * anomaly categories.
+     */
+    static PresentCensusCategory classifyPresent(int meta, RenderSection section) {
+        if (PackedSectionMetadata.getCompactVisualsFlags(meta) != 0) {
+            return PresentCensusCategory.DRAWN;
+        }
+
+        boolean inFlight = PackedSectionMetadata.isCompactBuildInFlight(meta);
+        ChunkUpdateType pending = PackedSectionMetadata.getCompactPendingUpdate(meta);
+
+        if (!inFlight && pending != null) {
+            return PresentCensusCategory.QUEUED;
+        }
+
+        if (inFlight) {
+            return section != null && section.getBuildCancellationToken() == null
+                    ? PresentCensusCategory.WEDGED
+                    : PresentCensusCategory.BUILDING;
+        }
+
+        return section != null && section.isBuilt()
+                ? PresentCensusCategory.TERMINAL_BUILT
+                : PresentCensusCategory.TERMINAL_UNBUILT;
+    }
+
+    /** One search's census counts, in the printed line's field order. */
+    public record PresentCensus(int visible, int drawn, int queued, int building, int wedged,
+                                int terminalBuilt, int terminalUnbuilt, int mirrorMismatch) {
+        long anomaly() {
+            return (long) wedged + terminalBuilt + terminalUnbuilt + mirrorMismatch;
+        }
+    }
+
+    public PresentCensus presentCensus() {
+        return new PresentCensus(this.censusVisible, this.censusDrawn, this.censusQueued,
+                this.censusBuilding, this.censusWedged, this.censusTerminalBuilt,
+                this.censusTerminalUnbuilt, this.censusMirrorMismatch);
+    }
+
     public VisibleChunkCollector(SectionLattice lattice, int frame, int regionIdsLength, int targetQueueSize, Vector3ic cameraBlockPos) {
+        this(lattice, frame, regionIdsLength, targetQueueSize, cameraBlockPos, false);
+    }
+
+    public VisibleChunkCollector(SectionLattice lattice, int frame, int regionIdsLength, int targetQueueSize, Vector3ic cameraBlockPos, boolean collectPresentCensus) {
+        this.presentCensusLimit = collectPresentCensus ? presentCensusLimit() : 0;
+        this.presentCensusEnabled = this.presentCensusLimit > 0;
         this.lattice = lattice;
         this.frame = frame;
 
@@ -88,7 +187,59 @@ public class VisibleChunkCollector implements OcclusionCuller.Visitor {
             if (type != null && !PackedSectionMetadata.isCompactBuildInFlight(meta)) {
                 this.addRebuildCandidate(latticeIndex, chunkX, chunkY, chunkZ, type);
             }
+
+            if (this.presentCensusEnabled) {
+                this.censusVisit(latticeIndex, meta, type);
+            }
         }
+    }
+
+    private void censusVisit(int latticeIndex, int meta, ChunkUpdateType mirrorPending) {
+        this.censusVisible++;
+
+        // The body is read only for cells without visuals - the minority in a healthy scene, and
+        // exactly the population the census exists to explain. Drawn cells need no body read.
+        RenderSection section = null;
+
+        if (PackedSectionMetadata.getCompactVisualsFlags(meta) == 0) {
+            section = this.lattice.sectionAt(latticeIndex);
+
+            if (section != null && section.getPendingUpdate() != mirrorPending) {
+                this.censusMirrorMismatch++;
+            }
+        }
+
+        switch (classifyPresent(meta, section)) {
+            case DRAWN -> this.censusDrawn++;
+            case QUEUED -> this.censusQueued++;
+            case BUILDING -> this.censusBuilding++;
+            case WEDGED -> this.censusWedged++;
+            case TERMINAL_BUILT -> this.censusTerminalBuilt++;
+            case TERMINAL_UNBUILT -> this.censusTerminalUnbuilt++;
+        }
+    }
+
+    private void printPresentCensus() {
+        PresentCensus census = this.presentCensus();
+        long anomaly = census.anomaly();
+
+        if (anomaly == presentCensusLastPrintedAnomaly || presentCensusPrintedLines >= this.presentCensusLimit) {
+            return;
+        }
+
+        presentCensusLastPrintedAnomaly = anomaly;
+        presentCensusPrintedLines++;
+
+        System.out.println("[Celtium] CELTIUM_PRESENT_CENSUS frame=" + this.frame
+                + " visible=" + census.visible()
+                + " drawn=" + census.drawn()
+                + " queued=" + census.queued()
+                + " building=" + census.building()
+                + " wedged=" + census.wedged()
+                + " terminalBuilt=" + census.terminalBuilt()
+                + " terminalUnbuilt=" + census.terminalUnbuilt()
+                + " mirrorMismatch=" + census.mirrorMismatch()
+                + " graphSections=" + this.lattice.attachedSectionCount());
     }
 
     private void addRebuildCandidate(int latticeIndex, int chunkX, int chunkY, int chunkZ, ChunkUpdateType type) {
@@ -148,6 +299,10 @@ public class VisibleChunkCollector implements OcclusionCuller.Visitor {
             }
 
             this.rebuildCandidates[i] = null;
+        }
+
+        if (this.presentCensusEnabled) {
+            this.printPresentCensus();
         }
     }
 

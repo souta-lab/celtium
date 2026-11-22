@@ -138,7 +138,9 @@ public class RenderListManager {
             throw new IllegalStateException("Occlusion work in progress while trying to submit next task");
         }
 
-        var visitor = new VisibleChunkCollector(this.lattice, frame, regionIdsLength, targetQueueSize, viewport.getBlockCoord());
+        // The present census decomposes the camera's visible set; the shadow search visits a
+        // different set (the light's), so only the terrain search collects it.
+        var visitor = new VisibleChunkCollector(this.lattice, frame, regionIdsLength, targetQueueSize, viewport.getBlockCoord(), !this.shadow);
 
         Supplier<VisibleChunkCollector> occlusionTask = () -> {
             this.pendingVisibilitySnapshot = search.apply(visitor);

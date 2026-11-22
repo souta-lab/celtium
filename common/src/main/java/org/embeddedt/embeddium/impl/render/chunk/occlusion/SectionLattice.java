@@ -323,6 +323,14 @@ public final class SectionLattice {
     }
 
     /**
+     * Returns the number of sections in the authoritative collection, whether
+     * or not each currently has an installed lattice slot.
+     */
+    public int attachedSectionCount() {
+        return this.sections.size();
+    }
+
+    /**
      * Encodes a frame for the ordered visit gate. The low byte is reserved for
      * incoming direction bits, so the 32-bit frame occupies bits 8..39.
      */
