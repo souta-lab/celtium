@@ -4393,13 +4393,28 @@ public final class VulkanContext {
     private void recordStagingCopy(long destination, long destinationOffset, long length) {
         VkCommandBuffer commandBuffer = beginCommands();
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            // The same write-after-read dependency as the batched path (flushUploads): earlier frames may still read
-            // the destination range.
-            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, null);
+            // The same write-after-read / write-after-write dependency as the batched path (flushUploads): earlier
+            // frames may still read or write the destination range, and host writes to staging must be visible.
+            org.lwjgl.vulkan.VkMemoryBarrier.Buffer preCopy = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
+            preCopy.get(0).sType$Default()
+                    .srcAccessMask(VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            vkCmdPipelineBarrier(commandBuffer,
+                    VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, preCopy, null, null);
             VkBufferCopy.Buffer copy = VkBufferCopy.calloc(1, stack);
             copy.get(0).srcOffset(0L).dstOffset(destinationOffset).size(length);
             vkCmdCopyBuffer(commandBuffer, this.stagingBuffer, destination, copy);
+            org.lwjgl.vulkan.VkMemoryBarrier.Buffer postCopy = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
+            postCopy.get(0).sType$Default()
+                    .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT
+                            | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT
+                            | VK_ACCESS_TRANSFER_WRITE_BIT);
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT
+                            | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0, postCopy, null, null);
         }
         endCommands(commandBuffer);
     }

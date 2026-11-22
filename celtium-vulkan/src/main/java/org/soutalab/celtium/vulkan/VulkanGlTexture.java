@@ -3305,6 +3305,7 @@ public final class VulkanGlTexture {
             for (int covered = 0; covered < Math.max(1, this.mipLevels); covered++) {
                 setLevelLayout(covered, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             }
+            this.currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         } finally {
             // Deferred: the transition executes ahead of every later submission on the same queue, which is the only
             // ordering the recorded layout bookkeeping needs. The fence is still tracked for this texture even though
@@ -4115,6 +4116,25 @@ public final class VulkanGlTexture {
      * must not, and no longer comes through here: it writes only the levels its producer supplied, each in its own
      * layout, in {@link #uploadPatchedLevels}.
      */
+    /**
+     * {@return the {@code [srcStageMask, srcAccessMask]} for the {@code UNDEFINED -> TRANSFER_DST_OPTIMAL} entry
+     * barrier of a whole-image upload ({@link #copyToImage})}.
+     * <p>
+     * Re-uploading an already-initialized mirror (such as the lightmap or dynamic textures) with
+     * {@code TOP_OF_PIPE_BIT} does not wait for earlier frames' shader sampling on the same queue (WAR hazard and
+     * DCC/tile corruption while sampling; issue #422 (a)). Waiting on {@code SAMPLING_STAGES | TRANSFER_BIT} matches
+     * {@link #copyMipLevelToImage} and {@link #flushDeferredRegions}.
+     */
+    static int[] wholeUploadEntryBarrierMasks(boolean initialized) {
+        if (initialized) {
+            return new int[] {
+                    SAMPLING_STAGES | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT
+            };
+        }
+        return new int[] { VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0 };
+    }
+
     private void copyToImage(ByteBuffer pixels, int pixelWidth, int pixelHeight, int level, int offsetX, int offsetY) {
         if (level > 0) {
             copyMipLevelToImage(pixels, pixelWidth, pixelHeight, level, offsetX, offsetY);
@@ -4164,13 +4184,18 @@ public final class VulkanGlTexture {
         VkCommandBuffer commandBuffer = context.beginCommands();
         celtium$trace("wholeUpload level=" + level + " " + pixelWidth + "x" + pixelHeight, commandBuffer);
         boolean finishedSamplingTransition = false;
+        boolean initialized = this.currentLayout != VK_IMAGE_LAYOUT_UNDEFINED
+                || levelLayout(level) != VK_IMAGE_LAYOUT_UNDEFINED;
+        int[] entryMasks = wholeUploadEntryBarrierMasks(initialized);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
             // The whole chain is re-uploaded from scratch, so the old layout may be anything - including the
             // VK_IMAGE_LAYOUT_UNDEFINED an image starts in, which validation rejects as an oldLayout for a
             // first transition. Every mip level is covered because the levels are regenerated below.
+            // When the mirror is already initialized, wait on SAMPLING_STAGES | TRANSFER_BIT so earlier in-flight
+            // frames finish sampling before the transition discards/overwrites the image (issue #422 (a)).
             barrier.get(0).sType$Default()
-                    .srcAccessMask(0)
+                    .srcAccessMask(entryMasks[1])
                     .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
                     .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED)
                     .newLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
@@ -4178,8 +4203,10 @@ public final class VulkanGlTexture {
                     .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .image(image);
             barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level, this.mipLevels, 0, 1);
-            if (level == 0) { vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    0, null, null, barrier); }
+            if (level == 0) {
+                vkCmdPipelineBarrier(commandBuffer, entryMasks[0], VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        0, null, null, barrier);
+            }
 
             VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
             // A row length of 0 means the rows are tightly packed, which is exactly how GL returned them.
