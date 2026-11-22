@@ -9,6 +9,7 @@ import static org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 import static org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA;
 import static org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ZERO;
 import static org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD;
+import static org.lwjgl.vulkan.VK10.VK_BLEND_OP_SUBTRACT;
 
 /**
  * The content equality {@code CELTIUM_WEDGE_PIPE} found missing: the pack terrain pipeline key carries
@@ -58,9 +59,9 @@ class VulkanColorBlendStateTest {
         assertNotEquals(base, VulkanColorBlendState.of(false, 0, 0, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE,
                 VK_BLEND_OP_ADD, VK_BLEND_OP_ADD, VulkanColorBlendState.allChannels()), "dstAlpha");
         assertNotEquals(base, VulkanColorBlendState.of(false, 0, 0, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO,
-                0, VK_BLEND_OP_ADD, VulkanColorBlendState.allChannels()), "colorOp");
+                VK_BLEND_OP_SUBTRACT, VK_BLEND_OP_ADD, VulkanColorBlendState.allChannels()), "colorOp");
         assertNotEquals(base, VulkanColorBlendState.of(false, 0, 0, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO,
-                VK_BLEND_OP_ADD, 0, VulkanColorBlendState.allChannels()), "alphaOp");
+                VK_BLEND_OP_ADD, VK_BLEND_OP_SUBTRACT, VulkanColorBlendState.allChannels()), "alphaOp");
         assertNotEquals(base, VulkanColorBlendState.of(false, 0, 0, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO,
                 VK_BLEND_OP_ADD, VK_BLEND_OP_ADD, 0), "writeMask");
     }
