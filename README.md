@@ -270,3 +270,7 @@ FalseTweaks, Neodymium, ArchaicFix, Hodgepodge) and modern Minecraft (VulkanMod,
 nvidium, Iris).
 
 ライセンスには細心の注意を払って作っています。GPLやLGPL以外のソースを取り込むことはありません。
+
+## 🙏 Special thanks
+
+- **biyu_bu (밥다섯)** — tireless testing on real modpacks, with detailed reports (logs, screenshots, and retests) that drove many fixes, including the Demonica GUI corruption and the swapchain crash after v0.3.0.
