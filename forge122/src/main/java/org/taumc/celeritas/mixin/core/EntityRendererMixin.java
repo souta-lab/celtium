@@ -108,6 +108,55 @@ public abstract class EntityRendererMixin {
         org.soutalab.celtium.vulkan.FramePassTimings.end("worldPass");
     }
 
+    // pack-tail-2: the world pass' remainder (worldRest), named at its real seams. setupCameraTransform is
+    // called only from renderWorldPass in vanilla, and the renderer's world snapshot is seeded at its
+    // return (celtium$seedMirrorAtCameraSetup below), so this one bracket holds the camera/frustum setup
+    // plus the snapshot hand-off. renderRainSnow is likewise only called from renderWorldPass; its bracket
+    // name "weather" already exists in the pass table but no call site ever opened it, so the weather span
+    // sat inside worldRest while the name read a permanent zero.
+    @Inject(method = "func_78479_a", at = @At("HEAD"), require = 0)
+    private void celtium$wpCameraTimedBegin(float partialTicks, int pass,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("wpCamera");
+    }
+
+    @Inject(method = "func_78479_a", at = @At("RETURN"), require = 0)
+    private void celtium$wpCameraTimedEnd(float partialTicks, int pass,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("wpCamera");
+    }
+
+    @Inject(method = "func_78474_d", at = @At("HEAD"), require = 0)
+    private void celtium$weatherTimedBegin(float partialTicks,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("weather");
+    }
+
+    @Inject(method = "func_78474_d", at = @At("RETURN"), require = 0)
+    private void celtium$weatherTimedEnd(float partialTicks,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("weather");
+    }
+
+    // Forge's RenderWorldLast dispatch: mod handlers run here, inside the world pass, after the translucent
+    // entities and before the hand. In a pack frame this is where a mod's own per-frame world work lands,
+    // and it had no name - it sat inside worldRest with the game's glue.
+    @Inject(method = "func_175068_a", at = @At(value = "INVOKE",
+            target = "Lnet/minecraftforge/client/ForgeHooksClient;dispatchRenderLast(Lnet/minecraft/client/renderer/RenderGlobal;F)V"),
+            require = 0)
+    private void celtium$wpRenderLastTimedBegin(int pass, float partialTicks, long finishTimeNano,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("wpRenderLast");
+    }
+
+    @Inject(method = "func_175068_a", at = @At(value = "INVOKE",
+            target = "Lnet/minecraftforge/client/ForgeHooksClient;dispatchRenderLast(Lnet/minecraft/client/renderer/RenderGlobal;F)V",
+            shift = At.Shift.AFTER), require = 0)
+    private void celtium$wpRenderLastTimedEnd(int pass, float partialTicks, long finishTimeNano,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("wpRenderLast");
+    }
+
     @Inject(method = "func_78476_b", at = @At("HEAD"), require = 0)
     private void celtium$handPassTimedBegin(float partialTicks, int pass,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {

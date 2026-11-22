@@ -137,7 +137,23 @@ public final class FramePassTimings {
             // reach this table reflectively, so both stay at calls=0 as the "not separated" signal.
             "tickSched", "tickNet", "tickInput", "tickGameMode", "tickSound", "tickGuiTick", "tickFml",
             "tickWorld", "tickLvlRenderer", "tickFixture",
-            "tickEnt", "tickTileEnt", "tickParticles", "tickChunks", "tickDrain"};
+            "tickEnt", "tickTileEnt", "tickParticles", "tickChunks", "tickDrain",
+            // pack-tail-2: the pack route's two terrain-bearing stages, bracketed inside
+            // celtium$tryRenderPackTerrainPass once the execution is committed (a pack program is bound and
+            // compiled). terrainRecord sums every terrain record of the frame, and in a pack frame that sum
+            // mixes the shadow stage's record with the gbuffers stages' record; these two names separate them
+            // by Iris's own stage state (ShadowRenderingState). The deferred/composite stages never enter
+            // terrainRecord - their draws are immediate groups, recorded under flush/winRecord - so there is
+            // deliberately no third name.
+            "packRecordShadow", "packRecordGbuffers",
+            // pack-tail-2: the world pass' unnamed remainder (FrameBudgetTimings' worldRest), split at its
+            // real seams. wpCamera is setupCameraTransform - the camera/frustum setup, with the renderer's
+            // world snapshot seeded at its return; wpChunks is RenderGlobal.updateChunks, the chunk-update
+            // work renderWorldPass runs between setupTerrain and the terrain layers; wpRenderLast is Forge's
+            // RenderWorldLast dispatch, where mod handlers run inside the pass. All three join
+            // FrameBudgetTimings' WORLD_PASS_MEMBERS, so what they measure leaves worldRest instead of
+            // sitting inside it unnamed.
+            "wpCamera", "wpChunks", "wpRenderLast"};
 
     private static final int CAPACITY = 512;
 
