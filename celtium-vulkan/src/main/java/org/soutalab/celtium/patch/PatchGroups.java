@@ -270,7 +270,7 @@ public final class PatchGroups {
               "core.ShaderUniformAccessor"
         );
         group("tweaks", "speed and diagnostics", false,
-              "the light epoch, tick timing, join/watch observation, the empty outline composite skip, the EnumFacing.getFacingFromVector replacement and the options screen override disappear; the drawn picture is expected to be unchanged, which makes this the first injection candidate",
+              "the light epoch, tick timing, join/watch observation, the funnel summary print, the empty outline composite skip, the EnumFacing.getFacingFromVector replacement and the options screen override disappear; the drawn picture is expected to be unchanged, which makes this the first injection candidate",
               "core.WorldLightEpochMixin",
               "core.MinecraftTickTimingMixin",
               "core.MinecraftTickSplitMixin",
@@ -279,6 +279,7 @@ public final class PatchGroups {
               "core.ChunkProviderClientTickSplitMixin",
               "core.RenderGlobalTickSplitMixin",
               "core.MinecraftWorldAssignedWatchMixin",
+              "core.MinecraftFunnelSummaryMixin",
               "core.NetHandlerJoinProbeMixin",
               "core.IntegratedServerShutdownMixin",
               "core.crash.SplashProgressCallableMixin",

@@ -92,4 +92,27 @@ class CeltiumLightCacheFunnelTest {
         assertTrue(summary.contains("snapshotMismatch="), summary);
         assertTrue(summary.contains("snapshotEmpty="), summary);
     }
+
+    @Test
+    void funnelExitPrintIsDueOncePerWorldAndOnlyWithTraffic() {
+        // A world the funnel served, whose exit has not printed: due.
+        assertTrue(CeltiumLightCache.funnelExitPrintDue(1L, false));
+        assertTrue(CeltiumLightCache.funnelExitPrintDue(164_864L, false));
+        // No traffic in the world: there is no final state worth a line.
+        assertFalse(CeltiumLightCache.funnelExitPrintDue(0L, false));
+        // Already printed for this world (disconnect, then shutdown hands loadWorld null a
+        // second time): not due again. The guard is reset by the world-identity roll, which
+        // needs a running world and is covered by the fixture legs, not here.
+        assertFalse(CeltiumLightCache.funnelExitPrintDue(164_864L, true));
+        assertFalse(CeltiumLightCache.funnelExitPrintDue(0L, true));
+    }
+
+    @Test
+    void funnelPeriodicPrintIsDueExactlyOnIntervalMultiples() {
+        assertFalse(CeltiumLightCache.funnelPeriodicPrintDue(0L, 50_000L));
+        assertFalse(CeltiumLightCache.funnelPeriodicPrintDue(49_999L, 50_000L));
+        assertTrue(CeltiumLightCache.funnelPeriodicPrintDue(50_000L, 50_000L));
+        assertFalse(CeltiumLightCache.funnelPeriodicPrintDue(50_001L, 50_000L));
+        assertTrue(CeltiumLightCache.funnelPeriodicPrintDue(150_000L, 50_000L));
+    }
 }
