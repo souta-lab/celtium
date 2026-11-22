@@ -8487,6 +8487,12 @@ public final class CeltiumGlStub implements FunctionProvider {
         return stub == null ? -1 : stub.drawFbo;
     }
 
+    /** {@return the read framebuffer the stub last bound}, or -1 when no stub is installed. */
+    public static int celtium$readFramebuffer() {
+        CeltiumGlStub stub = installed;
+        return stub == null ? -1 : stub.readFbo;
+    }
+
     /**
      * {@return whether the stub's current draw framebuffer is the game's main one}, true when no stub is installed.
      * <p>

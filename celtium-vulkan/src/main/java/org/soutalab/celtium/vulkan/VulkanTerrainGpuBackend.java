@@ -64,7 +64,7 @@ import static org.lwjgl.vulkan.VK10.*;
  * <p>
  * Runs on the client/render thread with a current GL context, like the OpenGL backend it replaces.
  */
-public final class VulkanTerrainGpuBackend implements VulkanRenderer {
+public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageStateGuard.DepthAlphaSink {
     /** Alignment required for dynamic uniform buffer offsets. Tightened at construction from the device limits. */
     private static final int MIN_UNIFORM_ALIGNMENT = 256;
 
@@ -374,6 +374,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
             new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
     /** Cached VulkanModProgramPipeline instances for shader-pack terrain passes. */
     final java.util.Map<String, VulkanModProgramPipeline> packTerrainPipelines = new java.util.HashMap<>();
+    /** Host-side state bracket for pack terrain executions; see {@link PackStageStateGuard}. */
+    private final PackStageStateGuard packStageStateGuard = new PackStageStateGuard();
     private static final boolean PACK_TERRAIN_PROGRAMS =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.packTerrainPrograms", "true"));
     private int packTerrainDrawnLogs;
@@ -16927,9 +16929,12 @@ this.frameBufferOpen = false;
         }
         boolean bound = false;
         boolean stateSetup = false;
+        boolean stateCaptured = false;
         try {
             packProgram.bind();
             bound = true;
+            this.packStageStateGuard.capture(this.immediateState);
+            stateCaptured = true;
             iface.setupState(pass);
             stateSetup = true;
             iface.setProjectionMatrix(matrices.projection());
@@ -17356,6 +17361,12 @@ this.frameBufferOpen = false;
             if (stateSetup) {
                 try {
                     iface.restoreState();
+                } catch (Throwable ignored) {
+                }
+            }
+            if (stateCaptured) {
+                try {
+                    this.packStageStateGuard.restore(this.immediateState, this);
                 } catch (Throwable ignored) {
                 }
             }
