@@ -6756,6 +6756,12 @@ public final class CeltiumGlStub implements FunctionProvider {
         return GlDrawCensus.drawElementSummary();
     }
 
+    /** Prints the glDrawArrays census line at powers of two, through the census that owns the counters. */
+    private static void celtium$reportDrawArrays() {
+        GlDrawCensus.celtium$reportDrawArrays(clientPointerAccepted, ownedClientBufferDecoded,
+                pointerOnlyDecoded, ownedClientBufferMismatch, readableMappingRanges, readableMappingFailure);
+    }
+
 
     private static void celtium$noteMirrorMiss(String name) {
         Integer id = IDS.get(name);
@@ -10423,7 +10429,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (count <= 0) {
             // GL draws nothing for an empty range, and so does this: counting it as a gap would be a lie.
             GlDrawCensus.DRAWARRAY_EMPTY.incrementAndGet();
-            GlDrawCensus.celtium$reportDrawArrays();
+            celtium$reportDrawArrays();
             return;
         }
         // A mod can bind through Minecraft's VertexBuffer API and issue the draw through raw GL. Only that raw call
@@ -10480,7 +10486,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         } else if (mode == 6 && count < 3) {
             // A fan with fewer than three vertices has no triangles to present.
             GlDrawCensus.DRAWARRAY_EMPTY.incrementAndGet();
-            GlDrawCensus.celtium$reportDrawArrays();
+            celtium$reportDrawArrays();
             return;
         } else if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT) {
             reason = "vertex pointer size=" + this.vertexPointerSize + " type=0x"
@@ -10722,7 +10728,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                                 + stride + " format=" + formatId + " buffer=" + buffer
                                 + " pointerOffset=" + offset + " address=0x" + Long.toHexString(address);
                     }
-                    GlDrawCensus.celtium$reportDrawArrays();
+                    celtium$reportDrawArrays();
                     return;
                 }
                 if (reason == null) {
@@ -10734,7 +10740,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         celtium$noteDrawArrayRefusalContext(reason);
         GlDrawCensus.celtium$noteDrawArrayRefusal(reason);
-        GlDrawCensus.celtium$reportDrawArrays();
+        celtium$reportDrawArrays();
     }
 
     /**

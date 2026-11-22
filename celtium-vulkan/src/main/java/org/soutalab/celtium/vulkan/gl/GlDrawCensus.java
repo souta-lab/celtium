@@ -105,7 +105,9 @@ static void celtium$noteDrawArrayRefusal(String reason) {
  * mistake here. Powers of two bound the output to about twenty lines for any run length, and put the first line
  * in the log after the very first draw rather than after the last.
  */
-static void celtium$reportDrawArrays() {
+static void celtium$reportDrawArrays(long clientPointerAccepted, long ownedClientBufferDecoded,
+        long pointerOnlyDecoded, long ownedClientBufferMismatch, int readableMappingRanges,
+        String readableMappingFailure) {
     long calls = DRAWARRAY_CALLS.get();
     if (!org.soutalab.celtium.vulkan.VulkanDiagnostics.enabled()) {
         // The powers-of-two lines are the repeating half of this instrument; the exit line below is not gated, so
@@ -113,7 +115,9 @@ static void celtium$reportDrawArrays() {
         return;
     }
     if (calls > 0L && (calls & (calls - 1L)) == 0L) {
-        System.out.println("[Celtium] CELTIUM_DRAWARRAYS " + drawArraySummary());
+        System.out.println("[Celtium] CELTIUM_DRAWARRAYS " + drawArraySummary(clientPointerAccepted,
+                ownedClientBufferDecoded, pointerOnlyDecoded, ownedClientBufferMismatch,
+                readableMappingRanges, readableMappingFailure));
     }
 }
 
