@@ -141,6 +141,22 @@ class VulkanArenaFragmentationTest {
     }
 
     @Test
+    void theCountBoundedFormIgnoresScratchPastTheCount() {
+        // The arena's snapshot scratch is grown, never shrunk: after a call with many segments, a later
+        // call with fewer leaves stale entries past the count. Poison them with a free range that would
+        // read as a tail if the aggregation walked the array length instead of the count.
+        int[] offsets = {0, 60, 90};
+        int[] lengths = {60, 40, 10};
+        boolean[] free = {false, false, true};
+        VulkanArena.Fragmentation reading =
+                VulkanArena.summarizeFragmentation(100, offsets, lengths, free, 2);
+
+        assertEquals(100L, reading.usedBytes);
+        assertEquals(0, reading.holeCount);
+        assertEquals(0L, reading.tailBytes, "the stale third entry is scratch, not a range");
+    }
+
+    @Test
     void raggedSnapshotArraysAreRefused() {
         assertThrows(IllegalArgumentException.class, () -> VulkanArena.summarizeFragmentation(100,
                 new int[]{0}, new int[]{10, 20}, new boolean[]{true}),

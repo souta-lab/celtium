@@ -80,6 +80,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     // back when it leaves, so the same device and swapchain serve both (task-15).
     private RenderPassConfiguration<?> configuration;
     private RenderRegionManager regionManager;
+    /**
+     * The live-region set {@link #updateRegions()} builds every frame, kept as backend-owned scratch instead
+     * of a fresh IdentityHashMap per call: the set's contents are consumed inside that one call (the eviction
+     * walk), nothing retains it, and the backend is render-thread confined, so one cleared-and-refilled set is
+     * behaviour-identical to a new one. Lifetime owner: this backend instance.
+     */
+    private final java.util.IdentityHashMap<RenderRegion, Boolean> liveRegionScratch =
+            new java.util.IdentityHashMap<RenderRegion, Boolean>();
+    private final Set<RenderRegion> liveRegionSet = Collections.newSetFromMap(this.liveRegionScratch);
     private FogService fogService;
     private DynamicLightService dynamicLightService;
     private int commonVertexStride;
@@ -1209,7 +1218,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * {@code VulkanMultiDrawBatch::new} per call would defeat the comparison (BH10-13).
      */
     private final org.embeddedt.embeddium.impl.gl.device.MultiDrawBatchFactory batchFactory =
-            VulkanMultiDrawBatch::new;
+            VulkanMultiDrawBatch::obtain;
 
     /** Records the Vulkan backend in place of the OpenGL one for the batch assembly path. */
     public void install() {
@@ -15510,7 +15519,8 @@ this.frameBufferOpen = false;
         if (this.terrain.regionCount() == 0) {
             return;
         }
-        Set<RenderRegion> live = Collections.newSetFromMap(new IdentityHashMap<RenderRegion, Boolean>());
+        this.liveRegionScratch.clear();
+        Set<RenderRegion> live = this.liveRegionSet;
         live.addAll(this.regionManager.getLoadedRegions());
         Iterator<java.util.Map.Entry<RenderRegion, TerrainRenderer.RegionResources>> iterator =
                 this.terrain.regionEntries().iterator();

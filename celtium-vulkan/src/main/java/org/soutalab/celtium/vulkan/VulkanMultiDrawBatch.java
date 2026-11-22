@@ -42,6 +42,25 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
     private boolean unsortedOffsetsChecked;
     /** Whether every command reads the shared quad buffer at offset 0; computed once on demand. */
     private boolean unsortedOffsetsClean;
+    /** True while this instance sits in {@link #POOL}; guards against a double {@link #delete()} double-pooling it. */
+    private boolean pooled;
+
+    /**
+     * Deleted batches available for reuse, largest-retained first is unnecessary: capacities cluster on
+     * {@code sectionCount} and {@code sectionCount * ModelQuadFacing.COUNT} for the same region sizes, so a
+     * short scan finds a fit. The pool exists because a cached batch's lifetime is one camera-validity interval:
+     * in flight the assembler replaces batches constantly, and each replacement used to allocate three fresh
+     * backing arrays (int/int/long per command slot). The arrays are the batch's only heap cost - the retained
+     * packets are native and are still freed on {@link #delete()} - so pooling the object pools exactly the
+     * allocation the JFR census attributes to this constructor. Bounded so a pathological churn cannot retain
+     * unbounded arrays; overflow deletes behave exactly as before the pool existed.
+     * <p>
+     * Confinement: batch creation ({@link BatchAssembler}) and deletion ({@code BatchCache}) both run on the
+     * render thread; the pool is synchronized anyway so an accidental second caller degrades to contention,
+     * never to corruption.
+     */
+    private static final int POOL_LIMIT = 128;
+    private static final java.util.ArrayDeque<VulkanMultiDrawBatch> POOL = new java.util.ArrayDeque<>();
 
     public VulkanMultiDrawBatch(int capacity) {
         super(capacity);
@@ -49,6 +68,43 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
         this.baseVertices = new int[slots];
         this.elementCounts = new int[slots];
         this.elementPointers = new long[slots];
+    }
+
+    /**
+     * The batch factory the backend installs: a pooled batch whose slot arrays already cover
+     * {@code capacity} when one is available, a fresh batch otherwise. A pooled batch comes back with its
+     * command list cleared and its retained packets freed (they encode the previous owner's commands, so
+     * they can never be reused), which is exactly the state a fresh batch starts in.
+     */
+    public static VulkanMultiDrawBatch obtain(int capacity) {
+        synchronized (POOL) {
+            // Best fit: the smallest pooled batch whose slots cover the request, so a wide batch stays
+            // available for a wide request instead of being spent on a narrow one.
+            VulkanMultiDrawBatch best = null;
+            for (VulkanMultiDrawBatch candidate : POOL) {
+                if (candidate.capacity() > capacity
+                        && (best == null || candidate.capacity() < best.capacity())) {
+                    best = candidate;
+                }
+            }
+            if (best != null) {
+                POOL.remove(best);
+                best.pooled = false;
+                best.clear();
+                return best;
+            }
+        }
+        return new VulkanMultiDrawBatch(capacity);
+    }
+
+    /** Empties the pool; for tests, so one case's returned batches cannot leak into the next. */
+    static void drainPoolForTest() {
+        synchronized (POOL) {
+            for (VulkanMultiDrawBatch batch : POOL) {
+                batch.pooled = false;
+            }
+            POOL.clear();
+        }
     }
 
     @Override
@@ -86,8 +142,10 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
 
     @Override
     public void delete() {
-        // The arrays are owned by the Java heap and released with this object; the retained packets are
-        // native memory and are freed here.
+        // The retained packets are native memory and are freed here; they encode this batch's commands and
+        // are never carried into a reuse. The heap arrays are the allocation the pool exists to recycle, so
+        // instead of releasing the object with them, the batch returns to the pool (bounded by POOL_LIMIT)
+        // and only falls back to plain release when the pool is full.
         if (this.sharedPackets != null) {
             org.lwjgl.system.MemoryUtil.memFree(this.sharedPackets);
             this.sharedPackets = null;
@@ -99,6 +157,12 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
         this.sharedPacketsEncoded = false;
         this.regionPacketsEncoded = false;
         this.unsortedOffsetsChecked = false;
+        synchronized (POOL) {
+            if (!this.pooled && POOL.size() < POOL_LIMIT) {
+                this.pooled = true;
+                POOL.addLast(this);
+            }
+        }
     }
 
     /**

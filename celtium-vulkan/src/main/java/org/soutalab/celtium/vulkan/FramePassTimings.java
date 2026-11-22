@@ -770,11 +770,24 @@ public final class FramePassTimings {
         return text.toString();
     }
 
-    private static long percentile(long[] values, int n, double q) {
-        long[] copy = Arrays.copyOf(values, n);
-        Arrays.sort(copy);
+    /**
+     * The sort scratch {@link #percentile} works on, owned by this class instead of a fresh
+     * {@code Arrays.copyOf} per call: a single {@link #summary()} asks for ~34 percentiles over rings of
+     * {@link #CAPACITY} longs, and summaries print every 200 frames, so the copies were a steady allocation
+     * on the render thread for a purely local computation. Grow-only; the method is synchronized because
+     * summary readers are not all the same thread, and a garbled percentile would be a wrong number, not
+     * just a wasted one. Lifetime owner: this class (static), confined by the method lock.
+     */
+    private static long[] percentileScratch = new long[0];
+
+    private static synchronized long percentile(long[] values, int n, double q) {
+        if (percentileScratch.length < n) {
+            percentileScratch = new long[n];
+        }
+        System.arraycopy(values, 0, percentileScratch, 0, n);
+        Arrays.sort(percentileScratch, 0, n);
         int index = (int) Math.round(q * (n - 1));
-        return copy[Math.max(0, Math.min(n - 1, index))];
+        return percentileScratch[Math.max(0, Math.min(n - 1, index))];
     }
 
     private static long worst(long[] values, int n) {

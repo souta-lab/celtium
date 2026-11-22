@@ -99,6 +99,10 @@ public final class VulkanArena {
     private Segment tail;
     private Segment freeHead;
     private int liveSegmentCount;
+    /** Fragmentation census snapshot scratch (see {@link #fragmentation()}); grown to the segment count, never shrunk. */
+    private int[] fragmentationOffsets;
+    private int[] fragmentationLengths;
+    private boolean[] fragmentationFree;
 
     // Upload census: totals for the run, and the slice since the last report.
     private long uploads;
@@ -491,17 +495,32 @@ public final class VulkanArena {
         for (Segment segment = this.head; segment != null; segment = segment.next) {
             count++;
         }
-        int[] offsets = new int[count];
-        int[] lengths = new int[count];
-        boolean[] free = new boolean[count];
+        fillFragmentationScratch(count);
+        return summarizeFragmentation(this.capacity, this.fragmentationOffsets, this.fragmentationLengths,
+                this.fragmentationFree, count);
+    }
+
+    /**
+     * Fills this arena's snapshot scratch with the first {@code count} segments, growing the arrays when
+     * the segment list outgrows them. The scratch replaces three fresh arrays per census call: the census
+     * runs from {@code buffer()} on the recording path whenever it is enabled, and the snapshot is consumed
+     * by {@code summarizeFragmentation} before {@link #fragmentation()} returns, so reuse cannot alias
+     * anything live. Lifetime owner: this arena instance, confined to the same thread as the segment list
+     * it snapshots (the list itself is unsynchronized).
+     */
+    private void fillFragmentationScratch(int count) {
+        if (this.fragmentationOffsets == null || this.fragmentationOffsets.length < count) {
+            this.fragmentationOffsets = new int[count];
+            this.fragmentationLengths = new int[count];
+            this.fragmentationFree = new boolean[count];
+        }
         int index = 0;
-        for (Segment segment = this.head; segment != null; segment = segment.next) {
-            offsets[index] = segment.offset;
-            lengths[index] = segment.length;
-            free[index] = segment.free;
+        for (Segment segment = this.head; segment != null && index < count; segment = segment.next) {
+            this.fragmentationOffsets[index] = segment.offset;
+            this.fragmentationLengths[index] = segment.length;
+            this.fragmentationFree[index] = segment.free;
             index++;
         }
-        return summarizeFragmentation(this.capacity, offsets, lengths, free);
     }
 
     /** {@return the {@code CELTIUM_ARENA_FRAGMENTATION} line for this arena's current shape}. */
@@ -532,15 +551,29 @@ public final class VulkanArena {
                 || lengths.length != offsets.length || free.length != offsets.length) {
             throw new IllegalArgumentException("A fragmentation snapshot needs parallel offset/length/free arrays");
         }
+        return summarizeFragmentation(capacity, offsets, lengths, free, offsets.length);
+    }
+
+    /**
+     * The count-bounded form: only the first {@code count} snapshot entries are ranges; anything past them
+     * in the arrays is caller scratch and is not read. The tail test uses {@code count - 1}, not the array
+     * length, so a grown scratch array cannot promote a stale entry into the tail.
+     */
+    static Fragmentation summarizeFragmentation(int capacity, int[] offsets, int[] lengths, boolean[] free,
+            int count) {
+        if (offsets == null || lengths == null || free == null
+                || count < 0 || count > offsets.length || count > lengths.length || count > free.length) {
+            throw new IllegalArgumentException("A fragmentation snapshot needs parallel offset/length/free arrays");
+        }
         long used = 0L;
         long holeBytes = 0L;
         long largestHole = 0L;
         int holes = 0;
         long tail = 0L;
-        for (int i = 0; i < offsets.length; i++) {
+        for (int i = 0; i < count; i++) {
             if (!free[i]) {
                 used += lengths[i];
-            } else if (i == offsets.length - 1 && (long) offsets[i] + lengths[i] == capacity) {
+            } else if (i == count - 1 && (long) offsets[i] + lengths[i] == capacity) {
                 tail = lengths[i];
             } else {
                 holes++;
