@@ -157,6 +157,44 @@ public abstract class EntityRendererMixin {
         org.soutalab.celtium.vulkan.FramePassTimings.end("wpRenderLast");
     }
 
+    // Item 648: the last two vanilla call sites inside renderWorldPass that still ran unnamed - the
+    // destroy-progress tail (drawBlockDamageTexture, after the outline and debug sections, before the
+    // lit particles) and the world border (renderWorldBorder, right after the weather, before the
+    // translucent layer). pack-tail-2's desk pass filed both under the remainder's glue and its census
+    // showed the named glue was not where the residual lives; naming these two closes the vanilla side
+    // of the pass, so what is left in worldRest afterwards is pack-side work or waiting by construction.
+    @Inject(method = "func_175068_a", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/RenderGlobal;func_174981_a(Lnet/minecraft/client/renderer/Tessellator;Lnet/minecraft/client/renderer/BufferBuilder;Lnet/minecraft/entity/Entity;F)V"),
+            require = 0)
+    private void celtium$wpDestroyProgressTimedBegin(int pass, float partialTicks, long finishTimeNano,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("wpDestroyProgress");
+    }
+
+    @Inject(method = "func_175068_a", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/RenderGlobal;func_174981_a(Lnet/minecraft/client/renderer/Tessellator;Lnet/minecraft/client/renderer/BufferBuilder;Lnet/minecraft/entity/Entity;F)V",
+            shift = At.Shift.AFTER), require = 0)
+    private void celtium$wpDestroyProgressTimedEnd(int pass, float partialTicks, long finishTimeNano,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("wpDestroyProgress");
+    }
+
+    @Inject(method = "func_175068_a", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/RenderGlobal;func_180449_a(Lnet/minecraft/entity/Entity;F)V"),
+            require = 0)
+    private void celtium$wpWorldBorderTimedBegin(int pass, float partialTicks, long finishTimeNano,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("wpWorldBorder");
+    }
+
+    @Inject(method = "func_175068_a", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/RenderGlobal;func_180449_a(Lnet/minecraft/entity/Entity;F)V",
+            shift = At.Shift.AFTER), require = 0)
+    private void celtium$wpWorldBorderTimedEnd(int pass, float partialTicks, long finishTimeNano,
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        org.soutalab.celtium.vulkan.FramePassTimings.end("wpWorldBorder");
+    }
+
     @Inject(method = "func_78476_b", at = @At("HEAD"), require = 0)
     private void celtium$handPassTimedBegin(float partialTicks, int pass,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
