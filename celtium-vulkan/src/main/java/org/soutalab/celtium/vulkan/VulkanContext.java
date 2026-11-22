@@ -2655,12 +2655,38 @@ public final class VulkanContext {
         return result;
     }
 
-    /** Frees device memory allocated through {@link #allocateMemory}; a null handle is ignored as Vulkan ignores it. */
+    /**
+     * Frees device memory allocated through {@link #allocateMemory}; a null handle is ignored as Vulkan ignores it.
+     * <p>
+     * A free slower than 50 ms - the frame boundary's slow threshold, the {@code CELTIUM_BOUNDARY_SLOW} line's -
+     * prints one {@code CELTIUM_FREE_MEMORY_SLOW} line with the freed allocation's size ({@code -1} when the handle
+     * was not tracked by {@link #allocateMemory}) and the running slow totals. Item 675's desk separation put a
+     * same-JVM re-entry stall inside this call, after {@code settleGpu} had already waited the device idle, with the
+     * client thread's CPU barely advancing across a 66 s thread-dump interval: the block is inside the native call,
+     * not in any fence wait of ours, and until now nothing in the log said which free, or how large, or how many.
+     * The timing itself is two {@code nanoTime} reads around the native call, paid on every free; the print is
+     * bounded per tag by {@code CeltiumLogLimiter} like every other {@code [Celtium]} line.
+     */
     public static void freeMemory(org.lwjgl.vulkan.VkDevice device, long memory) {
+        Long size = null;
         if (memory != VK_NULL_HANDLE) {
-            LIVE_ALLOCATIONS.remove(Long.valueOf(memory));
+            size = LIVE_ALLOCATIONS.remove(Long.valueOf(memory));
         }
+        long started = System.nanoTime();
         vkFreeMemory(device, memory, null);
+        long took = System.nanoTime() - started;
+        if (took > SLOW_FREE_MEMORY_NANOS) {
+            slowFreeMemoryCalls++;
+            slowFreeMemoryNanos += took;
+            if (took > slowFreeMemoryWorstNanos) {
+                slowFreeMemoryWorstNanos = took;
+            }
+            System.out.println("[Celtium] CELTIUM_FREE_MEMORY_SLOW millis=" + (took / 1_000_000L)
+                    + " size=" + (size == null ? -1L : size.longValue())
+                    + " slowCalls=" + slowFreeMemoryCalls
+                    + " slowTotalMillis=" + (slowFreeMemoryNanos / 1_000_000L)
+                    + " slowWorstMillis=" + (slowFreeMemoryWorstNanos / 1_000_000L));
+        }
     }
 
     /** {@return the device memory allocations}: live now, peak, made in total, and live bytes in MiB. */
@@ -2703,6 +2729,12 @@ public final class VulkanContext {
             new java.util.concurrent.ConcurrentHashMap<Long, Long>();
     private static volatile long peakAllocations;
     private static volatile long allocationsMade;
+
+    /** A {@link #freeMemory} call slower than this prints; the frame boundary's slow threshold. */
+    private static final long SLOW_FREE_MEMORY_NANOS = 50_000_000L;
+    private static long slowFreeMemoryCalls;
+    private static long slowFreeMemoryNanos;
+    private static long slowFreeMemoryWorstNanos;
 
     private static long pipelineCreations;
     private static long pipelineCreationNanos;

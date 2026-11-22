@@ -16380,13 +16380,40 @@ this.frameBufferOpen = false;
     }
 
     /**
+     * Closes one bracketed segment of {@link #celtium$deleteSettled()} and {@return the instant the next
+     * segment starts}. A segment slower than 50 ms - the frame boundary's slow threshold, the
+     * {@code CELTIUM_BOUNDARY_SLOW} line's - prints one {@code CELTIUM_DELETE_SETTLED_SLOW} line naming it;
+     * a fast segment prints nothing and costs one {@code nanoTime} read. Item 675's desk separation placed a
+     * same-JVM re-entry stall somewhere in this sequence's head (the one thread-dump sample sat in
+     * {@code drawRecords}' {@code vkFreeMemory}), but two dumps 66 s apart cannot say whether one segment
+     * stalled or several slow frees accumulated - these brackets are what separates the two on the next leg,
+     * segment by segment, without waiting for a dump.
+     */
+    private static long celtium$deleteSegment(String segment, long segmentStartedNanos) {
+        long now = System.nanoTime();
+        long took = now - segmentStartedNanos;
+        if (took > 50_000_000L) {
+            System.out.println("[Celtium] CELTIUM_DELETE_SETTLED_SLOW segment=" + segment
+                    + " millis=" + (took / 1_000_000L));
+        }
+        return now;
+    }
+
+    /**
      * The release sequence {@link #delete()} runs once the device has settled: every resource this backend
      * owns, in dependency order. Split from {@code delete()} so the caller can hold the whole sequence to
      * one contract - a failure anywhere in it is recorded and ends the teardown, it does not propagate -
      * while the window-owned exit in the middle stays a plain return. Reaching the end of this method is
      * what {@link #fullyDeleted} records; the window-owned return deliberately does not reach it.
+     * <p>
+     * The head of the sequence - the indirect pipelines and commands, {@code drawRecords},
+     * {@code modelInstances}, the native pass executor, the texture array, and the window-owned exit's
+     * {@code celtium$releaseWorldResources()} - is bracketed by {@link #celtium$deleteSegment}: a slow
+     * segment names itself in the log instead of hiding inside the gap before
+     * {@code CELTIUM_BACKEND_DELETE} prints.
      */
     private void celtium$deleteSettled() {
+        long segmentStarted = System.nanoTime();
         for (VulkanImmediateTexturePipeline records : this.indirectRuns.recordsPipelines.values()) {
             records.delete();
         }
@@ -16403,20 +16430,25 @@ this.frameBufferOpen = false;
             this.indirectRuns.indirectCommands.delete();
             this.indirectRuns.indirectCommands = null;
         }
+        segmentStarted = celtium$deleteSegment("indirect", segmentStarted);
         if (this.drawRecords != null) {
             this.drawRecords.delete();
             this.drawRecords = null;
         }
+        segmentStarted = celtium$deleteSegment("drawRecords", segmentStarted);
         if (this.modelInstances != null) {
             this.modelInstances.delete();
             this.modelInstances = null;
         }
         this.openModelRunGroup = null;
+        segmentStarted = celtium$deleteSegment("modelInstances", segmentStarted);
         this.nativePassExecutor.delete();
+        segmentStarted = celtium$deleteSegment("nativePass", segmentStarted);
         if (this.textureArray != null) {
             this.textureArray.destroy();
             this.textureArray = null;
         }
+        celtium$deleteSegment("textureArray", segmentStarted);
         this.deleteCalls++;
         System.out.println("[Celtium] CELTIUM_BACKEND_DELETE backend@" + Integer.toHexString(System.identityHashCode(this))
                 + " " + celtium$ownershipSummary());
@@ -16426,7 +16458,9 @@ this.frameBufferOpen = false;
             // and the next world adopts the same instance again (VulkanTerrainFactory.create checks
             // celtium$isWindowBackend()). Without this branch a quit to the title screen deletes the device and the menu
             // has nothing to draw with, which is the state task-15 exists to remove.
+            long worldStarted = System.nanoTime();
             celtium$releaseWorldResources();
+            celtium$deleteSegment("releaseWorldResources", worldStarted);
             this.configuration = null;
             this.regionManager = null;
             this.fogService = null;
