@@ -7217,6 +7217,11 @@ public final class CeltiumGlStub implements FunctionProvider {
         this.textureCaptures.compressedTexImage(this, c);
     }
 
+    /** {@code bytes} rounded up to a GL unpack alignment; see {@link GlTextureCaptures}. */
+    private static int aligned(int bytes, int alignment) {
+        return GlTextureCaptures.aligned(bytes, alignment);
+    }
+
     /** Arms the one-shot skip for the patch an announcement just applied; see {@link GlTextureCaptures}. */
     public static void celtium$noteAnnouncedPatch(int level, int x, int y, int width, int height) {
         GlTextureCaptures.celtium$noteAnnouncedPatch(level, x, y, width, height);

@@ -101,7 +101,7 @@ final class GlTextureCaptures {
     private static final long MAX_PATCH_BACKLOG_BYTES = 192L * 1024L * 1024L;
 
     /** One captured level: RGBA8, {@code width * height} pixels, top row first, in stub-owned direct storage. */
-    private static final class TexCapture {
+    static final class TexCapture {
         final int width;
         final int height;
         final ByteBuffer data;
@@ -699,7 +699,7 @@ final class GlTextureCaptures {
     }
 
     /** {@code bytes} rounded up to a GL unpack alignment, which is always a power of two: 1, 2, 4 or 8. */
-    private static int aligned(int bytes, int alignment) {
+    static int aligned(int bytes, int alignment) {
         return (bytes + alignment - 1) & ~(alignment - 1);
     }
 
@@ -778,7 +778,7 @@ final class GlTextureCaptures {
     java.util.List<CeltiumGlStub.PendingPatch> texturePendingPatches(int textureName, int level) {
         java.util.List<TexCapture> pending = this.texPatchBacklog.get(
                 CeltiumGlStub.texLevelKey(textureName, level));
-        java.util.List<PendingPatch> out = new java.util.ArrayList<PendingPatch>(
+        java.util.List<CeltiumGlStub.PendingPatch> out = new java.util.ArrayList<CeltiumGlStub.PendingPatch>(
                 pending == null ? 0 : pending.size());
         if (pending != null) {
             for (TexCapture capture : pending) {
