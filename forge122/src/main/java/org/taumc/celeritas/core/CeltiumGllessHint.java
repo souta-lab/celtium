@@ -222,21 +222,26 @@ public final class CeltiumGllessHint {
     }
 
     /**
-     * LWJGL3's info-log natives: the shader/program stand-ins report success and carry no log. Writing the empty
-     * answer matters because the caller allocates a buffer of {@code maxLength} and LWJGL turns it into a String -
-     * an untouched buffer would be read as whatever the allocation held.
+     * LWJGL3's info-log natives: a program whose recorded link failed carries that failure as its log;
+     * anything else carries the empty log. Writing the empty answer matters because the caller
+     * allocates a buffer of {@code maxLength} and LWJGL turns it into a String - an untouched buffer
+     * would be read as whatever the allocation held. The object arrives with the call since the
+     * glstatus LWJGL3 wiring: before that the native route dropped it and no log could be answered
+     * but the empty one, so a caller that threw on a false LINK_STATUS threw with no reason attached.
      */
-    public static void glGetShaderInfoLog(int maxLength, long lengthPtr, long logPtr) {
-        if (lengthPtr != 0L) {
-            org.lwjgl.system.MemoryUtil.memPutInt(lengthPtr, 0);
-        }
+    public static void glGetShaderInfoLog(int object, int maxLength, long lengthPtr, long logPtr) {
+        int written = 0;
         if (logPtr != 0L) {
-            org.lwjgl.system.MemoryUtil.memPutByte(logPtr, (byte) 0);
+            written = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+                    .celtium$writeInfoLog(object, maxLength, logPtr);
+        }
+        if (lengthPtr != 0L) {
+            org.lwjgl.system.MemoryUtil.memPutInt(lengthPtr, written);
         }
     }
 
-    public static void glGetProgramInfoLog(int maxLength, long lengthPtr, long logPtr) {
-        glGetShaderInfoLog(maxLength, lengthPtr, logPtr);
+    public static void glGetProgramInfoLog(int object, int maxLength, long lengthPtr, long logPtr) {
+        glGetShaderInfoLog(object, maxLength, lengthPtr, logPtr);
     }
 
     /**
@@ -2484,36 +2489,19 @@ public final class CeltiumGllessHint {
      * The same family as {@link #glGetIntegerv}: the caller reads the buffer, and the value decides whether the game
      * treats a shader as usable. Vanilla's {@code RenderGlobal.makeEntityOutlineShader} and {@code ShaderGroup} check
      * {@code GL_COMPILE_STATUS} and {@code GL_LINK_STATUS} and log or throw when they are false, so answering zero
-     * would turn every shader into a failed one. This renderer takes the shaders' source and draws with its own
-     * pipeline, so the honest answer to "did this compile" is yes - and {@code GL_INFO_LOG_LENGTH} is 0 because there
-     * is no log to read.
+     * would turn every shader into a failed one. The answer itself is the stub's shared one
+     * ({@code CeltiumGlStub.celtium$shaderProgramQueryAnswer}): a program whose link the registry recorded answers
+     * with that link's truth, so a mod's own failure path - Iris's and Embeddium's builders throw on a false
+     * LINK_STATUS - fires with the reason in the info log instead of the pack proceeding over passes this renderer
+     * refuses by name at prepare. An object with no recorded link keeps the default true, and COMPILE_STATUS is
+     * always true: compilation here happens at link, per program, so no per-shader result exists to report.
      */
-    public static void glGetShaderProgramiv(int pname, long params) {
+    public static void glGetShaderProgramiv(int object, int pname, long params) {
         if (params == 0L) {
             return;
         }
-        int value;
-        switch (pname) {
-            case 0x8B81: // GL_COMPILE_STATUS
-            case 0x8B82: // GL_LINK_STATUS
-            case 0x8B83: // GL_VALIDATE_STATUS
-                value = 1; // GL_TRUE
-                break;
-            case 0x8B84: // GL_INFO_LOG_LENGTH
-            case 0x8B86: // GL_ACTIVE_UNIFORMS
-            case 0x8B87: // GL_ACTIVE_UNIFORM_MAX_LENGTH
-            case 0x8B89: // GL_ACTIVE_ATTRIBUTES
-            case 0x8B8A: // GL_ACTIVE_ATTRIBUTE_MAX_LENGTH
-                value = 0;
-                break;
-            case 0x8B85: // GL_ATTACHED_SHADERS
-                value = 1;
-                break;
-            default:
-                value = 0;
-                break;
-        }
-        org.lwjgl.system.MemoryUtil.memPutInt(params, value);
+        org.lwjgl.system.MemoryUtil.memPutInt(params,
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$shaderProgramQueryAnswer(object, pname));
     }
 
     /**
@@ -2537,17 +2525,8 @@ public final class CeltiumGllessHint {
     }
 
     /** {@return the integer answer for the single-value shader and program queries} */
-    public static int glGetShaderProgrami(int pname) {
-        switch (pname) {
-            case 0x8B81: // GL_COMPILE_STATUS
-            case 0x8B82: // GL_LINK_STATUS
-            case 0x8B83: // GL_VALIDATE_STATUS
-                return 1;
-            case 0x8B85: // GL_ATTACHED_SHADERS
-                return 1;
-            default:
-                return 0;
-        }
+    public static int glGetShaderProgrami(int object, int pname) {
+        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$shaderProgramQueryAnswer(object, pname);
     }
 
     /** Fence tokens for the GL-less path; 0 means "no object" to every caller, as with the names. */
