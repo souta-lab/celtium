@@ -60,6 +60,18 @@ public final class FramePassTimings {
             "entGather", "entGatherWalk", "entCull", "entDraw", "entBlockEntities", "entSetTile",
             "setupTerrain", "stGraph", "stEvents", "stAsync", "stPrepare", "stUpload", "stUpdate", "stVisible", "stReclaim", "sky", "terrainHandoff", "terrainRecord", "terrainSubmit", "recordPrepare",
             "recordBatch", "prepDescriptors", "prepBarriers", "prepBegin",
+            // Item 673: recordPrepare's three brackets at their real seams, so the next census can name which
+            // driver-visible call owns the fixed cost instead of re-measuring the aggregate. prepUniformCap is
+            // the capacity reservations and prepDescBind the descriptor write inside prepDescriptors;
+            // prepAcquire is the frame target's acquire barriers, prepRoute the framebuffer lookup plus the
+            // depth/bound-target routing decision, and prepPublish the published-texture sampling walk inside
+            // prepBarriers; prepBeginPass is vkCmdBeginRenderPass plus its bookkeeping and prepViewportBind
+            // the viewport/scissor + pipeline bind + push constants inside prepBegin. The pre-terrain flush
+            // keeps its own terrainPreflush name inside prepBegin, so prepBegin minus its children is the
+            // flush plus the calloc/timestamp residue. All seven are inclusive INSIDE names: reported, never
+            // subtracted, so the double counting that bit the kpi-8 v1 split cannot recur through them.
+            "prepUniformCap", "prepDescBind", "prepAcquire", "prepRoute", "prepPublish", "prepBeginPass",
+            "prepViewportBind",
             "recBind", "recDraw", "recLoop", "terrainTarget", "terrainSetup", "terrainClose", "terrainPrep", "terrainCapacity", "terrainSharedIndex", "terrainPreflush", "flushCloseGroup",
             "winBarrier", "winRecord", "winSubmit", "winEnd", "winBeginPass", "winTransition",
             // The terrain pass' three unmeasured spans: the fixed prepare work before recording (frame target,

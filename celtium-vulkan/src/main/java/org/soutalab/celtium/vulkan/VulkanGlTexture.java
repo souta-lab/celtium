@@ -1333,6 +1333,21 @@ public final class VulkanGlTexture {
     }
 
     /**
+     * {@return how many foreign layout barriers have actually been recorded in this process}.
+     * <p>
+     * The settled fast path and the already-pending skip do not move this count: it advances only where
+     * {@code transitionForeignLayout} puts a {@code vkCmdPipelineBarrier} into a command buffer. That makes
+     * it a sound invalidation key for a caller that wants to know "did anything move a shared image since I
+     * last looked" (item 673's published-walk deduplication): a walk that left every published image in its
+     * sampling layout is still the last word exactly while this count, the publication version and the pair
+     * generation all stand unchanged. Read on the render thread, which is also the only thread that records
+     * transitions, so no extra synchronisation is taken for the read.
+     */
+    static long foreignLayoutTransitionCount() {
+        return foreignLayoutTransitions;
+    }
+
+    /**
      * {@return the layout the open recording for this command buffer would leave the image in, or the confirmed
      * layout when nothing is pending there}, for reports and acceptance checks.
      */
