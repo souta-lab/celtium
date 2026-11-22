@@ -49,8 +49,18 @@ class ChainPairMultiFramebufferTest {
     void thePackTerrainFetchPassesItsColourCount() throws IOException {
         String body = methodSlice(backendSource(),
                 "long targetRenderPass = frameVariantRenderPass(targetColors, pairClass);", 8000);
-        assertTrue(body.contains("framebuffer = ensureChainPairFramebuffer(targetRenderPass, targetColors);"),
+        assertTrue(body.contains("framebuffer = ensureChainPairFramebuffer(drawIdentity, targetRenderPass, targetColors);"),
                 "the pack terrain path asks for its framebuffer at the pass's own colour count");
+    }
+
+    @Test
+    void theIdentityCountedAskDispatchesByCount() throws IOException {
+        String body = methodSlice(backendSource(),
+                "private long ensureChainPairFramebuffer(long identity, long renderPass, int colorCount) {", 2200);
+        assertTrue(body.contains("framebufferCache().chainPair(identity, renderPass, glless, this.targetWidth,"),
+                "a one-colour ask on an explicit identity delegates to the legacy entry for that identity");
+        assertTrue(body.contains("framebufferCache().chainPairMulti(identity, renderPass, glless, colorCount,"),
+                "a multi-colour ask on an explicit identity goes to the multi-target entry with its count");
     }
 
     @Test
