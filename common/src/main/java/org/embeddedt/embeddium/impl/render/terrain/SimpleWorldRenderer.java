@@ -283,7 +283,19 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
         System.out.println("[Celtium] CELTIUM_WORLD_LOAD initRenderer enter, old manager="
                 + (this.renderSectionManager != null));
         if (this.renderSectionManager != null) {
-            this.renderSectionManager.destroy();
+            // A teardown failure must not brick the reload (issue #425's remaining exposure): destroy()
+            // already runs every stage and rethrows the first failure at the end, so a throw here is a
+            // report, not a stop. Without the guard the field keeps the half-destroyed manager, the new
+            // manager is never created, and every later frame draws through the wreckage - the reload
+            // dies reporting a teardown that had already safely stopped releasing resources. The new
+            // manager's own creation keeps its fail-hard contract; only the old one's teardown is
+            // absorbed, and it is named rather than swallowed.
+            try {
+                this.renderSectionManager.destroy();
+            } catch (RuntimeException failure) {
+                System.out.println("[Celtium] CELTIUM_WORLD_LOAD old manager teardown failed and is"
+                        + " discarded anyway: " + failure);
+            }
             this.renderSectionManager = null;
         }
         System.out.println("[Celtium] CELTIUM_WORLD_LOAD old manager destroyed");
