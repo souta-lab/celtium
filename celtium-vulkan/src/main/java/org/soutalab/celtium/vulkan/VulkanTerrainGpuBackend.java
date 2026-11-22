@@ -1864,6 +1864,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private float traceWorstDelta;
     private float worstModelViewDelta;
     boolean worldPassActive;
+    /**
+     * True only inside {@code endWorldPass()}'s ordering flush, which runs after {@code worldPassActive} was
+     * cleared: the group-decay census reads it to tell a world group closed by that flush from a GUI closure.
+     */
+    private boolean endWorldPassFlush;
     /** Matrices for the frame's world pass, captured once at the camera boundary and used for drawing. */
     final float[] worldSnapshotProjection = new float[16];
     private final float[] worldSnapshotModelView = new float[16];
@@ -8026,7 +8031,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // stage and still defer exactly as before - the rule adds an ordering boundary, it does not stop deferral.
         if (!this.immediateGroups.isEmpty()) {
             int pending = this.immediateGroups.size();
-            this.flushPendingBeforeGlDraw();
+            this.endWorldPassFlush = true;
+            try {
+                this.flushPendingBeforeGlDraw();
+            } finally {
+                this.endWorldPassFlush = false;
+            }
             if (this.immediateGroups.size() < pending) {
                 // Counted only when the flush actually drew something: the ordering call also returns early for an
                 // empty queue, a framebuffer replacement and a stall, and a counter that moved on those would not
@@ -8192,6 +8202,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 }
                 this.skyGroupStateThisFrame = null;
             }
+        }
+        if (GroupDecayCensus.ENABLED) {
+            // Before the offers reset below, and after frameId advanced: the frame that just ended is frameId - 1,
+            // the number GROUP_BOUNDS printed for its closures while it ran.
+            GroupDecayCensus.frameEnd(this.frameId - 1, this.immediateOffersThisFrame,
+                    this.immediateGroups.size(), this.prepareDescriptorFailures,
+                    this.targetStatistics.unflushedTargetGroupsDropped(),
+                    this.submissionStatistics.frameArenaFallbackGroups(),
+                    this.immediateLastRefusal, this.immediateStatistics);
         }
         this.immediateOffersLastFrame = this.immediateOffersThisFrame;
         this.immediateOffersThisFrame = 0;
@@ -15052,6 +15071,9 @@ this.frameBufferOpen = false;
             // see eight vertices here, where the base-vertex defect would still have shown eight vertices but drawn the
             // second quad with the first quad's four.
             this.immediateStatistics.noteImmediateGroupsClosed();
+            if (GroupDecayCensus.ENABLED) {
+                GroupDecayCensus.noteClosure(this.worldPassActive, this.endWorldPassFlush);
+            }
             int groupVertices = this.currentImmediateMesh.vertexCount();
             if (groupVertices > this.immediateStatistics.immediateMaxGroupVertices()) {
                 this.immediateStatistics.setImmediateMaxGroupVertices(groupVertices);
