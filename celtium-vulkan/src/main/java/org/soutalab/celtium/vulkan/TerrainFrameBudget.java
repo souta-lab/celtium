@@ -16,15 +16,17 @@ package org.soutalab.celtium.vulkan;
  * it draws through the same loop). The window is keyed to the backend's frame id, which increments once per
  * presented frame; {@link #beginFrame(long)} rolls it lazily, so passes of one frame share one budget.
  * <p>
- * Defaults are Vulcanizator's ({@code terrainVisibleMaxVertices=4000000},
- * {@code terrainVisibleMaxDraws=16384}); each is disabled by setting it to 0 or below. The rebuild target is
- * the celtium-scale analogue of Vulcanizator's adaptive snapshot target: celtium rebuilds inline in the
- * frame, so the target is a per-frame rebuild-time budget in microseconds, not the 250 ms a background
+ * Vertex and draw drop caps default to disabled ({@code 0}): a hard cap shared across all terrain passes drops
+ * later passes ({@code CUTOUT_MIPPED} leaves and {@code TRANSLUCENT} water, exposing the dark riverbed as black
+ * water) on vanilla large render distances such as RD 32 (issue #422 (c)/(d)). Both caps remain opt-in through
+ * {@code -Dceltium.vulkan.terrainMaxVertices} and {@code -Dceltium.vulkan.terrainMaxDraws} ({@code <= 0} disables).
+ * The rebuild target is the celtium-scale analogue of Vulcanizator's adaptive snapshot target: celtium rebuilds
+ * inline in the frame, so the target is a per-frame rebuild-time budget in microseconds, not the 250 ms a background
  * snapshot build may spend.
  */
 public final class TerrainFrameBudget {
-    private static final long MAX_VERTICES = Long.getLong("celtium.vulkan.terrainMaxVertices", 4_000_000L);
-    private static final int MAX_DRAWS = Integer.getInteger("celtium.vulkan.terrainMaxDraws", 16_384);
+    private static final long MAX_VERTICES = Long.getLong("celtium.vulkan.terrainMaxVertices", 0L);
+    private static final int MAX_DRAWS = Integer.getInteger("celtium.vulkan.terrainMaxDraws", 0);
     private static final int REBUILD_CAP = Integer.getInteger("celtium.vulkan.terrainMaxRebuildsPerFrame", 128);
     private static final long REBUILD_TARGET_NANOS =
             Long.getLong("celtium.vulkan.terrainRebuildTargetMicros", 2_000L) * 1_000L;

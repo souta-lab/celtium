@@ -48,6 +48,14 @@ public final class VulkanSwapchain {
     private static final boolean SWAPCHAIN_REQUESTED = Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY);
     private static final boolean PRESENT_FROM_COMPOSITE =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
+    /**
+     * Request transfer-only swapchain image usage by default (issue #422 (a)): the native present path only blits
+     * and clears swapchain images and never attaches them as colour attachments. Dropping COLOR_ATTACHMENT_BIT
+     * avoids displayable DCC compression mismatches on RDNA3 proprietary drivers; set to {@code false} to opt back
+     * into colour-attachment swapchain usage.
+     */
+    private static final boolean PRESENT_TRANSFER_ONLY =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentTransferOnly", "true"));
     private static final boolean ASSUME_NO_PRESENT_SUPPORT =
             Boolean.getBoolean("celtium.vulkan.assumeNoPresentSupport");
     private final VulkanContext context;
@@ -685,10 +693,11 @@ public final class VulkanSwapchain {
             toTransfer.get(0).sType$Default()
                     .oldLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR).newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
                     .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                    .image(image).srcAccessMask(0).dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT);
+                    .image(image).srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT);
             toTransfer.get(0).subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(0).levelCount(1)
                     .baseArrayLayer(0).layerCount(1);
-            vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null,
+            vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null,
                     toTransfer);
             vkCmdCopyImageToBuffer(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, copy);
             org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer backToPresent =
@@ -2193,6 +2202,9 @@ public final class VulkanSwapchain {
         transitionToTransferDst(stack, commands, this.images[imageIndex]);
         if (initVariant) {
             recordOpaqueBlackClear(stack, commands, this.images[imageIndex]);
+            // Order the clear write before the blit write on the same swapchain image (WAW hazard on RDNA3 fast
+            // clear / DCC metadata if omitted; issue #422 (a)).
+            recordTransferWriteToWriteBarrier(stack, commands, this.images[imageIndex]);
         }
         org.lwjgl.vulkan.VkImageBlit.Buffer region = org.lwjgl.vulkan.VkImageBlit.calloc(1, stack);
         region.get(0).srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0)
@@ -2676,7 +2688,7 @@ public final class VulkanSwapchain {
             surfaceOfferValues.formats = offeredFormats;
             SwapchainCreateArguments.Result choice =
                     SwapchainCreateArguments.select(surfaceOfferValues, requestedWidth, requestedHeight,
-                            desiredImageCount());
+                            desiredImageCount(), PRESENT_TRANSFER_ONLY);
             if (choice.refusal != null) {
                 reasons.add(choice.refusal + " (surface offered formats " + availableFormats + ")");
                 return false;
@@ -2798,21 +2810,24 @@ public final class VulkanSwapchain {
                 return false;
             }
             this.images = new long[imagesWritten];
-            this.views = new long[imagesWritten];
+            boolean createViews = imageViewsWanted(swapchainUsage);
+            this.views = createViews ? new long[imagesWritten] : new long[0];
             for (int i = 0; i < this.images.length; i++) {
                 this.images[i] = imageHandles.get(i);
-                org.lwjgl.vulkan.VkImageViewCreateInfo view = org.lwjgl.vulkan.VkImageViewCreateInfo.calloc(stack)
-                        .sType$Default()
-                        .image(this.images[i])
-                        .viewType(VK_IMAGE_VIEW_TYPE_2D)
-                        .format(this.format);
-                view.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
-                LongBuffer viewHandle = stack.mallocLong(1);
-                if (vkCreateImageView(this.context.device(), view, null, viewHandle) != VK_SUCCESS) {
-                    reasons.add("could not create a view for swapchain image " + i);
-                    return false;
+                if (createViews) {
+                    org.lwjgl.vulkan.VkImageViewCreateInfo view = org.lwjgl.vulkan.VkImageViewCreateInfo.calloc(stack)
+                            .sType$Default()
+                            .image(this.images[i])
+                            .viewType(VK_IMAGE_VIEW_TYPE_2D)
+                            .format(this.format);
+                    view.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+                    LongBuffer viewHandle = stack.mallocLong(1);
+                    if (vkCreateImageView(this.context.device(), view, null, viewHandle) != VK_SUCCESS) {
+                        reasons.add("could not create a view for swapchain image " + i);
+                        return false;
+                    }
+                    this.views[i] = viewHandle.get(0);
                 }
-                this.views[i] = viewHandle.get(0);
             }
             this.imageInitialization = beginDeferredImageInitialization(swapchainUsage);
             System.out.println("[Celtium] CELTIUM_SWAPCHAIN_INIT " + this.imageInitialization);
@@ -2961,6 +2976,44 @@ public final class VulkanSwapchain {
         vkCmdClearColorImage(commands, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, color, range);
     }
 
+    /**
+     * {@return whether VkImageViews should be created for swapchain images with {@code usage}}.
+     * <p>
+     * Per {@code VUID-VkImageViewCreateInfo-image-04441}, creating a {@code VkImageView} on an image whose usage
+     * includes only transfer bits (no {@code COLOR_ATTACHMENT}/{@code SAMPLED}/{@code STORAGE}) is invalid. The
+     * native present path only blits and clears swapchain images and never binds swapchain image views.
+     */
+    static boolean imageViewsWanted(int usage) {
+        return (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) != 0;
+    }
+
+    /**
+     * {@return the source pipeline stage for {@link #transitionToTransferDst}}.
+     * <p>
+     * The acquire semaphore is waited at {@code ALL_COMMANDS_BIT} (which includes {@code TRANSFER_BIT} but does not
+     * block {@code TOP_OF_PIPE_BIT}), so using {@code TRANSFER_BIT} chains the {@code UNDEFINED -> TRANSFER_DST}
+     * layout transition strictly after acquire completes (issue #422 (a)).
+     */
+    static int transferDstEntrySrcStage() {
+        return VK_PIPELINE_STAGE_TRANSFER_BIT;
+    }
+
+    /** Records a TRANSFER_WRITE -> TRANSFER_WRITE barrier on a swapchain image already in TRANSFER_DST_OPTIMAL. */
+    private void recordTransferWriteToWriteBarrier(MemoryStack stack, VkCommandBuffer commands, long image) {
+        VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
+        barrier.get(0).sType$Default()
+                .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                .newLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .image(image);
+        barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+        vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null,
+                null, barrier);
+    }
+
     private void transitionToTransferDst(MemoryStack stack, VkCommandBuffer commands, long image) {
         VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
         barrier.get(0).sType$Default()
@@ -2972,7 +3025,7 @@ public final class VulkanSwapchain {
                 .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                 .image(image);
         barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
-        vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null,
+        vkCmdPipelineBarrier(commands, transferDstEntrySrcStage(), VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null,
                 null, barrier);
     }
 

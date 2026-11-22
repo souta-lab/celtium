@@ -185,10 +185,26 @@ public final class VulkanBuffer {
         try {
             commandBuffer = this.context.beginCommands();
             try (MemoryStack stack = MemoryStack.stackPush()) {
+                org.lwjgl.vulkan.VkMemoryBarrier.Buffer preCopy = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
+                preCopy.get(0).sType$Default()
+                        .srcAccessMask(VK_ACCESS_MEMORY_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+                vkCmdPipelineBarrier(commandBuffer,
+                        VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, preCopy, null, null);
                 // Both sizes are multiples of 4, which is what a Vulkan buffer copy requires.
                 VkBufferCopy.Buffer copy = VkBufferCopy.calloc(1, stack);
                 copy.get(0).srcOffset(0L).dstOffset(0L).size(oldSize);
                 vkCmdCopyBuffer(commandBuffer, oldHandle, this.handle, copy);
+                org.lwjgl.vulkan.VkMemoryBarrier.Buffer postCopy = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack);
+                postCopy.get(0).sType$Default()
+                        .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT
+                                | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+                vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT
+                                | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        0, postCopy, null, null);
             }
             endCommandsOwns = true;
             this.context.endCommands(commandBuffer, "buffer-readback");

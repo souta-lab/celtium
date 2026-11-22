@@ -1102,6 +1102,37 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * a frame (263 us) became fast clears (17 us) plus partial resolves (62 us), and the draws that follow on the
      * compressed surface cost less as well.
      */
+    /**
+     * {@return the source access mask for {@link #recordColorToTransfer}}, covering prior colour attachment,
+     * transfer, and shader accesses so RDNA3/PAL flushes and resolves DCC/CB caches cleanly (issue #422 (a)).
+     */
+    static int colorToTransferSrcAccessMask() {
+        return VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+    }
+
+    /**
+     * {@return the {@code [srcAccessMask, dstAccessMask]} pair for {@link #recordLayoutBarriers}}.
+     * <p>
+     * First-acquire transitions run from {@code TOP_OF_PIPE_BIT} where non-zero {@code srcAccessMask} is invalid
+     * ({@code VUID-vkCmdPipelineBarrier-pImageMemoryBarriers-02819}); every subsequent acquire and every release
+     * carries full attachment, transfer, and shader masks so layout transitions across {@code GENERAL} cannot skip
+     * CB/DCC cache flushes or invalidations (issue #422 (a)).
+     */
+    static int[] layoutBarrierAccessMasks(boolean release, boolean firstAcquire, boolean depth) {
+        int attachmentAccess = depth
+                ? (VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT)
+                : (VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+        int generalAccess = attachmentAccess | VK_ACCESS_SHADER_READ_BIT
+                | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+        if (release) {
+            return new int[] { attachmentAccess | VK_ACCESS_TRANSFER_WRITE_BIT, generalAccess };
+        }
+        int src = firstAcquire ? 0 : generalAccess;
+        int dst = attachmentAccess | VK_ACCESS_TRANSFER_WRITE_BIT;
+        return new int[] { src, dst };
+    }
+
     private void recordColorToTransfer(VkCommandBuffer command, long image) {
         try (MemoryStack stack = stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
@@ -1109,7 +1140,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(DEPTH_TRANSFER_LAYOUT)
                     .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
                     .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .srcAccessMask(colorToTransferSrcAccessMask())
                     .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
             barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
             vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -1188,8 +1219,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * transfers: the images belong to this queue in every phase, so the barrier only moves layouts.
      */
     private void recordLayoutBarriers(VkCommandBuffer command, boolean release) {
-        int colorAccess = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        int depthAccess = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        boolean first = this.firstAcquire && !release;
+        int[] colorMasks = layoutBarrierAccessMasks(release, first, false);
+        int[] depthMasks = layoutBarrierAccessMasks(release, first, true);
         int queueFamily = this.context.queueFamilyIndex();
         try (MemoryStack stack = stackPush()) {
             VkImageMemoryBarrier.Buffer barriers = VkImageMemoryBarrier.calloc(2, stack);
@@ -1203,9 +1235,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     .oldLayout(release ? COLOR_RENDER_LAYOUT : this.colorImageLayout)
                     .newLayout(release ? VK_IMAGE_LAYOUT_GENERAL : COLOR_RENDER_LAYOUT)
                     .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
-                    .srcAccessMask(release && !(this.firstAcquire && !release) ? colorAccess : 0)
+                    .srcAccessMask(colorMasks[0])
                     // Acquire can be followed by a game transfer clear before the attachment pass.
-                    .dstAccessMask(release ? 0 : (colorAccess | VK_ACCESS_TRANSFER_WRITE_BIT));
+                    .dstAccessMask(colorMasks[1]);
             colorBarrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
 
             VkImageMemoryBarrier depthBarrier = barriers.get(1);
@@ -1214,12 +1246,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     .oldLayout(release ? DEPTH_RENDER_LAYOUT : this.depthImageLayout)
                     .newLayout(DEPTH_RENDER_LAYOUT)
                     .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
-                    .srcAccessMask(release && !(this.firstAcquire && !release) ? depthAccess : 0)
-                    .dstAccessMask(release ? 0 : (depthAccess | VK_ACCESS_TRANSFER_WRITE_BIT));
+                    .srcAccessMask(depthMasks[0])
+                    .dstAccessMask(depthMasks[1]);
             depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
 
             vkCmdPipelineBarrier(command,
-                    this.firstAcquire && !release ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    first ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                     VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barriers);
         }
     }

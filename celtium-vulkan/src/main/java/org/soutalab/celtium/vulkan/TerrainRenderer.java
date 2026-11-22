@@ -913,9 +913,30 @@ public final class TerrainRenderer {
         }
     }
 
-    /** {@return the uniform ring, which the pass reserves against before recording}. */
+    /** {@return the slot index into the per-frame-slot uniform buffer ring}. */
+    static int uniformSlotIndex(int frameSlot) {
+        return frameSlot & (VulkanTerrainPipeline.DESCRIPTOR_SLOTS - 1);
+    }
+
+    /** {@return the active frame slot's uniform ring, which the pass reserves against before recording}. */
     VulkanUniformBuffer uniforms() {
-        return this.uniforms;
+        return uniforms(this.uniformSlot);
+    }
+
+    /** {@return the uniform ring belonging to {@code frameSlot}, or {@code null} before creation}. */
+    VulkanUniformBuffer uniforms(int frameSlot) {
+        VulkanUniformBuffer[] buffers = this.uniformBuffers;
+        return buffers == null ? null : buffers[uniformSlotIndex(frameSlot)];
+    }
+
+    /** {@return the growth summary across the uniform slot ring, for diagnostics}. */
+    String uniformGrowthSummary() {
+        VulkanUniformBuffer[] buffers = this.uniformBuffers;
+        if (buffers == null) {
+            return "=none";
+        }
+        VulkanUniformBuffer active = buffers[this.uniformSlot];
+        return active == null ? "=none" : active.growthSummary();
     }
 
     /** {@return the stride of one uniform block}. */
@@ -943,7 +964,15 @@ public final class TerrainRenderer {
         return this.uniformsLogged;
     }
 
-    private VulkanUniformBuffer uniforms;
+    /**
+     * One host-coherent uniform ring per in-flight frame slot ({@link VulkanTerrainPipeline#DESCRIPTOR_SLOTS}),
+     * matching {@link #dynamicLightBuffers} and the pipeline's per-slot descriptor sets. A single shared ring had its
+     * write cursor reset to 0 on every frame begin and overwrote {@code u_RegionOffset} and fog blocks while up to
+     * three earlier frames were still executing on the GPU (issue #422 (b)/(d): regions teleporting to another
+     * region's coordinates such as +y200 / floating leaf canopies).
+     */
+    private VulkanUniformBuffer[] uniformBuffers;
+    private int uniformSlot;
     private long uniformStride;
     private int uniformBlocks;
     private long uniformWriteCursor;
@@ -1000,16 +1029,18 @@ public final class TerrainRenderer {
             this.dynamicLightsGathered = true;
             gatherDynamicLights(camera);
         }
+        VulkanUniformBuffer activeUniforms = this.uniformBuffers[this.uniformSlot];
         long offset = this.uniformWriteCursor;
         this.uniformWriteCursor += this.uniformStride;
-        if (this.uniformWriteCursor > this.uniforms.size()) {
+        if (this.uniformWriteCursor > activeUniforms.size()) {
             // This must not happen: render() reserves an upper bound before recording, and growth replaces the
             // buffer that descriptors recorded earlier in this pass already point at. Reported loudly rather than
             // growing silently, so a missed reservation shows up as a defect instead of as wrong terrain.
-            record("uniform buffer grew during recording: " + this.uniformWriteCursor + " > " + this.uniforms.size()
+            record("uniform buffer grew during recording: slot=" + this.uniformSlot + " "
+                    + this.uniformWriteCursor + " > " + activeUniforms.size()
                     + " (descriptors bound earlier in this pass may be stale)");
-            this.uniforms.ensureCapacity(this.uniformWriteCursor);
-            this.uniformBlocks = (int) (this.uniforms.size() / this.uniformStride);
+            activeUniforms.ensureCapacity(this.uniformWriteCursor);
+            this.uniformBlocks = (int) (activeUniforms.size() / this.uniformStride);
         }
 
         float regionOffsetX = (region.getOriginX() - camera.intX) - camera.fracX;
@@ -1062,7 +1093,7 @@ public final class TerrainRenderer {
                     + " regionOffset=(" + regionOffsetX + "," + regionOffsetY + "," + regionOffsetZ + ")");
         }
 
-        long addr = this.uniforms.mappedAddress() + offset;
+        long addr = activeUniforms.mappedAddress() + offset;
         MemoryUtil.memPutFloat(addr + 0, regionOffsetX);
         MemoryUtil.memPutFloat(addr + 4, regionOffsetY);
         MemoryUtil.memPutFloat(addr + 8, regionOffsetZ);
@@ -1151,15 +1182,21 @@ public final class TerrainRenderer {
      */
     void resetUniformWriteCursor(int frameSlot) {
         this.uniformWriteCursor = 0;
-        this.dynamicLightSlot = frameSlot & (VulkanTerrainPipeline.DESCRIPTOR_SLOTS - 1);
+        int slot = uniformSlotIndex(frameSlot);
+        this.uniformSlot = slot;
+        this.dynamicLightSlot = slot;
         this.dynamicLightsGathered = false;
     }
 
-    /** Releases the uniform ring, if it exists. */
+    /** Releases all per-slot uniform and dynamic-light rings, if they exist. */
     void releaseUniforms() {
-        if (this.uniforms != null) {
-            this.uniforms.delete();
-            this.uniforms = null;
+        if (this.uniformBuffers != null) {
+            for (VulkanUniformBuffer buffer : this.uniformBuffers) {
+                if (buffer != null) {
+                    buffer.delete();
+                }
+            }
+            this.uniformBuffers = null;
         }
         if (this.dynamicLightBuffers != null) {
             for (VulkanUniformBuffer buffer : this.dynamicLightBuffers) {
@@ -1171,18 +1208,23 @@ public final class TerrainRenderer {
         }
     }
 
-    /** Creates or grows the uniform ring so it holds at least the required bytes. */
-    void ensureUniformCapacity(VulkanContext context, long required) {
-        if (this.uniforms == null) {
-            this.uniforms = new VulkanUniformBuffer(context, required);
+    /** Creates the per-slot uniform rings or grows the active frame slot's ring to hold at least {@code required} bytes. */
+    void ensureUniformCapacity(VulkanContext context, int frameSlot, long required) {
+        int slot = uniformSlotIndex(frameSlot);
+        if (this.uniformBuffers == null) {
+            this.uniformBuffers = new VulkanUniformBuffer[VulkanTerrainPipeline.DESCRIPTOR_SLOTS];
+            for (int i = 0; i < this.uniformBuffers.length; i++) {
+                this.uniformBuffers[i] = new VulkanUniformBuffer(context, required);
+            }
         } else {
-            this.uniforms.ensureCapacity(required);
+            // Grow only the active slot (fence-confirmed idle at beginRecording); other slots may still be in flight.
+            this.uniformBuffers[slot].ensureCapacity(required);
         }
-        this.uniformBlocks = (int) (this.uniforms.size() / this.uniformStride);
+        this.uniformBlocks = (int) (this.uniformBuffers[slot].size() / this.uniformStride);
         if (this.dynamicLightBuffers == null) {
             this.dynamicLightBuffers = new VulkanUniformBuffer[VulkanTerrainPipeline.DESCRIPTOR_SLOTS];
-            for (int slot = 0; slot < this.dynamicLightBuffers.length; slot++) {
-                this.dynamicLightBuffers[slot] =
+            for (int i = 0; i < this.dynamicLightBuffers.length; i++) {
+                this.dynamicLightBuffers[i] =
                         new VulkanUniformBuffer(context, VulkanTerrainPipeline.DYNAMIC_LIGHT_BLOCK_SIZE);
             }
         }
