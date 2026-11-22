@@ -146,6 +146,13 @@ public final class FramePassTimings {
             // terrainRecord - their draws are immediate groups, recorded under flush/winRecord - so there is
             // deliberately no third name.
             "packRecordShadow", "packRecordGbuffers",
+            // shadow-diff-1: the pack route's two priced spans inside the stage brackets above.
+            // packRecordRebuild is BatchAssembler.createCachedBatch - the re-assembly a chunk-supply
+            // frame correlates across the whole shadow volume, and the span the rebuild budget defers.
+            // packRecordUniform is the per-region uniform span (region-offset write, descriptor-set
+            // claim, uniform block pack): the steady per-region cost whose measured share decides the
+            // incremental-pack design. Both are inclusive spans inside the stage brackets.
+            "packRecordRebuild", "packRecordUniform",
             // pack-tail-2: the world pass' unnamed remainder (FrameBudgetTimings' worldRest), split at its
             // real seams. wpCamera is setupCameraTransform - the camera/frustum setup, with the renderer's
             // world snapshot seeded at its return; wpChunks is RenderGlobal.updateChunks, the chunk-update

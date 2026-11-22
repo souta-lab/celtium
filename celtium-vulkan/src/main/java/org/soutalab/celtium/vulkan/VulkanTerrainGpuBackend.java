@@ -378,6 +378,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private final PackStageStateGuard packStageStateGuard = new PackStageStateGuard();
     private static final boolean PACK_TERRAIN_PROGRAMS =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.packTerrainPrograms", "true"));
+    /**
+     * The item 328 rebuild discipline, applied to the pack route's shadow stage (shadow-diff-1): when on,
+     * a shadow-stage batch rebuild that the frame's {@link TerrainFrameBudget} allowance does not cover is
+     * deferred and the stored batch is drawn as-is (last-good reuse), instead of the pack route's usual
+     * unconditional retire-and-rebuild. Off by default - the pack route then behaves exactly as before,
+     * and the budget is never consulted or noted from this path.
+     */
+    private static final boolean PACK_SHADOW_REBUILD_BUDGET =
+            Boolean.getBoolean("celtium.vulkan.packShadowRebuildBudget");
     private int packTerrainDrawnLogs;
     private int packTerrainRefusedLogs;
     private int packTerrainHandoffLogs;
@@ -16994,6 +17003,9 @@ this.frameBufferOpen = false;
         // closed in the finally; null while the execution has not committed (no program, not compiled), so
         // a vanilla pass - which reaches this method on its way to the built-in path - files nothing.
         String packStageBracket = null;
+        // shadow-diff-1: the same stage decision as the bracket's, kept as a boolean for the draw loop:
+        // the rebuild budget discipline applies to the shadow stage only.
+        boolean shadowStage = false;
         try {
             packProgram.bind();
             bound = true;
@@ -17017,8 +17029,8 @@ this.frameBufferOpen = false;
             // draw loop below are this stage's record cost inside terrainRecord. The stage is Iris's own
             // (DemonicaTerrainBridge.shadowsBeingRendered): the shadow stage's record and the gbuffers
             // stages' record file under separate names, so a terrainRecord spike names its owner.
-            packStageBracket = DemonicaTerrainBridge.shadowsBeingRendered()
-                    ? "packRecordShadow" : "packRecordGbuffers";
+            shadowStage = DemonicaTerrainBridge.shadowsBeingRendered();
+            packStageBracket = shadowStage ? "packRecordShadow" : "packRecordGbuffers";
             org.soutalab.celtium.vulkan.FramePassTimings.begin(packStageBracket);
             var vertexType = this.configuration.getVertexTypeForPass(pass);
             var vertexFormat = vertexType == null ? null : vertexType.getVertexFormat();
@@ -17297,6 +17309,9 @@ this.frameBufferOpen = false;
             Iterator<ChunkRenderList> iterator = renderLists.iterator(pass.isReverseOrder());
             SectionRenderDataStorage.BatchCacheParams cacheParams =
                     new SectionRenderDataStorage.BatchCacheParams(useBlockFaceCulling, view);
+            // shadow-diff-1: the rebuild budget governs this execution only when the flag is on and this
+            // is the shadow stage; every other execution keeps the unconditional rebuild below.
+            boolean budgetedShadow = PACK_SHADOW_REBUILD_BUDGET && shadowStage;
             boolean indexBound = false;
             LongBuffer regionVertexBuf = stack.mallocLong(1);
             LongBuffer regionVertexOffset = stack.longs(0L);
@@ -17320,12 +17335,47 @@ this.frameBufferOpen = false;
                     if (cached == null || !cached.isValidFor(renderList.getSectionsWithGeometry(),
                             renderList.getSectionsWithGeometryCount(), occlusionCamera.intX, occlusionCamera.intY,
                             occlusionCamera.intZ)) {
-                        if (cached != null) {
-                            storage.retireCachedMultiDrawBatch(cacheParams);
+                        // The budget's rebuild discipline (item 328, V-03), ported to this path for the
+                        // shadow stage only and only under -Dceltium.vulkan.packShadowRebuildBudget
+                        // (shadow-diff-1): the built-in path's loop has run under it since item 328, but
+                        // the pack route - which records the shadow stage of every pack frame - never
+                        // consulted it, so a chunk-supply frame rebuilt the whole shadow volume's batches
+                        // in one frame (pack-tail-2: 85% of the slowest-16 terrainRecord). A stored batch
+                        // whose rebuild is deferred is drawn as-is below: the storage deletes a stored
+                        // batch the moment any of its sections' meshes change, so a stored batch always
+                        // references live arena ranges and only its visibility selection can be stale -
+                        // for a depth-only pass, a frame-old visibility decision is the whole cost. A
+                        // region with no stored batch has no last-good to reuse, so its first build
+                        // always proceeds and is counted separately, as in the built-in loop. The draw
+                        // caps are deliberately not ported (the #422 lesson recorded on TerrainFrameBudget).
+                        boolean hasStored = cached != null;
+                        if (!budgetedShadow || !hasStored || this.terrainBudget.rebuildAllowed()) {
+                            // Retire-before-rebuild (item 398), as in the built-in loop: only inside this
+                            // branch - a deferred rebuild below draws the stored batch as-is, so retiring
+                            // before the budget decision would destroy the last-good it exists to reuse.
+                            if (hasStored) {
+                                storage.retireCachedMultiDrawBatch(cacheParams);
+                            }
+                            long rebuildStarted = budgetedShadow ? System.nanoTime() : 0L;
+                            org.soutalab.celtium.vulkan.FramePassTimings.begin("packRecordRebuild");
+                            try {
+                                cached = BatchAssembler.createCachedBatch(region, storage, renderList,
+                                        occlusionCamera, pass, useBlockFaceCulling, null,
+                                        (commands, ignored, ignoredPass) -> null);
+                            } finally {
+                                org.soutalab.celtium.vulkan.FramePassTimings.end("packRecordRebuild");
+                            }
+                            storage.storeCachedMultiDrawBatch(cacheParams, cached);
+                            if (budgetedShadow) {
+                                if (hasStored) {
+                                    this.terrainBudget.noteRebuild(System.nanoTime() - rebuildStarted);
+                                } else {
+                                    this.terrainBudget.noteForcedFirstBuild(System.nanoTime() - rebuildStarted);
+                                }
+                            }
+                        } else {
+                            this.terrainBudget.noteDeferredReuse();
                         }
-                        cached = BatchAssembler.createCachedBatch(region, storage, renderList, occlusionCamera, pass,
-                                useBlockFaceCulling, null, (commands, ignored, ignoredPass) -> null);
-                        storage.storeCachedMultiDrawBatch(cacheParams, cached);
                     }
                     if (!(cached.getBatch() instanceof VulkanMultiDrawBatch batch) || batch.isEmpty()) {
                         continue;
@@ -17333,11 +17383,22 @@ this.frameBufferOpen = false;
                     float regionOffsetX = (region.getOriginX() - camera.intX) - camera.fracX;
                     float regionOffsetY = (region.getOriginY() - camera.intY) - camera.fracY;
                     float regionOffsetZ = (region.getOriginZ() - camera.intZ) - camera.fracZ;
-                    iface.setRegionOffset(regionOffsetX, regionOffsetY, regionOffsetZ);
-
-                    long descSet = modPipeline.samplersAndImages(samplerTextures, imageTextures, modProgram, this.frameId);
-                    ByteBuffer pushUniforms = modPipeline.uniformsViaBuffer() ? null
-                            : VulkanModProgramPipeline.packUniforms(modProgram);
+                    // shadow-diff-1: the per-region uniform span - the region offset write, the descriptor
+                    // set claim it forces (the offset rides the program's uniform block, so each region's
+                    // values claim a fresh ring slot), and the block pack behind it. Bracketed so a census
+                    // can price this span against packRecordRebuild before anyone optimises it (the
+                    // incremental-pack design in shadow-diff-1 §3 waits on that number).
+                    long descSet;
+                    ByteBuffer pushUniforms;
+                    org.soutalab.celtium.vulkan.FramePassTimings.begin("packRecordUniform");
+                    try {
+                        iface.setRegionOffset(regionOffsetX, regionOffsetY, regionOffsetZ);
+                        descSet = modPipeline.samplersAndImages(samplerTextures, imageTextures, modProgram, this.frameId);
+                        pushUniforms = modPipeline.uniformsViaBuffer() ? null
+                                : VulkanModProgramPipeline.packUniforms(modProgram);
+                    } finally {
+                        org.soutalab.celtium.vulkan.FramePassTimings.end("packRecordUniform");
+                    }
                     if (descSet == 0L && (modPipeline.uniformsViaBuffer() || !samplers.isEmpty() || !imageBindings.isEmpty())) {
                         // Ring or pool exhausted: a draw without its own set would read the previous region's
                         // uniforms (wrong region offset), so the region is skipped and counted instead.
