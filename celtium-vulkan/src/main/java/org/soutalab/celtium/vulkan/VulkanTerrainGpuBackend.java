@@ -2493,6 +2493,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private boolean entityProgramLogged;
     /** Which programs the custom-program shutter refused, and how often - the entity path's identity. */
     private final java.util.LinkedHashMap<String, Integer> shaderProgramRefusedIds = new java.util.LinkedHashMap<>();
+    /** (program, format) pairs already reported as drawn by the built-in pipeline under a bound program. */
+    private final java.util.LinkedHashMap<String, Integer> untexturedFallbackIds = new java.util.LinkedHashMap<>();
     /** The same refusals grouped by program alone. */
     private final it.unimi.dsi.fastutil.ints.Int2IntLinkedOpenHashMap shaderProgramRefusedPrograms =
             new it.unimi.dsi.fastutil.ints.Int2IntLinkedOpenHashMap();
@@ -9446,10 +9448,28 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             }
             this.immediateStatistics.noteProgramQueryCount();
             // A mod's own program that the stub lowered and compiled is drawn, not refused (VulkanModProgramPipeline).
+            // One refusal is not a refusal: when the batch's texture state is disabled, the bound program is
+            // not the program a fixed-function stack would draw it with (the untextured variant is), so a
+            // textured program that happens to be bound must not gate it - when the only gap is the
+            // attribute mapping, the batch takes the built-in path below exactly as if no program were
+            // bound. The check runs here, before the executable query, so a batch that falls back is never
+            // reported as not drawn; every other refusal is untouched and reported as before.
+            boolean untexturedFallback = false;
+            if (boundProgram != 0 && boundProgram != Integer.MIN_VALUE) {
+                org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program bound =
+                        org.soutalab.celtium.vulkan.gl.ModProgramRegistry.program(boundProgram);
+                untexturedFallback = org.soutalab.celtium.vulkan.VulkanModProgramPipeline
+                        .untexturedBuiltInFallback(bound, formatId,
+                                !this.immediateState.texture2dEnabled() || celtium$layoutHasNoTexture(formatId));
+                if (untexturedFallback) {
+                    celtium$recordUntexturedFallback(boundProgram, formatId, bound);
+                }
+            }
             org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program modDrawProgram =
-                    boundProgram != 0 && boundProgram != Integer.MIN_VALUE ? this.modPrograms.celtium$executableModProgram(boundProgram, formatId)
+                    !untexturedFallback && boundProgram != 0 && boundProgram != Integer.MIN_VALUE
+                            ? this.modPrograms.celtium$executableModProgram(boundProgram, formatId)
                             : null;
-            if (boundProgram != 0 && modDrawProgram == null) {
+            if (boundProgram != 0 && modDrawProgram == null && !untexturedFallback) {
                 celtium$offerStage(9);
                 celtium$recordCustomProgramRefusal(boundProgram, formatId, boundTexture);
                 org.soutalab.celtium.vulkan.FramePassTimings.end("offPrepare");
@@ -10296,6 +10316,25 @@ this.frameBufferOpen = false;
             celtium$noteFlushSite(1);
             this.flushPendingBeforeGlDraw();
             return false;
+        }
+    }
+
+    /**
+     * Reports (once per program and format) a batch drawn by the built-in pipeline under a bound program
+     * it could not use: the untextured fallback of {@code VulkanModProgramPipeline.untexturedBuiltInFallback}.
+     * The line names the attribute gap that would have refused the batch, so a leg reading the log sees
+     * both that the gap occurred and that the batch was drawn anyway.
+     */
+    private void celtium$recordUntexturedFallback(int boundProgram, int formatId,
+            org.soutalab.celtium.vulkan.gl.ModProgramRegistry.Program bound) {
+        String programKey = boundProgram + "/fmt" + formatId;
+        if (this.untexturedFallbackIds.putIfAbsent(programKey, 1) == null) {
+            System.out.println("[Celtium] CELTIUM_MOD_PROGRAM_FALLBACK program=" + boundProgram
+                    + " format=" + formatId + " route=builtin-untextured reason="
+                    + org.soutalab.celtium.vulkan.VulkanModProgramPipeline.unsupportedAttributes(
+                            bound.lowered().attributes(), formatId)
+                    + " (the batch's texture state is disabled, so the bound program is not the program"
+                    + " a fixed-function stack would draw it with)");
         }
     }
 

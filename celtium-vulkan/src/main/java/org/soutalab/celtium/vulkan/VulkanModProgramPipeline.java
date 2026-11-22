@@ -263,6 +263,29 @@ public final class VulkanModProgramPipeline {
     }
 
     /**
+     * {@return whether a batch this program cannot draw may be drawn by the built-in pipeline instead of
+     * refused}: the batch's texture state is disabled, so the bound program is not the program a
+     * fixed-function stack would draw it with - {@code Gui.drawRect} and the gradient-rect family run
+     * with texturing off and are rendered by the untextured program variant, whatever textured program
+     * happens to be bound - and the only thing wrong with the bound program for this batch is the
+     * attribute mapping. The measured arrival is Demonica's GLSM: its textured FFP program stays bound
+     * across the menu's rectangle draws, and a POSITION batch under it was refused for reading a texture
+     * coordinate the batch does not carry, so the rectangles vanished (demonica-gui-1, mechanism (a)).
+     * <p>
+     * Every other refusal stands: the program must be one the stub itself lowered and compiled (an
+     * unlowered binding - the ShaderGroup post-process shape - is refused exactly as before), and a
+     * batch with its texture state enabled is refused exactly as before.
+     */
+    public static boolean untexturedBuiltInFallback(ModProgramRegistry.Program program, int formatId,
+                                                    boolean textureDisabled) {
+        if (!textureDisabled || program == null || program.lowered() == null || !program.lowered().ok()
+                || !program.compiled()) {
+            return false;
+        }
+        return unsupportedAttributes(program.lowered().attributes(), formatId) != null;
+    }
+
+    /**
      * {@return why this program's attributes cannot be read from this batch layout}, or null when they can - the
      * format half of {@link #unsupported}, split out so both halves are testable without a device: which formats map
      * onto program attributes at all, and which attribute reads which of the layout's fields.
