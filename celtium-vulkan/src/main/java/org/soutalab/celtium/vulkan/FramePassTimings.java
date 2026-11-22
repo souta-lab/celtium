@@ -248,10 +248,12 @@ public final class FramePassTimings {
     }
 
     /**
-     * Resolved once, through {@link HarnessConfig} like every other repeating instrument's switch: this is asked on
+     * Resolved through {@link HarnessConfig} like every other repeating instrument's switch: this is asked on
      * both sides of every bracket, and a per-bracket property walk is what the JFR census of the shipping
      * configuration put at 1.8% of the client thread's samples (65 of the 87 ConcurrentHashMap.get samples, from the
-     * instrumentation itself) - so the answer is a field read, taken when this class initialises.
+     * instrumentation itself) - so the answer stays a field read. The resolution is taken when this class
+     * initialises and re-taken at every {@link #beginFrame()}; see {@link #resolveSwitches()} for why the re-take
+     * exists.
      * <p>
      * This switch used to be the family's exception, a raw {@code Boolean.getBoolean("celtium.vulkan.passSplit")}:
      * the harness file could not name it at all, and the legacy command-line layer in {@link HarnessConfig} only
@@ -262,7 +264,7 @@ public final class FramePassTimings {
      * spellings work with the master switch on; a player's run, which has neither, observes exactly the old
      * no-switch behaviour.
      */
-    private static final boolean PASS_SPLIT_ENABLED = HarnessConfig.bool("passSplit", false);
+    private static volatile boolean PASS_SPLIT_ENABLED;
 
     /** {@return whether the instrument should measure at all}. */
     public static boolean enabled() {
@@ -274,8 +276,41 @@ public final class FramePassTimings {
         return PASS_SPLIT_ENABLED || BRACKETS_ENABLED || TICK_PERCENTILES || TickTimings.enabled();
     }
 
+    /**
+     * (Re-)resolves every harness switch this class keeps, through {@link HarnessConfig}: the eight answers the
+     * bracket path reads as fields ({@link #PASS_SPLIT_ENABLED}, {@link #BRACKETS_ENABLED}, {@link #CPU_CLOCK},
+     * {@link #TICK_SPLIT_FRAMES}, {@link #TICK_PERCENTILES} with {@link #PERCENTILE_FRAMES}, {@link #COUNT_CALLS}
+     * and {@link #MICROS}).
+     * <p>
+     * Called once when this class initialises, so a run that never opens a frame observes exactly the old
+     * class-init resolution, and again at every {@link #beginFrame()} - once a frame, never per bracket, so the
+     * property walk the JFR census priced stays off the bracket path. The frame open is the moment the
+     * configuration of the frame being recorded is taken, and taking it there is what makes the resolution robust
+     * against this class being initialised earlier by an unrelated touch: a production path a unit test exercises
+     * can initialise the class before the harness configuration exists (the HUD census' flush hook evaluates this
+     * class's UI-section state as a call argument at the head of {@code flushPendingBeforeGlDraw}, so its test
+     * initialised the class with no harness properties set), and a resolution fixed at that moment used to hold for
+     * the whole JVM - the coverage test then recorded nothing however it set its own properties (hud-census-1
+     * sections 9/10, 2026-11-23). A player's run fixes its configuration before launch, so the re-take reads the
+     * same values every frame and changes nothing there.
+     */
+    private static void resolveSwitches() {
+        PASS_SPLIT_ENABLED = HarnessConfig.bool("passSplit", false);
+        BRACKETS_ENABLED = HarnessConfig.bool("brackets", false);
+        CPU_CLOCK = HarnessConfig.bool("passSplitCpu", false);
+        TICK_SPLIT_FRAMES = HarnessConfig.integer("tickSplitFrames", 4000);
+        TICK_PERCENTILES = HarnessConfig.bool("tickPercentiles", false);
+        PERCENTILE_FRAMES = Math.max(64, HarnessConfig.integer("tickPercentileFrames", 4096));
+        COUNT_CALLS = HarnessConfig.bool("passCounts", false);
+        MICROS = HarnessConfig.bool("passSplitMicros", false);
+    }
+
+    static {
+        resolveSwitches();
+    }
+
     /** The harness's {@code brackets=true}: keep the pass brackets on without the pass-split report. */
-    private static final boolean BRACKETS_ENABLED = HarnessConfig.bool("brackets", false);
+    private static volatile boolean BRACKETS_ENABLED;
 
     /**
      * The clock the brackets read.
@@ -288,7 +323,7 @@ public final class FramePassTimings {
      * driver work or preemption counted as work, and only a CPU clock separates them. Default stays wall time, so
      * every measured number before this flag keeps its meaning.
      */
-    private static final boolean CPU_CLOCK = HarnessConfig.bool("passSplitCpu", false);
+    private static volatile boolean CPU_CLOCK;
     private static final java.lang.management.ThreadMXBean THREAD_BEAN =
             java.lang.management.ManagementFactory.getThreadMXBean();
     private static final boolean THREAD_CPU_SUPPORTED = THREAD_BEAN.isCurrentThreadCpuTimeSupported();
@@ -303,7 +338,7 @@ public final class FramePassTimings {
      * {@link #TICK_SPLIT_FRAMES} frames as {@code CELTIUM_FRAME_TICK_PASSES}: Intel's warm p99 is the tick frames, and
      * the frame drawn after a tick costs ~0.3 ms more than a plain one - these say which bracket holds it.
      */
-    private static final int TICK_SPLIT_FRAMES = HarnessConfig.integer("tickSplitFrames", 4000);
+    private static volatile int TICK_SPLIT_FRAMES;
     private static boolean tickSinceLastFrame;
     private static final long[] tickFrameSums = new long[1 + TOP_LEVEL.length + INSIDE.length];
     private static final long[] plainFrameSums = new long[1 + TOP_LEVEL.length + INSIDE.length];
@@ -330,9 +365,8 @@ public final class FramePassTimings {
      * <p>
      * Memory is {@code frames x brackets x 8} bytes, allocated only when the switch is on (4 096 frames is ~3 MB).
      */
-    private static final boolean TICK_PERCENTILES = HarnessConfig.bool("tickPercentiles", false);
-    private static final int PERCENTILE_FRAMES =
-            Math.max(64, HarnessConfig.integer("tickPercentileFrames", 4096));
+    private static volatile boolean TICK_PERCENTILES;
+    private static volatile int PERCENTILE_FRAMES;
     private static final int PERCENTILE_COLUMNS = 1 + TOP_LEVEL.length + INSIDE.length;
     private static long[][] percentileRows;
     private static boolean[] percentileIsTick;
@@ -488,6 +522,8 @@ public final class FramePassTimings {
 
     /** Brackets the frame itself. */
     public static void beginFrame() {
+        // The frame's configuration is taken here, once per frame: see resolveSwitches().
+        resolveSwitches();
         if (!enabled()) return;
         noteContextThread();
         coverage.reset();
@@ -684,7 +720,7 @@ public final class FramePassTimings {
      * steady-state profile. They exist to separate "the bracket never ran" from "the bracket ran and measured zero", a
      * question asked while diagnosing, so they are a switch rather than a permanent tax.
      */
-    private static final boolean COUNT_CALLS = HarnessConfig.bool("passCounts", false);
+    private static volatile boolean COUNT_CALLS;
 
     /** {@return whether per-bracket call counting is on} (the harness's {@code passCounts}). */
     public static boolean countsCallsEnabled() {
@@ -926,7 +962,7 @@ public final class FramePassTimings {
      * ~0.2 ms a frame, which is exactly the resolution the next decision needs and exactly what 0.1 ms cannot give.
      * The unit is printed beside the frame count so a microsecond line can never be read as a millisecond one.
      */
-    private static final boolean MICROS = HarnessConfig.bool("passSplitMicros", false);
+    private static volatile boolean MICROS;
 
     /** {@return the unit the split is printed in, for the line's own label}. */
     public static String unit() {
