@@ -121,4 +121,94 @@ class FrameBudgetTimingsTest {
         assertEquals(-1L, FrameBudgetTimings.tailSpan(3_000_000L, 5_000_000L),
                 "a present before its boundary is not a pair");
     }
+
+    // The split's index tables, as literals: the production printing path resolves these from
+    // FramePassTimings' name table, but resolving them here would initialise that class - it latches its
+    // harness switches at initialisation, and PassTimingCoverageTest depends on setting the properties
+    // before that happens. The layout is windowMeansNanos': a bracket's mean sits at its index + 1.
+    private static final int TERRAIN = 10;
+    private static final int SETUP = 11;
+    private static final int ENTITIES = 12;
+    private static final int PARTICLES = 13;
+    private static final int PARTICLES_LIT = 14;
+    private static final int SKY = 15;
+    private static final int WORLD_PASS = 20;
+    private static final int FLUSH = 21;
+    private static final int[][] BUCKETS = {
+            {TERRAIN}, {SETUP}, {ENTITIES}, {PARTICLES, PARTICLES_LIT}, {SKY}, {16, 17}, {18, 19}};
+    private static final int[] WORLD_MEMBERS = {TERRAIN, SETUP, ENTITIES, PARTICLES, PARTICLES_LIT, SKY, FLUSH};
+
+    /** A means row in {@link FramePassTimings}' window layout: index 0 is the frame, bracket i sits at i + 1. */
+    private static long[] meansWith(int bracket, long nanos) {
+        long[] means = new long[40];
+        means[bracket + 1] = nanos;
+        return means;
+    }
+
+    @Test
+    void otherSplitNamesEachBucketFromTheGivenTable() {
+        long[] means = meansWith(TERRAIN, 2_000_000L);
+        long[] split = FrameBudgetTimings.otherSplit(5_800_000L, 500_000L, means, 300_000L,
+                BUCKETS, WORLD_PASS, WORLD_MEMBERS, FLUSH, 0L);
+        assertEquals(500_000L, split[0], "outside passes through");
+        assertEquals(2_000_000L, split[1], "the terrain bucket is the terrain bracket's mean");
+        assertEquals(300_000L, split[10], "the pass residual passes through");
+        assertEquals(5_800_000L - 500_000L - 2_000_000L - 300_000L, split[11],
+                "unexplained is what no bucket covered");
+    }
+
+    @Test
+    void otherSplitWorldRestIsWorldPassMinusTheNamedInsideBrackets() {
+        long[] means = meansWith(WORLD_PASS, 4_000_000L);
+        means[TERRAIN + 1] = 1_500_000L;
+        means[ENTITIES + 1] = 1_000_000L;
+        long[] split = FrameBudgetTimings.otherSplit(5_800_000L, 0L, means, 0L,
+                BUCKETS, WORLD_PASS, WORLD_MEMBERS, FLUSH, 0L);
+        assertEquals(1_500_000L, split[9],
+                "worldRest keeps only what worldPass holds beyond the bucketed brackets");
+    }
+
+    @Test
+    void otherSplitWorldRestNeverGoesNegativeWhenBracketsOverlap() {
+        long[] means = meansWith(WORLD_PASS, 1_000_000L);
+        means[TERRAIN + 1] = 1_500_000L;
+        long[] split = FrameBudgetTimings.otherSplit(5_800_000L, 0L, means, 0L,
+                BUCKETS, WORLD_PASS, WORLD_MEMBERS, FLUSH, 0L);
+        assertEquals(0L, split[9], "an overlap artefact is floored, not reported as negative time");
+    }
+
+    @Test
+    void otherSplitSumsMultiMemberBuckets() {
+        long[] means = meansWith(PARTICLES, 400_000L);
+        means[PARTICLES_LIT + 1] = 100_000L;
+        means[18 + 1] = 700_000L;
+        means[19 + 1] = 200_000L;
+        long[] split = FrameBudgetTimings.otherSplit(5_800_000L, 0L, means, 0L,
+                BUCKETS, WORLD_PASS, WORLD_MEMBERS, FLUSH, 0L);
+        assertEquals(500_000L, split[4], "particles and its lit half are one bucket");
+        assertEquals(900_000L, split[7], "gui and hand are one bucket");
+    }
+
+    @Test
+    void otherSplitFlushIsNettedByTheRecordSpanItContains() {
+        long[] means = meansWith(FLUSH, 2_000_000L);
+        long[] split = FrameBudgetTimings.otherSplit(5_800_000L, 0L, means, 0L,
+                BUCKETS, WORLD_PASS, WORLD_MEMBERS, FLUSH, 1_100_000L);
+        assertEquals(900_000L, split[8],
+                "flushNet is the flush minus the record span, which the budget already accounted");
+        long[] clamped = FrameBudgetTimings.otherSplit(5_800_000L, 0L, means, 0L,
+                BUCKETS, WORLD_PASS, WORLD_MEMBERS, FLUSH, 2_500_000L);
+        assertEquals(0L, clamped[8], "a record mean above the flush mean floors at zero, never negative");
+    }
+
+    @Test
+    void otherSplitWorldRestExcludesTheFlushToo() {
+        long[] means = meansWith(WORLD_PASS, 4_000_000L);
+        means[TERRAIN + 1] = 1_500_000L;
+        means[FLUSH + 1] = 500_000L;
+        long[] split = FrameBudgetTimings.otherSplit(5_800_000L, 0L, means, 0L,
+                BUCKETS, WORLD_PASS, WORLD_MEMBERS, FLUSH, 0L);
+        assertEquals(2_000_000L, split[9],
+                "the flush is named by its own bucket, so the remainder no longer absorbs it");
+    }
 }

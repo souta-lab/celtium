@@ -68,6 +68,13 @@ import java.util.Locale;
  * frame column above; outside + the renderer's spans + tail is what that column is made of, and the split says
  * which side of the boundary an unexplained remainder sits on. It costs one clock read at each mark it pairs
  * and nothing when it is off.
+ * <p>
+ * The other split ({@code otherSplit=true}) decomposes this class's {@code other} against
+ * {@link FramePassTimings}' brackets over the same steady window: the terrain pass's own recording, the
+ * game's setup and entity work, the world pass's remainder, the pass frame's residual, and the loop span's
+ * outside. The two instruments' frames are offset by half a frame, so the split is a comparison of window
+ * means, not a per-frame identity - see {@link #otherSplit} for the bucket construction and the bias the
+ * {@code batch} double count puts on its remainder.
  */
 public final class FrameBudgetTimings {
 
@@ -264,6 +271,92 @@ public final class FrameBudgetTimings {
     /** The harness's {@code loopSpan=true}: pair the present mark with the frame boundary (see the class comment). */
     private static final boolean LOOP_SPAN = HarnessConfig.bool("loopSpan", false);
 
+    /**
+     * The harness's {@code otherSplit=true}: decompose {@code other} against {@link FramePassTimings}' brackets.
+     * <p>
+     * The budget frame and the pass frame are offset by half a frame (the pass frame is
+     * {@code updateCameraAndRender}; the budget frame is boundary to boundary, and the boundary sits inside the
+     * pass frame's world pass), so no per-frame pairing between the two instruments exists and none is faked:
+     * the split is statistical, over each instrument's own last-512 window of the same steady scene - the same
+     * reading the loop span's outside + tail &asymp; frame check already uses. Every bucket is a mean of bracket
+     * means, because means add and percentiles of different brackets describe frames that never happened. The
+     * buckets are chosen disjoint by construction (see {@link #otherSplit}); what no bucket covers - the swap
+     * point's flush outside the pass frame, the loop glue, the two instruments' phase offset - is printed as
+     * {@code unexplained} rather than silently absorbed, and it is biased low: {@code batch} wraps work inside
+     * several region buckets as well as sitting in the budget's own accounted sum, so those buckets carry up
+     * to the whole of {@code batch} a second time. The one containment that is exact - {@code winRecord} is
+     * the {@code record} span's own interval, inside {@code flush} - is netted in {@code flushNet} instead of
+     * left to the bias.
+     */
+    private static final boolean OTHER_SPLIT = HarnessConfig.bool("otherSplit", false);
+
+    /** Bucket member names for {@link #otherSplit}, in the printed order after {@code outside}. */
+    private static final String[][] OTHER_BUCKETS = {
+            {"terrain"},
+            {"setupTerrain"},
+            {"entities"},
+            {"particles", "particlesLit"},
+            {"sky"},
+            {"clouds", "weather"},
+            {"gui", "hand"},
+    };
+
+    /** Bracket indices of {@link #OTHER_BUCKETS}' members, resolved lazily from the shared name table. */
+    private static int[][] otherBucketIndex;
+
+    /** The {@code worldPass} bracket's index, for the remainder bucket computed in {@link #otherSplit}. */
+    private static int worldPassIndex = -2;
+
+    /**
+     * Resolves the bucket indices on first use rather than in this class's static initialiser.
+     * <p>
+     * Loading {@link FramePassTimings} from a static initialiser would latch its own harness switches at
+     * whatever moment some other class happened to load this one - in a test JVM that is before the test
+     * that sets the properties those switches read, which silently leaves the pass instrument off there.
+     * The split only runs when a leg asked for it, so resolving there costs nothing and loads nothing early.
+     */
+    private static int[][] otherBucketIndex() {
+        int[][] resolved = otherBucketIndex;
+        if (resolved == null) {
+            resolved = new int[OTHER_BUCKETS.length][];
+            for (int b = 0; b < OTHER_BUCKETS.length; b++) {
+                resolved[b] = new int[OTHER_BUCKETS[b].length];
+                for (int m = 0; m < OTHER_BUCKETS[b].length; m++) {
+                    resolved[b][m] = FramePassTimings.indexOfName(OTHER_BUCKETS[b][m]);
+                }
+            }
+            otherBucketIndex = resolved;
+        }
+        return resolved;
+    }
+
+    /** {@return the {@code worldPass} bracket's name-table index}, resolved with {@link #otherBucketIndex()}. */
+    private static int worldPassIndex() {
+        if (worldPassIndex == -2) {
+            worldPassIndex = FramePassTimings.indexOfName("worldPass");
+        }
+        return worldPassIndex;
+    }
+
+    /** Indices of {@link #WORLD_PASS_MEMBERS}, resolved with {@link #otherBucketIndex()}. */
+    private static int[] worldPassMemberIndex;
+
+    private static int[] worldPassMemberIndex() {
+        int[] resolved = worldPassMemberIndex;
+        if (resolved == null) {
+            resolved = new int[WORLD_PASS_MEMBERS.length];
+            for (int i = 0; i < WORLD_PASS_MEMBERS.length; i++) {
+                resolved[i] = FramePassTimings.indexOfName(WORLD_PASS_MEMBERS[i]);
+            }
+            worldPassMemberIndex = resolved;
+        }
+        return resolved;
+    }
+
+    /** Brackets inside {@code worldPass} that the split already names; the rest is worldRest. */
+    private static final String[] WORLD_PASS_MEMBERS = {
+            "terrain", "setupTerrain", "entities", "particles", "particlesLit", "sky", "flush"};
+
     private static final boolean PRESENT_INTERVAL = ENABLED
             || HarnessConfig.bool("presentInterval", false)
             || LOOP_SPAN;
@@ -430,6 +523,135 @@ public final class FrameBudgetTimings {
         return PRESENT_INTERVAL;
     }
 
+    /**
+     * {@return the decomposition of one {@code other} mean}, in this order: outside, terrain, setup, entities,
+     * particles, sky, cloudsWeather, guiHand, flushNet, worldRest, passResidual, unexplained.
+     * <p>
+     * Pure arithmetic over the two instruments' window means, kept static and separate from the printing for
+     * the same reason {@link #split} is: the unit test asserts the production arithmetic, not a copy of it.
+     * The bracket indices arrive as parameters, resolved by the printing path from the shared name table, so
+     * the arithmetic itself never loads {@link FramePassTimings}: that class latches its harness switches at
+     * initialisation, and a caller that loaded it early (a test class, say) would pin them at the wrong values
+     * for whoever came later.
+     * {@code bracketMeans} is {@link FramePassTimings#windowMeansNanos()} (index 0 is the pass frame itself, so
+     * a bracket's mean sits at its name-table index + 1). The buckets are disjoint by construction: {@code
+     * terrain} contains its own sub-brackets (record, submit, prepare), {@code setupTerrain} contains the
+     * {@code st*} family, {@code entities} the {@code ent*} family, and {@code worldRest} is what {@code
+     * worldPass} holds beyond those, {@code sky} and {@code flush} - the snapshot's remainder after the
+     * boundary, the render glue, and the inside brackets no bucket names ({@code dyn*}, {@code anim*},
+     * {@code chunkUpload}).
+     * <p>
+     * {@code flushNet} is the one bucket that crosses the two instruments, and it exists because of a
+     * containment chain the first leg of the census measured: the budget's {@code batch} span wraps the batch
+     * accept, the accept triggers {@code flush} (the window flush) from inside itself, and the flush's window
+     * pass contains {@code winRecord}, whose interval is exactly what the budget's {@code record} span times.
+     * The flush therefore has to be named as a bucket of its own - left inside {@code worldRest} it inflates
+     * the remainder by work the budget already subtracted - and it is printed net of {@code record}:
+     * {@code max(0, flush - record)}. The part of {@code batch} that wraps a flush is not netted anywhere:
+     * it stays inside whichever region bucket the batch was accepted from (sky, clouds, entities, gui), which
+     * biases {@code unexplained} low by at most the {@code batch} mean; the memo fields print both spans so
+     * the reader can bound it. {@code worldRest} is floored at zero: nested brackets can overlap at the
+     * edges, and a negative remainder would be an artefact of the overlap, not a measurement. {@code
+     * unexplained} is not floored - a small negative there is the remaining double count showing itself, and
+     * printing it is how the reader knows the size of that bias.
+     */
+    static long[] otherSplit(long otherMean, long outsideMean, long[] bracketMeans, long passResidualMean,
+            int[][] bucketIndex, int worldPassIndex, int[] worldPassMembers, int flushIndex, long recordMean) {
+        long[] buckets = new long[bucketIndex.length];
+        for (int b = 0; b < bucketIndex.length; b++) {
+            long sum = 0L;
+            for (int member : bucketIndex[b]) {
+                if (member >= 0 && member + 1 < bracketMeans.length) {
+                    sum += bracketMeans[member + 1];
+                }
+            }
+            buckets[b] = sum;
+        }
+        long flushNet = 0L;
+        if (flushIndex >= 0 && flushIndex + 1 < bracketMeans.length) {
+            flushNet = Math.max(0L, bracketMeans[flushIndex + 1] - recordMean);
+        }
+        long worldRest = 0L;
+        if (worldPassIndex >= 0 && worldPassIndex + 1 < bracketMeans.length) {
+            long rest = bracketMeans[worldPassIndex + 1];
+            for (int member : worldPassMembers) {
+                if (member >= 0 && member + 1 < bracketMeans.length) {
+                    rest -= bracketMeans[member + 1];
+                }
+            }
+            worldRest = Math.max(0L, rest);
+        }
+        long explained = outsideMean + passResidualMean + worldRest + flushNet;
+        for (long bucket : buckets) {
+            explained += bucket;
+        }
+        return new long[] {outsideMean, buckets[0], buckets[1], buckets[2], buckets[3], buckets[4], buckets[5],
+                buckets[6], flushNet, worldRest, passResidualMean, otherMean - explained};
+    }
+
+    /** {@return the mean of a ring's window in nanoseconds}, read through the ring's own write cursor. */
+    private static long ringMean(long[] ring, int cursor) {
+        int count = Math.min(cursor, CAPACITY);
+        if (count <= 0) {
+            return 0L;
+        }
+        long sum = 0L;
+        for (int i = 0; i < count; i++) {
+            sum += ring[(cursor - count + i + CAPACITY) % CAPACITY];
+        }
+        return sum / count;
+    }
+
+    /**
+     * Prints the other-split line for the current windows of both instruments, or the reason it cannot.
+     * <p>
+     * Called from the window print and the summary. The unavailable form matters: a leg that asked for the
+     * split but forgot {@code passSplit} must read as "not measured", never as a row of zeros - the same
+     * positive-control rule the pass instrument's own summary follows.
+     */
+    private static void printOtherSplit() {
+        if (!OTHER_SPLIT || !ENABLED) {
+            return;
+        }
+        if (FramePassTimings.windowFrameCount() == 0) {
+            System.out.println("[Celtium] CELTIUM_OTHER_SPLIT unavailable (pass timings measured no frames;"
+                    + " otherSplit needs passSplit or brackets on the same leg)");
+            return;
+        }
+        long[] means = FramePassTimings.windowMeansNanos();
+        long outsideMean = LOOP_SPAN ? ringMean(loopOutsideRing, loopOutsideSamples) : -1L;
+        long otherMean = ringMean(otherRing, written);
+        long recordMean = ringMean(recordRing, written);
+        int flush = FramePassTimings.indexOfName("flush");
+        long[] split = otherSplit(otherMean, Math.max(0L, outsideMean), means,
+                FramePassTimings.windowResidualMeanNanos(), otherBucketIndex(), worldPassIndex(),
+                worldPassMemberIndex(), flush, recordMean);
+        int lightmap = FramePassTimings.indexOfName("lightmap");
+        int mouseOver = FramePassTimings.indexOfName("mouseOver");
+        int winRecord = FramePassTimings.indexOfName("winRecord");
+        System.out.println("[Celtium] CELTIUM_OTHER_SPLIT frames=" + written
+                + " passFrames=" + FramePassTimings.windowFrameCount()
+                + " meanMs[other=" + ms(otherMean)
+                + " outside=" + (outsideMean < 0L ? "-1.0" : ms(split[0]))
+                + " terrain=" + ms(split[1])
+                + " setup=" + ms(split[2])
+                + " entities=" + ms(split[3])
+                + " particles=" + ms(split[4])
+                + " sky=" + ms(split[5])
+                + " cloudsWeather=" + ms(split[6])
+                + " guiHand=" + ms(split[7])
+                + " flushNet=" + ms(split[8])
+                + " worldRest=" + ms(split[9])
+                + " passResidual=" + ms(split[10])
+                + " unexplained=" + ms(split[11]) + "]"
+                + " memoMs[batch=" + ms(ringMean(batchRing, written))
+                + " record=" + ms(recordMean)
+                + " flush=" + ms(flush >= 0 ? means[flush + 1] : 0L)
+                + " lightmap=" + ms(lightmap >= 0 ? means[lightmap + 1] : 0L)
+                + " mouseOver=" + ms(mouseOver >= 0 ? means[mouseOver + 1] : 0L)
+                + " winRecord=" + ms(winRecord >= 0 ? means[winRecord + 1] : 0L) + "]");
+    }
+
     /** Prints the last window's percentiles, or nothing once the line budget is spent. */
     private static void printWindow() {
         if (lines >= MAX_LINES) {
@@ -456,6 +678,7 @@ public final class FrameBudgetTimings {
                 + " worstFrame=" + worstFrameText()
                 + terrainTimingCensusText()
                 + (lines >= MAX_LINES ? " (line budget reached; the teardown summary still prints)" : ""));
+        printOtherSplit();
     }
 
     /**
@@ -511,6 +734,7 @@ public final class FrameBudgetTimings {
                 + " gpuShare=" + share(gpuRing, frameRing, count)
                 + " worstFrame=" + worstFrameText()
                 + terrainTimingCensusText());
+        printOtherSplit();
     }
 
     /**
