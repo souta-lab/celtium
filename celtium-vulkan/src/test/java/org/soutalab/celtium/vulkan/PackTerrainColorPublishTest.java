@@ -99,22 +99,26 @@ class PackTerrainColorPublishTest {
         // Depth-free deferred1 owns colortex0 ALT (tex 131); depth-attached gbuffers_water cannot reuse
         // 0x100000000bf directly (ownerDepthMatches=false) so it must hand off colour from deferred1.
         assertEquals(deferred1, VulkanTerrainGpuBackend.celtium$resolvePackTerrainColorHandoffSource(
-                translucent, translucent, deferred1, mainId, mainId, true, true, false, true));
+                translucent, translucent, deferred1, mainId, mainId, true, true, false, true, true));
 
         // No handoff when depth already matched (direct reuse), when owner was not yet acquired,
         // when size mismatches, or when owner is main/self/absent.
         assertEquals(0L, VulkanTerrainGpuBackend.celtium$resolvePackTerrainColorHandoffSource(
-                translucent, deferred1, deferred1, mainId, mainId, true, true, true, true));
+                translucent, deferred1, deferred1, mainId, mainId, true, true, true, true, true));
         assertEquals(0L, VulkanTerrainGpuBackend.celtium$resolvePackTerrainColorHandoffSource(
-                translucent, translucent, deferred1, mainId, mainId, true, true, false, false));
+                translucent, translucent, deferred1, mainId, mainId, true, true, false, false, true));
         assertEquals(0L, VulkanTerrainGpuBackend.celtium$resolvePackTerrainColorHandoffSource(
-                translucent, translucent, deferred1, mainId, mainId, true, false, false, true));
+                translucent, translucent, deferred1, mainId, mainId, true, false, false, true, true));
         assertEquals(0L, VulkanTerrainGpuBackend.celtium$resolvePackTerrainColorHandoffSource(
-                translucent, translucent, mainId, mainId, mainId, true, true, false, true));
+                translucent, translucent, mainId, mainId, mainId, true, true, false, true, true));
         assertEquals(0L, VulkanTerrainGpuBackend.celtium$resolvePackTerrainColorHandoffSource(
-                translucent, translucent, translucent, mainId, mainId, true, true, false, true));
+                translucent, translucent, translucent, mainId, mainId, true, true, false, true, true));
         assertEquals(0L, VulkanTerrainGpuBackend.celtium$resolvePackTerrainColorHandoffSource(
-                translucent, translucent, Long.MIN_VALUE, mainId, mainId, true, true, false, true));
+                translucent, translucent, Long.MIN_VALUE, mainId, mainId, true, true, false, true, true));
+        // An owner whose pair was last written in an earlier frame holds the previous frame's final image; handing
+        // that off would feed it back into this frame's gbuffer (white-out measured 2026-11-22, solid from 0xc2).
+        assertEquals(0L, VulkanTerrainGpuBackend.celtium$resolvePackTerrainColorHandoffSource(
+                translucent, translucent, deferred1, mainId, mainId, true, true, false, true, false));
     }
 
     @Test

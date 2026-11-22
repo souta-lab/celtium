@@ -14180,7 +14180,9 @@ this.frameBufferOpen = false;
                                 chainIdentityValue, existingOwner,
                                 this.targetRegistry.mainIdentity(), this.gameFramebufferIdentity,
                                 ownerExists, ownerSizeMatches, ownerDepthMatches,
-                                ownerExists && offTarget.chainPairAcquired(existingOwner));
+                                ownerExists && offTarget.chainPairAcquired(existingOwner),
+                                ownerExists && this.targetRegistry.chainPairClearedFrame(existingOwner)
+                                        == celtium$frameSerial());
                     }
                     boolean explicitWinColorClear = this.targetRegistry.hasLatchedClear()
                             && this.targetRegistry.latchedIdentity() == chainIdentityValue
@@ -17029,7 +17031,9 @@ this.frameBufferOpen = false;
                         handoffSource = celtium$resolvePackTerrainColorHandoffSource(identity, drawIdentity,
                                 existingOwner, this.targetRegistry.mainIdentity(), this.gameFramebufferIdentity,
                                 ownerExists, ownerSizeMatches, ownerDepthMatches,
-                                ownerExists && pairOwner.chainPairAcquired(existingOwner));
+                                ownerExists && pairOwner.chainPairAcquired(existingOwner),
+                                ownerExists && this.targetRegistry.chainPairClearedFrame(existingOwner)
+                                        == celtium$frameSerial());
                     }
                 }
                 if (handoffSource != 0L && !celtium$renderListsHaveGeometry(renderLists, pass)) {
@@ -17411,13 +17415,15 @@ this.frameBufferOpen = false;
                                                              boolean ownerPairExists,
                                                              boolean ownerSizeMatches,
                                                              boolean ownerDepthMatches,
-                                                             boolean ownerAcquired) {
+                                                             boolean ownerAcquired,
+                                                             boolean ownerWrittenThisFrame) {
         if (drawIdentity == boundIdentity
                 && existingPublishedOwner != Long.MIN_VALUE && existingPublishedOwner != 0L
                 && existingPublishedOwner != drawIdentity
                 && existingPublishedOwner != mainIdentity
                 && existingPublishedOwner != gameFramebufferIdentity
-                && ownerPairExists && ownerSizeMatches && !ownerDepthMatches && ownerAcquired) {
+                && ownerPairExists && ownerSizeMatches && !ownerDepthMatches && ownerAcquired
+                && ownerWrittenThisFrame) {
             return existingPublishedOwner;
         }
         return 0L;
