@@ -48,7 +48,7 @@ class TerrainShadowLookupTest {
 
     @Test
     void theShadersDeclareTheOffsetsTheRendererWrites() throws Exception {
-        // TerrainRenderer.writeUniforms writes u_ShadowEnabled at 84, u_ShadowDarkness at 88 and the matrix at 96,
+        // TerrainRenderer.writePassUniforms writes u_ShadowEnabled at 84, u_ShadowDarkness at 88 and the matrix at 96,
         // inside the 256-byte block; every terrain module must declare the same members in that order.
         Path shaders = locateShaders();
         for (String name : new String[] {"terrain_solid.vert", "terrain_solid_vanilla.vert",

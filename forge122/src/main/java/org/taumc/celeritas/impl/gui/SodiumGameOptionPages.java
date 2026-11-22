@@ -222,7 +222,7 @@ public class SodiumGameOptionPages {
                         .build())
                 // BH-33: the native renderer does not carry a chunk fade. Its terrain shader does declare
                 // u_ChunkFadeEnabled (offset 60) and u_ChunkFadeParams (offset 64, x = duration ms, y = chunk age ms),
-                // but the backend's writeUniforms(RenderRegion, TerrainRenderPass, CameraTransform) has no per-section
+                // but the backend's writePassUniforms(TerrainRenderPass, CameraTransform) has no per-section
                 // age to put in y, so it writes 0/0 and every section would fade by the same amount if a duration were
                 // written. The real port needs a section-age source at the draw site (a terrain-path task). Until then
                 // the option must not claim a duration it cannot carry: both binding directions are pinned to 0 and the

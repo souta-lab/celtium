@@ -303,6 +303,18 @@ public final class VulkanTerrainPipeline {
      */
     static final int SHADOW_MAP_BINDING = 4;
 
+    /**
+     * The per-region offset array binding (agera-kpi-3): a storage buffer holding one vec4 per
+     * region draw of the frame (xyz = region origin minus camera), read by the vertex stage
+     * through {@code gl_InstanceIndex} - a draw's firstInstance carries its region's index. This
+     * replaces the per-region dynamic-offset uniform delivery for the offset alone: the uniform
+     * block is written and bound once per pass with its pass-constant contents, and the offset
+     * travels with the draw command itself, so the descriptor bind no longer repeats per region.
+     * Like the dynamic light block it is not a dynamic-offset binding: each frame slot has its
+     * own buffer, so {@code bindDescriptors} keeps its single dynamic offset.
+     */
+    static final int REGION_OFFSETS_BINDING = 5;
+
     /** The byte size of the dynamic light block: the info vec4 plus one vec4 per source. */
     static final int DYNAMIC_LIGHT_BLOCK_SIZE = 16 + DynamicLightService.MAX_LIGHTS * 16;
 
@@ -476,6 +488,7 @@ public final class VulkanTerrainPipeline {
     private final long[] writtenAtlasView = new long[DESCRIPTOR_SLOTS];
     private final long[] writtenLightmapView = new long[DESCRIPTOR_SLOTS];
     private final long[] writtenDynamicLightBuffer = new long[DESCRIPTOR_SLOTS];
+    private final long[] writtenRegionOffsetsBuffer = new long[DESCRIPTOR_SLOTS];
     private boolean deleted;
 
     /**
@@ -704,14 +717,18 @@ public final class VulkanTerrainPipeline {
      * @throws IllegalStateException    if this pass samples the lightmap but no lightmap was supplied
      */
     public void bindTextures(VulkanGlTexture atlas, VulkanGlTexture lightmap, VulkanBuffer uniforms,
-                             VulkanUniformBuffer dynamicLights, int slot) {
+                             VulkanUniformBuffer dynamicLights, VulkanHostBuffer regionOffsets, int slot) {
         if (uniforms == null) {
             throw new NullPointerException("uniforms");
         }
         if (dynamicLights == null) {
             throw new NullPointerException("dynamicLights");
         }
-        bindTextures(atlas, lightmap, uniforms.buffer(), uniforms.size(), dynamicLights.buffer(), slot);
+        if (regionOffsets == null) {
+            throw new NullPointerException("regionOffsets");
+        }
+        bindTextures(atlas, lightmap, uniforms.buffer(), uniforms.size(), dynamicLights.buffer(),
+                regionOffsets.buffer(), regionOffsets.size(), slot);
     }
 
     /**
@@ -728,12 +745,16 @@ public final class VulkanTerrainPipeline {
      * @param uniformBufferSize the size of that buffer in bytes
      * @param dynamicLightBuffer the native {@code VkBuffer} holding this frame slot's dynamic light
      *                          block ({@link #DYNAMIC_LIGHT_BLOCK_SIZE} bytes)
+     * @param regionOffsetsBuffer the native {@code VkBuffer} holding this frame slot's per-region
+     *                          offset array ({@link #REGION_OFFSETS_BINDING})
+     * @param regionOffsetsBufferSize the size of that buffer in bytes
      * @throws NullPointerException     if {@code atlas} is {@code null}
      * @throws IllegalArgumentException if the uniform buffer handle is 0 or the buffer has no storage
      * @throws IllegalStateException    if this pass samples the lightmap but no lightmap was supplied
      */
     public void bindTextures(VulkanGlTexture atlas, VulkanGlTexture lightmap, long uniformBuffer,
-                             long uniformBufferSize, long dynamicLightBuffer, int slot) {
+                             long uniformBufferSize, long dynamicLightBuffer, long regionOffsetsBuffer,
+                             long regionOffsetsBufferSize, int slot) {
         requireAlive();
         if (atlas == null) {
             throw new NullPointerException("atlas");
@@ -744,6 +765,13 @@ public final class VulkanTerrainPipeline {
         if (dynamicLightBuffer == 0L) {
             throw new IllegalArgumentException("The dynamic light buffer has no VkBuffer;"
                     + " it was deleted or never written");
+        }
+        if (regionOffsetsBuffer == 0L) {
+            throw new IllegalArgumentException("The region offsets buffer has no VkBuffer;"
+                    + " it was deleted or never written");
+        }
+        if (regionOffsetsBufferSize <= 0L) {
+            throw new IllegalArgumentException("The region offsets buffer has no storage");
         }
         if (uniformBufferSize <= 0L) {
             throw new IllegalArgumentException("The uniform buffer has no storage");
@@ -776,7 +804,7 @@ public final class VulkanTerrainPipeline {
         this.uniformsSize = uniformBufferSize;
         this.uniformsRange = (int) Math.min(uniformBufferSize, (long) UNIFORM_BLOCK_SIZE);
 
-        // Write only what changed. This ran on every bind - once per region per pass - and rewrote all five bindings of a set that a
+        // Write only what changed. This ran on every bind - once per region per pass - and rewrote all six bindings of a set that a
         // frame still in flight may name, which is VUID-vkUpdateDescriptorSets-None-03047 on Intel (ten messages in a world leg,
         // none on AMD). In the steady state nothing here changes: the uniform buffer belongs to the frame slot, and the atlas,
         // lightmap and shadow map keep their views for the session.
@@ -788,7 +816,8 @@ public final class VulkanTerrainPipeline {
                 && this.writtenUniformRange[writeSlot] == this.uniformsRange
                 && this.writtenAtlasView[writeSlot] == atlasView
                 && this.writtenLightmapView[writeSlot] == lightmapView
-                && this.writtenDynamicLightBuffer[writeSlot] == dynamicLightBuffer;
+                && this.writtenDynamicLightBuffer[writeSlot] == dynamicLightBuffer
+                && this.writtenRegionOffsetsBuffer[writeSlot] == regionOffsetsBuffer;
         if (unchanged) {
             auditAtlasWrite(atlas);
             return;
@@ -798,12 +827,15 @@ public final class VulkanTerrainPipeline {
         this.writtenAtlasView[writeSlot] = atlasView;
         this.writtenLightmapView[writeSlot] = lightmapView;
         this.writtenDynamicLightBuffer[writeSlot] = dynamicLightBuffer;
+        this.writtenRegionOffsetsBuffer[writeSlot] = regionOffsetsBuffer;
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkDescriptorBufferInfo.Buffer bufferInfo = VkDescriptorBufferInfo.calloc(1, stack);
             bufferInfo.get(0).buffer(uniformBuffer).offset(0L).range(uniformsRange);
             VkDescriptorBufferInfo.Buffer dynamicLightInfo = VkDescriptorBufferInfo.calloc(1, stack);
             dynamicLightInfo.get(0).buffer(dynamicLightBuffer).offset(0L).range(DYNAMIC_LIGHT_BLOCK_SIZE);
+            VkDescriptorBufferInfo.Buffer regionOffsetsInfo = VkDescriptorBufferInfo.calloc(1, stack);
+            regionOffsetsInfo.get(0).buffer(regionOffsetsBuffer).offset(0L).range(regionOffsetsBufferSize);
 
             VkDescriptorImageInfo.Buffer atlasInfo = VkDescriptorImageInfo.calloc(1, stack);
             atlasInfo.get(0).sampler(atlasSamplerFor(atlas)).imageView(atlasView)
@@ -815,7 +847,7 @@ public final class VulkanTerrainPipeline {
             // The binding of each write comes from the constant, so the array order carries no meaning: the atlas
             // goes to BLOCK_ATLAS_BINDING (2) and the lightmap to LIGHTMAP_BINDING (1), matching the shader source.
             long set = this.descriptorSets[writeSlot];
-            VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(5, stack);
+            VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(6, stack);
             writes.get(0).sType$Default().dstSet(set).dstBinding(UNIFORM_BINDING).dstArrayElement(0)
                     .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
                     .pBufferInfo(bufferInfo);
@@ -833,6 +865,9 @@ public final class VulkanTerrainPipeline {
             writes.get(4).sType$Default().dstSet(set).dstBinding(SHADOW_MAP_BINDING).dstArrayElement(0)
                     .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                     .pImageInfo(lightmapInfo);
+            writes.get(5).sType$Default().dstSet(set).dstBinding(REGION_OFFSETS_BINDING).dstArrayElement(0)
+                    .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                    .pBufferInfo(regionOffsetsInfo);
             VulkanDescriptorWrites.note(writes, "VulkanTerrainPipeline");
             vkUpdateDescriptorSets(context.device(), writes, null);
         }
@@ -865,8 +900,9 @@ public final class VulkanTerrainPipeline {
                 long from = this.descriptorSets[useSlot];
                 long to = this.shadowDescriptorSets[useSlot];
                 org.lwjgl.vulkan.VkCopyDescriptorSet.Buffer copies =
-                        org.lwjgl.vulkan.VkCopyDescriptorSet.calloc(4, stack);
-                int[] copied = {UNIFORM_BINDING, BLOCK_ATLAS_BINDING, LIGHTMAP_BINDING, DYNAMIC_LIGHTS_BINDING};
+                        org.lwjgl.vulkan.VkCopyDescriptorSet.calloc(5, stack);
+                int[] copied = {UNIFORM_BINDING, BLOCK_ATLAS_BINDING, LIGHTMAP_BINDING, DYNAMIC_LIGHTS_BINDING,
+                        REGION_OFFSETS_BINDING};
                 for (int i = 0; i < copied.length; i++) {
                     copies.get(i).sType$Default().srcSet(from).srcBinding(copied[i]).srcArrayElement(0)
                             .dstSet(to).dstBinding(copied[i]).dstArrayElement(0).descriptorCount(1);
@@ -1499,8 +1535,9 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
         // listed in its stageFlags makes the set invalid, while listing a stage that does not use it is harmless.
         // The shader sources are authored in parallel with this class, so permissiveness is the safe choice.
         int stages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        // Five bindings: the region uniforms, the atlas, the light map, the dynamic light block and the shadow map.
-        VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(5, stack);
+        // Six bindings: the region uniforms, the atlas, the light map, the dynamic light block, the shadow map
+        // and the per-region offset array.
+        VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(6, stack);
         bindings.get(0).binding(UNIFORM_BINDING)
                 .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
                 .descriptorCount(1)
@@ -1519,6 +1556,10 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
                 .stageFlags(stages);
         bindings.get(4).binding(SHADOW_MAP_BINDING)
                 .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                .descriptorCount(1)
+                .stageFlags(stages);
+        bindings.get(5).binding(REGION_OFFSETS_BINDING)
+                .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
                 .descriptorCount(1)
                 .stageFlags(stages);
         VkDescriptorSetLayoutCreateInfo create = VkDescriptorSetLayoutCreateInfo.calloc(stack).sType$Default()
@@ -1708,11 +1749,12 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
     private void createDescriptorPool(MemoryStack stack, VkDevice device) {
         // The pool has to name every descriptor type the set layout uses, or the allocation makes sets of the wrong type
         // (WARNING-CoreValidation-AllocateDescriptorSets-WrongType).
-        VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(3, stack);
+        VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(4, stack);
         // Two sets per slot (ordinary and shadow, see SHADOW_MAP_BINDING), each with three image samplers.
         sizes.get(0).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC).descriptorCount(2 * DESCRIPTOR_SLOTS);
         sizes.get(1).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(6 * DESCRIPTOR_SLOTS);
         sizes.get(2).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(2 * DESCRIPTOR_SLOTS);
+        sizes.get(3).type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(2 * DESCRIPTOR_SLOTS);
         VkDescriptorPoolCreateInfo create = VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
                 .maxSets(2 * DESCRIPTOR_SLOTS)
                 .pPoolSizes(sizes);

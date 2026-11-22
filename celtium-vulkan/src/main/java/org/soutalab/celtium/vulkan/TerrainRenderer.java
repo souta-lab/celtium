@@ -587,10 +587,12 @@ public final class TerrainRenderer {
         return this.indirectGrowths;
     }
 
-    static long commandHash(long checksum, int indexCount, long firstIndex, int vertexOffset) {
+    static long commandHash(long checksum, int indexCount, long firstIndex, int vertexOffset,
+            int firstInstance) {
         checksum = checksum * 1099511628211L + indexCount;
         checksum = checksum * 1099511628211L + firstIndex;
         checksum = checksum * 1099511628211L + vertexOffset;
+        checksum = checksum * 1099511628211L + firstInstance;
         return checksum;
     }
 
@@ -599,10 +601,10 @@ public final class TerrainRenderer {
             java.util.Map<org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveType, VulkanBuffer> sharedIndexBuffers,
             RegionResources resources,
             VulkanMultiDrawBatch batch, boolean sortedPass,
-            ChunkPrimitiveType primitiveType) {
+            ChunkPrimitiveType primitiveType, int firstInstance) {
         long batchStarted = System.nanoTime();
         long finishedAt = indirectBatchBody(context, commandBuffer, stack, sharedIndexBuffers, resources, batch,
-                sortedPass, primitiveType, batchStarted);
+                sortedPass, primitiveType, batchStarted, firstInstance);
         if (finishedAt != Long.MIN_VALUE) {
             this.indirectBatchNanos += finishedAt - batchStarted;
             return true;
@@ -617,7 +619,7 @@ public final class TerrainRenderer {
             java.util.Map<org.embeddedt.embeddium.impl.render.chunk.compile.sorting.ChunkPrimitiveType, VulkanBuffer> sharedIndexBuffers,
             RegionResources resources,
             VulkanMultiDrawBatch batch, boolean sortedPass,
-            ChunkPrimitiveType primitiveType, long setupStarted) {
+            ChunkPrimitiveType primitiveType, long setupStarted, int firstInstance) {
         this.terrainIndirectOffers++;
         if (!context.multiDrawIndirectEnabled()) {
             this.terrainIndirectFallbacks++;
@@ -687,6 +689,14 @@ public final class TerrainRenderer {
         // this page exactly as it did a per-offer encoding's.
         MemoryUtil.memCopy(batch.retainedPacketsAddress(regionIndex), packets, (long) needed);
         this.terrainIndirectPacketCacheHits++;
+        // Stamp this region's index into every copied command's firstInstance field (offset 16
+        // of the 20-byte command, agera-kpi-3): the vertex shader reads its region offset from
+        // the binding-5 array at gl_InstanceIndex, which equals firstInstance for these
+        // single-instance draws. The batch's retained encoding keeps its zeros - only the page
+        // copy is stamped, one int per command over bytes the copy just touched.
+        for (int i = 0; i < size; i++) {
+            MemoryUtil.memPutInt(packets + (long) i * INDIRECT_COMMAND_BYTES + 16, firstInstance);
+        }
         long afterPacket = System.nanoTime();
         this.indirectPacketNanos += afterPacket - afterBind;
         if (TERRAIN_INDIRECT_COMPARE) {
@@ -698,12 +708,13 @@ public final class TerrainRenderer {
                 long packet = packets + (long) i * INDIRECT_COMMAND_BYTES;
                 this.terrainDirectEquivalentDraws++;
                 this.terrainDirectEquivalentChecksum = commandHash(this.terrainDirectEquivalentChecksum,
-                        batch.elementCount(i), directFirstIndex, batch.baseVertex(i));
+                        batch.elementCount(i), directFirstIndex, batch.baseVertex(i), firstInstance);
                 this.terrainIndirectCommandDraws++;
                 this.terrainIndirectCommandChecksum = commandHash(this.terrainIndirectCommandChecksum,
                         MemoryUtil.memGetInt(packet),
                         Integer.toUnsignedLong(MemoryUtil.memGetInt(packet + 8)),
-                        MemoryUtil.memGetInt(packet + 12));
+                        MemoryUtil.memGetInt(packet + 12),
+                        MemoryUtil.memGetInt(packet + 16));
             }
             afterPacket = System.nanoTime();
         }
@@ -856,12 +867,32 @@ public final class TerrainRenderer {
         return buffer == null ? 0L : buffer.buffer();
     }
 
+    /** {@return the native handle of the region offset buffer of a descriptor slot, or 0 before creation}. */
+    long regionOffsetBufferHandle(int slot) {
+        VulkanHostBuffer[] buffers = this.regionOffsetBuffers;
+        if (buffers == null) {
+            return 0L;
+        }
+        VulkanHostBuffer buffer = buffers[slot & (VulkanTerrainPipeline.DESCRIPTOR_SLOTS - 1)];
+        return buffer == null ? 0L : buffer.buffer();
+    }
+
+    /** {@return the size in bytes of the region offset buffer of a descriptor slot, or 0 before creation}. */
+    long regionOffsetBufferSize(int slot) {
+        VulkanHostBuffer[] buffers = this.regionOffsetBuffers;
+        if (buffers == null) {
+            return 0L;
+        }
+        VulkanHostBuffer buffer = buffers[slot & (VulkanTerrainPipeline.DESCRIPTOR_SLOTS - 1)];
+        return buffer == null ? 0L : buffer.size();
+    }
+
     /**
      * Gathers this frame's dynamic light sources into the current slot's buffer. Runs on the first
      * uniform write of the frame, which is the first call that knows the frame's camera. The positions
      * the service returns are camera-relative, and so is the terrain shader's worldPosition (it is
-     * built from u_RegionOffset, which {@link #writeUniforms} writes as region origin minus camera),
-     * so the shader measures distance directly in that shared frame. The header still carries the
+     * built from the region offset, which {@link #writeRegionOffset} writes as region origin minus
+     * camera), so the shader measures distance directly in that shared frame. The header still carries the
      * camera position next to the count, as provenance. (Item 430: the shader used to subtract the
      * header camera from the already camera-relative position, counting the camera offset twice -
      * about 64 blocks of it vertical - and the raise came to zero everywhere.)
@@ -978,6 +1009,19 @@ public final class TerrainRenderer {
     private long uniformWriteCursor;
     private boolean uniformsLogged;
 
+    /**
+     * One host-coherent storage buffer per frame slot holding the frame's per-region offsets
+     * (agera-kpi-3, descriptor binding 5): one vec4 per region draw, xyz = region origin minus
+     * camera. The vertex stage reads its draw's entry through {@code gl_InstanceIndex}, whose
+     * value the draw command's firstInstance carries, so the offset no longer needs a uniform
+     * block - and a descriptor rebind - of its own per region. Written through the same slot
+     * discipline as the uniform ring; the cursor resets with it at frame begin.
+     */
+    private VulkanHostBuffer[] regionOffsetBuffers;
+    private int regionOffsetWriteCursor;
+    /** Bytes per region offset entry: one vec4. */
+    private static final int REGION_OFFSET_ENTRY_BYTES = 16;
+
     /** How many region draws have passed, so the fog line can be compared between legs at the same index. */
     private int fogLogDraws;
     /** The fog line repeats every this many region draws (plus the first). */
@@ -1024,7 +1068,20 @@ public final class TerrainRenderer {
         this.passFogPrepared = false;
     }
 
-    long writeUniforms(RenderRegion region, TerrainRenderPass pass, CameraTransform camera) {
+    /**
+     * Writes this pass' uniform block once, ahead of the region loop, and returns its ring offset
+     * for the pass' single descriptor bind (agera-kpi-3). Everything the block carries is constant
+     * across a pass - the fog values come from the snapshot {@link #preparePassFog} took, the
+     * shadow lookup from the backend's per-pass arming - except the region offset, which no
+     * longer travels in the block at all: {@link #writeRegionOffset} appends it to the binding-5
+     * array and the draw command's firstInstance names the entry. The block's offset field is
+     * still written (zeros) because the fragment stage declares the same block layout.
+     * <p>
+     * Before this split the block was rewritten per region and the descriptor set rebound with a
+     * fresh dynamic offset for every region batch; the agera-kpi-2 census put that rebind at
+     * roughly 7.5-10us per batch on ANV, the second-largest named child of terrain record.
+     */
+    long writePassUniforms(TerrainRenderPass pass, CameraTransform camera) {
         if (!this.dynamicLightsGathered) {
             this.dynamicLightsGathered = true;
             gatherDynamicLights(camera);
@@ -1042,10 +1099,6 @@ public final class TerrainRenderer {
             activeUniforms.ensureCapacity(this.uniformWriteCursor);
             this.uniformBlocks = (int) (activeUniforms.size() / this.uniformStride);
         }
-
-        float regionOffsetX = (region.getOriginX() - camera.intX) - camera.fracX;
-        float regionOffsetY = (region.getOriginY() - camera.intY) - camera.fracY;
-        float regionOffsetZ = (region.getOriginZ() - camera.intZ) - camera.fracZ;
 
         float fogR, fogG, fogB, fogA, fogDensity, fogStart, fogEnd;
         int currentFogMode, fogShape, fragmentDiscard;
@@ -1075,28 +1128,12 @@ public final class TerrainRenderer {
             fragmentDiscard = pass.supportsFragmentDiscard() ? 1 : 0;
         }
 
-        // The line is repeated every FOG_LOG_EVERY region draws as well as on the first one, and carries the draw
-        // index. It printed once, which made the two legs' single samples different frames and so incomparable: the
-        // bridge leg read [0.3816, 0.4421, 0.545] and the GL-less leg [0.4786, 0.5544, 0.6834] with no way to tell
-        // whether that was a difference between the backends or between the frames they happened to log.
-        this.fogLogDraws++;
-        if (!uniformsLogged || (PeriodicLog.ENABLED && this.fogLogDraws % FOG_LOG_EVERY == 0)) {
-            uniformsLogged = true;
-            float[] fogColor = this.fogService != null ? this.fogService.getFogColor() : null;
-            // stdout, not record(): the diagnostics list is capped and this line was being dropped from it.
-            System.out.println("[Celtium] CELTIUM_FOG draw=" + this.fogLogDraws + " fogColor=" + java.util.Arrays.toString(fogColor)
-                    + " start=" + fogStart
-                    + " end=" + fogEnd
-                    + " density=" + fogDensity
-                    + " shape=" + (this.fogService != null ? fogShape : -1)
-                    + " glFogMode=" + currentFogMode + " cutoff=" + (this.fogService != null ? this.fogService.getFogCutoff() : 0.0f)
-                    + " regionOffset=(" + regionOffsetX + "," + regionOffsetY + "," + regionOffsetZ + ")");
-        }
-
         long addr = activeUniforms.mappedAddress() + offset;
-        MemoryUtil.memPutFloat(addr + 0, regionOffsetX);
-        MemoryUtil.memPutFloat(addr + 4, regionOffsetY);
-        MemoryUtil.memPutFloat(addr + 8, regionOffsetZ);
+        // The region offset field: no longer read by the vertex stage (the offset arrives through
+        // the binding-5 array), still written so the block the fragment stage declares is whole.
+        MemoryUtil.memPutFloat(addr + 0, 0.0f);
+        MemoryUtil.memPutFloat(addr + 4, 0.0f);
+        MemoryUtil.memPutFloat(addr + 8, 0.0f);
         MemoryUtil.memPutFloat(addr + 12, 0.0f);
         MemoryUtil.memPutFloat(addr + 16, fogR);
         MemoryUtil.memPutFloat(addr + 20, fogG);
@@ -1148,6 +1185,67 @@ public final class TerrainRenderer {
         return offset;
     }
 
+    /**
+     * Appends this region's offset to the frame slot's binding-5 array and returns its index,
+     * which the caller carries into the region's draw commands as firstInstance (agera-kpi-3).
+     * The values are the identical floats the uniform block's {@code u_RegionOffset} used to
+     * carry - region origin minus camera, in the same computation order - so a draw reads
+     * exactly the offset it read before the delivery channel changed.
+     */
+    int writeRegionOffset(RenderRegion region, CameraTransform camera) {
+        float regionOffsetX = (region.getOriginX() - camera.intX) - camera.fracX;
+        float regionOffsetY = (region.getOriginY() - camera.intY) - camera.fracY;
+        float regionOffsetZ = (region.getOriginZ() - camera.intZ) - camera.fracZ;
+
+        // The fog line moved here from the per-region uniform write (agera-kpi-3 split): it is
+        // repeated every FOG_LOG_EVERY region draws as well as on the first one, and carries the
+        // draw index. It printed once, which made the two legs' single samples different frames
+        // and so incomparable: the bridge leg read [0.3816, 0.4421, 0.545] and the GL-less leg
+        // [0.4786, 0.5544, 0.6834] with no way to tell whether that was a difference between the
+        // backends or between the frames they happened to log.
+        this.fogLogDraws++;
+        if (!uniformsLogged || (PeriodicLog.ENABLED && this.fogLogDraws % FOG_LOG_EVERY == 0)) {
+            uniformsLogged = true;
+            float fogStart = this.passFogPrepared ? this.passFogStart
+                    : (this.fogService != null ? this.fogService.getFogStart() : 0.0f);
+            float fogEnd = this.passFogPrepared ? this.passFogEnd
+                    : (this.fogService != null ? this.fogService.getFogEnd() : 0.0f);
+            float fogDensity = this.passFogPrepared ? this.passFogDensity
+                    : (this.fogService != null ? this.fogService.getFogDensity() : 0.0f);
+            int fogShape = this.passFogPrepared ? this.passFogShape
+                    : (this.fogService != null ? this.fogService.getFogShapeIndex()
+                    : FogService.FOG_SHAPE_SPHERICAL);
+            int currentFogMode = this.passFogPrepared ? this.passFogMode : fogMode();
+            float[] fogColor = this.fogService != null ? this.fogService.getFogColor() : null;
+            // stdout, not record(): the diagnostics list is capped and this line was being dropped from it.
+            System.out.println("[Celtium] CELTIUM_FOG draw=" + this.fogLogDraws + " fogColor=" + java.util.Arrays.toString(fogColor)
+                    + " start=" + fogStart
+                    + " end=" + fogEnd
+                    + " density=" + fogDensity
+                    + " shape=" + (this.fogService != null ? fogShape : -1)
+                    + " glFogMode=" + currentFogMode + " cutoff=" + (this.fogService != null ? this.fogService.getFogCutoff() : 0.0f)
+                    + " regionOffset=(" + regionOffsetX + "," + regionOffsetY + "," + regionOffsetZ + ")");
+        }
+
+        VulkanHostBuffer active = this.regionOffsetBuffers[this.uniformSlot];
+        int index = this.regionOffsetWriteCursor++;
+        if ((long) (index + 1) * REGION_OFFSET_ENTRY_BYTES > active.size()) {
+            // The same missed-reservation guard as the uniform ring, in the same loud shape.
+            // VulkanHostBuffer growth retires the old buffer rather than deleting it under the
+            // recording, and the pipeline rewrites the descriptor when the handle changes, so
+            // growing here is safe - but it still means the reservation was wrong, so it is said.
+            record("region offset buffer grew during recording: slot=" + this.uniformSlot + " entry=" + index
+                    + " capacity=" + (active.size() / REGION_OFFSET_ENTRY_BYTES));
+            active.ensureCapacity((long) (index + 1) * REGION_OFFSET_ENTRY_BYTES);
+        }
+        long addr = active.mappedAddress() + (long) index * REGION_OFFSET_ENTRY_BYTES;
+        MemoryUtil.memPutFloat(addr, regionOffsetX);
+        MemoryUtil.memPutFloat(addr + 4, regionOffsetY);
+        MemoryUtil.memPutFloat(addr + 8, regionOffsetZ);
+        MemoryUtil.memPutFloat(addr + 12, 0.0f);
+        return index;
+    }
+
     /** Whether the pass being recorded samples the shadow map (item 537); set by the backend before the pass. */
     private boolean shadowLookupEnabled;
     /** How much of the sky-lit light a shadowed fragment keeps lost (0 = no darkening, 1 = all sky light). */
@@ -1182,6 +1280,7 @@ public final class TerrainRenderer {
      */
     void resetUniformWriteCursor(int frameSlot) {
         this.uniformWriteCursor = 0;
+        this.regionOffsetWriteCursor = 0;
         int slot = uniformSlotIndex(frameSlot);
         this.uniformSlot = slot;
         this.dynamicLightSlot = slot;
@@ -1206,6 +1305,14 @@ public final class TerrainRenderer {
             }
             this.dynamicLightBuffers = null;
         }
+        if (this.regionOffsetBuffers != null) {
+            for (VulkanHostBuffer buffer : this.regionOffsetBuffers) {
+                if (buffer != null) {
+                    buffer.delete();
+                }
+            }
+            this.regionOffsetBuffers = null;
+        }
     }
 
     /** Creates the per-slot uniform rings or grows the active frame slot's ring to hold at least {@code required} bytes. */
@@ -1227,6 +1334,29 @@ public final class TerrainRenderer {
                 this.dynamicLightBuffers[i] =
                         new VulkanUniformBuffer(context, VulkanTerrainPipeline.DYNAMIC_LIGHT_BLOCK_SIZE);
             }
+        }
+    }
+
+    /**
+     * Creates the per-slot region offset buffers or grows the active frame slot's buffer to hold
+     * at least {@code requiredEntries} vec4 entries. Called with the uniform reservation, before
+     * anything is recorded: one entry per region draw is the frame's upper bound (region count
+     * times the passes a frame can have), so the write cursor never crosses capacity mid-frame.
+     * Growth goes through {@link VulkanHostBuffer#ensureCapacity}, which retires the old buffer
+     * instead of deleting it under a recording; the pipeline notices the new handle on the next
+     * {@code bindTextures} and rewrites the slot's descriptor.
+     */
+    void ensureRegionOffsetCapacity(VulkanContext context, int frameSlot, int requiredEntries) {
+        int slot = uniformSlotIndex(frameSlot);
+        long requiredBytes = (long) requiredEntries * REGION_OFFSET_ENTRY_BYTES;
+        if (this.regionOffsetBuffers == null) {
+            this.regionOffsetBuffers = new VulkanHostBuffer[VulkanTerrainPipeline.DESCRIPTOR_SLOTS];
+            for (int i = 0; i < this.regionOffsetBuffers.length; i++) {
+                this.regionOffsetBuffers[i] = new VulkanHostBuffer(context, requiredBytes,
+                        VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            }
+        } else {
+            this.regionOffsetBuffers[slot].ensureCapacity(requiredBytes);
         }
     }
 

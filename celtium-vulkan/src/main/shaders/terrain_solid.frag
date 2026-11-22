@@ -34,6 +34,10 @@
 //                   offset 64 : vec4  u_ChunkFadeParams         x = fade duration ms, y = chunk age ms
 //     binding 1 : sampler2D u_LightTex   (light map, VERTEX stage only - not declared here)
 //     binding 2 : sampler2D u_BlockTex   (block atlas, FRAGMENT stage)
+//     binding 5 : storage buffer "CeltiumRegionOffsets" (VERTEX stage only - not declared here):
+//                 the vertex stage reads its region's offset from this array through
+//                 gl_InstanceIndex instead of the block's u_RegionOffset (agera-kpi-3); the
+//                 block field above is still written so the layout is unchanged.
 //
 //   ONE pipeline covers every variant; the OpenGL #ifdefs become these runtime uniforms:
 //       USE_FOG                    -> u_FogMode != 0
