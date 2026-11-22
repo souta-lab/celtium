@@ -3748,18 +3748,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer {
     private static final boolean PRESENT_FROM_COMPOSITE =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
     /**
-     * How many mid-frame windows one frame may open.
-     * <p>
-     * One, until the submit-wait defect was fixed: a second window in the same frame had measured as a black frame, and
-     * re-measuring after the fix shows the frame pixel-identical to GL at sixteen windows per frame. The cost was
-     * checked before raising it - frame interval p50 16.07ms and p99 17.90ms at sixteen against 16.13ms and 18.16ms at
-     * one - so the limit is set where batches are drawn in the frame that produced them, which is what makes the
-     * immediate path lag-free rather than a frame late.
-     */
-    private static final int IMMEDIATE_WINDOWS_PER_FRAME =
-            Integer.getInteger("celtium.vulkan.immediateWindowsPerFrame", 16).intValue();
-
-    /**
      * How many indices a window may hold before the accept path flushes it. 32768 since 2026-11-06: two same-jar A/Bs
      * against 8192 (l10flush 4 pairs: p50 0.941, p95 0.937; l26flush 5 pairs: p50 0.988, p95 0.995, p99 0.995, tick
      * frame 0.977) moved every percentile the same way and none the other - the GUI's font runs filled 8192 several
@@ -23563,9 +23551,6 @@ this.frameBufferOpen = false;
             record("ui test quad failed: " + describe(error));
         }
     }
-
-    /** z' = (z + w) / 2: GL's [-1, 1] clip depth onto Vulkan's [0, 1]. Read-only; was a new array per call. */
-    private static final float[] CLIP_DEPTH_REMAP = {1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0.5f, 0f, 0f, 0f, 0.5f, 1f};
 
     /**
      * Writes {@code result = clipDepthRemap * projection}, the same z remap the terrain projection goes through, so a
