@@ -22,7 +22,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * in the other environment behind {@code require = 0} - the mixin loads, nothing logs, and the
  * behaviour the hook carried simply never happens (there, the dynamic-light raise). The sweep
  * wrote both names into {@code method =} and the SRG form into {@code @At} targets across ten
- * mixin classes, each SRG name taken from the build's own mcp_stable 39 table.
+ * mixin classes, each SRG name taken from the build's own mcp_stable 39 table. QUEUE 572's
+ * second half added an eleventh class later: {@code OpenGlHelperMixin}'s
+ * {@code glFramebufferRenderbuffer} hook, which the sweep had left as a suspicion (possibly a
+ * Forge addition) until the decompiled sources showed the method is vanilla's.
  * <p>
  * These tests read the compiled classes' constant pools - the same bytes Mixin reads, in the
  * shape {@code RenderItemTargetsTest} established - and require both forms of every swept pair
@@ -40,6 +43,8 @@ class DualFormHookNamesTest {
             new String[][]{{"matrixMode", "func_179128_n"}},
             "/org/taumc/celeritas/mixin/core/LightmapCoordsMixin.class",
             new String[][]{{"setLightmapTextureCoords", "func_77475_a"}},
+            "/org/taumc/celeritas/mixin/core/OpenGlHelperMixin.class",
+            new String[][]{{"glFramebufferRenderbuffer", "func_153190_b"}},
             "/org/taumc/celeritas/mixin/core/MinecraftMixin.class",
             new String[][]{
                     {"runGameLoop", "func_71411_J"},
