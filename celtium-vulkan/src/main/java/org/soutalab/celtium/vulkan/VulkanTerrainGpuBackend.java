@@ -23149,13 +23149,20 @@ this.frameBufferOpen = false;
                 // LWJGL MemoryStack (OutOfMemoryError: Out of stack space at bindAndDraw).
                 // Bound the lifetime to ONE group. All vkCmd* calls synchronously consume these
                 // parameter arrays before this scope ends; Vulkan owns the recorded handles.
+                // The bound is the try itself, not this comment: a later perf refactor rewrote the
+                // block as a bare block and kept the words, so the transients accumulated on the
+                // flush's one frame again - measured on the shipped 0.3.0 jar, whose fatal window
+                // held 4,685 groups (a 256-table enchanting sheet; the run's own
+                // CELTIUM_MODELVIEW_EXACT line reads groups=4685), and 4,685 bind arrays of 16
+                // bytes alone exceed the 64 KiB default stack. The shape is pinned by
+                // scripts/cpu-contract/immediate_group_stack_scope_check.py.
                 long groupDrawStart = BATCH_TIMINGS ? System.nanoTime() : 0;
                 org.soutalab.celtium.vulkan.FramePassTimings.end("rcPrepared");
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("grpPrep");
                 org.soutalab.celtium.vulkan.FramePassTimings.end("rcPush");
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("rcViewport");
-                {
-                    celtium$setGroupViewport(stack, group, this.passAreaWidth, this.passAreaHeight);
+                try (MemoryStack groupStack = MemoryStack.stackPush()) {
+                    celtium$setGroupViewport(groupStack, group, this.passAreaWidth, this.passAreaHeight);
                     // After the viewport and before the draw: the read-back records what the command will actually fetch
                     // from the group's slice, which is the one fact the accept-time reads cannot supply.
                     this.highlightProbe.celtium$probeReadBack(group, mesh);
