@@ -19,9 +19,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * WORLD_PASS_MEMBERS entry, because subtracting a container would subtract its contents twice.
  * <p>
  * The target is a Demonica class, named by string so this mixin carries no compile-time dependency
- * on Demonica, and {@code @Pseudo} keeps it silently off in a run without Demonica. The second
- * parameter is Angelica's Camera type, which is not on this project's classpath either; the handler
- * reads it as {@code Object}, a plain reference widening at the bytecode level.
+ * on Demonica, and {@code @Pseudo} keeps it silently off in a run without Demonica. The target's
+ * second parameter is Angelica's Camera type, which is not on this project's classpath either; the
+ * handlers therefore declare only the leading {@code EntityRenderer} parameter. An {@code @Inject}
+ * handler's declared parameters must be an exact prefix of the target's - widening the Camera
+ * parameter to {@code Object} is rejected by the injector as an invalid descriptor (measured in the
+ * item 648 WR1 leg, where that mistake quarantined this whole group), while omitting it is fine
+ * because the bracket never reads it.
  */
 @Pseudo
 @Mixin(targets = "net.coderbot.iris.pipeline.ShadowRenderer")
@@ -29,13 +33,13 @@ public abstract class DemonicaShadowPhaseTimingMixin {
 
     @Inject(method = "renderShadows", at = @At("HEAD"), require = 0)
     private void celtium$wpShadowPhaseTimedBegin(net.minecraft.client.renderer.EntityRenderer renderer,
-            Object camera, CallbackInfo info) {
+            CallbackInfo info) {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("wpShadowPhase");
     }
 
     @Inject(method = "renderShadows", at = @At("RETURN"), require = 0)
     private void celtium$wpShadowPhaseTimedEnd(net.minecraft.client.renderer.EntityRenderer renderer,
-            Object camera, CallbackInfo info) {
+            CallbackInfo info) {
         org.soutalab.celtium.vulkan.FramePassTimings.end("wpShadowPhase");
     }
 }
