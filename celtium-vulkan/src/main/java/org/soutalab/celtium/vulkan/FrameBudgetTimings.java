@@ -299,26 +299,46 @@ public final class FrameBudgetTimings {
             {"gui", "hand"},
     };
 
-    /** Bracket indices of {@link #OTHER_BUCKETS}' members, resolved once from the shared name table. */
-    private static final int[][] OTHER_BUCKET_INDEX = resolveBuckets();
+    /** Bracket indices of {@link #OTHER_BUCKETS}' members, resolved lazily from the shared name table. */
+    private static int[][] otherBucketIndex;
 
     /** The {@code worldPass} bracket's index, for the remainder bucket computed in {@link #otherSplit}. */
-    private static final int WORLD_PASS_INDEX = FramePassTimings.indexOfName("worldPass");
+    private static int worldPassIndex = -2;
+
+    /**
+     * Resolves the bucket indices on first use rather than in this class's static initialiser.
+     * <p>
+     * Loading {@link FramePassTimings} from a static initialiser would latch its own harness switches at
+     * whatever moment some other class happened to load this one - in a test JVM that is before the test
+     * that sets the properties those switches read, which silently leaves the pass instrument off there.
+     * The split only runs when a leg asked for it, so resolving there costs nothing and loads nothing early.
+     */
+    private static int[][] otherBucketIndex() {
+        int[][] resolved = otherBucketIndex;
+        if (resolved == null) {
+            resolved = new int[OTHER_BUCKETS.length][];
+            for (int b = 0; b < OTHER_BUCKETS.length; b++) {
+                resolved[b] = new int[OTHER_BUCKETS[b].length];
+                for (int m = 0; m < OTHER_BUCKETS[b].length; m++) {
+                    resolved[b][m] = FramePassTimings.indexOfName(OTHER_BUCKETS[b][m]);
+                }
+            }
+            otherBucketIndex = resolved;
+        }
+        return resolved;
+    }
+
+    /** {@return the {@code worldPass} bracket's name-table index}, resolved with {@link #otherBucketIndex()}. */
+    private static int worldPassIndex() {
+        if (worldPassIndex == -2) {
+            worldPassIndex = FramePassTimings.indexOfName("worldPass");
+        }
+        return worldPassIndex;
+    }
 
     /** Brackets inside {@code worldPass} that {@link #OTHER_BUCKETS} already names; the rest is worldRest. */
     private static final String[] WORLD_PASS_MEMBERS = {
             "terrain", "setupTerrain", "entities", "particles", "particlesLit", "sky"};
-
-    private static int[][] resolveBuckets() {
-        int[][] resolved = new int[OTHER_BUCKETS.length][];
-        for (int b = 0; b < OTHER_BUCKETS.length; b++) {
-            resolved[b] = new int[OTHER_BUCKETS[b].length];
-            for (int m = 0; m < OTHER_BUCKETS[b].length; m++) {
-                resolved[b][m] = FramePassTimings.indexOfName(OTHER_BUCKETS[b][m]);
-            }
-        }
-        return resolved;
-    }
 
     private static final boolean PRESENT_INTERVAL = ENABLED
             || HarnessConfig.bool("presentInterval", false)
@@ -505,10 +525,11 @@ public final class FrameBudgetTimings {
      * that bias.
      */
     static long[] otherSplit(long otherMean, long outsideMean, long[] bracketMeans, long passResidualMean) {
-        long[] buckets = new long[OTHER_BUCKET_INDEX.length];
-        for (int b = 0; b < OTHER_BUCKET_INDEX.length; b++) {
+        int[][] bucketIndex = otherBucketIndex();
+        long[] buckets = new long[bucketIndex.length];
+        for (int b = 0; b < bucketIndex.length; b++) {
             long sum = 0L;
-            for (int member : OTHER_BUCKET_INDEX[b]) {
+            for (int member : bucketIndex[b]) {
                 if (member >= 0 && member + 1 < bracketMeans.length) {
                     sum += bracketMeans[member + 1];
                 }
@@ -516,8 +537,9 @@ public final class FrameBudgetTimings {
             buckets[b] = sum;
         }
         long worldRest = 0L;
-        if (WORLD_PASS_INDEX >= 0 && WORLD_PASS_INDEX + 1 < bracketMeans.length) {
-            long rest = bracketMeans[WORLD_PASS_INDEX + 1];
+        int wpIndex = worldPassIndex();
+        if (wpIndex >= 0 && wpIndex + 1 < bracketMeans.length) {
+            long rest = bracketMeans[wpIndex + 1];
             for (String member : WORLD_PASS_MEMBERS) {
                 int index = FramePassTimings.indexOfName(member);
                 if (index >= 0 && index + 1 < bracketMeans.length) {
