@@ -47,6 +47,12 @@ import java.util.regex.Pattern;
  * their Proj forms) -> the modern comparison fetch wrapped back into the {@code vec4} the legacy call
  * answers with, and a shadow sampler type is carried as declared: whether the texture a binding resolves
  * to has a comparing sampler is a property of that texture, checked by the prepare path, not here.</li>
+ * <li>Opt-in ({@code -Dceltium.vulkan.fractionalPowGuard}, default off): a {@code pow} whose exponent is, as
+ * written, a positive fractional constant is routed through {@code celtium_pow_guard}, which never calls
+ * {@code pow} on a non-positive base. Measured cause: BSL's light shafts reach {@code pow(vl / 32, 0.25)} at
+ * exactly 0 - the value its own falloff clamp produces - and RADV's native execution answers NaN over the
+ * anti-sun cone (wedge-16). With the switch off the lowering is byte-for-byte what it was before the guard
+ * existed.</li>
  * <li>The fixed-function inputs mods still read: {@code gl_Vertex}, {@code gl_Color}, {@code gl_MultiTexCoord0},
  * {@code gl_ModelViewProjectionMatrix}, {@code gl_ModelViewMatrix}, {@code gl_ProjectionMatrix},
  * {@code gl_NormalScale}, {@code ftransform()}, and the {@code gl_TexCoord[0]}/{@code gl_FrontColor} varyings. They become ordinary
@@ -180,6 +186,11 @@ public final class ModGlslTranslator {
      */
     private static final Pattern SHADOW_CALL_PATTERN = Pattern.compile(
             "\\b(shadow1DProj|shadow2DProj|shadow1D|shadow2D)\\s*\\(");
+    /** A call to the built-in {@code pow}: the name, then the opening parenthesis of its argument list. */
+    private static final Pattern POW_CALL_PATTERN = Pattern.compile("(?<![\\w.])pow\\s*\\(");
+    /** A vector constructor heading an exponent written as one call: the type name and the argument text. */
+    private static final Pattern EXPONENT_CONSTRUCTOR = Pattern.compile("(vec[234])\\s*\\((.*)\\)",
+            Pattern.DOTALL);
 
     private ModGlslTranslator() {
     }
@@ -527,8 +538,8 @@ public final class ModGlslTranslator {
         if (fragment.contains("gl_FragData")) {
             throw new IllegalArgumentException("gl_FragData with a non-constant index is not lowered");
         }
-        vertex = lowerTextureCalls(lowerShadowCalls(vertex));
-        fragment = lowerTextureCalls(lowerShadowCalls(fragment));
+        vertex = lowerTextureCalls(lowerShadowCalls(guardFractionalPow(vertex)));
+        fragment = lowerTextureCalls(lowerShadowCalls(guardFractionalPow(fragment)));
 
         vs.append(vertex).append("\nvoid main() {\n    celtium_user_main();\n")
                 // GL's clip depth is [-1, 1], Vulkan's [0, 1]. y is not flipped: like every other pass here the image
@@ -1549,6 +1560,176 @@ public final class ModGlslTranslator {
         }
         out.append(s, copied, s.length());
         return out.toString();
+    }
+
+    /**
+     * The overload set a stage with at least one guarded call is prefixed with. The guard never calls
+     * {@code pow} on a non-positive base: a positive base takes the call unchanged, and zero, a negative
+     * or a NaN base answers 0 - the value {@code pow(0, e)} has for the positive fractional exponents
+     * this pass rewrites, and the value the shader's own clamps intend where a negative leaked past
+     * one (GLSL leaves {@code pow} of a negative base undefined). The vector forms select per
+     * component, so a NaN one component computed is discarded by the select, not propagated by
+     * arithmetic.
+     */
+    private static final String POW_GUARD_HELPERS = """
+            float celtium_pow_guard(float celtium_base, float celtium_exp) {
+                return celtium_base > 0.0 ? pow(celtium_base, celtium_exp) : 0.0;
+            }
+            vec2 celtium_pow_guard(vec2 celtium_base, vec2 celtium_exp) {
+                return mix(vec2(0.0), pow(celtium_base, celtium_exp), greaterThan(celtium_base, vec2(0.0)));
+            }
+            vec3 celtium_pow_guard(vec3 celtium_base, vec3 celtium_exp) {
+                return mix(vec3(0.0), pow(celtium_base, celtium_exp), greaterThan(celtium_base, vec3(0.0)));
+            }
+            vec4 celtium_pow_guard(vec4 celtium_base, vec4 celtium_exp) {
+                return mix(vec4(0.0), pow(celtium_base, celtium_exp), greaterThan(celtium_base, vec4(0.0)));
+            }
+            vec2 celtium_pow_guard(vec2 celtium_base, float celtium_exp) {
+                return celtium_pow_guard(celtium_base, vec2(celtium_exp));
+            }
+            vec3 celtium_pow_guard(vec3 celtium_base, float celtium_exp) {
+                return celtium_pow_guard(celtium_base, vec3(celtium_exp));
+            }
+            vec4 celtium_pow_guard(vec4 celtium_base, float celtium_exp) {
+                return celtium_pow_guard(celtium_base, vec4(celtium_exp));
+            }
+            vec2 celtium_pow_guard(float celtium_base, vec2 celtium_exp) {
+                return celtium_pow_guard(vec2(celtium_base), celtium_exp);
+            }
+            vec3 celtium_pow_guard(float celtium_base, vec3 celtium_exp) {
+                return celtium_pow_guard(vec3(celtium_base), celtium_exp);
+            }
+            vec4 celtium_pow_guard(float celtium_base, vec4 celtium_exp) {
+                return celtium_pow_guard(vec4(celtium_base), celtium_exp);
+            }
+            """;
+
+    /**
+     * {@return whether the fractional-pow guard is switched on for this translation}. Read at every
+     * translation rather than latched into a static: a program is translated when a mod links it, long
+     * after the launch properties are set, and a per-call read leaves no initialization-order trap of
+     * the kind a static latch on a property has.
+     */
+    private static boolean fractionalPowGuardEnabled() {
+        return Boolean.getBoolean("celtium.vulkan.fractionalPowGuard");
+    }
+
+    /**
+     * Rewrites {@code pow(base, exp)} to {@code celtium_pow_guard(base, exp)} wherever {@code exp} is,
+     * as written, a constant with a positive fractional value (see
+     * {@link #isPositiveFractionalConstant}), and prefixes the overload set when the stage gained a
+     * rewrite. Behind {@code -Dceltium.vulkan.fractionalPowGuard} (default off): with the switch off
+     * the source is returned untouched, and a stage with no rewritten call is untouched either way.
+     * <p>
+     * Why: measured on BSL's composite (wedge-16), a light-shafts value reaches
+     * {@code pow(vl / 32.0, vec3(0.25))} as exactly 0 - its falloff clamp produces 0 - and the
+     * reference result is 0, but the native execution on RADV/ACO wrote NaN over the whole anti-sun
+     * cone, which the downstream chain turns into a black wedge. Whether the clamp is what the native
+     * code drops or its {@code pow(0, 0.25)} itself returns NaN is not separable from the capture; the
+     * guard covers both, because it never calls {@code pow} on a non-positive base at all. A
+     * {@code max(base, 0.0)} clamp would cover only the first: the clamped 0 would still reach the
+     * suspect {@code pow}.
+     * <p>
+     * The pass is conservative where the shadow lowering is strict: a hardening must not refuse a
+     * program the translator otherwise accepts, so a call whose argument list does not close, does
+     * not split, or whose exponent is not a constant this pass proves fractional is passed through
+     * verbatim. Scanning and parsing run on the comment-blanked text ({@link #stripComments} keeps
+     * every offset), so a {@code pow(} inside a comment - balanced or not - is neither rewritten nor
+     * able to corrupt the parse of a real call; the argument texts are taken from that same blanked
+     * text, in which a comment inside an argument list has already become spaces.
+     */
+    private static String guardFractionalPow(String s) {
+        if (!fractionalPowGuardEnabled()) {
+            return s;
+        }
+        String rewritten = rewritePowCalls(s);
+        return rewritten.equals(s) ? s : POW_GUARD_HELPERS + rewritten;
+    }
+
+    /**
+     * {@return {@code s} with every provably-fractional-constant {@code pow} call guarded},
+     * recursing into argument lists so a nested call is rewritten inside its outer call whether or
+     * not the outer one qualifies. A call that does not qualify - and whose arguments no rewrite
+     * touched - is copied out verbatim, comments and spacing included.
+     */
+    private static String rewritePowCalls(String s) {
+        String scan = stripComments(s);
+        Matcher m = POW_CALL_PATTERN.matcher(scan);
+        StringBuilder out = null;
+        int copied = 0;
+        while (m.find()) {
+            int open = m.end() - 1;
+            int close = matchingParen(scan, open);
+            if (close < 0) {
+                continue;
+            }
+            List<String> rawArgs = new ArrayList<>();
+            for (String arg : splitDeclarators(scan.substring(open + 1, close))) {
+                rawArgs.add(arg.strip());
+            }
+            List<String> args = new ArrayList<>(rawArgs.size());
+            boolean argsChanged = false;
+            for (String arg : rawArgs) {
+                String rewrittenArg = rewritePowCalls(arg);
+                argsChanged |= !rewrittenArg.equals(arg);
+                args.add(rewrittenArg);
+            }
+            boolean guard = rawArgs.size() == 2 && isPositiveFractionalConstant(rawArgs.get(1));
+            if (!guard && !argsChanged) {
+                continue;
+            }
+            if (out == null) {
+                out = new StringBuilder(s.length() + 64);
+            }
+            out.append(s, copied, m.start());
+            out.append(guard ? "celtium_pow_guard(" : "pow(");
+            out.append(String.join(", ", args));
+            out.append(')');
+            copied = close + 1;
+            m.region(copied, scan.length());
+        }
+        if (out == null) {
+            return s;
+        }
+        out.append(s, copied, s.length());
+        return out.toString();
+    }
+
+    /**
+     * {@return whether an exponent as written is a constant with a positive fractional value}: a bare
+     * numeric literal, a {@code vecN} splat of one, or a {@code vecN} constructor whose components
+     * are all such literals. Anything else - a name, an expression (even a constant one like
+     * {@code 1.0 / 2.2}), an integer-valued, zero or negative literal - is not rewritten: the pass
+     * rewrites only what it can prove, and integer exponents are left alone because a negative base
+     * raised to them is the behaviour programs in the wild already get from this pipeline.
+     */
+    private static boolean isPositiveFractionalConstant(String exponent) {
+        String t = exponent.strip();
+        Matcher ctor = EXPONENT_CONSTRUCTOR.matcher(t);
+        if (ctor.matches()) {
+            for (String part : splitDeclarators(ctor.group(2))) {
+                if (!isPositiveFractionalLiteral(part.strip())) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return isPositiveFractionalLiteral(t);
+    }
+
+    /** {@return whether {@code text} is one numeric literal whose value is positive and not an integer}. */
+    private static boolean isPositiveFractionalLiteral(String text) {
+        if (!NUMBER_LITERAL.matcher(text).matches()) {
+            return false;
+        }
+        double value;
+        try {
+            value = Double.parseDouble(text.replaceAll("[fF]$", ""));
+        } catch (NumberFormatException notDecimal) {
+            // A hex literal: an integer by construction, never a fractional exponent this pass rewrites.
+            return false;
+        }
+        return value > 0.0 && Double.isFinite(value) && value != Math.floor(value);
     }
 
     /** {@return the index of the close parenthesis matching the one at {@code open}, or -1 when it never closes}. */

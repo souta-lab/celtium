@@ -1232,4 +1232,199 @@ class ModGlslTranslatorTest {
                 new ModGlslTranslator.Attribute("a_Extra", "vec2", 1)), result.attributes());
         assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
         assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);    }
+
+    /**
+     * BSL's composite tail in miniature: the light-shafts value divided down and raised to a fractional
+     * power through a vector exponent - the call wedge-16 measured coming out as NaN on RADV, at a base
+     * of exactly 0 that the shader's own falloff clamp produced.
+     */
+    private static final String SHAFTS_FRAGMENT = """
+            #version 120
+            varying vec2 uv;
+            uniform sampler2D tex;
+            uniform float falloff;
+            void main() {
+                vec3 vl = texture2D(tex, uv).rgb * falloff;
+                vl = pow(vl / 32.0, vec3(0.25));
+                gl_FragColor = vec4(vl, 1.0);
+            }
+            """;
+
+    private static ModGlslTranslator.Result translateWithPowGuard(boolean on, String vertex, String fragment) {
+        if (on) {
+            System.setProperty("celtium.vulkan.fractionalPowGuard", "true");
+        } else {
+            System.clearProperty("celtium.vulkan.fractionalPowGuard");
+        }
+        try {
+            return ModGlslTranslator.translate(vertex, fragment);
+        } finally {
+            System.clearProperty("celtium.vulkan.fractionalPowGuard");
+        }
+    }
+
+    @Test
+    void fractionalPowGuardIsOffByDefault() {
+        ModGlslTranslator.Result result = translateWithPowGuard(false, QUAD_VERTEX, SHAFTS_FRAGMENT);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertTrue(result.fragment().contains("pow(vl / 32.0, vec3(0.25))"),
+                () -> "the unguarded lowering must keep the call as written:\n" + result.fragment());
+        assertFalse(result.fragment().contains("celtium_pow_guard"));
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void fractionalPowGuardRewritesTheShaftsCall() {
+        ModGlslTranslator.Result off = translateWithPowGuard(false, QUAD_VERTEX, SHAFTS_FRAGMENT);
+        ModGlslTranslator.Result result = translateWithPowGuard(true, QUAD_VERTEX, SHAFTS_FRAGMENT);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertTrue(result.fragment().contains("celtium_pow_guard(vl / 32.0, vec3(0.25))"),
+                () -> "the shafts call must be routed through the guard:\n" + result.fragment());
+        assertTrue(result.fragment().contains("float celtium_pow_guard(float celtium_base, float celtium_exp)"),
+                () -> "the overload set must be injected into the stage that gained a rewrite:\n"
+                        + result.fragment());
+        // The vertex stage has no pow call: it stays byte-for-byte the unguarded lowering.
+        assertEquals(off.vertex(), result.vertex());
+        assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+        // The switch is read per translation, not latched: off again is the unguarded text again.
+        ModGlslTranslator.Result offAgain = translateWithPowGuard(false, QUAD_VERTEX, SHAFTS_FRAGMENT);
+        assertEquals(off.fragment(), offAgain.fragment());
+    }
+
+    @Test
+    void fractionalPowGuardRewritesScalarAndComponentExponents() {
+        String fragment = """
+                #version 120
+                varying vec2 uv;
+                uniform vec3 tint;
+                void main() {
+                    float a = pow(uv.x, 0.25);
+                    vec3 b = pow(tint, vec3(0.25, 0.5, 2.2));
+                    vec2 c = pow(uv, 0.5);
+                    gl_FragColor = vec4(b + vec3(a) + vec3(c, 1.0), 1.0);
+                }
+                """;
+        ModGlslTranslator.Result result = translateWithPowGuard(true, QUAD_VERTEX, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertTrue(result.fragment().contains("celtium_pow_guard(uv.x, 0.25)"),
+                () -> "scalar base and exponent:\n" + result.fragment());
+        assertTrue(result.fragment().contains("celtium_pow_guard(tint, vec3(0.25, 0.5, 2.2))"),
+                () -> "vector exponent with fractional components:\n" + result.fragment());
+        assertTrue(result.fragment().contains("celtium_pow_guard(uv, 0.5)"),
+                () -> "vector base with a scalar exponent:\n" + result.fragment());
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void fractionalPowGuardLeavesOtherExponentsAlone() {
+        String fragment = """
+                #version 120
+                varying vec2 uv;
+                uniform float gain;
+                uniform vec3 tint;
+                void main() {
+                    float a = pow(uv.x, 2.0);
+                    float b = pow(uv.x, gain);
+                    float c = pow(uv.x, -0.5);
+                    float d = pow(uv.x, 1.0 / 2.2);
+                    vec3 e = pow(tint, vec3(2.0));
+                    gl_FragColor = vec4(e + vec3(a + b + c + d), 1.0);
+                }
+                """;
+        ModGlslTranslator.Result off = translateWithPowGuard(false, QUAD_VERTEX, fragment);
+        ModGlslTranslator.Result result = translateWithPowGuard(true, QUAD_VERTEX, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertFalse(result.fragment().contains("celtium_pow_guard"),
+                () -> "no exponent here is a positive fractional constant:\n" + result.fragment());
+        assertEquals(off.fragment(), result.fragment());
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void fractionalPowGuardRewritesNestedCallsAndMacroBodies() {
+        String fragment = """
+                #version 120
+                varying vec2 uv;
+                #define SHAFT(x) pow(x, 0.25)
+                void main() {
+                    float a = pow(pow(uv.x, 0.5), 0.25);
+                    float b = SHAFT(uv.y);
+                    gl_FragColor = vec4(vec3(a + b), 1.0);
+                }
+                """;
+        ModGlslTranslator.Result result = translateWithPowGuard(true, QUAD_VERTEX, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertTrue(result.fragment().contains("celtium_pow_guard(celtium_pow_guard(uv.x, 0.5), 0.25)"),
+                () -> "the inner call is guarded inside the outer one:\n" + result.fragment());
+        assertTrue(result.fragment().contains("#define SHAFT(x) celtium_pow_guard(x, 0.25)"),
+                () -> "a call in a macro body is guarded in place, so expansions inherit it:\n"
+                        + result.fragment());
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void fractionalPowGuardIgnoresCommentText() {
+        String fragment = """
+                #version 120
+                varying vec2 uv;
+                /* pow(broken, 0.25 - the parenthesis never closes in here */
+                // pow(also, 0.25) is a comment too
+                void main() {
+                    float a = pow(uv.x, 2.0);
+                    gl_FragColor = vec4(vec3(a), 1.0);
+                }
+                """;
+        ModGlslTranslator.Result result = translateWithPowGuard(true, QUAD_VERTEX, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertFalse(result.fragment().contains("celtium_pow_guard"),
+                () -> "comment text is not a call, and must not corrupt the parse of the real one:\n"
+                        + result.fragment());
+        assertTrue(result.fragment().contains("pow(uv.x, 2.0)"),
+                () -> "the real call after the comments is carried through untouched:\n"
+                        + result.fragment());
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void fractionalPowGuardRewritesTheVertexStageToo() {
+        String vertex = """
+                #version 120
+                attribute vec2 position;
+                varying vec2 uv;
+                void main() {
+                    gl_Position = vec4(position, 0.0, 1.0);
+                    uv = vec2(pow(position.x * 0.5 + 0.5, 0.5), position.y);
+                }
+                """;
+        String fragment = """
+                #version 120
+                varying vec2 uv;
+                void main() { gl_FragColor = vec4(uv, 0.0, 1.0); }
+                """;
+        ModGlslTranslator.Result result = translateWithPowGuard(true, vertex, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertTrue(result.vertex().contains("celtium_pow_guard(position.x * 0.5 + 0.5, 0.5)"),
+                () -> "the vertex stage is guarded by the same rule:\n" + result.vertex());
+        assertFalse(result.fragment().contains("celtium_pow_guard"));
+        assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void fractionalPowGuardPassesThroughACallItCannotParse() {
+        String fragment = """
+                #version 120
+                varying vec2 uv;
+                void main() { gl_FragColor = vec4(pow(uv.x)); }
+                """;
+        ModGlslTranslator.Result result = translateWithPowGuard(true, QUAD_VERTEX, fragment);
+        // Not compiled here: shaderc refuses the source's own one-argument pow, as it did before the
+        // guard existed. The pass's contract is only that it does not refuse or rewrite what it
+        // cannot prove.
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertTrue(result.fragment().contains("pow(uv.x)"),
+                () -> "a one-argument call is passed through verbatim:\n" + result.fragment());
+        assertFalse(result.fragment().contains("celtium_pow_guard"));
+    }
 }
