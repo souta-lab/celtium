@@ -10302,7 +10302,6 @@ this.frameBufferOpen = false;
                         + " keptForOtherTargets=" + this.immediateStatistics.immediateGroupsKeptForOtherTargets()
                         + " noPipeline=" + this.immediateFlushNoPipeline
                         + " deferredNextFrame=" + this.immediateStatistics.immediateDeferredNextFrame()
-                        + " refusedWindowBudget=" + this.immediateStatistics.immediateRefusedWindowBudget()
                         + " lastError=" + this.immediateLastFlushError);
             }
             if (formatId >= 0 && formatId < this.immediateAcceptedByFormat.length) {

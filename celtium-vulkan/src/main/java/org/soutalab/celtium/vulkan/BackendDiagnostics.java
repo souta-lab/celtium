@@ -561,8 +561,8 @@ final class BackendDiagnostics {
                 // the real flush count is actualFlushes (22.1 a frame on the world scene against 113.6 groups). The
                 // rename is the whole change; closed minus drawn is the number that reached no pipeline, and the
                 // pending/recorded/retired sizes are what
-                // is still held. immediateGroupsKeptForOtherTargets, immediateDeferredNextFrame and
-                // immediateRefusedWindowBudget are printed because they name the three ways a group can be held back;
+                // is still held. immediateGroupsKeptForOtherTargets and immediateDeferredNextFrame are printed
+                // because they name the two ways a group can be held back;
                 // reading them here is what makes a zero that cannot move (no increment site) visible as such.
                 + " immediateGroupsDrawn=" + b.immediateStatistics.immediateGroupsDrawn()
                 + " groupPool=[created=" + ImmediateGroup.poolCreated + " reused=" + ImmediateGroup.poolReused
@@ -603,7 +603,6 @@ final class BackendDiagnostics {
                 + " immediateGroupsDiscarded=" + b.immediateStatistics.immediateGroupsDiscarded()
                 + " immediateGroupsKeptForOtherTargets=" + b.immediateStatistics.immediateGroupsKeptForOtherTargets()
                 + " immediateDeferredNextFrame=" + b.immediateStatistics.immediateDeferredNextFrame()
-                + " immediateRefusedWindowBudget=" + b.immediateStatistics.immediateRefusedWindowBudget()
                 + " groupsStaleTargetGeneration=" + b.immediateStatistics.groupsStaleTargetGeneration()
                 + " groupsStaleWorldEpoch=" + b.immediateStatistics.groupsStaleWorldEpoch()
                 + " worldEpoch=" + b.worldEpoch

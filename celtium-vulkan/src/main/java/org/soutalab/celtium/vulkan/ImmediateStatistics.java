@@ -196,13 +196,6 @@ public final class ImmediateStatistics {
     private int immediateBatchesOffered;
     private int immediateDeferredNextFrame;
     private int immediateMaxGroupVertices;
-    /**
-     * How often a batch was left to GL because the frame's window budget was already spent.
-     * <p>
-     * This is the alternative to deferring it to a later frame: the batch is drawn by GL in the frame that produced it,
-     * which keeps ordering and latency right at the cost of GL doing that draw. Named so the configuration is honest.
-     */
-    private int immediateRefusedWindowBudget;
     private int immediateWindowsThisFrame;
     private float lastAlphaPushReference = Float.NaN;
     private int lastPartialColorMask = -1;
@@ -1939,26 +1932,6 @@ public final class ImmediateStatistics {
     /** {@return immediateMaxGroupVertices}. */
     int immediateMaxGroupVertices() {
         return this.immediateMaxGroupVertices;
-    }
-
-    /** Records one immediateRefusedWindowBudget. */
-    void noteImmediateRefusedWindowBudget() {
-        this.immediateRefusedWindowBudget++;
-    }
-
-    /** Adds to immediateRefusedWindowBudget. */
-    void addImmediateRefusedWindowBudget(int value) {
-        this.immediateRefusedWindowBudget += value;
-    }
-
-    /** Sets immediateRefusedWindowBudget. */
-    void setImmediateRefusedWindowBudget(int value) {
-        this.immediateRefusedWindowBudget = value;
-    }
-
-    /** {@return immediateRefusedWindowBudget}. */
-    int immediateRefusedWindowBudget() {
-        return this.immediateRefusedWindowBudget;
     }
 
     /** Records one immediateWindowsThisFrame. */
