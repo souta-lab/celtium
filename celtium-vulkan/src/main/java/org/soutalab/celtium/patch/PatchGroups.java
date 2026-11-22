@@ -194,6 +194,7 @@ public final class PatchGroups {
               "core.terrain.ClientChunkManagerMixin",
               "core.terrain.WorldClientMixin",
               "core.terrain.ChunkEntityMembershipMixin",
+              "core.terrain.BlockRendererDispatcherMixin",
               "core.BufferBuilderAccessor",
               "core.EntityRendererLightmapAccessor",
               "core.collections.ClassInheritanceMultiMapMixin",
