@@ -56,15 +56,16 @@ import static org.lwjgl.system.libffi.LibFFI.ffi_type_void;
 public final class CeltiumGlStub implements FunctionProvider {
 
     /** C return types. Java-side only - the trampoline marshals them into the libffi result slot. */
-    private static final byte R_VOID = 0;
-    private static final byte R_INT = 1;
-    private static final byte R_LONG = 2;
-    private static final byte R_PTR = 3;
+    static final byte R_VOID = 0;
+    static final byte R_INT = 1;
+    static final byte R_LONG = 2;
+    static final byte R_PTR = 3;
 
     /**
      * Argument types as they arrive at the trampoline: every arg slot is a pointer to the value. Package-private
      * rather than private (the SEM_* ids below have the same shape) because {@link GlTrampolines} reads the same
-     * encoding when it builds a row's CIF and picks its upcall shape.
+     * encoding when it builds a row's CIF and picks its upcall shape, and {@link GlFunctionTable} reads the same
+     * ids when it registers a row.
      */
     static final byte A_INT = 11;
     static final byte A_LONG = 12;
@@ -76,68 +77,68 @@ public final class CeltiumGlStub implements FunctionProvider {
     // Semantics ids - what dispatch() does with the call. The enum keeps the table lines short.
     static final int SEM_NOOP = 0;            // record only - state the Vulkan side owns or nobody reads
     static final int SEM_GEN = 1;             // object-name allocation: returns the next id
-    private static final int SEM_GET_ERROR = 2;       // always GL_NO_ERROR - nothing the stub does can raise one
-    private static final int SEM_GET_STRING = 3;      // arg0 pname -> interned ascii
+    static final int SEM_GET_ERROR = 2;       // always GL_NO_ERROR - nothing the stub does can raise one
+    static final int SEM_GET_STRING = 3;      // arg0 pname -> interned ascii
     static final int SEM_IS_ENABLED = 4;      // arg0 cap -> recorded enable bit
-    private static final int SEM_ENABLE = 5;          // arg0 cap -> set enable bit
-    private static final int SEM_DISABLE = 6;         // arg0 cap -> clear enable bit
+    static final int SEM_ENABLE = 5;          // arg0 cap -> set enable bit
+    static final int SEM_DISABLE = 6;         // arg0 cap -> clear enable bit
     static final int SEM_GET_INTEGERV = 7;    // arg0 pname, arg1 out[] -> plausible ints
-    private static final int SEM_GET_FLOATV = 8;      // arg0 pname, arg1 out[] -> plausible floats
-    private static final int SEM_GET_BOOLEANV = 9;    // arg0 pname, arg1 out[] -> plausible bytes
-    private static final int SEM_IS_OBJECT = 10;      // arg0 id -> whether the table generated it
+    static final int SEM_GET_FLOATV = 8;      // arg0 pname, arg1 out[] -> plausible floats
+    static final int SEM_GET_BOOLEANV = 9;    // arg0 pname, arg1 out[] -> plausible bytes
+    static final int SEM_IS_OBJECT = 10;      // arg0 id -> whether the table generated it
     static final int SEM_DELETE = 11;         // id list -> retire names (reissue is the same counter-free)
-    private static final int SEM_GET_STRINGI = 12;    // pname, index -> extension string
-    private static final int SEM_GET_INTEGER64V = 13; // pname, out64[] -> plausible longs
+    static final int SEM_GET_STRINGI = 12;    // pname, index -> extension string
+    static final int SEM_GET_INTEGER64V = 13; // pname, out64[] -> plausible longs
     private static final int SEM_ROUTE = 14;          // pixel/semantic routing - handled in route()
-    private static final int SEM_ZERO = 15;           // int return: 0 - valid-but-empty answers (uniform loc etc)
-    private static final int SEM_FBO_COMPLETE = 16;   // int return: GL_FRAMEBUFFER_COMPLETE
-    private static final int SEM_SIGNALED = 17;       // int return: GL_ALREADY_SIGNALED
-    private static final int SEM_MAP = 18;            // ptr return: the named buffer's storage
-    private static final int SEM_UNMAP = 19;          // byte return: true, buffer contents already live
-    private static final int SEM_BUFFER_DATA = 20;    // (target,size,data,usage) -> size bytes of storage
-    private static final int SEM_STATUS = 21;         // (obj,pname,out[]) -> successful-answer queries
-    private static final int SEM_INFO_LOG = 22;       // (obj,bufSize,len*,log) -> empty string
-    private static final int SEM_BIND_BUFFER = 23;    // (target,name) -> binding record for map/data
-    private static final int SEM_BIND_TEXTURE = 24;   // (target,name) -> texture binding record
-    private static final int SEM_ACTIVE_TEXTURE = 25; // (unit) -> texture unit selector record
-    private static final int SEM_TEXIMAGE = 26;       // (target,level,internal,w,h,...) -> size record per bound
-    private static final int SEM_VIEWPORT = 27;       // (x,y,w,h) -> viewport record feeding GL_VIEWPORT
-    private static final int SEM_FOG_I = 71;
-    private static final int SEM_FOG_F = 72;
-    private static final int SEM_FOG_FV = 73;
-    private static final int SEM_FOG_IV = 74;
-    private static final int SEM_TEX_ENV_I = 47;      // (target,pname,param) -> texture-env int, per active unit
-    private static final int SEM_TEX_ENV_F = 48;      // (target,pname,param) -> texture-env float
-    private static final int SEM_TEX_ENV_FV = 49;     // (target,pname,values) -> texture-env float array
-    private static final int SEM_GET_TEX_ENV_I = 50;  // (target,pname,out) -> the recorded int
-    private static final int SEM_GET_TEX_ENV_FV = 51; // (target,pname,out) -> the recorded floats
-    private static final int SEM_COPY_TEX_IMAGE = 52;    // copy from the bound read framebuffer into a texture level
-    private static final int SEM_COPY_TEX_SUB_IMAGE = 53; // the same, into a sub-rectangle
-    private static final int SEM_BLIT_FRAMEBUFFER = 78;  // framebuffer-to-framebuffer blit (the depth bit is served)
-    private static final int SEM_COPY_IMAGE_SUB_DATA = 79; // (srcName,srcTarget,srcLevel,srcX,srcY,srcZ,dstName,dstTarget,dstLevel,dstX,dstY,dstZ,w,h,d) -> captured level to captured level
-    private static final int SEM_TEX_PARAM_I = 54;     // (target,pname,param) -> texture parameter of the bound texture
-    private static final int SEM_TEX_PARAM_IV = 55;    // (target,pname,values) -> the same, from an array
-    private static final int SEM_TEX_PARAM_I_DSA = 56; // (texture,pname,param) -> the same, texture named directly
-    private static final int SEM_TEX_PARAM_IV_DSA = 57; // (texture,pname,values) -> the same, from an array
-    private static final int SEM_MULT_MATRIX = 58;     // (matrix) -> multiply the active matrix of the mirror
-    private static final int SEM_MATRIX_MODE = 59;     // (mode) -> which stack glMultMatrix* multiplies
-    private static final int SEM_BIND_FRAMEBUFFER = 28; // (target,name) -> framebuffer binding record
-    private static final int SEM_CLEAR = 29;          // (mask) -> pending clear of the owned frame image
-    private static final int SEM_CLEAR_COLOR = 30;    // (r,g,b,a) -> the colour glClear will use
-    private static final int SEM_CLEAR_DEPTH = 31;    // (d) -> the depth glClear will use
-    private static final int SEM_BUFFER_SUBDATA = 32; // (target,offset,size,data) -> into the recorded storage
-    private static final int SEM_LINE_WIDTH = 33;      // (w) -> recorded raster line width
-    private static final int SEM_USE_PROGRAM = 34;     // (program) -> recorded current program
-    private static final int SEM_NEW_LIST = 35;        // (list,mode) -> the list being compiled
-    private static final int SEM_END_LIST = 36;        // () -> compilation finished
-    private static final int SEM_CALL_LIST = 37;       // (list) -> recorded for the display-list census
-    private static final int SEM_BIND_VERTEX_ARRAY = 38; // (vao) -> recorded vertex array binding
-    private static final int SEM_TEXIMAGE_PIXELS = 39; // (target,level,internal,w,h,border,fmt,type,pixels) -> extent + RGBA8
-    private static final int SEM_TEXSUBIMAGE = 40;     // (target,level,x,y,w,h,fmt,type,pixels) -> patch into a captured level
-    private static final int SEM_COMPRESSED_TEXIMAGE = 41; // (target,level,internal,w,h,border,size,data) -> extent only
-    private static final int SEM_PIXEL_STORE = 42;     // (pname,value) -> the unpack state upload conversion needs
-    private static final int SEM_VERTEX_POINTER = 43;  // (size,type,stride,offset) -> how to read the bound array buffer
-    private static final int SEM_DRAW_ARRAYS = 44;     // (mode,first,count) -> one array-buffer draw, drawn natively
+    static final int SEM_ZERO = 15;           // int return: 0 - valid-but-empty answers (uniform loc etc)
+    static final int SEM_FBO_COMPLETE = 16;   // int return: GL_FRAMEBUFFER_COMPLETE
+    static final int SEM_SIGNALED = 17;       // int return: GL_ALREADY_SIGNALED
+    static final int SEM_MAP = 18;            // ptr return: the named buffer's storage
+    static final int SEM_UNMAP = 19;          // byte return: true, buffer contents already live
+    static final int SEM_BUFFER_DATA = 20;    // (target,size,data,usage) -> size bytes of storage
+    static final int SEM_STATUS = 21;         // (obj,pname,out[]) -> successful-answer queries
+    static final int SEM_INFO_LOG = 22;       // (obj,bufSize,len*,log) -> empty string
+    static final int SEM_BIND_BUFFER = 23;    // (target,name) -> binding record for map/data
+    static final int SEM_BIND_TEXTURE = 24;   // (target,name) -> texture binding record
+    static final int SEM_ACTIVE_TEXTURE = 25; // (unit) -> texture unit selector record
+    static final int SEM_TEXIMAGE = 26;       // (target,level,internal,w,h,...) -> size record per bound
+    static final int SEM_VIEWPORT = 27;       // (x,y,w,h) -> viewport record feeding GL_VIEWPORT
+    static final int SEM_FOG_I = 71;
+    static final int SEM_FOG_F = 72;
+    static final int SEM_FOG_FV = 73;
+    static final int SEM_FOG_IV = 74;
+    static final int SEM_TEX_ENV_I = 47;      // (target,pname,param) -> texture-env int, per active unit
+    static final int SEM_TEX_ENV_F = 48;      // (target,pname,param) -> texture-env float
+    static final int SEM_TEX_ENV_FV = 49;     // (target,pname,values) -> texture-env float array
+    static final int SEM_GET_TEX_ENV_I = 50;  // (target,pname,out) -> the recorded int
+    static final int SEM_GET_TEX_ENV_FV = 51; // (target,pname,out) -> the recorded floats
+    static final int SEM_COPY_TEX_IMAGE = 52;    // copy from the bound read framebuffer into a texture level
+    static final int SEM_COPY_TEX_SUB_IMAGE = 53; // the same, into a sub-rectangle
+    static final int SEM_BLIT_FRAMEBUFFER = 78;  // framebuffer-to-framebuffer blit (the depth bit is served)
+    static final int SEM_COPY_IMAGE_SUB_DATA = 79; // (srcName,srcTarget,srcLevel,srcX,srcY,srcZ,dstName,dstTarget,dstLevel,dstX,dstY,dstZ,w,h,d) -> captured level to captured level
+    static final int SEM_TEX_PARAM_I = 54;     // (target,pname,param) -> texture parameter of the bound texture
+    static final int SEM_TEX_PARAM_IV = 55;    // (target,pname,values) -> the same, from an array
+    static final int SEM_TEX_PARAM_I_DSA = 56; // (texture,pname,param) -> the same, texture named directly
+    static final int SEM_TEX_PARAM_IV_DSA = 57; // (texture,pname,values) -> the same, from an array
+    static final int SEM_MULT_MATRIX = 58;     // (matrix) -> multiply the active matrix of the mirror
+    static final int SEM_MATRIX_MODE = 59;     // (mode) -> which stack glMultMatrix* multiplies
+    static final int SEM_BIND_FRAMEBUFFER = 28; // (target,name) -> framebuffer binding record
+    static final int SEM_CLEAR = 29;          // (mask) -> pending clear of the owned frame image
+    static final int SEM_CLEAR_COLOR = 30;    // (r,g,b,a) -> the colour glClear will use
+    static final int SEM_CLEAR_DEPTH = 31;    // (d) -> the depth glClear will use
+    static final int SEM_BUFFER_SUBDATA = 32; // (target,offset,size,data) -> into the recorded storage
+    static final int SEM_LINE_WIDTH = 33;      // (w) -> recorded raster line width
+    static final int SEM_USE_PROGRAM = 34;     // (program) -> recorded current program
+    static final int SEM_NEW_LIST = 35;        // (list,mode) -> the list being compiled
+    static final int SEM_END_LIST = 36;        // () -> compilation finished
+    static final int SEM_CALL_LIST = 37;       // (list) -> recorded for the display-list census
+    static final int SEM_BIND_VERTEX_ARRAY = 38; // (vao) -> recorded vertex array binding
+    static final int SEM_TEXIMAGE_PIXELS = 39; // (target,level,internal,w,h,border,fmt,type,pixels) -> extent + RGBA8
+    static final int SEM_TEXSUBIMAGE = 40;     // (target,level,x,y,w,h,fmt,type,pixels) -> patch into a captured level
+    static final int SEM_COMPRESSED_TEXIMAGE = 41; // (target,level,internal,w,h,border,size,data) -> extent only
+    static final int SEM_PIXEL_STORE = 42;     // (pname,value) -> the unpack state upload conversion needs
+    static final int SEM_VERTEX_POINTER = 43;  // (size,type,stride,offset) -> how to read the bound array buffer
+    static final int SEM_DRAW_ARRAYS = 44;     // (mode,first,count) -> one array-buffer draw, drawn natively
     private static final int SEM_COMPILED_ARRAYS = -2;
     private static final Fn COMPILED_ARRAYS = new Fn("compiledClientArrays", R_VOID, new byte[0], SEM_COMPILED_ARRAYS);
     // Step 1 of the loading-screen unit: glBegin/glEnd leave the generic no-op table so the *site* that opens a
@@ -146,21 +147,21 @@ public final class CeltiumGlStub implements FunctionProvider {
     // window reached SEM_NOOP and drew nothing; the no-op census showed glVertex3f=152460/glBegin=38115/glEnd=38115
     // but a count is not a site. This step only names the callers; the vertex recording and the submit are the next
     // two steps, each landing on its own.
-    private static final int SEM_BEGIN = 68;           // (mode) -> the site that opens an immediate-mode run
-    private static final int SEM_END = 69;             // () -> the site that closes it
-    private static final int SEM_READ_PIXELS = 70;     // (x,y,w,h,format,type,pixels) -> read the bound read framebuffer
-    private static final int SEM_SCISSOR = 45;         // (x,y,w,h) -> the game's clip rectangle, for the group's scissor
-    private static final int SEM_CULL_FACE = 60;       // arg0 = the face GL will cull
-    private static final int SEM_FRONT_FACE = 61;      // arg0 = the winding GL calls front
-    private static final int SEM_POLYGON_OFFSET = 62;  // (factor, units) as float bits -> the depth bias GL wants
-    private static final int SEM_COLOR_MASK = 63;      // (r,g,b,a) -> which channels the draw may write (BH-10)
-    private static final int SEM_BLEND_FUNC = 64;      // (src,dst) -> all four GL blend factors, as glBlendFunc does
-    private static final int SEM_BLEND_FUNC_SEPARATE = 65; // (srcRgb,dstRgb,srcAlpha,dstAlpha) -> the four factors
-    private static final int SEM_BLEND_EQUATION = 66;  // (mode) -> both blend equations
-    private static final int SEM_BLEND_EQUATION_SEPARATE = 67; // (rgbMode, alphaMode) -> the two equations
-    private static final int SEM_LIST_BASE = 75;      // (base) -> the offset glCallLists adds to every name
-    private static final int SEM_CALL_LISTS = 76;     // (count, type, address) -> execute a run of display lists
-    private static final int SEM_BIND_IMAGE_TEXTURE = 77; // full GL image-unit tuple -> native ledger
+    static final int SEM_BEGIN = 68;           // (mode) -> the site that opens an immediate-mode run
+    static final int SEM_END = 69;             // () -> the site that closes it
+    static final int SEM_READ_PIXELS = 70;     // (x,y,w,h,format,type,pixels) -> read the bound read framebuffer
+    static final int SEM_SCISSOR = 45;         // (x,y,w,h) -> the game's clip rectangle, for the group's scissor
+    static final int SEM_CULL_FACE = 60;       // arg0 = the face GL will cull
+    static final int SEM_FRONT_FACE = 61;      // arg0 = the winding GL calls front
+    static final int SEM_POLYGON_OFFSET = 62;  // (factor, units) as float bits -> the depth bias GL wants
+    static final int SEM_COLOR_MASK = 63;      // (r,g,b,a) -> which channels the draw may write (BH-10)
+    static final int SEM_BLEND_FUNC = 64;      // (src,dst) -> all four GL blend factors, as glBlendFunc does
+    static final int SEM_BLEND_FUNC_SEPARATE = 65; // (srcRgb,dstRgb,srcAlpha,dstAlpha) -> the four factors
+    static final int SEM_BLEND_EQUATION = 66;  // (mode) -> both blend equations
+    static final int SEM_BLEND_EQUATION_SEPARATE = 67; // (rgbMode, alphaMode) -> the two equations
+    static final int SEM_LIST_BASE = 75;      // (base) -> the offset glCallLists adds to every name
+    static final int SEM_CALL_LISTS = 76;     // (count, type, address) -> execute a run of display lists
+    static final int SEM_BIND_IMAGE_TEXTURE = 77; // full GL image-unit tuple -> native ledger
 
     /** One function-table row: name, return type, arg types, semantics. */
     private static final class Fn {
@@ -195,430 +196,21 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final List<Fn> TABLE = new ArrayList<>();
     private static final Map<String, Integer> IDS = new HashMap<>();
 
-    private static Fn fn(String name, byte ret, int semantics, byte... args) {
+    static Fn fn(String name, byte ret, int semantics, byte... args) {
         Fn fn = new Fn(name, ret, args, semantics);
         TABLE.add(fn);
         return fn;
     }
 
     static {
-        registerNamesAndQueries();
-        registerBuffersAndTextures();
-        registerStateAndDraws();
-        registerNoops();
+        GlFunctionTable.registerAll();
         for (int i = 0; i < TABLE.size(); i++) {
             IDS.putIfAbsent(TABLE.get(i).name, Integer.valueOf(i));
         }
     }
 
-    private static void registerNamesAndQueries() {
-        // ---- names: every generator returns a fresh id; the same table's delete frees it for reporting only
-        fn("glGenTextures", R_INT, SEM_GEN, A_INT, A_PTR);
-        fn("glGenBuffers", R_INT, SEM_GEN, A_INT, A_PTR);
-        fn("glGenRenderbuffers", R_INT, SEM_GEN, A_INT, A_PTR);
-        fn("glGenFramebuffers", R_INT, SEM_GEN, A_INT, A_PTR);
-        fn("glGenVertexArrays", R_INT, SEM_GEN, A_INT, A_PTR);
-        fn("glGenSamplers", R_INT, SEM_GEN, A_INT, A_PTR);
-        fn("glGenQueries", R_INT, SEM_GEN, A_INT, A_PTR);
-        fn("glGenLists", R_INT, SEM_GEN, A_INT);
-        fn("glCreateShader", R_INT, SEM_GEN, A_INT);
-        fn("glCreateProgram", R_INT, SEM_GEN);
-        fn("glGenSync", R_LONG, SEM_GEN);
-        fn("glFenceSync", R_LONG, SEM_GEN, A_INT, A_INT);
-        fn("glGenTransformFeedbacks", R_INT, SEM_GEN, A_INT, A_PTR);
-        fn("glGenProgramPipelines", R_INT, SEM_GEN, A_INT, A_PTR);
-        // ---- queries that shape what the game thinks it has
-        fn("glGetString", R_PTR, SEM_GET_STRING, A_INT);
-        fn("glGetStringi", R_PTR, SEM_GET_STRINGI, A_INT, A_INT);
-        fn("glGetError", R_INT, SEM_GET_ERROR);
-        fn("glIsEnabled", R_INT, SEM_IS_ENABLED, A_INT);   // GLboolean - byte, marshalled as int by the caller
-        fn("glIsEnabledi", R_INT, SEM_IS_ENABLED, A_INT, A_INT);
-        fn("glIsTexture", R_INT, SEM_IS_OBJECT, A_INT);
-        fn("glIsBuffer", R_INT, SEM_IS_OBJECT, A_INT);
-        fn("glIsFramebuffer", R_INT, SEM_IS_OBJECT, A_INT);
-        fn("glIsRenderbuffer", R_INT, SEM_IS_OBJECT, A_INT);
-        fn("glIsVertexArray", R_INT, SEM_IS_OBJECT, A_INT);
-        fn("glIsShader", R_INT, SEM_IS_OBJECT, A_INT);
-        fn("glIsProgram", R_INT, SEM_IS_OBJECT, A_INT);
-        fn("glIsQuery", R_INT, SEM_IS_OBJECT, A_INT);
-        fn("glIsSampler", R_INT, SEM_IS_OBJECT, A_INT);
-        fn("glIsList", R_INT, SEM_IS_OBJECT, A_INT);
-        fn("glIsSync", R_INT, SEM_IS_OBJECT, A_LONG);
-        fn("glGetIntegerv", R_VOID, SEM_GET_INTEGERV, A_INT, A_PTR);
-        fn("glGetInteger64v", R_VOID, SEM_GET_INTEGER64V, A_INT, A_PTR);
-        fn("glGetFloatv", R_VOID, SEM_GET_FLOATV, A_INT, A_PTR);
-        fn("glGetDoublev", R_VOID, SEM_GET_FLOATV, A_INT, A_PTR);   // doubles read as floats is a known GL quirk - 4B each
-        fn("glGetBooleanv", R_VOID, SEM_GET_BOOLEANV, A_INT, A_PTR);
-        fn("glEnable", R_VOID, SEM_ENABLE, A_INT);
-        // BH-08: the immediate path's cull state never reached the renderer because the face calls were no-ops and
-        // nothing read the capability. Both are recorded here instead: the enable already lands in the enables map
-        // with every other capability, and the face and winding get their own semantic case.
-        fn("glCullFace", R_VOID, SEM_CULL_FACE, A_INT);
-        fn("glFrontFace", R_VOID, SEM_FRONT_FACE, A_INT);
-        fn("glPolygonOffset", R_VOID, SEM_POLYGON_OFFSET, A_FLOAT, A_FLOAT);
-        fn("glDisable", R_VOID, SEM_DISABLE, A_INT);
-        // BH-09: Celeritas' own UI clips with GL11.glScissor directly (VintageDrawContext.enableScissor), so the
-        // rectangle must be recorded rather than dropped - it was in the NOOP table, which is why a scroll list could
-        // not be clipped. The enable bit is not a second mirror: scissorTest() reads the same enables map that
-        // glEnable/glDisable write.
-        fn("glScissor", R_VOID, SEM_SCISSOR, A_INT, A_INT, A_INT, A_INT);
-        fn("glEnablei", R_VOID, SEM_ENABLE, A_INT, A_INT);
-        fn("glDisablei", R_VOID, SEM_DISABLE, A_INT, A_INT);
-        // ---- deletion: retire names so glIs* answers go false (names are never reissued - GL does not require it)
-        fn("glDeleteTextures", R_VOID, SEM_DELETE, A_INT, A_PTR);
-        fn("glDeleteBuffers", R_VOID, SEM_DELETE, A_INT, A_PTR);
-        fn("glDeleteRenderbuffers", R_VOID, SEM_DELETE, A_INT, A_PTR);
-        fn("glDeleteFramebuffers", R_VOID, SEM_DELETE, A_INT, A_PTR);
-        fn("glDeleteVertexArrays", R_VOID, SEM_DELETE, A_INT, A_PTR);
-        fn("glDeleteSamplers", R_VOID, SEM_DELETE, A_INT, A_PTR);
-        fn("glDeleteQueries", R_VOID, SEM_DELETE, A_INT, A_PTR);
-        fn("glDeleteLists", R_VOID, SEM_DELETE, A_INT, A_INT);
-        fn("glDeleteShader", R_VOID, SEM_DELETE, A_INT);
-        fn("glDeleteProgram", R_VOID, SEM_DELETE, A_INT);
-        fn("glDeleteSync", R_VOID, SEM_DELETE, A_LONG);
-        // ---- return-valued queries: a 0/garbage return would break callers that read it
-        fn("glCheckFramebufferStatus", R_INT, SEM_FBO_COMPLETE, A_INT);
-        fn("glCheckNamedFramebufferStatus", R_INT, SEM_FBO_COMPLETE, A_INT, A_INT);
-        fn("glClientWaitSync", R_INT, SEM_SIGNALED, A_LONG, A_INT, A_LONG);
-        fn("glRenderMode", R_INT, SEM_ZERO, A_INT);
-        fn("glGetUniformLocation", R_INT, SEM_ZERO, A_INT, A_PTR);
-        fn("glGetAttribLocation", R_INT, SEM_ZERO, A_INT, A_PTR);
-        fn("glGetUniformBlockIndex", R_INT, SEM_ZERO, A_INT, A_PTR);
-        fn("glGetProgramResourceIndex", R_INT, SEM_ZERO, A_INT, A_INT, A_PTR);
-        fn("glCreateShaderProgramv", R_INT, SEM_GEN, A_INT, A_INT, A_PTR);
-        fn("glGetTexLevelParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR);
-        // The DSA forms the modern renderer path actually calls: without these every size query answers 0, so
-        // announcements are refused as "0x0" and mirrors are built 1x1 before the upload resizes them.
-        fn("glGetTextureLevelParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR);
-        fn("glGetTextureLevelParameterfv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR);
-        fn("glGetTextureParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetTextureParameterfv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetNamedFramebufferAttachmentParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR);
-        fn("glGetFramebufferAttachmentParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR);
-        fn("glGetTexLevelParameterfv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR);
-        fn("glGetShaderiv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetProgramiv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetShaderInfoLog", R_VOID, SEM_INFO_LOG, A_INT, A_INT, A_PTR, A_PTR);
-        fn("glGetProgramInfoLog", R_VOID, SEM_INFO_LOG, A_INT, A_INT, A_PTR, A_PTR);
-        fn("glGetBufferParameteri64v", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetBufferParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetSynciv", R_VOID, SEM_STATUS, A_LONG, A_INT, A_INT, A_PTR, A_PTR);
-        fn("glGetFramebufferParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetFramebufferAttachmentParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR);
-        fn("glGetRenderbufferParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetVertexAttribiv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetVertexAttribPointerv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetUniformfv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetUniformiv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetActiveUniform", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR, A_PTR, A_PTR, A_PTR);
-        fn("glGetActiveAttrib", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR, A_PTR, A_PTR, A_PTR);
-        fn("glGetActiveUniformsiv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR, A_INT, A_PTR);
-        fn("glGetActiveUniformBlockiv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR);
-        fn("glGetProgramResourceiv", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_INT, A_PTR, A_INT, A_PTR);
-        fn("glGetProgramResourceName", R_VOID, SEM_INFO_LOG, A_INT, A_INT, A_INT, A_INT, A_PTR, A_PTR);
-        fn("glGetShaderSource", R_VOID, SEM_INFO_LOG, A_INT, A_INT, A_PTR, A_PTR);
-        fn("glGetAttachedShaders", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR, A_PTR);
-        fn("glGetPointerv", R_VOID, SEM_STATUS, A_INT, A_PTR);
-        fn("glGetBufferPointerv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetQueryObjectiv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetQueryObjectuiv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetQueryObjecti64v", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetQueryObjectui64v", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-    }
-
-    private static void registerBuffersAndTextures() {
-        // ---- buffer storage: glBufferData allocates, glMapBuffer returns the storage address
-        fn("glBufferData", R_VOID, SEM_BUFFER_DATA, A_INT, A_LONG, A_PTR, A_INT);
-        fn("glNamedBufferData", R_VOID, SEM_BUFFER_DATA, A_INT, A_LONG, A_PTR, A_INT);
-        fn("glBufferStorage", R_VOID, SEM_BUFFER_DATA, A_INT, A_LONG, A_PTR, A_INT);
-        fn("glNamedBufferStorage", R_VOID, SEM_BUFFER_DATA, A_INT, A_LONG, A_PTR, A_INT);
-        fn("glMapBuffer", R_PTR, SEM_MAP, A_INT, A_INT);
-        fn("glMapNamedBuffer", R_PTR, SEM_MAP, A_INT, A_INT);
-        fn("glMapBufferRange", R_PTR, SEM_MAP, A_INT, A_LONG, A_LONG, A_INT);
-        fn("glMapNamedBufferRange", R_PTR, SEM_MAP, A_INT, A_LONG, A_LONG, A_INT);
-        fn("glUnmapBuffer", R_INT, SEM_UNMAP, A_INT);
-        fn("glUnmapNamedBuffer", R_INT, SEM_UNMAP, A_INT);
-        fn("glBindBuffer", R_VOID, SEM_BIND_BUFFER, A_INT, A_INT);
-        // ---- texture bindings/images: size tracking feeds glGetTexLevelParameter (FML probes the max texture
-        // size by uploading proxy images) and the pixel capture the Vulkan mirrors are built from.
-        fn("glBindTexture", R_VOID, SEM_BIND_TEXTURE, A_INT, A_INT);
-        fn("glBindImageTexture", R_VOID, SEM_BIND_IMAGE_TEXTURE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
-        fn("glActiveTexture", R_VOID, SEM_ACTIVE_TEXTURE, A_INT);
-        fn("glTexImage1D", R_VOID, SEM_TEXIMAGE_PIXELS, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
-        fn("glTexImage2D", R_VOID, SEM_TEXIMAGE_PIXELS, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
-        // glTexImage3D carries depth between height and border: (target,level,internal,w,h,depth,border,fmt,type,pixels)
-        fn("glTexImage3D", R_VOID, SEM_TEXIMAGE_PIXELS, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
-        fn("glTexStorage2D", R_VOID, SEM_TEXIMAGE, A_INT, A_INT, A_INT, A_INT, A_INT);
-        fn("glTexStorage3D", R_VOID, SEM_TEXIMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
-        fn("glCompressedTexImage2D", R_VOID, SEM_COMPRESSED_TEXIMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
-        fn("glTexSubImage2D", R_VOID, SEM_TEXSUBIMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
-        fn("glPixelStorei", R_VOID, SEM_PIXEL_STORE, A_INT, A_INT);
-        fn("glViewport", R_VOID, SEM_VIEWPORT, A_INT, A_INT, A_INT, A_INT);
-        // Texture-environment state. The stub used to no-op all of it, so the two queries the renderer asks - the
-        // combine mode and the environment colour, both on the lightmap unit - returned zero and the hurt flash was
-        // invisible to the instrument as well as to the frame (measured by entity-models: the reference shifts the
-        // zombie head from (78.9,123.7,87.7) to (117.3,105.0,79.4) and ours moves by at most 1.8).
-        fn("glFogi", R_VOID, SEM_FOG_I, A_INT, A_INT);
-        fn("glFogf", R_VOID, SEM_FOG_F, A_INT, A_FLOAT);
-        fn("glFogfv", R_VOID, SEM_FOG_FV, A_INT, A_PTR);
-        fn("glFogiv", R_VOID, SEM_FOG_IV, A_INT, A_PTR);
-        fn("glTexEnvi", R_VOID, SEM_TEX_ENV_I, A_INT, A_INT, A_INT);
-        fn("glTexEnviv", R_VOID, SEM_TEX_ENV_I, A_INT, A_INT, A_PTR);
-        fn("glTexEnvf", R_VOID, SEM_TEX_ENV_F, A_INT, A_INT, A_FLOAT);
-        fn("glTexEnvfv", R_VOID, SEM_TEX_ENV_FV, A_INT, A_INT, A_PTR);
-        // LWJGL2's GlStateManager.glTexEnv(int,int,FloatBuffer) arrives under the bare name, which is the fv variant:
-        // RenderLivingBase.setBrightness writes the hurt/team env colour through exactly this call, and while it sat
-        // in the noop list texEnvColor stayed zero - the combine fired but the mix factor was black at 0.
-        fn("glTexEnv", R_VOID, SEM_TEX_ENV_FV, A_INT, A_INT, A_PTR);
-        fn("glGetTexEnvi", R_VOID, SEM_GET_TEX_ENV_I, A_INT, A_INT, A_PTR);
-        fn("glGetTexEnviv", R_VOID, SEM_GET_TEX_ENV_I, A_INT, A_INT, A_PTR);
-        fn("glGetTexEnvfv", R_VOID, SEM_GET_TEX_ENV_FV, A_INT, A_INT, A_PTR);
-        // Texture parameters: the filter and wrap state GL keeps per texture object. These used to be in the no-op
-        // list, so every texture answered the same hardcoded value and the real one was gone - measured as the
-        // options background sampling CLAMP_TO_EDGE where vanilla tiles it with REPEAT (GuiOptions.drawBackground
-        // and Cleanroom's patched GuiSlot.drawContainerBackground both draw it with UVs up to height/32), and the
-        // sky faces likewise. Recorded per texture *name* rather than per binding because the queries that need it
-        // (the mirror's wrap read, the DSA glGetTextureParameter*) name the texture, not the unit.
-        fn("glTexParameteri", R_VOID, SEM_TEX_PARAM_I, A_INT, A_INT, A_INT);
-        fn("glTexParameterf", R_VOID, SEM_TEX_PARAM_I, A_INT, A_INT, A_FLOAT);
-        fn("glTexParameteriv", R_VOID, SEM_TEX_PARAM_IV, A_INT, A_INT, A_PTR);
-        fn("glTexParameterfv", R_VOID, SEM_TEX_PARAM_IV, A_INT, A_INT, A_PTR);
-        fn("glTexParameterIiv", R_VOID, SEM_TEX_PARAM_IV, A_INT, A_INT, A_PTR);
-        fn("glTexParameterIuiv", R_VOID, SEM_TEX_PARAM_IV, A_INT, A_INT, A_PTR);
-        fn("glGetTexParameteriv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetTexParameterfv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetTexParameterIiv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetTexParameterIuiv", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        // The DSA forms name the texture directly: the modern mirror path asks with glGetTextureParameteri (LWJGL
-        // answers that over glGetTextureParameteriv) and sets with glTextureParameteri.
-        fn("glTextureParameteri", R_VOID, SEM_TEX_PARAM_I_DSA, A_INT, A_INT, A_INT);
-        fn("glTextureParameterf", R_VOID, SEM_TEX_PARAM_I_DSA, A_INT, A_INT, A_FLOAT);
-        fn("glTextureParameteriv", R_VOID, SEM_TEX_PARAM_IV_DSA, A_INT, A_INT, A_PTR);
-        fn("glTextureParameterfv", R_VOID, SEM_TEX_PARAM_IV_DSA, A_INT, A_INT, A_PTR);
-        fn("glTextureParameterIiv", R_VOID, SEM_TEX_PARAM_IV_DSA, A_INT, A_INT, A_PTR);
-        fn("glTextureParameterIuiv", R_VOID, SEM_TEX_PARAM_IV_DSA, A_INT, A_INT, A_PTR);
-        // Matrix multiplication that never goes through GlStateManager. Forge's item transform is the measured case:
-        // ForgeHooksClient.handleCameraTransforms -> multiplyCurrentGlMatrix -> GL11.glMultMatrix(matrixBuf)
-        // (ForgeHooksClient.java:425-455), so the item's 30/225-degree rotation reached the stub's no-op list while
-        // every GlStateManager-routed matrix call reached the mirror - the mirror kept the GUI ortho as the group's
-        // modelview and all six faces of a block projected onto one square (the user's flat slot icon). The same entry
-        // point is what the GLU perspective helper uses: org.lwjglx.util.glu.Project.gluPerspective calls
-        // GL11.glMultMatrixf at two sites (javap of lwjglxx-1.1.22), so this hook is also the projection channel's
-        // missing link - glMatrixMode is recorded here so the census says which stack the multiply landed on.
-        fn("glMultMatrixf", R_VOID, SEM_MULT_MATRIX, A_PTR);
-        fn("glMultMatrixd", R_VOID, SEM_MULT_MATRIX, A_PTR);
-        fn("glMatrixMode", R_VOID, SEM_MATRIX_MODE, A_INT);
-    }
-
-    private static void registerStateAndDraws() {
-        // Copy-from-framebuffer. The main menu's panorama is built with these: renderSkybox draws the six 256x256
-        // cube faces into the window and copies each into the skybox texture, and the blur passes copy their own
-        // targets. Registered rather than left in the no-op list so the request is named and counted: under GL-less
-        // there is no GL framebuffer to read the pixels from, so what is missing is a readback of the renderer's own
-        // image for the bound read framebuffer, which is a different component's resource.
-        fn("glCopyTexImage2D", R_VOID, SEM_COPY_TEX_IMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
-        fn("glCopyTexSubImage2D", R_VOID, SEM_COPY_TEX_SUB_IMAGE, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
-        // Texture-to-texture copy: unlike the framebuffer copies above, both levels live in the stub's own
-        // capture, so this one is served in full - it is FoamFix's fast animation path (see copyImageSubData).
-        fn("glCopyImageSubData", R_VOID, SEM_COPY_IMAGE_SUB_DATA, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT,
-                A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
-        fn("glBlitFramebuffer", R_VOID, SEM_BLIT_FRAMEBUFFER, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT,
-                A_INT, A_INT);
-        // glReadPixels is the same question the copies answer, asked into a client buffer: the bound read framebuffer's
-        // rectangle from the image the renderer owns. It used to sit in the no-op list, which left every caller's
-        // buffer zeroed - the fixture's format-2 readback measured "all mismatch" and ScreenShotHelper's screenshots
-        // came out blank - so it is registered and served now.
-        fn("glReadPixels", R_VOID, SEM_READ_PIXELS, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_PTR);
-        fn("glBindFramebuffer", R_VOID, SEM_BIND_FRAMEBUFFER, A_INT, A_INT);
-        fn("glBindFramebufferEXT", R_VOID, SEM_BIND_FRAMEBUFFER, A_INT, A_INT);
-        fn("glBindFramebufferARB", R_VOID, SEM_BIND_FRAMEBUFFER, A_INT, A_INT);
-        // ---- clears: with no GL framebuffer to clear, the request is recorded for the owned frame image. Without
-        // this the image's depth holds undefined values for the whole session and every depth-tested draw fails.
-        fn("glClear", R_VOID, SEM_CLEAR, A_INT);
-        fn("glClearColor", R_VOID, SEM_CLEAR_COLOR, A_FLOAT, A_FLOAT, A_FLOAT, A_FLOAT);
-        fn("glClearDepth", R_VOID, SEM_CLEAR_DEPTH, A_DOUBLE);
-        fn("glClearDepthf", R_VOID, SEM_CLEAR_DEPTH, A_FLOAT);
-        // ---- state the getters answer from: recorded rather than left at the no-op default
-        fn("glLineWidth", R_VOID, SEM_LINE_WIDTH, A_FLOAT);
-        fn("glUseProgram", R_VOID, SEM_USE_PROGRAM, A_INT);
-        fn("glNewList", R_VOID, SEM_NEW_LIST, A_INT, A_INT);
-        fn("glEndList", R_VOID, SEM_END_LIST);
-        fn("glCallList", R_VOID, SEM_CALL_LIST, A_INT);
-        fn("glListBase", R_VOID, SEM_LIST_BASE, A_INT);
-        fn("glCallLists", R_VOID, SEM_CALL_LISTS, A_INT, A_INT, A_PTR);
-        fn("glBindVertexArray", R_VOID, SEM_BIND_VERTEX_ARRAY, A_INT);
-        fn("glBufferSubData", R_VOID, SEM_BUFFER_SUBDATA, A_INT, A_LONG, A_LONG, A_PTR);
-        // ---- client-array drawing: the pointer state that says how to read the bound array buffer's bytes, and the
-        // draw that uses it. This is the VBO path RenderGlobal.renderSky takes (`skyVBO.drawArrays(7)` ->
-        // VertexBuffer.drawArrays -> GlStateManager.glDrawArrays -> GL11.glDrawArrays), and it is the one entry point
-        // here that produces geometry rather than state: answering it with a no-op is a hole in the picture, not a
-        // state detail - measured as a GL-less world frame with no sky dome, no stars and no horizon plane while no
-        // counter mentioned them.
-        //
-        // glEnableClientState/glDisableClientState are the same capability bits glEnable sets (GL_VERTEX_ARRAY is
-        // 32884), so they share those semantics: glIsEnabled answers from the same record, as GL does.
-        fn("glEnableClientState", R_VOID, SEM_ENABLE, A_INT);
-        fn("glDisableClientState", R_VOID, SEM_DISABLE, A_INT);
-        fn("glVertexPointer", R_VOID, SEM_VERTEX_POINTER, A_INT, A_INT, A_INT, A_PTR);
-        fn("glDrawArrays", R_VOID, SEM_DRAW_ARRAYS, A_INT, A_INT, A_INT);
-        fn("glBegin", R_VOID, SEM_BEGIN, A_INT);
-        fn("glEnd", R_VOID, SEM_END);
-        // ---- the blend and colour-write state (BH-07, BH-10): the two the games' own wrappers reach through
-        // OpenGlHelper rather than through a GlStateManager field, which is why a mixin hook could not see them.
-        // Read from the original: `GlStateManager.blendFunc(int,int)` calls `GL11.glBlendFunc` directly, while both
-        // `tryBlendFuncSeparate` overloads delegate to `OpenGlHelper.glBlendFunc`, which with OpenGL14 present (the
-        // stub reports GL 4.6, so it is) calls `GL14.glBlendFuncSeparate`. The mixin hooks the enum overload only, so
-        // the int overload - the one JsonBlendingMode and every Forge caller with plain ints uses - reached the
-        // no-op table and the mirror kept the last enum call's factors. Recording here catches every caller of every
-        // shape, including raw GL, for the same reason the cull capability is recorded here (BH-08).
-        fn("glBlendFunc", R_VOID, SEM_BLEND_FUNC, A_INT, A_INT);
-        fn("glBlendFuncSeparate", R_VOID, SEM_BLEND_FUNC_SEPARATE, A_INT, A_INT, A_INT, A_INT);
-        fn("glBlendEquation", R_VOID, SEM_BLEND_EQUATION, A_INT);
-        fn("glBlendEquationSeparate", R_VOID, SEM_BLEND_EQUATION_SEPARATE, A_INT, A_INT);
-        // BH-10: the Fancy-cloud depth-only pass reaches this through GlStateManager.colorMask, which is itself
-        // cached and calls GL11.glColorMask only when the mask changes - so the stub is the one place that sees the
-        // change that matters (false,false,false,false at RenderGlobal:1655).
-        fn("glColorMask", R_VOID, SEM_COLOR_MASK, A_INT, A_INT, A_INT, A_INT);
-        // ---- DSA create-functions: same out-array shape as the glGen* family
-        fn("glCreateTextures", R_VOID, SEM_GEN, A_INT, A_INT, A_PTR);
-        fn("glCreateBuffers", R_VOID, SEM_GEN, A_INT, A_PTR);
-        fn("glCreateFramebuffers", R_VOID, SEM_GEN, A_INT, A_PTR);
-        fn("glCreateRenderbuffers", R_VOID, SEM_GEN, A_INT, A_PTR);
-        fn("glCreateVertexArrays", R_VOID, SEM_GEN, A_INT, A_PTR);
-        fn("glCreateSamplers", R_VOID, SEM_GEN, A_INT, A_PTR);
-        fn("glCreateQueries", R_VOID, SEM_GEN, A_INT, A_INT, A_PTR);
-        fn("glCreateTransformFeedbacks", R_VOID, SEM_GEN, A_INT, A_PTR);
-        fn("glCreateProgramPipelines", R_VOID, SEM_GEN, A_INT, A_PTR);
-        // ---- ARB/EXT-suffixed entry points (roam-vanilla-diff audit, 2026-11-22): LWJGL2 exposes the
-        // framebuffer, buffer-object, shader-object, query, multitexture and copy-image families under
-        // ARB/EXT-suffixed names as separate native symbols. Only glBindFramebufferARB/EXT were registered, so a
-        // caller on the ARB/EXT dispatch path (OpenGlHelper picks it by reported capability; some mods call the
-        // suffixed names directly) could bind a framebuffer but not create, check or delete one - the gen calls
-        // fell into the unknown-symbol record and returned 0, which a caller reads as the default framebuffer.
-        // That is the same silent-wrongness shape as the once-unrouted glCopyImageSubData. The suffixed names are
-        // semantically identical to their core names in LWJGL2, so they alias to the same semantics and argument
-        // shapes; suffixed names whose core form is a deliberate no-op are listed with the no-ops below instead,
-        // so the unknown-symbol census stops charging them.
-        fn("glGenFramebuffersEXT", R_INT, SEM_GEN, A_INT, A_PTR);
-        fn("glGenRenderbuffersEXT", R_INT, SEM_GEN, A_INT, A_PTR);
-        fn("glDeleteFramebuffersEXT", R_VOID, SEM_DELETE, A_INT, A_PTR);
-        fn("glDeleteRenderbuffersEXT", R_VOID, SEM_DELETE, A_INT, A_PTR);
-        fn("glIsFramebufferEXT", R_INT, SEM_IS_OBJECT, A_INT);
-        fn("glIsRenderbufferEXT", R_INT, SEM_IS_OBJECT, A_INT);
-        fn("glCheckFramebufferStatusEXT", R_INT, SEM_FBO_COMPLETE, A_INT);
-        fn("glGenFramebuffersARB", R_INT, SEM_GEN, A_INT, A_PTR);
-        fn("glGenRenderbuffersARB", R_INT, SEM_GEN, A_INT, A_PTR);
-        fn("glDeleteFramebuffersARB", R_VOID, SEM_DELETE, A_INT, A_PTR);
-        fn("glDeleteRenderbuffersARB", R_VOID, SEM_DELETE, A_INT, A_PTR);
-        fn("glIsFramebufferARB", R_INT, SEM_IS_OBJECT, A_INT);
-        fn("glIsRenderbufferARB", R_INT, SEM_IS_OBJECT, A_INT);
-        fn("glCheckFramebufferStatusARB", R_INT, SEM_FBO_COMPLETE, A_INT);
-        fn("glGenBuffersARB", R_INT, SEM_GEN, A_INT, A_PTR);
-        fn("glDeleteBuffersARB", R_VOID, SEM_DELETE, A_INT, A_PTR);
-        fn("glIsBufferARB", R_INT, SEM_IS_OBJECT, A_INT);
-        fn("glBindBufferARB", R_VOID, SEM_BIND_BUFFER, A_INT, A_INT);
-        fn("glBufferDataARB", R_VOID, SEM_BUFFER_DATA, A_INT, A_LONG, A_PTR, A_INT);
-        fn("glBufferSubDataARB", R_VOID, SEM_BUFFER_SUBDATA, A_INT, A_LONG, A_LONG, A_PTR);
-        fn("glMapBufferARB", R_PTR, SEM_MAP, A_INT, A_INT);
-        fn("glUnmapBufferARB", R_INT, SEM_UNMAP, A_INT);
-        fn("glGetBufferParameterivARB", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glCreateShaderObjectARB", R_INT, SEM_GEN, A_INT);
-        fn("glCreateProgramObjectARB", R_INT, SEM_GEN);
-        fn("glDeleteObjectARB", R_VOID, SEM_DELETE, A_INT);
-        fn("glUseProgramObjectARB", R_VOID, SEM_USE_PROGRAM, A_INT);
-        fn("glGetUniformLocationARB", R_INT, SEM_ZERO, A_INT, A_PTR);
-        fn("glGetObjectParameteriARB", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR);
-        fn("glGetInfoLogARB", R_VOID, SEM_INFO_LOG, A_INT, A_INT, A_PTR, A_PTR);
-        fn("glGetActiveUniformARB", R_VOID, SEM_STATUS, A_INT, A_INT, A_INT, A_PTR, A_PTR, A_PTR, A_PTR);
-        fn("glGetAttachedObjectsARB", R_VOID, SEM_STATUS, A_INT, A_INT, A_PTR, A_PTR);
-        fn("glGetShaderSourceARB", R_VOID, SEM_INFO_LOG, A_INT, A_INT, A_PTR, A_PTR);
-        fn("glCopyImageSubDataARB", R_VOID, SEM_COPY_IMAGE_SUB_DATA, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT,
-                A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT, A_INT);
-        fn("glActiveTextureARB", R_VOID, SEM_ACTIVE_TEXTURE, A_INT);
-        fn("glGenQueriesARB", R_INT, SEM_GEN, A_INT, A_PTR);
-        fn("glDeleteQueriesARB", R_VOID, SEM_DELETE, A_INT, A_PTR);
-        fn("glIsQueryARB", R_INT, SEM_IS_OBJECT, A_INT);
-    }
-
-    private static void registerNoops() {
-        // ---- state-set no-ops: the fixed-function and raster state the Vulkan side mirrors or owns
-        String[] noops = {
-                "glBindRenderbuffer",
-                "glBindSampler", "glBindBufferBase", "glBindBufferRange",
-                "glBlendFuncSeparatei", "glBlendEquationi", "glBlendEquationSeparatei",
-                "glBlendColor", "glColorMaski", "glDepthMask", "glDepthFunc", "glDepthRange",
-                "glClearBufferfv", "glClearBufferiv",
-                "glClearBufferuiv", "glStencilFunc", "glStencilFuncSeparate", "glStencilOp", "glStencilOpSeparate",
-                "glStencilMask", "glStencilMaskSeparate", "glPolygonMode",
-                "glPointSize", "glPrimitiveRestartIndex", "glProvokingVertex",                "glSampleCoverage", "glSampleMaski", "glLogicOp", "glHint",
-                "glPixelStoref", "glReadBuffer", "glDrawBuffer", "glDrawBuffers", "glClampColor",
-                "glColorMaterial", "glMaterialf", "glMaterialfv", "glMateriali", "glLightf", "glLightfv",
-                "glLighti", "glLightiv", "glLightModelf", "glLightModelfv", "glLightModeli", "glLightModeliv",
-                "glShadeModel", "glTexGeni", "glTexGenf", "glTexGeniv", "glTexGenfv", "glAlphaFunc", "glNormal3f",
-                "glNormal3b", "glNormal3fv", "glColor4f", "glColor3f", "glColor4ub", "glColor3ub", "glSecondaryColor3f",
-                "glTexCoord2f", "glMultiTexCoord2f", "glVertex3f",
-                "glLoadIdentity", "glLoadMatrixf", "glLoadMatrixd", "glPushMatrix",
-                "glPopMatrix", "glOrtho", "glFrustum", "glTranslatef", "glTranslated", "glRotatef", "glRotated",
-                "glScalef", "glScaled", "glGenerateMipmap", "glSamplerParameteri",
-                "glSamplerParameterf", "glSamplerParameteriv", "glSamplerParameterIiv", "glSamplerParameterIuiv",
-                "glAttachShader", "glDetachShader", "glBindAttribLocation", "glBindFragDataLocation",
-                "glLinkProgram", "glValidateProgram", "glShaderSource", "glCompileShader", "glUniform1i",
-                "glUniform1f", "glUniform2f", "glUniform3f", "glUniform4f", "glUniform1iv", "glUniform2iv",
-                "glUniform3iv", "glUniform4iv", "glUniform1fv", "glUniform2fv", "glUniform3fv", "glUniform4fv",
-                "glUniformMatrix2fv", "glUniformMatrix3fv", "glUniformMatrix4fv", "glEnableVertexAttribArray",
-                "glDisableVertexAttribArray", "glVertexAttribPointer", "glVertexAttribIPointer",
-                "glVertexAttribLPointer", "glVertexAttribDivisor", "glVertexAttrib1f", "glVertexAttrib2f",
-                "glVertexAttrib3f", "glVertexAttrib4f", "glVertexAttrib4Nub", "glDrawElements",
-                "glDrawRangeElements", "glDrawElementsInstanced", "glDrawArraysInstanced", "glMultiDrawArrays",
-                "glMultiDrawElements", "glDrawElementsBaseVertex", "glBeginQuery", "glEndQuery", "glBeginQueryIndexed",
-                "glEndQueryIndexed", "glWaitSync", "glFlush", "glFinish", "glPushAttrib",
-                "glPopAttrib", "glPushClientAttrib", "glPopClientAttrib", "glSelectBuffer", "glFeedbackBuffer", "glInitNames",
-                "glPushName", "glPopName", "glLoadName", "glRasterPos2f", "glRasterPos3f", "glBitmap",
-                "glCopyPixels", "glDrawPixels",
-                "glFramebufferTexture2D", "glFramebufferTexture", "glFramebufferTexture1D",
-                "glFramebufferTexture3D", "glFramebufferTextureLayer", "glFramebufferRenderbuffer",
-                "glRenderbufferStorage", "glRenderbufferStorageMultisample",
-                "glTexSubImage1D", "glTexSubImage3D",
-                "glCompressedTexSubImage2D", "glGetTexImage",
-                "glGetCompressedTexImage", "glCopyBufferSubData", "glFlushMappedBufferRange", "glGetBufferSubData",
-                "glTexCoordPointer", "glColorPointer", "glNormalPointer", "glIndexPointer", "glEdgeFlagPointer",
-                "glSecondaryColorPointer", "glFogCoordPointer", "glInterleavedArrays", "glArrayElement", "glRects", "glClipPlane", "glSecondaryColor3fv", "glColor4fv",
-                "glDepthBoundsEXT", "glMultiDrawArraysIndirect", "glMultiDrawElementsIndirect", "glDrawArraysIndirect",
-                "glDrawElementsIndirect", "glDispatchCompute", "glMemoryBarrier", "glTextureBarrier",
-                "glFramebufferParameteri", "glNamedFramebufferTexture",
-                "glNamedFramebufferRenderbuffer", "glNamedRenderbufferStorage",
-                "glTextureImage2DEXT",
-                "glTextureSubImage2D", "glNamedTexImage2DEXT", "glNamedCopyTexSubImage2DEXT", "glTextureStorage2D",
-                "glGenerateTextureMipmap", "glBindTextureUnit",
-                "glTexBuffer", "glTexBufferRange",
-                "glUniformBlockBinding",
-                "glUseProgramStages", "glActiveShaderProgram", "glProgramUniform1i", "glProgramUniform1f",
-                "glProgramUniform2f", "glProgramUniform3f", "glProgramUniform4f", "glProgramUniform1iv",
-                "glProgramUniformMatrix4fv",
-                // ARB/EXT-suffixed forms of the no-op rows above (roam-vanilla-diff audit, 2026-11-22): same
-                // deliberate no-op as their core names, registered so the unknown-symbol census stops charging
-                // them and an ARB/EXT-path caller sees the same surface as a core-path caller.
-                "glBindRenderbufferEXT", "glBindRenderbufferARB",
-                "glFramebufferTexture2DEXT", "glFramebufferTexture2DARB",
-                "glFramebufferRenderbufferEXT", "glFramebufferRenderbufferARB",
-                "glRenderbufferStorageEXT", "glRenderbufferStorageARB",
-                "glGenerateMipmapEXT", "glGenerateMipmapARB",
-                "glShaderSourceARB", "glCompileShaderARB", "glAttachObjectARB", "glDetachObjectARB",
-                "glLinkProgramARB", "glValidateProgramARB",
-                "glUniform1iARB", "glUniform1fARB", "glUniform2fARB", "glUniform3fARB", "glUniform4fARB",
-                "glUniform1ivARB", "glUniform2ivARB", "glUniform3ivARB", "glUniform4ivARB",
-                "glUniform1fvARB", "glUniform2fvARB", "glUniform3fvARB", "glUniform4fvARB",
-                "glUniformMatrix2fvARB", "glUniformMatrix3fvARB", "glUniformMatrix4fvARB",
-                "glVertexAttribPointerARB", "glEnableVertexAttribArrayARB", "glDisableVertexAttribArrayARB",
-                "glBeginQueryARB", "glEndQueryARB",
-                "glMultiTexCoord2fARB"
-        };
-        for (String name : noops) {
-            // Rough signature for the table: every arg marshals as int/pointer uniformly - the noop discards them,
-            // so an arg count is all the trampoline needs.
-            fn(name, R_VOID, SEM_NOOP, new byte[] { A_PTR, A_PTR, A_PTR, A_PTR, A_PTR, A_PTR, A_PTR, A_PTR });
-        }
-    }
+    /* The registration methods that used to sit here (registerNamesAndQueries and its three
+       siblings) live in GlFunctionTable, which the static block above calls. */
 
     // ---- runtime state ---------------------------------------------------------------
 
