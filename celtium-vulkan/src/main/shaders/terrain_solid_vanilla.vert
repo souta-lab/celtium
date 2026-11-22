@@ -37,6 +37,10 @@
 //                   offset  0 : vec4  u_DynamicLightInfo    x = live source count (0..32), yzw = camera position (world)
 //                   offset 16 : vec4  u_DynamicLights[32]   xyz = camera-relative position,
 //                                                         w = light level 0..15
+//     binding 5 : storage buffer "CeltiumRegionOffsets" (std430, VERTEX stage only) - one vec4
+//                 per region draw of the frame (xyz = region origin minus camera, w unused),
+//                 read through gl_InstanceIndex: a draw's firstInstance carries its region's
+//                 index, so one descriptor bind serves every region of a pass (agera-kpi-3).
 //
 //   The pipeline layout push constant range is therefore:
 //       stageFlags = VK_SHADER_STAGE_VERTEX_BIT, offset = 0, size = 128.
@@ -97,6 +101,17 @@ layout(std140, set = 0, binding = 0) uniform CeltiumSolidUniforms {
     float u_ShadowDarkness;         // offset 88 fraction of sky light a shadowed fragment loses
     mat4  u_ShadowMatrix;           // offset 96 light space: shadow pass' Vulkan projection x model-view
 } celtium;
+
+// Per-region offsets (binding 5). The block's own u_RegionOffset field is still written by the
+// backend (the fragment stage declares the same block, so the layout is unchanged), but the
+// vertex stage no longer reads it: the offset now arrives through this array, indexed by
+// gl_InstanceIndex. Vulkan defines gl_InstanceIndex as firstInstance plus the instance counter,
+// and terrain draws are single-instance, so the value is exactly the firstInstance the backend
+// patched into the draw command. One descriptor bind therefore serves every region of a pass,
+// where the dynamic-offset delivery needed a rebind per region (agera-kpi-3).
+layout(std430, set = 0, binding = 5) readonly buffer CeltiumRegionOffsets {
+    vec4 u_RegionOffsets[];
+};
 
 layout(set = 0, binding = 1) uniform sampler2D u_LightTex;
 
@@ -263,7 +278,7 @@ void main() {
 
     // ---- main() ---------------------------------------------------------------------------
     // Transform the chunk-local vertex position into world model space
-    vec3 translation = celtium.u_RegionOffset.xyz + _get_draw_translation(_draw_id);
+    vec3 translation = u_RegionOffsets[gl_InstanceIndex].xyz + _get_draw_translation(_draw_id);
     vec3 worldPosition = _vert_position + translation;
 
     // Legacy fog: the fragment distance is evaluated in camera-relative model space, exactly as

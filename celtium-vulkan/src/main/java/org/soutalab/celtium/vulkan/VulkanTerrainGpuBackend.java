@@ -17549,6 +17549,11 @@ this.frameBufferOpen = false;
         }
         try {
             ensureUniformCapacity(this.terrain.regionCount());
+            // The binding-5 offset array's reservation rides with the uniform one (agera-kpi-3):
+            // one entry per region draw is the frame's upper bound, reserved before recording so
+            // the write cursor never crosses capacity mid-frame.
+            this.terrain.ensureRegionOffsetCapacity(this.context, this.frameSlot,
+                    (this.terrain.regionCount() * MAX_UNIFORM_PASSES) + 1);
         } catch (RuntimeException error) {
             this.immediateStatistics.noteUniformPreparationFailures();
             this.immediateStatistics.setLastUniformPreparationFailure(String.valueOf(error));
@@ -17571,7 +17576,7 @@ this.frameBufferOpen = false;
         // where this one has 128), and a set bound under one layout is not compatible with the other - measured in leg
         // shadowTerrain4 as VUID-vkCmdDrawIndexedIndirect-None-08600.
         VulkanUniformBuffer slotUniforms = this.terrain.uniforms(this.frameSlot);
-        pipeline.bindTextures(this.atlasTexture, this.lightmapTexture, slotUniforms.buffer(), slotUniforms.size(), this.terrain.dynamicLightBufferHandle(this.frameSlot), this.frameSlot);
+        pipeline.bindTextures(this.atlasTexture, this.lightmapTexture, slotUniforms.buffer(), slotUniforms.size(), this.terrain.dynamicLightBufferHandle(this.frameSlot), this.terrain.regionOffsetBufferHandle(this.frameSlot), this.terrain.regionOffsetBufferSize(this.frameSlot), this.frameSlot);
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("prepDescriptors");
         }
@@ -17804,6 +17809,21 @@ this.frameBufferOpen = false;
         LongBuffer regionDescSet = stack.mallocLong(1);
         IntBuffer regionDynOffset = stack.mallocInt(1);
         this.terrain.preparePassFog(pass);
+        // One uniform block and one descriptor bind for the whole pass (agera-kpi-3): the block
+        // carries only pass-constant values now, and each region's offset travels through the
+        // binding-5 array, named by the draw's firstInstance. The per-region rebind this
+        // replaces was the agera-kpi-2 census' second-largest terrain-record child (the bind
+        // alone measured ~7.5-10us per region batch on ANV). Nothing inside the region loop
+        // rebinds descriptor sets, and the immediate-group tail after the loop binds its own,
+        // so one bind at the pass' head serves every region draw below.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("recBind");
+        long passUniformStarted = System.nanoTime();
+        long passUniformOffset = this.terrain.writePassUniforms(pass, camera);
+        long passAfterUniform = System.nanoTime();
+        this.terrainUniformNanos += passAfterUniform - passUniformStarted;
+        pipeline.bindDescriptors(this.commandBuffer, passUniformOffset, this.frameSlot, regionDescSet, regionDynOffset);
+        this.terrainBindNanos += System.nanoTime() - passAfterUniform;
+        org.soutalab.celtium.vulkan.FramePassTimings.end("recBind");
         try {
         while (iterator.hasNext()) {
             ChunkRenderList renderList = iterator.next();
@@ -17889,11 +17909,12 @@ this.frameBufferOpen = false;
             }
             org.soutalab.celtium.vulkan.FramePassTimings.begin("recBind");
             long uniformStarted = System.nanoTime();
-            long uniformOffset = this.terrain.writeUniforms(region, pass, camera);
+            // The region's offset goes to the binding-5 array; the returned index rides the
+            // region's draw commands as firstInstance (agera-kpi-3). The descriptor bind itself
+            // happened once, at the pass' head.
+            int regionIndex = this.terrain.writeRegionOffset(region, camera);
             long afterUniform = System.nanoTime();
             this.terrainUniformNanos += afterUniform - uniformStarted;
-            pipeline.bindDescriptors(this.commandBuffer, uniformOffset, this.frameSlot, regionDescSet, regionDynOffset);
-            this.terrainBindNanos += System.nanoTime() - afterUniform;
             if (this.boundHandleLogs < 6 && this.atlasTexture != null) {
                 // Which pipeline and descriptor set the draw will actually use, next to the views the backend handed
                 // bindTextures. If the set printed here is not the one that was written, the terrain samples another
@@ -17980,7 +18001,7 @@ this.frameBufferOpen = false;
             // is drawn directly with the reason counted. BH-02's rule decides which source that is.
             boolean indirect = false;
             if (TERRAIN_INDIRECT_ENABLED) {
-                indirect = this.terrain.tryIndirectBatch(this.context, this.commandBuffer, stack, this.sharedIndexBuffers, resources, batch, sortedPass, primitiveType);
+                indirect = this.terrain.tryIndirectBatch(this.context, this.commandBuffer, stack, this.sharedIndexBuffers, resources, batch, sortedPass, primitiveType, regionIndex);
             } else {
                 this.terrain.noteTerrainIndirectFallback();
                 this.terrain.setLastTerrainIndirectFallback("the indirect path is off (-Dceltium.vulkan.indirectTerrain)");
@@ -18054,7 +18075,7 @@ this.frameBufferOpen = false;
                     }
                     // The run ends: draw it while its own source is still the bound one, then open a new run
                     // at this command, binding this command's source first when it differs.
-                    celtium$drawIndexedRun(runFirstIndex, runBaseVertex, runElementCount, resources);
+                    celtium$drawIndexedRun(runFirstIndex, runBaseVertex, runElementCount, resources, regionIndex);
                     if (arena != arenaBound) {
                         this.terrain.bindIndexBuffer(this.commandBuffer, arena
                                 ? resources.indexArena.buffer() : this.sharedIndexBuffers.get(primitiveType));
@@ -18065,7 +18086,7 @@ this.frameBufferOpen = false;
                 command++;
             }
             if (runStart >= 0) {
-                celtium$drawIndexedRun(runFirstIndex, runBaseVertex, runElementCount, resources);
+                celtium$drawIndexedRun(runFirstIndex, runBaseVertex, runElementCount, resources, regionIndex);
             }
             }
 
@@ -18167,11 +18188,13 @@ this.frameBufferOpen = false;
     /**
      * One {@code vkCmdDrawIndexed} for a merged run of source commands: the run's first index, its first command's
      * baseVertex, and the summed element count. The command-count and readback diagnostics see it as one draw, which
-     * it is.
+     * it is. {@code firstInstance} is the run's region index into the binding-5 offset array
+     * (agera-kpi-3): every command of a run belongs to the same region, so the whole run reads
+     * the one offset entry the indirect path would have stamped per command.
      */
     private void celtium$drawIndexedRun(long firstIndex, int baseVertex, int elementCount,
-            TerrainRenderer.RegionResources resources) {
-        vkCmdDrawIndexed(this.commandBuffer, elementCount, 1, (int) firstIndex, baseVertex, 0);
+            TerrainRenderer.RegionResources resources, int firstInstance) {
+        vkCmdDrawIndexed(this.commandBuffer, elementCount, 1, (int) firstIndex, baseVertex, firstInstance);
         if (VERTEX_DIAGNOSTICS && !this.readbackDone && this.readbackSlots < READBACK_SLOTS) {
             this.readbackOffsets[this.readbackSlots] = (long) baseVertex * this.commonVertexStride;
             this.readbackRegions[this.readbackSlots] = resources;
