@@ -187,6 +187,23 @@ public final class CeltiumLightCache {
     private static boolean funnelFirstSourceHitPrinted;
     private static boolean funnelNoRaisePrinted;
 
+    /**
+     * Whether the world-exit print ({@link #printFunnelSummaryOnWorldExit}) has already fired for
+     * the world the cache is currently rolled under. Reset by the world-identity roll in
+     * {@link #rollTick}, so each world gets exactly one final summary at its exit.
+     */
+    private static boolean funnelSummaryPrintedForWorld;
+
+    /**
+     * The world-exit print's insurance interval: a run killed before any {@code loadWorld(null)}
+     * (the harness's timeout kill is exactly that shape) never reaches the exit print, so the
+     * funnel also prints its summary every this many calls while the run is alive.
+     */
+    private static final long FUNNEL_PERIODIC_PRINT_INTERVAL = 50_000L;
+
+    /** The last summary the periodic print emitted; a repeat with unchanged counters is not reprinted. */
+    private static String funnelLastPeriodicSummary;
+
     /** {@return a compact summary of combined-light funnel traffic for diagnostics}. */
     public static String funnelSummary() {
         return "funnelCalls=" + funnelCalls + " funnelHits=" + funnelHits
@@ -196,26 +213,67 @@ public final class CeltiumLightCache {
                 + " " + MinecraftDynamicLightService.diagnosticSummary();
     }
 
+    /** The one print shape every funnel-summary outlet uses. */
+    private static void printFunnelSummaryLine() {
+        System.out.println("[Celtium] CELTIUM_FUNNEL_SUMMARY " + funnelSummary());
+    }
+
+    /**
+     * The world-exit print's gate, kept pure and free of Minecraft types so the rule itself is
+     * unit-testable: a world's final summary is due exactly when the funnel saw traffic and this
+     * world's exit has not printed yet. A world the funnel never served has no final state worth
+     * a line, and a second {@code loadWorld(null)} for the same world (disconnect, then shutdown)
+     * must not print it twice.
+     */
+    static boolean funnelExitPrintDue(long calls, boolean alreadyPrintedForWorld) {
+        return calls > 0 && !alreadyPrintedForWorld;
+    }
+
+    /**
+     * The periodic print's gate, kept pure like {@link #funnelExitPrintDue}: due exactly on a
+     * multiple of the interval. The calls counter only ever moves by one, so an exact multiple is
+     * a crossing, never a skip.
+     */
+    static boolean funnelPeriodicPrintDue(long calls, long interval) {
+        return calls > 0 && calls % interval == 0;
+    }
+
+    /**
+     * Prints the final {@link #funnelSummary()} from inside the game, at world exit - the primary
+     * outlet for the counters, called by the mixin on {@code Minecraft.loadWorld} when it is
+     * handed {@code null} (disconnect and the game's own shutdown sequence both pass through
+     * there). This is the print the shutdown hook below could not deliver in the validation
+     * harness: by JVM-hook time the harness's log plumbing is already torn down, while a print
+     * from the game's own shutdown sequence still lands in the captured console (measured, item
+     * 430 legs). Once per world; the guard resets when the cache rolls under a different world
+     * object (see {@link #rollTick}).
+     */
+    public static void printFunnelSummaryOnWorldExit() {
+        if (funnelExitPrintDue(funnelCalls, funnelSummaryPrintedForWorld)) {
+            funnelSummaryPrintedForWorld = true;
+            printFunnelSummaryLine();
+        }
+    }
+
     /**
      * Prints {@link #funnelSummary()} once, when the JVM exits.
      * <p>
-     * The counters exist so real-game legs can verify the funnel is live (item 430 reads them), but
-     * nothing called this: the traffic accumulated and no surface ever showed it. A shutdown hook is
-     * the one place that runs after the last lookup of every configuration - a run killed by the
-     * harness's timeout included - and it only reads these counters, never the game. The font glyph
-     * capture's summary hook is the same shape, for the same reason.
+     * The counters exist so real-game legs can verify the funnel is live (item 430 reads them).
+     * This hook is the last resort for interactive runs only: the primary outlet is now the
+     * in-game print at world exit ({@link #printFunnelSummaryOnWorldExit}), backed by the
+     * periodic print inside {@link #combinedLightFunnel} for runs killed before any exit.
      * <p>
      * Measured caveat (item 430, 2026-11-21 legs): in the validation harness this print does NOT
      * reach the captured console even in runs where the funnel provably raised - by JVM-hook time
      * the harness's log plumbing is already torn down, while prints from the game's own shutdown
-     * sequence still land. Legs must read the in-run first-event prints in
-     * {@link #combinedLightFunnel} (first source query / first source hit / no-raise-yet), which
-     * carry the same counters; this hook remains as a last resort for interactive runs only.
+     * sequence still land. Legs must read the world-exit print, the periodic prints, or the
+     * in-run first-event prints in {@link #combinedLightFunnel} (first source query / first
+     * source hit / no-raise-yet), which carry the same counters.
      */
     static {
         try {
             Runtime.getRuntime().addShutdownHook(new Thread(
-                    () -> System.out.println("[Celtium] CELTIUM_FUNNEL_SUMMARY " + funnelSummary()),
+                    CeltiumLightCache::printFunnelSummaryLine,
                     "celtium-funnel-summary"));
         } catch (IllegalStateException | SecurityException ignored) {
             // A shutdown already in progress, or a security manager: the counters are a diagnostic, not a contract.
@@ -227,6 +285,17 @@ public final class CeltiumLightCache {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("lightCache");
         try {
             funnelCalls++;
+            if (funnelPeriodicPrintDue(funnelCalls, FUNNEL_PERIODIC_PRINT_INTERVAL)) {
+                // Insurance for runs that never reach a world exit (a harness timeout kill is
+                // exactly that shape): the summary reaches the captured console while the run is
+                // alive, at most once per interval and only when the counters moved since the
+                // last periodic print.
+                String summary = funnelSummary();
+                if (!summary.equals(funnelLastPeriodicSummary)) {
+                    funnelLastPeriodicSummary = summary;
+                    System.out.println("[Celtium] CELTIUM_FUNNEL_SUMMARY " + summary);
+                }
+            }
             if (!funnelApplies(ENABLED, lightValue, world.isRemote, isClientMainThread())) {
                 funnelPassthrough++;
                 return vanillaBody.getAsInt();
@@ -395,6 +464,10 @@ public final class CeltiumLightCache {
         long now = world.getTotalWorldTime();
         long epoch = lightEpoch;
         if (generationRolls(tick, lightEpochSeen, world == rolledWorld, now, epoch)) {
+            if (world != rolledWorld) {
+                // A different world object: its exit has not printed a funnel summary yet.
+                funnelSummaryPrintedForWorld = false;
+            }
             tick = now;
             lightEpochSeen = epoch;
             rolledWorld = world;
