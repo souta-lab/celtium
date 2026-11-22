@@ -79,6 +79,14 @@ public final class VulkanSwapchain {
     private int height;
 
     private String argumentSummary = "not attempted";
+
+    /**
+     * Whether the latest {@link #createSwapchain} attempt stopped as a wait - the surface pins a 0x0
+     * extent, so no creation was possible - rather than as a refusal. Read by {@link #buildForSurface}
+     * on the failure path and carried to the caller in {@link CreationOutcome}; the object itself is
+     * deleted on that path, so the flag cannot travel on it.
+     */
+    private boolean creationAwaitingSurfaceSize;
     /** What the surface reported at the last creation attempt, and how the request differs from it (BH-18). */
     private String surfaceOffer = "surface-offer: not queried";
     /** The present modes the surface offered at that attempt, by name. */
@@ -786,6 +794,19 @@ public final class VulkanSwapchain {
     }
 
     /**
+     * The part of a creation attempt's outcome the {@code reasons} list cannot carry: whether a failed
+     * attempt was refused, or stopped as a wait because the surface has not reported a size to create
+     * against. The distinction is the caller's to act on - a refusal counts toward the swapchain creation
+     * escalation, a wait does not - and it is decided at the arguments seam
+     * ({@link SwapchainCreateArguments.Result#awaitingSurfaceSize}), so it travels as this typed outcome
+     * rather than as a sentence the caller would have to re-read.
+     */
+    public static final class CreationOutcome {
+        /** Set when the attempt stopped because the surface pins a 0x0 extent (a minimised window). */
+        public boolean awaitingSurfaceSize;
+    }
+
+    /**
      * Creates a surface for the window and a swapchain for it.
      *
      * @param window the GLFW window handle Minecraft renders into
@@ -794,7 +815,7 @@ public final class VulkanSwapchain {
      */
     public static VulkanSwapchain create(VulkanContext context, long window, int width, int height,
                                          List<String> reasons) {
-        return create(context, window, width, height, reasons, VK_NULL_HANDLE);
+        return create(context, window, width, height, reasons, VK_NULL_HANDLE, new CreationOutcome());
     }
 
     /**
@@ -804,6 +825,18 @@ public final class VulkanSwapchain {
      */
     public static VulkanSwapchain create(VulkanContext context, long window, int width, int height,
                                          List<String> reasons, long reusedSurface) {
+        return create(context, window, width, height, reasons, reusedSurface, new CreationOutcome());
+    }
+
+    /**
+     * Creates a swapchain, adopting {@code reusedSurface} when the caller kept one for this same window,
+     * and reports in {@code outcome} whether a failure was a refusal or a wait for the surface to report
+     * a size.
+     *
+     * @param reusedSurface a surface detached from the previous swapchain, or {@link VK_NULL_HANDLE} to build one
+     */
+    public static VulkanSwapchain create(VulkanContext context, long window, int width, int height,
+                                         List<String> reasons, long reusedSurface, CreationOutcome outcome) {
         if (context == null || window == 0L) {
             reasons.add("no window handle was available for a Vulkan surface");
             return null;
@@ -820,7 +853,7 @@ public final class VulkanSwapchain {
         if (reusedSurface != VK_NULL_HANDLE) {
             // Same window, same surface: nothing to create, and nothing for the compositor's explicit-sync state to
             // be re-initialised against.
-            return buildForSurface(context, window, reusedSurface, "reused-surface", width, height, reasons);
+            return buildForSurface(context, window, reusedSurface, "reused-surface", width, height, reasons, outcome);
         }
         if (CeltiumWindow.sdl()) {
             String compositor = CeltiumWindow.sdlCompositor();
@@ -878,7 +911,7 @@ public final class VulkanSwapchain {
                     System.out.println("[Celtium] CELTIUM_SURFACE_WIN32 created=true hwnd=0x"
                             + Long.toHexString(hwnd) + " hinstance=0x" + Long.toHexString(hinstance));
                     return buildForSurface(context, window, handle.get(0), "win32-raw",
-                            width, height, reasons);
+                            width, height, reasons, outcome);
                 }
             }
             if (compositor != null && compositor.equalsIgnoreCase("X11")) {
@@ -907,7 +940,7 @@ public final class VulkanSwapchain {
                     }
                     surface = handle.get(0);
                 }
-                return buildForSurface(context, window, surface, where, width, height, reasons);
+                return buildForSurface(context, window, surface, where, width, height, reasons, outcome);
             }
             long sdlWindow = CeltiumWindow.sdlWindowPointer();
             if (sdlWindow == 0L) {
@@ -950,7 +983,7 @@ public final class VulkanSwapchain {
                         return null;
                     }
                     surface = handle.get(0);
-                    return buildForSurface(context, window, surface, where + "-wayland-raw", width, height, reasons);
+                    return buildForSurface(context, window, surface, where + "-wayland-raw", width, height, reasons, outcome);
                 }
                 if (!org.lwjgl.sdl.SDLVulkan.SDL_Vulkan_CreateSurface(sdlWindow, context.instance(), null, handle)) {
                     reasons.add("SDL_Vulkan_CreateSurface failed for compositor " + compositor
@@ -959,7 +992,7 @@ public final class VulkanSwapchain {
                 }
                 surface = handle.get(0);
             }
-            return buildForSurface(context, window, surface, where, width, height, reasons);
+            return buildForSurface(context, window, surface, where, width, height, reasons, outcome);
         }
         int platformId = GLFW.glfwGetPlatform();
         String platform;
@@ -1012,13 +1045,13 @@ public final class VulkanSwapchain {
             }
         }
 
-        return buildForSurface(context, window, surface, platform, width, height, reasons);
+        return buildForSurface(context, window, surface, platform, width, height, reasons, outcome);
     }
 
     /** Builds the swapchain for an already-created surface; the platform name is for diagnostics. */
     private static VulkanSwapchain buildForSurface(VulkanContext context, long window, long surface, String platform,
                                                    int width,
-            int height, List<String> reasons) {
+            int height, List<String> reasons, CreationOutcome outcome) {
         // BH-19: the present-support contract, and the ownership/sharing decision behind it.
         //
         // The decision, written down because the audit asks for a decision rather than an omission: **one queue is
@@ -1069,6 +1102,9 @@ public final class VulkanSwapchain {
         VulkanSwapchain swapchain = new VulkanSwapchain(context, surface, platform, window);
         try {
             if (!swapchain.createSwapchain(width, height, reasons)) {
+                if (swapchain.creationAwaitingSurfaceSize) {
+                    outcome.awaitingSurfaceSize = true;
+                }
                 swapchain.delete();
                 return null;
             }
@@ -2690,6 +2726,10 @@ public final class VulkanSwapchain {
                     SwapchainCreateArguments.select(surfaceOfferValues, requestedWidth, requestedHeight,
                             desiredImageCount(), PRESENT_TRANSFER_ONLY);
             if (choice.refusal != null) {
+                // The one classification the caller acts on: a pinned 0x0 extent is a wait, carried on the
+                // outcome rather than in the reason text, so the creation escalation never has to re-read
+                // the sentence to know a minimised window is not a refusing surface.
+                this.creationAwaitingSurfaceSize = choice.awaitingSurfaceSize;
                 reasons.add(choice.refusal + " (surface offered formats " + availableFormats + ")");
                 return false;
             }

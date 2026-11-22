@@ -18938,13 +18938,34 @@ this.frameBufferOpen = false;
         long adopt = window == this.reusableSurfaceWindow ? this.reusableSurface : 0L;
         this.reusableSurface = 0L;
         this.reusableSurfaceWindow = 0L;
-        this.swapchain = VulkanSwapchain.create(this.context, window, framebufferWidth, framebufferHeight, reasons, adopt);
+        VulkanSwapchain.CreationOutcome creationOutcome = new VulkanSwapchain.CreationOutcome();
+        this.swapchain = VulkanSwapchain.create(this.context, window, framebufferWidth, framebufferHeight, reasons, adopt,
+                creationOutcome);
         if (this.swapchain != null) {
             this.swapchainCreationEscalation.recordSuccess();
             org.soutalab.celtium.vulkan.CeltiumFramePacing.setFifoPacing(this.swapchain.presentModeIsFifo());
         }
         forwardPendingPresentedDumps();
         if (this.swapchain == null) {
+            if (creationOutcome.awaitingSurfaceSize) {
+                // A wait, not a refused creation: the surface pins a 0x0 extent (a minimised window, or one
+                // mid-resize), so no caller could have created a swapchain against it and nothing about the
+                // surface's fitness was decided. The escalation below counts refused creations only, and
+                // feeding it waits is what killed a healthy shipped v0.3.0 session: the surface pinned 0x0
+                // while a world loaded, the loading screen's present loop retried unthrottled, and 120 waits
+                // in about two seconds reached the limit. The frame is skipped exactly as the pre-attempt
+                // returns above skip it, creation is retried on the next present, and the escalation is left
+                // untouched - neither fed nor reset, because a wait is neither a refusal nor a success. The
+                // first present after the surface reports a size lands the creation and its recordSuccess.
+                this.presentSkipReason = "surface reports no size yet";
+                if (!this.pendingPresentedDumps.isEmpty()) {
+                    // Held, as on the refusal path: the next successful creation still serves the request.
+                    record("presented-image dump held while swapchain creation waits for a surface size: "
+                            + this.pendingPresentedDumps + " (" + reasons + ")");
+                }
+                record("swapchain creation waiting: the surface reports no size yet: " + reasons);
+                return false;
+            }
             // Only this branch is a refused creation: the returns above it (no window handle, no drawable
             // size) attempted nothing, so they never reach the latch. The refusal is latched with its
             // reasons for the escalation the swap point polls; the recording is all that changes here -

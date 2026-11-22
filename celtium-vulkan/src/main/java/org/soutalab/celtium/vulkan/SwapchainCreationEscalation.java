@@ -20,7 +20,13 @@ package org.soutalab.celtium.vulkan;
  * <p>
  * Only refused creations are counted: the calls that return before attempting one (no window handle yet, a
  * minimised window with no drawable size) never reach this class, so a game sitting in the menu before its
- * window exists accrues nothing. A successful creation resets the run, so the count is consecutive, not
+ * window exists accrues nothing. A creation that stops inside the attempt because the surface pins a 0x0
+ * extent is the same wait one step later - the arguments seam flags it
+ * ({@code SwapchainCreateArguments.Result#awaitingSurfaceSize}) and the backend routes it around this
+ * latch, neither feeding nor resetting the run - because a minimised or resizing window is a state, not a
+ * verdict: a shipped v0.3.0 session whose surface pinned 0x0 for about two seconds of world-load presents
+ * once reached 120 here and died, on a surface that created its swapchain the moment it reported a size
+ * again. A successful creation resets the run, so the count is consecutive, not
  * cumulative: an ordinary rebuild (a resize, a present-mode change) drops and recreates inside one
  * {@code ensureSwapchain()} call and lands on the success, and a surface that refuses only while a driver
  * finishes initialising recovers the moment one creation lands. The limit is in attempts because creation
