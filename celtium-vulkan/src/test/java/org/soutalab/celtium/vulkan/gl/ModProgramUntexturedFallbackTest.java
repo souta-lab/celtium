@@ -1,8 +1,8 @@
-package org.soutalab.celtium.vulkan;
+package org.soutalab.celtium.vulkan.gl;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.soutalab.celtium.vulkan.gl.ModProgramRegistry;
+import org.soutalab.celtium.vulkan.VulkanModProgramPipeline;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
