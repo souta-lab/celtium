@@ -17438,7 +17438,7 @@ this.frameBufferOpen = false;
             long[] attachedColorImages = null;
 
             if (onMain) {
-                this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+                celtium$segmentAwareAcquireBarriers();
                 framebuffer = ensureFramebuffer(targetRenderPass);
                 this.passAttachedColorImage = this.frameTarget.colorImage();
                 this.passAttachedColorImages = null;
@@ -17880,7 +17880,7 @@ this.frameBufferOpen = false;
                 if (pairOwner != null) {
                     pairOwner.recordChainPairAttachRelease(drawIdentity, routedDepthKey);
                 } else if (onMain) {
-                    this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+                    celtium$passEndReleaseBarriers();
                 }
             }
             if (this.packTerrainDrawnLogs < 16) {
@@ -18885,6 +18885,19 @@ this.frameBufferOpen = false;
         this.layoutSegmentReacquirePending = false;
         if (this.frameTarget instanceof GllessFrameTarget glless) {
             glless.requireAttachmentBarriers(this.commandBuffer, true);
+        }
+    }
+
+    /**
+     * A pass head that attaches the frame image with no outside consumer in between (the pack terrain
+     * path, which has no publish walk of its own): flag on, the segment-aware acquire - a no-op when the
+     * previous pass or window left the segment open and no clear is pending; flag off, the legacy acquire.
+     */
+    private void celtium$segmentAwareAcquireBarriers() {
+        if (LayoutOwnership.ENABLED && this.frameTarget instanceof GllessFrameTarget glless) {
+            glless.requireAttachmentBarriers(this.commandBuffer, true);
+        } else {
+            this.frameTarget.recordAcquireBarriers(this.commandBuffer);
         }
     }
 
