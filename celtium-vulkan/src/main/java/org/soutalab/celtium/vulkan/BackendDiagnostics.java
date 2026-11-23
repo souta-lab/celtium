@@ -366,17 +366,17 @@ final class BackendDiagnostics {
                 // which without a log. Surfaced here and not in b.diagnostics(): that list is not part of the report.
                 + " gameClearLatch=" + (b.celtium$gameClearLatchEnabled() ? "on" : "off")
                 + " presentedMean=" + (b.swapchain != null ? b.swapchain.lastPresentedMean() : -1.0f)
-                + " swapPointCalls=" + b.swapPointCalls
-                + " swapPointMillis=" + (b.swapPointNanos / 1000000L)
-                + " swapPointFlushMillis=" + (b.swapPointFlushNanos / 1000000L)
-                + " swapPointWorstMs=" + (b.swapPointWorstNanos / 1000000L)
+                + " swapPointCalls=" + b.presentSwapchain.swapPointCalls
+                + " swapPointMillis=" + (b.presentSwapchain.swapPointNanos / 1000000L)
+                + " swapPointFlushMillis=" + (b.presentSwapchain.swapPointFlushNanos / 1000000L)
+                + " swapPointWorstMs=" + (b.presentSwapchain.swapPointWorstNanos / 1000000L)
                 + " presentStages[" + (b.swapchain != null
                         ? org.soutalab.celtium.vulkan.VulkanSwapchain.presentStageSummary() : "none") + "]"
-                + " swapPointImageMillis=" + (b.swapPointImageNanos / 1000000L)
-                + " swapPointImageMs[p50/p95/worst=" + b.celtium$distribution(b.swapPointImageRing, b.swapPointImageRingCount) + "]"
+                + " swapPointImageMillis=" + (b.presentSwapchain.swapPointImageNanos / 1000000L)
+                + " swapPointImageMs[p50/p95/worst=" + b.celtium$distribution(b.presentSwapchain.swapPointImageRing, b.presentSwapchain.swapPointImageRingCount) + "]"
                 + " submitToFenceMs[p50/p95/worst=" + b.celtium$distribution(b.submitToFenceRing, b.submitToFenceRingCount) + "]"
-                + " swapPointDumpMillis=" + (b.swapPointDumpNanos / 1000000L)
-                + " swapPointPollMillis=" + (b.swapPointPollNanos / 1000000L)
+                + " swapPointDumpMillis=" + (b.presentSwapchain.swapPointDumpNanos / 1000000L)
+                + " swapPointPollMillis=" + (b.presentSwapchain.swapPointPollNanos / 1000000L)
                 + " presentMarkerExpected=170.0_magenta_1_0_1"
                 + " fogModeSource=native-owner"
                 // The lit ITEM family's fog: 0 lit-fog groups with a 256-byte block means the fix is compiled but never

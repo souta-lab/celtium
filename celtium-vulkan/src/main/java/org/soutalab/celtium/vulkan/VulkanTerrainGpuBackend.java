@@ -1982,18 +1982,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     int glSwapsSkipped;
     /** Per-frame present calls that arrived, and why the last one did not present. */
     int presentHookCalls;
-    /**
-     * Swap-point wall-clock accounting, in nanos: {@code celtium$presentFrame} runs between updateRenderer's end and
-     * the window swap, outside every {@code FramePassTimings} bracket. A frame-interval gap that survives the bracket
-     * split needs these to say whether the present (acquire, blit submit, queue present) or the boundary flush owns
-     * the time.
-     */
-    long swapPointNanos;
-    long swapPointFlushNanos;
-    long swapPointWorstNanos;
-    long swapPointCalls;
-    /** The three blocks inside a present call that are not the swapchain stages themselves. */
-    long swapPointImageNanos;
+    // The swap-point accounting (swapPoint*) lives in PresentSwapchain with the present path it
+    // measures (item 704, R3 candidate 2 carried out with the R10 extraction).
     /**
      * The last {@link #DISTRIBUTION_SAMPLES} durations of the two frame costs that decide the interval but are invisible
      * in the render brackets: the swap-point image path (frame image to swapchain blit plus the wait for the frame's
@@ -2001,23 +1991,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * "what does a steady-state frame pay" - the load phase dominates them - so the summary reports p50/p95/worst of
      * both.
      */
-    private static final int DISTRIBUTION_SAMPLES = 512;
-    final long[] swapPointImageRing = new long[DISTRIBUTION_SAMPLES];
-    private int swapPointImageRingAt;
-    int swapPointImageRingCount;
+    static final int DISTRIBUTION_SAMPLES = 512;
     final long[] submitToFenceRing = new long[DISTRIBUTION_SAMPLES];
     private int submitToFenceRingAt;
     int submitToFenceRingCount;
     /** When the current slot's submission reached the queue, for the submit-to-fence measurement. */
     private final long[] slotSubmitNanos = new long[FRAME_SLOTS];
 
-    void celtium$noteSwapPointImage(long nanos) {
-        this.swapPointImageRing[this.swapPointImageRingAt] = nanos;
-        this.swapPointImageRingAt = (this.swapPointImageRingAt + 1) % DISTRIBUTION_SAMPLES;
-        if (this.swapPointImageRingCount < DISTRIBUTION_SAMPLES) {
-            this.swapPointImageRingCount++;
-        }
-    }
 
     private void celtium$noteSubmitToFence(int slot, long nanos) {
         if (nanos <= 0L) {
@@ -2042,8 +2022,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         long worst = copy[count - 1] / 1000000L;
         return p50 + "/" + p95 + "/" + worst + " n=" + count;
     }
-    long swapPointDumpNanos;
-    long swapPointPollNanos;
     /** Bounded probe counter for the frame-queued setter. */
     private int celtium$lastFrameReachedQueueLogs;
     /** The path the fixture asked its presented-image dump to be written to, re-asked on a cadence. */
@@ -12295,7 +12273,7 @@ this.frameBufferOpen = false;
             // A failed flush must not stop the frame: the queued work keeps its owner and the next boundary retries.
             record("frame-boundary flush failed: " + error);
         } finally {
-            this.swapPointFlushNanos += System.nanoTime() - flushStartedNanos;
+            this.presentSwapchain.swapPointFlushNanos += System.nanoTime() - flushStartedNanos;
         }
     }
 

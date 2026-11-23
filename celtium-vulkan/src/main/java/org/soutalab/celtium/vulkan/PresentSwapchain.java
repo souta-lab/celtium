@@ -14,7 +14,9 @@ package org.soutalab.celtium.vulkan;
  * renderer, so this class reads them through the backend. The state that was already local to this
  * cluster (the kept surface, the cached window-begin struct) moved with the code. Every entry the rest
  * of the renderer calls keeps its name and signature on the backend as a delegating door, so no caller
- * changed.
+ * changed. The swap-point accounting ({@code swapPoint*}) also lives here: it measures this present path,
+ * and its one writer outside it (the boundary flush's share) reaches it through the backend's
+ * {@code presentSwapchain} field.
  */
 final class PresentSwapchain {
 
@@ -22,6 +24,33 @@ final class PresentSwapchain {
 
     PresentSwapchain(VulkanTerrainGpuBackend backend) {
         this.backend = backend;
+    }
+
+    /**
+     * Swap-point wall-clock accounting, in nanos: {@code celtium$presentFrame} runs between updateRenderer's end and
+     * the window swap, outside every {@code FramePassTimings} bracket. A frame-interval gap that survives the bracket
+     * split needs these to say whether the present (acquire, blit submit, queue present) or the boundary flush owns
+     * the time.
+     */
+    long swapPointNanos;
+    long swapPointFlushNanos;
+    long swapPointWorstNanos;
+    long swapPointCalls;
+    /** The three blocks inside a present call that are not the swapchain stages themselves. */
+    long swapPointImageNanos;
+    /** The image ring of the swap-point accounting; its size is the backend's {@code DISTRIBUTION_SAMPLES}, shared with the submit-to-fence ring that stayed there. */
+    final long[] swapPointImageRing = new long[VulkanTerrainGpuBackend.DISTRIBUTION_SAMPLES];
+    private int swapPointImageRingAt;
+    int swapPointImageRingCount;
+    long swapPointDumpNanos;
+    long swapPointPollNanos;
+
+    private void celtium$noteSwapPointImage(long nanos) {
+        this.swapPointImageRing[this.swapPointImageRingAt] = nanos;
+        this.swapPointImageRingAt = (this.swapPointImageRingAt + 1) % VulkanTerrainGpuBackend.DISTRIBUTION_SAMPLES;
+        if (this.swapPointImageRingCount < VulkanTerrainGpuBackend.DISTRIBUTION_SAMPLES) {
+            this.swapPointImageRingCount++;
+        }
     }
 
     /** A surface kept across a rebuild: it belongs to the window, and recreating it breaks Wayland's explicit sync. */
@@ -407,14 +436,14 @@ final class PresentSwapchain {
             // end of updateRenderer and the window swap - outside every FramePassTimings bracket, so a leg's
             // wall-vs-CPU gap cannot attribute them without a dedicated counter.
             long spentNanos = System.nanoTime() - presentStartedNanos;
-            backend.swapPointNanos += spentNanos;
+            this.swapPointNanos += spentNanos;
             FrameBudgetTimings.addPresent(spentNanos);
             // The cadence mark: a menu presents frames without ever reaching the frame boundary, so this is the only
             // place the frame period is measured there (-Dceltium.vulkan.frameBudget=true; a no-op otherwise).
             FrameBudgetTimings.markPresent();
-            backend.swapPointCalls++;
-            if (spentNanos > backend.swapPointWorstNanos) {
-                backend.swapPointWorstNanos = spentNanos;
+            this.swapPointCalls++;
+            if (spentNanos > this.swapPointWorstNanos) {
+                this.swapPointWorstNanos = spentNanos;
             }
         }
     }
@@ -672,8 +701,8 @@ final class PresentSwapchain {
                     presentSourceLayout, backend.targetWidth, backend.targetHeight, org.lwjgl.vulkan.VK10.VK_NULL_HANDLE,
                     org.lwjgl.vulkan.VK10.VK_NULL_HANDLE, org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);            backend.frameTarget.noteColorImageLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
             long presentImageNanos = System.nanoTime() - presentImageStartedNanos;
-            backend.swapPointImageNanos += presentImageNanos;
-            backend.celtium$noteSwapPointImage(presentImageNanos);
+            this.swapPointImageNanos += presentImageNanos;
+            celtium$noteSwapPointImage(presentImageNanos);
             backend.presentAttempts++;
             backend.presentSkipReason = "presented";
             boolean reached = backend.swapchain.lastPresentSucceeded();
@@ -697,13 +726,13 @@ final class PresentSwapchain {
                 }
                 long dumpStartedNanos = System.nanoTime();
                 dumpFrameIfRequested(backend.framePresentedFromVulkan);
-                backend.swapPointDumpNanos += System.nanoTime() - dumpStartedNanos;
+                this.swapPointDumpNanos += System.nanoTime() - dumpStartedNanos;
                 // The caller skips the game's own Display.update when this returns true, and that call is also what polls
                 // the window's events, so they are polled here instead: input keeps working without the GL swap. Done in
                 // this module because the GLFW classes are on its classpath and not on the game module's.
                 long pollStartedNanos = System.nanoTime();
                 celtium$pollEvents();
-                backend.swapPointPollNanos += System.nanoTime() - pollStartedNanos;
+                this.swapPointPollNanos += System.nanoTime() - pollStartedNanos;
                 // The game's own Display.update runs after this and would swap through GL as well. The frame that swap
                 // would show is the one just presented, so it is skipped once, at the swap point itself.
                 backend.swapPendingFromVulkan = true;
