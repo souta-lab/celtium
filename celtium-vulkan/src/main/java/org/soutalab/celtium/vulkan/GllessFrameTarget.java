@@ -220,6 +220,27 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private float gameClearLatchedBlue;
     private float gameClearLatchedAlpha;
     private double gameClearLatchedDepth = 1.0D;
+    /**
+     * GLSM stage 2 (S2-2): the shared frame state this target's frame latch moves into on the
+     * stage-2 route, attached by the backend at creation. The frame identity is resolved
+     * through the supplier at call time - the registry's main identity is only established
+     * after targets exist, so capturing its value here would freeze a stale key. Both stay
+     * null on the off route, where the fields above remain the latch's only owner.
+     */
+    private GlsmFrameState glsmFrameState;
+    private java.util.function.LongSupplier glsmFrameIdentity;
+
+    /**
+     * Attaches the shared GLSM frame state (stage 2). The backend calls this when it creates
+     * the target, so the frame latch has exactly one home per route: the ClearState on the on
+     * route, this class's fields on the off route.
+     */
+    public void celtium$attachGlsmFrameState(GlsmFrameState state,
+                                             java.util.function.LongSupplier frameIdentity) {
+        this.glsmFrameState = state;
+        this.glsmFrameIdentity = frameIdentity;
+    }
+
     /** How many clears came from the latch and how many still had to be read live, for this target's summary. */
     private int latchedGameClears;
     private int liveGameClears;
@@ -777,6 +798,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
         private float latchedBlue;
         private float latchedAlpha;
         private double latchedDepth;
+        // GLSM stage 2 (S2-2): the frame latch's ClearState record, and the applied count its
+        // consumption moved, captured and restored as a pair on the frame-state route - the
+        // ClearState equivalent of the gameClearLatched* fields above.
+        private GlsmFrameState.PendingClear glsmLatched;
+        private long glsmAppliedTotal;
+        private boolean glsmSnapshot;
         private boolean defaultAcquired;
         // Parallel arrays, not two boxed maps: a snapshot is taken for every window flush (~10 a frame) and covers
         // every chain pair, while a rollback that reads it back is rare.
@@ -805,6 +832,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
         snapshot.latchedBlue = this.gameClearLatchedBlue;
         snapshot.latchedAlpha = this.gameClearLatchedAlpha;
         snapshot.latchedDepth = this.gameClearLatchedDepth;
+        if (GlsmFrameState.ENABLED && this.glsmFrameState != null) {
+            snapshot.glsmLatched = this.glsmFrameState.clearState()
+                    .peek(this.glsmFrameIdentity.getAsLong());
+            snapshot.glsmAppliedTotal = this.glsmFrameState.clearState().appliedTotal();
+            snapshot.glsmSnapshot = true;
+        } else {
+            snapshot.glsmSnapshot = false;
+            snapshot.glsmLatched = null;
+        }
         snapshot.defaultAcquired = this.defaultPair.acquired;
         int size = this.chainPairs.size();
         if (snapshot.chainKeys == null || snapshot.chainKeys.length < size) {
@@ -846,6 +882,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
         this.gameClearLatchedBlue = snapshot.latchedBlue;
         this.gameClearLatchedAlpha = snapshot.latchedAlpha;
         this.gameClearLatchedDepth = snapshot.latchedDepth;
+        if (snapshot.glsmSnapshot && this.glsmFrameState != null) {
+            this.glsmFrameState.clearState().restore(this.glsmFrameIdentity.getAsLong(),
+                    snapshot.glsmLatched);
+            this.glsmFrameState.clearState().restoreAppliedTotal(snapshot.glsmAppliedTotal);
+        }
         this.defaultPair.acquired = snapshot.defaultAcquired;
         for (int i = 0; i < snapshot.chainCount; i++) {
             Pair pair = this.chainPairs.get(snapshot.chainKeys[i]);
@@ -930,7 +971,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
      */
     private void applyGameClears(VkCommandBuffer command) {
         boolean first = this.neverCleared;
-        boolean latched = this.gameClearLatched;
+        // GLSM stage 2 (S2-2): on the frame-state route the latch is the ClearState's pending
+        // record for the frame identity, consumed here at the point the fields were read. The
+        // fields are never written on this route, so the two owners can never both hold one.
+        GlsmFrameState.PendingClear stateLatched = null;
+        if (GlsmFrameState.ENABLED && this.glsmFrameState != null) {
+            stateLatched = this.glsmFrameState.clearState()
+                    .consume(this.glsmFrameIdentity.getAsLong());
+        }
+        boolean latched = stateLatched != null || this.gameClearLatched;
         boolean initializeOnly = false;
         int clears;
         float latchedRed = 0.0F;
@@ -939,13 +988,22 @@ public final class GllessFrameTarget implements FrameImageTarget {
         float latchedAlpha = 0.0F;
         double latchedDepth = 1.0D;
         if (latched) {
-            clears = this.gameClearLatchedMask;
-            latchedRed = this.gameClearLatchedRed;
-            latchedGreen = this.gameClearLatchedGreen;
-            latchedBlue = this.gameClearLatchedBlue;
-            latchedAlpha = this.gameClearLatchedAlpha;
-            latchedDepth = this.gameClearLatchedDepth;
-            this.gameClearLatched = false;
+            if (stateLatched != null) {
+                clears = stateLatched.mask;
+                latchedRed = stateLatched.red;
+                latchedGreen = stateLatched.green;
+                latchedBlue = stateLatched.blue;
+                latchedAlpha = stateLatched.alpha;
+                latchedDepth = stateLatched.depth;
+            } else {
+                clears = this.gameClearLatchedMask;
+                latchedRed = this.gameClearLatchedRed;
+                latchedGreen = this.gameClearLatchedGreen;
+                latchedBlue = this.gameClearLatchedBlue;
+                latchedAlpha = this.gameClearLatchedAlpha;
+                latchedDepth = this.gameClearLatchedDepth;
+                this.gameClearLatched = false;
+            }
         } else {
             int owner = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.pendingClearDrawFbo();
             boolean ownerIsMain = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.pendingClearIsMain();

@@ -1084,6 +1084,10 @@ final class CopyReadSide {
             // There is no GL side to share images with: the frame lands in an owned target whose semaphores are
             // signalled and consumed by Vulkan submissions alone.
             this.backend.frameTarget = GllessFrameTarget.create(this.backend.context, width, height);
+            // GLSM stage 2: the new target latches its frame clears into the backend's shared
+            // frame state on the stage-2 route (a no-op shape off it - the attach is cheap
+            // and the target only reads the state when the route is on).
+            this.backend.celtium$attachFrameState();
             if (this.backend.gameFramebufferIsShared) {
                 this.backend.frameTarget.noteGameFramebufferAdopted();
             }

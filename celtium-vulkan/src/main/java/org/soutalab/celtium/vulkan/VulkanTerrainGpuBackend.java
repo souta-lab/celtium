@@ -877,6 +877,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     final RenderTargetRegistry targetRegistry = new RenderTargetRegistry();
     /**
+     * GLSM stage 2 (glsm-stage2-design.md §3.1): the frame-target state machine. S2-2 moves
+     * the clear issue/application state into its ClearState; every clear site below reads the
+     * owner {@link GlsmFrameState#ENABLED} selects, and the legacy owners (the registry's
+     * latch and ownership rule, {@code GllessFrameTarget}'s latch fields, this class's
+     * carried-reservation fields) stay the off route's state, untouched there.
+     */
+    final GlsmFrameState glsmFrameState = new GlsmFrameState();
+    /**
      * Bumped when a world's resources are released, so a queued group from the previous world can never be drawn.
      * <p>
      * The window-owned backend outlives a world: on a quit to the title screen the world renderer detaches and
@@ -6572,6 +6580,25 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     /**
+     * GLSM stage 2 (S2-2): the carried main clear's reservation mask, read from whichever
+     * owner the stage-2 route selects - the ClearState on the on route, the
+     * {@code mainClearCarried*} fields off it.
+     */
+    private int celtium$carriedReservationMask() {
+        return GlsmFrameState.ENABLED ? this.glsmFrameState.clearState().carriedMask()
+                : this.mainClearCarriedMask;
+    }
+
+    /** Drops the carried reservation, in whichever owner the stage-2 route selects. */
+    private void celtium$dropCarriedReservation() {
+        if (GlsmFrameState.ENABLED) {
+            this.glsmFrameState.clearState().clearCarried();
+        } else {
+            this.mainClearCarriedMask = 0;
+        }
+    }
+
+    /**
      * Attaches the main framebuffer's clear to the last queued group of the main image, so the window that records
      * that group records the clear after its draws.
      * <p>
@@ -6583,15 +6610,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private boolean celtium$carryMainClearInQueue(int mask) {
         int effective = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$effectiveClearMask(mask);
-        if (this.mainClearCarriedMask != 0) {
-            if (this.mainClearCarriedMask == effective) {
+        int reserved = celtium$carriedReservationMask();
+        if (reserved != 0) {
+            if (reserved == effective) {
                 // The same glClear reaches this method twice (GlStateManager.clear's own hook and the glClear it
                 // issues), and the first call already attached it. Attaching it again would record two clears.
                 return true;
             }
             // A reservation no clear consumed: carrying this one with the earlier clear's values would erase the wrong
             // colour, so it is dropped and the decision is made again.
-            this.mainClearCarriedMask = 0;
+            celtium$dropCarriedReservation();
         }
         if (!celtium$queueCanCarryMainClear(effective)) {
             return false;
@@ -6614,13 +6642,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     group.postClears = new java.util.ArrayList<QueuedClear>(2);
                 }
                 group.postClears.add(new QueuedClear(effective, rgba, depth));
-                this.mainClearCarriedMask = effective;
-                this.mainClearCarriedDepth = depth;
                 // The owner a discard hands the clear back under: the framebuffer this clear was issued
                 // against, which the predicate above has just shown to be the main one. Read now, while
                 // the stub still names it - the pending-mask record of it is only written at record time.
-                this.mainClearCarriedDrawFbo =
-                        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$drawFramebuffer();
+                int drawFbo = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$drawFramebuffer();
+                if (GlsmFrameState.ENABLED) {
+                    // S2-2: the reservation moves into the ClearState, its values copied out of
+                    // the shared scratch above; the group keeps carrying the clear itself, and
+                    // the issue is counted where the queue takes ownership of it.
+                    this.glsmFrameState.clearState().reserveCarried(effective, rgba, depth,
+                            drawFbo, group.target);
+                    this.glsmFrameState.clearState().noteQueuedCarried();
+                } else {
+                    this.mainClearCarriedMask = effective;
+                    this.mainClearCarriedDepth = depth;
+                    this.mainClearCarriedDrawFbo = drawFbo;
+                }
                 this.mainClearsQueued++;
                 return true;
             }
@@ -6639,11 +6676,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * @return whether the mask was consumed
      */
     public boolean celtium$takeCarriedMainClear(int mask) {
-        int carried = this.mainClearCarriedMask;
+        int carried = celtium$carriedReservationMask();
         if (!celtium$carriedClearMatches(carried, mask)) {
             return false;
         }
-        this.mainClearCarriedMask = 0;
+        celtium$dropCarriedReservation();
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.consumePendingClears();
         return true;
     }
@@ -6663,7 +6700,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /** Drops a reservation that no clear consumed, so a later clear cannot be carried with an earlier one's values. */
     void celtium$forgetCarriedMainClear() {
-        this.mainClearCarriedMask = 0;
+        celtium$dropCarriedReservation();
     }
 
     /**
@@ -6686,8 +6723,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 continue;
             }
             for (QueuedClear clear : group.postClears) {
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$rependMainClear(
-                        clear.mask, this.mainClearCarriedDrawFbo, clear.rgba, clear.depth);
+                if (GlsmFrameState.ENABLED) {
+                    // S2-2: the rescue is a transition inside the ClearState - the carried
+                    // clear folds back into the pending table under the main identity, and
+                    // the frame latch applies it at the next pass begin. No re-pend leaves
+                    // the state machine, and the issue is not counted twice: it was counted
+                    // when the queue took the clear.
+                    this.glsmFrameState.clearState().rescueCarriedToPending(main, clear.mask,
+                            clear.rgba, clear.depth);
+                } else {
+                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$rependMainClear(
+                            clear.mask, this.mainClearCarriedDrawFbo, clear.rgba, clear.depth);
+                }
                 this.mainClearsRescued++;
             }
         }
@@ -14954,9 +15001,10 @@ this.frameBufferOpen = false;
                                 ownerExists && this.targetRegistry.chainPairClearedFrame(existingOwner)
                                         == celtium$frameSerial());
                     }
-                    boolean explicitWinColorClear = this.targetRegistry.hasLatchedClear()
-                            && this.targetRegistry.latchedIdentity() == chainIdentityValue
-                            && (this.targetRegistry.latchedMask() & 0x4000) != 0;
+                    GlsmFrameState.PendingClear pendingForWindow =
+                            celtium$pendingClear(chainIdentityValue);
+                    boolean explicitWinColorClear = pendingForWindow != null
+                            && (pendingForWindow.mask & 0x4000) != 0;
                     boolean windowHandoffApplied = false;
                     if (windowHandoffSource != 0L && !explicitWinColorClear) {
                         int copied = celtium$copyChainPairHandoffColors(offTarget, chainIdentityValue,
@@ -15007,15 +15055,18 @@ this.frameBufferOpen = false;
                                 // validation layer and reported once per creation: it is the same clear the ordinary path
                                 // records, so it is the pair's first clear rather than an extra one.
                                 record(offTarget.chainPairSelfTest(chainIdentityValue, this.commandBuffer));
-                            } else if (this.targetRegistry.hasLatchedClear()
-                                    && this.targetRegistry.latchedIdentity() == chainIdentityValue) {
+                            } else if (celtium$pendingClear(chainIdentityValue) != null) {
                                 // A glClear the game issued for this framebuffer before it ever queued a draw - the
                                 // queue-marker route found no group to carry it, so it latched here instead. It clears
                                 // with the colour and depth the game latched, not whatever the stub reads now.
-                                int latchedMask = this.targetRegistry.latchedMask();
-                                float[] latchedColour = this.targetRegistry.latchedColour();
-                                double latchedDepth = this.targetRegistry.latchedDepth();
-                                this.targetRegistry.noteClear(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
+                                GlsmFrameState.PendingClear latched =
+                                        celtium$pendingClear(chainIdentityValue);
+                                int latchedMask = latched.mask;
+                                float[] latchedColour = new float[] {latched.red, latched.green,
+                                        latched.blue, latched.alpha};
+                                double latchedDepth = latched.depth;
+                                celtium$noteClearApplied(chainIdentityValue,
+                                        RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
                                         (latchedMask & 0x4000) != 0, true);
                                 offTarget.applyGameClearToChainPair(chainIdentityValue, this.commandBuffer,
                                         latchedMask, latchedColour, latchedDepth);
@@ -17705,9 +17756,9 @@ this.frameBufferOpen = false;
                 this.targetRegistry.chainPairClearContentIdentity(identity), identity)) {
             return;
         }
-        boolean latched = this.targetRegistry.hasLatchedClear()
-                && this.targetRegistry.latchedIdentity() == identity;
-        int mask = latched ? this.targetRegistry.latchedMask() : (0x4000 | 0x0100);
+        GlsmFrameState.PendingClear pending = celtium$pendingClear(identity);
+        boolean latched = pending != null;
+        int mask = latched ? pending.mask : (0x4000 | 0x0100);
         boolean depthAllowed = celtium$routedDepthClearAllowed(depthKey,
                 owner.sharedDepthClearedFrameSerial(depthKey), celtium$frameSerial());
         if ((mask & 0x0100) != 0 && !depthAllowed) {
@@ -17732,8 +17783,8 @@ this.frameBufferOpen = false;
             float[] colour;
             double depth;
             if (latched) {
-                colour = this.targetRegistry.latchedColour();
-                depth = this.targetRegistry.latchedDepth();
+                colour = new float[] {pending.red, pending.green, pending.blue, pending.alpha};
+                depth = pending.depth;
             } else {
                 colour = new float[4];
                 org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(colour);
@@ -17749,7 +17800,8 @@ this.frameBufferOpen = false;
         if ((mask & 0x0100) != 0) {
             owner.noteSharedDepthCleared(depthKey, celtium$frameSerial());
         }
-        this.targetRegistry.noteClear(RenderTargetRegistry.ImageSlot.CHAIN_PAIR, (mask & 0x4000) != 0, latched);
+        celtium$noteClearApplied(identity, RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
+                (mask & 0x4000) != 0, latched);
         this.targetRegistry.noteChainPairCleared(identity, celtium$frameSerial(), identity);
         celtium$noteChainPairClear("routed-terrain-pass");
     }
@@ -18010,9 +18062,9 @@ this.frameBufferOpen = false;
                     attachedColorImages[s] = pairOwner.chainPairColorImageAt(drawIdentity, s);
                 }
                 this.postChainBridge.celtium$transitionPublishedFrameTextures(true, 0L, routedDepthImage, attachedColorImages);
-                boolean explicitColorClear = this.targetRegistry.hasLatchedClear()
-                        && this.targetRegistry.latchedIdentity() == drawIdentity
-                        && (this.targetRegistry.latchedMask() & 0x4000) != 0;
+                GlsmFrameState.PendingClear pendingForPass = celtium$pendingClear(drawIdentity);
+                boolean explicitColorClear = pendingForPass != null
+                        && (pendingForPass.mask & 0x4000) != 0;
                 boolean handoffApplied = false;
                 if (handoffSource != 0L && !explicitColorClear) {
                     int copied = celtium$copyChainPairHandoffColors(pairOwner, identity, drawIdentity,
@@ -20306,6 +20358,62 @@ this.frameBufferOpen = false;
     private final float[] gameClearLatchRgba = new float[4];
 
     /**
+     * GLSM stage 2 (S2-2): the pending (latched) clear for an identity, read from whichever
+     * owner the stage-2 route selects - the ClearState's per-identity table on the on route,
+     * the registry's single latch off it. The off route's answer is rebuilt into the same
+     * shape so the consumers read one form; reading consumes nothing on either route.
+     */
+    private GlsmFrameState.PendingClear celtium$pendingClear(long identity) {
+        if (GlsmFrameState.ENABLED) {
+            return this.glsmFrameState.clearState().peek(identity);
+        }
+        if (!this.targetRegistry.hasLatchedClear()
+                || this.targetRegistry.latchedIdentity() != identity) {
+            return null;
+        }
+        GlsmFrameState.PendingClear pending = new GlsmFrameState.PendingClear();
+        pending.mask = this.targetRegistry.latchedMask();
+        float[] colour = this.targetRegistry.latchedColour();
+        pending.red = colour[0];
+        pending.green = colour[1];
+        pending.blue = colour[2];
+        pending.alpha = colour[3];
+        pending.depth = this.targetRegistry.latchedDepth();
+        pending.issues = 1;
+        return pending;
+    }
+
+    /**
+     * GLSM stage 2 (S2-2): records a clear's application against a slot, under the
+     * colour-clear ownership rule of whichever owner the stage-2 route selects. On the on
+     * route a latched application also consumes the identity's pending record, at the same
+     * point the registry's {@code noteClear} consumed its latch.
+     *
+     * @return whether the clear was accepted (not refused as another slot's collision)
+     */
+    private boolean celtium$noteClearApplied(long identity, RenderTargetRegistry.ImageSlot slot,
+                                             boolean colour, boolean latched) {
+        if (GlsmFrameState.ENABLED) {
+            return this.glsmFrameState.clearState().noteClear(identity, slot, colour, latched);
+        }
+        return this.targetRegistry.noteClear(slot, colour, latched);
+    }
+
+    /**
+     * GLSM stage 2: hands the shared frame state to the frame target the backend currently
+     * holds, called when a target is (re)created. The frame identity is a supplier, not a
+     * value: the registry's main identity is established after targets exist and can be
+     * re-established, and the latch's key must be the registry's answer at the moment of use.
+     */
+    void celtium$attachFrameState() {
+        GllessFrameTarget glless = offTargetTarget();
+        if (glless != null) {
+            glless.celtium$attachGlsmFrameState(this.glsmFrameState,
+                    () -> this.targetRegistry.mainIdentity());
+        }
+    }
+
+    /**
      * Attributes the game's pending {@code glClear} request to the framebuffer that was bound when it was issued.
      * <p>
      * A GL clear belongs to the framebuffer bound at the moment it is called, and the game clears three of them every
@@ -20356,7 +20464,15 @@ this.frameBufferOpen = false;
             celtium$reportGameClearLatch("pair", mask, rgba, depth);
             return;
         }
-        glless.noteGameClear(mask, rgba[0], rgba[1], rgba[2], rgba[3], depth);
+        if (GlsmFrameState.ENABLED) {
+            // S2-2: the frame latch is the ClearState's pending record under the main
+            // identity; GllessFrameTarget.applyGameClears consumes it from there.
+            this.glsmFrameState.clearState().latch(this.targetRegistry.mainIdentity(), mask,
+                    rgba[0], rgba[1], rgba[2], rgba[3], depth,
+                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.pendingClearDrawFbo());
+        } else {
+            glless.noteGameClear(mask, rgba[0], rgba[1], rgba[2], rgba[3], depth);
+        }
         this.targetStatistics.noteGameClearsLatchedForFrame();
         celtium$reportGameClearLatch("frame", mask, rgba, depth);
     }
@@ -20455,6 +20571,10 @@ this.frameBufferOpen = false;
                 }
                 group.postClears.add(new QueuedClear(mask, rgba, depth));
                 this.gameClearsQueued++;
+                if (GlsmFrameState.ENABLED) {
+                    this.glsmFrameState.clearState()
+                            .noteRoute(GlsmFrameState.ClearRoute.QUEUED);
+                }
                 return;
             }
         }
@@ -20471,6 +20591,9 @@ this.frameBufferOpen = false;
                     java.util.Collections.singletonList(new QueuedClear(mask, rgba, depth));
             celtium$recordQueuedClearsInPass(single, identity);
             this.gameClearsInPassArm++;
+            if (GlsmFrameState.ENABLED) {
+                this.glsmFrameState.clearState().noteRoute(GlsmFrameState.ClearRoute.IN_PASS);
+            }
             celtium$noteGameClearRoute(drawFbo, mask, "inPass", identity);
             return;
         }
@@ -20492,6 +20615,10 @@ this.frameBufferOpen = false;
                         // for the frame boundary exactly as submitOpenFrameBuffer's rule says.
                         this.frameCoordinator.submitCommands(false);
                         this.gameClearsSubmittedStandalone++;
+                        if (GlsmFrameState.ENABLED) {
+                            this.glsmFrameState.clearState()
+                                    .noteRoute(GlsmFrameState.ClearRoute.STANDALONE);
+                        }
                         submitted = true;
                         celtium$noteGameClearRoute(drawFbo, mask, "standalone", identity);
                     } else if (!this.frameBufferOpen && this.commandState.recording()) {
@@ -20514,7 +20641,15 @@ this.frameBufferOpen = false;
         // No queued draw for this framebuffer and none submitted it can erase: the clear still runs at the pair's
         // pass-begin site, where the registry latch keeps the colour the game asked for rather than whatever the
         // stub state says then.
-        this.targetRegistry.latchClear(identity, mask, rgba[0], rgba[1], rgba[2], rgba[3], depth);
+        if (GlsmFrameState.ENABLED) {
+            // S2-2: the pair latch joins the same per-identity pending table as the frame
+            // latch - the registry's single record could be overwritten by another pair's
+            // latch before this one was consumed; keyed by identity, it cannot.
+            this.glsmFrameState.clearState().latch(identity, mask, rgba[0], rgba[1], rgba[2],
+                    rgba[3], depth, drawFbo);
+        } else {
+            this.targetRegistry.latchClear(identity, mask, rgba[0], rgba[1], rgba[2], rgba[3], depth);
+        }
         this.gameClearsLatchedForPairs++;
         celtium$noteGameClearRoute(drawFbo, mask, "latch", identity);
     }
@@ -20577,6 +20712,13 @@ this.frameBufferOpen = false;
                 rect.get(0).baseArrayLayer(0).layerCount(1);
                 vkCmdClearAttachments(this.commandBuffer, attachments, rect);
                 this.gameClearsAppliedInPass++;
+                if (GlsmFrameState.ENABLED
+                        && (identity == this.targetRegistry.mainIdentity() || identity == 0L)) {
+                    // S2-2: a main group's queued clears are the carried main clears (the
+                    // celtium$gameClear route returns before the queue for the main identity),
+                    // so each replay moves one carried issue to applied.
+                    this.glsmFrameState.clearState().noteCarriedApplied();
+                }
             }
         }
     }
