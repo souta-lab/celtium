@@ -839,11 +839,16 @@ public final class VulkanModProgramPipeline {
                         .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE).descriptorCount(1)
                         .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT);
             }
+            // The struct slots below are sequential positions in the bindings array; the binding
+            // NUMBERS are a separate axis (the GLSM shared block is always declared at +2 by the
+            // lowering, whether or not a region table occupies +1). Conflating the two made the
+            // shared-only layout write one slot past the array's end, failing every such pipeline.
+            int bindingSlot = this.samplerCount + this.imageCount;
             if (this.uniformsViaBuffer) {
                 // The binding the lowering named for the block: after every sampler and storage image. Both
                 // stages read the block (the fixed-function matrices live in the vertex stage), as the push
                 // range it replaces did.
-                bindings.get(this.samplerCount + this.imageCount)
+                bindings.get(bindingSlot++)
                         .binding(this.samplerCount + this.imageCount)
                         .descriptorType(celtium$uniformBindingType(this.dynamicUniform)).descriptorCount(1)
                         .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT);
@@ -851,14 +856,14 @@ public final class VulkanModProgramPipeline {
             if (this.glsmActive && this.glsmRegionMember != null) {
                 // GLSM stage 1: the region-offset SSBO table, at the binding the lowering named
                 // (after the block's own). Vertex-only, as the built-in route's binding 5 is.
-                bindings.get(this.samplerCount + this.imageCount + 1)
+                bindings.get(bindingSlot++)
                         .binding(this.samplerCount + this.imageCount + 1)
                         .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(1)
                         .stageFlags(VK_SHADER_STAGE_VERTEX_BIT);
             }
             if (this.glsmActive && !this.glsmSharedPerFrame.isEmpty()) {
                 // GLSM stage 1: the shared per-frame block, after the region table's binding.
-                bindings.get(this.samplerCount + this.imageCount + 2)
+                bindings.get(bindingSlot++)
                         .binding(this.samplerCount + this.imageCount + 2)
                         .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(1)
                         .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT);
@@ -1411,6 +1416,19 @@ public final class VulkanModProgramPipeline {
             return;
         }
         sharedPerFrameEpoch = epoch;
+        long harvestCount = GlsmPackState.harvests();
+        if (harvestCount <= 5 || harvestCount % 300 == 0) {
+            float[] mv = harvested.get("modelViewMatrix");
+            float[] pj = harvested.get("projectionMatrix");
+            float[] cp = harvested.get("cameraPosition");
+            System.out.println("[Celtium] CELTIUM_GLSM_HARVEST epoch=" + epoch
+                    + " present=" + harvested.keySet()
+                    + " mv0=" + (mv == null ? "null" : mv[0] + "," + mv[5] + "," + mv[10])
+                    + " proj0=" + (pj == null ? "null" : pj[0] + "," + pj[5])
+                    + " camPos=" + (cp == null ? "null" : cp[0] + "," + cp[1] + "," + cp[2])
+                    + " divergences=" + GlsmPackState.divergences()
+                    + " regionUnextractable=" + GlsmPackState.regionUnextractable());
+        }
         VulkanUniformBuffer shared = sharedPerFrameBuffer(this.context);
         long base = shared.mappedAddress();
         MemoryUtil.memSet(base, 0, GlsmPackState.PER_FRAME_BLOCK_BYTES);

@@ -467,6 +467,15 @@ public final class ModProgramRegistry {
                                 + " vertex=" + (vertex == null ? "fixed-function" : "own")
                                 + " names=[" + names + "]"
                         : " lowered=false reason=" + p.lowered.failure()));
+        if (GlsmPackState.ENABLED && p.lowered.ok()) {
+            System.out.println("[Celtium] CELTIUM_GLSM_LINK program=" + program
+                    + " region=" + p.lowered.regionOffsetMember()
+                    + " shared=" + p.lowered.sharedPerFrameMembers()
+                    + " extracted=" + p.lowered.extractedUniforms().size()
+                    + " divergences=" + GlsmPackState.divergences()
+                    + " regionExtracted=" + GlsmPackState.regionExtracted()
+                    + " regionUnextractable=" + GlsmPackState.regionUnextractable());
+        }
         return p;
     }
 
