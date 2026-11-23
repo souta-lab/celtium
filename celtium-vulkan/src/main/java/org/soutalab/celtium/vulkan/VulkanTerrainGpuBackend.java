@@ -721,12 +721,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * The band is the picture's top rows, which are the image's last rows: the frame image is in GL texture order (row 0
      * is the picture's bottom), the same order {@code readImageRectangle} returns.
      */
-    private static final long SKY_FRAME_PROBE = Long.getLong("celtium.vulkan.skyFrameProbe", -1L).longValue();
-    private static final int SKY_FRAME_PROBE_LIMIT =
+    static final long SKY_FRAME_PROBE = Long.getLong("celtium.vulkan.skyFrameProbe", -1L).longValue();
+    static final int SKY_FRAME_PROBE_LIMIT =
             Integer.getInteger("celtium.vulkan.skyFrameProbeLimit", 24).intValue();
     private int skyFrameProbeLines;
     /** Sky draws issued in the frame that is running; the probe prints it for the frame that just ended. */
-    private int skyDrawsThisFrame;
+    int skyDrawsThisFrame;
     /**
      * The same band read from the frame image immediately before the present blits it.
      * <p>
@@ -734,7 +734,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * together separate "the frame image never held the sky" from "it held it and the blit or the present lost it", which
      * is the only remaining pair of shapes for a draw that is issued, counted and absent from the picture.
      */
-    private int skyPresentProbeLines;
+    int skyPresentProbeLines;
     /** Lines of the per-draw probe, bounded like the other two. */
     private int skyDrawProbeLines;
 
@@ -848,7 +848,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private int frameCloses;
     private int renderCalls;
     TerrainRenderPass lastUiPass;
-    private boolean swapchainProbeDone;
+    boolean swapchainProbeDone;
     VulkanSwapchain swapchain;
 
     /**
@@ -860,7 +860,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * because the present hook's catch would swallow a throw from here and this module cannot call
      * {@code displayCrashReport}.
      */
-    private final SwapchainCreationEscalation swapchainCreationEscalation = new SwapchainCreationEscalation();
+    final SwapchainCreationEscalation swapchainCreationEscalation = new SwapchainCreationEscalation();
 
     /** Passes a single frame can have; used to reserve uniform blocks before recording. */
     private static final int MAX_UNIFORM_PASSES = 6;
@@ -1946,7 +1946,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private int lineBatchesNative;
     private int lineBatchesRefusedForWidth;
     /** What the swapchain said about the last present: the report boolean alone does not say why it failed. */
-    private String lastPresentResult = "none";
+    String lastPresentResult = "none";
     /** Frames presented from Vulkan, and the attempts that did not reach the queue. */
     int framePresentedFromVulkan;
     int presentAttempts;
@@ -1960,8 +1960,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     int presentSkips;
     /** {@link #presentSkips} split by the gate that returned: no target/stalled, no swapchain, no completed frame,
      * target unavailable. Printed on the CELTIUM_PRESENT heartbeat, so a long run of skips names its gate. */
-    private final int[] presentSkipsByReason = new int[4];
-    private int presentFailures;
+    final int[] presentSkipsByReason = new int[4];
+    int presentFailures;
     /** Frame composites left to the present path because Vulkan had already shown the frame. */
     private int glCompositesSkipped;
     int gameFramebufferAdopted;
@@ -1970,16 +1970,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     String firstGlErrorWhere;
     int firstGlErrorCode;
     /** A completed frame's content is in the shared image and has not been presented yet. */
-    private boolean lastFrameReachedQueue;
+    boolean lastFrameReachedQueue;
     /** The frame identity whose work was last queued, so a present can say how far behind the game it is. */
-    private long queuedFrameId = -1L;
-    private long presentLagMax;
-    private long presentLagOne;
-    private long presentLagMore;
+    long queuedFrameId = -1L;
+    long presentLagMax;
+    long presentLagOne;
+    long presentLagMore;
     boolean presentedImageDumpRequested;
     /** A presented frame has not reached the game's swap point yet, and how many swaps that skipped. */
-    private boolean swapPendingFromVulkan;
-    private int glSwapsSkipped;
+    boolean swapPendingFromVulkan;
+    int glSwapsSkipped;
     /** Per-frame present calls that arrived, and why the last one did not present. */
     int presentHookCalls;
     /**
@@ -2011,7 +2011,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** When the current slot's submission reached the queue, for the submit-to-fence measurement. */
     private final long[] slotSubmitNanos = new long[FRAME_SLOTS];
 
-    private void celtium$noteSwapPointImage(long nanos) {
+    void celtium$noteSwapPointImage(long nanos) {
         this.swapPointImageRing[this.swapPointImageRingAt] = nanos;
         this.swapPointImageRingAt = (this.swapPointImageRingAt + 1) % DISTRIBUTION_SAMPLES;
         if (this.swapPointImageRingCount < DISTRIBUTION_SAMPLES) {
@@ -2047,17 +2047,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** Bounded probe counter for the frame-queued setter. */
     private int celtium$lastFrameReachedQueueLogs;
     /** The path the fixture asked its presented-image dump to be written to, re-asked on a cadence. */
-    private java.nio.file.Path presentedDumpPath;
+    java.nio.file.Path presentedDumpPath;
     /**
      * Write serials already attributed to a presented frame, by dump file name. Compared against the swapchain's
      * per-path serials each present: a name whose serial advanced was written by the present that just ran, so the
      * presented-frame counter names the frame that file holds even when several requests are pending at once.
      */
-    private final java.util.Map<String, Long> seenDumpWriteSerialByName = new java.util.HashMap<>();
+    final java.util.Map<String, Long> seenDumpWriteSerialByName = new java.util.HashMap<>();
     /** The presented-frame count that wrote each dump file, by file name. */
     final java.util.Map<String, Integer> presentedDumpWrittenFrames = new java.util.HashMap<>();
     /** How many times the present-time drain of pending immediate work failed, bounded for reporting. */
-    private int presentFlushFailures;
+    int presentFlushFailures;
     /**
      * Presented-image dumps held before swapchain creation or across a wrapper replacement.
      * <p>
@@ -2068,7 +2068,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * lost the frame. Held instead, and forwarded the moment the swapchain is created; if the creation fails the path
      * stays here and is named in the report rather than dropped silently.
      */
-    private final java.util.List<java.nio.file.Path> pendingPresentedDumps = new java.util.ArrayList<>();
+    final java.util.List<java.nio.file.Path> pendingPresentedDumps = new java.util.ArrayList<>();
     /** How many bound-pipeline/descriptor lines have been recorded; bounded so a run cannot flood. */
     private int boundHandleLogs;
     /** Chain targets adopted from the renderer's own off-target image, and the ones refused. */
@@ -2396,8 +2396,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** How many orthographic projections the mirror has been given; the GUI's own, if it arrives at all. */
     private int orthoCalls;
     /** How many frame images the periodic dump has written; capped so a long run cannot fill the disk. */
-    private int frameDumpsWritten;
-    private String presentSkipReason = "never called";
+    int frameDumpsWritten;
+    String presentSkipReason = "never called";
     /** Textures supplied whole on their first offer, and the ones that could not be. */
     int lazyMirrorSupplies;
     /**
@@ -3223,16 +3223,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** The indirect/record run path, split out of this class (2026-11-06); see IndirectImmediateRuns. */
     final IndirectImmediateRuns indirectRuns = new IndirectImmediateRuns(this);
     /** {@code -Dceltium.vulkan.pumpBeforePresent=true}: service SDL's queue immediately before the present. */
-    private static final boolean PUMP_BEFORE_PRESENT = Boolean.getBoolean("celtium.vulkan.pumpBeforePresent");
+    static final boolean PUMP_BEFORE_PRESENT = Boolean.getBoolean("celtium.vulkan.pumpBeforePresent");
     /** {@code -Dceltium.vulkan.skipPresent=true}: record and submit, never present (isolation for the Wayland fault). */
-    private static final boolean SKIP_PRESENT = Boolean.getBoolean("celtium.vulkan.skipPresent");
+    static final boolean SKIP_PRESENT = Boolean.getBoolean("celtium.vulkan.skipPresent");
     /** Frame-target recreations refused because a recording was open; each is retried on the next recording. */
     long frameTargetRecreationDeferred;
     /** {@code -Dceltium.vulkan.debugFullscreenAfterFrames=N}: ask SDL for fullscreen on the Nth present (debug only). */
-    private static final int DEBUG_FULLSCREEN_AFTER_FRAMES =
+    static final int DEBUG_FULLSCREEN_AFTER_FRAMES =
             Integer.getInteger("celtium.vulkan.debugFullscreenAfterFrames", -1);
-    private int debugFramesPresented;
-    private boolean debugFullscreenAsked;
+    int debugFramesPresented;
+    boolean debugFullscreenAsked;
     /**
      * {@code -Dceltium.vulkan.debugResizeAfterFrames=N} with {@code -Dceltium.vulkan.debugResizeTo=WxH}: ask SDL to
      * resize the window once, which is the surface-extent change that rebuilds the swapchain. The launcher's own death
@@ -3245,7 +3245,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private int debugFramesSeen;
     private boolean debugResizeAsked;
 
-    private void celtium$debugMaybeResize() {
+    void celtium$debugMaybeResize() {
         if (DEBUG_RESIZE_AFTER_FRAMES < 0 || this.debugResizeAsked || DEBUG_RESIZE_TO.isEmpty()) {
             return;
         }
@@ -3276,7 +3276,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     static final boolean FRAME_STATS = Boolean.getBoolean("celtium.vulkan.frameStats");
     /** Read once: these are consulted on frame and loading paths, not at startup only. */
     private static final boolean HANDOFF_TIMINGS = Boolean.getBoolean("celtium.vulkan.handoffTimings");
-    private static final String FRAME_DUMP_DIR = HarnessConfig.path("frameDumpDir");
+    static final String FRAME_DUMP_DIR = HarnessConfig.path("frameDumpDir");
     private static final boolean DUMP_LOADING_PROGRESS =
             HarnessConfig.bool("dumpLoadingProgress", false);
     /**
@@ -3290,12 +3290,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * {@code celtium$mirrorProbe} dumps.
      */
     private static final boolean MIRROR_DUMP_ON = VulkanGlTexture.mirrorDumpConfigured();
-    private static final int FRAME_DUMP_EVERY = HarnessConfig.integer("frameDumpEvery", 60);
-    private static final int FRAME_DUMP_COUNT = HarnessConfig.integer("frameDumpCount", 0);
+    static final int FRAME_DUMP_EVERY = HarnessConfig.integer("frameDumpEvery", 60);
+    static final int FRAME_DUMP_COUNT = HarnessConfig.integer("frameDumpCount", 0);
     private static final boolean SWAPCHAIN_PROBE = Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY);
     int frameIntervalCount;
 
-    private void celtium$noteFrameBoundary(String where) {
+    void celtium$noteFrameBoundary(String where) {
         if (ModPrograms.MOD_READBACK) {
             this.modPrograms.celtium$reportModInputReadback();
         }
@@ -3897,7 +3897,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private static final boolean REFUSE_TERRAIN_PASS = Boolean.getBoolean("celtium.vulkan.refuseTerrainPass");
     private static final boolean GAME_CLEAR_LATCH =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.gameClearLatch", "true"));
-    private static final int PRESENTED_DUMP_EVERY =
+    static final int PRESENTED_DUMP_EVERY =
             HarnessConfig.integer("presentedDumpEvery", 40);
     static final boolean CHAIN_FRAME_DUMP = Boolean.getBoolean("celtium.vulkan.chainFrameDump");
     /**
@@ -4180,7 +4180,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * cleared by the idle wait before {@code endFrame} runs, which is why using it there refused to end every healthy
      * frame.
      */
-    private boolean frameSubmitReachedQueue;
+    boolean frameSubmitReachedQueue;
 
     /**
      * Batches drawn, by format id - the counter that pairs with {@code acceptedByFormat}.
@@ -16347,21 +16347,21 @@ this.frameBufferOpen = false;
      * same full-screen composite, so "the hotbar band is the world's colour" was measured on a frame that had no hotbar
      * in any image. {@code -Dceltium.vulkan.presentPatchMinPresent} aims it at the world's own presents.
      */
-    private static final boolean PRESENT_PATCH_TRACE = Boolean.getBoolean("celtium.vulkan.presentPatch");
+    static final boolean PRESENT_PATCH_TRACE = Boolean.getBoolean("celtium.vulkan.presentPatch");
     /**
      * Whether the present drains the bound target's pending immediate work before it blits, matching GL's
      * swap-point ordering. {@code -Dceltium.vulkan.presentFlushPending=false} keeps the old defer-to-the-next-
      * boundary behaviour for comparison legs.
      */
-    private static final boolean PRESENT_FLUSH_PENDING =
+    static final boolean PRESENT_FLUSH_PENDING =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFlushPending", "true"));
     /** How many presents report the patch line; {@code -Dceltium.vulkan.presentPatchLines}. */
-    private static final int PRESENT_PATCH_LINES =
+    static final int PRESENT_PATCH_LINES =
             Integer.getInteger("celtium.vulkan.presentPatchLines", 8).intValue();
     /** The first present (1-based) that reports it; {@code -Dceltium.vulkan.presentPatchMinPresent}. */
-    private static final int PRESENT_PATCH_MIN_PRESENT =
+    static final int PRESENT_PATCH_MIN_PRESENT =
             Integer.getInteger("celtium.vulkan.presentPatchMinPresent", 1).intValue();
-    private int presentPatchLogs;
+    int presentPatchLogs;
     /**
      * Whether the chain pair is cleared to magenta at the head of the frame's own window, once per frame.
      * {@code -Dceltium.vulkan.pairProbeClear=true}; a measurement switch that makes the pair unmistakable to the draw
@@ -16494,7 +16494,7 @@ this.frameBufferOpen = false;
         record("flush sources total=" + this.flushReasonCount + " [" + line + "]");
     }
 
-    private void celtium$printVerificationSummary(String trigger, boolean snapshot) {
+    void celtium$printVerificationSummary(String trigger, boolean snapshot) {
         celtium$reportFlushReasonsForSummary();
         if (!snapshot) {
             // The no-op census, at the same point and for the same reason as the flush census above: it is the only
@@ -16668,14 +16668,7 @@ this.frameBufferOpen = false;
     }
 
     public void delete() {
-        if (this.cachedWindowBegin != null) {
-            this.cachedWindowBegin.free();
-            this.cachedWindowBegin = null;
-        }
-        if (this.cachedWindowBeginArea != null) {
-            this.cachedWindowBeginArea.free();
-            this.cachedWindowBeginArea = null;
-        }
+        this.presentSwapchain.freeCachedWindowBegin();
         if (this.groupViewportScratch != null) {
             this.groupViewportScratch.free();
             this.groupViewportScratch = null;
@@ -19588,236 +19581,57 @@ this.frameBufferOpen = false;
 
     // ------------------------------------------------------------------ frame target
 
+    // The present/swapchain cluster lives in PresentSwapchain (refactoring plan R10, item 704 seam 4):
+    // the swapchain life cycle and the present path. The doors below keep every name the rest of the
+    // renderer and the swap point call.
+
+    final PresentSwapchain presentSwapchain = new PresentSwapchain(this);
+
+    private boolean ensureSwapchain() {
+        return this.presentSwapchain.ensureSwapchain();
+    }
+
+    public String celtium$swapchainCreationFailure() {
+        return this.presentSwapchain.celtium$swapchainCreationFailure();
+    }
+
+    private void runSwapchainProbe() {
+        this.presentSwapchain.runSwapchainProbe();
+    }
+
+    private org.lwjgl.vulkan.VkRenderPassBeginInfo celtium$windowBeginInfo(long renderPass, long framebuffer,
+                                                                          int width, int height) {
+        return this.presentSwapchain.celtium$windowBeginInfo(renderPass, framebuffer, width, height);
+    }
+
+    public boolean celtium$presentFrame() {
+        return this.presentSwapchain.celtium$presentFrame();
+    }
+
+    public void celtium$pollEvents() {
+        this.presentSwapchain.celtium$pollEvents();
+    }
+
+    public boolean celtium$consumeSwapPendingFromVulkan() {
+        return this.presentSwapchain.celtium$consumeSwapPendingFromVulkan();
+    }
+
+    public double celtium$presentedImageMean() {
+        return this.presentSwapchain.celtium$presentedImageMean();
+    }
+
+    public boolean celtium$dumpPresentedImage(java.nio.file.Path path) {
+        return this.presentSwapchain.celtium$dumpPresentedImage(path);
+    }
+
+
     /** Swapchains dropped because the VSync option changed (task-56), so the rebuild is a number, not a claim. */
 
-    /** A surface kept across a rebuild: it belongs to the window, and recreating it breaks Wayland's explicit sync. */
-    private long reusableSurface;
-    private long reusableSurfaceWindow;
 
-    /** A request is owned by the window, not the replaceable swapchain wrapper. */
-    private void releaseSwapchainForRebuild() {
-        this.pendingPresentedDumps.addAll(this.swapchain.takePendingPresentedImageDumps());
-        long window = CeltiumWindow.sdl() ? CeltiumWindow.sdlWindowPointer() : 0L;
-        if (window != 0L && this.swapchain.nativeWindowHandle() == window) {
-            // Same window: hand the surface over instead of destroying it. Destroying and recreating it on the same
-            // wl_surface is what produced wp_linux_drm_syncobj_surface_v1 error 4 on the first present after a resize,
-            // and sway closes the connection on it.
-            this.reusableSurface = this.swapchain.detachSurface();
-            this.reusableSurfaceWindow = window;
-        }
-        this.swapchain.delete();
-        this.swapchain = null;
-        // Write serials are local to the old wrapper. Retain completed frame bindings,
-        // but do not mistake the new wrapper's serial 1 for an already observed write.
-        this.seenDumpWriteSerialByName.clear();
-    }
 
-    /**
-     * Drops the swapchain WITHOUT handing its surface over to the next one.
-     * <p>
-     * The counterpart of {@link #releaseSwapchainForRebuild()} for a lost surface: the handover exists because a
-     * surface belongs to its window, but a lost surface is dead - adopting it would rebuild every new swapchain on
-     * the same dead handle and fail forever (bughunt LANE-05 #5). {@code delete()} destroys the surface with the
-     * swapchain, and the creation below builds a fresh one from the window.
-     */
-    private void dropSwapchainAndSurface() {
-        this.pendingPresentedDumps.addAll(this.swapchain.takePendingPresentedImageDumps());
-        this.swapchain.delete();
-        this.swapchain = null;
-        this.seenDumpWriteSerialByName.clear();
-    }
 
-    private void forwardPendingPresentedDumps() {
-        if (this.swapchain == null) {
-            return;
-        }
-        java.util.Iterator<java.nio.file.Path> requests = this.pendingPresentedDumps.iterator();
-        while (requests.hasNext()) {
-            java.nio.file.Path held = requests.next();
-            this.swapchain.requestPresentedImageDump(held);
-            this.presentedDumpPath = held;
-            requests.remove();
-            System.out.println("[Celtium] CELTIUM_PRESENTED_DUMP_HELD path=" + held
-                    + " (forwarded after swapchain creation/rebuild)");
-        }
-    }
 
-    /**
-     * Creates the swapchain if it does not exist yet, and reports why when it cannot.
-     * <p>
-     * It used to be created as a side effect of the diagnostic probe, which meant turning the probe off silently turned
-     * the frame present off with it - a run that looked validation-clean because it presented nothing. Anything that
-     * needs to present calls this instead, so the probe is only a probe.
-     */
-    private boolean ensureSwapchain() {
-        // The VSync option changed since this swapchain was built (task-56): the present mode is a creation parameter,
-        // so the only way to honour it is a new swapchain. Dropping it here routes the rebuild through exactly the
-        // path an out-of-date surface takes - the acquire semaphores, the per-image render-finished semaphores and the
-        // image ownership all belong to the swapchain object and are recreated with it, which is why this is safe to
-        // do between frames and not mid-acquire.
-        if (this.swapchain != null && this.swapchain.presentModeStale()) {
-            record("the VSync option changed: dropping the swapchain so the present mode is rebuilt"
-                    + " requested=" + org.soutalab.celtium.vulkan.VulkanSwapchain.vsyncRequested()
-                    + " previous=[" + this.swapchain.presentModeSummary() + "]");
-            releaseSwapchainForRebuild();
-            this.submissionStatistics.notePresentModeRebuilds();
-        }
-        // The swapchain's own verdicts, consumed here because this is the one place that runs before every present
-        // and owns the drop: an out-of-date acquire or present, a retired acquisition and a presenter failure all
-        // used to set a flag no production code read, so the rebuild they asked for never happened - an out-of-date
-        // whose cause was not an extent change presented-failed every frame forever, and retired acquisitions
-        // leaked an image each until the acquire blocked for good (bughunt LANE-05 #1). A lost surface is the
-        // stronger verdict and is decided first: its surface must not be handed over to the next swapchain.
-        if (this.swapchain != null) {
-            String decision = org.soutalab.celtium.vulkan.VulkanSwapchain.rebuildDecision(
-                    this.swapchain.surfaceLost(), this.swapchain.rebuildNeeded());
-            if ("recreate-surface".equals(decision)) {
-                record("the surface was lost (VK_ERROR_SURFACE_LOST_KHR): dropping the swapchain and its"
-                        + " surface so both are recreated");
-                dropSwapchainAndSurface();
-                this.submissionStatistics.noteSurfaceLostRebuilds();
-            } else if ("rebuild".equals(decision)) {
-                record("the swapchain asked for a rebuild (" + this.swapchain.rebuildReason()
-                        + "): dropping it so it is rebuilt");
-                releaseSwapchainForRebuild();
-                this.submissionStatistics.noteOutOfDateRebuilds();
-            }
-        }
-        // Under the GL-less window there is no current context to ask, so the handle comes from Display - the same
-        // GLFW window either way. Reflective because celtium-vulkan does not depend on the lwjglxx shim.
-        //
-        // On Cleanroom 0.7 the window is SDL's and the GLFW class is not on the runtime classpath at all: the call
-        // below is a NoClassDefFoundError there, so SDL answers first and the GLFW branch is never reached.
-        long window = CeltiumWindow.sdl() ? CeltiumWindow.sdlWindowPointer()
-                : org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
-        if (window == 0L) {
-            try {
-                Class<?> display = Class.forName("org.lwjgl.opengl.Display");
-                window = ((Long) display.getMethod("getWindow").invoke(null)).longValue();
-            } catch (ReflectiveOperationException | LinkageError ignored) {
-                // Fall through: no window means no swapchain.
-            }
-        }
-        if (window == 0L) {
-            record("swapchain unavailable: no current " + (CeltiumWindow.sdl() ? "SDL" : "GLFW") + " window");
-            return false;
-        }
-        // Through the cached read: this runs on every present (and every frame that ensures the swapchain), and
-        // glfwGetFramebufferSize on X11 is a server round-trip - JFR put it at 1.4% of the client thread's samples with
-        // this as one of its two callers. The cache is dropped when the game's own framebuffer reports a different size,
-        // and the surface capabilities below remain the authority on what a fresh swapchain would be given, so a resize
-        // is still seen on the first frame after it.
-        int[] drawable = cachedWindowFramebufferSize();
-        int framebufferWidth = drawable[0];
-        int framebufferHeight = drawable[1];
-        if (framebufferWidth <= 0 || framebufferHeight <= 0) {
-            // A minimised window has no drawable: the swapchain stays as it is and the frame swaps through GL.
-            this.presentSkipReason = "window has no drawable size";
-            return false;
-        }
-        if (this.swapchain != null) {
-            // The size the surface would give a fresh swapchain is the authority, not the driver's out-of-date report.
-            // The check used to be gated on frameId, which only advances at a world frame boundary
-            // (captureWorldSnapshot) - so a window that was resized while the menu was up (which is what a real launch
-            // does: the window is created small and then sized to the display) kept the swapchain from its first
-            // present. The present blit is bottom-anchored and never scaled, so it then showed the frame's lower left
-            // clipped by the smaller swapchain: measured on the user's own session, the menu appeared shifted with its
-            // right side and logo cut off, and going fullscreen did not change it. A present-time check costs one
-            // surface-capabilities query per presented frame and is what makes the swapchain follow the window.
-            // The rebuild is back to unconditional: the Wayland rejection was not the new swapchain but SDL's own
-            // window swap presenting on the same wl_surface (stubbed in CeltiumGllessSdlSwapTransformer), so a resize
-            // can keep following the window at full resolution.
-            if (!this.swapchain.matchesSurfaceExtent(framebufferWidth, framebufferHeight)) {
-                record("the surface extent no longer matches the " + this.swapchain.width() + "x"
-                        + this.swapchain.height() + " swapchain (window framebuffer is " + framebufferWidth
-                        + "x" + framebufferHeight + "), rebuilding it");
-                releaseSwapchainForRebuild();
-            }
-            if (this.swapchain != null) {
-                forwardPendingPresentedDumps();
-                return true;
-            }
-        }
-        java.util.List<String> reasons = new java.util.ArrayList<String>();
-        long adopt = window == this.reusableSurfaceWindow ? this.reusableSurface : 0L;
-        this.reusableSurface = 0L;
-        this.reusableSurfaceWindow = 0L;
-        VulkanSwapchain.CreationOutcome creationOutcome = new VulkanSwapchain.CreationOutcome();
-        this.swapchain = VulkanSwapchain.create(this.context, window, framebufferWidth, framebufferHeight, reasons, adopt,
-                creationOutcome);
-        if (this.swapchain != null) {
-            this.swapchainCreationEscalation.recordSuccess();
-            org.soutalab.celtium.vulkan.CeltiumFramePacing.setFifoPacing(this.swapchain.presentModeIsFifo());
-        }
-        forwardPendingPresentedDumps();
-        if (this.swapchain == null) {
-            if (creationOutcome.awaitingSurfaceSize) {
-                // A wait, not a refused creation: the surface pins a 0x0 extent (a minimised window, or one
-                // mid-resize), so no caller could have created a swapchain against it and nothing about the
-                // surface's fitness was decided. The escalation below counts refused creations only, and
-                // feeding it waits is what killed a healthy shipped v0.3.0 session: the surface pinned 0x0
-                // while a world loaded, the loading screen's present loop retried unthrottled, and 120 waits
-                // in about two seconds reached the limit. The frame is skipped exactly as the pre-attempt
-                // returns above skip it, creation is retried on the next present, and the escalation is left
-                // untouched - neither fed nor reset, because a wait is neither a refusal nor a success. The
-                // first present after the surface reports a size lands the creation and its recordSuccess.
-                this.presentSkipReason = "surface reports no size yet";
-                if (!this.pendingPresentedDumps.isEmpty()) {
-                    // Held, as on the refusal path: the next successful creation still serves the request.
-                    record("presented-image dump held while swapchain creation waits for a surface size: "
-                            + this.pendingPresentedDumps + " (" + reasons + ")");
-                }
-                record("swapchain creation waiting: the surface reports no size yet: " + reasons);
-                return false;
-            }
-            // Only this branch is a refused creation: the returns above it (no window handle, no drawable
-            // size) attempted nothing, so they never reach the latch. The refusal is latched with its
-            // reasons for the escalation the swap point polls; the recording is all that changes here -
-            // the skip this returns for is counted and reported exactly as before.
-            this.swapchainCreationEscalation.recordRefusal(reasons.toString());
-            if (!this.pendingPresentedDumps.isEmpty()) {
-                // Not dropped: the request stays held and is named, so the next creation attempt can still serve it and
-                // a leg can tell "no frame was presented" from "the request was thrown away".
-                record("presented-image dump held across a failed swapchain creation: "
-                        + this.pendingPresentedDumps + " (" + reasons + ")");
-            }
-            record("swapchain unavailable at surface and swapchain creation: " + reasons);
-            // BH-19 evidence: this list is what names *why* the swapchain was refused - the present-support contract,
-            // a surface usage/alpha/format refusal, or a vkCreateSwapchainKHR result. record()'s line reaches the
-            // report but not the process stdout, so the leg that exercises the refusal (the synthetic
-            // -Dceltium.vulkan.assumeNoPresentSupport=true contract test, or a real non-presenting family) had no
-            // reason string in its artifact - only the present hook's lastSkip=[swapchain unavailable]. Printed once
-            // per failed creation, where the run's own log keeps it.
-            System.out.println("[Celtium] CELTIUM_SWAPCHAIN_FAILED " + reasons);
-            return false;
-        }
-        record(this.swapchain.describe());
-        return true;
-    }
 
-    /**
-     * The swapchain creation escalation's verdict, for the swap point to poll: the crash line once
-     * {@link SwapchainCreationEscalation#FAILURE_LIMIT} creations in a row have been refused, or
-     * {@code null} while creation is merely failing transiently (or landing).
-     * <p>
-     * Polled rather than thrown from here, for two measured reasons: the swap point's hook wraps the
-     * present in a catch that swallows {@code RuntimeException | LinkageError}, so a throw from the
-     * backend would never reach a crash report; and this module is not compiled against Minecraft, so the
-     * {@code displayCrashReport} the escalation ends in cannot be called from here. The mixin polls this
-     * beside the window-renderer escalation, outside that catch, and owns the report and the throw - the
-     * same split as the renderer's, whose reasons are likewise produced on this side and reported there.
-     *
-     * @return the failure line for the crash report, or {@code null} when no escalation is due
-     */
-    public String celtium$swapchainCreationFailure() {
-        if (!this.swapchainCreationEscalation.escalationDue()) {
-            return null;
-        }
-        return "Celtium could not create the Vulkan swapchain after "
-                + this.swapchainCreationEscalation.consecutiveRefusals()
-                + " consecutive attempts. Last failure: " + this.swapchainCreationEscalation.lastRefusal()
-                + ". Check the Vulkan driver and Celtium's bundled LWJGL Vulkan bindings.";
-    }
 
     /**
      * The pair's clear decision: once per frame per content identity, not once per frame.
@@ -19867,69 +19681,6 @@ this.frameBufferOpen = false;
         return false;
     }
 
-    /**
-     * S2 probe: builds the surface and swapchain for the window GLFW currently owns, reports what the surface
-     * advertises, and presents one cleared image. GL still presents this window in the hybrid build, so this runs
-     * once and only when {@code -Dceltium.vulkan.swapchainProbe=true} is set.
-     */
-    private void runSwapchainProbe() {
-        if (this.gpuStalled) {
-            // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
-            // barrier recorded into a buffer that was never begun, and a framebuffer destroyed while a stale command buffer
-            // still referenced it, both from paths that assumed the frame had been recorded.
-            return;
-        }
-        if (this.swapchainProbeDone) {
-            return;
-        }
-        this.swapchainProbeDone = true;
-        String step = "window handle";
-        try {
-            if (!ensureSwapchain()) {
-                return;
-            }
-            record(this.swapchain.describe());
-            step = "clear and present";
-            record(this.swapchain.clearAndPresent(0.2f, 0.4f, 0.8f, 1.0f));
-            // Then present the frame's own content rather than a cleared image. Minecraft draws its final composite
-            // through Framebuffer.func_178038_a - a shader over a full-screen quad - and this is the step that replaces
-            // it: the shared colour image is where this frame's content lives. It runs after the clear probe so both
-            // are visible in one run and neither can hide the other.
-            step = "present the frame content";
-            // The frame content is only readable while the game's framebuffer is bound: at the probe's moment the
-            // default framebuffer is, which is exactly what beginFrame() refuses with
-            // "the bound draw framebuffer is the default framebuffer". So this step is skipped and said so, rather
-            // than reported as a failure of the mechanism.
-            if (org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING) == 0) {
-                record("presenting the frame skipped: the default framebuffer is bound, so there is no frame content"
-                        + " to present here");
-            } else if (ensureFrameTarget()) {
-                this.frameSubmitReachedQueue = false;
-                this.frameTarget.beginFrame();
-                this.lastPresentResult = this.swapchain.presentImage(this.frameTarget.colorImage(),
-                        org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, this.targetWidth,
-                        this.targetHeight);
-                record(this.lastPresentResult);
-                this.frameTarget.endFrame();
-            } else {
-                record("presenting the frame skipped: no frame target");
-            }
-        } catch (RuntimeException | LinkageError error) {
-            // The failing step and the deepest frame inside this module are what make an NPE diagnosable here: the
-            // probe runs once, so a bare message would leave the next attempt guessing.
-            StackTraceElement[] trace = error.getStackTrace();
-            StringBuilder where = new StringBuilder();
-            for (int i = 0; i < Math.min(4, trace.length); i++) {
-                if (i > 0) {
-                    where.append(" <- ");
-                }
-                where.append(trace[i].getClassName().substring(trace[i].getClassName().lastIndexOf('.') + 1))
-                        .append(':').append(trace[i].getLineNumber());
-            }
-            String arguments = this.swapchain == null ? "" : " args[" + this.swapchain.argumentSummary() + "]";
-            record("swapchain probe failed at " + step + ": " + describe(error) + " [" + where + "]" + arguments);
-        }
-    }
 
     /**
      * Whether the bound texture is the colour image of the framebuffer the game is currently rendering into.
@@ -20989,64 +20740,8 @@ this.frameBufferOpen = false;
                 + " perCallNanos=" + perCall + " bestNanos=" + this.drawBenchBestNanos);
     }
 
-    /** The window begin struct reused across frames: its contents change only when the pass, framebuffer or extent do. */
-    private org.lwjgl.vulkan.VkRenderPassBeginInfo cachedWindowBegin;
-    private org.lwjgl.vulkan.VkRect2D cachedWindowBeginArea;
-    private long cachedWindowBeginPass;
-    private long cachedWindowBeginFramebuffer;
-    private int cachedWindowBeginWidth = -1;
-    private int cachedWindowBeginHeight = -1;
-    private boolean cachedWindowBeginValid;
 
-    /**
-     * {@return the window's render-pass begin info}, reusing the struct and its render area while the pass, the
-     * framebuffer and the extent stay the same. Every window used to calloc a begin struct and a rectangle and fill
-     * them: thirty windows a frame, each about 3 us of the measured winBeginPass span including the caller's vkCmd.
-     */
-    private org.lwjgl.vulkan.VkRenderPassBeginInfo celtium$windowBeginInfo(long renderPass, long framebuffer,
-                                                                          int width, int height) {
-        if (this.cachedWindowBegin == null) {
-            this.cachedWindowBegin = org.lwjgl.vulkan.VkRenderPassBeginInfo.malloc();
-            this.cachedWindowBeginArea = org.lwjgl.vulkan.VkRect2D.malloc();
-            this.cachedWindowBeginValid = false;
-        }
-        // Compared field by field, not by a hash: two different framebuffers whose hash collided would have recorded a
-        // pass against the wrong one, and a device loss on a loaded world is exactly what that costs.
-        if (!this.cachedWindowBeginValid || renderPass != this.cachedWindowBeginPass
-                || framebuffer != this.cachedWindowBeginFramebuffer
-                || width != this.cachedWindowBeginWidth || height != this.cachedWindowBeginHeight) {
-            org.lwjgl.vulkan.VkRect2D area = this.cachedWindowBeginArea;
-            area.offset().set(0, 0);
-            area.extent().set(width, height);
-            this.cachedWindowBegin.sType$Default().renderPass(renderPass).framebuffer(framebuffer)
-                    .renderArea(area);
-            // The chain-pair pass clears its depth attachment, so it needs a clear value for it: the count must cover
-            // the highest attachment index with a CLEAR load op (VUID-VkRenderPassBeginInfo-clearValueCount-00902,
-            // which the first leg of this change reported 20 times before this line existed). The frame pass loads
-            // both attachments, so it needs none - and passing none is what it has always done.
-            int chainColors = chainPairRenderPassColorCount(renderPass);
-            if (chainColors > 0) {
-                if (this.cachedWindowClearValues == null) {
-                    this.cachedWindowClearValues = org.lwjgl.vulkan.VkClearValue.calloc(9);
-                }
-                // The colour attachments load, so their values are ignored; the depth - at the index the colour
-                // count puts it - is cleared to the far plane.
-                this.cachedWindowClearValues.get(chainColors).depthStencil().depth(1.0f).stencil(0);
-                this.cachedWindowBegin.clearValueCount(chainColors + 1).pClearValues(this.cachedWindowClearValues);
-            } else {
-                this.cachedWindowBegin.clearValueCount(0).pClearValues(null);
-            }
-            this.cachedWindowBeginPass = renderPass;
-            this.cachedWindowBeginFramebuffer = framebuffer;
-            this.cachedWindowBeginWidth = width;
-            this.cachedWindowBeginHeight = height;
-            this.cachedWindowBeginValid = true;
-        }
-        return this.cachedWindowBegin;
-    }
 
-    /** The clear values the chain-pair pass' begin needs (depth only); allocated on first use. */
-    private org.lwjgl.vulkan.VkClearValue.Buffer cachedWindowClearValues;
 
     /** Counts one window opening against the frame that asked for it, printing the first few callers. */
     private void celtium$noteWindowOpenSite() {
@@ -21111,7 +20806,7 @@ this.frameBufferOpen = false;
      * and that is exactly where the panorama's white lives. The rule is the same: the first frame with no splash
      * upload after one that had them ends the splash, and its canvases must not stay as any texture's content.
      */
-    private void celtium$dropSplashCanvasesAtSplashEnd() {
+    void celtium$dropSplashCanvasesAtSplashEnd() {
         if (!this.splashCanvasIds.isEmpty() && !this.splashUploadsThisFrame) {
             for (int id : this.splashCanvasIds) {
                 if (this.textureRegistry != null) {
@@ -21231,432 +20926,16 @@ this.frameBufferOpen = false;
 
 
 
-    /**
-     * Presents this frame's content from Vulkan, and says whether it reached the queue.
-     * <p>
-     * The frame's colour image is the one the game's own rendering and the native passes both wrote into (it is the shared
-     * image the GL side draws through), so presenting it puts this frame on the swapchain without a GL swap. The sequence
-     * is the one the probe already used: beginFrame, presentImage, endFrame.
-     * <p>
-     * Called once per frame from {@code Minecraft.updateDisplay}. A false return leaves the caller to swap through GL as
-     * before, so a failure here cannot leave the window without a frame.
-     */
-    public boolean celtium$presentFrame() {
-        long presentStartedNanos = System.nanoTime();
-        try {
-            return celtium$presentFrameImpl();
-        } finally {
-            // Swap-point accounting: this call and the boundary flush before it are the renderer's work between the
-            // end of updateRenderer and the window swap - outside every FramePassTimings bracket, so a leg's
-            // wall-vs-CPU gap cannot attribute them without a dedicated counter.
-            long spentNanos = System.nanoTime() - presentStartedNanos;
-            this.swapPointNanos += spentNanos;
-            FrameBudgetTimings.addPresent(spentNanos);
-            // The cadence mark: a menu presents frames without ever reaching the frame boundary, so this is the only
-            // place the frame period is measured there (-Dceltium.vulkan.frameBudget=true; a no-op otherwise).
-            FrameBudgetTimings.markPresent();
-            this.swapPointCalls++;
-            if (spentNanos > this.swapPointWorstNanos) {
-                this.swapPointWorstNanos = spentNanos;
-            }
-        }
-    }
-
-    private void celtium$debugMaybeGoFullscreen() {
-        if (DEBUG_FULLSCREEN_AFTER_FRAMES < 0 || this.debugFullscreenAsked) {
-            return;
-        }
-        if (++this.debugFramesPresented < DEBUG_FULLSCREEN_AFTER_FRAMES) {
-            return;
-        }
-        this.debugFullscreenAsked = true;
-        long window = CeltiumWindow.sdlWindowPointer();
-        if (window != 0L) {
-            boolean ok = org.lwjgl.sdl.SDLVideo.SDL_SetWindowFullscreen(window, true);
-            System.out.println("[Celtium] CELTIUM_DEBUG_FULLSCREEN frames=" + this.debugFramesPresented
-                    + " window=0x" + Long.toHexString(window) + " ok=" + ok
-                    + " (the launcher's fatal transition, asked for deliberately)");
-        }
-    }
-
-    private boolean celtium$presentFrameImpl() {
-        org.soutalab.celtium.vulkan.CeltiumSdlEventTrace.installOnce();
-        celtium$noteFrameBoundary("present");
-        this.reports.celtium$reportWindowState();
-        celtium$debugMaybeResize();
-        celtium$debugMaybeGoFullscreen();
-        // Isolation switch for the Wayland fault: with the swapchain out of the picture the frame is recorded and
-        // submitted but never presented, which separates "the swapchain's own wl_display use is the fault" from
-        // "something else in the present path is". Off by default; a leg that sets it draws nothing to the window.
-        if (SKIP_PRESENT) {
-            return true;
-        }
-        if (PUMP_BEFORE_PRESENT) {
-            // Serialise the two users of the wayland display: SDL services its queue here, on this thread, immediately
-            // before the swapchain's own dispatch runs. The fault measured on Wayland happens inside SDL's dispatch
-            // reached from SDL itself, and it disappears when the present is skipped, so the experiment is whether
-            // having nothing pending for SDL while the WSI works removes it.
-            try {
-                // Reflective: this module does not compile against LWJGL's GLFW-era Display, and Cleanroom's window
-                // bridge answers it on the SDL line.
-                Class<?> display = Class.forName("org.lwjgl.opengl.Display");
-                display.getMethod("processMessages").invoke(null);
-            } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
-                // A pump that fails must not stop the frame from being presented.
-            }
-        }
-        long presentStart = System.nanoTime();
-        try {
-            return celtium$presentFrameBody();
-        } finally {
-            if (VulkanContext.ASYNC_PRESENT) {
-                try {
-                    this.context.celtium$flushBatchedSubmits();
-                } catch (RuntimeException | LinkageError error) {
-                    record("post-present flush failed: " + error);
-                }
-            }
-            long presentNanos = System.nanoTime() - presentStart;
-            if (presentNanos > 50_000_000L) {
-                System.out.println("[Celtium] CELTIUM_PRESENT_SLOW millis=" + (presentNanos / 1_000_000L)
-                        + " frame=" + this.frameId);
-            }
-        }
-    }
-
-    private boolean celtium$presentFrameBody() {
-        // The present must not order after work still sitting in the frame buffer: paths that reach here without
-        // the swap-point flush (the bridge's world-pass present) still need the frame's submission queued first.
-        celtium$finishFrameBuffer();
-        celtium$dropSplashCanvasesAtSplashEnd();
-        // Fourth trigger for the counter summary, and the one a screen-open leg needs: frameId advances on the world
-        // render path, which a GUI screen skips, so a leg that opens a screen never reached the frame-120 print and
-        // read every counter as absent. Presents keep happening with a screen up, so counting them gives such a leg a
-        // print too. Bounded like the others: once per process, at the 120th present.
-        this.celtium$presentCount++;
-        if (this.celtium$presentCount == 120) {
-            celtium$printVerificationSummary("present 120", true);
-        }
-        // Counted before any condition: the entry counter is what says whether the per-frame call arrives at all, which the
-        // attempt counter cannot (it is only reached after the early returns).
-        this.presentHookCalls++;
-        // The counters below are otherwise only printed by event-driven reports, which say what happened the first time
-        // something changed rather than where the session ended up. This heartbeat is what makes the present path
-        // readable at the end of a run: whether the per-frame call arrives, and if it does not present, which gate
-        // returned it.
-        if (this.presentHookCalls <= 3 || this.presentHookCalls % 300 == 0) {
-            System.out.println("[Celtium] CELTIUM_PRESENT hookCalls=" + this.presentHookCalls
-                    + " attempts=" + this.presentAttempts + " presented=" + this.framePresentedFromVulkan
-                    + " failures=" + this.presentFailures + " swapsSkipped=" + this.glSwapsSkipped
-                    + " drainFailures=" + this.presentFlushFailures
-                    + " waiting=" + this.lastFrameReachedQueue + " lastSkip=[" + this.presentSkipReason
-                    + "] lastResult=[" + this.lastPresentResult + "] skipsByReason=[noTarget/stalled="
-                    + this.presentSkipsByReason[0] + " noSwapchain=" + this.presentSkipsByReason[1]
-                    + " noCompletedFrame=" + this.presentSkipsByReason[2] + " targetUnavailable="
-                    + this.presentSkipsByReason[3] + "]");
-        }
-        if (this.frameTarget == null || this.gpuStalled) {
-            this.presentSkipReason = "no frame target, or stalled";
-            this.presentSkips++;
-            this.presentSkipsByReason[0]++;
-            return false;
-        }
-        if (!ensureSwapchain()) {
-            // The swapchain is created here rather than only by the diagnostic probe: "anything that needs to present calls
-            // this" is what that method's own contract says, and this is the second caller it was written for.
-            this.presentSkipReason = "swapchain unavailable";
-            this.presentSkips++;
-            this.presentSkipsByReason[1]++;
-            return false;
-        }
-        // GL's updateDisplay presents everything drawn since the last swap, but this renderer defers immediate
-        // draws to the next bind or texture boundary - which can be arbitrarily later. Measured at startup: the
-        // splash's composite sat in the queue while its own updateDisplay presented a still-white frame image, and
-        // the presented loading frames stayed one update behind for the whole phase. Drawing the bound target's
-        // pending work here restores the swap-point ordering; groups for other targets stay queued for their own
-        // pass, exactly as at a bind boundary, and an empty queue costs one list check.
-        if (PRESENT_FLUSH_PENDING && !this.immediateWindowBusy) {
-            try {
-                FramePassTimings.begin("flush");
-                try {
-                    // The swap-point drain is the frame-end trigger for the window census.
-                    this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_FRAME_END;
-                    flushPendingBeforeGlDraw();
-                } finally {
-                    FramePassTimings.end("flush");
-                }
-            } catch (RuntimeException | LinkageError error) {
-                // A failed drain must not stop the present: the queued work keeps its owner, and whatever
-                // completed earlier is still worth showing.
-                this.presentFlushFailures++;
-                if (this.presentFlushFailures <= 3) {
-                    record("present-time immediate drain failed; the queue keeps its work: "
-                            + describeWithOrigin(error));
-                }
-            }
-        }
-        if (!this.lastFrameReachedQueue) {
-            this.presentSkipReason = "no completed frame waiting";
-            this.presentSkips++;
-            this.presentSkipsByReason[2]++;
-            // No completed frame's content is waiting in the shared image. frameSubmitReachedQueue cannot be used here:
-            // it is cleared when the next frame begins, and this call happens after that.
-            return false;
-        }
-        // Consumed: the next call presents the frame after this one. What is worth measuring is how far the frame
-        // being presented is from the one the game is drawing: a still picture cannot show a trail, but a present that
-        // serves a frame two or more behind is exactly what a moving camera looks like when it lags.
-        this.lastFrameReachedQueue = false;
-        if (this.queuedFrameId >= 0L) {
-            long lag = this.frameId - this.queuedFrameId;
-            if (lag > this.presentLagMax) {
-                this.presentLagMax = lag;
-            }
-            if (lag <= 1L) {
-                this.presentLagOne++;
-            } else {
-                this.presentLagMore++;
-            }
-        }
-        try {
-            if (!ensureFrameTarget()) {
-                this.presentSkipReason = "frame target not available";
-                this.presentSkips++;
-                this.presentSkipsByReason[3]++;
-                return false;
-            }
-            // No beginFrame/endFrame around this any more. The probe needed them because it produced the content itself,
-            // but in the normal frame the content and the copyback have already happened: the shading was measured as
-            // +13.4 ms per frame on Intel with them (AMD: no measurable cost), which is the price of a second copyback and
-            // its waits per frame. The shared image is left in the layout GL declares, which is what is passed here.
-            // VK_IMAGE_LAYOUT_GENERAL is the layout both targets leave the colour image in after a frame's release
-            // barrier (GllessFrameTarget.recordReleaseBarriers ends
-            // there), so it is the layout this present really finds. Taking it from the target's own bookkeeping was
-            // tried and reverted: the bridge target records the layout its *GL* side leaves, which is a different
-            // question from the one this call asks.
-            // Except when ensureFrameTarget() above has just rebuilt the target - a world or dimension change does -
-            // because a fresh image is UNDEFINED and no barrier for it has reached any submitted buffer yet.
-            // Declaring GENERAL for it makes this blit's source barrier claim a layout the image is not in, which the
-            // layer reports at vkQueueSubmit as VUID-vkCmdDraw-None-09600 (its submit-time first-layout check, whose
-            // "vkCmdDraw" is a hardcoded label rather than the command). The GL-less target's own bookkeeping answers
-            // this exactly - UNDEFINED while fresh, GENERAL once a submitted frame has transitioned it - so it is
-            // asked only in the configuration that owns the image; the bridge's tracking answers a different question.
-            int presentSourceLayout = this.frameTarget.colorImageLayout();
-            // The image is handed back in GENERAL whatever it was found in, because UNDEFINED is a legal oldLayout for
-            // the source transition and an illegal newLayout for the hand-back: passing the found layout through as the
-            // restore target produced VUID-VkImageMemoryBarrier-newLayout-01198 on a freshly rebuilt target (the
-            // present's restore barrier asked for newLayout=UNDEFINED). Content is not claimed by saying GENERAL here -
-            // a fresh image has none either way, and the next frame's acquire barrier is what gives it a layout it can
-            // be drawn into.
-            // What the present is about to serve, and what the pair held for it: the loading screen's frame image is a
-            // flat white field while the pair holds the game's picture, and the question is whether that is already
-            // true when the frame is presented or whether the image is whitened after the composite. The patch is the
-            // logo's own region, so a flat value is "no picture" and a dark one is "picture".
-            if (PRESENT_PATCH_TRACE && this.presentPatchLogs < PRESENT_PATCH_LINES
-                    && this.framePresentedFromVulkan + 1 >= PRESENT_PATCH_MIN_PRESENT
-                    && this.targetWidth > 512 && this.targetHeight > 512) {
-                this.presentPatchLogs++;
-                String presentLine = "CELTIUM_PRESENT_PATCH present=" + (this.framePresentedFromVulkan + 1)
-                        + " frame=" + this.frameId
-                        + " windows=" + this.immediateStatistics.immediateWindows()
-                        + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame()
-                        + " frameCentre=" + this.postChainBridge.celtium$patchMean(this.frameTarget.colorImage(), 928, 516, 64)
-                        // The hotbar's own band, in the frame image the present is about to blit. A flat band means the
-                        // GUI stage's draws are not in that image at all; a textured one means they are and the blit or
-                        // the swapchain loses them. Two statements, two different fixes.
-                        //
-                        // Row 0 of an owned image is the picture's BOTTOM (the readback is in image order; the present
-                        // flips once), so the hotbar - the bottom of the picture - is y = 0, not y = targetHeight - 32.
-                        // The earlier form read the picture's top: measured on leg r212-world-hud16 at presents 40-47,
-                        // "hotbarBand" was (111,145,207) - the sky - while the pair read (32,23,16). Both labels were
-                        // read as being about the hotbar in the rounds before that.
-                        + " hotbarBand=" + this.postChainBridge.celtium$patchMean(this.frameTarget.colorImage(),
-                                Math.max(0, this.targetWidth / 2 - 120), 0, 32)
-                        // The same coordinates on the picture's other end, so the two are told apart in one line.
-                        + " topBand=" + this.postChainBridge.celtium$patchMean(this.frameTarget.colorImage(),
-                                Math.max(0, this.targetWidth / 2 - 120), Math.max(0, this.targetHeight - 32), 32)
-                        + " pairCentre=" + (this.postChainBridge.celtium$livePairImage() == 0L ? "none"
-                                : this.postChainBridge.celtium$patchMean(this.postChainBridge.celtium$livePairImage(), 928, 516, 64))
-                        // The same hotbar band in the chain pair. The teammate's round-240 census puts the HUD family
-                        // on its own target identity, not on the frame image's; if that identity routes to the pair,
-                        // the HUD is in the pair and the present serves the frame image - a routing fault, not a lost
-                        // draw. Pixels, not bounds: the bounds reader collapses these groups to NDC (0,0), so its
-                        // geometry evidence cannot answer this.
-                        + " pairHotbarBand=" + (this.postChainBridge.celtium$livePairImage() == 0L ? "none"
-                                : this.postChainBridge.celtium$patchMean(this.postChainBridge.celtium$livePairImage(),
-                                        Math.max(0, this.targetWidth / 2 - 120), 0, 32))
-                        // And the default pair, which the routing table sends a non-main, non-zero identity's draws to.
-                        // The HUD's stage carries an identity of its own in this leg, and that identity's image has to be
-                        // looked at directly: the chain pair was checked and holds the world, so the default pair is the
-                        // remaining candidate - it is black in the splash legs, and nothing presents it.
-                        + " defaultPairHotbarBand=" + (offTargetTarget() == null
-                                || offTargetTarget().offTargetColorImage() == 0L ? "none"
-                                : this.postChainBridge.celtium$patchMean(offTargetTarget().offTargetColorImage(),
-                                        Math.max(0, this.targetWidth / 2 - 120), 0, 32));
-                System.out.println("[Celtium] " + presentLine);
-                record(presentLine);
-            }
-            long presentImageStartedNanos = System.nanoTime();
-            // The frame image as the blit is about to read it, in the present that serves it: the boundary probe reads
-            // the same image one frame later, and a difference between the two is the frame's own draws landing after
-            // the present rather than before it.
-            if (SKY_FRAME_PROBE >= 0L && this.frameId >= SKY_FRAME_PROBE
-                    && this.skyPresentProbeLines < SKY_FRAME_PROBE_LIMIT
-                    && this.frameTarget.colorImage() != 0L) {
-                this.skyPresentProbeLines++;
-                int[] presentFramePixels = celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,
-                        this.targetWidth, this.targetHeight);
-                System.out.println("[Celtium] CELTIUM_SKY_PRESENT_PROBE present=" + (this.framePresentedFromVulkan + 1)
-                        + " frame=" + this.frameId
-                        + " skyDraws=" + this.skyDrawsThisFrame
-                        + " " + PixelSignatures.celtium$skyBandSignature(presentFramePixels, this.targetWidth, this.targetHeight));
-            }
-            this.lastPresentResult = this.swapchain.presentImage(this.frameTarget.colorImage(),
-                    presentSourceLayout, this.targetWidth, this.targetHeight, org.lwjgl.vulkan.VK10.VK_NULL_HANDLE,
-                    org.lwjgl.vulkan.VK10.VK_NULL_HANDLE, org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);            this.frameTarget.noteColorImageLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
-            long presentImageNanos = System.nanoTime() - presentImageStartedNanos;
-            this.swapPointImageNanos += presentImageNanos;
-            celtium$noteSwapPointImage(presentImageNanos);
-            this.presentAttempts++;
-            this.presentSkipReason = "presented";
-            boolean reached = this.swapchain.lastPresentSucceeded();
-            if (reached) {
-                this.framePresentedFromVulkan++;
-                // Attribute the dumps this present wrote to this presented frame. The fixture can only observe
-                // the file once per render tick and several presents can pass in that window (measured: the
-                // startup request's file first existed while the counter read 16), which is why the frame is
-                // named from the write rather than from the observation. Several requests can be pending at
-                // once, so the attribution is kept per file name rather than as one "last write".
-                java.util.Map<String, Long> writes = this.swapchain.dumpWriteSerialByPath();
-                if (!writes.isEmpty()) {
-                    for (java.util.Map.Entry<String, Long> write : writes.entrySet()) {
-                        Long seen = this.seenDumpWriteSerialByName.get(write.getKey());
-                        if (seen == null || seen.longValue() != write.getValue().longValue()) {
-                            this.seenDumpWriteSerialByName.put(write.getKey(), write.getValue());
-                            this.presentedDumpWrittenFrames.put(write.getKey(),
-                                    Integer.valueOf(this.framePresentedFromVulkan));
-                        }
-                    }
-                }
-                long dumpStartedNanos = System.nanoTime();
-                dumpFrameIfRequested(this.framePresentedFromVulkan);
-                this.swapPointDumpNanos += System.nanoTime() - dumpStartedNanos;
-                // The caller skips the game's own Display.update when this returns true, and that call is also what polls
-                // the window's events, so they are polled here instead: input keeps working without the GL swap. Done in
-                // this module because the GLFW classes are on its classpath and not on the game module's.
-                long pollStartedNanos = System.nanoTime();
-                celtium$pollEvents();
-                this.swapPointPollNanos += System.nanoTime() - pollStartedNanos;
-                // The game's own Display.update runs after this and would swap through GL as well. The frame that swap
-                // would show is the one just presented, so it is skipped once, at the swap point itself.
-                this.swapPendingFromVulkan = true;
-            } else {
-                this.presentFailures++;
-            }
-            return reached;
-        } catch (RuntimeException | LinkageError error) {
-            this.presentFailures++;
-            this.lastPresentResult = "present threw: " + error;
-            return false;
-        }
-    }
-
-    /**
-     * Writes the presented image out every N frames when a directory is named, which is how the window's content is
-     * inspected over a run: one image at the fixture's capture cannot say whether what is on screen is a loading
-     * screen, the world, or a frame that never got drawn.
-     */
-    private void dumpFrameIfRequested(int presented) {
-        if (DUMP_PAIRS_AT_PRESENT > 0 && presented == DUMP_PAIRS_AT_PRESENT) {
-            this.postChainBridge.dumpChainPairs("present" + presented);
-        }
-        // Keep the fixture's own dump fresh as well. It asks for it once, and the write happens at the next present;
-        // when the run ends before that present - which is what a capture followed by a shutdown does - the file on
-        // disk is still the early one, and the picture assertions measure a frame from before the world existed.
-        // Re-asking on a cadence bounds the age instead of depending on where the run happens to stop.
-        int dumpEvery = PRESENTED_DUMP_EVERY;
-        if (this.presentedDumpPath != null && dumpEvery > 0 && presented % dumpEvery == 0) {
-            this.swapchain.requestPresentedImageDump(this.presentedDumpPath);
-        }
-        String directory = FRAME_DUMP_DIR;
-        if (directory == null) {
-            return;
-        }
-        if (FRAME_DUMP_EVERY <= 0 || presented % FRAME_DUMP_EVERY != 0) {
-            return;
-        }
-        if (this.frameDumpsWritten >= FRAME_DUMP_COUNT) {
-            return;
-        }
-        this.frameDumpsWritten++;
-        celtium$dumpPresentedImage(java.nio.file.Paths.get(directory, "frame-" + presented + ".png"));
-    }
 
 
-    /** Polls the window's events. The caller skips Display.update when a frame was presented, and that call polls them. */
-    public void celtium$pollEvents() {
-        try {
-            if (!CeltiumWindow.sdl()) {
-                // SDL pumps its own events in the loader's frame loop; calling GLFW there would be a
-                // NoClassDefFoundError on 0.7.
-                org.lwjgl.glfw.GLFW.glfwPollEvents();
-            }
-        } catch (RuntimeException | LinkageError ignored) {
-            // Polling is not worth failing a frame over.
-        }
-    }
 
 
-    /**
-     * {@return whether a presented frame is still waiting for the game's swap point, consuming that fact}.
-     * <p>
-     * True at most once per presented frame: the caller uses it to skip the GL swap for a frame Vulkan already showed,
-     * and the answer is cleared here so that a frame which was not presented still swaps through GL.
-     */
-    public boolean celtium$consumeSwapPendingFromVulkan() {
-        boolean pending = this.swapPendingFromVulkan;
-        this.swapPendingFromVulkan = false;
-        if (pending) {
-            this.glSwapsSkipped++;
-        }
-        return pending;
-    }
 
-    /**
-     * {@return the mean of the last image presented to the swapchain}, or -1 when it was not read back.
-     * <p>
-     * Exposed so the fixture can record it at the capture: an earlier comparison of this mean against the GL screenshot's
-     * was wrong because the two were taken at different moments, and a value recorded at the capture is the same frame.
-     * It is only meaningful with {@code -Dceltium.vulkan.presentReadback=true}.
-     */
-    public double celtium$presentedImageMean() {
-        return this.swapchain == null ? -1.0D : this.swapchain.lastPresentedMean();
-    }
 
-    /**
-     * Requests a PNG of the next acquired/presented image, not the last-presented image.
-     * <p>
-     * Readback and frame attribution belong to the present path. Requests survive lazy creation and wrapper replacement;
-     * accepting one does not mean its PNG has been written. Never read a swapchain image after presentation released it.
-     */
-    public boolean celtium$dumpPresentedImage(java.nio.file.Path path) {
-        if (path == null) {
-            return false;
-        }
-        if (this.swapchain == null) {
-            // The loading phase's request: accepted and held, because the swapchain is created on the present path and
-            // the splash's own last updateDisplay() is this run's first present. Returning false here made the fixture
-            // record "could not be requested" for a frame that was about to be presented - the request was possible,
-            // it just had no object to write through yet.
-            this.pendingPresentedDumps.add(path);
-            this.presentedImageDumpRequested = true;
-            return true;
-        }
-        this.swapchain.requestPresentedImageDump(path);
-        this.presentedDumpPath = path;
-        this.presentedImageDumpRequested = true;
-        return true;
-    }
+
+
+
+
 
     // ---- glCopyTexImage2D / glCopyTexSubImage2D: the read side of the copy --------------------------------------
     //
@@ -21853,11 +21132,11 @@ this.frameBufferOpen = false;
         return this.copyReadSide.celtium$immediateMatrixState();
     }
 
-    private boolean ensureFrameTarget() {
+    boolean ensureFrameTarget() {
         return this.copyReadSide.ensureFrameTarget();
     }
 
-    private boolean ensureFrameTarget(int width, int height) {
+    boolean ensureFrameTarget(int width, int height) {
         return this.copyReadSide.ensureFrameTarget(width, height);
     }
 
@@ -21865,7 +21144,7 @@ this.frameBufferOpen = false;
         return CopyReadSide.currentViewport();
     }
 
-    private static int[] cachedWindowFramebufferSize() {
+    static int[] cachedWindowFramebufferSize() {
         return CopyReadSide.cachedWindowFramebufferSize();
     }
 
@@ -24421,7 +23700,7 @@ this.frameBufferOpen = false;
      * exception prints as "null". The class alone cannot name the array, so the first frames of the stack travel with
      * it. Bounded to five frames: this runs once per failure.
      */
-    private static String describeWithOrigin(Throwable error) {
+    static String describeWithOrigin(Throwable error) {
         StringBuilder line = new StringBuilder(describe(error));
         StackTraceElement[] frames = error.getStackTrace();
         for (int i = 0; i < frames.length && i < 5; i++) {
