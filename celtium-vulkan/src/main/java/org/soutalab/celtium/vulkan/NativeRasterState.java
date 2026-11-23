@@ -51,6 +51,9 @@ public final class NativeRasterState {
     public void flushBeforeChange() { changing(); }
 
     private void changing() {
+        // GAP-FL-1 (F-7): every actual raster change records into the one flush census.
+        org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.current()
+                .note(org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.Reason.RASTER_CHANGE);
         if (this.beforeChange != null && !this.notifying) {
             this.notifying = true;
             try { this.beforeChange.run(); }
