@@ -823,7 +823,26 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     public boolean celtium$unifiedFrameBuffer() {
         return !this.gpuStalled
-                && (this.frameTarget == null || !this.frameTarget.needsFrameSemaphores());
+                && (this.frameTarget == null || !this.frameTarget.needsFrameSemaphores()
+                        || FrameCoordinator.FRAME_SEMAPHORE_COALESCE);
+    }
+
+    /**
+     * E1(a) early finish point (design e1e3-design section 1.2): a consumer that may only close its target once
+     * the recording is QUEUED gets exactly that, by finishing the unified frame buffer on the spot (the finish
+     * submission carries the frame's semaphore pair when the target has one) instead of the window / pass having
+     * submitted directly. With coalescing off, or when the submission already left the recording path, this is
+     * the identity. Off-target closes whose recordings are not in this buffer are unaffected in practice: the
+     * finish only queues what the frame has recorded so far, in queue order, which is the same order the close
+     * would have observed after the boundary submit.
+     */
+    private FrameCoordinator.Submission celtium$finishForTargetClose(FrameCoordinator.Submission progress) {
+        if (FrameCoordinator.FRAME_SEMAPHORE_COALESCE
+                && progress == FrameCoordinator.Submission.RECORDED && this.frameBufferOpen) {
+            celtium$finishFrameBuffer();
+            return FrameCoordinator.Submission.QUEUED;
+        }
+        return progress;
     }
 
     /** [accept, record, submit, fence-complete, pending, invalid, off-accept, off-record, off-complete]. */
@@ -1712,6 +1731,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             }
         }
 
+        // E1(a): a RECORDED progress under coalescing is finished on the spot so the close below sees the
+        // QUEUED state the semaphore contract requires (no-op with the flag off).
+        progress = celtium$finishForTargetClose(progress);
         try {
             if (!progress.canCloseTarget(this.frameTarget.needsFrameSemaphores())) {
                 // An external owner requires its semaphore packet to have been queued. A native same-queue target
@@ -3603,6 +3625,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                         celtium$frameSerial(), bindCache);
                 this.frameTarget.recordReleaseBarriers(this.commandBuffer);
                 FrameCoordinator.Submission progress = this.frameCoordinator.submitCommands();
+                // E1(a): same early finish as the terrain close, so a coalesced RECORDED still closes.
+                progress = celtium$finishForTargetClose(progress);
                 if (progress.canCloseTarget(this.frameTarget.needsFrameSemaphores())) {
                     this.frameTarget.endFrame();
                 }
@@ -12729,7 +12753,13 @@ this.frameBufferOpen = false;
                 try {
                     this.frameSubmitReachedQueue = false;
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("wfpBegin");
-                    this.frameTarget.beginFrame();
+                    // E1(a): with coalescing on, the window does not open the frame's semaphore bracket - the
+                    // frame lifecycle's owner opens it once and the boundary submission closes it, so the
+                    // per-window beginFrame/endFrame packets (on a shared target, whole signal/wait-only
+                    // submissions) are skipped. Off, the call runs exactly as before.
+                    if (!FrameCoordinator.FRAME_SEMAPHORE_COALESCE) {
+                        this.frameTarget.beginFrame();
+                    }
                     org.soutalab.celtium.vulkan.FramePassTimings.end("wfpBegin");
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("wfpMiddle");
                     opened = true;
@@ -13072,7 +13102,10 @@ this.frameBufferOpen = false;
                     if (celtium$windowPollNeeded(submission)) {
                         celtium$pollCompletedSlots();
                     }
-                    this.frameTarget.endFrame();
+                    // E1(a): the pair to the skipped beginFrame above - skipped with coalescing on.
+                    if (!FrameCoordinator.FRAME_SEMAPHORE_COALESCE) {
+                        this.frameTarget.endFrame();
+                    }
                     org.soutalab.celtium.vulkan.FramePassTimings.end("winEnd");
                     opened = false;
                     this.terrainStatistics.notePassSubmissions();
@@ -13132,7 +13165,10 @@ this.frameBufferOpen = false;
                     this.groupQueueMutation++;
                     this.immediateGroups.addAll(0, this.recordedImmediateGroups);
                     this.recordedImmediateGroups.clear();
-                    if (opened) {
+                    // E1(a): the recovery round trip below exists to release the semaphore pair a failed
+                    // window's beginFrame opened. With coalescing on the window never opened it, so there is
+                    // nothing to release and the retry re-records into the unified buffer directly.
+                    if (opened && !FrameCoordinator.FRAME_SEMAPHORE_COALESCE) {
                         beginCommands();
                         gpuMark("pre-acq3");
                         this.frameTarget.recordAcquireBarriers(this.commandBuffer);
@@ -22074,8 +22110,10 @@ this.frameBufferOpen = false;
         this.passAreaWidth = this.targetWidth;
         this.passAreaHeight = this.targetHeight;
         // Open the unified frame buffer for this frame when the target carries no semaphore contract - a target that
-        // needs the wait/signal pair keeps the per-recording submits the contract was built on.
-        this.frameBufferOpen = this.frameTarget == null || !this.frameTarget.needsFrameSemaphores();
+        // needs the wait/signal pair keeps the per-recording submits the contract was built on. With E1(a)
+        // coalescing on, the buffer opens regardless of the contract and the boundary submission carries the pair.
+        this.frameBufferOpen = this.frameTarget == null || !this.frameTarget.needsFrameSemaphores()
+                || FrameCoordinator.FRAME_SEMAPHORE_COALESCE;
     }
 
     /**

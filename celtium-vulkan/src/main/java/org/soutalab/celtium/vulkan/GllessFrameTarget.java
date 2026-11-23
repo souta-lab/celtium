@@ -512,6 +512,16 @@ public final class GllessFrameTarget implements FrameImageTarget {
         this.waitSignalled = false;
     }
 
+    /**
+     * Whether this frame's wait signal is currently outstanding (a {@code beginFrame} signalled it and no
+     * submission has waited on it yet). Read by the coordinator only under E1(a) coalescing: a coalesced
+     * submission may carry the pair only when a signal is actually live, because the windows that used to
+     * re-signal per stage no longer call {@code beginFrame}.
+     */
+    public boolean celtium$waitSignalOutstanding() {
+        return this.waitSignalled;
+    }
+
     /** How many abandoned frames had their outstanding wait signal consumed. */
     public int abandonedWaitsConsumed() {
         return this.abandonedWaitsConsumed;

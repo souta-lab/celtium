@@ -27,6 +27,20 @@ public final class FrameCoordinator {
     private static int FAIL_SUBMITS_REMAINING = Integer.getInteger("celtium.vulkan.failSubmits", 0).intValue();
 
     /**
+     * E1(a) (item 679, design e1e3-design section 1): keep a window's recording in the unified frame buffer even
+     * when the frame target carries the frame-semaphore contract, instead of falling through to a per-window
+     * direct submit. The wait/signal pair is then carried exactly once, by the frame boundary's
+     * {@link #celtium$finishFrameBuffer} submission - the wait still precedes the first submission that touches
+     * the frame image and the signal still follows the last one, which is all the contract requires; the queue's
+     * own submission order supplies the ordering between the frame's submissions. Points that genuinely need
+     * the recording queued mid-frame (the {@code canCloseTarget} consumers, the copy ordering points) finish
+     * the unified buffer early instead of relying on the per-window fallthrough. Default off: with the flag off
+     * every path below is byte-identical to the pre-E1 code.
+     */
+    static final boolean FRAME_SEMAPHORE_COALESCE =
+            Boolean.parseBoolean(System.getProperty("celtium.vulkan.frameSemaphoreCoalesce", "false"));
+
+    /**
      * A frame's command buffer is always ended and submitted once, at the frame boundary, instead of per segment:
      * every device batches, unconditionally.
      * <p>
@@ -171,6 +185,29 @@ public final class FrameCoordinator {
                         calls == 0 ? 0.0 : submitQueueNanos / 1e6 / calls);
     }
 
+    /**
+     * Under E1(a) coalescing, whether a submission may carry the frame's semaphore pair right now. For the
+     * owned (GL-less) target the pair is self-signalled by {@code beginFrame}: windows no longer call it, so a
+     * submission made when no begin is live must not wait on a signal nobody issued (that wait would never
+     * complete) nor signal done for a consumer that is the same queue. Any other target's pair is signalled by
+     * its external producer, independent of this renderer's begin calls, so it stays live.
+     */
+    private boolean celtium$framePairLive() {
+        if (this.host.frameTarget() instanceof GllessFrameTarget gllessTarget) {
+            return gllessTarget.celtium$waitSignalOutstanding();
+        }
+        return true;
+    }
+
+    /** The semaphore inclusion for one submission, honouring the coalescing pair-liveness rule above. */
+    private boolean celtium$frameSemaphoresFor(boolean withFrameSemaphores) {
+        boolean frameSemaphores = withFrameSemaphores && this.host.frameTarget().needsFrameSemaphores();
+        if (frameSemaphores && FRAME_SEMAPHORE_COALESCE && !celtium$framePairLive()) {
+            return false;
+        }
+        return frameSemaphores;
+    }
+
     Submission submitCommands(boolean withFrameSemaphores) {
         if (this.host.gpuStalled()) {
             // Nothing to end: the buffer was never begun. This is the last of the recording entries the steady-state injection
@@ -180,7 +217,7 @@ public final class FrameCoordinator {
         // The owned target's semaphore pair synchronizes the renderer with itself on one queue, which is ordering
         // the queue already has: when the target says the contract does not apply the submission takes no semaphore
         // at all, and every per-stage packet that exists only to carry the pair is skipped with it.
-        boolean frameSemaphores = withFrameSemaphores && this.host.frameTarget().needsFrameSemaphores();
+        boolean frameSemaphores = celtium$frameSemaphoresFor(withFrameSemaphores);
         // OPT-07: every copy the frame recorded goes out as one submission before this one, so the vertices, indices
         // and uniform bytes this command buffer reads are in place. It is a no-op when nothing is pending, and it is
         // the frame's own ordering statement: a copy no longer needs a submission and a wait of its own.
@@ -188,8 +225,11 @@ public final class FrameCoordinator {
         if (this.host.frameBufferOpen()) {
             // Unified frame buffer: the segment's commands stay recorded; end, submission and bookkeeping all happen
             // once at the frame boundary via celtium$finishFrameBuffer. A frame that switched to a semaphore-carrying
-            // target mid-recording falls through instead and takes the direct path below.
-            if (!frameSemaphores) {
+            // target mid-recording falls through instead and takes the direct path below - unless E1(a) coalescing
+            // is on, in which case the recording stays unified regardless of the semaphore contract (the general
+            // form: it does not depend on the needsFrameSemaphores() value) and the boundary submission carries
+            // the pair once for the whole frame.
+            if (!frameSemaphores || FRAME_SEMAPHORE_COALESCE) {
                 return Submission.RECORDED;
             }
         }
@@ -267,7 +307,7 @@ public final class FrameCoordinator {
             this.host.commandState().reset();
             return;
         }
-        boolean frameSemaphores = withFrameSemaphores && this.host.frameTarget().needsFrameSemaphores();
+        boolean frameSemaphores = celtium$frameSemaphoresFor(withFrameSemaphores);
         this.host.context().flushUploads();
         // The batched path ends the buffer here rather than in submit(), so the frame's GPU-time pair closes here too.
         this.host.recordFrameEndTimestamp();
