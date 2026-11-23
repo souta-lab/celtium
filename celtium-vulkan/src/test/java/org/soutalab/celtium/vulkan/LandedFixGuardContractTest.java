@@ -23,6 +23,8 @@ class LandedFixGuardContractTest {
 
     private static final String BACKEND =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java";
+    private static final String COPY_READ_SIDE =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CopyReadSide.java";
     private static final String CONTEXT =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanContext.java";
     private static final String TERRAIN_RENDERER =
@@ -68,7 +70,8 @@ class LandedFixGuardContractTest {
      */
     @Test
     void aDepthCopyResolvingToOneImageIsRefusedBeforeTheBarrierWork() throws IOException {
-        String backend = read(BACKEND);
+        // The depth copy moved to CopyReadSide (refactoring plan R11); the guard follows the method.
+        String backend = read(COPY_READ_SIDE);
         int serve = backend.indexOf("public String celtium$serveDepthCopy(");
         assertTrue(serve >= 0, "celtium$serveDepthCopy is declared");
         String body = backend.substring(serve, serve + 16000);

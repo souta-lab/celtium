@@ -188,8 +188,9 @@ class DepthFormatPairPinTest {
         assertFalse(allocator.contains("VK_FORMAT_D32_SFLOAT"),
                 "the allocator names no fixed depth format of its own");
 
+        // The copy itself moved to CopyReadSide (refactoring plan R11); the pin follows the method.
         String backend = Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"));
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CopyReadSide.java"));
         String copy = methodSlice(backend, "public String celtium$serveDepthCopy", 2400);
         assertTrue(copy.contains("target.sharedDepthImage(sourceKey)"),
                 "the copy's source is a shared-store image");
