@@ -3097,6 +3097,13 @@ public final class VulkanContext {
      * were reported and enabled at creation (item 652, stage 0).
      */
     private boolean meshShaderSupported;
+    /**
+     * The mesh limits read from {@code VkPhysicalDeviceMeshShaderPropertiesEXT} at device
+     * creation (item 652; {@link MeshCapability#ABSENT} when the extension was not
+     * advertised, so no query ran). The feature pair in {@link #meshShaderSupported} says
+     * the shaders may run; this snapshot says the compiled shaders' sizes fit.
+     */
+    private MeshCapability meshCapability = MeshCapability.ABSENT;
 
     /** {@return whether the device was created with {@code multiDrawIndirect} enabled}. */
     public boolean multiDrawIndirectEnabled() {
@@ -3146,6 +3153,16 @@ public final class VulkanContext {
      */
     public boolean meshShaderEnabled() {
         return this.meshShaderSupported;
+    }
+
+    /**
+     * {@return the mesh limits snapshot taken at device creation} (item 652,
+     * alpha-mesh-next2). Never null: a device that never advertised the extension
+     * carries {@link MeshCapability#ABSENT}, whose every judgement is false, so a
+     * caller gating on the snapshot alone still lands on the indirect path.
+     */
+    public MeshCapability meshCapability() {
+        return this.meshCapability;
     }
 
     /** {@return the device's {@code maxDrawIndirectCount}}; 0 means the limit was never read (OPT-09's clamp). */
@@ -3478,6 +3495,33 @@ public final class VulkanContext {
                                 .pNext(supportedMesh.address());
                 org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2(this.physicalDevice, meshFeatures2);
                 this.meshShaderSupported = supportedMesh.meshShader() && supportedMesh.taskShader();
+                // The limits half of the capability (alpha-mesh-next2): the properties
+                // struct is queried whenever the extension is advertised, feature pair or
+                // not, so the report line below can name what a mesh-only or small-limit
+                // device actually offers. Before this query existed, stage 2 clamped
+                // against one fixture's measured total hard-coded as a constant and
+                // stage 1 dispatched with no limit check at all.
+                org.lwjgl.vulkan.VkPhysicalDeviceMeshShaderPropertiesEXT meshProperties =
+                        org.lwjgl.vulkan.VkPhysicalDeviceMeshShaderPropertiesEXT.calloc(stack).sType$Default();
+                org.lwjgl.vulkan.VkPhysicalDeviceProperties2 meshProperties2 =
+                        org.lwjgl.vulkan.VkPhysicalDeviceProperties2.calloc(stack).sType$Default()
+                                .pNext(meshProperties.address());
+                org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceProperties2(this.physicalDevice, meshProperties2);
+                this.meshCapability = new MeshCapability(
+                        meshProperties.maxTaskWorkGroupTotalCount(),
+                        meshProperties.maxTaskWorkGroupCount(0),
+                        meshProperties.maxTaskWorkGroupInvocations(),
+                        meshProperties.maxTaskWorkGroupSize(0),
+                        meshProperties.maxTaskPayloadSize(),
+                        meshProperties.maxMeshWorkGroupTotalCount(),
+                        meshProperties.maxMeshWorkGroupCount(0),
+                        meshProperties.maxMeshWorkGroupInvocations(),
+                        meshProperties.maxMeshOutputVertices(),
+                        meshProperties.maxMeshOutputPrimitives());
+                System.out.println("[Celtium] CELTIUM_MESH_PROPERTIES features=" + this.meshShaderSupported
+                        + " " + this.meshCapability
+                        + " stage1Capable=" + this.meshCapability.stage1Capable()
+                        + " stage2Capable=" + this.meshCapability.stage2Capable());
                 if (this.meshShaderSupported) {
                     deviceExtensions.add(
                             org.lwjgl.vulkan.EXTMeshShader.VK_EXT_MESH_SHADER_EXTENSION_NAME);

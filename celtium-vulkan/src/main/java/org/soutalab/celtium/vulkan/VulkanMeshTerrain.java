@@ -83,11 +83,13 @@ public final class VulkanMeshTerrain {
         if (!ENABLED) {
             return false;
         }
-        if (context == null || !context.meshShaderEnabled()) {
+        if (context == null || !context.meshShaderEnabled()
+                || !context.meshCapability().stage1Capable()) {
             if (!gateReported) {
                 gateReported = true;
                 System.out.println("[Celtium] CELTIUM_MESH_TERRAIN gate=capability-off flag=on"
-                        + " meshShaderEnabled=" + (context != null && context.meshShaderEnabled()));
+                        + " meshShaderEnabled=" + (context != null && context.meshShaderEnabled())
+                        + " stage1Capable=" + (context != null && context.meshCapability().stage1Capable()));
             }
             return false;
         }
@@ -211,6 +213,16 @@ public final class VulkanMeshTerrain {
             quads += indexCount / 6;
         }
         if (quads <= 0L || quads > Integer.MAX_VALUE) {
+            return false;
+        }
+        // The dispatch below issues one mesh workgroup per quad, all in the x
+        // dimension: both counts must fit the device's mesh limits, or the dispatch
+        // itself is outside the vkCmdDrawMeshTasksEXT valid-usage rules. Before
+        // alpha-mesh-next2 this was unchecked (the limits were never even queried);
+        // a batch that does not fit now refuses here and the caller draws it through
+        // the ordinary indirect chain — the same fallback every other refusal in
+        // this method takes.
+        if (!this.context.meshCapability().stage1DispatchFits(quads)) {
             return false;
         }
         if (this.slotExhausted[slot]

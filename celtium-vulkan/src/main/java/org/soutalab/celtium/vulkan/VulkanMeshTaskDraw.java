@@ -66,12 +66,15 @@ public final class VulkanMeshTaskDraw {
     public static final int PUSH_BYTES = 144;
 
     /**
-     * The clamp on task workgroups per draw: the measured maxTaskWorkGroupTotalCount on
-     * the RADV fixture (mesh-shader-652 section 1.1). Section counts in the target
-     * scenes are orders of magnitude below this; the clamp is a safety net, and a frame
-     * that reaches it falls back rather than truncating.
+     * The clamp on task workgroups per draw is no longer a constant: it is the device's
+     * own maxTaskWorkGroupTotalCount / maxTaskWorkGroupCount[0], read at device creation
+     * into {@link MeshCapability} (alpha-mesh-next2). The previous form hard-coded the
+     * RADV fixture's measured 4,194,304 (mesh-shader-652 section 1.1) as if it were a
+     * spec guarantee; on a device with a smaller total the draw would have exceeded the
+     * limit instead of falling back. Section counts in the target scenes are orders of
+     * magnitude below any real device's cap either way — the clamp remains a safety net,
+     * and a frame that reaches it falls back rather than truncating.
      */
-    private static final int MAX_TASK_WORKGROUPS = 4194304;
 
     private static final int PRINT_EVERY_FRAMES = 60;
 
@@ -81,6 +84,8 @@ public final class VulkanMeshTaskDraw {
         NONE,
         /** The device did not report / could not enable the mesh+task feature pair. */
         NO_MESH_SHADER,
+        /** The feature pair is on but the device limits cannot hold the compiled shaders. */
+        NO_MESH_LIMITS,
         /** A frame budget cap is active for this frame (design section 2.3). */
         BUDGET_ACTIVE,
         /** The caller has no stage-2 pipeline to bind yet. */
@@ -121,9 +126,16 @@ public final class VulkanMeshTaskDraw {
         long uploadedDirectoryGeneration = -1L;
     }
 
-    /** The standing gate: the stage-2 flag on AND the stage-0 capability pair enabled. */
+    /**
+     * The standing gate: the stage-2 flag on, the stage-0 capability pair enabled, AND
+     * the device limits able to hold the compiled task/mesh shaders
+     * ({@link MeshCapability#stage2Capable()}). The limits term is what makes the
+     * fallback shape complete: a feature-pair device whose mesh output or payload
+     * limits are below the shaders' compiled sizes never constructs this class, so
+     * its frames take the indirect path exactly as a no-extension device's do.
+     */
     public static boolean available(VulkanContext context) {
-        return ENABLED && context.meshShaderEnabled();
+        return ENABLED && context.meshShaderEnabled() && context.meshCapability().stage2Capable();
     }
 
     public VulkanMeshTaskDraw(VulkanContext context) {
@@ -153,6 +165,7 @@ public final class VulkanMeshTaskDraw {
         }
         System.out.println("[Celtium] CELTIUM_MESH_TERRAIN_STAGE2_GATE enabled=" + ENABLED
                 + " meshShader=" + context.meshShaderEnabled()
+                + " limits=" + context.meshCapability()
                 + " quadsPerMeshWorkgroup=" + QUADS_PER_MESH_WORKGROUP
                 + " mode=input-side (item 677 stage 2: directory + task shader + one draw call)");
     }
@@ -214,6 +227,9 @@ public final class VulkanMeshTaskDraw {
         if (!this.context.meshShaderEnabled()) {
             return count(GateReason.NO_MESH_SHADER);
         }
+        if (!this.context.meshCapability().stage2Capable()) {
+            return count(GateReason.NO_MESH_LIMITS);
+        }
         if (budgetActive) {
             return count(GateReason.BUDGET_ACTIVE);
         }
@@ -236,7 +252,7 @@ public final class VulkanMeshTaskDraw {
             return count(GateReason.NO_SECTIONS);
         }
         int taskGroups = taskWorkGroupCount(sectionCount);
-        if (taskGroups > MAX_TASK_WORKGROUPS) {
+        if (!this.context.meshCapability().stage2TaskGroupsFit(taskGroups)) {
             return count(GateReason.OVER_TASK_WORKGROUP_LIMIT);
         }
         try {
@@ -302,6 +318,7 @@ public final class VulkanMeshTaskDraw {
                     + " ineligibleSections=" + this.reasonCounts[GateReason.INELIGIBLE_SECTIONS.ordinal()]
                     + " budgetActive=" + this.reasonCounts[GateReason.BUDGET_ACTIVE.ordinal()]
                     + " noMeshShader=" + this.reasonCounts[GateReason.NO_MESH_SHADER.ordinal()]
+                    + " noMeshLimits=" + this.reasonCounts[GateReason.NO_MESH_LIMITS.ordinal()]
                     + " overLimit=" + this.reasonCounts[GateReason.OVER_TASK_WORKGROUP_LIMIT.ordinal()]
                     + "]");
         }
