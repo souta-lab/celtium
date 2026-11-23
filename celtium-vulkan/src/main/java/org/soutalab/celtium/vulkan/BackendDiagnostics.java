@@ -204,16 +204,16 @@ final class BackendDiagnostics {
                 + " lastOrderingFlushFailure=" + (b.lastOrderingFlushFailure == null ? "none"
                         : b.lastOrderingFlushFailure.replace(' ', '_').substring(0,
                                 Math.min(200, b.lastOrderingFlushFailure.length())))
-                + " batchCallCount=" + b.batchCallCount
-                + " batchCallMillis=" + (b.batchCallNanos / 1000000L)
-                + " batchCallWorstMillis=" + (b.batchCallWorstNanos / 1000000L)
-                + " batchCallOpeningMillis=" + (b.batchCallOpeningNanos / 1000000L)
-                + " batchCallOpeningCount=" + b.batchCallOpeningCount
-                + " batchCallCpuMillis=" + (b.batchCallCpuNanos / 1000000L)
+                + " batchCallCount=" + BatchCallTimings.batchCallCount
+                + " batchCallMillis=" + (BatchCallTimings.batchCallNanos / 1000000L)
+                + " batchCallWorstMillis=" + (BatchCallTimings.batchCallWorstNanos / 1000000L)
+                + " batchCallOpeningMillis=" + (BatchCallTimings.batchCallOpeningNanos / 1000000L)
+                + " batchCallOpeningCount=" + BatchCallTimings.batchCallOpeningCount
+                + " batchCallCpuMillis=" + (BatchCallTimings.batchCallCpuNanos / 1000000L)
                 + " threadCpuSupported=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.THREAD_CPU_SUPPORTED
-                + " threadWaitedMillis=" + b.threadWaitedMillis()
-                + " threadBlockedMillis=" + b.threadBlockedMillis()
-                + " threadCpuTotalMillis=" + (b.threadCpuNanos() / 1000000L)
+                + " threadWaitedMillis=" + BatchCallTimings.threadWaitedMillis()
+                + " threadBlockedMillis=" + BatchCallTimings.threadBlockedMillis()
+                + " threadCpuTotalMillis=" + (BatchCallTimings.threadCpuNanos() / 1000000L)
                 + " uniformPreparationFailures=" + b.immediateStatistics.uniformPreparationFailures()
                 + " lastUniformPreparationFailure=" + b.immediateStatistics.lastUniformPreparationFailure()
                 + " regionUploadFailures=" + b.regionUploadFailures

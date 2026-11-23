@@ -429,7 +429,7 @@ public abstract class WorldVertexBufferUploaderMixin {
             boolean batchTimed = org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.BATCH_TIMINGS;
             long batchCallStarted = batchTimed ? System.nanoTime() : 0L;
             long batchCallCpuStarted = batchTimed
-                    ? org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.threadCpuNanos() : -1L;
+                    ? org.soutalab.celtium.vulkan.BatchCallTimings.threadCpuNanos() : -1L;
             try {
                 celtium$noteProbedTextureSite();
                 celtium$noteProbedFormatSite(formatId);
@@ -456,20 +456,20 @@ public abstract class WorldVertexBufferUploaderMixin {
                     }
                 }
             } finally {
-                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallCount++;
+                org.soutalab.celtium.vulkan.BatchCallTimings.batchCallCount++;
                 if (batchTimed) {
                     long batchCallTook = System.nanoTime() - batchCallStarted;
-                    long batchCallCpuEnded = org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.threadCpuNanos();
+                    long batchCallCpuEnded = org.soutalab.celtium.vulkan.BatchCallTimings.threadCpuNanos();
                     if (batchCallCpuStarted >= 0 && batchCallCpuEnded >= 0) {
-                        org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallCpuNanos += batchCallCpuEnded - batchCallCpuStarted;
+                        org.soutalab.celtium.vulkan.BatchCallTimings.batchCallCpuNanos += batchCallCpuEnded - batchCallCpuStarted;
                     }
-                    org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallNanos += batchCallTook;
-                    if (batchCallTook > org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallWorstNanos) {
-                        org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallWorstNanos = batchCallTook;
+                    org.soutalab.celtium.vulkan.BatchCallTimings.batchCallNanos += batchCallTook;
+                    if (batchCallTook > org.soutalab.celtium.vulkan.BatchCallTimings.batchCallWorstNanos) {
+                        org.soutalab.celtium.vulkan.BatchCallTimings.batchCallWorstNanos = batchCallTook;
                     }
-                    if (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallOpeningCount < 200) {
-                        org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallOpeningCount++;
-                        org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.batchCallOpeningNanos += batchCallTook;
+                    if (org.soutalab.celtium.vulkan.BatchCallTimings.batchCallOpeningCount < 200) {
+                        org.soutalab.celtium.vulkan.BatchCallTimings.batchCallOpeningCount++;
+                        org.soutalab.celtium.vulkan.BatchCallTimings.batchCallOpeningNanos += batchCallTook;
                     }
                 }
             }
