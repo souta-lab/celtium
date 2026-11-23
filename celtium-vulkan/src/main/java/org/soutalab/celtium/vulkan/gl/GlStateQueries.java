@@ -248,7 +248,7 @@ final class GlStateQueries {
         if (pname == 0x8764) { // GL_BUFFER_SIZE - LWJGL needs this to size glMapBuffer results
             int bound = stub.boundBuffer(target);
             NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(bound);
-            ByteBuffer storage = bound == 0 ? null : stub.bufferStore.get(bound);
+            ByteBuffer storage = bound == 0 ? null : GlsmBufferState.current().storage(bound);
             int size = nativeBuffer != null ? nativeBuffer.byteSize()
                     : stub.logicalSizeOf(bound, storage == null ? 0 : storage.capacity());
             if ("glGetBufferParameteri64v".equals(name)) {

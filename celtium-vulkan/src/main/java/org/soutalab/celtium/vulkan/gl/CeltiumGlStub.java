@@ -249,7 +249,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     // GAP-ST-1 rewired: the enable/observed record is owned by GlsmEnableState (singleton). A false value there
     // may be an observed disable or simply an untouched provider default; native replacements can bypass
     // callbacks, so the latter must never erase state captured through Minecraft's API.
-    private final int[] bufferBindings = new int[FLAT_MAP_SIZE];
+    // GAP-ST-2 rewired: buffer bindings and storage are owned by GlsmBufferState.
     /** Bound texture name per (active unit, target). The game uses one unit; the key keeps the option open. A read
      * of an unbound (unit,target) returns -1 - never a valid GL name. */
     final it.unimi.dsi.fastutil.longs.Long2IntMap textureBindings =
@@ -333,12 +333,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * The unpack state {@code glPixelStorei} set. Conversion reads rows where GL would read them: assuming tight rows
      * while the game asked for a row length or a row skip would store a sheared image instead of a missing one.
      */
-    volatile int unpackAlignment = 4;
-    volatile int unpackRowLength;
-    volatile int unpackSkipPixels, unpackSkipRows;
+    // GAP-ST-2 (S-5): pixel-store state is also GlsmBufferState's.
     /* The per-name logical sizes that used to sit here live in BufferStorageRecord, which operates on the store below. */
-    final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ByteBuffer> bufferStore =
-            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
     long getStringAddress;
     ByteBuffer getStringBuffer;
     // GAP-ST-5 rewired: the viewport's raw rectangle and packed form are owned by GlsmViewportState.
@@ -593,11 +589,11 @@ public final class CeltiumGlStub implements FunctionProvider {
      * conversion.
      */
     long texUploadSpanBytes(int rowBytes, int width, int height) {
-        if ((this.unpackRowLength != 0 && this.unpackRowLength != width)
-                || this.unpackSkipPixels != 0 || this.unpackSkipRows != 0) {
+        if ((GlsmBufferState.current().unpackRowLength() != 0 && GlsmBufferState.current().unpackRowLength() != width)
+                || GlsmBufferState.current().unpackSkipPixels() != 0 || GlsmBufferState.current().unpackSkipRows() != 0) {
             return -1L;
         }
-        return (long) aligned(rowBytes, this.unpackAlignment) * (height - 1) + rowBytes;
+        return (long) aligned(rowBytes, GlsmBufferState.current().unpackAlignment()) * (height - 1) + rowBytes;
     }
 
     /**
@@ -1599,9 +1595,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             this.pixelUnpackBuffer = name;
             return;
         }
-        if (target >= 0 && target < this.bufferBindings.length) {
-            this.bufferBindings[target] = name;
-        }
+        GlsmBufferState.current().bind(target, name);
     }
 
     /** Refusals caused by a bound pixel buffer, counted once so the diagnostic is bounded. */
@@ -1699,7 +1693,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         long capacity;
         try {
             NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
-            view = nativeBuffer != null ? nativeBuffer.compatibilityView() : this.bufferStore.get(name);
+            view = nativeBuffer != null ? nativeBuffer.compatibilityView() : GlsmBufferState.current().storage(name);
             if (view == null) {
                 return;
             }
@@ -1722,7 +1716,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         long readCapacity;
         try {
             NativeGeometryBuffer nativeRead = NativeGeometryBuffer.find(readName);
-            source = nativeRead != null ? nativeRead.compatibilityView() : this.bufferStore.get(readName);
+            source = nativeRead != null ? nativeRead.compatibilityView() : GlsmBufferState.current().storage(readName);
             if (source == null) {
                 return;
             }
@@ -1745,7 +1739,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 }
                 return;
             }
-            ByteBuffer destination = this.bufferStore.get(writeName);
+            ByteBuffer destination = GlsmBufferState.current().storage(writeName);
             if (destination != null
                     && mapRangeOffset(writeOffset, size, this.logicalSizeOf(writeName, destination.capacity())) >= 0L) {
                 ByteBuffer out = destination.duplicate();
@@ -2012,7 +2006,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             if (nativeBuffer != null) {
                 size = nativeBuffer.byteSize();
             } else {
-                java.nio.ByteBuffer storage = stub.bufferStore.get(name);
+                java.nio.ByteBuffer storage = GlsmBufferState.current().storage(name);
                 size = storage == null ? 0L : stub.logicalSizeOf(name, storage.capacity());
             }
         } catch (RuntimeException error) {
@@ -2066,7 +2060,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         } catch (RuntimeException error) {
             return;
         }
-        java.nio.ByteBuffer storage = stub.bufferStore.get(name);
+        java.nio.ByteBuffer storage = GlsmBufferState.current().storage(name);
         if (storage == null) {
             return;
         }
@@ -6216,7 +6210,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
         if (nativeBuffer != null) nativeBuffer.close();
         if (NativeGeometryBuffer.boundId() == name) NativeGeometryBuffer.unbind();
-        this.bufferStore.remove(name);
+        GlsmBufferState.current().removeStorage(name);
         this.bufferStorage.forget(name);
         if (this.pixelPackBuffer == name) {
             this.pixelPackBuffer = 0;
@@ -6224,11 +6218,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (this.pixelUnpackBuffer == name) {
             this.pixelUnpackBuffer = 0;
         }
-        for (int target = 0; target < this.bufferBindings.length; target++) {
-            if (this.bufferBindings[target] == name) {
-                this.bufferBindings[target] = 0;
-            }
-        }
+        GlsmBufferState.current().unbindName(name);
     }
 
     private void deleteTexture(int name) {
@@ -7041,7 +7031,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
             return;
         }
-        ByteBuffer storage = this.bufferStore.get(name);
+        ByteBuffer storage = GlsmBufferState.current().storage(name);
         int logicalSize = this.logicalSizeOf(name, storage == null ? 0 : storage.capacity());
         if (storage == null || data == 0L || mapRangeOffset(offset, size, logicalSize) < 0L) {
             return;
@@ -7055,22 +7045,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glPixelStorei}: the unpack state upload conversion reads rows with. Only the UNPACK_* pnames matter. */
     private void pixelStore(int pname, int value) {
-        switch (pname) {
-            case 0x0CF5: // GL_UNPACK_ALIGNMENT - 1, 2, 4 or 8; anything else is not a legal GL value
-                this.unpackAlignment = value == 1 || value == 2 || value == 8 ? value : 4;
-                break;
-            case 0x0CF2: // GL_UNPACK_ROW_LENGTH
-                this.unpackRowLength = Math.max(0, value);
-                break;
-            case 0x0CF3: // GL_UNPACK_SKIP_ROWS
-                this.unpackSkipRows = Math.max(0, value);
-                break;
-            case 0x0CF4: // GL_UNPACK_SKIP_PIXELS
-                this.unpackSkipPixels = Math.max(0, value);
-                break;
-            default:
-                break;
-        }
+        GlsmBufferState.current().pixelStore(pname, value);
     }
 
     // ---- texture pixels: the uploads the Vulkan mirrors are built from -----------------------------------
@@ -7288,7 +7263,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * that names the buffer a call applies to and the delegations the dispatch, the transformer's route and
      * the census land on.
      */
-    private final BufferStorageRecord bufferStorage = new BufferStorageRecord(this.bufferStore);
+    private final BufferStorageRecord bufferStorage = new BufferStorageRecord(GlsmBufferState.current().store());
 
     /**
      * The buffer whose storage an operation applies to: the bound name for {@code glBufferData}, or the name arg
@@ -7305,7 +7280,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             return this.pixelPackBuffer;
         }
         return target == GL_ARRAY_BUFFER ? NativeGeometryBuffer.boundId()
-                : target >= 0 && target < this.bufferBindings.length ? this.bufferBindings[target] : 0;
+                : GlsmBufferState.current().bound(target);
     }
 
     private int bufferFor(Fn fn, long[] c) {
@@ -7821,7 +7796,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub.pixelPackBuffer > 0) {
             // With a pack buffer bound the argument is an offset into it: resolve it against the buffer's storage,
             // and refuse an offset outside its logical size rather than write through a small integer or stale tail.
-            ByteBuffer storage = stub.bufferStore.get(stub.pixelPackBuffer);
+            ByteBuffer storage = GlsmBufferState.current().storage(stub.pixelPackBuffer);
             int logicalSize = storage == null ? 0
                     : stub.logicalSizeOf(stub.pixelPackBuffer, storage.capacity());
             if (storage == null || address < 0L || address >= logicalSize) {
@@ -8035,7 +8010,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         java.nio.ByteBuffer vertices;
         try {
             vertices = bound != null ? bound.compatibilityView()
-                    : boundName == 0 ? null : this.bufferStore.get(boundName);
+                    : boundName == 0 ? null : GlsmBufferState.current().storage(boundName);
         } catch (RuntimeException error) {
             return;
         }
@@ -8049,7 +8024,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             bound = NativeGeometryBuffer.find(positionAttrib.buffer);
             boundName = positionAttrib.buffer;
             try {
-                vertices = bound != null ? bound.compatibilityView() : this.bufferStore.get(boundName);
+                vertices = bound != null ? bound.compatibilityView() : GlsmBufferState.current().storage(boundName);
             } catch (RuntimeException error) {
                 return;
             }
@@ -8108,7 +8083,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (elementName > 0) {
             try {
                 elements = NativeGeometryBuffer.find(elementName);
-                elementView = elements != null ? elements.compatibilityView() : this.bufferStore.get(elementName);
+                elementView = elements != null ? elements.compatibilityView() : GlsmBufferState.current().storage(elementName);
             } catch (RuntimeException error) {
                 return;
             }
@@ -8237,7 +8212,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         int boundName = NativeGeometryBuffer.boundId();
         int buffer = boundName;
         ByteBuffer storage = nativeBuffer != null ? nativeBuffer.compatibilityView()
-                : buffer == 0 ? null : this.bufferStore.get(buffer);
+                : buffer == 0 ? null : GlsmBufferState.current().storage(buffer);
         // A VAO-carried draw names its vertex buffer through attribute 0's record, not through the binding the
         // setup left behind: the full-screen quad's renderer binds its VBO only while it sets the pointers and
         // unbinds it again before the draw, so the live binding at draw time is 0 and the pointer read as client
@@ -8247,7 +8222,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (position.pointerSet && position.buffer != 0 && position.buffer != boundName) {
             nativeBuffer = NativeGeometryBuffer.find(position.buffer);
             buffer = position.buffer;
-            storage = nativeBuffer != null ? nativeBuffer.compatibilityView() : this.bufferStore.get(buffer);
+            storage = nativeBuffer != null ? nativeBuffer.compatibilityView() : GlsmBufferState.current().storage(buffer);
         }
         // No array buffer bound means the pointer glVertexPointer was handed is a **client address**, not an offset
         // into GL-owned storage: the vertices are process memory the game wrote, and under a stub there is no GL object
