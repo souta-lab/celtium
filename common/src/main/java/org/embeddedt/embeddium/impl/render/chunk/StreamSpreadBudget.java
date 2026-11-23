@@ -39,13 +39,11 @@ public final class StreamSpreadBudget {
             return;
         }
         this.lastRefillNanos = nowNanos;
-        if (elapsedNanos >= REFILL_WINDOW_NANOS * 2L) {
-            // Two windows of idleness earn the whole capacity; saying so directly also keeps the multiply below
-            // away from overflow for arbitrarily long pauses (menu screens, world switches).
-            this.tokensMicros = this.capacityMicros;
-            return;
-        }
-        long earnedMicros = elapsedNanos * this.budgetMicros / REFILL_WINDOW_NANOS;
+        // The elapsed time is capped before the multiply so arbitrarily long pauses (menu screens, world
+        // switches) cannot overflow: a thousand windows of credit is already far more than the capacity plus
+        // any debt a real slice can create, and the min below discards the excess anyway.
+        long cappedElapsedNanos = Math.min(elapsedNanos, REFILL_WINDOW_NANOS * 1000L);
+        long earnedMicros = cappedElapsedNanos * this.budgetMicros / REFILL_WINDOW_NANOS;
         this.tokensMicros = Math.min(this.capacityMicros, this.tokensMicros + earnedMicros);
     }
 
