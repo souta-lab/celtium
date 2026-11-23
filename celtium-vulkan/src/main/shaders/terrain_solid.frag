@@ -120,11 +120,17 @@ float _shadowFactor(vec3 ndc, vec3 ndcDx, vec3 ndcDy) {
         slope = min(dot(abs(dzDuv), texel), 0.002);
     }
     float depth = ndc.z - (0.0003 + 1.5 * slope);
+    // One gather instead of four fetches. The shadow sampler is NEAREST (the terrain shadow sampler in
+    // VulkanTerrainPipeline), so a fetch at uv +/- half a texel per axis lands on texel floor(x - 0.5) or
+    // floor(x + 0.5), and floor(x + 0.5) is floor(x - 0.5) + 1: the four taps are exactly the 2x2 footprint
+    // textureGather returns, so the sampled texels are the same four. The comparisons are summed, so the
+    // gather's component order carries no meaning here and the result is bit-identical to the four fetches.
+    vec4 taps = textureGather(u_ShadowMap, uv);
     float shadowed = 0.0;
-    shadowed += depth > texture(u_ShadowMap, uv + texel * vec2(-0.5, -0.5)).r ? 1.0 : 0.0;
-    shadowed += depth > texture(u_ShadowMap, uv + texel * vec2( 0.5, -0.5)).r ? 1.0 : 0.0;
-    shadowed += depth > texture(u_ShadowMap, uv + texel * vec2(-0.5,  0.5)).r ? 1.0 : 0.0;
-    shadowed += depth > texture(u_ShadowMap, uv + texel * vec2( 0.5,  0.5)).r ? 1.0 : 0.0;
+    shadowed += depth > taps.x ? 1.0 : 0.0;
+    shadowed += depth > taps.y ? 1.0 : 0.0;
+    shadowed += depth > taps.z ? 1.0 : 0.0;
+    shadowed += depth > taps.w ? 1.0 : 0.0;
     return shadowed * 0.25;
 }
 
@@ -173,12 +179,15 @@ vec4 _expFog(vec4 fragColor, float fragDistance, vec4 fogColor, float fogDensity
 // even when the runtime switch below is off; a constant false removes the branch from the compiled shader.
 layout(constant_id = 0) const bool CELTIUM_FRAGMENT_DISCARD = true;
 
+// Specialised per pipeline, the same way: false for a pipeline that only ever draws passes without the shadow
+// lookup, which is every pass of a frame with no routed shadow pass (a vanilla frame, the flight scene included).
+// A constant false removes the shadow coordinate's derivatives, the whole _shadowFactor body and the shadow
+// varying loads from the compiled shader, instead of leaving them in the binary behind the runtime branch.
+// The backend creates that variant only under -Dceltium.vulkan.terrainShadowSpecVariant; the default true keeps
+// every existing pipeline shadow-capable, and u_ShadowEnabled stays the runtime authority inside one.
+layout(constant_id = 1) const bool CELTIUM_TERRAIN_SHADOW = true;
+
 void main() {
-    // Shadow-space coordinate and its screen derivatives, before any return or discard (derivatives need the whole
-    // quad). The shadow projection is orthographic, so w is 1 and the divide is exact either way.
-    vec3 shadowNdc = v_ShadowPos.xyz / max(v_ShadowPos.w, 1e-6);
-    vec3 shadowNdcDx = dFdx(shadowNdc);
-    vec3 shadowNdcDy = dFdy(shadowNdc);
     // Isolation switch for one A/B. A constant colour that reaches the frame image says the geometry is
     // rasterised and the loss is in the fragment maths (the texture, the vertex colour, the light map); a frame
     // that stays black says nothing is being rasterised at all. Every other candidate had been excluded by
@@ -186,6 +195,21 @@ void main() {
     if (celtium.u_SolidTerrain != 0) {
         fragColor = vec4(1.0, 0.0, 1.0, 1.0);
         return;
+    }
+    // Shadow-space coordinate and its screen derivatives, taken only when this pass samples the shadow map.
+    // The branch is on a uniform, so every invocation of a 2x2 quad enters it together and the derivatives stay
+    // well defined (the u_SolidTerrain return above is uniform for the same reason), and they are still taken
+    // before the discard below, after which part of a quad may be dead and derivatives of a value undefined.
+    // A pass with the lookup off - every pass of a frame with no routed shadow pass - no longer pays a divide
+    // and two vec3 derivatives per fragment for values nothing reads. The shadow projection is orthographic,
+    // so w is 1 and the divide is exact either way.
+    vec3 shadowNdc;
+    vec3 shadowNdcDx;
+    vec3 shadowNdcDy;
+    if (CELTIUM_TERRAIN_SHADOW && celtium.u_ShadowEnabled != 0) {
+        shadowNdc = v_ShadowPos.xyz / max(v_ShadowPos.w, 1e-6);
+        shadowNdcDx = dFdx(shadowNdc);
+        shadowNdcDy = dFdy(shadowNdc);
     }
     vec4 diffuseColor = texture(u_BlockTex, v_TexCoord, v_MaterialMipBias);
 
@@ -196,7 +220,7 @@ void main() {
     }
 
     vec4 m_color = v_Color;
-    if (celtium.u_ShadowEnabled != 0) {
+    if (CELTIUM_TERRAIN_SHADOW && celtium.u_ShadowEnabled != 0) {
         m_color = mix(v_Color, v_ShadowColor, _shadowFactor(shadowNdc, shadowNdcDx, shadowNdcDy));
     }
     // Apply correction factor to make the resulting color very close to what true bilinear interpolation would obtain
