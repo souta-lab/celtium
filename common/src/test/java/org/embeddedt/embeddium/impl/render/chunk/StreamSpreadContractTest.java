@@ -25,16 +25,32 @@ class StreamSpreadContractTest {
     }
 
     @Test
-    void spreadingIsOffByDefaultAndBranchesInUploadChunks() throws IOException {
+    void spreadingIsOnByDefaultAndBranchesInUploadChunks() throws IOException {
         String source = managerSource();
-        assertTrue(source.contains("Boolean.getBoolean(\"celtium.streamSpread\")"),
-                "the spread switch must be a default-off system property");
+        assertTrue(source.contains("System.getProperty(\"celtium.streamSpread\")"),
+                "the spread switch must read the celtium.streamSpread system property");
+        assertTrue(source.contains("value == null || Boolean.parseBoolean(value)"),
+                "the spread switch must default on (alpha proving ground) with =false as the control arm");
         int uploadStart = source.indexOf("public void uploadChunks()");
         int uploadEnd = source.indexOf("public final void tickVisibleRenders()", uploadStart);
         String upload = source.substring(uploadStart, uploadEnd);
         assertTrue(upload.contains("if (STREAM_SPREAD)"), "uploadChunks must branch on the spread switch");
         assertTrue(upload.contains("celtium$spreadUploadChunks(results)"),
                 "the spread branch must route through the spreading processor");
+    }
+
+    @Test
+    void fastPathKeepsTheUnspreadCallShapeWhenCreditCoversTheArrival() throws IOException {
+        String source = managerSource();
+        int spreadStart = source.indexOf("celtium$spreadUploadChunks");
+        int enqueue = source.indexOf("streamSpreadQueue.addAll(results)", spreadStart);
+        String head = source.substring(spreadStart, enqueue);
+        assertTrue(head.contains("streamSpreadQueue.isEmpty()"),
+                "the fast path must require an empty deferral queue");
+        assertTrue(head.contains("STREAM_SPREAD_PER_HOLDER_UPPER_MICROS"),
+                "the fast path must compare credit against the conservative per-holder estimate");
+        assertTrue(head.contains("celtium$processSpreadBatch(results)"),
+                "the fast path must process the whole arrival in one batch call");
     }
 
     @Test

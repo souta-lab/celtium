@@ -887,10 +887,32 @@ public abstract class RenderSectionManager {
      * A deferred holder keeps its output alive and its section un-committed until its slice runs, in arrival
      * order - the same guarantee the BH-25 failed-upload path gets from {@code consumeFailedUploads}, which the
      * backend-side {@code celtium.vulkan.uploadBudget} queue does not have (its caller commits and deletes every
-     * result of the batch whether or not the backend queued it). Off by default; when off, {@link #uploadChunks}
-     * runs the unmodified path.
+     * result of the batch whether or not the backend queued it). On by default on this alpha branch (the branch
+     * is the default-on proving ground); {@code -Dceltium.streamSpread=false} restores the unmodified path,
+     * which is also the leg control arm.
+     * <p>
+     * Steady state does not pay for the mechanism: {@link #celtium$spreadUploadChunks} opens with a fast path
+     * that, when nothing is deferred and the bucket's credit covers a conservative estimate of the whole
+     * arrival, processes the arrival in exactly the unspread call shape (one
+     * {@code processChunkBuildResults} call plus the delete loop, one measured debit). The slicing machinery
+     * below only runs when credit cannot cover the estimate - that is, when a burst is actually in progress.
+     * The v2 leg measured a plain-P50 tax of +0.5-0.7 ms [estimate] that could not be separated from
+     * session drift; because the fast path's steady-state call shape is identical to the unspread path, any
+     * tax that survives it is drift, and any that disappears was the mechanism's per-slice fixed costs
+     * (per-call list/set allocation inside {@code processChunkBuildResults} paid ceil(n/2) times, plus two
+     * nanoTime reads per slice).
      */
-    private static final boolean STREAM_SPREAD = Boolean.getBoolean("celtium.streamSpread");
+    private static final boolean STREAM_SPREAD = celtium$streamSpreadEnabled();
+
+    private static boolean celtium$streamSpreadEnabled() {
+        String value = System.getProperty("celtium.streamSpread");
+        return value == null || Boolean.parseBoolean(value);
+    }
+
+    /** Conservative per-holder cost ceiling for the fast-path estimate, in microseconds. The F1 legs measured
+     * 0.25-0.32 ms per holder (spentMicros / processed); 400 us sits above that band, so the fast path only
+     * claims an arrival the bucket could have paced whole anyway. */
+    private static final long STREAM_SPREAD_PER_HOLDER_UPPER_MICROS = 400L;
 
     /** The per-window pacing budget in microseconds; see {@link StreamSpreadBudget}. */
     private static final long STREAM_SPREAD_BUDGET_MICROS =
@@ -921,6 +943,7 @@ public abstract class RenderSectionManager {
     // What the spreading did, so a leg can tell "the budget engaged" from "it was never asked" (the same
     // positive-control rule as the backend budget's deferredUploads counters).
     private long streamSpreadCalls;
+    private long streamSpreadFastPaths;
     private long streamSpreadProcessed;
     private long streamSpreadMaxQueued;
     private long streamSpreadForcedDrains;
@@ -935,9 +958,29 @@ public abstract class RenderSectionManager {
      * regardless of credit, which bounds the pop-in a deferred section can suffer.
      */
     private void celtium$spreadUploadChunks(ArrayList<ChunkJobResult.Success<? extends ChunkTaskOutput>> results) {
+        long now = System.nanoTime();
+        if (this.streamSpreadBudget == null) {
+            this.streamSpreadBudget = new StreamSpreadBudget(STREAM_SPREAD_BUDGET_MICROS, now);
+        }
+        this.streamSpreadBudget.refill(now);
+
+        // Fast path: nothing deferred and the refilled credit covers a conservative estimate of the whole
+        // arrival (holders x the per-holder ceiling). The arrival is then processed in exactly the unspread
+        // call shape - one processChunkBuildResults call, the delete loop, one measured debit - and the
+        // queue, the slice lists and the per-slice timing never run. Steady state therefore pays only the
+        // refill arithmetic and this comparison for the mechanism.
+        if (this.streamSpreadQueue.isEmpty() && !results.isEmpty()
+                && this.streamSpreadBudget.tokensMicros()
+                        >= (long) results.size() * STREAM_SPREAD_PER_HOLDER_UPPER_MICROS) {
+            this.streamSpreadFastPaths++;
+            this.celtium$processSpreadBatch(results);
+            this.celtium$printSpreadCounters();
+            return;
+        }
+
         if (!results.isEmpty()) {
             if (this.streamSpreadQueue.isEmpty()) {
-                this.streamSpreadOldestNanos = System.nanoTime();
+                this.streamSpreadOldestNanos = now;
             }
             this.streamSpreadQueue.addAll(results);
             if (this.streamSpreadQueue.size() > this.streamSpreadMaxQueued) {
@@ -945,61 +988,79 @@ public abstract class RenderSectionManager {
             }
         }
 
-        long now = System.nanoTime();
-        if (this.streamSpreadBudget == null) {
-            this.streamSpreadBudget = new StreamSpreadBudget(STREAM_SPREAD_BUDGET_MICROS, now);
-        }
-        this.streamSpreadBudget.refill(now);
-
         boolean forced = now - this.streamSpreadOldestNanos > STREAM_SPREAD_MAX_WAIT_NANOS
                 || this.streamSpreadQueue.size() > STREAM_SPREAD_MAX_QUEUED;
-        if (forced) {
+        if (forced && !this.streamSpreadQueue.isEmpty()) {
+            // A forced drain flushes everything anyway; slicing it would only multiply the per-call fixed
+            // costs of processChunkBuildResults over work that is all being done now. One call, one debit.
             this.streamSpreadForcedDrains++;
+            ArrayList<ChunkJobResult.Success<? extends ChunkTaskOutput>> whole =
+                    new ArrayList<>(this.streamSpreadQueue);
+            this.streamSpreadQueue.clear();
+            this.celtium$processSpreadBatch(whole);
+            this.streamSpreadOldestNanos = System.nanoTime();
+            this.celtium$printSpreadCounters();
+            return;
         }
 
-        int slices = 0;
         while (!this.streamSpreadQueue.isEmpty()) {
             // No guaranteed first slice: with the measured trickle arrivals, guaranteeing one slice per call
             // processes every arrival whole and the budget can never engage (F1 v1 leg). Progress is guaranteed
             // instead by the forced drain above - a holder that waited past the maximum wait, or a queue past
             // the depth bound, is processed regardless of credit - and by the refill itself, which earns a
             // slice's cost back within a few frames.
-            if (!forced && !this.streamSpreadBudget.hasCredit()) {
+            if (!this.streamSpreadBudget.hasCredit()) {
                 break;
             }
             ArrayList<ChunkJobResult.Success<? extends ChunkTaskOutput>> slice = new ArrayList<>(STREAM_SPREAD_SLICE);
             while (slice.size() < STREAM_SPREAD_SLICE && !this.streamSpreadQueue.isEmpty()) {
                 slice.add(this.streamSpreadQueue.pollFirst());
             }
-            long started = System.nanoTime();
-            this.processChunkBuildResults(slice);
-            long spentMicros = (System.nanoTime() - started) / 1000L;
-            this.streamSpreadBudget.debit(spentMicros);
-            this.streamSpreadSpentMicros += spentMicros;
-            this.streamSpreadProcessed += slice.size();
-            slices++;
-            // The unspread path deletes every result it was handed, including the ones filtering dropped;
-            // a processed slice gets exactly that treatment. A deferred holder's output stays alive.
-            for (var result : slice) {
-                result.output().delete();
-            }
+            this.celtium$processSpreadBatch(slice);
         }
 
         if (!this.streamSpreadQueue.isEmpty()) {
             // The call ends with work still queued: that is the engagement a leg reads as its positive control.
             this.streamSpreadCalls++;
-        } else if (this.streamSpreadProcessed > this.streamSpreadPrintedProcessed) {
-            this.streamSpreadPrintedProcessed = this.streamSpreadProcessed;
-            System.out.println("[Celtium] CELTIUM_STREAM_SPREAD processed=" + this.streamSpreadProcessed
-                    + " spreadCalls=" + this.streamSpreadCalls
-                    + " spentMicros=" + this.streamSpreadSpentMicros
-                    + " maxQueued=" + this.streamSpreadMaxQueued
-                    + " forcedDrains=" + this.streamSpreadForcedDrains
-                    + " budgetMicros=" + STREAM_SPREAD_BUDGET_MICROS);
+        } else {
+            this.celtium$printSpreadCounters();
         }
         if (this.streamSpreadQueue.isEmpty()) {
             this.streamSpreadOldestNanos = System.nanoTime();
         }
+    }
+
+    /**
+     * Processes one batch of spread results in a single {@code processChunkBuildResults} call, debits the
+     * bucket once for the measured cost of the whole batch, and deletes every result's output - the unspread
+     * path deletes every result it was handed, including the ones filtering dropped; a processed batch gets
+     * exactly that treatment. A deferred holder's output stays alive.
+     */
+    private void celtium$processSpreadBatch(ArrayList<ChunkJobResult.Success<? extends ChunkTaskOutput>> batch) {
+        long started = System.nanoTime();
+        this.processChunkBuildResults(batch);
+        long spentMicros = (System.nanoTime() - started) / 1000L;
+        this.streamSpreadBudget.debit(spentMicros);
+        this.streamSpreadSpentMicros += spentMicros;
+        this.streamSpreadProcessed += batch.size();
+        for (var result : batch) {
+            result.output().delete();
+        }
+    }
+
+    /** Prints the positive-control counters once the queue has drained past the last printed total. */
+    private void celtium$printSpreadCounters() {
+        if (this.streamSpreadProcessed <= this.streamSpreadPrintedProcessed) {
+            return;
+        }
+        this.streamSpreadPrintedProcessed = this.streamSpreadProcessed;
+        System.out.println("[Celtium] CELTIUM_STREAM_SPREAD processed=" + this.streamSpreadProcessed
+                + " spreadCalls=" + this.streamSpreadCalls
+                + " fastPaths=" + this.streamSpreadFastPaths
+                + " spentMicros=" + this.streamSpreadSpentMicros
+                + " maxQueued=" + this.streamSpreadMaxQueued
+                + " forcedDrains=" + this.streamSpreadForcedDrains
+                + " budgetMicros=" + STREAM_SPREAD_BUDGET_MICROS);
     }
 
     /** Deletes the outputs of any results still deferred at teardown, so their mesh buffers are not leaked. */
