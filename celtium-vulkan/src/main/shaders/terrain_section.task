@@ -4,20 +4,19 @@
 
 #include "terrain_cull.glsl"
 
-// E10 / item 677, mesh stage 2 (input side): one task workgroup per section of the
-// section-granular DrawSourceTable. A workgroup applies the same judgement chain as the
-// compute generation (design section 2.4, plan H: occlusion mask AND remap AND frustum
-// AND distance; the frustum/distance formulas are the shared fragment in
-// terrain_cull.glsl, never a second copy) and, for a surviving section, emits the mesh
-// workgroups that re-issue its quads, split by the per-workgroup quad budget carried in
-// the push block. The payload is the only channel to the mesh side, so it carries the
-// whole slice address: the frame region index (the remap's binding-5 answer), the
-// section's entry range in the table (absolute, entry base included), this task
-// workgroup's own id (a mesh workgroup's gl_WorkGroupID is this id plus its in-group
-// offset, so the mesh side recovers its split position from the difference), and the
-// section's directory index.
+// E10 / item 677, mesh stage 5 (Wave32 task-shader amplification): 32 sections per task
+// workgroup (one RDNA 2 Wave32 wavefront, 100% SIMD utilization vs 1/32 in stage 2). Each
+// lane applies the same deterministic judgement chain as the compute generation (design
+// section 2.4, plan H: occlusion mask AND remap AND frustum AND distance; the frustum and
+// distance formulas are the shared fragment in terrain_cull.glsl, never a second copy).
+// Surviving sections are compacted in deterministic slot order into workgroup-local shared
+// memory and published into the task payload with an inclusive meshlet prefix sum (zero
+// global atomics, no count-buffer reproduction). One EmitMeshTasksEXT dispatches all
+// meshlets for the 32-section tile (zero mesh workgroups when the whole tile is culled).
 
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+const uint TASK_WORKGROUP_SIZE = 32u;
 
 // Task-private set 0 (design section 2.2): the directory first, then the same three
 // inputs the compute generation reads. The layout is owned by VulkanMeshTaskDraw.
@@ -46,15 +45,28 @@ layout(push_constant) uniform Push {
     ivec4 params2;
 } push;
 
+// Compacted tile payload (644 bytes, well within VK_EXT_mesh_shader's 16 KB minimum):
+// meshletEnd[i] is the inclusive meshlet prefix sum for surviving section i, so a mesh
+// workgroup with gl_WorkGroupID.x in [0, totalMeshlets) locates its section by binary
+// search and recovers its 0-based splitIndex as gl_WorkGroupID.x - prevEnd.
 struct CeltiumSectionTaskPayload {
-    int frameIndex;
-    uint firstEntry;
-    uint entryCount;
-    uint taskWorkGroupX;
-    uint sectionIndex;
+    uint sectionCount;
+    uint meshletEnd[TASK_WORKGROUP_SIZE];
+    int  frameIndex[TASK_WORKGROUP_SIZE];
+    uint firstEntry[TASK_WORKGROUP_SIZE];
+    uint entryCount[TASK_WORKGROUP_SIZE];
+    uint sectionQuads[TASK_WORKGROUP_SIZE];
 };
 
 taskPayloadSharedEXT CeltiumSectionTaskPayload celtiumPayload;
+
+shared uint s_survives[TASK_WORKGROUP_SIZE];
+shared int  s_frameIndex[TASK_WORKGROUP_SIZE];
+shared uint s_firstEntry[TASK_WORKGROUP_SIZE];
+shared uint s_entryCount[TASK_WORKGROUP_SIZE];
+shared uint s_sectionQuads[TASK_WORKGROUP_SIZE];
+shared uint s_meshlets[TASK_WORKGROUP_SIZE];
+shared uint s_totalMeshlets;
 
 // The mask segment always opens with a six-word header (window base xyz, dims xyz) —
 // the unified layout of the E10-b mask supply, so the form is decidable without a push
@@ -86,8 +98,15 @@ bool celtiumMaskAllows(uint dictIndex, ivec3 section) {
 }
 
 void main() {
-    uint sectionIndex = gl_WorkGroupID.x;
-    uint groups = 0u;
+    uint lid = gl_LocalInvocationID.x;
+    uint sectionIndex = gl_WorkGroupID.x * TASK_WORKGROUP_SIZE + lid;
+    uint survives = 0u;
+    int outFrameIndex = -1;
+    uint outFirstEntry = 0u;
+    uint outEntryCount = 0u;
+    uint outQuads = 0u;
+    uint outMeshlets = 0u;
+
     if (sectionIndex < uint(push.params.y)) {
         uint dirBase = sectionIndex * 8u;
         ivec3 section = ivec3(int(directoryData[dirBase + 0u]),
@@ -118,18 +137,45 @@ void main() {
                     uint budget = uint(max(push.params.z, 1));
                     uint split = (quads + budget - 1u) / budget;
                     if (split > 0u) {
-                        celtiumPayload.frameIndex = frameIndex;
-                        celtiumPayload.firstEntry = firstEntry + uint(push.params2.x);
-                        celtiumPayload.entryCount = entryCount;
-                        celtiumPayload.taskWorkGroupX = sectionIndex;
-                        celtiumPayload.sectionIndex = sectionIndex;
-                        groups = split;
+                        survives = 1u;
+                        outFrameIndex = frameIndex;
+                        outFirstEntry = firstEntry + uint(push.params2.x);
+                        outEntryCount = entryCount;
+                        outQuads = quads;
+                        outMeshlets = split;
                     }
                 }
             }
         }
     }
-    // Exactly one emit on every path: a culled section emits zero groups rather than
-    // leaving the emit unexecuted.
-    EmitMeshTasksEXT(groups, 1u, 1u);
+
+    s_survives[lid] = survives;
+    s_frameIndex[lid] = outFrameIndex;
+    s_firstEntry[lid] = outFirstEntry;
+    s_entryCount[lid] = outEntryCount;
+    s_sectionQuads[lid] = outQuads;
+    s_meshlets[lid] = outMeshlets;
+    barrier();
+
+    if (lid == 0u) {
+        uint outCount = 0u;
+        uint totalMeshlets = 0u;
+        for (uint i = 0u; i < TASK_WORKGROUP_SIZE; i++) {
+            if (s_survives[i] != 0u) {
+                totalMeshlets += s_meshlets[i];
+                celtiumPayload.meshletEnd[outCount] = totalMeshlets;
+                celtiumPayload.frameIndex[outCount] = s_frameIndex[i];
+                celtiumPayload.firstEntry[outCount] = s_firstEntry[i];
+                celtiumPayload.entryCount[outCount] = s_entryCount[i];
+                celtiumPayload.sectionQuads[outCount] = s_sectionQuads[i];
+                outCount++;
+            }
+        }
+        celtiumPayload.sectionCount = outCount;
+        s_totalMeshlets = totalMeshlets;
+    }
+    barrier();
+
+    // Uniform control flow across all 32 lanes: a fully culled tile emits zero mesh workgroups.
+    EmitMeshTasksEXT(s_totalMeshlets, 1u, 1u);
 }

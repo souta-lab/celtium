@@ -63,20 +63,22 @@
 //   system property override is rejected there, counted, not silently mismatched).
 // ============================================================================================
 
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
-layout(triangles, max_vertices = 252, max_primitives = 84) out;
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(triangles, max_vertices = 256, max_primitives = 128) out;
 
-const uint QUADS_PER_WORKGROUP = 42u;
+const uint TASK_WORKGROUP_SIZE = 32u;
+const uint QUADS_PER_WORKGROUP = 64u;
 
 // --------------------------------------------------------------------------------------------
 // Task payload - the declaration is terrain_section.task's, word for word.
 // --------------------------------------------------------------------------------------------
 struct CeltiumSectionTaskPayload {
-    int frameIndex;
-    uint firstEntry;
-    uint entryCount;
-    uint taskWorkGroupX;
-    uint sectionIndex;
+    uint sectionCount;
+    uint meshletEnd[TASK_WORKGROUP_SIZE];
+    int  frameIndex[TASK_WORKGROUP_SIZE];
+    uint firstEntry[TASK_WORKGROUP_SIZE];
+    uint entryCount[TASK_WORKGROUP_SIZE];
+    uint sectionQuads[TASK_WORKGROUP_SIZE];
 };
 
 taskPayloadSharedEXT CeltiumSectionTaskPayload celtiumPayload;
@@ -140,17 +142,17 @@ layout(std140, set = 2, binding = 2) uniform CeltiumMeshFrame {
 
 // --------------------------------------------------------------------------------------------
 // Varyings - per-vertex outputs; locations and types match terrain_solid.frag's inputs
-// and terrain_solid.mesh's outputs. Sized for the full split budget (42 quads x 6).
+// and terrain_solid.mesh's outputs. Sized for the full split budget (64 quads x 4 vertices).
 // --------------------------------------------------------------------------------------------
-layout(location = 0) out vec4 v_Color[252];
-layout(location = 1) out vec4 v_RdhFactor[252];
-layout(location = 2) out vec2 v_QuadCoord[252];
-layout(location = 3) out vec2 v_TexCoord[252];
-layout(location = 4) out float v_FragDistance[252];
-layout(location = 5) flat out float v_MaterialMipBias[252];
-layout(location = 6) flat out float v_MaterialAlphaCutoff[252];
-layout(location = 7) out vec4 v_ShadowPos[252];
-layout(location = 8) out vec4 v_ShadowColor[252];
+layout(location = 0) out vec4 v_Color[256];
+layout(location = 1) out vec4 v_RdhFactor[256];
+layout(location = 2) out vec2 v_QuadCoord[256];
+layout(location = 3) out vec2 v_TexCoord[256];
+layout(location = 4) out float v_FragDistance[256];
+layout(location = 5) flat out float v_MaterialMipBias[256];
+layout(location = 6) flat out float v_MaterialAlphaCutoff[256];
+layout(location = 7) out vec4 v_ShadowPos[256];
+layout(location = 8) out vec4 v_ShadowColor[256];
 
 // --------------------------------------------------------------------------------------------
 // Helpers - verbatim from terrain_solid.mesh (which took them verbatim from
@@ -290,59 +292,84 @@ void emitVertex(int slot, uint vertexId, uint firstInstance) {
 }
 
 void main() {
-    // This workgroup's slice of the section: quads [quadStart, quadStart + emitted) of the
-    // section's entry run, walked in entry order (the entries are the section's consecutive
-    // run of the section-major table, and every entry is whole quads - the directory's
-    // eligibility gate on the CPU side and the task stage both refuse anything else).
-    uint splitIndex = gl_WorkGroupID.x - celtiumPayload.taskWorkGroupX;
-    uint quadStart = splitIndex * QUADS_PER_WORKGROUP;
-    uint firstEntry = celtiumPayload.firstEntry;
-    uint entryEnd = firstEntry + celtiumPayload.entryCount;
-
-    // Count the quads this workgroup will actually emit: its budget, or what remains of
-    // the section from quadStart on, whichever is smaller (zero when the split arithmetic
-    // disagrees with the table - emit nothing rather than garbage).
-    uint sectionQuads = 0u;
-    for (uint e = firstEntry; e < entryEnd; e++) {
-        sectionQuads += tableData[e * 8u + 0u] / 6u;
+    // gl_WorkGroupID.x is 0-based within the grid emitted by EmitMeshTasksEXT for this
+    // 32-section tile. Binary-search the inclusive meshlet prefix sum to locate the
+    // surviving section and its 0-based splitIndex; all 64 lanes execute uniformly.
+    uint meshletId = gl_WorkGroupID.x;
+    uint count = celtiumPayload.sectionCount;
+    uint lo = 0u;
+    uint hi = count;
+    while (lo < hi) {
+        uint mid = (lo + hi) >> 1u;
+        if (celtiumPayload.meshletEnd[mid] <= meshletId) {
+            lo = mid + 1u;
+        } else {
+            hi = mid;
+        }
     }
+    if (lo >= count) {
+        SetMeshOutputsEXT(0u, 0u);
+        return;
+    }
+
+    uint prevEnd = (lo == 0u) ? 0u : celtiumPayload.meshletEnd[lo - 1u];
+    uint splitIndex = meshletId - prevEnd;
+    uint quadStart = splitIndex * QUADS_PER_WORKGROUP;
+    uint sectionQuads = celtiumPayload.sectionQuads[lo];
     uint emitted = 0u;
     if (quadStart < sectionQuads) {
         emitted = min(QUADS_PER_WORKGROUP, sectionQuads - quadStart);
     }
-    SetMeshOutputsEXT(emitted * 6u, emitted * 2u);
-    if (emitted == 0u) {
+    SetMeshOutputsEXT(emitted * 4u, emitted * 2u);
+    uint q = gl_LocalInvocationID.x;
+    if (q >= emitted) {
         return;
     }
 
-    uint firstInstance = uint(celtiumPayload.frameIndex);
+    // One lane per quad: locate the DrawSourceTable entry covering quad (quadStart + q)
+    // and emit its 4 shared vertices + 2 triangles in parallel across the 64-lane workgroup.
+    uint firstEntry = celtiumPayload.firstEntry[lo];
+    uint entryEnd = firstEntry + celtiumPayload.entryCount[lo];
+    uint firstInstance = uint(celtiumPayload.frameIndex[lo]);
+    uint quad = quadStart + q;
+
     uint entryIndex = firstEntry;
-    uint entryQuadBase = 0u; // quads before entryIndex, section-relative
-    uint outVertex = 0u;
-    uint outPrimitive = 0u;
-    for (uint q = 0u; q < emitted; q++) {
-        uint quad = quadStart + q;
-        // Advance the entry cursor monotonically until it covers this quad.
-        while (entryIndex < entryEnd
-                && quad >= entryQuadBase + tableData[entryIndex * 8u + 0u] / 6u) {
-            entryQuadBase += tableData[entryIndex * 8u + 0u] / 6u;
-            entryIndex++;
+    uint entryQuadBase = 0u;
+    while (entryIndex + 1u < entryEnd) {
+        uint eQuads = tableData[entryIndex * 8u + 0u] / 6u;
+        if (quad < entryQuadBase + eQuads) {
+            break;
         }
-        uint wordBase = entryIndex * 8u;
-        uint firstIndex = tableData[wordBase + 1u];
-        uint vertexOffset = tableData[wordBase + 2u];
-        uint localQuad = quad - entryQuadBase;
-        uint indexBase = firstIndex + localQuad * 6u;
-        int slotBase = int(outVertex);
-        for (int k = 0; k < 6; k++) {
-            uint vertexId = u_Indices[indexBase + uint(k)] + vertexOffset;
-            emitVertex(slotBase + k, vertexId, firstInstance);
-        }
-        gl_PrimitiveTriangleIndicesEXT[outPrimitive] =
-                uvec3(outVertex, outVertex + 1u, outVertex + 2u);
-        gl_PrimitiveTriangleIndicesEXT[outPrimitive + 1u] =
-                uvec3(outVertex + 3u, outVertex + 4u, outVertex + 5u);
-        outVertex += 6u;
-        outPrimitive += 2u;
+        entryQuadBase += eQuads;
+        entryIndex++;
     }
+
+    uint wordBase = entryIndex * 8u;
+    uint firstIndex = tableData[wordBase + 1u];
+    uint vertexOffset = tableData[wordBase + 2u];
+    uint entryFlags = tableData[wordBase + 7u];
+    uint localQuad = quad - entryQuadBase;
+
+    uint outVertex = q * 4u;
+    uint outPrimitive = q * 2u;
+    int slotBase = int(outVertex);
+    if (firstIndex == 0u && (entryFlags & 1u) == 0u) {
+        // Shared unsorted quad index pattern (QuadPrimitiveType: 0,1,2, 2,3,0):
+        // emit the 4 unique quad corners directly without reading the index buffer.
+        uint vertexBase = vertexOffset + localQuad * 4u;
+        emitVertex(slotBase + 0, vertexBase + 0u, firstInstance);
+        emitVertex(slotBase + 1, vertexBase + 1u, firstInstance);
+        emitVertex(slotBase + 2, vertexBase + 2u, firstInstance);
+        emitVertex(slotBase + 3, vertexBase + 3u, firstInstance);
+    } else {
+        uint indexBase = firstIndex + localQuad * 6u;
+        emitVertex(slotBase + 0, u_Indices[indexBase + 0u] + vertexOffset, firstInstance);
+        emitVertex(slotBase + 1, u_Indices[indexBase + 1u] + vertexOffset, firstInstance);
+        emitVertex(slotBase + 2, u_Indices[indexBase + 2u] + vertexOffset, firstInstance);
+        emitVertex(slotBase + 3, u_Indices[indexBase + 4u] + vertexOffset, firstInstance);
+    }
+    gl_PrimitiveTriangleIndicesEXT[outPrimitive] =
+            uvec3(outVertex, outVertex + 1u, outVertex + 2u);
+    gl_PrimitiveTriangleIndicesEXT[outPrimitive + 1u] =
+            uvec3(outVertex + 2u, outVertex + 3u, outVertex);
 }

@@ -76,11 +76,12 @@ public final class VulkanMeshStage2Pipeline {
 
     /**
      * The mesh shader's compile-time split budget ({@code QUADS_PER_WORKGROUP} in
-     * {@code terrain_section.mesh}). The task stage takes its budget from push, so a
+     * {@code terrain_section.mesh}: 64 quads x 4 unique vertices = 256 vertices, 128
+     * primitives). The task stage takes its budget from push, so a
      * {@code celtium.vulkan.meshTerrainStage2.quadsPerMeshWorkgroup} override would split
      * the section differently on the two stages; creation is refused while they disagree.
      */
-    public static final int SHADER_QUADS_PER_WORKGROUP = 42;
+    public static final int SHADER_QUADS_PER_WORKGROUP = 64;
 
     /** Bytes in the per-slot matrix block: the pass' projection and model-view matrices. */
     private static final int FRAME_BYTES = 128;
@@ -178,6 +179,22 @@ public final class VulkanMeshStage2Pipeline {
             long tableBuffer, GpuTerrainDrawTable.Table table, float[] planes,
             float cameraX, float cameraY, float cameraZ, float maxDistance,
             int passOrdinal, int tableEntryBase, boolean budgetActive) {
+        return recordPassHead(stack, commandBuffer, slot, terrainPipeline, passDescriptorSet,
+                vertexArena, indexBuffer, tableBuffer, table, null, 0L, planes, cameraX, cameraY,
+                cameraZ, maxDistance, passOrdinal, tableEntryBase, budgetActive);
+    }
+
+    /**
+     * Same as {@link #recordPassHead} with an optional pre-built {@link SectionDirectory.Directory}
+     * and generation stamp forwarded to {@link VulkanMeshTaskDraw#tryRecord}.
+     */
+    public VulkanMeshTaskDraw.GateReason recordPassHead(MemoryStack stack,
+            VkCommandBuffer commandBuffer, int slot, VulkanTerrainPipeline terrainPipeline,
+            long passDescriptorSet, VulkanBuffer vertexArena, VulkanBuffer indexBuffer,
+            long tableBuffer, GpuTerrainDrawTable.Table table,
+            SectionDirectory.Directory prebuiltDirectory, long directoryGeneration, float[] planes,
+            float cameraX, float cameraY, float cameraZ, float maxDistance,
+            int passOrdinal, int tableEntryBase, boolean budgetActive) {
         Stage2Pipeline stage2 = null;
         if (!this.released && terrainPipeline != null && slot >= 0 && slot < this.ringCursor.length
                 && !this.brokenPipelines.contains(terrainPipeline)
@@ -213,9 +230,9 @@ public final class VulkanMeshStage2Pipeline {
             // Null handles: the task draw counts NO_PIPELINE in its own census, so every
             // refusal of this path is visible in one place and nothing is recorded.
             return this.taskDraw.tryRecord(stack, commandBuffer, slot,
-                    VK_NULL_HANDLE, VK_NULL_HANDLE, tableBuffer, table, planes,
-                    cameraX, cameraY, cameraZ, maxDistance, passOrdinal, tableEntryBase,
-                    budgetActive);
+                    VK_NULL_HANDLE, VK_NULL_HANDLE, tableBuffer, table, prebuiltDirectory,
+                    directoryGeneration, planes, cameraX, cameraY, cameraZ, maxDistance,
+                    passOrdinal, tableEntryBase, budgetActive);
         }
         // The slot's matrix block: the pass pipeline's last pushed matrices, in the vertex
         // stage's order (projection first, then model-view), read by the mesh stage from
@@ -233,10 +250,16 @@ public final class VulkanMeshStage2Pipeline {
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, stage2.layout, 1,
                 stack.longs(passDescriptorSet, meshSet), null);
         this.ringCursor[slot]++;
-        return this.taskDraw.tryRecord(stack, commandBuffer, slot,
-                stage2.pipeline, stage2.layout, tableBuffer, table, planes,
-                cameraX, cameraY, cameraZ, maxDistance, passOrdinal, tableEntryBase,
-                budgetActive);
+        VulkanMeshTaskDraw.GateReason verdict = this.taskDraw.tryRecord(stack, commandBuffer, slot,
+                stage2.pipeline, stage2.layout, tableBuffer, table, prebuiltDirectory,
+                directoryGeneration, planes, cameraX, cameraY, cameraZ, maxDistance,
+                passOrdinal, tableEntryBase, budgetActive);
+        if (verdict == VulkanMeshTaskDraw.GateReason.NONE) {
+            // Restore the pass' own terrain pipeline so downstream pass-tail recording sees
+            // the same bound pipeline state as stage 1 and the non-mesh path.
+            terrainPipeline.bindPipeline(commandBuffer);
+        }
+        return verdict;
     }
 
     /** Creates the standing resources: the set-2 layout, the pool and rings, the matrix blocks. */

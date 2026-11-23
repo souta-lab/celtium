@@ -38,14 +38,29 @@ public final class VulkanMeshTaskDraw {
     public static final boolean ENABLED = Boolean.getBoolean("celtium.vulkan.meshTerrainStage2");
 
     /**
+     * Sections evaluated per task workgroup ({@code layout(local_size_x = 32)} in
+     * {@code terrain_section.task}): matches RDNA 2 Wave32 so all 32 lanes execute in
+     * lockstep and one task workgroup amplifies an entire 32-section tile.
+     */
+    public static final int TASK_WORKGROUP_SIZE = 32;
+
+    /**
      * The split budget of design section 2.2: how many quads one mesh workgroup may
-     * re-issue. The mesh side's stage-1 form emits 6 vertices per quad against RADV's
-     * measured 256-vertex mesh output limit, so 42 (252 vertices) is the safe initial
-     * value; it travels in the push block, never baked into the shader, because the
-     * budget changes with the mesh side's emission form.
+     * re-issue. {@code terrain_section.mesh} emits 4 unique vertices and 2 triangles per
+     * quad ({@code local_size_x = 64}, 1 lane per quad), so 64 quads = 256 vertices and
+     * 128 primitives, filling RADV's 256-vertex mesh output limit without duplicating
+     * shared quad corners.
      */
     public static final int QUADS_PER_MESH_WORKGROUP = Math.max(1,
-            Integer.getInteger("celtium.vulkan.meshTerrainStage2.quadsPerMeshWorkgroup", 42).intValue());
+            Integer.getInteger("celtium.vulkan.meshTerrainStage2.quadsPerMeshWorkgroup", 64).intValue());
+
+    /** {@return the number of Wave32 task workgroups needed to cover {@code sectionCount} sections}. */
+    public static int taskWorkGroupCount(int sectionCount) {
+        if (sectionCount <= 0) {
+            return 0;
+        }
+        return (sectionCount + TASK_WORKGROUP_SIZE - 1) / TASK_WORKGROUP_SIZE;
+    }
 
     /** Bytes in the stage's push block (the terrain generation family's 144-byte form). */
     public static final int PUSH_BYTES = 144;
@@ -103,6 +118,7 @@ public final class VulkanMeshTaskDraw {
         long describedTable;
         long describedRemap;
         long describedMask;
+        long uploadedDirectoryGeneration = -1L;
     }
 
     /** The standing gate: the stage-2 flag on AND the stage-0 capability pair enabled. */
@@ -174,6 +190,24 @@ public final class VulkanMeshTaskDraw {
                                 GpuTerrainDrawTable.Table table, float[] planes,
                                 float cameraX, float cameraY, float cameraZ, float maxDistance,
                                 int passOrdinal, int tableEntryBase, boolean budgetActive) {
+        return tryRecord(stack, commandBuffer, slotIndex, pipeline, pipelineLayout, tableBuffer,
+                table, null, 0L, planes, cameraX, cameraY, cameraZ, maxDistance, passOrdinal,
+                tableEntryBase, budgetActive);
+    }
+
+    /**
+     * Same as {@link #tryRecord} with an optional pre-built {@link SectionDirectory.Directory}
+     * and generation stamp: when {@code directoryGeneration != 0L} matches the generation
+     * already packed into {@code slotIndex}'s directory buffer, the per-frame directory
+     * re-pack is skipped and only the dynamic remap and occlusion mask are rewritten.
+     */
+    public GateReason tryRecord(MemoryStack stack, VkCommandBuffer commandBuffer, int slotIndex,
+                                long pipeline, long pipelineLayout, long tableBuffer,
+                                GpuTerrainDrawTable.Table table,
+                                SectionDirectory.Directory prebuiltDirectory,
+                                long directoryGeneration, float[] planes,
+                                float cameraX, float cameraY, float cameraZ, float maxDistance,
+                                int passOrdinal, int tableEntryBase, boolean budgetActive) {
         if (this.disabled) {
             return count(GateReason.DISABLED);
         }
@@ -189,7 +223,8 @@ public final class VulkanMeshTaskDraw {
         if (tableBuffer == VK_NULL_HANDLE) {
             return count(GateReason.TABLE_NOT_BOUND);
         }
-        SectionDirectory.Directory directory = SectionDirectory.build(table);
+        SectionDirectory.Directory directory = prebuiltDirectory != null
+                ? prebuiltDirectory : SectionDirectory.build(table);
         if (directory == null) {
             return count(GateReason.DIRECTORY_NOT_BUILT);
         }
@@ -200,17 +235,21 @@ public final class VulkanMeshTaskDraw {
         if (sectionCount == 0) {
             return count(GateReason.NO_SECTIONS);
         }
-        if (sectionCount > MAX_TASK_WORKGROUPS) {
+        int taskGroups = taskWorkGroupCount(sectionCount);
+        if (taskGroups > MAX_TASK_WORKGROUPS) {
             return count(GateReason.OVER_TASK_WORKGROUP_LIMIT);
         }
         try {
             Slot slot = this.slots[slotIndex];
             ensureBuffers(slot, directory, table);
-            long directoryAddress = slot.directory.mappedAddress();
-            ByteBuffer view = MemoryUtil.memByteBuffer(directoryAddress,
-                    Math.max(1, directory.recordsBytes()));
-            view.order(java.nio.ByteOrder.nativeOrder());
-            directory.packRecords(view, 0);
+            if (directoryGeneration == 0L || slot.uploadedDirectoryGeneration != directoryGeneration) {
+                long directoryAddress = slot.directory.mappedAddress();
+                ByteBuffer view = MemoryUtil.memByteBuffer(directoryAddress,
+                        Math.max(1, directory.recordsBytes()));
+                view.order(java.nio.ByteOrder.nativeOrder());
+                directory.packRecords(view, 0);
+                slot.uploadedDirectoryGeneration = directoryGeneration;
+            }
             long remapAddress = slot.remap.mappedAddress();
             for (int i = 0; i < table.remap.length; i++) {
                 MemoryUtil.memPutInt(remapAddress + (long) i * 4L, table.remap[i]);
@@ -221,11 +260,10 @@ public final class VulkanMeshTaskDraw {
             }
             ensureDescriptors(stack, slot, tableBuffer);
 
-            VkMemoryBarrier.Buffer barrier = VkMemoryBarrier.calloc(1, stack).sType$Default()
-                    .srcAccessMask(VK_ACCESS_HOST_WRITE_BIT)
-                    .dstAccessMask(VK_ACCESS_SHADER_READ_BIT);
-            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_HOST_BIT,
-                    EXTMeshShader.VK_PIPELINE_STAGE_TASK_SHADER_BIT_EXT, 0, barrier, null, null);
+            // No vkCmdPipelineBarrier(HOST_BIT -> TASK_SHADER_BIT_EXT) here: tryRecord runs
+            // inside an active VkRenderPass (where HOST_BIT is illegal per VUID-02285/06461),
+            // and Vulkan spec section 6.9 guarantees that host writes to mapped HOST_COHERENT
+            // buffers prior to vkQueueSubmit are automatically visible to all device stages.
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0,
                     stack.longs(slot.descriptorSet), null);
@@ -248,7 +286,7 @@ public final class VulkanMeshTaskDraw {
             push.clear();
             vkCmdPushConstants(commandBuffer, pipelineLayout,
                     EXTMeshShader.VK_SHADER_STAGE_TASK_BIT_EXT, 0, push);
-            EXTMeshShader.vkCmdDrawMeshTasksEXT(commandBuffer, sectionCount, 1, 1);
+            EXTMeshShader.vkCmdDrawMeshTasksEXT(commandBuffer, taskGroups, 1, 1);
         } catch (RuntimeException error) {
             this.disabled = true;
             System.out.println("[Celtium] CELTIUM_MESH_TERRAIN_STAGE2_DISABLED at=tryRecord reason="
@@ -286,8 +324,13 @@ public final class VulkanMeshTaskDraw {
             slot.directory = new VulkanHostBuffer(this.context, directoryBytes, usage);
             slot.remap = new VulkanHostBuffer(this.context, remapBytes, usage);
             slot.mask = new VulkanHostBuffer(this.context, maskBytes, usage);
+            slot.uploadedDirectoryGeneration = -1L;
         } else {
+            long previousDir = slot.directory.buffer();
             slot.directory.ensureCapacity(directoryBytes);
+            if (slot.directory.buffer() != previousDir) {
+                slot.uploadedDirectoryGeneration = -1L;
+            }
             slot.remap.ensureCapacity(remapBytes);
             slot.mask.ensureCapacity(maskBytes);
         }
