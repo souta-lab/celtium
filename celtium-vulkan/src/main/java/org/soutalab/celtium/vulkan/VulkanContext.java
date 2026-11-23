@@ -3083,6 +3083,8 @@ public final class VulkanContext {
     private boolean storageImageWriteWithoutFormatSupported;
     /** Whether drawIndirectFirstInstance was reported by the device and therefore enabled at creation. */
     private boolean drawIndirectFirstInstanceSupported;
+    /** Whether {@code VkPhysicalDeviceVulkan12Features.drawIndirectCount} was reported and enabled (E10). */
+    private boolean drawIndirectCountSupported;
     /** VkPhysicalDeviceLimits.maxDrawIndirectCount, a limit rather than a feature (0 when unreported). */
     private int maxDrawIndirectCount;
 
@@ -3109,6 +3111,17 @@ public final class VulkanContext {
      */
     public boolean drawIndirectFirstInstanceEnabled() {
         return this.drawIndirectFirstInstanceSupported;
+    }
+
+    /**
+     * {@return whether the device was created with {@code drawIndirectCount} enabled}.
+     * <p>
+     * E10's premise (design section 4): {@code vkCmdDrawIndexedIndirectCount} is Vulkan 1.2
+     * core, but the call is illegal unless the feature was enabled at device creation, which
+     * is what the query-and-enable block in device creation now does.
+     */
+    public boolean drawIndirectCountEnabled() {
+        return this.drawIndirectCountSupported;
     }
 
     /** {@return the device's {@code maxDrawIndirectCount}}; 0 means the limit was never read (OPT-09's clamp). */
@@ -3180,6 +3193,7 @@ public final class VulkanContext {
                 + " maxImageDimension2D=" + properties.limits().maxImageDimension2D() + "]"
                 + " indirect=[multiDrawIndirect=" + this.multiDrawIndirectSupported
                 + " drawIndirectFirstInstance=" + this.drawIndirectFirstInstanceSupported
+                + " drawIndirectCount=" + this.drawIndirectCountSupported
                 + " maxDrawIndirectCount=" + this.maxDrawIndirectCount + "]"
                 + " advertised=[externalMemoryFd="+ extensions.contains(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)
                 + " externalSemaphoreFd=" + extensions.contains(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME)
@@ -3515,6 +3529,30 @@ public final class VulkanContext {
                     createInfo.pNext(drawParametersFeatures.address());
                 }
             }
+            // E10's premise (design section 4.2): vkCmdDrawIndexedIndirectCount is Vulkan 1.2 core, but the call is
+            // only legal when the device was created with the drawIndirectCount feature enabled, and the pNext chain
+            // carried no Vulkan12Features struct at all - so the feature was neither queried nor enabled, on any
+            // device. The block follows the Vulkan11 draw-parameters shape above exactly: asked only when the
+            // device's API version can answer, enabled only when reported (enabling an unreported feature fails
+            // vkCreateDevice), and appended to the end of the chain rather than replacing its head.
+            boolean askIndirectCount = deviceProperties.apiVersion() >= org.lwjgl.vulkan.VK12.VK_API_VERSION_1_2;
+            org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features indirectCountFeatures = null;
+            if (askIndirectCount) {
+                org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features supported12 =
+                        org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features.calloc(stack).sType$Default();
+                org.lwjgl.vulkan.VkPhysicalDeviceFeatures2 features12 = org.lwjgl.vulkan.VkPhysicalDeviceFeatures2
+                        .calloc(stack).sType$Default().pNext(supported12.address());
+                org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2(this.physicalDevice, features12);
+                this.drawIndirectCountSupported = supported12.drawIndirectCount();
+                if (this.drawIndirectCountSupported) {
+                    indirectCountFeatures = org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features.calloc(stack)
+                            .sType$Default().drawIndirectCount(true);
+                    if (createInfo.pNext() != 0L) {
+                        org.lwjgl.system.MemoryUtil.memPutLong(indirectCountFeatures.address() + 8L, createInfo.pNext());
+                    }
+                    createInfo.pNext(indirectCountFeatures.address());
+                }
+            }
             // One descriptor set for every texture a window draws (architecture section 11.6): the shaders index an
             // array of sampled images with a value that comes from the draw itself, which is why the array needs
             // non-uniform indexing, a runtime-sized binding and update-after-bind - descriptors are written as textures
@@ -3568,6 +3606,7 @@ public final class VulkanContext {
                                 + " shaderStorageImageWriteWithoutFormat="
                                 + this.storageImageWriteWithoutFormatSupported
                                 + " pipelineStatisticsQuery=" + this.pipelineStatisticsQuerySupported
+                                + " drawIndirectCount=" + this.drawIndirectCountSupported
                                 + " shaderDrawParameters=" + this.shaderDrawParametersSupported
                                 + " dynamicRendering=" + this.dynamicRenderingSupported
                                 + " textureArray=" + this.textureArraySupported,
@@ -3576,6 +3615,7 @@ public final class VulkanContext {
             this.device = new VkDevice(handle.get(0), this.physicalDevice, createInfo);
             System.out.println("[Celtium] CELTIUM_DEVICE_FEATURES shaderDrawParameters="
                     + this.shaderDrawParametersSupported + " multiDrawIndirect=" + this.multiDrawIndirectSupported
+                    + " drawIndirectCount=" + this.drawIndirectCountSupported
                     + " maxDrawIndirectCount=" + this.maxDrawIndirectCount
                     + " textureArray=" + this.textureArraySupported
                     + " pipelineStatisticsQuery=" + this.pipelineStatisticsQuerySupported);

@@ -289,7 +289,11 @@ abstract class CeltiumCompileShaders extends DefaultTask {
 def compileTerrainShaders = tasks.register('compileTerrainShaders', CeltiumCompileShaders) {
     def workspaceRoot = rootProject.projectDir.parentFile
     def compilerSetting = providers.gradleProperty('glslang_validator').orNull
-    shaderSources.from(fileTree('src/main/shaders'))
+    // Include fragments (*.glsl, e.g. terrain_cull.glsl) are not standalone modules: they are
+    // pulled into a stage file by #include and have no stage of their own to compile to.
+    def terrainShaderTree = fileTree('src/main/shaders')
+    terrainShaderTree.exclude('**/*.glsl')
+    shaderSources.from(terrainShaderTree)
     compilerPath.set(compilerSetting == null ? ''
             : (new File(compilerSetting).absolute ? compilerSetting : new File(workspaceRoot, compilerSetting).absolutePath))
     // The workspace copy first so this machine keeps using the pinned package, then PATH so a checkout that has no
