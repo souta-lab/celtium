@@ -41,6 +41,10 @@ KNOWN_NAME_COLLISIONS = {
     ("NativePassRegistry.java", "targetRegistry"),
     ("PassExecutor.java", "targetRegistry"),
     ("PassExecutor.java", "publishedTextures"),
+    # E10-a's census class (added after the baseline): its timestampPeriod is a distinct
+    # field from the backend's (`= 1.0f`, still intact), assigned in the constructor from
+    # the physical device's real VkPhysicalDeviceLimits.timestampPeriod.
+    ("VulkanGpuTerrainCensus.java", "timestampPeriod"),
 }
 
 
