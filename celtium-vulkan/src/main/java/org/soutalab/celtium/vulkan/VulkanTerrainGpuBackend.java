@@ -383,6 +383,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
     /** Cached VulkanModProgramPipeline instances for shader-pack terrain passes. */
     final java.util.Map<String, VulkanModProgramPipeline> packTerrainPipelines = new java.util.HashMap<>();
+    /** Item 719(c): per-pipeKey regeneration rate cap for the set-cap safety net below. */
+    private final PipelineRegenGuard packTerrainRegenGuard = new PipelineRegenGuard();
     /** Host-side state bracket for pack terrain executions; see {@link PackStageStateGuard}. */
     private final PackStageStateGuard packStageStateGuard = new PackStageStateGuard();
     private static final boolean PACK_TERRAIN_PROGRAMS =
@@ -17530,6 +17532,26 @@ this.frameBufferOpen = false;
                     + depthTest + ":" + depthWrite + ":" + depthCompareOp + ":"
                     + colorBlend.hashCode() + ":" + targetColors;
             VulkanModProgramPipeline modPipeline = this.packTerrainPipelines.get(pipeKey);
+            // Item 719(c) safety net: a terrain pipeline whose descriptor-set cap fired is
+            // regenerated here, at the pass head where the backend re-resolves it - never
+            // mid-pass, so no in-flight local reference can observe the delete. delete() defers
+            // the real handle destruction through the context's retire cleanup, so sets the
+            // dying pipeline already recorded stay alive until their submissions retire.
+            // The failing pass already skipped its draw; regeneration turns a permanent
+            // per-pipeline loss into a one-pass loss plus a rebuild hitch. The guard caps
+            // regenerations per pipeKey so a genuinely unbounded key space degrades back to
+            // the plain skip instead of a rebuild loop.
+            if (modPipeline != null && modPipeline.celtium$consumeSetCapReached()) {
+                long regenNow = System.currentTimeMillis();
+                if (this.packTerrainRegenGuard.tryAcquire(pipeKey, regenNow)) {
+                    System.out.println("[Celtium] CELTIUM_PIPELINE_REGEN route=terrain key=" + pipeKey);
+                    this.packTerrainPipelines.remove(pipeKey);
+                    modPipeline.delete();
+                    modPipeline = null;
+                } else if (this.packTerrainRegenGuard.shouldLogSuppression(pipeKey, regenNow)) {
+                    System.out.println("[Celtium] CELTIUM_PIPELINE_REGEN_SUPPRESSED route=terrain key=" + pipeKey);
+                }
+            }
             if (modPipeline == null) {
                 try {
                     modPipeline = VulkanModProgramPipeline.createForTerrain(this.context, modProgram, vertexFormat,

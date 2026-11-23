@@ -105,6 +105,8 @@ final class PassExecutor {
     private final Map<RenderPassKey, Long> renderPasses = new HashMap<>();
     private final Map<FramebufferKey, Long> framebuffers = new HashMap<>();
     private final Map<PipelineKey, VulkanModProgramPipeline> pipelines = new HashMap<>();
+    /** Item 719(c): per-pipeline-key regeneration rate cap for the set-cap safety net. */
+    private final PipelineRegenGuard regenGuard = new PipelineRegenGuard();
     private VulkanDynamicMesh quadMesh;
     private long[] scratchViews = new long[8];
     private long[] scratchSamplers = new long[8];
@@ -364,7 +366,25 @@ final class PassExecutor {
         PipelineKey key = new PipelineKey(pass.spec().name(), pass.vertexSpirv(), pass.fragmentSpirv(), renderPass);
         VulkanModProgramPipeline existing = this.pipelines.get(key);
         if (existing != null) {
-            return existing;
+            // Item 719(c) safety net: regenerate a pipeline whose descriptor-set cap fired, at
+            // this resolution point (recordPass holds pipelines only in locals, and delete()
+            // defers handle destruction through the retire cleanup, so recorded work is safe).
+            // Rate-capped per key by the guard; past the cap the pass keeps its plain
+            // allocation-refusal skip.
+            if (!existing.celtium$consumeSetCapReached()) {
+                return existing;
+            }
+            long regenNow = System.currentTimeMillis();
+            if (!this.regenGuard.tryAcquire(key, regenNow)) {
+                if (this.regenGuard.shouldLogSuppression(key, regenNow)) {
+                    System.out.println("[Celtium] CELTIUM_PIPELINE_REGEN_SUPPRESSED route=native pass="
+                            + pass.spec().name());
+                }
+                return existing;
+            }
+            System.out.println("[Celtium] CELTIUM_PIPELINE_REGEN route=native pass=" + pass.spec().name());
+            this.pipelines.remove(key);
+            existing.delete();
         }
         NativePassRegistry.PassState state = pass.spec().state();
         VulkanModProgramPipeline built = VulkanModProgramPipeline.createForNativePass(

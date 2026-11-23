@@ -213,6 +213,14 @@ public final class VulkanModProgramPipeline {
      * lines by route without the census knowing the call sites.
      */
     String celtium$censusRoute = "mod";
+    /**
+     * Item 719(c) safety net: set when the descriptor-set cap guard in
+     * {@link #allocateOrReuseDescriptorSet} turns a lookup away. The pipeline's owner reads it
+     * (via {@link #celtium$consumeSetCapReached}) at its next resolution point - never mid-pass -
+     * and regenerates this pipeline alone, subject to its {@link PipelineRegenGuard}. A plain
+     * boolean write on an already-failing path; not gated by the census.
+     */
+    boolean celtium$setCapReached;
     private long setLayout = VK_NULL_HANDLE;
     private long pipelineLayout = VK_NULL_HANDLE;
     private long pipeline = VK_NULL_HANDLE;
@@ -1250,6 +1258,13 @@ public final class VulkanModProgramPipeline {
         return this.descriptorSetKeyCollisions;
     }
 
+    /** {@return whether the set cap guard fired since the last call} and clears the flag (item 719(c)). */
+    boolean celtium$consumeSetCapReached() {
+        boolean reached = this.celtium$setCapReached;
+        this.celtium$setCapReached = false;
+        return reached;
+    }
+
     private long allocateOrReuseDescriptorSet(long key, long[] views, long[] samplers, int[] layouts,
                                               long[] imageViews, int uniformSlot) {
         // Item 678: the census counts this lookup's outcome for terrain pipelines only - the set
@@ -1292,6 +1307,7 @@ public final class VulkanModProgramPipeline {
             this.descriptorSetKeyCollisions++;
         }
         if (cached == 0L && this.setsByKey.size() >= MAX_SETS * MAX_POOLS) {
+            this.celtium$setCapReached = true;
             if (censusTerrain) {
                 PackUniformCensus.noteSetMiss();
             }
