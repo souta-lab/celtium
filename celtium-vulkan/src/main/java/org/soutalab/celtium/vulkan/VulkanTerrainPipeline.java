@@ -193,6 +193,17 @@ public final class VulkanTerrainPipeline {
     private static final boolean NO_TERRAIN_DEPTH = Boolean.getBoolean("celtium.vulkan.noTerrainDepth");
 
     /**
+     * The shadow-less fragment variant switch: {@code -Dceltium.vulkan.terrainShadowSpecVariant} (default off).
+     * On, each terrain pipeline also creates a variant whose fragment stage is specialised with
+     * CELTIUM_TERRAIN_SHADOW false, and binds it for every pass that does not select the shadow set - so a frame
+     * with no routed shadow pass (a vanilla frame, the flight scene included) runs a fragment shader with the
+     * shadow lookup compiled out instead of merely branched around. Off, only the shadow-capable pipeline
+     * exists and every pass binds it, exactly as before this switch.
+     */
+    private static final boolean SHADOW_SPEC_VARIANT =
+            Boolean.getBoolean("celtium.vulkan.terrainShadowSpecVariant");
+
+    /**
      * {@return the vanilla-like layout's attribute offsets, built when a layout is asked for}.
      * <p>
      * A method rather than a static array, because Java assigns static finals in declaration order: an array
@@ -378,6 +389,15 @@ public final class VulkanTerrainPipeline {
     /** Nearest, clamp-to-edge, no compare: the shader compares depths itself. Created with the pool. */
     private long shadowSampler;
     private long pipeline;
+    /**
+     * The shadow-less fragment variant of {@link #pipeline} (CELTIUM_TERRAIN_SHADOW specialised false), created
+     * only under {@link #SHADOW_SPEC_VARIANT}; zero when the switch is off. {@link #bindPipeline} binds it for
+     * every pass that has not selected the shadow set, keyed on the same {@link #shadowSetActive} field that
+     * selects the descriptor set, so the pipeline and the set a pass draws with cannot disagree about the
+     * shadow lookup. The shadow-capable {@link #pipeline} stays the bound one while the shadow set is active,
+     * and u_ShadowEnabled remains the runtime authority inside it.
+     */
+    private long pipelineNoShadow;
     /**
      * The atlas sampler this pass binds when {@link #ATLAS_MAX_LOD} differs from the mirror's own clamp; zero when
      * the mirror's sampler is used instead. Created on the first {@code bindTextures} and owned by this pipeline.
@@ -689,7 +709,7 @@ public final class VulkanTerrainPipeline {
         if (commandBuffer == null) {
             throw new NullPointerException("commandBuffer");
         }
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, selectedPipeline());
     }
 
     /**
@@ -1039,9 +1059,19 @@ public final class VulkanTerrainPipeline {
         return texture.key() ^ (texture.view() * 31L);
     }
 
-    /** The pipeline handle this object created; for the audit that compares what is bound with what was written. */
+    /**
+     * The handle {@link #bindPipeline} binds for the pass being recorded: the shadow-capable pipeline while the
+     * shadow set is selected, the shadow-less variant otherwise (the shadow-capable pipeline when no variant
+     * exists). Keyed on {@link #shadowSetActive} - the same field that selects the descriptor set - so the
+     * pipeline and the set a pass draws with cannot disagree about the shadow lookup.
+     */
+    private long selectedPipeline() {
+        return this.shadowSetActive || this.pipelineNoShadow == 0L ? this.pipeline : this.pipelineNoShadow;
+    }
+
+    /** The pipeline handle this object binds for the current pass; for the audit that compares what is bound with what was written. */
     public long pipelineHandle() {
-        return this.pipeline;
+        return selectedPipeline();
     }
 
     /** The descriptor set this object writes and binds for a frame slot; see {@link #pipelineHandle()}. */
@@ -1263,6 +1293,11 @@ public final class VulkanTerrainPipeline {
             this.context.celtium$notePipelineDestroy("terrainpipeline");
             vkDestroyPipeline(device, pipeline, null);
             pipeline = 0L;
+        }
+        if (pipelineNoShadow != 0L) {
+            this.context.celtium$notePipelineDestroy("terrainpipeline");
+            vkDestroyPipeline(device, pipelineNoShadow, null);
+            pipelineNoShadow = 0L;
         }
         if (descriptorPool != 0L) {
             // Destroying the pool also frees the descriptor set allocated from it.
@@ -1581,6 +1616,19 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
     }
 
     private void createPipeline(MemoryStack stack, VkDevice device) {
+        pipeline = createPipelineVariant(stack, device, true);
+        if (SHADOW_SPEC_VARIANT) {
+            pipelineNoShadow = createPipelineVariant(stack, device, false);
+        }
+    }
+
+    /**
+     * Creates one graphics pipeline of this pass. {@code shadowCapable} is the fragment stage's
+     * CELTIUM_TERRAIN_SHADOW specialization: the primary pipeline is always capable, the variant (created only
+     * under {@link #SHADOW_SPEC_VARIANT}) is not, and the two differ in nothing else - same layout, same render
+     * pass, same state - so switching between them at {@link #bindPipeline} changes only the fragment binary.
+     */
+    private long createPipelineVariant(MemoryStack stack, VkDevice device, boolean shadowCapable) {
         long vertexModule = 0L;
         long fragmentModule = 0L;
         ByteBuffer vertexCode = null;
@@ -1596,11 +1644,13 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
             stages.get(0).sType$Default().stage(VK_SHADER_STAGE_VERTEX_BIT).module(vertexModule)
                     .pName(stack.UTF8("main"));
             org.lwjgl.vulkan.VkSpecializationMapEntry.Buffer specEntries =
-                    org.lwjgl.vulkan.VkSpecializationMapEntry.calloc(1, stack);
+                    org.lwjgl.vulkan.VkSpecializationMapEntry.calloc(2, stack);
             specEntries.get(0).constantID(0).offset(0).size(4);
+            specEntries.get(1).constantID(1).offset(4).size(4);
             org.lwjgl.vulkan.VkSpecializationInfo specialization = org.lwjgl.vulkan.VkSpecializationInfo.calloc(stack)
                     .pMapEntries(specEntries)
-                    .pData(stack.malloc(4).putInt(0, this.fragmentDiscard ? 1 : 0));
+                    .pData(stack.malloc(8).putInt(0, this.fragmentDiscard ? 1 : 0)
+                            .putInt(4, shadowCapable ? 1 : 0));
             stages.get(1).sType$Default().stage(VK_SHADER_STAGE_FRAGMENT_BIT).module(fragmentModule)
                     .pName(stack.UTF8("main")).pSpecializationInfo(specialization);
 
@@ -1725,7 +1775,7 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
             LongBuffer handle = stack.mallocLong(1);
             check(VulkanContext.createGraphicsPipelines(device, create, handle, "terrain"),
                     "vkCreateGraphicsPipelines(" + passName + ")");
-            pipeline = handle.get(0);
+            return handle.get(0);
         } finally {
             // A shader module is only needed while the pipeline is being created; the pipeline captures the code.
             if (fragmentModule != 0L) {
