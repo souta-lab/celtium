@@ -27,6 +27,7 @@ import org.taumc.celeritas.CeleritasVintage;
 import org.taumc.celeritas.impl.render.terrain.compile.VintageChunkBuildContext;
 import org.taumc.celeritas.impl.render.terrain.compile.task.ChunkBuilderMeshingTask;
 import org.taumc.celeritas.impl.render.terrain.sprite.SpriteUtil;
+import org.taumc.celeritas.impl.world.PrepareNullCensus;
 import org.taumc.celeritas.impl.world.WorldSlice;
 import org.taumc.celeritas.impl.world.cloned.ChunkRenderContext;
 import org.taumc.celeritas.impl.world.cloned.ClonedChunkSectionCache;
@@ -180,6 +181,27 @@ public class VintageRenderSectionManager extends RenderSectionManager {
             return true;
         }
         return array[y] == Chunk.NULL_BLOCK_STORAGE || array[y].isEmpty();
+    }
+
+    @Override
+    protected void onSectionAddedAsEmpty(RenderSection render) {
+        // The add-time EMPTY commit is where most terminal-built sections are actually born, and
+        // it never reaches WorldSlice.prepare, so the prepare-null census (item 701) counted
+        // nothing for it and a leg could not split the population. Classify it here with the same
+        // inputs prepare would have used, so the census sees both formation paths in one set of
+        // reason buckets (the add-path share is the line's addEmpty field).
+        if (!PrepareNullCensus.enabled()) {
+            return;
+        }
+
+        Chunk chunk = this.world.getChunk(render.getChunkX(), render.getChunkZ());
+        var storage = chunk.getBlockStorageArray();
+        int y = render.getChunkY();
+        var section = y >= 0 && y < storage.length ? storage[y] : null;
+
+        PrepareNullCensus.GLOBAL.recordAddEmpty(PrepareNullCensus.classifyForNullBranch(
+                chunk.isEmpty(), storage.length, y,
+                section == null, section != null && section.isEmpty()));
     }
 
     @Override

@@ -576,6 +576,17 @@ public abstract class RenderSectionManager {
 
     protected abstract boolean isSectionVisuallyEmpty(int x, int y, int z);
 
+    /**
+     * Called when a section is committed as EMPTY at add time because {@link #isSectionVisuallyEmpty}
+     * judged it empty, before the EMPTY_DATA commit lands. This is the dominant way a section
+     * becomes built-and-empty (the present census's terminalBuilt population): it bypasses the
+     * rebuild-task path entirely, so no rebuild task is created and WorldSlice.prepare is never
+     * called for the section. The default does nothing; implementations override it to observe
+     * the commit (the prepare-null census counts it here, item 683).
+     */
+    protected void onSectionAddedAsEmpty(RenderSection section) {
+    }
+
     public void onSectionAdded(int x, int y, int z) {
         long key = PositionUtil.packSection(x, y, z);
 
@@ -597,6 +608,7 @@ public abstract class RenderSectionManager {
         this.invalidateCachedSectionData(renderSection);
 
         if (this.isSectionVisuallyEmpty(x, y, z)) {
+            this.onSectionAddedAsEmpty(renderSection);
             this.updateSectionInfo(renderSection, RenderSection.EMPTY_DATA);
         } else {
             renderSection.setPendingUpdate(ChunkUpdateType.INITIAL_BUILD);
