@@ -345,8 +345,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
     long getStringAddress;
     ByteBuffer getStringBuffer;
-    volatile int viewportX, viewportY;
-    volatile int viewportW = 1280, viewportH = 720;
+    // GAP-ST-5 rewired: the viewport's raw rectangle and packed form are owned by GlsmViewportState.
     /** GL_DRAW_FRAMEBUFFER / GL_READ_FRAMEBUFFER bindings; GL_FRAMEBUFFER sets both. */
     volatile int drawFbo, readFbo;
     /** The colour and depth glClear will use, and the buffers it was asked to clear and nobody consumed yet. */
@@ -2192,10 +2191,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         snapshot.scissorHeight = stub.raster.scissorHeight();
         snapshot.polygonOffsetFactor = stub.raster.polygonOffsetFactor();
         snapshot.polygonOffsetUnits = stub.raster.polygonOffsetUnits();
-        snapshot.viewportX = stub.viewportX;
-        snapshot.viewportY = stub.viewportY;
-        snapshot.viewportWidth = stub.viewportW;
-        snapshot.viewportHeight = stub.viewportH;
+        snapshot.viewportX = GlsmViewportState.current().x();
+        snapshot.viewportY = GlsmViewportState.current().y();
+        snapshot.viewportWidth = GlsmViewportState.current().width();
+        snapshot.viewportHeight = GlsmViewportState.current().height();
         snapshot.listBase = stub.listBase;
         snapshot.activeTextureUnit = stub.textures.activeUnit();
         snapshot.texture2d = stub.textures.texture2d();
@@ -3541,50 +3540,22 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static void initializeWindowRectangles(int width, int height) {
         CeltiumGlStub stub = installed;
         if (stub == null || width <= 0 || height <= 0) return;
-        stub.viewportX = 0;
-        stub.viewportY = 0;
-        stub.viewportW = width;
-        stub.viewportH = height;
+        GlsmViewportState.current().initialize(0, 0, width, height);
         stub.raster.initializeScissor(width, height);
     }
 
-    /** The last viewport the game set, packed as x|y|w|h in four 16-bit fields; 0 means "never set". */
-    private static long viewportPacked;
-    private static boolean viewportSeen;
-
     /** {@return the last viewport rectangle packed into one long, or {@code -1} when the game never set one}. */
     public static long celtium$viewportPacked() {
-        return viewportSeen ? viewportPacked : -1L;
+        return GlsmViewportState.current().packed();
     }
 
     /**
-     * Records the rectangle the capture reads per offer, from whichever route set the viewport.
-     * <p>
-     * Both entries that can set it go through here: the transformed native's route ({@code celtium$viewport}, which the
-     * hint calls) and the stub's own dispatch table ({@code SEM_VIEWPORT}, the entry the legacy trampoline and the
-     * in-process callers use). A route that updated only one of the two records would answer {@code GL_VIEWPORT}
-     * correctly while every group key and every offer still described the previous rectangle.
+     * Records the viewport selected through Minecraft's API or LWJGL3's native entry point.
+     * Both entries that can set it go through GlsmViewportState: the transformed native's route
+     * (this method, which the hint calls) and the stub's own dispatch table (SEM_VIEWPORT).
      */
-    private static void recordViewportPacked(int x, int y, int width, int height) {
-        // Four 16-bit fields are enough for any real viewport; a negative or oversized rectangle is left out rather
-        // than truncated into a different one.
-        if (width >= 0 && height >= 0 && width <= 0xFFFF && height <= 0xFFFF) {
-            viewportPacked = ((long) (x & 0xFFFF) << 48) | ((long) (y & 0xFFFF) << 32)
-                    | ((long) (width & 0xFFFF) << 16) | (height & 0xFFFF);
-            viewportSeen = true;
-        }
-    }
-
-    /** Records the viewport selected through Minecraft's API or LWJGL3's native entry point. */
     public static void celtium$viewport(int x, int y, int width, int height) {
-        recordViewportPacked(x, y, width, height);
-        CeltiumGlStub stub = installed;
-        if (stub != null) {
-            stub.viewportX = x;
-            stub.viewportY = y;
-            stub.viewportW = width;
-            stub.viewportH = height;
-        }
+        GlsmViewportState.current().set(x, y, width, height);
     }
 
     /** glScissor calls seen, so a leg can say whether the scene clipped at all rather than only whether a group did. */
@@ -5382,11 +5353,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 pixelStore((int) c[0], (int) c[1]);
                 return 0L;
             case SEM_VIEWPORT:
-                this.viewportX = (int) c[0];
-                this.viewportY = (int) c[1];
-                this.viewportW = (int) c[2];
-                this.viewportH = (int) c[3];
-                recordViewportPacked(this.viewportX, this.viewportY, this.viewportW, this.viewportH);
+                GlsmViewportState.current().set((int) c[0], (int) c[1], (int) c[2], (int) c[3]);
                 return 0L;
             case SEM_FOG_I:
                 org.soutalab.celtium.vulkan.ImmediateFogState.current().parameter((int) c[0], (int) c[1]);
@@ -8667,13 +8634,13 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         String shortReason = reason == null ? "none"
                 : reason.substring(0, Math.min(48, reason.length()));
-        String key = this.drawFbo + "/" + this.viewportW + "x" + this.viewportH + "/" + shortReason;
+        String key = this.drawFbo + "/" + GlsmViewportState.current().width() + "x" + GlsmViewportState.current().height() + "/" + shortReason;
         if (!REFUSAL_CONTEXTS.add(key)) {
             return;
         }
         System.out.println("[Celtium] CELTIUM_DRAWARRAY_REFUSAL_CONTEXT drawFbo=" + this.drawFbo
                 + " readFbo=" + this.readFbo
-                + " viewport=" + this.viewportW + "x" + this.viewportH
+                + " viewport=" + GlsmViewportState.current().width() + "x" + GlsmViewportState.current().height()
                 + " stride=" + this.vertexPointerStride
                 + " otherArrays=" + celtium$otherArrayNames()
                 + " reason=" + shortReason
