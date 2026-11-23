@@ -60,12 +60,14 @@ public final class GpuTerrainCulling {
             Boolean.getBoolean("celtium.vulkan.gpuTerrainCulling.shadowDraw");
 
     /**
-     * Distance limit, in blocks, for the census visibility test. The CPU search distance is
-     * decided inside the chunk render-list manager and is not plumbed to the Vulkan backend in
-     * E10-a, so the census takes its limit from here; the default is far beyond any render
-     * distance in use, which keeps the distance term from ever rejecting a command the CPU drew
-     * (the safe direction) while the shader term itself is exercised and unit-tested. Plumbing
-     * the real search distance is E10-b preparation work, recorded in the E10-a record.
+     * Distance limit, in blocks, for the census visibility test, used for a frame whose search
+     * context was never noted. The real limit is the search distance of the search that produced
+     * the frame's lists, plumbed from the render-list manager through
+     * {@code TerrainGpuBackend.noteSearchContext} (E10-b preparation); the CPU's own distance
+     * test is a closest-point test against the section box with that same limit, so the plumbed
+     * value keeps the census term from rejecting a command the CPU drew, in the same form.
+     * This property remains as the fallback for context-less frames; its default is far beyond
+     * any render distance in use, which is the safe direction for the same reason.
      */
     public static final float MAX_DISTANCE_BLOCKS =
             Float.parseFloat(System.getProperty("celtium.vulkan.gpuTerrainCulling.maxDistanceBlocks", "4096"));

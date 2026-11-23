@@ -3092,6 +3092,11 @@ public final class VulkanContext {
     private boolean drawIndirectCountSupported;
     /** VkPhysicalDeviceLimits.maxDrawIndirectCount, a limit rather than a feature (0 when unreported). */
     private int maxDrawIndirectCount;
+    /**
+     * Whether {@code VK_EXT_mesh_shader} was advertised and both of its features (mesh and task)
+     * were reported and enabled at creation (item 652, stage 0).
+     */
+    private boolean meshShaderSupported;
 
     /** {@return whether the device was created with {@code multiDrawIndirect} enabled}. */
     public boolean multiDrawIndirectEnabled() {
@@ -3127,6 +3132,20 @@ public final class VulkanContext {
      */
     public boolean drawIndirectCountEnabled() {
         return this.drawIndirectCountSupported;
+    }
+
+    /**
+     * {@return whether the device was created with {@code VK_EXT_mesh_shader} enabled and both
+     * the mesh and task shader features on}.
+     * <p>
+     * Item 652, stage 0: an optional capability in the same shape as
+     * {@link #drawIndirectCountEnabled()}. The gate is the pair of features, not the extension
+     * alone, because the design's stage-2 form issues through task shaders; a device reporting
+     * only the mesh half keeps the indirect path as its only terrain route. Stage 1's proof path
+     * ({@code VulkanMeshTerrain}) gates on this answer, and so will stage 2.
+     */
+    public boolean meshShaderEnabled() {
+        return this.meshShaderSupported;
     }
 
     /** {@return the device's {@code maxDrawIndirectCount}}; 0 means the limit was never read (OPT-09's clamp). */
@@ -3200,6 +3219,7 @@ public final class VulkanContext {
                 + " drawIndirectFirstInstance=" + this.drawIndirectFirstInstanceSupported
                 + " drawIndirectCount=" + this.drawIndirectCountSupported
                 + " maxDrawIndirectCount=" + this.maxDrawIndirectCount + "]"
+                + " meshShader=" + this.meshShaderSupported
                 + " advertised=[externalMemoryFd="+ extensions.contains(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)
                 + " externalSemaphoreFd=" + extensions.contains(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME)
                 + " swapchain=" + extensions.contains(VK_KHR_SWAPCHAIN_EXTENSION_NAME) + "]"
@@ -3442,6 +3462,27 @@ public final class VulkanContext {
             if (this.dynamicRenderingSupported) {
                 deviceExtensions.add(org.lwjgl.vulkan.KHRDynamicRendering.VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
             }
+            // Mesh shading (item 652, stage 0): an optional capability in the same shape as dynamic
+            // rendering above - the extension is enabled only when the device advertises it AND
+            // reports both features (the design's gate is the pair; see meshShaderEnabled()). The
+            // feature query runs here, beside the extension decision, because the enabled list is
+            // frozen into the names buffer below; the enable struct joins the create-info pNext
+            // chain further down, appended to its end like the feature blocks around it. A device
+            // without the pair is created exactly as before: no extension, no struct, and the
+            // indirect terrain path stays its only route.
+            if (advertised.contains(org.lwjgl.vulkan.EXTMeshShader.VK_EXT_MESH_SHADER_EXTENSION_NAME)) {
+                org.lwjgl.vulkan.VkPhysicalDeviceMeshShaderFeaturesEXT supportedMesh =
+                        org.lwjgl.vulkan.VkPhysicalDeviceMeshShaderFeaturesEXT.calloc(stack).sType$Default();
+                org.lwjgl.vulkan.VkPhysicalDeviceFeatures2 meshFeatures2 =
+                        org.lwjgl.vulkan.VkPhysicalDeviceFeatures2.calloc(stack).sType$Default()
+                                .pNext(supportedMesh.address());
+                org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2(this.physicalDevice, meshFeatures2);
+                this.meshShaderSupported = supportedMesh.meshShader() && supportedMesh.taskShader();
+                if (this.meshShaderSupported) {
+                    deviceExtensions.add(
+                            org.lwjgl.vulkan.EXTMeshShader.VK_EXT_MESH_SHADER_EXTENSION_NAME);
+                }
+            }
             PointerBuffer names = stack.mallocPointer(deviceExtensions.size());
             for (String extension : deviceExtensions) {
                 names.put(stack.UTF8(extension));
@@ -3558,6 +3599,21 @@ public final class VulkanContext {
                     createInfo.pNext(indirectCountFeatures.address());
                 }
             }
+            // The mesh-shader enable (item 652, stage 0), appended to the end of the chain in the
+            // same shape as the blocks above: the extension joined the enabled list when both
+            // features reported (beside the dynamic-rendering decision), and this struct is what
+            // turns the pair on for the created device. Enabling a feature the device did not
+            // report would fail vkCreateDevice, which is why the struct exists only on the
+            // supported branch.
+            if (this.meshShaderSupported) {
+                org.lwjgl.vulkan.VkPhysicalDeviceMeshShaderFeaturesEXT meshFeatures =
+                        org.lwjgl.vulkan.VkPhysicalDeviceMeshShaderFeaturesEXT.calloc(stack)
+                                .sType$Default().meshShader(true).taskShader(true);
+                if (createInfo.pNext() != 0L) {
+                    org.lwjgl.system.MemoryUtil.memPutLong(meshFeatures.address() + 8L, createInfo.pNext());
+                }
+                createInfo.pNext(meshFeatures.address());
+            }
             // One descriptor set for every texture a window draws (architecture section 11.6): the shaders index an
             // array of sampled images with a value that comes from the draw itself, which is why the array needs
             // non-uniform indexing, a runtime-sized binding and update-after-bind - descriptors are written as textures
@@ -3614,7 +3670,8 @@ public final class VulkanContext {
                                 + " drawIndirectCount=" + this.drawIndirectCountSupported
                                 + " shaderDrawParameters=" + this.shaderDrawParametersSupported
                                 + " dynamicRendering=" + this.dynamicRenderingSupported
-                                + " textureArray=" + this.textureArraySupported,
+                                + " textureArray=" + this.textureArraySupported
+                                + " meshShader=" + this.meshShaderSupported,
                         lastDeviceLossReport));
             }
             this.device = new VkDevice(handle.get(0), this.physicalDevice, createInfo);
@@ -3623,7 +3680,8 @@ public final class VulkanContext {
                     + " drawIndirectCount=" + this.drawIndirectCountSupported
                     + " maxDrawIndirectCount=" + this.maxDrawIndirectCount
                     + " textureArray=" + this.textureArraySupported
-                    + " pipelineStatisticsQuery=" + this.pipelineStatisticsQuerySupported);
+                    + " pipelineStatisticsQuery=" + this.pipelineStatisticsQuerySupported
+                    + " meshShader=" + this.meshShaderSupported);
         }
     }
 

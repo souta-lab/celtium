@@ -143,6 +143,11 @@ public final class TerrainFrameBudget {
      * {@link #noteDroppedBatch(long, int)}) - a partial batch would break the indirect path's
      * one-call-per-batch shape, so drops are whole-batch by construction.
      */
+    /** Whether a hard draw cap is in force at all (both caps default to disabled, 0). */
+    public boolean capActive() {
+        return this.maxVertices > 0L || this.maxDraws > 0;
+    }
+
     public boolean tryConsumeDraw(long vertices, int draws) {
         if (this.maxVertices > 0 && this.drawnVertices + vertices > this.maxVertices) {
             return false;

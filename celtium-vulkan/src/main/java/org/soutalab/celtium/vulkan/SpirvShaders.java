@@ -47,6 +47,21 @@ public final class SpirvShaders {
     /** Classpath name of the SOLID terrain pass fragment module. */
     public static final String SOLID_FRAGMENT = "terrain_solid.frag";
 
+    /** Task module of the stage-2/3 section path (item 677): one workgroup per section. */
+    public static final String TERRAIN_SECTION_TASK = "terrain_section.task";
+
+    /** Mesh module of the stage-2/3 section path (item 677): re-issues a section's quads. */
+    public static final String TERRAIN_SECTION_MESH = "terrain_section.mesh";
+    /**
+     * Mesh stage module for the SOLID terrain pass (item 652, stage 1): the proof form of the
+     * mesh-shader path, which re-issues the meshed terrain data the indirect path would draw,
+     * reading the shared vertex and index arenas as storage buffers. It pairs with
+     * {@link #SOLID_FRAGMENT}, whose inputs its per-vertex outputs mirror exactly. Only loaded
+     * when the mesh path is armed ({@code -Dceltium.vulkan.meshTerrain} on a device created
+     * with {@code VK_EXT_mesh_shader} enabled).
+     */
+    public static final String SOLID_MESH = "terrain_solid.mesh";
+
     /** The record-reading form of the position-only variant: the sky, the stars and the horizon plane. */
     public static final String IMMEDIATE_POSITION_RECORDS_VERTEX = "immediate_position_records.vert";
     /** The record-reading form of the position-plus-texture variant: sky, clouds and the water surface. */

@@ -668,7 +668,14 @@ public abstract class RenderSectionManager {
         Object view = this.isInShadowPass()
                 ? SectionRenderDataStorage.BatchCacheParams.SHADOW_VIEW
                 : SectionRenderDataStorage.BatchCacheParams.DEFAULT_VIEW;
-        this.terrainBackend.render(matrices, this.getCurrentRenderListManager().getRenderLists(), pass,
+        var listManager = this.getCurrentRenderListManager();
+        // The search context of the lists about to be drawn, for backends that consume the culler's
+        // visible set directly (the GPU-culling census is the first). Noted here, after the graph
+        // updates above have published, so the snapshot and distance are the ones that produced
+        // these very lists.
+        this.terrainBackend.noteSearchContext(listManager.getVisibilitySnapshot(),
+                listManager.getLastUpdatedFrame(), listManager.getPublishedSearchDistance());
+        this.terrainBackend.render(matrices, listManager.getRenderLists(), pass,
                 occlusionCamera, camera, view, isDebugInfoShown());
     }
 
