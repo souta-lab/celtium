@@ -91,6 +91,8 @@ final class VulkanGpuTerrainCensus {
 
     private static final class Pending {
         long frameId;
+        /** Issuance mode of this dispatch: true = deterministic slot (mode 1), false = atomic append. */
+        boolean deterministic;
         int passCount;
         int[][] canonicalPerPass;
         int[] countSlotPerPass;
@@ -153,6 +155,7 @@ final class VulkanGpuTerrainCensus {
                     + " maxDrawIndirectCount=" + context.maxDrawIndirectCount()
                     + " capabilityGate=" + GpuTerrainCulling.capabilityGate(
                             context.drawIndirectCountEnabled(), false)
+                    + " deterministicSlot=" + GpuTerrainCulling.DETERMINISTIC_SLOT
                     + " mode=shadow-generation (E10-a: drawing unchanged)");
         }
     }
@@ -303,8 +306,11 @@ final class VulkanGpuTerrainCensus {
         long countsAddress = slot.counts.mappedAddress();
         long outAddress = slot.out.mappedAddress();
         for (int p = 0; p < pending.passCount; p++) {
-            int gpuCount = MemoryUtil.memGetInt(countsAddress + (long) pending.countSlotPerPass[p] * 4L);
             int capacity = pending.outCapacityPerPass[p];
+            // Deterministic-slot issuance writes no count word: the list length is the
+            // capacity itself, and culled slots hold zero commands, stripped below.
+            int gpuCount = pending.deterministic ? capacity
+                    : MemoryUtil.memGetInt(countsAddress + (long) pending.countSlotPerPass[p] * 4L);
             if (gpuCount < 0) {
                 gpuCount = 0;
             }
@@ -315,6 +321,9 @@ final class VulkanGpuTerrainCensus {
             for (int i = 0; i < gpuCommands.length; i++) {
                 gpuCommands[i] = MemoryUtil.memGetInt(
                         outAddress + ((long) pending.outBasePerPass[p] * GpuTerrainDrawTable.COMMAND_INTS + i) * 4L);
+            }
+            if (pending.deterministic) {
+                gpuCommands = GpuTerrainDrawTable.stripZeroCommands(gpuCommands);
             }
             GpuTerrainDrawTable.Diff diff =
                     GpuTerrainDrawTable.compareCommands(pending.canonicalPerPass[p], gpuCommands);
@@ -414,6 +423,7 @@ final class VulkanGpuTerrainCensus {
                 stack.longs(slot.descriptorSet), null);
         Pending pending = new Pending();
         pending.frameId = finished.frameId;
+        pending.deterministic = GpuTerrainCulling.DETERMINISTIC_SLOT;
         pending.passCount = passes.size();
         pending.canonicalPerPass = new int[passes.size()][];
         pending.countSlotPerPass = new int[passes.size()];
@@ -441,7 +451,7 @@ final class VulkanGpuTerrainCensus {
             push.putInt(128, outCursor);
             push.putInt(132, maskBase[p]);
             push.putInt(136, count);
-            push.putInt(140, 0);
+            push.putInt(140, GpuTerrainCulling.DETERMINISTIC_SLOT ? 1 : 0);
             push.clear();
             vkCmdPushConstants(commandBuffer, this.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, push);
             vkCmdDispatch(commandBuffer, (count + WORKGROUP - 1) / WORKGROUP, 1, 1);

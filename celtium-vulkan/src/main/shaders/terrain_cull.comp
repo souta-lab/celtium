@@ -32,7 +32,7 @@ layout(push_constant) uniform Push {
     vec4 planes[6];
     vec4 camera;      // xyz: camera position in blocks; w: max distance in blocks
     ivec4 params;     // x: entry start, y: entry count, z: count slot, w: remap base
-    ivec4 params2;    // x: output base (commands), y: mask base (words), z: output capacity (commands), w: unused
+    ivec4 params2;    // x: output base (commands), y: mask base (words), z: output capacity (commands), w: issuance mode (0 = atomic append, 1 = deterministic slot)
 } push;
 
 void main() {
@@ -48,19 +48,37 @@ void main() {
     int dictIndex = int(tableData[base + 3u]);
     ivec3 section = ivec3(int(tableData[base + 4u]), int(tableData[base + 5u]), int(tableData[base + 6u]));
 
-    if (dictIndex < 0) {
+    bool deterministic = push.params2.w == 1;
+    bool visible = false;
+    int frameIndex = -1;
+    if (dictIndex >= 0) {
+        frameIndex = remapData[push.params.w + dictIndex];
+        if (frameIndex >= 0) {
+            uint maskWord = maskData[push.params2.y + (dictIndex >> 5)];
+            if ((maskWord & (1u << (dictIndex & 31))) != 0u) {
+                vec3 boxMin = vec3(section * 16);
+                visible = celtiumBoxVisible(boxMin, vec3(CELTIUM_REGION_SIZE_BLOCKS), push.planes, push.camera.xyz, push.camera.w);
+            }
+        }
+    }
+    if (deterministic) {
+        // Angelica T1 form: the slot is the entry's own index, so the generated list's
+        // length is the entry count (known on the CPU) and no atomic or count buffer is
+        // involved. A culled entry leaves a zero command in its slot; a drawing consumer
+        // issues the whole list with a plain indirect draw and the GPU discards the
+        // zero commands without vertex work.
+        if (local >= uint(push.params2.z)) {
+            return;
+        }
+        uint outBase = (uint(push.params2.x) + local) * 5u;
+        outData[outBase + 0u] = visible ? indexCount : 0u;
+        outData[outBase + 1u] = visible ? 1u : 0u;
+        outData[outBase + 2u] = visible ? firstIndex : 0u;
+        outData[outBase + 3u] = visible ? uint(vertexOffset) : 0u;
+        outData[outBase + 4u] = visible ? uint(frameIndex) : 0u;
         return;
     }
-    int frameIndex = remapData[push.params.w + dictIndex];
-    if (frameIndex < 0) {
-        return;
-    }
-    uint maskWord = maskData[push.params2.y + (dictIndex >> 5)];
-    if ((maskWord & (1u << (dictIndex & 31))) == 0u) {
-        return;
-    }
-    vec3 boxMin = vec3(section * 16);
-    if (!celtiumBoxVisible(boxMin, vec3(CELTIUM_REGION_SIZE_BLOCKS), push.planes, push.camera.xyz, push.camera.w)) {
+    if (!visible) {
         return;
     }
     uint slot = atomicAdd(countData[push.params.z], 1u);

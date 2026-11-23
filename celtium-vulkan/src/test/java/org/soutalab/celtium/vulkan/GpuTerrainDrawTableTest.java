@@ -211,6 +211,49 @@ class GpuTerrainDrawTableTest {
     }
 
     @Test
+    void deterministicSlotKeepsEntrySlotsAndZeroFillsCulledEntries() {
+        GpuTerrainDrawTable.Builder builder = new GpuTerrainDrawTable.Builder();
+        int drawn = builder.dictIndexFor(1, 4);
+        int undrawn = builder.dictIndexFor(2, -1);
+        builder.add(new GpuTerrainDrawTable.Entry(36, 0, 100, drawn, -1, 0, 0, 0));
+        builder.add(new GpuTerrainDrawTable.Entry(72, 0, 260, undrawn, -1, 0, 0, 0));
+        builder.add(new GpuTerrainDrawTable.Entry(48, 0, 380, drawn, -1, 0, 0, 0));
+        GpuTerrainDrawTable.Table table = builder.build();
+        int[] slotted = GpuTerrainDrawTable.generateDeterministicSlot(table, 0, table.entries.length,
+                identityPlanes(), 0, 0, 0, 4096);
+        // Length is the entry count itself: the draw count needs no count buffer.
+        assertEquals(3 * GpuTerrainDrawTable.COMMAND_INTS, slotted.length);
+        // Table order is section-major, so slot order follows the sorted entries; every
+        // surviving command sits at its own entry slot and the unmapped region's slot
+        // (whichever it is) is a zero command. Stripping must recover exactly the
+        // append-form generation, in order.
+        int[] stripped = GpuTerrainDrawTable.stripZeroCommands(slotted);
+        int[] appended = GpuTerrainDrawTable.generate(table, 0, table.entries.length,
+                identityPlanes(), 0, 0, 0, 4096);
+        assertEquals(appended.length, stripped.length);
+        for (int i = 0; i < appended.length; i++) {
+            assertEquals(appended[i], stripped[i]);
+        }
+        int zeroSlots = 0;
+        for (int s = 0; s < 3; s++) {
+            if (slotted[s * GpuTerrainDrawTable.COMMAND_INTS] == 0
+                    && slotted[s * GpuTerrainDrawTable.COMMAND_INTS + 1] == 0) {
+                zeroSlots++;
+            }
+        }
+        assertEquals(1, zeroSlots);
+    }
+
+    @Test
+    void stripZeroCommandsDropsOnlyZeroCommands() {
+        int[] in = {36, 1, 0, 100, 9, 0, 0, 0, 0, 0, 72, 1, 0, 260, 9};
+        int[] out = GpuTerrainDrawTable.stripZeroCommands(in);
+        assertEquals(2 * GpuTerrainDrawTable.COMMAND_INTS, out.length);
+        assertEquals(36, out[0]);
+        assertEquals(72, out[5]);
+    }
+
+    @Test
     void capabilityGateOrdersCapabilityBeforeBudget() {
         assertEquals(GpuTerrainCulling.GateReason.NO_DRAW_INDIRECT_COUNT,
                 GpuTerrainCulling.capabilityGate(false, true));

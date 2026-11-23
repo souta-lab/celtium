@@ -28,6 +28,40 @@ public final class GpuTerrainCulling {
     public static final boolean CENSUS = Boolean.getBoolean("celtium.vulkan.gpuTerrainCulling.census");
 
     /**
+     * Deterministic-slot issuance (Angelica T1 form, next E10 slice): the generation
+     * shader writes each entry's command at the slot equal to its own entry index —
+     * no {@code atomicAdd} on a shared count word, no count buffer at all — and writes
+     * a zero command ({@code indexCount = 0, instanceCount = 0}) for a culled entry, so
+     * the generated list's length is the entry count itself, a number the CPU already
+     * knows. That is the issuance shape whose draw side needs only
+     * {@code vkCmdDrawIndexedIndirect} with a CPU-side draw count, which removes the
+     * {@code drawIndirectCount} feature from this path's requirements and removes the
+     * count slot's zero-fill, barrier and read-back round trip from the frame.
+     * <p>
+     * Desk breakdown of the current (atomic append) issuance cost this replaces
+     * [見積 — desk estimates from the code and the gpu-culling2 fixture record
+     * (offers=1725/frame, draws=37162/frame), not measurements]: (a) every surviving
+     * invocation atomically increments one shared 4-byte word, so the append's tail is
+     * serialised on a single address — at fixture scale that is tens of thousands of
+     * contended atomics per frame across all passes sharing the dispatch shape;
+     * (b) the count word must be zeroed before the dispatch and read before the output
+     * can be consumed (census harvest reads it, then reads count-dependent output; the
+     * executor form additionally records a fill plus barrier and lets the draw read it
+     * device-side); (c) the CPU collection walk itself is unchanged by this slice —
+     * entry-linear builder appends plus a per-region dictionary lookup — and stays the
+     * dominant CPU term until the persistent section-meta table (Angelica T2) lands.
+     * The deterministic form's own cost is bounded and known in exchange: the output
+     * buffer is written at full entry-count size every frame (culled slots included)
+     * and a drawing consumer walks zero commands for culled entries, which the GPU
+     * front end discards without invoking vertex work.
+     * <p>
+     * Default off: with the flag off the shader receives issuance mode 0 and every
+     * buffer, push word and comparison behaves exactly as before this slice.
+     */
+    public static final boolean DETERMINISTIC_SLOT =
+            Boolean.getBoolean("celtium.vulkan.gpuTerrainCulling.deterministicSlot");
+
+    /**
      * Distance limit, in blocks, for the census visibility test. The CPU search distance is
      * decided inside the chunk render-list manager and is not plumbed to the Vulkan backend in
      * E10-a, so the census takes its limit from here; the default is far beyond any render
