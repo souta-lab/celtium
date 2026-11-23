@@ -845,6 +845,18 @@ public abstract class RenderSectionManager {
         var results = this.collectChunkBuildResults();
 
         if (results.isEmpty()) {
+            // Item 730: a deferred (budgeted) upload fails frames after its batch was committed, so its failure
+            // arrives when there may be no new results at all. Consuming the failed set only alongside a fresh
+            // batch would strand those sections exactly when the world has gone quiet, so the late failures are
+            // re-queued here too.
+            java.util.Set<org.embeddedt.embeddium.impl.render.chunk.RenderSection> lateFailedUploads =
+                    this.terrainBackend.consumeFailedUploads();
+
+            if (!lateFailedUploads.isEmpty()) {
+                this.finishAllGraphUpdates();
+                this.requeueLateFailedUploads(lateFailedUploads, java.util.Collections.emptySet());
+            }
+
             return;
         }
 
@@ -938,6 +950,46 @@ public abstract class RenderSectionManager {
 
             result.render.setLastBuiltFrame(result.buildTime);
             this.sectionMetricsTracker.updateSectionBuildDuration(result.render, holder.executionTimeNanos());
+        }
+
+        // Item 730: failures recorded after their own batch was processed - a deferred upload draining on a
+        // later frame, or a deferral copy that failed at enqueue time - name sections this batch does not
+        // contain. The loop above can only skip the commit for sections in the batch, so the rest are re-queued
+        // here; leaving them would keep them reading as built with no geometry, permanently.
+        if (!failedUploads.isEmpty()) {
+            java.util.Set<org.embeddedt.embeddium.impl.render.chunk.RenderSection> inBatch =
+                    java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+
+            for (var holder : filtered) {
+                inBatch.add(holder.output().render);
+            }
+
+            this.requeueLateFailedUploads(failedUploads, inBatch);
+        }
+    }
+
+    /**
+     * Re-queues sections whose upload failed after their batch had already been committed (item 730's deferred
+     * drain, BH-25's late half).
+     * <p>
+     * Unlike the in-batch retry above, this must not clear the build cancellation token: the token no longer
+     * belongs to the failed submission - a newer build may already be in flight under it - and clearing it would
+     * cancel that build. A fresh REBUILD request is enough: if a newer build is in flight it commits on its own,
+     * and the extra request simply rebuilds once more. Disposed sections are left alone, as in the in-batch retry.
+     */
+    private void requeueLateFailedUploads(
+            java.util.Set<org.embeddedt.embeddium.impl.render.chunk.RenderSection> failedUploads,
+            java.util.Set<org.embeddedt.embeddium.impl.render.chunk.RenderSection> inCurrentBatch) {
+        for (var section : failedUploads) {
+            if (inCurrentBatch.contains(section) || section.isDisposed()) {
+                continue;
+            }
+
+            if (section.requestUpdate(ChunkUpdateType.REBUILD)) {
+                this.celtiumPendingMeshUpdates.add(section);
+            }
+
+            this.markGraphDirty();
         }
     }
 

@@ -15609,7 +15609,14 @@ this.frameBufferOpen = false;
     long deferredUploadMaxQueued;
     long deferredUploadMaxDrainOutputs;
 
-    /** One region's remaining outputs, with the graph trigger that arrives with the batch. */
+    /**
+     * One region's remaining outputs, with the graph trigger that arrives with the batch.
+     * <p>
+     * The outputs held here are backend-owned copies made at enqueue time ({@link #celtium$copyOutputForDeferral}):
+     * the caller deletes the originals on the same call that queued them, so a queue that held the originals would
+     * drain freed native memory on a later frame (item 730). The backend deletes each copy once the drain has
+     * consumed it, and deletes whatever is still queued when the world is released.
+     */
     private static final class DeferredUpload {
         final RenderRegion region;
         final List<ChunkTaskOutput> outputs;
@@ -15619,6 +15626,40 @@ this.frameBufferOpen = false;
             this.region = region;
             this.outputs = outputs;
             this.trigger = trigger;
+        }
+    }
+
+    /** {@return whether an arriving batch is spread over the following frames instead of uploaded at once}. */
+    static boolean celtium$shouldDeferUpload(int budget, int burstThreshold, int batchSize) {
+        return budget > 0 && batchSize > burstThreshold;
+    }
+
+    /**
+     * {@return a backend-owned copy of an output, deep enough to survive the caller deleting the original}.
+     * <p>
+     * Item 730: the budgeted path used to queue the caller's outputs themselves and return, after which
+     * {@code RenderSectionManager.uploadChunks} deleted every one of them in the same call. The drain, a frame or
+     * more later, then read freed {@code NativeBuffer}s, failed with "Buffer has been deleted", and the sections -
+     * already committed as built - stayed missing permanently. The interface contract for {@code uploadMeshes} is
+     * "consume/copy native output data before the caller deletes those outputs", so the copy is made here, inside
+     * the backend, and no other path changes: the caller still deletes the originals, the unbudgeted path still
+     * uploads the originals synchronously, and the default (budget 0) never reaches this code.
+     * <p>
+     * Only the native buffers are copied. {@code delete()} frees nothing else: the section info, the sort state and
+     * the vertex ranges are plain Java heap objects the original and the copy safely share, and
+     * {@code BuiltRenderSectionData.bake()} is a no-op, so rebuilding a {@code ChunkBuildOutput} around the copied
+     * buffers changes nothing else. An output type with no native data of its own is returned unchanged.
+     */
+    static ChunkTaskOutput celtium$copyOutputForDeferral(ChunkTaskOutput output) {
+        return output.copyForDeferral();
+    }
+
+    /** Deletes every output still held by the deferred queue. The queue owns copies, so this is their only release. */
+    private void celtium$deleteDeferredOutputs() {
+        for (DeferredUpload entry : this.deferredUploads) {
+            for (ChunkTaskOutput output : entry.outputs) {
+                output.delete();
+            }
         }
     }
 
@@ -15654,7 +15695,24 @@ this.frameBufferOpen = false;
                 // The same rule the unbudgeted loop follows: one region's failure is counted, the rest still go.
                 this.regionUploadFailures++;
                 this.lastRegionUploadFailure = String.valueOf(error);
+                // BH-25, connected for the drain (item 730): name every section of the failed region, so the
+                // caller's late-failure pass leaves them un-built and re-queues them. The sections were committed
+                // when the batch arrived - the drain runs frames later - so without this the failure was a
+                // permanent hole: nothing re-submits a section that reads as built.
+                for (ChunkTaskOutput output : take) {
+                    if (output.render != null && this.terrain.noteFailedUpload(output.render)) {
+                        this.terrain.noteSectionsLeftUnbuilt(1);
+                    }
+                }
+                record("deferred region upload failed and was skipped: " + error
+                        + " (sections left un-built: " + taken
+                        + ", regionUploadFailures=" + this.regionUploadFailures + ")");
             } finally {
+                // The drain owns the copies it queued: uploadRegion consumes them synchronously, on success and
+                // on failure alike, so each taken copy is deleted here and never reaches a second drain.
+                for (ChunkTaskOutput output : take) {
+                    output.delete();
+                }
                 releaseUploadList(take);
             }
             drained += taken;
@@ -15718,19 +15776,37 @@ this.frameBufferOpen = false;
         // Only a burst is budgeted. A batch smaller than the threshold - the steady-state trickle, and the batch the
         // fixture's capture deadline waits on - goes straight through, so the deadline never sees a queue it must wait
         // out. A larger arrival is spread over the following frames by the drain at the head of setupTerrain.
-        if (UPLOAD_BUDGET > 0 && results.size() > UPLOAD_BURST) {
+        if (celtium$shouldDeferUpload(UPLOAD_BUDGET, UPLOAD_BURST, results.size())) {
             // Queue instead of uploading: the drain at the head of setupTerrain spends the budget once per frame.
             // Before the warm-up the outputs go straight through - the startup build is what a capture deadline needs.
             Reference2ReferenceMap<RenderRegion, List<ChunkTaskOutput>> queued = this.uploadDeferredGroupScratch;
             queued.clear();
+            int deferredCount = 0;
             for (ChunkJobResult.Success<? extends ChunkTaskOutput> holder : results) {
                 ChunkTaskOutput output = holder.output();
+                // Item 730: the queue takes a backend-owned copy, never the caller's output. The caller deletes
+                // every original on this same call, so a queued original would be freed memory by the time the
+                // drain reaches it - the copy is what makes the deferral's ownership contract real.
+                ChunkTaskOutput copy;
+                try {
+                    copy = celtium$copyOutputForDeferral(output);
+                } catch (RuntimeException error) {
+                    // A section whose copy failed is not queued and not uploaded: name it for the caller's
+                    // late-failure re-queue instead of letting it commit as built with no geometry.
+                    this.regionUploadFailures++;
+                    this.lastRegionUploadFailure = String.valueOf(error);
+                    if (output.render != null && this.terrain.noteFailedUpload(output.render)) {
+                        this.terrain.noteSectionsLeftUnbuilt(1);
+                    }
+                    continue;
+                }
                 List<ChunkTaskOutput> queue = queued.get(output.render.getRegion());
                 if (queue == null) {
                     queue = new ArrayList<>();
                     queued.put(output.render.getRegion(), queue);
                 }
-                queue.add(output);
+                queue.add(copy);
+                deferredCount++;
             }
             for (Reference2ReferenceMap.Entry<RenderRegion, List<ChunkTaskOutput>> entry
                     : queued.reference2ReferenceEntrySet()) {
@@ -15739,7 +15815,7 @@ this.frameBufferOpen = false;
             // The lists moved to the queue; the map itself is done with.
             queued.clear();
             this.deferredUploadBatches++;
-            this.deferredUploadOutputs += results.size();
+            this.deferredUploadOutputs += deferredCount;
             if (this.deferredUploads.size() > this.deferredUploadMaxQueued) {
                 this.deferredUploadMaxQueued = this.deferredUploads.size();
             }
@@ -16517,8 +16593,10 @@ this.frameBufferOpen = false;
     @Override
     public void celtium$releaseWorldResources() {
         // Chunk outputs are per-world job results; keeping them across a world change would upload a section into the
-        // wrong world's region storage.
+        // wrong world's region storage. The queue holds backend-owned copies (item 730), so clearing the queue
+        // without deleting them would leak their native buffers on every world change.
         if (!this.deferredUploads.isEmpty()) {
+            celtium$deleteDeferredOutputs();
             this.deferredUploads.clear();
         }
         // The counter summary is printed here as well as through the F3 debug list, because that list is only built when
