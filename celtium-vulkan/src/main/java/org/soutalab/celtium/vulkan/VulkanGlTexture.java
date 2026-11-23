@@ -4480,6 +4480,22 @@ public final class VulkanGlTexture {
     private VkCommandBuffer patchBatch;
 
     /**
+     * (d2) frame ride, {@code -Dceltium.vulkan.animFrameRide=true}: an animation batch that ends with only
+     * deferred regions pending does not submit them on a private command buffer of its own. The regions stay
+     * deferred and the backend records them at the head of the next frame's own recording
+     * ({@link #celtium$recordDeferredIntoFrame}), which is the in-place position the GL path this renderer
+     * replaces always had - Celeritas writes an animated sprite into the atlas inside the ordinary stream and
+     * there is no batch object, no private buffer and no submission of its own to pay for. Off, the batch ends
+     * exactly as it always has. The hold is opportunistic: every existing guard that needs the copies landed
+     * (the "must not land after this write" paths and the staging ring's wrap, both of which call
+     * {@link #submitPatchBatch()}) still sees {@code deferredCount > 0} and forces the private submission, so
+     * the ride only ever wins when nothing else needed the pixels first.
+     */
+    private static final boolean ANIM_FRAME_RIDE = Boolean.getBoolean("celtium.vulkan.animFrameRide");
+    /** Whether the pending deferred regions are being held for the frame ride instead of a private submit. */
+    private boolean deferredHeldForFrame;
+
+    /**
      * Opens a patch batch for a run of patches the caller brackets - the atlas's animated sprites of one
      * {@code TextureMap.updateAnimations}, one patch per sprite. Measured 2026-11-05 (wall profile r69prof, warm ticks):
      * one command buffer and one submission per sprite put ~0.3 ms on every tick frame. Returns whether this call
@@ -4494,14 +4510,25 @@ public final class VulkanGlTexture {
         return true;
     }
 
-    /** Closes a batch {@link #beginPatchBatch()} opened and submits what it recorded. */
-    public void endPatchBatch() {
+    /**
+     * Closes a batch {@link #beginPatchBatch()} opened and submits what it recorded.
+     * {@return whether the batch's regions were instead held for the frame ride (see {@link #ANIM_FRAME_RIDE}):
+     * the caller then owes them a recording at the next frame's head and a fence adoption at that frame's
+     * submission. A batch that already recorded into a private buffer cannot ride - only its own submission
+     * carries it - so it submits here as usual and answers {@code false}.
+     */
+    public boolean endPatchBatch() {
         if (this.patchBatch != null || this.deferredCount > 0) {
             celtium$trace("endPatchBatch", null);
         }
         this.regionDeferring = false;
         this.patchBatching = false;
+        if (ANIM_FRAME_RIDE && this.patchBatch == null && this.deferredCount > 0) {
+            this.deferredHeldForFrame = true;
+            return true;
+        }
         submitPatchBatch();
+        return false;
     }
 
     /**
@@ -4572,6 +4599,9 @@ public final class VulkanGlTexture {
         int depth = this.deferredDepth;
         this.deferredCount = 0;
         this.deferredDepth = 0;
+        // Recorded into a private buffer, the regions are no longer the frame ride's: whichever path records
+        // them first owns them, and the backend's ride hook finds nothing left to record.
+        this.deferredHeldForFrame = false;
         if (this.patchBatch == null) {
             org.soutalab.celtium.vulkan.FramePassTimings.begin("animBatchBegin");
             try {
@@ -4580,8 +4610,57 @@ public final class VulkanGlTexture {
                 org.soutalab.celtium.vulkan.FramePassTimings.end("animBatchBegin");
             }
         }
-        VkCommandBuffer commandBuffer = this.patchBatch;
+        celtium$recordDeferredRegions(this.patchBatch, count, depth, true);
+    }
+
+    /**
+     * Records {@code count} pending regions (already snapshotted and cleared by the caller) into
+     * {@code commandBuffer}: the levels they touch go to TRANSFER_DST together, each level takes one copy with
+     * all of its regions, and the levels return to sampling.
+     * <p>
+     * The counting pass and the copy scratch's growth run before anything is recorded, not between the two
+     * barriers as they used to: the frame ride records into a buffer this texture does not own and cannot
+     * abandon, so everything fallible happens while the target buffer is still untouched and the recording
+     * itself is plain struct writes and {@code vkCmd} calls. For the private batch the shape is unchanged -
+     * a recording that still stops between the barriers abandons the buffer, as before.
+     */
+    private void celtium$recordDeferredRegions(VkCommandBuffer commandBuffer, int count, int depth,
+            boolean abandonOnFailure) {
         celtium$trace("flushDeferredRegions count=" + count + " depth=" + depth, commandBuffer);
+        int[] rects = this.deferredRects;
+        if (this.deferredLevelCounts.length < depth) {
+            this.deferredLevelCounts = new int[depth];
+        }
+        int[] levelCounts = this.deferredLevelCounts;
+        for (int level = 0; level < depth; level++) {
+            levelCounts[level] = 0;
+        }
+        int maxRegions = 0;
+        for (int i = 0; i < count; i++) {
+            int lvl = rects[i * 5];
+            if (lvl >= 0 && lvl < depth) {
+                int next = ++levelCounts[lvl];
+                if (next > maxRegions) {
+                    maxRegions = next;
+                }
+            }
+        }
+        VkBufferImageCopy.Buffer copies = null;
+        if (maxRegions > 0) {
+            // Heap, not the MemoryStack: the first animation tick after a stitch flushes every animated sprite
+            // at once (1730 regions over five levels on E2E-E, leg lt1-e2ee-amd), and five levels' arrays on the
+            // 64 KiB stack threw "Out of stack space" after the opening barrier - the mixin swallows it, and the
+            // half-recorded batch was submitted by the next tick: levels 0..4 left in TRANSFER_DST (5x 09600).
+            // Reused across ticks and freed in delete() so steady-state animation ticks do not calloc/free per level.
+            copies = this.deferredCopyScratch;
+            if (copies == null || copies.capacity() < maxRegions) {
+                if (copies != null) {
+                    copies.free();
+                }
+                copies = VkBufferImageCopy.calloc(maxRegions);
+                this.deferredCopyScratch = copies;
+            }
+        }
         boolean recorded = false;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
@@ -4597,38 +4676,7 @@ public final class VulkanGlTexture {
             barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, depth, 0, 1);
             vkCmdPipelineBarrier(commandBuffer, SAMPLING_STAGES | VK_PIPELINE_STAGE_TRANSFER_BIT,
                     VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
-            int[] rects = this.deferredRects;
-            if (this.deferredLevelCounts.length < depth) {
-                this.deferredLevelCounts = new int[depth];
-            }
-            int[] levelCounts = this.deferredLevelCounts;
-            for (int level = 0; level < depth; level++) {
-                levelCounts[level] = 0;
-            }
-            int maxRegions = 0;
-            for (int i = 0; i < count; i++) {
-                int lvl = rects[i * 5];
-                if (lvl >= 0 && lvl < depth) {
-                    int next = ++levelCounts[lvl];
-                    if (next > maxRegions) {
-                        maxRegions = next;
-                    }
-                }
-            }
-            if (maxRegions > 0) {
-                // Heap, not the MemoryStack: the first animation tick after a stitch flushes every animated sprite
-                // at once (1730 regions over five levels on E2E-E, leg lt1-e2ee-amd), and five levels' arrays on the
-                // 64 KiB stack threw "Out of stack space" after the opening barrier - the mixin swallows it, and the
-                // half-recorded batch was submitted by the next tick: levels 0..4 left in TRANSFER_DST (5x 09600).
-                // Reused across ticks and freed in delete() so steady-state animation ticks do not calloc/free per level.
-                VkBufferImageCopy.Buffer copies = this.deferredCopyScratch;
-                if (copies == null || copies.capacity() < maxRegions) {
-                    if (copies != null) {
-                        copies.free();
-                    }
-                    copies = VkBufferImageCopy.calloc(maxRegions);
-                    this.deferredCopyScratch = copies;
-                }
+            if (copies != null) {
                 for (int level = 0; level < depth; level++) {
                     int regions = levelCounts[level];
                     if (regions == 0) {
@@ -4661,7 +4709,7 @@ public final class VulkanGlTexture {
                     barrier);
             recorded = true;
         } finally {
-            if (!recorded) {
+            if (!recorded && abandonOnFailure) {
                 // A batch whose recording stopped between the two barriers leaves its levels in TRANSFER_DST if it
                 // is ever submitted. Freed instead: the patches it held are lost, the layouts stay sampled.
                 this.patchBatch = null;
@@ -4670,8 +4718,65 @@ public final class VulkanGlTexture {
         }
     }
 
+    /**
+     * Lands regions held for the frame ride (see {@link #ANIM_FRAME_RIDE}) in the frame's own recording: the
+     * caller passes the frame slot's command buffer, already recording, and the regions become its first
+     * transfers - ahead of every pass that samples this texture, which is where the tick that produced them
+     * sits relative to the frame. The staging slices they name are read by the frame's submission, so the
+     * caller owes this texture that submission's fence through {@link #celtium$adoptUploadFence(long)}; if
+     * the recording is abandoned instead, no fence is adopted and the slices stay covered by the previous
+     * upload's fence, which is correct because the copies then never execute.
+     * <p>
+     * A private batch buffer already holding recorded work cannot be adopted into the frame's recording, so
+     * that case submits privately here and the frame simply finds the atlas already updated.
+     * <p>
+     * The hold flag is the gate, not a courtesy: regions that are merely pending - an open batch's, or a
+     * guard's private recording in flight - are not this method's to move, and a hold a guard already landed
+     * privately answers {@code false} with nothing left to record.
+     *
+     * @return whether regions were recorded into {@code frameCommands}; only then does the caller owe the
+     * fence adoption.
+     */
+    public boolean celtium$recordDeferredIntoFrame(VkCommandBuffer frameCommands) {
+        if (!this.deferredHeldForFrame) {
+            return false;
+        }
+        this.deferredHeldForFrame = false;
+        if (this.patchBatch != null) {
+            submitPatchBatch();
+            return false;
+        }
+        int count = this.deferredCount;
+        if (count == 0) {
+            return false;
+        }
+        int depth = this.deferredDepth;
+        this.deferredCount = 0;
+        this.deferredDepth = 0;
+        celtium$recordDeferredRegions(frameCommands, count, depth, false);
+        return true;
+    }
+
+    /**
+     * Adopts the fence of the frame submission that carried this texture's frame-ridden regions as the
+     * texture's outstanding upload fence, in the place of the private deferred submission's fence
+     * {@link #submitPatchBatch()} would have recorded: the staging slices the regions name may not be reused
+     * until that fence confirms, which is the same statement {@link #awaitOutstandingUpload()} enforces for
+     * the private path.
+     */
+    public void celtium$adoptUploadFence(long fence) {
+        this.outstandingUploadFence = fence;
+        if (org.soutalab.celtium.vulkan.CrashBreadcrumbs.enabled()) {
+            org.soutalab.celtium.vulkan.CrashBreadcrumbs.note3(
+                    org.soutalab.celtium.vulkan.CrashBreadcrumbs.DEFERRED_UPLOAD, glTextureName(),
+                    this.outstandingUploadFence, this.instanceSerial);
+        }
+    }
+
     /** Submits the open patch batch, if any; its fence becomes this texture's outstanding upload. */
     private void submitPatchBatch() {
+        // Landing the regions on the private submission ends any frame-ride hold on them.
+        this.deferredHeldForFrame = false;
         // Pending regions name slices of the staging ring this submission is about to fence: record them first.
         org.soutalab.celtium.vulkan.FramePassTimings.begin("animBatchFlush");
         try {

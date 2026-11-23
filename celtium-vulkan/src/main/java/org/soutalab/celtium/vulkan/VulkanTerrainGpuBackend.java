@@ -5128,6 +5128,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /** The mirror whose patch batch {@link #beginAnimationUploads(int)} opened, closed by the matching end. */
     private VulkanGlTexture animationBatchTexture;
+    /**
+     * (d2) frame ride: the mirror whose last animation batch ended in a hold instead of a submission. Its
+     * regions are recorded at the head of the next frame recording (see {@link #beginCommands()}); cleared
+     * there, or by any guard path that lands them privately first (the record then finds nothing to do).
+     */
+    private VulkanGlTexture animRideTexture;
+    /** The mirror whose ride regions were recorded into {@link #animRideSlot}, awaiting its fence adoption. */
+    private VulkanGlTexture animRideFenceTexture;
+    /** The slot the ride regions were recorded into; its submission's fence is the one to adopt. */
+    private int animRideSlot = -1;
     @Override
     public void beginAnimationUploads(int glTextureId) {
         if (this.animationBatchTexture != null || glTextureId <= 0) {
@@ -5149,9 +5159,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.animationBatchTexture = null;
             // The patch batch's submission: one submit per tick, and the only Vulkan call the animation pass makes
             // that can block. `anim` holds the whole pass, so this name says whether the submit is the pass's cost.
+            // With the frame ride on, the end can instead hold the regions for the next frame's recording: no
+            // submission happens here at all, and this bracket reads ~0 - the recording cost reappears at the
+            // frame's head under `animBatchFlush`, which is where the work honestly sits in that shape.
             FramePassTimings.begin("animBatchEnd");
             try {
-                texture.endPatchBatch();
+                if (texture.endPatchBatch()) {
+                    this.animRideTexture = texture;
+                }
             } finally {
                 FramePassTimings.end("animBatchEnd");
             }
@@ -22022,6 +22037,30 @@ this.frameBufferOpen = false;
             // their transitions become fact only when this buffer's submission is accepted, and opening
             // this recording drops the previous one's uncommitted notes with it.
             this.targetRegistry.beginNamedTargetLayoutRecording(this.commandBuffer.address());
+            // (d2) frame ride: regions an animation batch held back are recorded here, as this recording's
+            // first transfers - ahead of every pass that samples the atlas, which is the position the tick
+            // that produced them occupies relative to this frame. The slot is remembered so its submission
+            // can hand its fence to the texture (see celtium$submitSlotDeferred); a recording abandoned
+            // before submitting never adopts, and the texture's slices stay covered by the older fence,
+            // which is correct because the copies then never execute - the atlas keeps the previous frame
+            // of animation and the next tick uploads anew.
+            if (this.animRideTexture != null) {
+                VulkanGlTexture ride = this.animRideTexture;
+                this.animRideTexture = null;
+                FramePassTimings.begin("animBatchFlush");
+                try {
+                    if (ride.celtium$recordDeferredIntoFrame(this.commandBuffer)) {
+                        // Only a recording that actually took the regions earns the fence adoption.
+                        this.animRideFenceTexture = ride;
+                        this.animRideSlot = this.frameSlot;
+                    }
+                } catch (RuntimeException | LinkageError failure) {
+                    // A failed ride loses one tick of animation updates; it must not lose the frame.
+                    record("animation frame ride failed: " + describe(failure));
+                } finally {
+                    FramePassTimings.end("animBatchFlush");
+                }
+            }
             // Queries must be reset before they are written again, and a fresh command buffer is exactly where that
             // belongs; without it validation reports every timestamp write as using an unavailable query.
             if (this.timestampPool != 0) {
@@ -23904,6 +23943,18 @@ this.frameBufferOpen = false;
         this.slotDeferredFences[slot] = this.context.celtium$submitDeferredFrame(
                 commandBuffer, waitSemaphores, waitStages, signalSemaphores, slot,
                 lost -> celtium$noteSlotConfirmed(slot, lost.booleanValue()));
+        if (this.animRideFenceTexture != null) {
+            // (d2) frame ride: this submission is the first one queued after the ride regions were recorded.
+            // If it is the slot they were recorded into, its batch fence now covers their staging slices and
+            // the texture adopts it as its outstanding upload fence. Any other slot means the recording that
+            // carried them was abandoned unsubmitted: no adoption, and the slices stay covered by the older
+            // fence - correct, because those copies never execute.
+            if (slot == this.animRideSlot) {
+                this.animRideFenceTexture.celtium$adoptUploadFence(this.slotDeferredFences[slot]);
+            }
+            this.animRideFenceTexture = null;
+            this.animRideSlot = -1;
+        }
         celtium$snapshotTimingState();
     }
 
