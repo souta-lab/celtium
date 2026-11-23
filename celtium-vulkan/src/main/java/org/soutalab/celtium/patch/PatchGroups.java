@@ -256,6 +256,10 @@ public final class PatchGroups {
               "core.GuiScreenDrawMixin",
               "core.GuiContainerDrawMixin"
         );
+        group("upstream_arrival_instrument", "upstream arrival instrument", false,
+              "the CELTIUM_UPSTREAM series (item 727) loses its renders / mapRenders stage, so a run can no longer separate the renderer entry from the dispatch; rendering itself is untouched because the injector is require=0 and read-only, and the rest of the series counts from hooks in the mechanism groups",
+              "core.RenderItemFrameArrivalMixin"
+        );
         group("text", "text", false,
               "the font batcher stops and glyphs fall back to the generic recording through the GL stub (unmeasured)",
               "core.FontRendererMixin",

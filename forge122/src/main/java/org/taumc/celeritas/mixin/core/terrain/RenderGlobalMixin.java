@@ -500,15 +500,35 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
         // cannot say which of its four parts owns it: the membership gather (tick-gated), the per-entity cull
         // (every entity, every pass), the draw itself (the model replays), and the block entities that the
         // second injection renders inside the same bracket. Each is a different owner and a different fix.
+        // The upstream arrival census (item 727) counts the item frames this pass carries before any culling,
+        // pass 0 only, so its gathered number is the total every later stage is compared against.
+        if (org.soutalab.celtium.vulkan.UpstreamArrivalCensus.ENABLED && pass == 0) {
+            int celtium$gatheredFrames = 0;
+            for (Entity celtium$listed : celeritas$collectedEntities[pass]) {
+                if (celtium$listed instanceof net.minecraft.entity.item.EntityItemFrame) {
+                    celtium$gatheredFrames++;
+                }
+            }
+            org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteGathered(celtium$gatheredFrames,
+                    this.world == null ? 0L : this.world.getTotalWorldTime());
+        }
         org.soutalab.celtium.vulkan.FramePassTimings.begin("entCull");
         for(Entity entity : celeritas$collectedEntities[pass]) {
+            boolean celtium$isItemFrame = org.soutalab.celtium.vulkan.UpstreamArrivalCensus.ENABLED
+                    && entity instanceof net.minecraft.entity.item.EntityItemFrame;
             // Do regular vanilla checks for visibility
             if(!this.renderManager.shouldRender(entity, camera, renderViewX, renderViewY, renderViewZ) && !entity.isRidingOrBeingRiddenBy(player)) {
+                if (celtium$isItemFrame) {
+                    org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteCullShould();
+                }
                 continue;
             }
 
             // Check if any corners of the bounding box are in a visible subchunk
             if(!CeleritasWorldRenderer.instance().isEntityVisible(entity)) {
+                if (celtium$isItemFrame) {
+                    org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteCullVisible();
+                }
                 continue;
             }
 
@@ -517,6 +537,9 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
             if ((entity != renderViewEntity || this.mc.gameSettings.thirdPersonView != 0 || isSleeping)
                     && (entity.posY < 0.0D || entity.posY >= 256.0D || this.world.isBlockLoaded(entityBlockPos.setPos(entity))))
             {
+                if (celtium$isItemFrame) {
+                    org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteDispatch();
+                }
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("entDraw");
                 this.renderManager.renderEntityStatic(entity, partialTicks, false);
                 org.soutalab.celtium.vulkan.FramePassTimings.end("entDraw");
@@ -529,6 +552,8 @@ public abstract class RenderGlobalMixin implements SimpleWorldRenderer.Provider<
                 if (this.renderManager.isRenderMultipass(entity)) {
                     multipassEntityList.add(entity);
                 }
+            } else if (celtium$isItemFrame) {
+                org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteCullGate();
             }
         }
         org.soutalab.celtium.vulkan.FramePassTimings.end("entCull");
