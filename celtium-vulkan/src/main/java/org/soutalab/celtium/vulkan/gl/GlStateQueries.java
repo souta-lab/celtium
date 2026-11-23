@@ -321,7 +321,7 @@ final class GlStateQueries {
             case 0x8514: // GL_TEXTURE_BINDING_CUBE_MAP
                 return stub.textureBindingOrZero(0x8513);
             case 0x8CA7: // GL_RENDERBUFFER_BINDING
-                return stub.boundRenderbuffer;
+                return GlsmClientArrayState.current().boundRenderbuffer();
             case 0x8919: // GL_SAMPLER_BINDING - sampler objects are not modelled
                 return 0;
             case 0x8A28: { // GL_UNIFORM_BUFFER_BINDING - the generic binding record
