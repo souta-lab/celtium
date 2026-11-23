@@ -101,11 +101,58 @@ public final class FakeGlLWJGLService {
                         LOG.add("data " + boundBuffer);
                         yield null;
                     }
+                    case "memByteBuffer" -> byteBufferAt((long) args[0], (int) args[1]);
+                    case "memAddress" -> addressOf((java.nio.Buffer) args[0])
+                            + (args.length > 1 ? (int) args[1] : ((java.nio.Buffer) args[0]).position());
+                    case "memCopy" -> {
+                        if (args[0] instanceof Number) {
+                            UNSAFE.copyMemory((long) args[0], (long) args[1], (long) args[2]);
+                        } else {
+                            java.nio.ByteBuffer src = (java.nio.ByteBuffer) args[0];
+                            java.nio.ByteBuffer dst = (java.nio.ByteBuffer) args[1];
+                            UNSAFE.copyMemory(addressOf(src) + src.position(), addressOf(dst) + dst.position(),
+                                    src.remaining());
+                        }
+                        yield null;
+                    }
                     case "hashCode" -> System.identityHashCode(proxy);
                     case "equals" -> proxy == args[0];
                     case "toString" -> "FakeGlLWJGLService";
                     default -> throw new UnsupportedOperationException("FakeGlLWJGLService: " + method.getName());
                 });
+    }
+
+    /**
+     * A direct buffer over memory this fake allocated, built the only way available without LWJGL on the
+     * classpath: an uninitialised {@code DirectByteBuffer} whose {@code Buffer} fields are set through Unsafe.
+     * The memory is not registered with a cleaner - it belongs to the {@code NativeBuffer} (or the test) that
+     * allocated it, and that owner frees it. Item 730's deferred-copy tests read and write through this view,
+     * which is what the fake's memory cases exist for.
+     */
+    private static java.nio.ByteBuffer byteBufferAt(long address, int capacity) {
+        try {
+            Class<?> direct = Class.forName("java.nio.DirectByteBuffer");
+            Object buffer = UNSAFE.allocateInstance(direct);
+            Class<?> base = Class.forName("java.nio.Buffer");
+            UNSAFE.putLong(buffer, UNSAFE.objectFieldOffset(base.getDeclaredField("address")), address);
+            UNSAFE.putInt(buffer, UNSAFE.objectFieldOffset(base.getDeclaredField("capacity")), capacity);
+            UNSAFE.putInt(buffer, UNSAFE.objectFieldOffset(base.getDeclaredField("limit")), capacity);
+            UNSAFE.putInt(buffer, UNSAFE.objectFieldOffset(base.getDeclaredField("position")), 0);
+            UNSAFE.putInt(buffer, UNSAFE.objectFieldOffset(base.getDeclaredField("mark")), -1);
+            return (java.nio.ByteBuffer) buffer;
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    /** The native address a direct buffer wraps, read from the {@code Buffer} field through Unsafe. */
+    private static long addressOf(java.nio.Buffer buffer) {
+        try {
+            Class<?> base = Class.forName("java.nio.Buffer");
+            return UNSAFE.getLong(buffer, UNSAFE.objectFieldOffset(base.getDeclaredField("address")));
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
     }
 
     private static Unsafe unsafe() {
