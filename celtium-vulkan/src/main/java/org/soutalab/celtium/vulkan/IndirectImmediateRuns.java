@@ -35,6 +35,21 @@ final class IndirectImmediateRuns {
     int indirectRunCommands;
     VulkanImmediateTexturePipeline indirectRunPipeline;
     long indirectRunTextureSet;
+    /** The GL texture name the run's groups sampled, kept so an evicted run set can be rebuilt at the flush. */
+    int indirectRunTextureId;
+    /**
+     * The cache key the run's descriptor was cached under when the run opened: the texture key for the textured
+     * family, the pair key {@code (texture key * 31) + light map key} for the lit item family. A run holds its set
+     * from the first group's enqueue to the flush, and a later group of the same flush can evict it in between -
+     * its own draw-side rebuild misses on another texture of the same pipeline instance, the eldest entry is
+     * retired, and the completion-gated free does not count the run's still unrecorded use (item 699, the
+     * indirect path's shape of the flush-boundary crash the per-group guard already closes). The flush therefore
+     * asks the cache again through this key before it binds the set.
+     */
+    long indirectRunDescriptorKey;
+    /** Runs whose held set was found evicted at the flush and rebuilt, and runs dropped because no rebuild was available. */
+    long indirectRunDescriptorRebuilds;
+    long indirectRunDescriptorDrops;
     int indirectProbeLines;
     VulkanDynamicMesh indirectRunMesh;
     java.nio.ByteBuffer indirectRunPush;
@@ -220,6 +235,14 @@ final class IndirectImmediateRuns {
                 this.indirectRunPipelineObject = twin;
             }
             this.indirectRunTextureSet = prepared.descriptor;
+            this.indirectRunTextureId = group.texture;
+            // By the time a group reaches the enqueue, the draw loop's own eviction guard has already rebuilt it
+            // against the wrappers current at the draw, so the light map keyed here is the one the set was built
+            // against - the same recomputation celtium$siblingSetEvicted performs for a single group.
+            this.indirectRunDescriptorKey = prepared.pipeline instanceof VulkanImmediateItemPipeline itemKey
+                    && itemKey.lit()
+                    ? (prepared.textureKey * 31L) + (b.lightmapTexture == null ? 0L : b.lightmapTexture.key())
+                    : prepared.textureKey;
             this.indirectRunMesh = mesh;
             this.indirectRunOriginalPipeline = prepared.pipeline;
             this.indirectRunFirstCommand = this.indirectCommandCount;
@@ -242,6 +265,50 @@ final class IndirectImmediateRuns {
         this.indirectRunCommands++;
         this.indirectGroupsIssued++;
         return true;
+    }
+
+    /**
+     * {@return whether the set this open run holds may be bound at its flush} - and, when it may not, leaves a
+     * rebuilt set in its place or drops the run.
+     * <p>
+     * The per-group eviction guard cannot cover a run: it asks the question of each group as the draw loop
+     * reaches it, but a run's groups are only recorded, not drawn, so the set they share stays unrecorded while
+     * later groups of the same flush are processed - and a later group's rebuild on the same pipeline instance
+     * can evict exactly that set (item 699). The cache map is the authority, as it is for a single group. Every
+     * group of the run shares the one descriptor, so one rebuilt set - for the run's own texture, resolved from
+     * the registry at the flush, with the current light map for the lit item family - serves the whole run. The
+     * colour family holds no descriptor (its draw passes none), so it is never asked.
+     */
+    boolean celtium$runDescriptorUsable() {
+        Object original = this.indirectRunOriginalPipeline;
+        boolean textured = original instanceof VulkanImmediateTexturePipeline;
+        boolean litItem = original instanceof VulkanImmediateItemPipeline item && item.lit();
+        if (!textured && !litItem) {
+            return true;
+        }
+        boolean stillCached = textured
+                ? ((VulkanImmediateTexturePipeline) original)
+                        .celtium$setStillCached(this.indirectRunTextureSet, this.indirectRunDescriptorKey)
+                : ((VulkanImmediateItemPipeline) original)
+                        .celtium$setStillCached(this.indirectRunTextureSet, this.indirectRunDescriptorKey);
+        if (stillCached) {
+            return true;
+        }
+        VulkanGlTexture current = b.celtium$registry().get(this.indirectRunTextureId);
+        long rebuilt = 0L;
+        if (current != null) {
+            rebuilt = textured
+                    ? ((VulkanImmediateTexturePipeline) original).descriptorSetFor(current)
+                    : ((VulkanImmediateItemPipeline) original).descriptorSetFor(current, b.lightmapTexture);
+        }
+        if (rebuilt != 0L) {
+            this.indirectRunTextureSet = rebuilt;
+            this.indirectRunDescriptor = rebuilt;
+            this.indirectRunDescriptorRebuilds++;
+            return true;
+        }
+        this.indirectRunDescriptorDrops++;
+        return false;
     }
 
     /** Where an indirect run was closed, by short reason, for the run-formation census. */
@@ -277,6 +344,11 @@ final class IndirectImmediateRuns {
         // the run's pipeline; this guard only asks whether there is anything to draw at all.
         if (this.indirectRunMesh == null || this.indirectRunCommands <= 0
                 || (this.indirectRunPipeline == null && this.indirectRunPipelineObject == null)) {
+            return;
+        }
+        if (!celtium$runDescriptorUsable()) {
+            // The run's set was evicted while the run was open and no rebuild is available: dropping the run is a
+            // missing draw, binding the retired set is the flush-boundary device-lost class. Counted inside.
             return;
         }
         if (this.indirectRunCommands == 1 && this.indirectRunOriginalPipeline != null) {
