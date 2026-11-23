@@ -398,15 +398,14 @@ public final class CeltiumGlStub implements FunctionProvider {
     private volatile boolean drawFramebufferIsMain = true;
 
     /** Fixed-pipeline state the getters answer from, at the values a fresh GL context starts them at. */
-    volatile float currentRed = 1.0f, currentGreen = 1.0f, currentBlue = 1.0f, currentAlpha = 1.0f;
+    // GAP-ST-9 rewired: the immediate mode's current colour is GlsmImmediateState's.
     /** Scratch the clear-value query fills through {@link #mainClearValues(float[])}. */
     final float[] clearValueScratch = new float[4];
 
     /** GL's initial light-model ambient, answered when no backend mirror exists. */
     final float[] lightAmbientDefault = {0.2f, 0.2f, 0.2f, 1.0f};
-    volatile float lineWidth = 1.0f;
     /** The last {@code glPointSize} request. Points are not rasterized, so this exists for the query only. */
-    volatile float pointSize = 1.0f;
+    // GAP-ST-9: line width and point size are GlsmImmediateState's too.
     /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
     volatile int boundVertexArray;
     // GAP-PROG-1 rewired: the current program is GlsmShaderLedger's (SEM_USE_PROGRAM writes it there).
@@ -1248,23 +1247,21 @@ public final class CeltiumGlStub implements FunctionProvider {
         // The capture owns both snapshots - its own mirror and GL_CURRENT_COLOR, which every colour route writes and
         // the backend's group tint reads - so the mode that decides the rollback and the values it rolls back cannot
         // disagree, and a second arrival (the other layer's report of the same glNewList) is dropped inside.
-        this.legacyCapture.openCompile(mode, this.currentRed, this.currentGreen, this.currentBlue, this.currentAlpha);
+        this.legacyCapture.openCompile(mode, GlsmImmediateState.current().red(), GlsmImmediateState.current().green(), GlsmImmediateState.current().blue(), GlsmImmediateState.current().alpha());
     }
 
     private void closeCompileState() {
         if (this.legacyCapture == null || !this.legacyCapture.closeCompile()) {
             return;
         }
-        this.currentRed = this.legacyCapture.callerRed();
-        this.currentGreen = this.legacyCapture.callerGreen();
-        this.currentBlue = this.legacyCapture.callerBlue();
-        this.currentAlpha = this.legacyCapture.callerAlpha();
+        GlsmImmediateState.current().color(this.legacyCapture.callerRed(), this.legacyCapture.callerGreen(),
+                this.legacyCapture.callerBlue(), this.legacyCapture.callerAlpha());
         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                 org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend != null) {
             // One state call per compile, and models compile once: the colour the list's compile must not tint the
             // next group with.
-            backend.setColor(this.currentRed, this.currentGreen, this.currentBlue, this.currentAlpha);
+            backend.setColor(GlsmImmediateState.current().red(), GlsmImmediateState.current().green(), GlsmImmediateState.current().blue(), GlsmImmediateState.current().alpha());
         }
     }
 
@@ -1942,7 +1939,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static void celtium$pointSize(float size) {
         CeltiumGlStub stub = installed;
         if (stub != null && size > 0.0f) {
-            stub.pointSize = size;
+            GlsmImmediateState.current().pointSize(size);
         }
     }
 
@@ -2077,7 +2074,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static void celtium$lineWidth(float width) {
         CeltiumGlStub stub = installed;
         if (stub != null && width > 0.0f) {
-            stub.lineWidth = width;
+            GlsmImmediateState.current().lineWidth(width);
         }
     }
 
@@ -2133,12 +2130,12 @@ public final class CeltiumGlStub implements FunctionProvider {
         for (int i = 0; i < caps; i++) {
             snapshot.capabilities[i] = stub.enabledCap(ATTRIB_CAPABILITIES[i]);
         }
-        snapshot.red = stub.currentRed;
-        snapshot.green = stub.currentGreen;
-        snapshot.blue = stub.currentBlue;
-        snapshot.alpha = stub.currentAlpha;
-        snapshot.lineWidth = stub.lineWidth;
-        snapshot.pointSize = stub.pointSize;
+        snapshot.red = GlsmImmediateState.current().red();
+        snapshot.green = GlsmImmediateState.current().green();
+        snapshot.blue = GlsmImmediateState.current().blue();
+        snapshot.alpha = GlsmImmediateState.current().alpha();
+        snapshot.lineWidth = GlsmImmediateState.current().lineWidth();
+        snapshot.pointSize = GlsmImmediateState.current().pointSize();
         snapshot.depthWrites = stub.attribDepthWrites();
         snapshot.depthFunc = stub.attribDepthFunc();
         snapshot.alphaFunc = stub.attribAlphaFunc();
@@ -2235,23 +2232,20 @@ public final class CeltiumGlStub implements FunctionProvider {
             restored |= LegacyAttribSnapshot.ENABLE_BIT;
         }
         if (restoresAttrib(snapshot, LegacyAttribSnapshot.CURRENT_BIT)) {
-            this.currentRed = snapshot.red;
-            this.currentGreen = snapshot.green;
-            this.currentBlue = snapshot.blue;
-            this.currentAlpha = snapshot.alpha;
+            GlsmImmediateState.current().color(snapshot.red, snapshot.green, snapshot.blue, snapshot.alpha);
             // The group payload reads its colour from the backend mirror, not from these fields: restoring only the
             // stub would leave the popped draw's tint as the next vanilla group's colour.
             if (backend != null) {
-                backend.setColor(this.currentRed, this.currentGreen, this.currentBlue, this.currentAlpha);
+                backend.setColor(GlsmImmediateState.current().red(), GlsmImmediateState.current().green(), GlsmImmediateState.current().blue(), GlsmImmediateState.current().alpha());
             }
             restored |= LegacyAttribSnapshot.CURRENT_BIT;
         }
         if (restoresAttrib(snapshot, LegacyAttribSnapshot.LINE_BIT)) {
-            this.lineWidth = snapshot.lineWidth;
+            GlsmImmediateState.current().lineWidth(snapshot.lineWidth);
             restored |= LegacyAttribSnapshot.LINE_BIT;
         }
         if (restoresAttrib(snapshot, LegacyAttribSnapshot.POINT_BIT)) {
-            this.pointSize = snapshot.pointSize;
+            GlsmImmediateState.current().pointSize(snapshot.pointSize);
             restored |= LegacyAttribSnapshot.POINT_BIT;
         }
         if (restoresAttrib(snapshot, LegacyAttribSnapshot.DEPTH_BUFFER_BIT)) {
@@ -3044,10 +3038,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static void celtium$setCurrentColor(float red, float green, float blue, float alpha) {
         CeltiumGlStub stub = installed;
         if (stub != null) {
-            stub.currentRed = red;
-            stub.currentGreen = green;
-            stub.currentBlue = blue;
-            stub.currentAlpha = alpha;
+            GlsmImmediateState.current().color(red, green, blue, alpha);
         }
     }
 
@@ -5375,7 +5366,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 bufferSubData(fn, c);
                 return 0L;
             case SEM_LINE_WIDTH:
-                this.lineWidth = Float.intBitsToFloat((int) c[0]);
+                GlsmImmediateState.current().lineWidth(Float.intBitsToFloat((int) c[0]));
                 return 0L;
             case SEM_USE_PROGRAM:
                 GlsmShaderLedger.current().useProgram((int) c[0]);
