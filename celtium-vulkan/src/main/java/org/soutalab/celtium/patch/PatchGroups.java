@@ -244,10 +244,12 @@ public final class PatchGroups {
               "features.textures.TextureMapStitchPhaseMixin"
         );
         group("pack_phase_instrument", "pack phase instrument", false,
-              "the wpPackPrepare / wpPackBegin / wpShadowPhase census brackets (item 648) stop; rendering itself is untouched because every injector is require=0 and read-only, and the mixins are @Pseudo so they are silently off without Demonica anyway",
+              "the wpPackPrepare / wpPackBegin / wpShadowPhase census brackets (item 648) and their item 690 children (wpShadowMatrix / wpShadowFrustum / wpShadowTerrainSetup / wpShadowTargetPrep inside the shadow phase, wpBeginUniforms / wpBeginTargets inside the frame begin) stop; rendering itself is untouched because every injector is require=0 and read-only, and the mixins are @Pseudo so they are silently off without Demonica anyway",
               "core.DemonicaPipelinePrepareTimingMixin",
               "core.DemonicaPipelineBeginTimingMixin",
-              "core.DemonicaShadowPhaseTimingMixin"
+              "core.DemonicaShadowPhaseTimingMixin",
+              "core.DemonicaShadowSetupTimingMixin",
+              "core.DemonicaPipelineBeginChildrenTimingMixin"
         );
         group("hud_census_instrument", "hud census instrument", false,
               "the screen bracket stops, so the pass census no longer separates the screen section from the frame residual; rendering itself is untouched because every injector is require=0 and read-only",

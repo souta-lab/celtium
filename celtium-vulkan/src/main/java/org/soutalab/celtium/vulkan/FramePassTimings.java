@@ -224,6 +224,25 @@ public final class FramePassTimings {
             // census reads them off the per-frame profiles and nets the contained names out by hand, the
             // same offline reconstruction pack-tail-2 used for its terrainRecord split.
             "wpPackPrepare", "wpPackBegin", "wpShadowPhase",
+            // Item 690 (the item 648 section 7 follow-up): the inside of the two containers above, split
+            // at the seams the 648 census fixed. Inside wpShadowPhase: wpShadowMatrix is the modelview
+            // build plus the perspective/ortho generation (getShadowModelView up to the
+            // InternalShadowRenderingState.begin call); wpShadowFrustum is the frustum construction,
+            // as two sequential spans under one name (the terrain frustum: createShadowFrustum through
+            // its position set; the entity frustum: createEntityShadowFrustum through its own);
+            // wpShadowTerrainSetup is the Celeritas-side terrain setup between the frustum and the GL
+            // state (enterManagedCode through the setupGlState call - viewport creation, the section
+            // graph dirty mark, setupShadowTerrain); wpShadowTargetPrep is setupGlState itself, the
+            // shadow targets' bind and GL state preparation. Inside wpPackBegin: wpBeginUniforms sums
+            // the four uniform-update calls (IrisTimeUniforms.updateTime, WorldTimeUniforms.snapshot,
+            // FrameUpdateNotifier.onNewFrame, CustomUniforms.update) as sequential spans under one
+            // name, and wpBeginTargets is prepareRenderTargets plus the custom-image clear loop.
+            // wpPackBegin minus its two children reads as the section 7 "other" bucket (the begin
+            // composite, the phase set, the horizon). All six are inclusive and report-only like their
+            // parents: none joins WORLD_PASS_MEMBERS, and the sequential same-name spans never nest,
+            // so the outermost-only accumulation stays exact.
+            "wpShadowMatrix", "wpShadowFrustum", "wpShadowTerrainSetup", "wpShadowTargetPrep",
+            "wpBeginUniforms", "wpBeginTargets",
             // Item 678 (shadow-diff Layer B, first stage): the inside of packRecordUniform, split at its
             // three priced seams so the census can name which of them owns the per-region uniform span
             // before anyone optimises it. packUniformOffset is the backend's region-offset write;
