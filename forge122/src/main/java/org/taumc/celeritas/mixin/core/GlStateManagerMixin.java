@@ -730,10 +730,11 @@ public abstract class GlStateManagerMixin {
      * repeat is skippable by construction - and skipping it at this wrapper, before the trampoline, saves the whole
      * FFI + argument-unpack + dispatch cost rather than only the handler body.
      * <p>
-     * The stub's own {@code matrixMode} is the authority on purpose: direct {@code GL11.glMatrixMode} callers (several
-     * vanilla paths) update the same field through the trampoline, so a second cache in the mixin could disagree with
-     * the stub and skip a set the backend needed. Reading the field is correct under the GL-less window (the field is
-     * the only state there is) and under the bridge (every writer reaches the field the same way it reaches GL).
+     * The GLSM matrix-mode record (GlsmMatrixMode, GAP-ST-11) is the authority on purpose: direct
+     * {@code GL11.glMatrixMode} callers (several vanilla paths) update the same record through the trampoline, so a
+     * second cache in the mixin could disagree with it and skip a set the backend needed. Reading the record is
+     * correct under the GL-less window (the record is the only state there is) and under the bridge (every writer
+     * reaches the record the same way it reaches GL).
      */
     @Inject(method = {"matrixMode", "func_179128_n"}, at = @At("HEAD"), cancellable = true, require = 0)
     private static void celtium$skipRedundantMatrixMode(int mode, CallbackInfo info) {

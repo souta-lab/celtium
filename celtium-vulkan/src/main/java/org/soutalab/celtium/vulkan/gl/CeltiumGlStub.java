@@ -5476,7 +5476,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 celtium$noteMatrixMultiplyArrival(fn);
                 return 0L;
             case SEM_MATRIX_MODE:
-                this.matrixMode = (int) c[0];
+                GlsmMatrixMode.current().set((int) c[0]);
                 return 0L;
             case SEM_BIND_FRAMEBUFFER:
                 bindFramebuffer((int) a0, (int) a1);
@@ -6124,8 +6124,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int GL_MODELVIEW = 0x1700;
     private static final int GL_PROJECTION = 0x1701;
     private static final int GL_TEXTURE_MATRIX_MODE = 0x1702;
-    /** The stack the stub last saw selected; GL starts in MODELVIEW. */
-    volatile int matrixMode = GL_MODELVIEW;
+    /* The matrix mode itself moved to GlsmMatrixMode (GAP-ST-11): the stub route's write
+       (SEM_MATRIX_MODE) and the mixin's skip read now meet in that one record. */
 
     /**
      * {@return whether the stub already believes {@code mode} is current}, for the GlStateManager mixin's redundant-
@@ -6139,7 +6139,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static boolean celtium$matrixModeIsCurrent(int mode) {
         CeltiumGlStub stub = installed;
-        return stub != null && stub.matrixMode == mode;
+        return stub != null && GlsmMatrixMode.current().isCurrent(mode);
     }
 
     private static String matrixModeName(int mode) {
@@ -6165,7 +6165,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (MATRIX_MULTIPLY_ARRIVALS.get() <= 4L
                 && org.soutalab.celtium.vulkan.VulkanDiagnostics.enabled()) {
             System.out.println("[Celtium] CELTIUM_MULT_MATRIX arrival-only fn=" + fn.name
-                    + " mode=" + matrixModeName(this.matrixMode)
+                    + " mode=" + matrixModeName(GlsmMatrixMode.current().get())
                     + " applied=" + MATRIX_MULTIPLY_APPLIED.get()
                     + " site=[" + celtium$callSite(8) + "]");
         }
