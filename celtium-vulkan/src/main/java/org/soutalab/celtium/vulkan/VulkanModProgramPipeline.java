@@ -179,6 +179,12 @@ public final class VulkanModProgramPipeline {
      * prepared-draw path binds without dynamic offsets.
      */
     private boolean dynamicUniform;
+    /**
+     * The dynamic offset the next {@link #bindTerrainUniformsAndSet} call binds, remembered by
+     * {@link #samplersAndImages} on the dynamic route: the terrain backend calls the two back to back for
+     * one region, so the slot staged for that region is still the value here when its set is bound.
+     */
+    private int pendingDynamicOffset;
     private VulkanUniformBuffer uniformBuffer;
     /** The constant-attribute ring (binding 1, stride 0); null for a pipeline whose layout feeds every attribute. */
     private VulkanUniformBuffer constantRing;
@@ -869,6 +875,44 @@ public final class VulkanModProgramPipeline {
         return dynamicUniform ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     }
 
+    /**
+     * {@return the descriptor-set key for the uniform route}: on the plain route the staged slot is part
+     * of the set's identity, because the set names the slot's offset; on the dynamic route the set names
+     * the ring's base and the slot is no part of its identity, so every slot of a sampler group shares one
+     * set. Static and pure so the identity rule is pinned without a device.
+     */
+    static long celtium$uniformRouteSetKey(long samplerHash, long uniformBuffer, int slot,
+                                           boolean dynamicUniform) {
+        long hash = dynamicUniform
+                ? mix64(samplerHash) ^ mix64(uniformBuffer)
+                : mix64(samplerHash ^ (slot + 1L) * 0x9E3779B97F4A7C15L) ^ mix64(uniformBuffer);
+        return hash == 0L ? 1L : hash;
+    }
+
+    /**
+     * {@return the slot value a set's input snapshot records}: the slot itself on the plain route, where
+     * the snapshot check then refuses a set written for another slot; the constant -1 on the dynamic
+     * route, whose sets are written from the ring's base and serve every slot.
+     */
+    static int celtium$routeSnapshotSlot(int slot, boolean dynamicUniform) {
+        return dynamicUniform ? -1 : slot;
+    }
+
+    /**
+     * {@return the offset written into the set's uniform descriptor}: the slot's offset on the plain
+     * route; 0 on the dynamic route, where the bind's dynamic offset supplies it instead. The offset the
+     * shader effectively reads is this value plus {@link #celtium$uniformDynamicOffset} on the dynamic
+     * route, and this value alone on the plain route - the equivalence the B3 test pins.
+     */
+    static long celtium$uniformWriteOffset(boolean dynamicUniform, int slot, int stride) {
+        return dynamicUniform ? 0L : (long) slot * stride;
+    }
+
+    /** {@return the dynamic offset a bind supplies for {@code slot} on the dynamic route}. */
+    static int celtium$uniformDynamicOffset(int slot, int stride) {
+        return slot * stride;
+    }
+
     private void createPipeline(byte[] vertexSpirv, byte[] fragmentSpirv, int formatId, long renderPass, int cull,
                                 boolean depthTest, boolean depthWrite, int depthCompareOp,
                                 VulkanColorBlendState colorBlend, boolean honourModProgramFlags,
@@ -1008,8 +1052,10 @@ public final class VulkanModProgramPipeline {
     /**
      * Builds the one descriptor set from sampler bindings followed by storage-image bindings - and, on the
      * uniform-buffer route, the block's binding, which names the ring slot {@code program}'s current uniform
-     * values were staged into for {@code epoch} (the caller's frame counter). 0 when no set could be allocated
-     * or the epoch claimed every ring slot, which the caller refuses as a missing draw.
+     * values were staged into for {@code epoch} (the caller's frame counter). On the dynamic route the set
+     * names the ring's base instead and the staged slot is remembered as the bind's dynamic offset
+     * ({@link #pendingDynamicOffset}), so the set is shared by every slot of the sampler group. 0 when no
+     * set could be allocated or the epoch claimed every ring slot, which the caller refuses as a missing draw.
      */
     public long samplersAndImages(VulkanGlTexture[] textures, VulkanGlTexture[] imageTextures,
                                   ModProgramRegistry.Program program, long epoch) {
@@ -1050,11 +1096,18 @@ public final class VulkanModProgramPipeline {
         if (slot < 0) {
             return 0L;
         }
-        hash = mix64(hash ^ (slot + 1L) * 0x9E3779B97F4A7C15L) ^ mix64(this.uniformBuffer.buffer());
-        if (hash == 0L) {
-            hash = 1L;
+        if (this.dynamicUniform) {
+            // B3: the set names the ring's base, so its identity is the sampler group alone; the staged
+            // slot reaches the draw as the bind's dynamic offset, remembered here for
+            // bindTerrainUniformsAndSet, which the terrain backend calls immediately after this returns.
+            this.pendingDynamicOffset = celtium$uniformDynamicOffset(slot, this.uniformStride);
+            hash = celtium$uniformRouteSetKey(hash, this.uniformBuffer.buffer(), slot, true);
+            return allocateOrReuseDescriptorSet(hash, views, samplers, layouts, imageViews,
+                    celtium$routeSnapshotSlot(slot, true));
         }
-        return allocateOrReuseDescriptorSet(hash, views, samplers, layouts, imageViews, slot);
+        hash = celtium$uniformRouteSetKey(hash, this.uniformBuffer.buffer(), slot, false);
+        return allocateOrReuseDescriptorSet(hash, views, samplers, layouts, imageViews,
+                celtium$routeSnapshotSlot(slot, false));
     }
 
     /**
@@ -1238,9 +1291,13 @@ public final class VulkanModProgramPipeline {
             if (set == 0L) {
                 return 0L;
             }
+            // The uniform binding is written when the caller staged a slot (uniformSlot >= 0) and, on
+            // the dynamic route, also for its -1 snapshot slot: the set names the ring's base there.
+            // Non-dynamic callers passing -1 (the explicit-handle sets) never write one, as before.
+            boolean writeUniform = uniformSlot >= 0 || this.dynamicUniform;
             VkDescriptorImageInfo.Buffer imageInfos = VkDescriptorImageInfo.calloc(this.samplerCount + this.imageCount, stack);
             VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(
-                    this.samplerCount + this.imageCount + (uniformSlot >= 0 ? 1 : 0), stack);
+                    this.samplerCount + this.imageCount + (writeUniform ? 1 : 0), stack);
             for (int i = 0; i < this.samplerCount; i++) {
                 imageInfos.get(i).imageLayout(layouts[i]).imageView(views[i]).sampler(samplers[i]);
                 writes.get(i).sType$Default().dstSet(set).dstBinding(i)
@@ -1254,14 +1311,14 @@ public final class VulkanModProgramPipeline {
                         .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE).descriptorCount(1)
                         .pImageInfo(VkDescriptorImageInfo.create(imageInfos.address(index), 1));
             }
-            if (uniformSlot >= 0) {
+            if (writeUniform) {
                 VkDescriptorBufferInfo.Buffer bufferInfo = VkDescriptorBufferInfo.calloc(1, stack)
                         .buffer(this.uniformBuffer.buffer())
-                        .offset((long) uniformSlot * this.uniformStride)
+                        .offset(celtium$uniformWriteOffset(this.dynamicUniform, uniformSlot, this.uniformStride))
                         .range(this.uniformBlockBytes);
                 writes.get(this.samplerCount + this.imageCount).sType$Default().dstSet(set)
                         .dstBinding(this.samplerCount + this.imageCount)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(1)
+                        .descriptorType(celtium$uniformBindingType(this.dynamicUniform)).descriptorCount(1)
                         .pBufferInfo(bufferInfo);
             }
             vkUpdateDescriptorSets(this.context.device(), writes, null);
@@ -1485,8 +1542,17 @@ public final class VulkanModProgramPipeline {
                                    LongBuffer setScratch) {
         if (descriptorSet != 0L) {
             setScratch.put(0, descriptorSet);
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout,
-                    0, setScratch, null);
+            if (this.dynamicUniform) {
+                // B3: the set names the ring's base; the region's staged slot is this bind's dynamic
+                // offset, remembered by samplersAndImages for exactly this call.
+                try (MemoryStack stack = MemoryStack.stackPush()) {
+                    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout,
+                            0, setScratch, stack.ints(this.pendingDynamicOffset));
+                }
+            } else {
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout,
+                        0, setScratch, null);
+            }
         }
         if (this.pushBytes > 0 && pushUniforms != null) {
             pushUniforms.position(0).limit(this.pushBytes);
