@@ -1251,11 +1251,16 @@ class ModGlslTranslatorTest {
             """;
 
     private static ModGlslTranslator.Result translateWithPowGuard(boolean on, String vertex, String fragment) {
-        if (on) {
-            System.setProperty("celtium.vulkan.fractionalPowGuard", "true");
-        } else {
+        System.setProperty("celtium.vulkan.fractionalPowGuard", Boolean.toString(on));
+        try {
+            return ModGlslTranslator.translate(vertex, fragment);
+        } finally {
             System.clearProperty("celtium.vulkan.fractionalPowGuard");
         }
+    }
+
+    private static ModGlslTranslator.Result translateWithPowGuardUnset(String vertex, String fragment) {
+        System.clearProperty("celtium.vulkan.fractionalPowGuard");
         try {
             return ModGlslTranslator.translate(vertex, fragment);
         } finally {
@@ -1264,7 +1269,22 @@ class ModGlslTranslatorTest {
     }
 
     @Test
-    void fractionalPowGuardIsOffByDefault() {
+    void fractionalPowGuardIsOnByDefault() {
+        // The default flipped after the item-684 verification leg measured the cone NaN gone with
+        // the guard on (and reproduced with it off) on the shipped jar: with the property unset the
+        // shafts call is guarded.
+        ModGlslTranslator.Result result = translateWithPowGuardUnset(QUAD_VERTEX, SHAFTS_FRAGMENT);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertTrue(result.fragment().contains("celtium_pow_guard(vl / 32.0, vec3(0.25))"),
+                () -> "the default lowering must route the call through the guard:\n"
+                        + result.fragment());
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void fractionalPowGuardExplicitOffKeepsThePreGuardLowering() {
+        // The byte-equivalence pin that survives the default flip: an explicit off returns the
+        // lowering byte-for-byte what it was before the guard existed.
         ModGlslTranslator.Result result = translateWithPowGuard(false, QUAD_VERTEX, SHAFTS_FRAGMENT);
         assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
         assertTrue(result.fragment().contains("pow(vl / 32.0, vec3(0.25))"),

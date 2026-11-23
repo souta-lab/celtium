@@ -47,12 +47,13 @@ import java.util.regex.Pattern;
  * their Proj forms) -> the modern comparison fetch wrapped back into the {@code vec4} the legacy call
  * answers with, and a shadow sampler type is carried as declared: whether the texture a binding resolves
  * to has a comparing sampler is a property of that texture, checked by the prepare path, not here.</li>
- * <li>Opt-in ({@code -Dceltium.vulkan.fractionalPowGuard}, default off): a {@code pow} whose exponent is, as
- * written, a positive fractional constant is routed through {@code celtium_pow_guard}, which never calls
- * {@code pow} on a non-positive base. Measured cause: BSL's light shafts reach {@code pow(vl / 32, 0.25)} at
- * exactly 0 - the value its own falloff clamp produces - and RADV's native execution answers NaN over the
- * anti-sun cone (wedge-16). With the switch off the lowering is byte-for-byte what it was before the guard
- * existed.</li>
+ * <li>On by default ({@code -Dceltium.vulkan.fractionalPowGuard=false} opts out): a {@code pow} whose
+ * exponent is, as written, a positive fractional constant is routed through {@code celtium_pow_guard},
+ * which never calls {@code pow} on a non-positive base. Measured cause: BSL's light shafts reach
+ * {@code pow(vl / 32, 0.25)} at exactly 0 - the value its own falloff clamp produces - and RADV's native
+ * execution answers NaN over the anti-sun cone (wedge-16); the verification leg (item 684) measured the
+ * cone NaN gone with the guard on and reproduced with it off, which is what flipped the default. With
+ * the switch off the lowering is byte-for-byte what it was before the guard existed.</li>
  * <li>The fixed-function inputs mods still read: {@code gl_Vertex}, {@code gl_Color}, {@code gl_MultiTexCoord0},
  * {@code gl_ModelViewProjectionMatrix}, {@code gl_ModelViewMatrix}, {@code gl_ProjectionMatrix},
  * {@code gl_NormalScale}, {@code ftransform()}, and the {@code gl_TexCoord[0]}/{@code gl_FrontColor} varyings. They become ordinary
@@ -1611,15 +1612,17 @@ public final class ModGlslTranslator {
      * the kind a static latch on a property has.
      */
     private static boolean fractionalPowGuardEnabled() {
-        return Boolean.getBoolean("celtium.vulkan.fractionalPowGuard");
+        return !"false".equalsIgnoreCase(
+                System.getProperty("celtium.vulkan.fractionalPowGuard", "true"));
     }
 
     /**
      * Rewrites {@code pow(base, exp)} to {@code celtium_pow_guard(base, exp)} wherever {@code exp} is,
      * as written, a constant with a positive fractional value (see
      * {@link #isPositiveFractionalConstant}), and prefixes the overload set when the stage gained a
-     * rewrite. Behind {@code -Dceltium.vulkan.fractionalPowGuard} (default off): with the switch off
-     * the source is returned untouched, and a stage with no rewritten call is untouched either way.
+     * rewrite. Behind {@code -Dceltium.vulkan.fractionalPowGuard} (default on since the item-684
+     * verification leg; {@code =false} opts out): with the switch off the source is returned
+     * untouched, and a stage with no rewritten call is untouched either way.
      * <p>
      * Why: measured on BSL's composite (wedge-16), a light-shafts value reaches
      * {@code pow(vl / 32.0, vec3(0.25))} as exactly 0 - its falloff clamp produces 0 - and the
