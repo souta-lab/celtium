@@ -72,7 +72,25 @@ public final class FramePassTimings {
             // subtracted, so the double counting that bit the kpi-8 v1 split cannot recur through them.
             "prepUniformCap", "prepDescBind", "prepAcquire", "prepRoute", "prepPublish", "prepBeginPass",
             "prepViewportBind",
-            "recBind", "recDraw", "recLoop", "terrainTarget", "terrainSetup", "terrainClose", "terrainPrep", "terrainCapacity", "terrainSharedIndex", "terrainPreflush", "flushCloseGroup",
+            "recBind", "recDraw", "recLoop",
+            // Item 691 (flight-census-leg-2 section 4, R1): the terrainRecord residual - the named rec*
+            // children summed to 748/996 us of a 1977/2577 us parent, leaving 1.2-1.6 ms a frame in no
+            // bracket at all. These five names cover every span of recordRenderPass the older names do
+            // not, at their real seams: recHead is the pass head before recordPrepare (budget window
+            // roll, routed-state init, the pack-route attempt - in a pack frame that attempt IS the
+            // record, in a vanilla frame it is the refusal check); recPassSetup is recordPrepare's end
+            // to the region loop (statistics query, iterator and cache key, stack buffers, pass fog,
+            // the pass-level recBind nested inside it, shared vertex bind, chain begin); recIter is the
+            // per-region iterator advance, which sat outside recLoop; recCharge is the per-region span
+            // between recLoop and recBind (batch cast, the budget's draw charge and drop decision,
+            // statistics charge, readback slot); recPassTail is the loop's end to the method's end
+            // (chain close, statistics end, the immediate tail and UI quads inside the pass, render-pass
+            // end, timestamp, readback copies, routed hand-back, release barriers). All five are
+            // inclusive INSIDE names: reported, never subtracted, and none joins TOP_LEVEL,
+            // FrameBudgetTimings' OTHER_BUCKETS or its WORLD_PASS_MEMBERS - they sit inside the terrain
+            // bucket through terrainRecord, so the other-split needs no new member for them.
+            "recHead", "recPassSetup", "recIter", "recCharge", "recPassTail",
+            "terrainTarget", "terrainSetup", "terrainClose", "terrainPrep", "terrainCapacity", "terrainSharedIndex", "terrainPreflush", "flushCloseGroup",
             "winBarrier", "winRecord", "winSubmit", "winEnd", "winBeginPass", "winTransition",
             // The terrain pass' three unmeasured spans: the fixed prepare work before recording (frame target,
             // pipeline lookup, shared index buffer, uniform capacity, atlas/lightmap mirrors), the command-buffer
