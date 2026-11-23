@@ -22658,8 +22658,6 @@ this.frameBufferOpen = false;
      */
     private static final boolean GAME_CLEAR_STANDALONE =
             !Boolean.getBoolean("celtium.vulkan.disableGameClearStandalone");
-    /** The order this slot's last submission was made in; 0 means it has never submitted. */
-    private final long[] slotSubmitSequence = new long[FRAME_SLOTS];
     /**
      * The recording-lifecycle guard per slot. {@link #commandState} aliases the current slot's entry, so every site
      * that guarded "the backend command buffer" now guards "the command buffer this recording owns" - the same
@@ -22669,9 +22667,6 @@ this.frameBufferOpen = false;
     /** Slot this recording belongs to, and the slot the next recording will take. */
     int frameSlot;
     private int nextFrameSlot;
-    private long submitSequence;
-    /** Highest submission sequence confirmed complete; retirement is gated on it. */
-    private long completedSubmitSequence;
     /** Waits spent on a slot whose previous submission had not completed when it was reused. */
 
     private void createCommandResources() {
