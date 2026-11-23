@@ -2,7 +2,7 @@
 
 生成: `python3 scripts/instrument-index.py`。手で編集しない。
 
-システムプロパティの読み取りキー **363 個**／文字列内マーカー **584 個**。
+システムプロパティの読み取りキー **362 個**／文字列内マーカー **584 個**。
 機能設定・故障注入も含む。すべてが計測用スイッチという意味ではない。
 
 名前を検索してリンク先の実装を読む。既定値・有効条件・出力上限は推測で掲載しない。
@@ -44,7 +44,7 @@
 | [celtium.probe](#group-celtium-probe) | 5 |
 | [celtium.releaseTextureCpuData](#group-celtium-releaseTextureCpuData) | 2 |
 | [celtium.shaderc](#group-celtium-shaderc) | 2 |
-| [celtium.terrain](#group-celtium-terrain) | 5 |
+| [celtium.terrain](#group-celtium-terrain) | 4 |
 | [celtium.validation](#group-celtium-validation) | 1 |
 | [celtium.vulkan](#group-celtium-vulkan) | 251 |
 | [celtium.vulkanTerrain](#group-celtium-vulkanTerrain) | 1 |
@@ -331,7 +331,6 @@
 | `celtium.terrain.brightnessDiagnostics` | `Boolean.getBoolean` | [VintageBlockRenderer.java:52](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/compile/pipeline/VintageBlockRenderer.java#L52>) |
 | `celtium.terrain.forceCompactFormat` | `Boolean.getBoolean` | [CeleritasWorldRenderer.java:411](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/CeleritasWorldRenderer.java#L411>) |
 | `celtium.terrain.noShade` | `Boolean.getBoolean` | [VintageDiffuseProvider.java:18](<../forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/compile/light/VintageDiffuseProvider.java#L18>) |
-| `celtium.terrain.yLevelShelves` | `Boolean.getBoolean` | [YLevelShelves.java:34](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/data/YLevelShelves.java#L34>) |
 
 <a id="group-celtium-validation"></a>
 ## `celtium.validation.*`
