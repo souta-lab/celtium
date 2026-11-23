@@ -169,6 +169,16 @@ public final class VulkanModProgramPipeline {
     private static final int UNIFORM_RING_SLOTS = 32;
     /** Ring depth of a shader-pack terrain pipeline: one claim per region per pass, and two frames in flight. */
     private static final int TERRAIN_UNIFORM_RING_SLOTS = 2048;
+    /**
+     * Item 678 Layer B, B1: pack a program's uniform block incrementally - rewrite only the members whose
+     * values changed since the last pack (the registry tracks them per member) into a block the program
+     * retains, instead of walking every member on every version change. The census behind it (M5) is that
+     * a region step changes one member (the region offset) while the frame's members change once per frame,
+     * so the per-region walk is almost all repetition. Off by default: the off route is the original full
+     * walk, byte for byte, and the on route is built to produce the identical block.
+     */
+    private static final boolean PACK_UNIFORM_INCREMENTAL =
+            Boolean.getBoolean("celtium.vulkan.packUniformIncremental");
     /** This pipeline's ring depth: {@link #UNIFORM_RING_SLOTS}, or {@link #TERRAIN_UNIFORM_RING_SLOTS} for terrain. */
     private int uniformRingSlots = UNIFORM_RING_SLOTS;
     /**
@@ -1512,6 +1522,12 @@ public final class VulkanModProgramPipeline {
         if (cached != null) {
             return cached;
         }
+        if (PACK_UNIFORM_INCREMENTAL) {
+            ByteBuffer retained = packUniformsIncremental(program);
+            if (retained != null) {
+                return retained;
+            }
+        }
         long version = program.uniformVersion();
         ModGlslTranslator.Result lowered = program.lowered();
         ByteBuffer block = program.reusablePackedUniformBuffer(Math.max(16, lowered.uniformBlockSize()));
@@ -1560,6 +1576,165 @@ public final class VulkanModProgramPipeline {
                 }
             }
         }
+        program.cachePackedUniforms(version, block);
+        return block;
+    }
+
+    /**
+     * One lowered block's packing arithmetic, computed once per lowering: the full walk resolves each
+     * member's component count, column count and stride from its type string and looks its initializer up
+     * on every pack; a plan does that a single time and keeps the results in flat arrays indexed by the
+     * member's position in the lowered member order (the same order the registry's dirty bitset uses).
+     */
+    private static final class PackPlan {
+        final String[] names;
+        final int[] offsets;
+        final int[] sizes;
+        final int[] components;
+        final int[] columns;
+        final int[] elements;
+        final int[] columnStrides;
+        final boolean[] integerTypes;
+        final float[][] defaults;
+
+        PackPlan(ModGlslTranslator.Result lowered) {
+            List<ModGlslTranslator.UniformMember> members = lowered.uniforms();
+            int n = members.size();
+            this.names = new String[n];
+            this.offsets = new int[n];
+            this.sizes = new int[n];
+            this.components = new int[n];
+            this.columns = new int[n];
+            this.elements = new int[n];
+            this.columnStrides = new int[n];
+            this.integerTypes = new boolean[n];
+            this.defaults = new float[n][];
+            Map<String, float[]> defaultsByName = lowered.uniformDefaults();
+            for (int i = 0; i < n; i++) {
+                ModGlslTranslator.UniformMember member = members.get(i);
+                this.names[i] = member.name();
+                this.offsets[i] = member.offset();
+                this.sizes[i] = member.size();
+                String type = member.type();
+                this.components[i] = componentsOf(type);
+                this.columns[i] = columnsOf(type);
+                this.elements[i] = Math.max(1, member.arrayLength());
+                this.columnStrides[i] = (member.arrayLength() > 0 || this.columns[i] > 1)
+                        ? 16 : this.components[i] * 4;
+                this.integerTypes[i] = isIntegerType(type);
+                this.defaults[i] = defaultsByName.get(member.name());
+            }
+        }
+    }
+
+    /** Plans by lowering; a lowering is immutable, and a re-link's new lowering simply misses once. */
+    private static final java.util.WeakHashMap<ModGlslTranslator.Result, PackPlan> PACK_PLANS =
+            new java.util.WeakHashMap<>();
+
+    private static PackPlan packPlan(ModGlslTranslator.Result lowered) {
+        PackPlan plan = PACK_PLANS.get(lowered);
+        if (plan == null) {
+            plan = new PackPlan(lowered);
+            PACK_PLANS.put(lowered, plan);
+        }
+        return plan;
+    }
+
+    /**
+     * Writes one member of the plan into {@code block} from the program's current values, with the full
+     * walk's source precedence (recorded floats, recorded ints, declaration defaults) and bounds guard.
+     * A member with no source is zero, as in GL: a full pack gets that from the cleared buffer, so a
+     * partial pack clears the member's own range instead.
+     */
+    private static void packPlanMember(PackPlan plan, int i, ModProgramRegistry.Program program, ByteBuffer block) {
+        float[] floats = program.floats(plan.names[i]);
+        int[] ints = floats == null ? program.ints(plan.names[i]) : null;
+        float[] defaults = floats == null && ints == null ? plan.defaults[i] : null;
+        if (floats == null && ints == null && defaults == null) {
+            int from = plan.offsets[i];
+            int to = Math.min(block.capacity(), from + plan.sizes[i]);
+            if (to > from) {
+                MemoryUtil.memSet(MemoryUtil.memAddress(block) + from, 0, to - from);
+            }
+            return;
+        }
+        int components = plan.components[i];
+        int columns = plan.columns[i];
+        int elements = plan.elements[i];
+        int columnStride = plan.columnStrides[i];
+        boolean integerType = plan.integerTypes[i];
+        int value = 0;
+        for (int e = 0; e < elements; e++) {
+            for (int c = 0; c < columns; c++) {
+                int base = plan.offsets[i] + (e * columns + c) * columnStride;
+                for (int k = 0; k < components; k++, value++) {
+                    int at = base + k * 4;
+                    if (at + 4 > block.capacity()) {
+                        continue;
+                    }
+                    if (floats != null && value < floats.length) {
+                        block.putFloat(at, floats[value]);
+                    } else if (ints != null && value < ints.length) {
+                        if (integerType) {
+                            block.putInt(at, ints[value]);
+                        } else {
+                            block.putFloat(at, ints[value]);
+                        }
+                    } else if (defaults != null && value < defaults.length) {
+                        if (integerType) {
+                            block.putInt(at, (int) defaults[value]);
+                        } else {
+                            block.putFloat(at, defaults[value]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * {@return the program's uniform block packed incrementally} (item 678 Layer B, B1): the block the
+     * program retains across versions is rewritten only where values changed - in full after a link or an
+     * unclassified change, member by member otherwise, per the registry's dirty bitset - and produces the
+     * same bytes the full walk in {@link #packUniforms} would. Returns null when the program has no
+     * lowering, leaving the caller on the original route (and its original behavior there).
+     */
+    private static ByteBuffer packUniformsIncremental(ModProgramRegistry.Program program) {
+        ModGlslTranslator.Result lowered = program.lowered();
+        if (lowered == null) {
+            return null;
+        }
+        long version = program.uniformVersion();
+        int bytes = Math.max(16, lowered.uniformBlockSize());
+        ByteBuffer block = program.retainedPackedUniforms();
+        PackPlan plan = packPlan(lowered);
+        boolean full = block == null || block.capacity() < bytes
+                || program.retainedPackResult() != lowered || program.uniformPackAllDirty();
+        if (full) {
+            if (block == null || block.capacity() < bytes) {
+                block = ByteBuffer.allocateDirect(bytes).order(java.nio.ByteOrder.nativeOrder());
+            }
+            MemoryUtil.memSet(MemoryUtil.memAddress(block), 0, block.capacity());
+            for (int i = 0; i < plan.names.length; i++) {
+                packPlanMember(plan, i, program, block);
+            }
+            program.retainPackedUniforms(block, lowered);
+        } else {
+            long[] dirty = program.uniformPackDirtyWords();
+            if (dirty != null) {
+                for (int w = 0; w < dirty.length; w++) {
+                    long word = dirty[w];
+                    while (word != 0L) {
+                        int member = (w << 6) + Long.numberOfTrailingZeros(word);
+                        if (member < plan.names.length) {
+                            packPlanMember(plan, member, program, block);
+                        }
+                        word &= word - 1;
+                    }
+                }
+            }
+        }
+        program.consumeUniformPackDirty();
         program.cachePackedUniforms(version, block);
         return block;
     }
