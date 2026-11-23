@@ -432,7 +432,7 @@ final class ModelReplay {
                 // The target-change handoff is an ordering flush, not a draw boundary (the window
                 // census' stamp in VulkanTerrainGpuBackend).
                 b.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
-                b.flushPendingBeforeGlDraw();
+                b.celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_REPLAY_OFFTARGET);
                 if (b.modelOffTargetFlushLogs < b.MODEL_OFFTARGET_FLUSH_LOG_LIMIT) {
                     b.modelOffTargetFlushLogs++;
                     System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET_FLUSH batches+"

@@ -284,7 +284,7 @@ b.frameBufferOpen = false;
         if (pending == 0) {
             return 0;
         }
-        b.flushPendingBeforeGlDraw();
+        b.celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_REPLAY_OFFTARGET);
         if (b.chainInputBatchLogs <= 12) {
             System.out.println("[Celtium] CELTIUM_CHAIN_INPUT_FLUSH frame=" + b.frameId
                     + " target=" + b.targetRegistry.currentIdentity() + " groups=" + pending

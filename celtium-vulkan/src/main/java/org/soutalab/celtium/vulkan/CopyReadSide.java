@@ -194,7 +194,7 @@ final class CopyReadSide {
         }
         // The copy's ordering flush, not a draw boundary (the window census' stamp).
         this.backend.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
-        this.backend.flushPendingBeforeGlDraw();
+        this.backend.celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_COPY_ORDER);
         int sourceFrom = target.sharedDepthLayout(sourceKey);
         int destFrom = target.sharedDepthLayout(destKey);
         org.lwjgl.vulkan.VkCommandBuffer commands = this.backend.context.beginCommands();
@@ -526,7 +526,10 @@ final class CopyReadSide {
             // The copy host's flush is the copy path's ordering contract (TextureCopyService's own
             // statement of it), not a draw boundary: stamp it so its windows count as order.
             CopyReadSide.this.backend.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
-            CopyReadSide.this.backend.flushPendingBeforeGlDraw();
+            // The copy service's ordering flushes all arrive through this one delegation, so the E2
+            // census stamps them here (item 695): copy-order is the call point, whichever copy asked.
+            CopyReadSide.this.backend.celtium$flushPendingForGlDrawCause(
+                    GlDrawWindowCensus.CAUSE_COPY_ORDER);
         }
 
         @Override

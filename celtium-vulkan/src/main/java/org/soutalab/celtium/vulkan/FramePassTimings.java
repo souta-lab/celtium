@@ -886,6 +886,8 @@ public final class FramePassTimings {
         // Item 678: the pack-uniform census prints on this same window cadence (its counters only
         // accumulate while an instrument here is enabled, so the ride costs nothing when off).
         PackUniformCensus.reportWindow(windowFrames);
+        // Item 695 (E2): the gl-draw window census rides the same cadence, on the same terms.
+        GlDrawWindowCensus.reportWindow(windowFrames);
         if (ACCEPT_FLUSH) {
             System.out.println("[Celtium] CELTIUM_ACCEPT_FLUSH " + acceptFlushSummary());
             sizeFlushTripsWindow = 0L;
