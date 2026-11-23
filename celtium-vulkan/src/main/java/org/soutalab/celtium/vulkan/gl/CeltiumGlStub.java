@@ -406,8 +406,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     final float[] lightAmbientDefault = {0.2f, 0.2f, 0.2f, 1.0f};
     /** The last {@code glPointSize} request. Points are not rasterized, so this exists for the query only. */
     // GAP-ST-9: line width and point size are GlsmImmediateState's too.
-    /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
-    volatile int boundVertexArray;
+    // GAP-ST-8 rewired: the bound vertex array name is GlsmClientArrayState's too - both bind
+    // routes and the delete path write it there, and boundAttribs() reads the records it keys.
     // GAP-PROG-1 rewired: the current program is GlsmShaderLedger's (SEM_USE_PROGRAM writes it there).
     // GAP-ST-7 rewired: compilingList/compilingMode, lastCalledList, executingList and listBase
     // are GlsmDisplayListLedger's, as are the compiled-list/geometry/payload maps and counters below.
@@ -1929,7 +1929,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         // once and rebinds its VAO draws from its own state and not from whatever the last draw left behind.
         // Name 0 is the default VAO and keeps its own records too: skipping it lost the pointer a caller had set
         // on VAO 0 when it bound another VAO and came back.
-        stub.boundVertexArray = array;
+        GlsmClientArrayState.current().bindVertexArray(array);
         stub.celtium$noteAttribZero();
     }
 
@@ -2533,11 +2533,12 @@ public final class CeltiumGlStub implements FunctionProvider {
     /**
      * {@return the bound VAO's attribute records}, creating the VAO's array on first use.
      * The records themselves - the per-VAO arrays of {@link GlsmClientArrayState.VaoAttrib} -
-     * are owned by {@link GlsmClientArrayState} (GLSM stage 3, GAP-ST-8 remainder); this
-     * accessor only names which VAO is bound here.
+     * and the bound VAO's name are owned by {@link GlsmClientArrayState} (GLSM stage 3,
+     * GAP-ST-8 remainder); this accessor only asks the owner for the bound name's records.
      */
     private GlsmClientArrayState.VaoAttrib[] boundAttribs() {
-        return GlsmClientArrayState.current().attribsFor(this.boundVertexArray);
+        GlsmClientArrayState arrays = GlsmClientArrayState.current();
+        return arrays.attribsFor(arrays.boundVertexArray());
     }
 
     /** Copies attribute 0's record into the legacy single-pointer fields the client-array paths read. */
@@ -5459,7 +5460,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 callLists((int) c[0], (int) c[1], c[2]);
                 return 0L;
             case SEM_BIND_VERTEX_ARRAY:
-                this.boundVertexArray = (int) c[0];
+                GlsmClientArrayState.current().bindVertexArray((int) c[0]);
                 // The same swap the transformer's route performs: the VAO's own attribute records become live
                 // (the owner's arrays are keyed by the bound name, so naming the VAO is the whole swap).
                 celtium$noteAttribZero();
@@ -6105,8 +6106,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                 GlsmNameLedger.current().removeName(name);
                 if (vertexArrays) {
                     GlsmClientArrayState.current().forgetVaoAttribs(name);
-                    if (this.boundVertexArray == name) {
-                        this.boundVertexArray = 0;
+                    if (GlsmClientArrayState.current().boundVertexArray() == name) {
+                        GlsmClientArrayState.current().bindVertexArray(0);
                         // The deleted VAO's records go with it; the default VAO's array is re-read on next use.
                     }
                 }

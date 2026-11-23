@@ -5,7 +5,8 @@ import java.util.Map;
 
 /**
  * GLSM stage 3, GAP-ST-8 (census S-12): the owner of the client-array pointer records,
- * the per-VAO attribute records, and the renderbuffer binding/dimensions.
+ * the per-VAO attribute records, the bound vertex array name, and the renderbuffer
+ * binding/dimensions.
  * <p>
  * A pointer record is the full gl*Pointer tuple (size, type, stride, offset-or-address,
  * plus the buffer name the VBO route bound when the pointer was set) - the draw path and
@@ -64,6 +65,8 @@ public final class GlsmClientArrayState {
     private final Map<Long, Pointer> vaoAttribs = new HashMap<Long, Pointer>();
     /** Per-VAO generic attribute record arrays, keyed by the VAO name; created whole on first use. */
     private final Map<Integer, VaoAttrib[]> vaoAttribRecords = new HashMap<Integer, VaoAttrib[]>();
+    /** The bound vertex array name; name 0 is the default VAO. Volatile as the stub field it replaces was. */
+    private volatile int boundVertexArray;
     private int boundRenderbuffer;
     private final Map<Integer, int[]> renderbufferSizes = new HashMap<Integer, int[]>();
     private long version;
@@ -131,6 +134,20 @@ public final class GlsmClientArrayState {
             this.version++;
         }
     }
+
+    /**
+     * Records the vertex array {@code glBindVertexArray} bound. The attribute records are
+     * keyed by this name ({@link #attribsFor(int)}), so naming the VAO here is the whole
+     * swap: the array the name keys becomes the live one. Deleting the bound VAO rebinds 0
+     * through this same entry, exactly as the stub's field write did.
+     * <p>
+     * Moved here from CeltiumGlStub (GLSM stage 3, GAP-ST-8 remainder): the stub's two bind
+     * routes and its delete path write through this method, and the GL_VERTEX_ARRAY_BINDING
+     * query reads {@link #boundVertexArray()} through GlsmQueryFacade.
+     */
+    public void bindVertexArray(int name) { this.boundVertexArray = name; this.version++; }
+
+    public int boundVertexArray() { return this.boundVertexArray; }
 
     public void bindRenderbuffer(int name) { this.boundRenderbuffer = name; this.version++; }
 

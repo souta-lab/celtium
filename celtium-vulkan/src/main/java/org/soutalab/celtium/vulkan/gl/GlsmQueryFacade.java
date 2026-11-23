@@ -57,6 +57,9 @@ public final class GlsmQueryFacade {
 
     public int boundBuffer(int target) { return GlsmBufferState.current().bound(target); }
 
+    /** GL_VERTEX_ARRAY_BINDING: the VAO name the client-array owner holds as bound. */
+    public int boundVertexArray() { return GlsmClientArrayState.current().boundVertexArray(); }
+
     public int currentProgram() { return GlsmShaderLedger.current().currentProgram(); }
 
     public int colorAttachmentTexture(int framebuffer) {

@@ -434,7 +434,7 @@ final class GlStateQueries {
             case 0x0D3B: // GL_MAX_CLIENT_ATTRIB_STACK_DEPTH - the bounded stack the push/pop routes use
                 return 16;
             case 0x85B5: // GL_VERTEX_ARRAY_BINDING
-                return stub.boundVertexArray;
+                return GlsmQueryFacade.current().boundVertexArray();
             case 0x8CDF: // GL_MAX_COLOR_ATTACHMENTS - the MRT ledger size: a chain target holds a colour image
                 // per slot up to COLOR_ATTACHMENT_SLOTS, and a pass is built with that many attachments
                 return CeltiumGlStub.COLOR_ATTACHMENT_SLOTS;
