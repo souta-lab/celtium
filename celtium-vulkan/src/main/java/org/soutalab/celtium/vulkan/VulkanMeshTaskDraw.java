@@ -312,17 +312,60 @@ public final class VulkanMeshTaskDraw {
         this.recordedFrames++;
         this.recordedSections += sectionCount;
         if (this.recordedFrames % PRINT_EVERY_FRAMES == 0) {
-            System.out.println("[Celtium] CELTIUM_MESH_TERRAIN_STAGE2 frames=" + this.recordedFrames
-                    + " sections=" + this.recordedSections
-                    + " fallbacks=[directoryNotBuilt=" + this.reasonCounts[GateReason.DIRECTORY_NOT_BUILT.ordinal()]
-                    + " ineligibleSections=" + this.reasonCounts[GateReason.INELIGIBLE_SECTIONS.ordinal()]
-                    + " budgetActive=" + this.reasonCounts[GateReason.BUDGET_ACTIVE.ordinal()]
-                    + " noMeshShader=" + this.reasonCounts[GateReason.NO_MESH_SHADER.ordinal()]
-                    + " noMeshLimits=" + this.reasonCounts[GateReason.NO_MESH_LIMITS.ordinal()]
-                    + " overLimit=" + this.reasonCounts[GateReason.OVER_TASK_WORKGROUP_LIMIT.ordinal()]
-                    + "]");
+            System.out.println("[Celtium] CELTIUM_MESH_TERRAIN_STAGE2 "
+                    + summaryLine(this.recordedFrames, this.recordedSections, this.reasonCounts));
         }
         return count(GateReason.NONE);
+    }
+
+    /** {@return how many passes this draw recorded (one task dispatch each)}. */
+    public long recordedFrames() {
+        return this.recordedFrames;
+    }
+
+    /** {@return the total sections across every recorded pass}. */
+    public long recordedSections() {
+        return this.recordedSections;
+    }
+
+    /** {@return how many attempts ended with {@code reason} (NONE counts successes)}. */
+    public long reasonCount(GateReason reason) {
+        return this.reasonCounts[reason.ordinal()];
+    }
+
+    /**
+     * The one-line census of this draw: recorded frames/sections plus EVERY gate
+     * reason's count. Pure formatting (no Vulkan state), so a unit test can pin it.
+     * Before alpha-mesh-next3 the periodic line named only six of the eleven
+     * reasons and printed only inside the success branch every 60 recorded
+     * frames — a leg in which the mesh path never succeeded (the exact case a
+     * proof leg must diagnose) produced no census line at all, and refusals
+     * such as NO_PIPELINE / TABLE_NOT_BOUND / NO_SECTIONS were invisible.
+     * A short {@code counts} array reads its missing reasons as zero.
+     */
+    public static String summaryLine(long frames, long sections, long[] counts) {
+        return "frames=" + frames
+                + " sections=" + sections
+                + " fallbacks=[directoryNotBuilt=" + countAt(counts, GateReason.DIRECTORY_NOT_BUILT)
+                + " ineligibleSections=" + countAt(counts, GateReason.INELIGIBLE_SECTIONS)
+                + " budgetActive=" + countAt(counts, GateReason.BUDGET_ACTIVE)
+                + " noMeshShader=" + countAt(counts, GateReason.NO_MESH_SHADER)
+                + " noMeshLimits=" + countAt(counts, GateReason.NO_MESH_LIMITS)
+                + " noPipeline=" + countAt(counts, GateReason.NO_PIPELINE)
+                + " tableNotBound=" + countAt(counts, GateReason.TABLE_NOT_BOUND)
+                + " noSections=" + countAt(counts, GateReason.NO_SECTIONS)
+                + " overLimit=" + countAt(counts, GateReason.OVER_TASK_WORKGROUP_LIMIT)
+                + " disabled=" + countAt(counts, GateReason.DISABLED)
+                + "]";
+    }
+
+    private static long countAt(long[] counts, GateReason reason) {
+        return counts != null && reason.ordinal() < counts.length ? counts[reason.ordinal()] : 0L;
+    }
+
+    /** This draw's census line, in {@link #summaryLine} form. */
+    public String summaryLine() {
+        return summaryLine(this.recordedFrames, this.recordedSections, this.reasonCounts);
     }
 
     private GateReason count(GateReason reason) {
@@ -395,6 +438,17 @@ public final class VulkanMeshTaskDraw {
 
     /** Destroys every stage-2 resource. Called from the backend's own teardown. */
     public void delete() {
+        // The final census: unconditional on the 60-frame periodic cadence, so a
+        // short or never-succeeding proof leg still leaves exactly one line naming
+        // how many passes the mesh path drew and why the rest fell back. Silent
+        // only when the draw was never attempted at all.
+        long attempts = 0L;
+        for (long c : this.reasonCounts) {
+            attempts += c;
+        }
+        if (attempts > 0L) {
+            System.out.println("[Celtium] CELTIUM_MESH_TERRAIN_STAGE2_FINAL " + summaryLine());
+        }
         VkDevice device = this.context.device();
         for (Slot slot : this.slots) {
             if (slot.descriptorPool != 0L) {

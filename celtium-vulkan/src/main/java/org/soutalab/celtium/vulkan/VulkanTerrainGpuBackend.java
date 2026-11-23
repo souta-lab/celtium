@@ -17115,6 +17115,19 @@ this.frameBufferOpen = false;
                 this.shadowGpuTerrainDraw = null;
             }
             if (this.celtium$meshStage2 != null) {
+                // Final mesh census (alpha-mesh-next3): one line at teardown joining
+                // the backend's coverage accounting with the capability verdict the
+                // CELTIUM_MESH_PROPERTIES line reported at device creation, so a
+                // proof leg can read outcome + device verdict from a single place.
+                // Printed only when the mesh path was ever attempted; the task draw
+                // prints its own CELTIUM_MESH_TERRAIN_STAGE2_FINAL line in delete().
+                if (this.celtium$meshPassesDrawn > 0L || this.celtium$meshCoverageMisses > 0L) {
+                    System.out.println("[Celtium] CELTIUM_MESH_CENSUS passesDrawn="
+                            + this.celtium$meshPassesDrawn
+                            + " coverageMisses=" + this.celtium$meshCoverageMisses
+                            + " stage2Capable=" + this.context.meshCapability().stage2Capable()
+                            + " capability=" + this.context.meshCapability());
+                }
                 this.celtium$meshStage2.taskDraw().delete();
                 this.celtium$meshStage2.release();
                 this.celtium$meshStage2 = null;
@@ -19247,9 +19260,20 @@ this.frameBufferOpen = false;
                     this.terrainBudget.capActive());
             if (verdict == VulkanMeshTaskDraw.GateReason.NONE) {
                 this.celtium$meshPassesDrawn++;
+                // Census (alpha-mesh-next3, stage4-wire handover item 4): a mesh-drawn
+                // pass skips the region loop, which is where the loop's draws/sections
+                // are normally credited — without this the pass' TerrainStatistics
+                // read draws=0/sections=0 and the verification line could not tell a
+                // mesh-drawn pass from an empty one. Credit the one task dispatch
+                // and the directory's section count, in the loop's own units.
+                this.terrainStatistics.addLastDrawCommands(1L);
+                this.terrainStatistics.addLastSectionsDrawn(
+                        collected.cachedDirectory != null
+                                ? collected.cachedDirectory.sectionCount() : 0L);
                 if (this.celtium$meshPassesDrawn % 60L == 1L) {
                     System.out.println("[Celtium] CELTIUM_MESH_TERRAIN_STAGE4_WIRE pass="
-                            + pass.name() + " sectionsDrawn=" + this.celtium$meshPassesDrawn
+                            + pass.name() + " passesDrawn=" + this.celtium$meshPassesDrawn
+                            + " sections=" + this.celtium$meshStage2.taskDraw().recordedSections()
                             + " coverageMisses=" + this.celtium$meshCoverageMisses);
                 }
                 return true;
