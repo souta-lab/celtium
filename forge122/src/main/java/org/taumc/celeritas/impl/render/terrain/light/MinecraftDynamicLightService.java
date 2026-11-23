@@ -80,11 +80,18 @@ public final class MinecraftDynamicLightService implements DynamicLightService {
     // Item 698 values print: the counters above say a gather happened and how many sources it
     // kept, but not what it actually wrote - the scratch contents (camera-relative position and
     // level per source) are the discriminator between "the values are wrong" and "the values are
-    // right but light nothing visible". Prints are budgeted (count changes plus a sparse periodic
-    // re-print) so a long session stays readable and under the log limiter's per-tag cap.
+    // right but light nothing visible". The v1 print (first non-empty gather only) measured the
+    // values correct yet could not bracket the capture frame: a leg's final summary showed
+    // gatherLast=0, so whether the source was still being returned at capture time stayed open.
+    // v2 therefore prints every count transition (including the drop to zero, with the call
+    // index) and re-prints the values every 256 calls while the count is non-zero, so a leg can
+    // place the capture frame inside the source's lifetime from the console alone. Budgets keep
+    // a long session readable and under the log limiter's per-tag cap.
     private static int gatherValuesChangePrints;
     private static int gatherValuesPeriodicPrints;
     private static int gatherValuesLastCount = -1;
+    private static int gatherTransitionPrints;
+    private static int gatherTrackedCount;
 
     private MinecraftDynamicLightService() {
     }
@@ -168,11 +175,19 @@ public final class MinecraftDynamicLightService implements DynamicLightService {
             System.out.println("[Celtium] CELTIUM_GATHER_FIRST count=" + count
                     + " snapshot=" + this.snapshotCount);
         }
+        if (count != gatherTrackedCount) {
+            if (gatherTransitionPrints < 32) {
+                gatherTransitionPrints++;
+                System.out.println("[Celtium] CELTIUM_GATHER_TRANSITION calls=" + gatherCalls
+                        + " count=" + gatherTrackedCount + "->" + count);
+            }
+            gatherTrackedCount = count;
+        }
         if (count > 0) {
             boolean changed = count != gatherValuesLastCount;
-            boolean periodic = (gatherCalls & 4095L) == 0L;
+            boolean periodic = (gatherCalls & 255L) == 0L;
             if ((changed && gatherValuesChangePrints < 8)
-                    || (periodic && gatherValuesPeriodicPrints < 4)) {
+                    || (periodic && gatherValuesPeriodicPrints < 16)) {
                 if (changed) {
                     gatherValuesChangePrints++;
                 } else {
@@ -181,6 +196,7 @@ public final class MinecraftDynamicLightService implements DynamicLightService {
                 gatherValuesLastCount = count;
                 StringBuilder line = new StringBuilder("[Celtium] CELTIUM_GATHER_VALUES count=");
                 line.append(count);
+                line.append(" calls=").append(gatherCalls);
                 line.append(" cam=").append(cameraX).append(',').append(cameraY).append(',').append(cameraZ);
                 int shown = Math.min(count, 4);
                 for (int i = 0; i < shown; i++) {
