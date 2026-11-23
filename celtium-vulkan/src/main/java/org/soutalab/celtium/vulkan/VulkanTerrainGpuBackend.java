@@ -16934,6 +16934,14 @@ this.frameBufferOpen = false;
 
     public void delete() {
         this.presentSwapchain.freeCachedWindowBegin();
+        if (this.cachedTerrainBegin != null) {
+            this.cachedTerrainBegin.free();
+            this.cachedTerrainBegin = null;
+        }
+        if (this.cachedTerrainBeginArea != null) {
+            this.cachedTerrainBeginArea.free();
+            this.cachedTerrainBeginArea = null;
+        }
         if (this.groupViewportScratch != null) {
             this.groupViewportScratch.free();
             this.groupViewportScratch = null;
@@ -18933,11 +18941,7 @@ this.frameBufferOpen = false;
             }
         }
         org.soutalab.celtium.vulkan.FramePassTimings.end("prepRoute");
-        begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
-                .renderPass(renderPass)
-                .framebuffer(terrainFramebuffer);
-        begin.renderArea().offset().set(0, 0);
-        begin.renderArea().extent().set(passAreaWidth, passAreaHeight);
+        begin = celtium$terrainBeginInfo(renderPass, terrainFramebuffer, passAreaWidth, passAreaHeight);
         timestampSlot = this.timestampsUsable && this.timestampSlots < WINDOW_SLOT_BASE
                 ? this.timestampSlots : -1;
         gpuMark("terrain-begin");
@@ -21235,6 +21239,50 @@ this.frameBufferOpen = false;
 
 
 
+
+    /** The terrain begin struct reused across passes, in the window cache's shape; see below. */
+    private org.lwjgl.vulkan.VkRenderPassBeginInfo cachedTerrainBegin;
+    private org.lwjgl.vulkan.VkRect2D cachedTerrainBeginArea;
+    private long cachedTerrainBeginPass;
+    private long cachedTerrainBeginFramebuffer;
+    private int cachedTerrainBeginWidth = -1;
+    private int cachedTerrainBeginHeight = -1;
+    private boolean cachedTerrainBeginValid;
+
+    /**
+     * {@return the terrain pass' render-pass begin info}, reusing the struct and its render area
+     * while the pass, the framebuffer and the extent stay the same.
+     * <p>
+     * The terrain bracket used to calloc a begin struct on the memory stack and refill it on every
+     * pass, although its four inputs change only when the routed target does - the same shape the
+     * window path's {@link #celtium$windowBeginInfo} cache already answers for its windows. The
+     * terrain pass attaches no clear values (its attachments load), so the cached struct names none,
+     * explicitly, where the stack calloc's zeroing used to say it implicitly. Compared field by
+     * field, not by a hash, for the window cache's reason.
+     */
+    private org.lwjgl.vulkan.VkRenderPassBeginInfo celtium$terrainBeginInfo(long renderPass, long framebuffer,
+                                                                              int width, int height) {
+        if (this.cachedTerrainBegin == null) {
+            this.cachedTerrainBegin = org.lwjgl.vulkan.VkRenderPassBeginInfo.malloc();
+            this.cachedTerrainBeginArea = org.lwjgl.vulkan.VkRect2D.malloc();
+            this.cachedTerrainBeginValid = false;
+        }
+        if (!this.cachedTerrainBeginValid || renderPass != this.cachedTerrainBeginPass
+                || framebuffer != this.cachedTerrainBeginFramebuffer
+                || width != this.cachedTerrainBeginWidth || height != this.cachedTerrainBeginHeight) {
+            org.lwjgl.vulkan.VkRect2D area = this.cachedTerrainBeginArea;
+            area.offset().set(0, 0);
+            area.extent().set(width, height);
+            this.cachedTerrainBegin.sType$Default().renderPass(renderPass).framebuffer(framebuffer)
+                    .renderArea(area).clearValueCount(0).pClearValues(null);
+            this.cachedTerrainBeginPass = renderPass;
+            this.cachedTerrainBeginFramebuffer = framebuffer;
+            this.cachedTerrainBeginWidth = width;
+            this.cachedTerrainBeginHeight = height;
+            this.cachedTerrainBeginValid = true;
+        }
+        return this.cachedTerrainBegin;
+    }
 
     /** Counts one window opening against the frame that asked for it, printing the first few callers. */
     private void celtium$noteWindowOpenSite() {

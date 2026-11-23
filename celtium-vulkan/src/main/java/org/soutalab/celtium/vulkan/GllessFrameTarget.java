@@ -1606,6 +1606,20 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
     }
 
+    /**
+     * The same record as {@link #noteSharedDepthLayout}, skipped when the store already names {@code layout}.
+     *
+     * @return whether the store's record changed
+     */
+    public boolean noteSharedDepthLayoutIfChanged(long depthKey, int layout) {
+        SharedDepth entry = this.sharedDepths.get(depthKey);
+        if (entry == null || entry.layout == layout) {
+            return false;
+        }
+        entry.layout = layout;
+        return true;
+    }
+
     /** {@return the frame serial the shared depth image for {@code depthKey} was last cleared in}, -1 when never. */
     public long sharedDepthClearedFrameSerial(long depthKey) {
         SharedDepth entry = this.sharedDepths.get(depthKey);
@@ -2211,6 +2225,39 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
+     * Records a layout at a slot the caller already resolved (the published walk resolves it once per
+     * cache rebuild, when the pair generation changes), skipping the write when the pair's record
+     * already names {@code layout}.
+     * <p>
+     * The walk used to pay two pair lookups and a slot scan per name per pass for this record
+     * ({@code chainPairColorSlotForImage} plus the note's own lookup), and wrote the same value back
+     * on every settled pass. One lookup remains - the record is read before it is trusted, because
+     * the pair's own acquire and clear paths also write it between walks, so a caller's memo of the
+     * last value it wrote would not be a sound reason to skip.
+     *
+     * @return whether the pair's record changed
+     */
+    public boolean noteChainPairColorLayoutAtSlotIfChanged(long identity, int slot, int layout) {
+        checkAlive();
+        Pair pair = existingChainPair(identity);
+        if (pair == null || slot < 0) {
+            return false;
+        }
+        if (slot == 0) {
+            if (pair.colorLayout() == layout) {
+                return false;
+            }
+            pair.noteColorLayout(layout);
+            return true;
+        }
+        if (pair.extraColorLayoutAt(slot) == layout) {
+            return false;
+        }
+        pair.noteExtraColorLayout(slot, layout);
+        return true;
+    }
+
+    /**
      * A framebuffer can be sampled before its first draw (vanilla's empty outline target does this every frame).
      * Initialize the owned attachment, rather than manufacturing an unwritten texture mirror under its name.
      * This one-time bootstrap completes before publication; subsequent sampling adds no submission or wait.
@@ -2774,6 +2821,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.extraColorViews = null;
             this.extraColorLayouts = null;
             this.extraColorCount = 0;
+        }
+
+        /** The recorded layout of an extra colour slot, UNDEFINED when the slot holds none. */
+        private int extraColorLayoutAt(int slot) {
+            return slot > 0 && slot - 1 < this.extraColorCount && this.extraColorLayouts != null
+                    ? this.extraColorLayouts[slot - 1] : VK_IMAGE_LAYOUT_UNDEFINED;
         }
 
         /** Records a layout an extra colour image has been moved to, by whoever moved it (the sampling side). */
