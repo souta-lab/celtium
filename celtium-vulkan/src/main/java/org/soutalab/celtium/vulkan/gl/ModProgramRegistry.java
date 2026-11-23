@@ -223,18 +223,11 @@ public final class ModProgramRegistry {
     private static final int GL_VERTEX_SHADER = 0x8B31;
     private static final int GL_FRAGMENT_SHADER = 0x8B30;
 
-    private static final Int2ObjectOpenHashMap<String> SHADER_SOURCES = new Int2ObjectOpenHashMap<>();
-    /** The stage each shader name was created for, by GL enum; absent when the creating call was never routed here. */
-    private static final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap SHADER_STAGES =
-            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+    // GAP-PROG-1 rewired: shader sources and stages live in GlsmShaderLedger.
     private static final Int2ObjectOpenHashMap<Program> PROGRAMS = new Int2ObjectOpenHashMap<>();
-    /**
-     * Shader names deleted while a live program still referenced them (item 328, V-04). GL defers such a
-     * deletion until detach, so the source is retained for the referencing program - but the name itself is
-     * spent: if it is attached afresh (recycled by the driver for a new shader object), the retained source
-     * must not be what a link compiles. A fresh {@code glShaderSource} for the name spends the marker.
-     */
-    private static final IntOpenHashSet DELETED_SHADERS = new IntOpenHashSet();
+    // GAP-PROG-1: the deferred-deletion marker set (item 328, V-04 - GL defers a referenced
+    // shader's deletion until detach, and a recycled name must not compile its predecessor's
+    // retained source) is GlsmShaderLedger's deleted set, consulted via isDeleted/spendDeletion.
     /** Uniform writes to a location no linked program names: counted, so a lost value is visible. */
     private static int unmatchedUniformWrites;
     /**
@@ -264,18 +257,14 @@ public final class ModProgramRegistry {
      * at the call that actually starts the new incarnation.
      */
     public static void shaderStage(int shader, int glStage) {
-        SHADER_STAGES.put(shader, glStage);
-        if (DELETED_SHADERS.remove(shader)) {
-            SHADER_SOURCES.remove(shader);
-        }
+        GlsmShaderLedger.current().createShader(shader, glStage);
     }
 
     /** {@code glShaderSource}: the stage's text, concatenated as GL concatenates the strings. */
     public static void shaderSource(int shader, String source) {
-        SHADER_SOURCES.put(shader, source);
         // A fresh source is the current incarnation speaking for itself; any deletion marker the name
-        // carried is spent.
-        DELETED_SHADERS.remove(shader);
+        // carried is spent (the ledger's shaderSource does both).
+        GlsmShaderLedger.current().shaderSource(shader, source);
     }
 
     /** {@code glAttachShader}. */
@@ -285,9 +274,7 @@ public final class ModProgramRegistry {
             // A name deleted while attached elsewhere and now attached afresh is a new shader object: in GL
             // it starts with no source, so its predecessor's retained source is dropped here rather than
             // compiled by this program's link. A later glShaderSource re-arms the name.
-            if (DELETED_SHADERS.remove(shader)) {
-                SHADER_SOURCES.remove(shader);
-            }
+            GlsmShaderLedger.current().spendDeletion(shader);
             p.shaders.add(shader);
         }
     }
@@ -300,7 +287,7 @@ public final class ModProgramRegistry {
         String stageFailure = null;
         for (int i = 0, n = p.shaders.size(); i < n; i++) {
             int shader = p.shaders.getInt(i);
-            String source = SHADER_SOURCES.get(shader);
+            String source = GlsmShaderLedger.current().source(shader);
             if (source == null) {
                 continue;
             }
@@ -309,7 +296,7 @@ public final class ModProgramRegistry {
             // fragment stage that mentioned gl_Position in a comment was classified as the vertex stage and
             // the whole program was refused for having no fragment stage. Two shaders claiming one stage is
             // a link error in GL; it is one here too, rather than the second silently overwriting the first.
-            int stage = SHADER_STAGES.get(shader);
+            int stage = GlsmShaderLedger.current().stage(shader);
             boolean isVertex;
             if (stage == GL_VERTEX_SHADER) {
                 isVertex = true;
@@ -892,10 +879,8 @@ public final class ModProgramRegistry {
             // live program references them any more (item 328, V-04).
             for (int i = 0, n = removed.shaders.size(); i < n; i++) {
                 int shader = removed.shaders.getInt(i);
-                if (DELETED_SHADERS.contains(shader) && !referencedByLiveProgram(shader)) {
-                    DELETED_SHADERS.remove(shader);
-                    SHADER_SOURCES.remove(shader);
-                    SHADER_STAGES.remove(shader);
+                if (GlsmShaderLedger.current().isDeleted(shader) && !referencedByLiveProgram(shader)) {
+                    GlsmShaderLedger.current().dropShader(shader);
                 }
             }
         }
@@ -909,11 +894,9 @@ public final class ModProgramRegistry {
      */
     public static void deleteShader(int id) {
         if (referencedByLiveProgram(id)) {
-            DELETED_SHADERS.add(id);
+            GlsmShaderLedger.current().markDeleted(id);
         } else {
-            DELETED_SHADERS.remove(id);
-            SHADER_SOURCES.remove(id);
-            SHADER_STAGES.remove(id);
+            GlsmShaderLedger.current().dropShader(id);
         }
     }
 
@@ -936,10 +919,8 @@ public final class ModProgramRegistry {
 
     /** Test support: forget everything. */
     static void clear() {
-        SHADER_SOURCES.clear();
-        SHADER_STAGES.clear();
+        GlsmShaderLedger.current().clear();
         PROGRAMS.clear();
-        DELETED_SHADERS.clear();
         unmatchedUniformWrites = 0;
         locationNameCollisions = 0;
         GlsmPackState.clear();

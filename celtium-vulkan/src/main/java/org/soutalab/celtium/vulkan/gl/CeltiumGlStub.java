@@ -408,7 +408,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** The last {@code glPointSize} request. Points are not rasterized, so this exists for the query only. */
     volatile float pointSize = 1.0f;
     /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
-    volatile int currentProgram, boundVertexArray;
+    volatile int boundVertexArray;
+    // GAP-PROG-1 rewired: the current program is GlsmShaderLedger's (SEM_USE_PROGRAM writes it there).
     // GAP-ST-7 rewired: compilingList/compilingMode, lastCalledList, executingList and listBase
     // are GlsmDisplayListLedger's, as are the compiled-list/geometry/payload maps and counters below.
 
@@ -5377,7 +5378,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.lineWidth = Float.intBitsToFloat((int) c[0]);
                 return 0L;
             case SEM_USE_PROGRAM:
-                this.currentProgram = (int) c[0];
+                GlsmShaderLedger.current().useProgram((int) c[0]);
                 return 0L;
             case SEM_NEW_LIST:
                 // A name of zero is not a list (the spec makes glNewList(0) GL_INVALID_VALUE), and recording under it
@@ -8318,8 +8319,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (reason == null) {
             celtium$noteClientTuple(clientMemory, buffer, count, formatId);
         }
-        if (this.currentProgram != 0 && this.celtium$programDraws.add(this.currentProgram)) {
-            System.out.println("[Celtium] CELTIUM_PROGRAM_DRAW program=" + this.currentProgram + " mode=" + mode
+        if (GlsmShaderLedger.current().currentProgram() != 0
+                && this.celtium$programDraws.add(GlsmShaderLedger.current().currentProgram())) {
+            System.out.println("[Celtium] CELTIUM_PROGRAM_DRAW program=" + GlsmShaderLedger.current().currentProgram() + " mode=" + mode
                     + " count=" + count + " format=" + formatId + " reason=" + reason);
         }
         long address = 0L;
