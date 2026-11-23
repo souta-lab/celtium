@@ -54,6 +54,19 @@ public final class GlsmShaderLedger {
     /** Marks a shader deleted; the caller drops it fully once no live program references it. */
     public void markDeleted(int shader) { this.deleted.add(shader); this.version++; }
 
+    /**
+     * Spends a pending deletion marker on a recycled name (the registry's attach rule):
+     * a deleted name attached afresh starts with no source.
+     *
+     * @return true when a marker was present (and the retained source was dropped)
+     */
+    public boolean spendDeletion(int shader) {
+        if (!this.deleted.remove(shader)) return false;
+        this.sources.remove(shader);
+        this.version++;
+        return true;
+    }
+
     public boolean isDeleted(int shader) { return this.deleted.contains(shader); }
 
     /** The deferred delete taking effect: source and stage go with the flag. */
