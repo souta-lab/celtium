@@ -308,7 +308,7 @@ public abstract class RenderSectionManager {
             this.createTerrainRenderList(playerViewport, null, frame, spectator);
         }
 
-        if (this.canSubmitShadowGraphSearch()) {
+        if (this.canSubmitShadowGraphSearch() && this.celtium$shouldSubmitShadowSearch(shadowViewport)) {
             this.submitShadowGraphSearch(shadowViewport, frame);
         }
     }
@@ -327,6 +327,90 @@ public abstract class RenderSectionManager {
 
         this.shadowRenderListManager.startShadowGraphUpdate(shadowViewport, frame, this.regions.getRegionIdsLength(),
                 this.getSearchDistance(null), lightVector, this.getTargetQueueSize());
+    }
+
+    // ---- E7 (item 690, alpha): shadow-search reuse gate ---------------------------------------------------
+    //
+    // The branch the item 690 census was pre-fixed to land on if the terrain-setup part of shadow setup
+    // dominates (optim-enum-opus55-1 E7): do not re-derive what the previous frame already derived when
+    // the inputs have not moved. In this tree the shadow graph search is submitted unconditionally on
+    // every shadow pass (canSubmitShadowGraphSearch has no override), so each frame pays a full
+    // findShadowVisible lattice scan plus the join that publishes it, even when the shadow camera sits
+    // in the same section, the light has not measurably turned, and no chunk has been added or removed
+    // since the search that produced the published lists.
+    //
+    // The gate keys the search on exactly those inputs: the shadow camera's section (the chunk coord of
+    // the shadow viewport), the light direction quantized to 1/32 component steps, and the chunk
+    // add/remove event count, with a 500 ms staleness cap so slower-moving causes of set change (a
+    // section gaining or losing geometry through a rebuild, which only marks the graph dirty) are
+    // absorbed within the cap instead of being tracked one by one. What is reused is only the section
+    // SET: the shadow camera matrices are rebuilt by the caller every frame regardless, so the shadows
+    // themselves keep tracking the light; what can lag is a section entering or leaving the set at its
+    // edge, bounded by one section quantum, one light quantum, or the age cap, whichever trips first.
+    // When the frustum carries no occlusion light vector the search always runs - the frustum-only
+    // scan's view is not keyed by anything this gate can quantize.
+    //
+    // Lab switch: -Dceltium.shadowSearchReuse (default off; off is the pre-change behaviour, submit
+    // every frame). While on, a CELTIUM_SHADOW_SEARCH_REUSE line is printed every 600 shadow passes so
+    // a leg can read the skip rate the bracket attribution has to match.
+
+    private static final boolean SHADOW_SEARCH_REUSE = Boolean.getBoolean("celtium.shadowSearchReuse");
+    private static final long SHADOW_SEARCH_REUSE_MAX_AGE_NANOS = 500_000_000L;
+
+    private boolean celtium$shadowSearchKeyValid;
+    private int celtium$shadowSearchChunkX;
+    private int celtium$shadowSearchChunkY;
+    private int celtium$shadowSearchChunkZ;
+    private int celtium$shadowSearchLightX;
+    private int celtium$shadowSearchLightY;
+    private int celtium$shadowSearchLightZ;
+    private int celtium$shadowSearchEventsAtSearch;
+    private long celtium$lastShadowSearchNanos;
+    private int celtium$shadowChunkEvents;
+    private long celtium$shadowSearchesSubmitted;
+    private long celtium$shadowSearchesSkipped;
+
+    private boolean celtium$shouldSubmitShadowSearch(Viewport shadowViewport) {
+        if (!SHADOW_SEARCH_REUSE) {
+            return true;
+        }
+        if (!(shadowViewport.getFrustum() instanceof ShadowSearchFrustum searchFrustum)
+                || !searchFrustum.supportsOcclusionSearch()) {
+            return true;
+        }
+        var chunk = shadowViewport.getChunkCoord();
+        int lightX = Math.round(searchFrustum.shadowLightX() * 32.0f);
+        int lightY = Math.round(searchFrustum.shadowLightY() * 32.0f);
+        int lightZ = Math.round(searchFrustum.shadowLightZ() * 32.0f);
+        long now = System.nanoTime();
+        boolean reusable = this.celtium$shadowSearchKeyValid
+                && chunk.x() == this.celtium$shadowSearchChunkX
+                && chunk.y() == this.celtium$shadowSearchChunkY
+                && chunk.z() == this.celtium$shadowSearchChunkZ
+                && lightX == this.celtium$shadowSearchLightX
+                && lightY == this.celtium$shadowSearchLightY
+                && lightZ == this.celtium$shadowSearchLightZ
+                && this.celtium$shadowChunkEvents == this.celtium$shadowSearchEventsAtSearch
+                && now - this.celtium$lastShadowSearchNanos < SHADOW_SEARCH_REUSE_MAX_AGE_NANOS;
+        if (reusable) {
+            this.celtium$shadowSearchesSkipped++;
+            if ((this.celtium$shadowSearchesSubmitted + this.celtium$shadowSearchesSkipped) % 600 == 0) {
+                System.out.println("CELTIUM_SHADOW_SEARCH_REUSE submitted=" + this.celtium$shadowSearchesSubmitted
+                        + " skipped=" + this.celtium$shadowSearchesSkipped);
+            }
+            return false;
+        }
+        this.celtium$shadowSearchKeyValid = true;
+        this.celtium$shadowSearchChunkX = chunk.x();
+        this.celtium$shadowSearchChunkY = chunk.y();
+        this.celtium$shadowSearchChunkZ = chunk.z();
+        this.celtium$shadowSearchLightX = lightX;
+        this.celtium$shadowSearchLightY = lightY;
+        this.celtium$shadowSearchLightZ = lightZ;
+        this.celtium$shadowSearchEventsAtSearch = this.celtium$shadowChunkEvents;
+        this.celtium$lastShadowSearchNanos = now;
+        this.celtium$shadowSearchesSubmitted++;
+        return true;
     }
 
     private void updateCameraPosition(Viewport positionedViewport) {
@@ -1544,12 +1628,15 @@ public abstract class RenderSectionManager {
     }
 
     public void onChunkAdded(int x, int z) {
+        // E7 gate input: the section set changed, so a reused shadow search is no longer keyed on it.
+        this.celtium$shadowChunkEvents++;
         for (int y = this.minSection; y < this.maxSection; y++) {
             this.onSectionAdded(x, y, z);
         }
     }
 
     public void onChunkRemoved(int x, int z) {
+        this.celtium$shadowChunkEvents++;
         for (int y = this.minSection; y < this.maxSection; y++) {
             this.onSectionRemoved(x, y, z);
         }
