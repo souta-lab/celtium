@@ -1846,12 +1846,17 @@ public final class VulkanModProgramPipeline {
         float[] floats = program.floats(plan.names[i]);
         int[] ints = floats == null ? program.ints(plan.names[i]) : null;
         float[] defaults = floats == null && ints == null ? plan.defaults[i] : null;
+        // The member's whole range is cleared first, source or not: the full walk packs into a
+        // zeroed buffer, so a rewrite that records fewer components than the value it replaces
+        // (a shorter glUniform*fv for the same member) must read its tail as zero - without this
+        // the retained block kept the replaced value's tail and the two routes' bytes diverged
+        // (merge-phase byte-equivalence test [b], shortened-rewrite case).
+        int from = plan.offsets[i];
+        int to = Math.min(block.capacity(), from + plan.sizes[i]);
+        if (to > from) {
+            MemoryUtil.memSet(MemoryUtil.memAddress(block) + from, 0, to - from);
+        }
         if (floats == null && ints == null && defaults == null) {
-            int from = plan.offsets[i];
-            int to = Math.min(block.capacity(), from + plan.sizes[i]);
-            if (to > from) {
-                MemoryUtil.memSet(MemoryUtil.memAddress(block) + from, 0, to - from);
-            }
             return;
         }
         int components = plan.components[i];
