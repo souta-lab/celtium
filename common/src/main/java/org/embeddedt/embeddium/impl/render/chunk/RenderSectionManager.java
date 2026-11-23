@@ -897,8 +897,11 @@ public abstract class RenderSectionManager {
             Long.getLong("celtium.streamSpreadBudgetMicros", 1200L).longValue();
 
     /** Holders processed per slice; a slice is the unit the bucket is debited for. Kept below the backend
-     * budget's burst threshold (32) so the two queues can never both engage on one call. */
-    private static final int STREAM_SPREAD_SLICE = 8;
+     * budget's burst threshold (32) so the two queues can never both engage on one call. Small, because the
+     * measured arrival shape (F1 v1 leg, 2026-11-23) is a trickle of at most 4 holders per call whose cost
+     * (~0.25 ms per holder) accumulates across consecutive frames: a slice of 8 plus a guaranteed first slice
+     * processed every arrival whole and the budget never engaged (spreadCalls=0, maxQueued=4). */
+    private static final int STREAM_SPREAD_SLICE = 2;
 
     /** The oldest deferred holder's maximum wait before the queue is drained regardless of credit (pop-in bound). */
     private static final long STREAM_SPREAD_MAX_WAIT_NANOS = 250_000_000L;
@@ -926,9 +929,10 @@ public abstract class RenderSectionManager {
 
     /**
      * The spreading form of {@link #uploadChunks}' processing step: queue the new results behind any deferred
-     * ones, then process slices while the bucket has credit. At least one slice is processed per call whenever
-     * the queue is non-empty, so the queue always makes progress; a holder that waited past
-     * {@link #STREAM_SPREAD_MAX_WAIT_NANOS}, or a queue past {@link #STREAM_SPREAD_MAX_QUEUED}, drains in full.
+     * ones, then process slices while the bucket has credit. A call may process nothing at all when the bucket
+     * is in debt - that is the spreading working, not a stall: a holder that waited past
+     * {@link #STREAM_SPREAD_MAX_WAIT_NANOS}, or a queue past {@link #STREAM_SPREAD_MAX_QUEUED}, drains in full
+     * regardless of credit, which bounds the pop-in a deferred section can suffer.
      */
     private void celtium$spreadUploadChunks(ArrayList<ChunkJobResult.Success<? extends ChunkTaskOutput>> results) {
         if (!results.isEmpty()) {
@@ -955,7 +959,12 @@ public abstract class RenderSectionManager {
 
         int slices = 0;
         while (!this.streamSpreadQueue.isEmpty()) {
-            if (!forced && slices > 0 && !this.streamSpreadBudget.hasCredit()) {
+            // No guaranteed first slice: with the measured trickle arrivals, guaranteeing one slice per call
+            // processes every arrival whole and the budget can never engage (F1 v1 leg). Progress is guaranteed
+            // instead by the forced drain above - a holder that waited past the maximum wait, or a queue past
+            // the depth bound, is processed regardless of credit - and by the refill itself, which earns a
+            // slice's cost back within a few frames.
+            if (!forced && !this.streamSpreadBudget.hasCredit()) {
                 break;
             }
             ArrayList<ChunkJobResult.Success<? extends ChunkTaskOutput>> slice = new ArrayList<>(STREAM_SPREAD_SLICE);
