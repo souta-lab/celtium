@@ -274,3 +274,4 @@ nvidium, Iris).
 ## 🙏 Special thanks
 
 - **biyu_bu (밥다섯)** — tireless testing on real modpacks, with detailed reports (logs, screenshots, and retests) that drove many fixes, including the Demonica GUI corruption and the swapchain crash after v0.3.0.
+- **Angelica (GTNewHorizons)** — Celtium's primary design reference. Its GLSM state-machine architecture, GPU terrain culling and shader-pack integration shaped Celtium's renderer design, and the GLSM migration draws on Angelica's code (LGPL-3.0).
