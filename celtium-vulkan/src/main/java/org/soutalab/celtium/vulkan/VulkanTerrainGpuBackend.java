@@ -397,6 +397,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private static final boolean PACK_SHADOW_REBUILD_BUDGET =
             Boolean.getBoolean("celtium.vulkan.packShadowRebuildBudget");
     /**
+     * The E6 gate for the pack route's shadow stage alone (pack-shadow-e6): pack-region landed the
+     * E6 form - the pass-head shared vertex bind and the per-region indirect draw - for both pack
+     * stages unconditionally, so the shadow stage's share of it could not be priced on its own.
+     * With {@code -Dceltium.vulkan.packShadowE6} on, the shadow stage takes the E6 form exactly as
+     * landed; off (the default), the shadow stage records the pre-E6 form instead - the per-region
+     * vertex bind and first-region shared-index bind in the bind span, and no indirect attempt in
+     * the draw span - so packRecordShadow A/Bs the form with everything else held fixed. The
+     * gbuffers stage is not gated: it keeps the landed E6 form either way.
+     */
+    private static final boolean PACK_SHADOW_E6 =
+            Boolean.getBoolean("celtium.vulkan.packShadowE6");
+    /**
      * The Angelica (Iris) shadow result-cache shape, applied to the pack route's shadow stage
      * (alpha-shadow-cache-form; supersedes the alpha-shadow-interval record-skipping shape as the
      * replacement candidate): when on via {@code -Dceltium.vulkan.packShadowCache}, a recorded shadow
@@ -18060,6 +18072,12 @@ this.frameBufferOpen = false;
             // shadow-diff-1: the rebuild budget governs this execution only when the flag is on and this
             // is the shadow stage; every other execution keeps the unconditional rebuild below.
             boolean budgetedShadow = PACK_SHADOW_REBUILD_BUDGET && shadowStage;
+            // pack-shadow-e6: whether this execution records in the E6 form. The gbuffers stage
+            // always does (pack-region's landed shape); the shadow stage only under its gate -
+            // with the gate off, the shadow stage's bind span below records the pre-E6 per-region
+            // binds and its draw span never attempts the indirect path.
+            boolean shadowE6 = PACK_SHADOW_E6 && shadowStage;
+            boolean e6Stage = !shadowStage || shadowE6;
             // E6: whether the shared index buffer is the one currently bound, as the direct
             // fallback loop's entry state. The indirect path manages its own binds through the
             // renderer's belief, so a successful indirect region clears this - the next direct
@@ -18092,8 +18110,12 @@ this.frameBufferOpen = false;
                 // E6: every region's geometry lives in the one shared vertex arena (kpi-4), so
                 // the vertex bind the loop used to record per region names the same buffer at
                 // offset 0 every time - the pass binds it once here, as the built-in path does,
-                // and the region draws below (indirect or direct) read it throughout.
-                this.terrain.bindSharedVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset);
+                // and the region draws below (indirect or direct) read it throughout. The pack
+                // shadow gate's off form skips this bind: its bind span re-records the bind per
+                // region instead, as before E6.
+                if (e6Stage) {
+                    this.terrain.bindSharedVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset);
+                }
                 while (true) {
                     // Item 722 (E6, first stage): packRegionIter brackets one region's iteration head
                     // (advance, lookup, cached-batch validity; packRecordRebuild nests inside),
@@ -18246,8 +18268,20 @@ this.frameBufferOpen = false;
                         // E6: the vertex buffer is the pass-head bind above and the index buffer
                         // is the draw span's own business now (the indirect path binds through
                         // the renderer's belief; the direct fallback binds at its entry), so the
-                        // only bind left per region is the uniform set itself.
+                        // only bind left per region is the uniform set itself. The pack shadow
+                        // gate's off form (the shadow stage without -Dceltium.vulkan.packShadowE6)
+                        // records the pre-E6 binds after the set instead: the region's vertex
+                        // buffer - the shared arena itself at offset 0 - and, on the first region
+                        // only, the shared index buffer, which the draw span's sharedIndexBound
+                        // then already reports as bound.
                         modPipeline.bindTerrainUniformsAndSet(this.commandBuffer, pushUniforms, descSet, setScratch);
+                        if (!e6Stage) {
+                            this.terrain.bindVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset, resources);
+                            if (!sharedIndexBound) {
+                                this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
+                                sharedIndexBound = true;
+                            }
+                        }
                     } finally {
                         org.soutalab.celtium.vulkan.FramePassTimings.end("packRegionBind");
                     }
@@ -18268,11 +18302,11 @@ this.frameBufferOpen = false;
                         // the region's slot as firstInstance and the indirect path, whose packets
                         // stamp 0, is not used.)
                         boolean indirect = false;
-                        if (TERRAIN_INDIRECT_ENABLED && !glsmRegionTable) {
+                        if (e6Stage && TERRAIN_INDIRECT_ENABLED && !glsmRegionTable) {
                             indirect = this.terrain.tryIndirectBatch(this.context, this.commandBuffer,
                                     stack, this.sharedIndexBuffers, resources, batch, sortedPass,
                                     primitiveType, 0);
-                        } else {
+                        } else if (e6Stage) {
                             this.terrain.noteTerrainIndirectFallback();
                             this.terrain.setLastTerrainIndirectFallback(glsmRegionTable
                                     ? "GLSM stage 1: region offsets ride the draws' firstInstance, which the indirect packets stamp 0; the direct walk delivers them"
