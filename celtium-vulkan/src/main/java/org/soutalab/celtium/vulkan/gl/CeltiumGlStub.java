@@ -1788,8 +1788,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         if (isDepthAttachment(attachment)) {
-            updateDepthAttachment(stub.framebufferDepthTextures, stub.depthTextureFramebuffers,
-                    framebuffer, attachment, texture);
+            GlsmFramebufferAttachments.current().attachDepth(framebuffer, texture);
             // Registration point, as in the bound-form attach: the record is complete enough to register from.
             Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
@@ -1801,10 +1800,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (slot < 0) {
             return;
         }
-        updateColorAttachmentSlot(stub.framebufferColorAttachments, framebuffer, slot, texture);
-        if (slot == 0) {
-            updateColorAttachment(stub.framebufferColorTextures, stub.colorTextureFramebuffers, framebuffer, texture);
-        }
+        GlsmFramebufferAttachments.current().attachColor(framebuffer, slot, texture);
         Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
             vulkan.celtium$rawAttachmentChanged(framebuffer);
@@ -6231,11 +6227,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (name != 0) {
             Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
-                for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry entry
-                        : this.framebufferColorTextures.int2IntEntrySet()) {
-                    if (entry.getIntValue() == name) {
-                        vulkan.celtium$rawAttachmentTextureDeleted(entry.getIntKey());
-                    }
+                for (Integer fbo : GlsmFramebufferAttachments.current().framebuffersWithColorTexture(name)) {
+                    vulkan.celtium$rawAttachmentTextureDeleted(fbo.intValue());
                 }
                 vulkan.celtium$rawTextureDeleted(name);
             }
@@ -6505,12 +6498,9 @@ public final class CeltiumGlStub implements FunctionProvider {
      * association exist at all; the resolution itself stays where it already is
      * ({@code celtium$publishFramebufferColorTexture}).
      */
-    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap framebufferColorTextures =
-            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
-
-    /** Reverse lookup for texture sampling: avoid a scan through every Mod FBO on each draw. */
-    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap colorTextureFramebuffers =
-            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+    // GAP-ST-3 rewired: the five attachment records (colour forward/reverse, per-slot colour,
+    // depth forward/reverse) are GlsmFramebufferAttachments'. The javadoc above is the record's
+    // history; the resolution stays at celtium$publishFramebufferColorTexture as it says.
 
     /** Colour attachment slots a framebuffer record carries: the MRT ledger size (GL_MAX_COLOR_ATTACHMENTS). */
     static final int COLOR_ATTACHMENT_SLOTS = 8;
@@ -6524,8 +6514,6 @@ public final class CeltiumGlStub implements FunctionProvider {
      * one pass (Iris's gbuffer targets attach colortex0/1/2 at once); the single-texture record above cannot say
      * that, so the tuple lives here and the backend's publication record is filled from it.
      */
-    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]> framebufferColorAttachments =
-            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
 
     /**
      * Depth attachments of raw framebuffers, mirroring {@link #framebufferColorTextures} for the depth slot.
@@ -6538,12 +6526,6 @@ public final class CeltiumGlStub implements FunctionProvider {
      * (every Iris shadow framebuffer attaches the same mainDepth) — so this record is the fact the backend's
      * shared depth store is keyed from.
      */
-    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap framebufferDepthTextures =
-            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
-
-    /** Reverse lookup for the depth record, mirroring {@link #colorTextureFramebuffers}. */
-    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap depthTextureFramebuffers =
-            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
 
     /** GL_DEPTH_ATTACHMENT. */
     private static final int DEPTH_ATTACHMENT = 0x8D00;
@@ -6618,14 +6600,12 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     private void forgetFramebuffer(int name) {
         if (name == 0) return;
-        int color = this.framebufferColorTextures.get(name);
+        int color = GlsmFramebufferAttachments.current().colorTexture(name);
         Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
             vulkan.celtium$rawFramebufferDeleted(name, color);
         }
-        updateColorAttachment(this.framebufferColorTextures, this.colorTextureFramebuffers, name, 0);
-        updateColorAttachment(this.framebufferDepthTextures, this.depthTextureFramebuffers, name, 0);
-        this.framebufferColorAttachments.remove(name);
+        GlsmFramebufferAttachments.current().framebufferDeleted(name);
         if (this.drawFbo == name) {
             this.drawFbo = 0;
             this.framebufferBindSerial++;
@@ -6655,13 +6635,12 @@ public final class CeltiumGlStub implements FunctionProvider {
         // Depth attachments have their own record (see framebufferDepthTextures): they are not sampled as
         // colour, but the backend keys its shared depth storage from the texture named here.
         if (isDepthAttachment(attachment)) {
-            updateDepthAttachment(this.framebufferDepthTextures, this.depthTextureFramebuffers,
-                    framebuffer, attachment, texture);
+            GlsmFramebufferAttachments.current().attachDepth(framebuffer, texture);
             if (texture != 0 && framebufferDepthAttachmentLogs < 8) {
                 framebufferDepthAttachmentLogs++;
                 System.out.println("[Celtium] CELTIUM_RAW_FBO_DEPTH framebuffer=" + framebuffer
                         + " depthTexture=" + texture
-                        + " depthAttachments=" + this.framebufferDepthTextures.size());
+                        + " depthAttachments=" + GlsmFramebufferAttachments.current().depthTextureCount());
             }
             // The depth attach completes most framebuffers' records (colour went on first), so it is a
             // registration point too: a framebuffer whose binds never reach the renderer's bind report still
@@ -6680,10 +6659,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (slot < 0) {
             return;
         }
-        updateColorAttachmentSlot(this.framebufferColorAttachments, framebuffer, slot, texture);
-        if (slot == 0) {
-            updateColorAttachment(this.framebufferColorTextures, this.colorTextureFramebuffers, framebuffer, texture);
-        }
+        GlsmFramebufferAttachments.current().attachColor(framebuffer, slot, texture);
         // After the record update, not before: the backend's registration reads the record this call just wrote
         // (it used to be notified first and so registered the previous attachment, or none).
         Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
@@ -6696,7 +6672,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             System.out.println("[Celtium] CELTIUM_RAW_FBO framebuffer=" + framebuffer + " slot=" + slot
                     + " colorTexture=" + texture
                     + " textarget=0x" + Integer.toHexString(textarget) + " level=" + level
-                    + " colorAttachments=" + this.framebufferColorTextures.size());
+                    + " colorAttachments=" + GlsmFramebufferAttachments.current().colorTextureCount());
         }
     }
 
@@ -6763,7 +6739,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null || glFramebufferName == 0) {
             return 0;
         }
-        return stub.framebufferColorTextures.get(glFramebufferName);
+        return GlsmFramebufferAttachments.current().colorTexture(glFramebufferName);
     }
 
     /** {@return the depth texture of a raw framebuffer, or 0 when none was recorded}. */
@@ -6772,7 +6748,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null || glFramebufferName == 0) {
             return 0;
         }
-        return stub.framebufferDepthTextures.get(glFramebufferName);
+        return GlsmFramebufferAttachments.current().depthTexture(glFramebufferName);
     }
 
     /** {@return the framebuffer a depth texture is attached to, or 0 when the texture is not a raw depth attachment}. */
@@ -6781,19 +6757,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null || glTextureName == 0) {
             return 0;
         }
-        int cached = stub.depthTextureFramebuffers.get(glTextureName);
-        if (cached != 0 && stub.framebufferDepthTextures.get(cached) == glTextureName) {
-            return cached;
-        }
-        stub.depthTextureFramebuffers.remove(glTextureName);
-        for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry entry
-                : stub.framebufferDepthTextures.int2IntEntrySet()) {
-            if (entry.getIntValue() == glTextureName) {
-                stub.depthTextureFramebuffers.put(glTextureName, entry.getIntKey());
-                return entry.getIntKey();
-            }
-        }
-        return 0;
+        return GlsmFramebufferAttachments.current().framebufferForDepthTexture(glTextureName);
     }
 
     /**
@@ -6807,12 +6771,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null || glFramebufferName == 0) {
             return out;
         }
-        int[] recorded = stub.framebufferColorAttachments.get(glFramebufferName);
-        if (recorded != null) {
-            System.arraycopy(recorded, 0, out, 0, COLOR_ATTACHMENT_SLOTS);
-        } else {
-            out[0] = stub.framebufferColorTextures.get(glFramebufferName);
-        }
+        GlsmFramebufferAttachments.current().colorAttachments(glFramebufferName, out);
         return out;
     }
 
@@ -6822,50 +6781,13 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null || glTextureName == 0) {
             return 0;
         }
-        int cached = stub.colorTextureFramebuffers.get(glTextureName);
-        if (cached != 0 && celtium$framebufferAttachesColor(stub, cached, glTextureName)) {
-            return cached;
-        }
-        stub.colorTextureFramebuffers.remove(glTextureName);
-        for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry entry
-                : stub.framebufferColorTextures.int2IntEntrySet()) {
-            if (entry.getIntValue() == glTextureName) {
-                stub.colorTextureFramebuffers.put(glTextureName, entry.getIntKey());
-                return entry.getIntKey();
-            }
-        }
-        // The slot-0 map above is not the whole record: a multi-target framebuffer's other colour textures
-        // live only in its attachment tuple, and a name filling one of those slots belongs to that
-        // framebuffer just the same (the measured case is a shadow framebuffer's second colour target -
-        // the sampling publication's adoption asked this lookup and was told the texture belonged nowhere).
-        for (it.unimi.dsi.fastutil.ints.Int2ObjectMap.Entry<int[]> entry
-                : stub.framebufferColorAttachments.int2ObjectEntrySet()) {
-            int[] slots = entry.getValue();
-            for (int slot = 1; slot < slots.length; slot++) {
-                if (slots[slot] == glTextureName) {
-                    stub.colorTextureFramebuffers.put(glTextureName, entry.getIntKey());
-                    return entry.getIntKey();
-                }
-            }
-        }
-        return 0;
+        return GlsmFramebufferAttachments.current().framebufferForColorTexture(glTextureName);
     }
 
     /** {@return whether {@code framebuffer}'s recorded colour attachments name {@code glTextureName} at any slot}. */
     private static boolean celtium$framebufferAttachesColor(CeltiumGlStub stub, int framebuffer,
             int glTextureName) {
-        if (stub.framebufferColorTextures.get(framebuffer) == glTextureName) {
-            return true;
-        }
-        int[] slots = stub.framebufferColorAttachments.get(framebuffer);
-        if (slots != null) {
-            for (int slot = 1; slot < slots.length; slot++) {
-                if (slots[slot] == glTextureName) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        return GlsmFramebufferAttachments.current().attachesColor(framebuffer, glTextureName);
     }
 
     /**
@@ -7748,8 +7670,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         this.blitDepthRequests++;
-        int sourceTexture = this.framebufferDepthTextures.get(this.readFbo);
-        int destTexture = this.framebufferDepthTextures.get(this.drawFbo);
+        int sourceTexture = GlsmFramebufferAttachments.current().depthTexture(this.readFbo);
+        int destTexture = GlsmFramebufferAttachments.current().depthTexture(this.drawFbo);
         int width = srcX1 - srcX0;
         int height = srcY1 - srcY0;
         String servedFrom;
@@ -9589,9 +9511,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             int slot = colorAttachmentSlot(attachment);
             int colorTexture = 0;
             if (framebuffer != 0 && slot >= 0) {
-                int[] recorded = this.framebufferColorAttachments.get(framebuffer);
-                colorTexture = recorded != null ? recorded[slot]
-                        : slot == 0 ? this.framebufferColorTextures.get(framebuffer) : 0;
+                colorTexture = GlsmFramebufferAttachments.current().colorSlot(framebuffer, slot);
             }
             boolean colorAttached = colorTexture != 0;
             int value;
