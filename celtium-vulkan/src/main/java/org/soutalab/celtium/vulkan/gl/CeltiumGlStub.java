@@ -1930,7 +1930,6 @@ public final class CeltiumGlStub implements FunctionProvider {
         // Name 0 is the default VAO and keeps its own records too: skipping it lost the pointer a caller had set
         // on VAO 0 when it bound another VAO and came back.
         stub.boundVertexArray = array;
-        stub.currentAttribs = stub.attribsFor(array);
         stub.celtium$noteAttribZero();
     }
 
@@ -2509,7 +2508,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         VERTEX_POINTER.normalized = saved.length > 5 && saved[5] != 0L;
         VERTEX_POINTER.integer = saved.length > 6 && saved[6] != 0L;
         // The restored pointer is attribute 0's record too; the two views of it must not drift apart.
-        VaoAttrib attrib = stub.boundAttribs()[0];
+        GlsmClientArrayState.VaoAttrib attrib = stub.boundAttribs()[0];
         attrib.size = VERTEX_POINTER.size;
         attrib.type = VERTEX_POINTER.type;
         attrib.stride = VERTEX_POINTER.stride;
@@ -2528,60 +2527,22 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     // GAP-ST-8: the bound renderbuffer and its recorded extent are GlsmClientArrayState's too.
 
-    /** The generic vertex attributes one VAO record carries; GL guarantees at least sixteen. */
-    private static final int MAX_VERTEX_ATTRIBS = 16;
+    /** The generic vertex attributes one VAO record carries; the owner's constant is the single source. */
+    private static final int MAX_VERTEX_ATTRIBS = GlsmClientArrayState.MAX_VERTEX_ATTRIBS;
 
     /**
-     * One generic vertex attribute's recorded state: its enable, its pointer, and the array buffer the pointer was
-     * set against. GL keeps all three per attribute inside the VAO. The stub used to keep a single pointer record
-     * for attribute 0 alone - no enables, no buffer, and no record at all for the other attributes - which is why a
-     * VAO-carried draw decoded from whichever attribute had been set last and from enables some other draw had left
-     * behind: Demonica's full-screen quad (three attributes set once at setup, its VBO unbound again before the
-     * draw) was refused on every frame for exactly that (offer-path diagnosis, 2026-11-20).
+     * {@return the bound VAO's attribute records}, creating the VAO's array on first use.
+     * The records themselves - the per-VAO arrays of {@link GlsmClientArrayState.VaoAttrib} -
+     * are owned by {@link GlsmClientArrayState} (GLSM stage 3, GAP-ST-8 remainder); this
+     * accessor only names which VAO is bound here.
      */
-    static final class VaoAttrib {
-        boolean enabled;
-        boolean pointerSet;
-        boolean normalized;
-        boolean integer;
-        /** GL's default attribute: size 4, float, tightly packed, null pointer, no buffer. */
-        int size = 4;
-        int type = 0x1406; // GL_FLOAT
-        int stride;
-        long offset;
-        int buffer;
-    }
-
-    /** Per-VAO generic attribute records, keyed by the VAO name; {@link #currentAttribs} is the bound VAO's array. */
-    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<VaoAttrib[]> vaoAttribRecords =
-            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<VaoAttrib[]>();
-
-    /** The bound VAO's attribute records; null until first use, when {@link #boundAttribs()} binds it. */
-    private VaoAttrib[] currentAttribs;
-
-    private VaoAttrib[] attribsFor(int vao) {
-        VaoAttrib[] attribs = this.vaoAttribRecords.get(vao);
-        if (attribs == null) {
-            attribs = new VaoAttrib[MAX_VERTEX_ATTRIBS];
-            for (int i = 0; i < attribs.length; i++) {
-                attribs[i] = new VaoAttrib();
-            }
-            this.vaoAttribRecords.put(vao, attribs);
-        }
-        return attribs;
-    }
-
-    /** {@return the bound VAO's attribute records}, creating the VAO's array on first use. */
-    private VaoAttrib[] boundAttribs() {
-        if (this.currentAttribs == null) {
-            this.currentAttribs = attribsFor(this.boundVertexArray);
-        }
-        return this.currentAttribs;
+    private GlsmClientArrayState.VaoAttrib[] boundAttribs() {
+        return GlsmClientArrayState.current().attribsFor(this.boundVertexArray);
     }
 
     /** Copies attribute 0's record into the legacy single-pointer fields the client-array paths read. */
     private void celtium$noteAttribZero() {
-        VaoAttrib position = boundAttribs()[0];
+        GlsmClientArrayState.VaoAttrib position = boundAttribs()[0];
         VERTEX_POINTER.size = position.size;
         VERTEX_POINTER.type = position.type;
         VERTEX_POINTER.stride = position.stride;
@@ -2594,7 +2555,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static void celtium$vertexAttribIPointer(int index, int size, int type, int stride, long pointer) {
         CeltiumGlStub stub = installed;
         if (stub != null && index >= 0 && index < MAX_VERTEX_ATTRIBS) {
-            VaoAttrib attrib = stub.boundAttribs()[index];
+            GlsmClientArrayState.VaoAttrib attrib = stub.boundAttribs()[index];
             attrib.size = size;
             attrib.type = type;
             attrib.stride = stride;
@@ -2616,7 +2577,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             long pointer) {
         CeltiumGlStub stub = installed;
         if (stub != null && index >= 0 && index < MAX_VERTEX_ATTRIBS) {
-            VaoAttrib attrib = stub.boundAttribs()[index];
+            GlsmClientArrayState.VaoAttrib attrib = stub.boundAttribs()[index];
             attrib.size = size;
             attrib.type = type;
             attrib.stride = stride;
@@ -2663,7 +2624,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             VERTEX_POINTER.normalized = false;
             VERTEX_POINTER.integer = false;
             // The same fact in the VAO's per-attribute record, so a VAO swap cannot resurrect an older pointer.
-            VaoAttrib attrib = stub.boundAttribs()[0];
+            GlsmClientArrayState.VaoAttrib attrib = stub.boundAttribs()[0];
             attrib.size = size;
             attrib.type = type;
             attrib.stride = stride;
@@ -3983,7 +3944,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (index < 0 || index >= MAX_VERTEX_ATTRIBS) {
             return 0;
         }
-        VaoAttrib attrib = boundAttribs()[index];
+        GlsmClientArrayState.VaoAttrib attrib = boundAttribs()[index];
         switch (pname) {
             case 0x8622: // GL_VERTEX_ATTRIB_ARRAY_ENABLED
                 // Attribute 0 keeps its two legacy spellings as well: the client-array enable and the capability
@@ -5499,8 +5460,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return 0L;
             case SEM_BIND_VERTEX_ARRAY:
                 this.boundVertexArray = (int) c[0];
-                // The same swap the transformer's route performs: the VAO's own attribute records become live.
-                this.currentAttribs = attribsFor(this.boundVertexArray);
+                // The same swap the transformer's route performs: the VAO's own attribute records become live
+                // (the owner's arrays are keyed by the bound name, so naming the VAO is the whole swap).
                 celtium$noteAttribZero();
                 return 0L;
             case SEM_VERTEX_POINTER:
@@ -5511,7 +5472,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 VERTEX_POINTER.type = (int) c[1];
                 VERTEX_POINTER.stride = (int) c[2];
                 VERTEX_POINTER.offset = c[3];
-                VaoAttrib pointerAttrib = boundAttribs()[0];
+                GlsmClientArrayState.VaoAttrib pointerAttrib = boundAttribs()[0];
                 pointerAttrib.size = (int) c[0];
                 pointerAttrib.type = (int) c[1];
                 pointerAttrib.stride = (int) c[2];
@@ -6143,11 +6104,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                 int name = memGetInt(names + (long) i * 4L);
                 GlsmNameLedger.current().removeName(name);
                 if (vertexArrays) {
-                    this.vaoAttribRecords.remove(name);
+                    GlsmClientArrayState.current().forgetVaoAttribs(name);
                     if (this.boundVertexArray == name) {
                         this.boundVertexArray = 0;
                         // The deleted VAO's records go with it; the default VAO's array is re-read on next use.
-                        this.currentAttribs = null;
                     }
                 }
                 if (renderbuffers) {
@@ -7915,7 +7875,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /**
      * Indexed draws, decoded like {@link #drawArrays}: the layout comes from the vertex pointer's stride and the
      * enabled arrays - the legacy client enables OR the placements the bound VAO's attribute records prove
-     * ({@link #celtium$vaoArrayMask(VaoAttrib[], int)}) - and the indices from a mirrored element buffer.
+     * ({@link #celtium$vaoArrayMask(GlsmClientArrayState.VaoAttrib[], int)}) - and the indices from a mirrored element buffer.
      * Anything else is refused by name in the indexed census rather than guessed - the same rule the unindexed
      * decoder follows, and the reason a refused draw stays blank instead of drawing garbage.
      */
@@ -7946,8 +7906,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         // setup left behind - the resolution drawArrays already performs for the same reason (the fullscreen
         // quad's renderer unbinds its VBO before drawing). A VAO renderer's draw - Demonica's GLSM streaming
         // renderer is the measured one - reaches this decoder with the association recorded only there.
-        VaoAttrib[] attribs = boundAttribs();
-        VaoAttrib positionAttrib = attribs[0];
+        GlsmClientArrayState.VaoAttrib[] attribs = boundAttribs();
+        GlsmClientArrayState.VaoAttrib positionAttrib = attribs[0];
         if (positionAttrib.pointerSet && positionAttrib.buffer != 0 && positionAttrib.buffer != boundName) {
             bound = NativeGeometryBuffer.find(positionAttrib.buffer);
             boundName = positionAttrib.buffer;
@@ -8145,8 +8105,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         // setup left behind: the full-screen quad's renderer binds its VBO only while it sets the pointers and
         // unbinds it again before the draw, so the live binding at draw time is 0 and the pointer read as client
         // memory. The record is the only place the association survives (offer-path diagnosis, 2026-11-20).
-        VaoAttrib[] attribs = boundAttribs();
-        VaoAttrib position = attribs[0];
+        GlsmClientArrayState.VaoAttrib[] attribs = boundAttribs();
+        GlsmClientArrayState.VaoAttrib position = attribs[0];
         if (position.pointerSet && position.buffer != 0 && position.buffer != boundName) {
             nativeBuffer = NativeGeometryBuffer.find(position.buffer);
             buffer = position.buffer;
@@ -8526,9 +8486,9 @@ public final class CeltiumGlStub implements FunctionProvider {
      * position-plus-texture form - without this bit the tuple read as "no other array" and the row never matched.
      * Only float attributes count: any other type's bytes are not the floats the layouts describe.
      */
-    private static int celtium$genericArrayMask(VaoAttrib[] attribs) {
+    private static int celtium$genericArrayMask(GlsmClientArrayState.VaoAttrib[] attribs) {
         for (int i = 1; i < attribs.length; i++) {
-            VaoAttrib attrib = attribs[i];
+            GlsmClientArrayState.VaoAttrib attrib = attribs[i];
             if (attrib.enabled && attrib.pointerSet && attrib.type == GL_FLOAT) {
                 return 4;
             }
@@ -8538,7 +8498,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /**
      * The layout mask a VAO's generic attributes prove for the indexed decoder, in
-     * {@link #celtium$otherArrayMask()}'s numbering. {@link #celtium$genericArrayMask(VaoAttrib[])} can only
+     * {@link #celtium$otherArrayMask()}'s numbering. {@link #celtium$genericArrayMask(GlsmClientArrayState.VaoAttrib[])} can only
      * name the texture bit - it accepts any enabled float attribute past position - which leaves a VAO
      * renderer whose colour rides in a normalized byte attribute (Demonica's GLSM streaming renderer is the
      * measured one) undecodable even though its records describe the layout exactly. Here a bit is granted
@@ -8546,10 +8506,10 @@ public final class CeltiumGlStub implements FunctionProvider {
      * size, normalization and offset all have to match that row - so a VAO interleaved differently keeps
      * the refusal instead of being decoded as a layout it is not.
      */
-    static int celtium$vaoArrayMask(VaoAttrib[] attribs, int stride) {
+    static int celtium$vaoArrayMask(GlsmClientArrayState.VaoAttrib[] attribs, int stride) {
         int mask = 0;
         for (int i = 1; i < attribs.length; i++) {
-            VaoAttrib attrib = attribs[i];
+            GlsmClientArrayState.VaoAttrib attrib = attribs[i];
             if (!attrib.enabled || !attrib.pointerSet) {
                 continue;
             }

@@ -13,6 +13,34 @@ import java.util.Map;
  * owners. VAO records are keyed by (vao, attrib index) exactly as the stub keys them.
  */
 public final class GlsmClientArrayState {
+    /** The generic vertex attributes one VAO record carries; GL guarantees at least sixteen. */
+    public static final int MAX_VERTEX_ATTRIBS = 16;
+
+    /**
+     * One generic vertex attribute's recorded state: its enable, its pointer, and the array buffer the pointer was
+     * set against. GL keeps all three per attribute inside the VAO. The stub used to keep a single pointer record
+     * for attribute 0 alone - no enables, no buffer, and no record at all for the other attributes - which is why a
+     * VAO-carried draw decoded from whichever attribute had been set last and from enables some other draw had left
+     * behind: Demonica's full-screen quad (three attributes set once at setup, its VBO unbound again before the
+     * draw) was refused on every frame for exactly that (offer-path diagnosis, 2026-11-20).
+     * <p>
+     * Moved here from CeltiumGlStub (GLSM stage 3, GAP-ST-8 remainder): the per-VAO arrays of these records are
+     * owned by {@link GlsmClientArrayState#attribsFor(int)} below; the keyed {@link Pointer} form in this
+     * same owner remains for the single-pointer routes that were rewired first.
+     */
+    public static final class VaoAttrib {
+        public boolean enabled;
+        public boolean pointerSet;
+        public boolean normalized;
+        public boolean integer;
+        /** GL's default attribute: size 4, float, tightly packed, null pointer, no buffer. */
+        public int size = 4;
+        public int type = 0x1406; // GL_FLOAT
+        public int stride;
+        public long offset;
+        public int buffer;
+    }
+
     /** One gl*Pointer tuple. */
     public static final class Pointer {
         public int size;
@@ -34,6 +62,8 @@ public final class GlsmClientArrayState {
     private final Map<Integer, Pointer> clientPointers = new HashMap<Integer, Pointer>();
     /** VAO attribute records, keyed by ((long) vao << 32) | attribIndex. */
     private final Map<Long, Pointer> vaoAttribs = new HashMap<Long, Pointer>();
+    /** Per-VAO generic attribute record arrays, keyed by the VAO name; created whole on first use. */
+    private final Map<Integer, VaoAttrib[]> vaoAttribRecords = new HashMap<Integer, VaoAttrib[]>();
     private int boundRenderbuffer;
     private final Map<Integer, int[]> renderbufferSizes = new HashMap<Integer, int[]>();
     private long version;
@@ -73,6 +103,33 @@ public final class GlsmClientArrayState {
         pointer.size = size; pointer.type = type; pointer.stride = stride;
         pointer.offset = offset; pointer.buffer = buffer;
         this.version++;
+    }
+
+    /**
+     * {@return the VAO's generic attribute records}, creating the VAO's array - all
+     * {@link #MAX_VERTEX_ATTRIBS} records at their GL defaults - on first use. The array is
+     * written in place while the VAO is bound; binding another VAO swaps which array is live,
+     * so a caller that sets its attributes once and rebinds its VAO reads its own state back.
+     * Name 0 is the default VAO and keeps its own records too.
+     */
+    public VaoAttrib[] attribsFor(int vao) {
+        VaoAttrib[] attribs = this.vaoAttribRecords.get(Integer.valueOf(vao));
+        if (attribs == null) {
+            attribs = new VaoAttrib[MAX_VERTEX_ATTRIBS];
+            for (int i = 0; i < attribs.length; i++) {
+                attribs[i] = new VaoAttrib();
+            }
+            this.vaoAttribRecords.put(Integer.valueOf(vao), attribs);
+            this.version++;
+        }
+        return attribs;
+    }
+
+    /** Drops a deleted VAO's attribute records; the name is never reissued, so nothing inherits them. */
+    public void forgetVaoAttribs(int vao) {
+        if (this.vaoAttribRecords.remove(Integer.valueOf(vao)) != null) {
+            this.version++;
+        }
     }
 
     public void bindRenderbuffer(int name) { this.boundRenderbuffer = name; this.version++; }
