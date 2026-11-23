@@ -18494,17 +18494,23 @@ this.frameBufferOpen = false;
                         // E6: the region's commands as one indirect call, in the built-in path's
                         // shape (kpi-3/4) - the batch's retained packets are copied into the
                         // frame's indirect page and drawn with the index buffer BH-02's rule
-                        // names for the whole batch. firstInstance stays 0, exactly as the direct
-                        // draws below pass it: the pack program reads its region offset from the
-                        // uniform block bound above, not from the binding-5 array the built-in
-                        // shader reads at gl_InstanceIndex, so no region index is stamped. A
-                        // batch the preparation refuses (a mixed-source unsorted batch, a sorted
-                        // batch with no index arena, a device without multiDrawIndirect) falls
-                        // back to the direct walk, whose commands are the same ones in the same
-                        // order. (GLSM stage 1 inverts exactly this on its route: the program reads
-                        // the offset from the table at gl_InstanceIndex, so the direct walk stamps
-                        // the region's slot as firstInstance and the indirect path, whose packets
-                        // stamp 0, is not used.)
+                        // names for the whole batch. On the uniform-block route firstInstance
+                        // stays 0, exactly as the direct draws below pass it: the pack program
+                        // reads its region offset from the uniform block bound above, not from
+                        // the binding-5 array the built-in shader reads at gl_InstanceIndex, so
+                        // no region index is stamped. A batch the preparation refuses (a
+                        // mixed-source unsorted batch, a sorted batch with no index arena, a
+                        // device without multiDrawIndirect) falls back to the direct walk,
+                        // whose commands are the same ones in the same order.
+                        // GLSM stage 1's table route joins the same issuance: the program reads
+                        // the offset from the table at gl_InstanceIndex, and the preparation
+                        // stamps the caller's firstInstance into every copied command - the
+                        // region's table slot, which is also what the direct walk passes to
+                        // every one of the batch's draws (a batch is one region's commands, so
+                        // one stamp serves them all). Stage 1 kept this route on the direct
+                        // walk out of caution; the packets only ever stamped 0 because the
+                        // caller passed 0. Opening it removes the route's per-command record
+                        // walk, the one issuance tax the table route alone was paying.
                         boolean indirect = false;
                         if (shadowIssuanceArmed) {
                             // E10 shadow issuance: this region's commands are in the
@@ -18512,15 +18518,14 @@ this.frameBufferOpen = false;
                             // recorded for it here, and the stage's one generated draw
                             // is recorded after the loop, in the camera executor's
                             // issued shape.
-                        } else if (TERRAIN_INDIRECT_ENABLED && !glsmRegionTable) {
+                        } else if (TERRAIN_INDIRECT_ENABLED) {
                             indirect = this.terrain.tryIndirectBatch(this.context, this.commandBuffer,
                                     stack, this.sharedIndexBuffers, resources, batch, sortedPass,
-                                    primitiveType, 0);
+                                    primitiveType, glsmRegionTable ? glsmFirstInstance : 0);
                         } else {
                             this.terrain.noteTerrainIndirectFallback();
-                            this.terrain.setLastTerrainIndirectFallback(glsmRegionTable
-                                    ? "GLSM stage 1: region offsets ride the draws' firstInstance, which the indirect packets stamp 0; the direct walk delivers them"
-                                    : "the indirect path is off (-Dceltium.vulkan.indirectTerrain)");
+                            this.terrain.setLastTerrainIndirectFallback(
+                                    "the indirect path is off (-Dceltium.vulkan.indirectTerrain)");
                         }
                         if (shadowIssuanceArmed) {
                             // The generated draw at the loop's end accounts these
