@@ -12,8 +12,10 @@ import net.minecraft.init.Items;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.world.World;
+import net.minecraftforge.fml.common.Loader;
 import org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightAccumulator;
 import org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService;
+import org.soutalab.celtium.vulkan.ConnectionGate;
 import org.taumc.celeritas.impl.CeltiumLightCache;
 
 /**
@@ -31,23 +33,85 @@ import org.taumc.celeritas.impl.CeltiumLightCache;
  * interpolated with the frame's render partial ticks and lifted to roughly the carrier's hands
  * (eye height &times; 0.75; a dropped item 0.2).
  * <p>
- * {@code -Dceltium.dynamicLights=false} turns the gather off entirely - the terrain then shades
- * exactly as vanilla does, which is also the A/B control the fixture proof leg uses. The same
- * switch governs the CPU mirror (item 430): the gather's surviving sources are kept as a
- * world-space snapshot that {@link CeltiumLightCache} raises entity, particle and held-item
- * brightness from, so an empty gather - disabled, or no world - mirrors nothing.
+ * The connection gate's adjudication ({@link #CONNECTION}) governs the gather: it runs only
+ * when the gate seats this native service - never while an enabled Celeritas Dynamic Lights is
+ * present, and never while the {@code celtium.dynamicLights} property is off - so an off or
+ * stood-down gather leaves the terrain shading exactly as vanilla does, which is also the A/B
+ * control the fixture proof leg uses. The same adjudication governs the CPU mirror (item 430):
+ * the gather's surviving sources are kept as a world-space snapshot that
+ * {@link CeltiumLightCache} raises entity, particle and held-item brightness from, so an empty
+ * gather - stood down, disabled, or no world - mirrors nothing.
  */
 public final class MinecraftDynamicLightService implements DynamicLightService {
 
     public static final MinecraftDynamicLightService INSTANCE = new MinecraftDynamicLightService();
 
+    /** The mod id of Celeritas Dynamic Lights, the external side of this connection. */
+    private static final String EXTERNAL_MOD_ID = "celeritasdynamiclights";
+
     /**
-     * Built-in dynamic light reimplementation is off by default: dynamic lighting belongs to mods such as
-     * Celeritas Dynamic Lights running over Celtium's generalised connection surface (Ledger II). The property key
-     * is preserved for compatibility and opt-in A/B testing ({@code -Dceltium.dynamicLights=true}).
+     * The native side's own term of the gate's adjudication. Built-in dynamic light
+     * reimplementation is off by default: dynamic lighting belongs to mods such as Celeritas
+     * Dynamic Lights running over Celtium's generalised connection surface (Ledger II). The
+     * property key is preserved for compatibility and opt-in A/B testing
+     * ({@code -Dceltium.dynamicLights=true}). It is an input to the gate, not the decision -
+     * {@link #CONNECTION} is the single truth for whether this service gathers.
      */
-    private static final boolean ENABLED =
+    private static final boolean NATIVE_PROPERTY =
             Boolean.parseBoolean(System.getProperty("celtium.dynamicLights", "false"));
+
+    /**
+     * The gate's adjudication of the dynamic-lights connection, computed once when this class
+     * loads - which is when the renderer first asks for a service, after every mod is known -
+     * and reported once through the gate. The external terms are the partner's own: its
+     * presence, and its enablement read through its own judgment (see {@link #externalEnabled}),
+     * so a mode the partner itself calls disabled is disabled here too.
+     */
+    private static final ConnectionGate.DynamicLightsDecision CONNECTION = adjudicate();
+
+    private static ConnectionGate.DynamicLightsDecision adjudicate() {
+        boolean externalPresent = Loader.isModLoaded(EXTERNAL_MOD_ID);
+        boolean[] enablementUnreadable = new boolean[1];
+        boolean externalEnabled = externalPresent && externalEnabled(enablementUnreadable);
+        ConnectionGate.DynamicLightsDecision decision =
+                ConnectionGate.dynamicLights(externalPresent, externalEnabled, NATIVE_PROPERTY);
+        String reason = decision.reason();
+        if (enablementUnreadable[0]) {
+            reason += "; its mode was unreadable, so enablement follows its own default (realtime)";
+        }
+        ConnectionGate.reportConnection("dynamicLights", decision.state().name(), reason);
+        return decision;
+    }
+
+    /**
+     * Reads Celeritas Dynamic Lights' own enablement judgment: the {@code dynamicLightsMode}
+     * field of its config class, asked through the mode's own {@code isEnabled()} - the same
+     * predicate the mod consults in its gather and its mixins, re-applied here rather than
+     * re-derived (the gate's partner-judgment term). Reflection only, so this class loads and
+     * adjudicates whether or not the mod is installed. An unreadable mode is reported through
+     * {@code enablementUnreadable} and counts as enabled - the mod's own default mode is
+     * realtime - so a broken read never turns into both sides managing the same sources.
+     */
+    private static boolean externalEnabled(boolean[] enablementUnreadable) {
+        try {
+            Class<?> config = Class.forName("toni.sodiumdynamiclights.config.DynamicLightsConfig",
+                    true, MinecraftDynamicLightService.class.getClassLoader());
+            Object mode = config.getField("dynamicLightsMode").get(null);
+            if (mode == null) {
+                enablementUnreadable[0] = true;
+                return true;
+            }
+            return Boolean.TRUE.equals(mode.getClass().getMethod("isEnabled").invoke(mode));
+        } catch (Throwable ignored) {
+            enablementUnreadable[0] = true;
+            return true;
+        }
+    }
+
+    /** {@return the connection gate's adjudication for dynamic lights, decided once at class load}. */
+    public static ConnectionGate.DynamicLightsDecision connectionDecision() {
+        return CONNECTION;
+    }
 
     private final DynamicLightAccumulator accumulator = new DynamicLightAccumulator();
 
@@ -121,7 +185,7 @@ public final class MinecraftDynamicLightService implements DynamicLightService {
     @Override
     public int gatherLights(float[] out, double cameraX, double cameraY, double cameraZ) {
         gatherCalls++;
-        if (!ENABLED) {
+        if (CONNECTION.state() != ConnectionGate.DynamicLightsState.NATIVE) {
             gatherDisabledReturns++;
             clearSnapshot();
             return 0;

@@ -276,7 +276,20 @@ public class VintageRenderSectionManager extends RenderSectionManager {
 
         @Override
         public org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService getDynamicLightService() {
-            return org.taumc.celeritas.impl.render.terrain.light.MinecraftDynamicLightService.INSTANCE;
+            // Whose dynamic lights run is the connection gate's adjudication, not a local
+            // choice (item 378): an enabled Celeritas Dynamic Lights wins and the native
+            // service stands down - the terrain connection reports no sources while the
+            // external raises them through the combined-light surface - the native service
+            // serves when the gate seats it, and no service is exposed when the gate is OFF
+            // (the backend factory substitutes the empty service for a null one).
+            switch (org.taumc.celeritas.impl.render.terrain.light.MinecraftDynamicLightService.connectionDecision().state()) {
+                case EXTERNAL:
+                    return org.embeddedt.embeddium.impl.render.chunk.light.DynamicLightService.EMPTY;
+                case NATIVE:
+                    return org.taumc.celeritas.impl.render.terrain.light.MinecraftDynamicLightService.INSTANCE;
+                default:
+                    return null;
+            }
         }
 
         @Override
