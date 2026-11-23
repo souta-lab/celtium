@@ -6235,9 +6235,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * once the clear has been OR'd into its pending mask - consumes that mask so the latch and the acquire do not apply
      * the same clear a second time. A mask that does not match the reservation is left pending, so a clear this method
      * did not carry still reaches the frame by the route it always had.
+     * <p>
+     * On by default on the alpha line (item 676's remainder): the frame-start main clear is the one ordering
+     * entrance whose predicate provably fires on the queue a HUD frame leaves behind - the previous frame's
+     * overlay groups are still queued for the main image, so {@link #celtium$clearNeedsOrderingFlush} answers
+     * true and the clear opens the frame-boundary drain window hud-leg-676 measured (drainWindows 1.0 a frame,
+     * its time inside the world-side flush). Carried, that clear rides the last of those groups instead and
+     * the drain's window is the next window's in-pass draw. {@code =false} restores the pre-carry route
+     * exactly. The edge the original default-off left open - a carried clear whose group is discarded before
+     * it is drawn - is closed by {@link #celtium$rescueCarriedMainClearsFromDrop}: the discard hands the
+     * clear back to the stub's pending mask, so the latch applies it as it would have had it never been
+     * carried.
      */
     private static final boolean MAIN_CLEAR_IN_QUEUE =
-            Boolean.parseBoolean(System.getProperty("celtium.vulkan.mainClearInQueue", "false"));
+            Boolean.parseBoolean(System.getProperty("celtium.vulkan.mainClearInQueue", "true"));
 
     /** Main-framebuffer clears carried by the queue instead of by a window of their own. */
     long mainClearsQueued;
@@ -6246,12 +6257,25 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return this.mainClearsQueued;
     }
 
+    /** Carried main clears handed back to the frame machinery because their group was discarded undrawn. */
+    long mainClearsRescued;
+    /** {@return carried main clears rescued at a queue discard}, so a leg can price the drop edge. */
+    public long mainClearsRescuedCount() {
+        return this.mainClearsRescued;
+    }
+
     /** The mask of the main clear the queue is carrying, or 0 when none is reserved. */
     private int mainClearCarriedMask;
     /** The colour the carried clear was issued with; the stub's own record, copied out before it can be reused. */
     private final float[] mainClearCarriedRgba = new float[4];
     /** The depth the carried clear was issued with. */
     private double mainClearCarriedDepth;
+    /**
+     * The raw GL name of the draw framebuffer the last carried main clear was issued against, kept past the
+     * reservation handshake ({@link #celtium$takeCarriedMainClear} spends the mask at record time, before
+     * the carrying group is drawn) so a discard can hand the clear back under its real owner.
+     */
+    private int mainClearCarriedDrawFbo;
 
     /**
      * {@return whether the main framebuffer's clear can ride the queue}, the predicate behind
@@ -6378,6 +6402,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 group.postClears.add(new QueuedClear(effective, rgba, depth));
                 this.mainClearCarriedMask = effective;
                 this.mainClearCarriedDepth = depth;
+                // The owner a discard hands the clear back under: the framebuffer this clear was issued
+                // against, which the predicate above has just shown to be the main one. Read now, while
+                // the stub still names it - the pending-mask record of it is only written at record time.
+                this.mainClearCarriedDrawFbo =
+                        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$drawFramebuffer();
                 this.mainClearsQueued++;
                 return true;
             }
@@ -6421,6 +6450,33 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** Drops a reservation that no clear consumed, so a later clear cannot be carried with an earlier one's values. */
     void celtium$forgetCarriedMainClear() {
         this.mainClearCarriedMask = 0;
+    }
+
+    /**
+     * Hands the main clears riding the queue back to the frame machinery, before the queue is discarded.
+     * <p>
+     * A carried clear exists only as its group's {@code postClears} once the stub has consumed the pending
+     * mask ({@link #celtium$takeCarriedMainClear} spends the reservation at record time, while the group is
+     * still queued), so a group discarded undrawn - a boundary drop, a replacement, an ordering flush that
+     * failed - would take the frame's clear with it, and the image would keep the previous frame's picture
+     * under the next one. The rescue re-pends each carried clear the discard set holds, under the owner and
+     * with the values it was issued with, so the latch at the next pass begin applies it exactly as it would
+     * have had the queue never carried it. Only main-image groups are scanned: a non-main framebuffer's
+     * clear rides its own group by the {@code celtium$gameClear} route and is owned by that image's latch,
+     * and re-pending one of those as a main clear would erase the wrong image.
+     */
+    private void celtium$rescueCarriedMainClearsFromDrop() {
+        long main = this.targetRegistry.mainIdentity();
+        for (ImmediateGroup group : this.immediateGroups) {
+            if ((group.target != main && group.target != 0L) || group.postClears == null) {
+                continue;
+            }
+            for (QueuedClear clear : group.postClears) {
+                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$rependMainClear(
+                        clear.mask, this.mainClearCarriedDrawFbo, clear.rgba, clear.depth);
+                this.mainClearsRescued++;
+            }
+        }
     }
 
     /**
@@ -8251,6 +8307,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // attached to a group of the frame that just ended, and carrying a later clear with its values would erase the
         // wrong colour.
         this.mainClearCarriedMask = 0;
+        this.mainClearCarriedDrawFbo = 0;
         lastFinishedFrameId = this.frameId;
         // The frame that just ended is priced here, at the one place every per-frame counter is reset
         // (-Dceltium.vulkan.frameBudget=true; a no-op otherwise).
@@ -10581,6 +10638,9 @@ this.frameBufferOpen = false;
      * would hand a still-live group back to the freelist.
      */
     private void celtium$discardImmediateGroups() {
+        // A main clear the queue is carrying rides one of these groups; hand it back before the group goes,
+        // or the discard takes the frame's clear with it (see celtium$rescueCarriedMainClearsFromDrop).
+        celtium$rescueCarriedMainClearsFromDrop();
         for (ImmediateGroup group : this.immediateGroups) {
             ImmediateGroup.recycle(group);
         }
