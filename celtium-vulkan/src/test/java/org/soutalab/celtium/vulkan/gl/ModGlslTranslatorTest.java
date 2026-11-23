@@ -691,6 +691,144 @@ class ModGlslTranslatorTest {
         assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
     }
 
+    /**
+     * Item 726 (Twilight Forest's aurora): an array constructor may omit its size -
+     * {@code uniform float offset[5] = float[](...)} - and take the length from the declaration. The
+     * lowering used to refuse it twice over (the constructor pattern had no empty brackets, and the array
+     * branch demanded an explicit size), so the whole program failed to translate.
+     */
+    @Test
+    void carriesAnUnsizedArrayConstructorInitializerAsItsDefault() {
+        String vertex = """
+                #version 120
+                attribute vec2 position;
+                varying vec2 uv;
+                void main() { gl_Position = vec4(position, 0.0, 1.0); uv = position; }
+                """;
+        String fragment = """
+                #version 120
+                varying vec2 uv;
+                uniform float offset[5] = float[](0.0, 1.0, 2.0, 3.0, 4.0);
+                uniform float weight[5] = float[](0.2270270270, 0.1945945946, 0.1216216216, 0.0540540541, 0.0162162162);
+                void main() { gl_FragColor = vec4(weight[0] + offset[1]); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertArrayEquals(new float[] {0.0f, 1.0f, 2.0f, 3.0f, 4.0f}, result.uniformDefaults().get("offset"));
+        assertArrayEquals(new float[] {0.2270270270f, 0.1945945946f, 0.1216216216f, 0.0540540541f, 0.0162162162f},
+                result.uniformDefaults().get("weight"));
+        assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void refusesAnUnsizedArrayConstructorWhoseCountMissesTheDeclaredLength() {
+        String fragment = """
+                #version 120
+                uniform float offset[5] = float[](0.0, 1.0, 2.0);
+                void main() { gl_FragColor = vec4(offset[0]); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(
+                "void main() { gl_Position = vec4(0.0); }", fragment);
+        assertNotNull(result.failure());
+        assertTrue(result.failure().contains("initializer this lowering does not evaluate"), result.failure());
+    }
+
+    /**
+     * Item 726 (Twilight Forest's pulsing_yellow): GLSL 120 has no built-in {@code round}, so a 120 shader
+     * may define its own. At {@code #version 450} that definition collides with glslang's built-in overload
+     * (parameter precision mismatch) and shaderc refuses it; the lowering renames the definition and its
+     * calls instead.
+     */
+    @Test
+    void renamesAUserFunctionThatCollidesWithA450Builtin() {
+        String vertex = """
+                #version 120
+                attribute vec2 position;
+                void main() { gl_Position = vec4(position, 0.0, 1.0); }
+                """;
+        String fragment = """
+                #version 120
+                float round(float n) {
+                    float y = n + 0.5;
+                    return y - mod(y, 1.0);
+                }
+                void main() { gl_FragColor = vec4(round(0.4)); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertTrue(result.fragment().contains("float celtium_r_round(float n)"), result.fragment());
+        assertTrue(result.fragment().contains("celtium_r_round(0.4)"), result.fragment());
+        assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void leavesACollidingFunctionNameAloneAt130AndAbove() {
+        // At 1.30+ the source's `round` may be the built-in; renaming is not applied there.
+        String fragment = """
+                #version 130
+                out vec4 color;
+                float round(float n) { return n; }
+                void main() { color = vec4(round(0.4)); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(
+                "#version 130\nvoid main() { gl_Position = vec4(0.0); }", fragment);
+        if (result.ok()) {
+            assertFalse(result.fragment().contains("celtium_r_round"), result.fragment());
+        }
+    }
+
+    /**
+     * Item 726 (Twilight Forest's starburst / shield): the fragment stage's {@code uniform vec3 position}
+     * enters the instance-less common block, which is emitted into the vertex stage too, where
+     * {@code position} is a varying - a redefinition glslang refuses. The member is renamed inside the
+     * block (and in the declaring stage's references); the reported interface keeps the GL name.
+     */
+    @Test
+    void renamesAUniformMemberThatCollidesWithAVaryingName() {
+        String vertex = """
+                #version 120
+                varying vec3 position;
+                void main() {
+                    position = (gl_ModelViewMatrix * gl_Vertex).xyz;
+                    gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
+                }
+                """;
+        String fragment = """
+                #version 120
+                uniform vec3 position;
+                void main() { gl_FragColor = vec4(position * 0.5 + 0.5, 1.0); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertTrue(result.uniforms().stream().anyMatch(m -> m.name().equals("position")),
+                result.uniforms().toString());
+        assertTrue(result.vertex().contains("vec3 celtium_u_position;"), result.vertex());
+        assertTrue(result.vertex().contains("out vec3 position;"), result.vertex());
+        assertTrue(result.fragment().contains("celtium_u_position * 0.5"), result.fragment());
+        assertCompiles(result.vertex(), Shaderc.shaderc_vertex_shader);
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void refusesAUniformVaryingCollisionShadowedInTheDeclaringStage() {
+        String vertex = """
+                #version 120
+                varying vec3 position;
+                void main() { position = gl_Vertex.xyz; gl_Position = gl_Vertex; }
+                """;
+        String fragment = """
+                #version 120
+                uniform vec3 position;
+                float shade(float position) { return position; }
+                void main() { gl_FragColor = vec4(shade(1.0)); }
+                """;
+        ModGlslTranslator.Result result = ModGlslTranslator.translate(vertex, fragment);
+        assertNotNull(result.failure());
+        assertTrue(result.failure().contains("shadowed"), result.failure());
+    }
+
     @Test
     void refusesAUniformInitializerThatIsNotAConstant() {
         String vertex = """

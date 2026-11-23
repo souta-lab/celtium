@@ -110,9 +110,15 @@ public final class ModGlslTranslator {
                     + "(attribute|varying|uniform)\\s+(?:(?:lowp|mediump|highp)\\s+)?(\\w+)\\s+([^;{}]+);");
     private static final Pattern DECLARATOR = Pattern.compile(
             "^\\s*(\\w+)\\s*(?:\\[\\s*(\\d+)\\s*\\])?\\s*(?:=\\s*(.*))?$", Pattern.DOTALL);
-    /** A constant constructor initializer: a type name, an optional array size, and the argument text. */
+    /**
+     * A constant constructor initializer: a type name, an optional array size, and the argument text. The
+     * bracket group also matches the unsized form {@code float[](...)} (group 2 is then empty, not null):
+     * GLSL lets an array constructor omit the size and take it from the context, and a uniform declaration
+     * supplies that context - Twilight Forest's aurora shader writes both of its blur tables that way, and
+     * the sized-only pattern made the initializer unrecognisable before evaluation even saw it (item 726).
+     */
     private static final Pattern CONSTRUCTOR_INITIALIZER = Pattern.compile(
-            "(\\w+)\\s*(?:\\[\\s*(\\d+)\\s*\\])?\\s*\\((.*)\\)", Pattern.DOTALL);
+            "(\\w+)\\s*(?:\\[\\s*(\\d*)\\s*\\])?\\s*\\((.*)\\)", Pattern.DOTALL);
     /** One numeric literal of an initializer (a trailing {@code f} is GLSL's float suffix). */
     private static final Pattern NUMBER_LITERAL = Pattern.compile(
             "[+-]?(?:0[xX][0-9a-fA-F]+|(?:\\d+\\.\\d*|\\.\\d+|\\d+)(?:[eE][+-]?\\d+)?)[fF]?");
@@ -276,6 +282,8 @@ public final class ModGlslTranslator {
         }
         String vertex = renameReserved(strip(vertexSource), modernDialect(vertexSource));
         String fragment = renameReserved(strip(fragmentSource), modernDialect(fragmentSource));
+        vertex = renameBuiltinCollidingFunctions(vertex, dialectVersion(vertexSource));
+        fragment = renameBuiltinCollidingFunctions(fragment, dialectVersion(fragmentSource));
         List<Declaration> vertexDecls = new ArrayList<>();
         List<Declaration> fragmentDecls = new ArrayList<>();
         vertex = removeDeclarations(vertex, vertexDecls, true);
@@ -300,6 +308,37 @@ public final class ModGlslTranslator {
                             + d.type);
                 }
             }
+        }
+        // The common block below is emitted without an instance name, so its member names land in the
+        // global scope of BOTH stages. A uniform declared in one stage whose name another stage uses for a
+        // varying (or either stage for an attribute / fragment output) therefore redefines that name in the
+        // other stage's copy of the block - Twilight Forest's starburst and shield both declare
+        // `uniform vec3 position` in the fragment stage while their shared vertex stage writes a
+        // `varying vec3 position`, and glslang refuses the pair (item 726). Such a member is emitted under
+        // an internal name instead; the reported interface (Result.uniforms, the defaults, the packing)
+        // keeps the GL name, exactly as the reserved-word rename above does. References are rewritten only
+        // in a stage that declares the uniform - in the other stage the name means the varying, and its
+        // text is not touched.
+        java.util.Set<String> ioNames = new java.util.HashSet<>();
+        for (List<Declaration> stage : List.of(vertexDecls, fragmentDecls)) {
+            for (Declaration d : stage) {
+                if (!"uniform".equals(d.qualifier)) {
+                    ioNames.add(d.name);
+                }
+            }
+        }
+        // Keyed by the member's GL name; the value is the name the block and the declaring stages use.
+        Map<String, String> uniformBlockRenames = new LinkedHashMap<>();
+        for (Declaration d : uniforms.values()) {
+            if (isSamplerType(d.type) || d.type.toLowerCase(java.util.Locale.ROOT).contains("image")
+                    || !ioNames.contains(d.name)) {
+                continue;
+            }
+            uniformBlockRenames.put(glName(d.name), "celtium_u_" + d.name);
+        }
+        if (!uniformBlockRenames.isEmpty()) {
+            vertex = renameUniformReferences(vertex, vertexDecls, uniformBlockRenames);
+            fragment = renameUniformReferences(fragment, fragmentDecls, uniformBlockRenames);
         }
         List<UniformMember> members = new ArrayList<>();
         Map<String, float[]> uniformDefaults = new LinkedHashMap<>();
@@ -407,7 +446,8 @@ public final class ModGlslTranslator {
                 common.append("layout(push_constant, std140) uniform CeltiumModUniforms {\n");
             }
             for (UniformMember m : members) {
-                common.append("    ").append(m.type).append(' ').append(glslName(m.name))
+                common.append("    ").append(m.type).append(' ')
+                        .append(uniformBlockRenames.getOrDefault(m.name(), glslName(m.name())))
                         .append(m.arrayLength > 0 ? "[" + m.arrayLength + "]" : "").append(";\n");
             }
             common.append("};\n");
@@ -585,6 +625,88 @@ public final class ModGlslTranslator {
         } while (m.find());
         m.appendTail(sb);
         return sb.toString();
+    }
+
+    /**
+     * Function names GLSL 1.30 added as built-ins. A {@code #version} 120 (or unversioned) source may define
+     * its own function under one of these names - Twilight Forest's pulsing_yellow defines
+     * {@code float round(float)} - and in 120 that definition is the only {@code round} there is. Lowered to
+     * {@code #version 450} it lands in the same overload set as glslang's built-in declaration, whose
+     * parameter carries a {@code highp} precision qualifier the source's definition does not, and glslang
+     * refuses the pair ("overloaded functions must have the same parameter precision qualifiers", item 726).
+     */
+    private static final Pattern BUILTIN_COLLIDING_DEFINITION = Pattern.compile(
+            "(?<![\\w.])(?:\\w+)\\s+(round|roundEven|trunc)\\s*\\([^;{}]*\\)\\s*[{;]");
+
+    /** The {@code #version} a source declares, or 110 - the dialect an unversioned legacy source is written in. */
+    private static int dialectVersion(String source) {
+        if (source == null) {
+            return 110;
+        }
+        Matcher m = VERSION_NUMBER.matcher(source);
+        return m.find() ? Integer.parseInt(m.group(1)) : 110;
+    }
+
+    /**
+     * Renames a stage's own definitions of {@link #BUILTIN_COLLIDING_DEFINITION} names - and every call to
+     * them in the same stage - to {@code celtium_r_<name>}, the {@link #renameReserved} prefix. Only a
+     * pre-1.30 dialect is touched: there the name cannot be the built-in (it did not exist yet), so a
+     * definition under it is unambiguously the source's own function. At 1.30 and above a definition and a
+     * built-in call cannot be told apart mechanically, and renaming could change what a call means, so
+     * those sources keep the compiler's own verdict. A function name is not part of the uniform interface,
+     * so nothing in the reported {@code Result} changes.
+     */
+    private static String renameBuiltinCollidingFunctions(String source, int version) {
+        if (version >= 130) {
+            return source;
+        }
+        java.util.Set<String> defined = new java.util.LinkedHashSet<>();
+        Matcher m = BUILTIN_COLLIDING_DEFINITION.matcher(source);
+        while (m.find()) {
+            defined.add(m.group(1));
+        }
+        for (String name : defined) {
+            source = Pattern.compile("\\b" + name + "\\s*\\(").matcher(source)
+                    .replaceAll(RENAMED + name + "(");
+        }
+        return source;
+    }
+
+    /**
+     * Rewrites one stage's references to the uniforms {@code renames} covers (keyed by GL name), for the
+     * stages that declare them. A stage that also declares the same name as an input/output, or whose body
+     * declares a local variable or parameter under it, makes the name's meaning in that stage ambiguous to
+     * a word-level rewrite, so those shapes are refused by name instead of renamed into a wrong program.
+     */
+    private static String renameUniformReferences(String body, List<Declaration> stageDecls,
+                                                  Map<String, String> renames) {
+        for (Declaration d : stageDecls) {
+            if (!"uniform".equals(d.qualifier)) {
+                continue;
+            }
+            String blockName = renames.get(glName(d.name));
+            if (blockName == null) {
+                continue;
+            }
+            for (Declaration other : stageDecls) {
+                if (!"uniform".equals(other.qualifier) && other.name.equals(d.name)) {
+                    throw new IllegalArgumentException("uniform " + d.name + " is also declared as a "
+                            + other.qualifier + " in the same stage: the name collision this lowering "
+                            + "renames around spans both meanings in one stage and is not lowered");
+                }
+            }
+            Pattern shadowed = Pattern.compile(
+                    "(?<![\\w.])(?!(?:return|if|while|for|switch|else|do|case)\\s)\\w+\\s+"
+                            + Pattern.quote(d.name) + "(?=\\s*[,;=\\)\\[])");
+            if (shadowed.matcher(body).find()) {
+                throw new IllegalArgumentException("uniform " + d.name + " collides with an input/output "
+                        + "name and is shadowed by a local declaration in a stage that declares it: "
+                        + "not lowered");
+            }
+            body = Pattern.compile("\\b" + Pattern.quote(d.name) + "\\b").matcher(body)
+                    .replaceAll(blockName);
+        }
+        return body;
     }
 
     private static String glName(String glslName) {
@@ -1823,10 +1945,15 @@ public final class ModGlslTranslator {
                 }
             }
             if (d.arrayLength > 0) {
-                // An array constructor: float[2](1.0, 2.0). Only a scalar element type is evaluated - a
+                // An array constructor: float[2](1.0, 2.0), or the unsized float[](...) whose length the
+                // declaration itself fixes - the argument count is then the size check, and it is already
+                // required to equal the declared length below. Only a scalar element type is evaluated - a
                 // vector element's own constructor would nest, which the refusal below names.
-                if (!ctorType.equals(d.type) || ctor.group(2) == null
-                        || Integer.parseInt(ctor.group(2)) != d.arrayLength || components != 1
+                String ctorSize = ctor.group(2);
+                if (!ctorType.equals(d.type)
+                        || ctorSize == null
+                        || (!ctorSize.isEmpty() && Integer.parseInt(ctorSize) != d.arrayLength)
+                        || components != 1
                         || args.size() != d.arrayLength) {
                     throw notConstant(d, init);
                 }
