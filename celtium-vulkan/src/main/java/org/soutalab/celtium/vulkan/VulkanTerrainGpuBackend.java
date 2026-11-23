@@ -17623,59 +17623,79 @@ this.frameBufferOpen = false;
             try {
                 setViewportAndScissor(stack, passW, passH);
                 modPipeline.bindTerrainPipeline(this.commandBuffer);
-                while (iterator.hasNext()) {
-                    ChunkRenderList renderList = iterator.next();
-                    RenderRegion region = renderList.getRegion();
-                    TerrainRenderer.RegionResources resources = this.terrain.resourcesIfPresent(region);
-                    SectionRenderDataStorage storage = region.getStorage(pass);
-                    if (resources == null || storage == null) {
-                        continue;
-                    }
-                    CachedBatch cached = storage.getCachedMultiDrawBatch(cacheParams);
-                    if (cached == null || !cached.isValidFor(renderList.getSectionsWithGeometry(),
-                            renderList.getSectionsWithGeometryCount(), occlusionCamera.intX, occlusionCamera.intY,
-                            occlusionCamera.intZ)) {
-                        // The budget's rebuild discipline (item 328, V-03), ported to this path for the
-                        // shadow stage only and only under -Dceltium.vulkan.packShadowRebuildBudget
-                        // (shadow-diff-1): the built-in path's loop has run under it since item 328, but
-                        // the pack route - which records the shadow stage of every pack frame - never
-                        // consulted it, so a chunk-supply frame rebuilt the whole shadow volume's batches
-                        // in one frame (pack-tail-2: 85% of the slowest-16 terrainRecord). A stored batch
-                        // whose rebuild is deferred is drawn as-is below: the storage deletes a stored
-                        // batch the moment any of its sections' meshes change, so a stored batch always
-                        // references live arena ranges and only its visibility selection can be stale -
-                        // for a depth-only pass, a frame-old visibility decision is the whole cost. A
-                        // region with no stored batch has no last-good to reuse, so its first build
-                        // always proceeds and is counted separately, as in the built-in loop. The draw
-                        // caps are deliberately not ported (the #422 lesson recorded on TerrainFrameBudget).
-                        boolean hasStored = cached != null;
-                        if (!budgetedShadow || !hasStored || this.terrainBudget.rebuildAllowed()) {
-                            // Retire-before-rebuild (item 398), as in the built-in loop: only inside this
-                            // branch - a deferred rebuild below draws the stored batch as-is, so retiring
-                            // before the budget decision would destroy the last-good it exists to reuse.
-                            if (hasStored) {
-                                storage.retireCachedMultiDrawBatch(cacheParams);
-                            }
-                            long rebuildStarted = budgetedShadow ? System.nanoTime() : 0L;
-                            org.soutalab.celtium.vulkan.FramePassTimings.begin("packRecordRebuild");
-                            try {
-                                cached = BatchAssembler.createCachedBatch(region, storage, renderList,
-                                        occlusionCamera, pass, useBlockFaceCulling, null,
-                                        (commands, ignored, ignoredPass) -> null);
-                            } finally {
-                                org.soutalab.celtium.vulkan.FramePassTimings.end("packRecordRebuild");
-                            }
-                            storage.storeCachedMultiDrawBatch(cacheParams, cached);
-                            if (budgetedShadow) {
-                                if (hasStored) {
-                                    this.terrainBudget.noteRebuild(System.nanoTime() - rebuildStarted);
-                                } else {
-                                    this.terrainBudget.noteForcedFirstBuild(System.nanoTime() - rebuildStarted);
-                                }
-                            }
-                        } else {
-                            this.terrainBudget.noteDeferredReuse();
+                while (true) {
+                    // Item 722 (E6, first stage): packRegionIter brackets one region's iteration head
+                    // (advance, lookup, cached-batch validity; packRecordRebuild nests inside),
+                    // packRegionBind / packRegionDraw bracket the bind issuance and the command loop
+                    // below, and packSamplerClaim brackets the samplersAndImages call inside the
+                    // uniform span - together they price the per-region / per-command issuance the
+                    // E6 port would remove. All are INSIDE names: reported, never subtracted, and
+                    // inert while the pass timings are off.
+                    ChunkRenderList renderList = null;
+                    RenderRegion region = null;
+                    TerrainRenderer.RegionResources resources = null;
+                    SectionRenderDataStorage storage = null;
+                    CachedBatch cached = null;
+                    org.soutalab.celtium.vulkan.FramePassTimings.begin("packRegionIter");
+                    try {
+                        if (!iterator.hasNext()) {
+                            break;
                         }
+                        renderList = iterator.next();
+                        region = renderList.getRegion();
+                        resources = this.terrain.resourcesIfPresent(region);
+                        storage = region.getStorage(pass);
+                        if (resources == null || storage == null) {
+                            continue;
+                        }
+                        cached = storage.getCachedMultiDrawBatch(cacheParams);
+                        if (cached == null || !cached.isValidFor(renderList.getSectionsWithGeometry(),
+                                renderList.getSectionsWithGeometryCount(), occlusionCamera.intX, occlusionCamera.intY,
+                                occlusionCamera.intZ)) {
+                            // The budget's rebuild discipline (item 328, V-03), ported to this path for the
+                            // shadow stage only and only under -Dceltium.vulkan.packShadowRebuildBudget
+                            // (shadow-diff-1): the built-in path's loop has run under it since item 328, but
+                            // the pack route - which records the shadow stage of every pack frame - never
+                            // consulted it, so a chunk-supply frame rebuilt the whole shadow volume's batches
+                            // in one frame (pack-tail-2: 85% of the slowest-16 terrainRecord). A stored batch
+                            // whose rebuild is deferred is drawn as-is below: the storage deletes a stored
+                            // batch the moment any of its sections' meshes change, so a stored batch always
+                            // references live arena ranges and only its visibility selection can be stale -
+                            // for a depth-only pass, a frame-old visibility decision is the whole cost. A
+                            // region with no stored batch has no last-good to reuse, so its first build
+                            // always proceeds and is counted separately, as in the built-in loop. The draw
+                            // caps are deliberately not ported (the #422 lesson recorded on TerrainFrameBudget).
+                            boolean hasStored = cached != null;
+                            if (!budgetedShadow || !hasStored || this.terrainBudget.rebuildAllowed()) {
+                                // Retire-before-rebuild (item 398), as in the built-in loop: only inside this
+                                // branch - a deferred rebuild below draws the stored batch as-is, so retiring
+                                // before the budget decision would destroy the last-good it exists to reuse.
+                                if (hasStored) {
+                                    storage.retireCachedMultiDrawBatch(cacheParams);
+                                }
+                                long rebuildStarted = budgetedShadow ? System.nanoTime() : 0L;
+                                org.soutalab.celtium.vulkan.FramePassTimings.begin("packRecordRebuild");
+                                try {
+                                    cached = BatchAssembler.createCachedBatch(region, storage, renderList,
+                                            occlusionCamera, pass, useBlockFaceCulling, null,
+                                            (commands, ignored, ignoredPass) -> null);
+                                } finally {
+                                    org.soutalab.celtium.vulkan.FramePassTimings.end("packRecordRebuild");
+                                }
+                                storage.storeCachedMultiDrawBatch(cacheParams, cached);
+                                if (budgetedShadow) {
+                                    if (hasStored) {
+                                        this.terrainBudget.noteRebuild(System.nanoTime() - rebuildStarted);
+                                    } else {
+                                        this.terrainBudget.noteForcedFirstBuild(System.nanoTime() - rebuildStarted);
+                                    }
+                                }
+                            } else {
+                                this.terrainBudget.noteDeferredReuse();
+                            }
+                        }
+                    } finally {
+                        org.soutalab.celtium.vulkan.FramePassTimings.end("packRegionIter");
                     }
                     if (!(cached.getBatch() instanceof VulkanMultiDrawBatch batch) || batch.isEmpty()) {
                         continue;
@@ -17704,7 +17724,12 @@ this.frameBufferOpen = false;
                         } finally {
                             org.soutalab.celtium.vulkan.FramePassTimings.end("packUniformOffset");
                         }
-                        descSet = modPipeline.samplersAndImages(samplerTextures, imageTextures, modProgram, this.frameId);
+                        org.soutalab.celtium.vulkan.FramePassTimings.begin("packSamplerClaim");
+                        try {
+                            descSet = modPipeline.samplersAndImages(samplerTextures, imageTextures, modProgram, this.frameId);
+                        } finally {
+                            org.soutalab.celtium.vulkan.FramePassTimings.end("packSamplerClaim");
+                        }
                         if (modPipeline.uniformsViaBuffer()) {
                             pushUniforms = null;
                         } else {
@@ -17726,43 +17751,53 @@ this.frameBufferOpen = false;
                         org.soutalab.celtium.vulkan.PackUniformCensus.noteSkippedRegion();
                         continue;
                     }
-                    modPipeline.bindTerrainUniformsAndSet(this.commandBuffer, pushUniforms, descSet, setScratch);
+                    org.soutalab.celtium.vulkan.FramePassTimings.begin("packRegionBind");
+                    try {
+                        modPipeline.bindTerrainUniformsAndSet(this.commandBuffer, pushUniforms, descSet, setScratch);
 
-                    this.terrain.bindVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset, resources);
-                    if (!indexBound) {
-                        this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
-                        indexBound = true;
-                    }
-                    boolean arenaBound = false;
-                    for (int cmd = 0; cmd < batch.size(); cmd++) {
-                        long byteOffset = batch.indexByteOffset(cmd);
-                        boolean arena;
-                        int firstIndex;
-                        if (sortedPass) {
-                            if (resources.indexArena == null) continue;
-                            arena = true;
-                            firstIndex = (int) (byteOffset / 4);
-                        } else if (byteOffset == 0) {
-                            arena = false;
-                            firstIndex = 0;
-                        } else if (resources.indexArena != null) {
-                            arena = true;
-                            firstIndex = (int) (byteOffset / 4);
-                        } else {
-                            continue;
+                        this.terrain.bindVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset, resources);
+                        if (!indexBound) {
+                            this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
+                            indexBound = true;
                         }
-                        if (arena != arenaBound) {
-                            this.terrain.bindIndexBuffer(this.commandBuffer, arena
-                                    ? resources.indexArena.buffer()
-                                    : this.sharedIndexBuffers.get(primitiveType));
-                            arenaBound = arena;
-                        }
-                        vkCmdDrawIndexed(this.commandBuffer, batch.elementCount(cmd), 1, firstIndex,
-                                batch.baseVertex(cmd), 0);
-                        drawnCommands++;
+                    } finally {
+                        org.soutalab.celtium.vulkan.FramePassTimings.end("packRegionBind");
                     }
-                    if (arenaBound) {
-                        this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
+                    org.soutalab.celtium.vulkan.FramePassTimings.begin("packRegionDraw");
+                    try {
+                        boolean arenaBound = false;
+                        for (int cmd = 0; cmd < batch.size(); cmd++) {
+                            long byteOffset = batch.indexByteOffset(cmd);
+                            boolean arena;
+                            int firstIndex;
+                            if (sortedPass) {
+                                if (resources.indexArena == null) continue;
+                                arena = true;
+                                firstIndex = (int) (byteOffset / 4);
+                            } else if (byteOffset == 0) {
+                                arena = false;
+                                firstIndex = 0;
+                            } else if (resources.indexArena != null) {
+                                arena = true;
+                                firstIndex = (int) (byteOffset / 4);
+                            } else {
+                                continue;
+                            }
+                            if (arena != arenaBound) {
+                                this.terrain.bindIndexBuffer(this.commandBuffer, arena
+                                        ? resources.indexArena.buffer()
+                                        : this.sharedIndexBuffers.get(primitiveType));
+                                arenaBound = arena;
+                            }
+                            vkCmdDrawIndexed(this.commandBuffer, batch.elementCount(cmd), 1, firstIndex,
+                                    batch.baseVertex(cmd), 0);
+                            drawnCommands++;
+                        }
+                        if (arenaBound) {
+                            this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
+                        }
+                    } finally {
+                        org.soutalab.celtium.vulkan.FramePassTimings.end("packRegionDraw");
                     }
                     drawnSections += renderList.getSectionsWithGeometryCount();
                 }
