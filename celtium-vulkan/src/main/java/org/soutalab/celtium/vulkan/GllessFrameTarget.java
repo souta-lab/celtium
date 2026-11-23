@@ -15,6 +15,7 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_TILING_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_TYPE_2D;
@@ -2097,6 +2098,100 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
         VulkanGlTexture.noteExternalForeignLayout(command, srcImage, COLOR_RENDER_LAYOUT);
         VulkanGlTexture.noteExternalForeignLayout(command, dstImage, COLOR_RENDER_LAYOUT);
+        return true;
+    }
+
+    /**
+     * Copies the depth image of {@code srcIdentity}'s chain pair into {@code dstIdentity}'s chain pair
+     * outside a render pass (alpha-shadow-cache-form): the source returns to the layout it was found in and
+     * the destination is left in {@link #DEPTH_RENDER_LAYOUT}, the layout a pass attaching it expects. The
+     * colour twin is {@link #copyChainPairColorSlot}; depth has no slot axis and pair depths share one
+     * format ({@code VK_FORMAT_D32_SFLOAT}), so a plain {@code vkCmdCopyImage} always applies.
+     * <p>
+     * Used by the pack shadow result cache: capture copies the just-recorded shadow pair's depth into the
+     * snapshot pair, restore copies it back. A borrowed (shared) source depth is only read, and its layout
+     * record - held by the shared store, see {@code Pair.depthLayout()} - is restored by the post barrier,
+     * so the copy leaves the sharing pairs' beliefs untouched.
+     *
+     * @return whether the copy was recorded
+     */
+    public boolean copyChainPairDepth(long srcIdentity, long dstIdentity, VkCommandBuffer command) {
+        checkAlive();
+        if (command == null || command.address() == 0L || srcIdentity == dstIdentity) {
+            return false;
+        }
+        Pair src = existingChainPair(srcIdentity);
+        Pair dst = existingChainPair(dstIdentity);
+        if (src == null || dst == null || !src.exists() || !dst.exists()) {
+            return false;
+        }
+        if (src.width <= 0 || src.height <= 0 || src.width != dst.width || src.height != dst.height) {
+            return false;
+        }
+        long srcImage = src.depthImage;
+        long dstImage = dst.depthImage;
+        if (srcImage == 0L || dstImage == 0L || srcImage == dstImage) {
+            return false;
+        }
+        int srcLayout = src.depthLayout();
+        int dstLayout = dst.depthLayout();
+        // A UNDEFINED source holds nothing worth copying; a UNDEFINED destination (a snapshot pair
+        // created for this capture and never written) is fine - its barrier discards, as any
+        // UNDEFINED-oldLayout transition does.
+        if (srcLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
+            return false;
+        }
+        int queueFamily = this.context.queueFamilyIndex();
+        try (MemoryStack stack = stackPush()) {
+            VkImageMemoryBarrier.Buffer pre = VkImageMemoryBarrier.calloc(2, stack);
+            pre.get(0).sType$Default()
+                    .image(srcImage)
+                    .oldLayout(srcLayout).newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                    .srcAccessMask(celtium$layoutSourceAccess(srcLayout))
+                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT);
+            pre.get(0).subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            pre.get(1).sType$Default()
+                    .image(dstImage)
+                    .oldLayout(dstLayout).newLayout(DEPTH_TRANSFER_LAYOUT)
+                    .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                    .srcAccessMask(celtium$layoutSourceAccess(dstLayout))
+                    .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+            pre.get(1).subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0, null, null, pre);
+
+            org.lwjgl.vulkan.VkImageCopy.Buffer region = org.lwjgl.vulkan.VkImageCopy.calloc(1, stack);
+            region.get(0).srcSubresource().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1);
+            region.get(0).srcOffset().set(0, 0, 0);
+            region.get(0).dstSubresource().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1);
+            region.get(0).dstOffset().set(0, 0, 0);
+            region.get(0).extent().set(dst.width, dst.height, 1);
+            vkCmdCopyImage(command, srcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    dstImage, DEPTH_TRANSFER_LAYOUT, region);
+
+            VkImageMemoryBarrier.Buffer post = VkImageMemoryBarrier.calloc(2, stack);
+            post.get(0).sType$Default()
+                    .image(srcImage)
+                    .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL).newLayout(srcLayout)
+                    .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                    .srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
+                    .dstAccessMask(celtium$layoutSourceAccess(srcLayout));
+            post.get(0).subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            post.get(1).sType$Default()
+                    .image(dstImage)
+                    .oldLayout(DEPTH_TRANSFER_LAYOUT).newLayout(DEPTH_RENDER_LAYOUT)
+                    .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                    .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                            | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                            | VK_ACCESS_SHADER_READ_BIT);
+            post.get(1).subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    0, null, null, post);
+        }
+        src.depthLayout(command, srcLayout);
+        dst.depthLayout(command, DEPTH_RENDER_LAYOUT);
         return true;
     }
 

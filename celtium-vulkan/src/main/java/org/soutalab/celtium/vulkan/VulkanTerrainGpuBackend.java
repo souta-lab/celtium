@@ -396,6 +396,103 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean PACK_SHADOW_REBUILD_BUDGET =
             Boolean.getBoolean("celtium.vulkan.packShadowRebuildBudget");
+    /**
+     * The Angelica (Iris) shadow result-cache shape, applied to the pack route's shadow stage
+     * (alpha-shadow-cache-form; supersedes the alpha-shadow-interval record-skipping shape as the
+     * replacement candidate): when on via {@code -Dceltium.vulkan.packShadowCache}, a recorded shadow
+     * stage's terrain result - the chain pair's colour slots plus its depth - is blit-copied into a
+     * dedicated snapshot chain pair ({@code ShadowRenderTargets.captureTerrainSnapshot} in the Angelica
+     * reference). A later shadow stage whose gate passes restores the snapshot into the live pair with
+     * the reverse copies ({@code restoreTerrainSnapshot}) and returns without recording terrain, so the
+     * presentation of the capture instant is held explicitly in the snapshot images and re-presented -
+     * unlike the interval shape, which simply left the live pair unsampled-over and let any other writer
+     * of the pair disturb the "cached" map. The redraw gate is Angelica's pair of conditions: the sun's
+     * rotation since the capture reaching {@code 0.03} degrees (the {@code ShadowGraphGate} threshold,
+     * scaled by elevation) or the snapshot's age exceeding 250 ms (at most four terrain redraws a
+     * second). Entity and other non-terrain casters are never part of the snapshot: they are recorded by
+     * their own paths after the terrain stage, fresh every frame, over the restored terrain map. Off by
+     * default - the state below is then never touched and the stage records exactly as before.
+     */
+    private static final boolean PACK_SHADOW_CACHE =
+            Boolean.getBoolean("celtium.vulkan.packShadowCache");
+    /** Angelica's snapshot age cap: a snapshot older than this is never restored (250 ms). */
+    private static final long PACK_SHADOW_CACHE_MAX_AGE_NANOS = 250_000_000L;
+    /** Angelica's ShadowGraphGate base threshold: sun rotation, in degrees, that forces a redraw. */
+    private static final double PACK_SHADOW_CACHE_SUN_THRESHOLD_DEGREES = 0.03;
+    /** Whether the snapshot pair currently holds a captured terrain result. */
+    private boolean packShadowCacheValid;
+    /** Draw identity / snapshot identity / extent / colour count of the captured result. */
+    private long packShadowCacheIdentity;
+    private long packShadowCacheSnapshotIdentity;
+    private int packShadowCacheWidth;
+    private int packShadowCacheHeight;
+    private int packShadowCacheColors;
+    /** Sun direction at the capture (unit vector, world space as read from the shadow model-view). */
+    private final float[] packShadowCacheSunDirection = new float[3];
+    /** {@code System.nanoTime()} of the capture; the 250 ms age cap is measured against it. */
+    private long packShadowCacheCaptureNanos;
+    private long packShadowCacheCaptured;
+    private long packShadowCacheRestored;
+
+    /**
+     * {@return the dedicated snapshot chain-pair identity for a shadow draw identity}: a bijective mix,
+     * so distinct draw identities keep distinct snapshots and the snapshot never names a real target
+     * (the one fixed point of the mix is folded away explicitly).
+     */
+    static long celtium$packShadowSnapshotIdentity(long drawIdentity) {
+        long snapshot = (drawIdentity ^ 0x5A17CA5E57A70001L) * 0x9E3779B97F4A7C15L;
+        return snapshot == drawIdentity ? snapshot ^ 1L : snapshot;
+    }
+
+    /**
+     * {@return the sun direction implied by a shadow model-view matrix}: the negated third column of
+     * its rotation (the world-space direction the shadow camera looks along, which for the shadow stage
+     * is the sun's travel direction), normalised. Only changes in this vector are read (the gate's angle
+     * and its vertical magnitude for the elevation scale), so a consistent sign convention is all the
+     * gate needs.
+     */
+    static float[] celtium$packShadowSunDirection(org.joml.Matrix4fc modelView) {
+        float x = -modelView.m20();
+        float y = -modelView.m21();
+        float z = -modelView.m22();
+        float length = (float) Math.sqrt(x * x + y * y + z * z);
+        if (!(length > 0.0f) || !Float.isFinite(length)) {
+            return new float[]{0.0f, -1.0f, 0.0f};
+        }
+        return new float[]{x / length, y / length, z / length};
+    }
+
+    /** {@return the angle between two unit sun directions, in degrees}. */
+    static double celtium$packShadowSunAngleDegrees(float[] a, float[] b) {
+        double dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        dot = Math.max(-1.0, Math.min(1.0, dot));
+        return Math.toDegrees(Math.acos(dot));
+    }
+
+    /**
+     * {@return Angelica's elevation-scaled gate threshold, in degrees}: the base 0.03 degrees divided
+     * by {@code max(0.5, sin^2(elevation))} of the captured sun - near the horizon the scale floor of
+     * 0.5 doubles the threshold, suppressing the oversensitivity a raw angular gate has when the sun is
+     * low and its azimuth swings fast (ShadowGraphGate's {@code deltaForElevation}).
+     */
+    static double celtium$packShadowSunThresholdDegrees(float[] sunDirection) {
+        double sinElevation = Math.min(1.0, Math.abs(sunDirection[1]));
+        double scale = Math.max(0.5, sinElevation * sinElevation);
+        return PACK_SHADOW_CACHE_SUN_THRESHOLD_DEGREES / scale;
+    }
+
+    /**
+     * {@return whether a pack shadow stage must record terrain instead of restoring the snapshot}:
+     * always when no snapshot is valid or the target changed, otherwise only when the snapshot aged
+     * past 250 ms or the sun rotated at least the elevation-scaled threshold since the capture.
+     */
+    static boolean celtium$packShadowCacheDue(boolean valid, boolean targetChanged, long ageNanos,
+                                              double sunAngleDegrees, double sunThresholdDegrees) {
+        if (!valid || targetChanged) {
+            return true;
+        }
+        return ageNanos > PACK_SHADOW_CACHE_MAX_AGE_NANOS || sunAngleDegrees >= sunThresholdDegrees;
+    }
     private int packTerrainDrawnLogs;
     private int packTerrainRefusedLogs;
     private int packTerrainHandoffLogs;
@@ -17394,6 +17491,14 @@ this.frameBufferOpen = false;
         // shadow-diff-1: the same stage decision as the bracket's, kept as a boolean for the draw loop:
         // the rebuild budget discipline applies to the shadow stage only.
         boolean shadowStage = false;
+        // Pack shadow result cache: a terrain record in flight, captured into the snapshot pair only
+        // when the record completes (the capture sits after the pass ends, before the final return
+        // below). A refusal after the gate falls back to the built-in path, which draws the stage
+        // itself - the snapshot must not claim that record, so nothing is published from here on a
+        // failure path.
+        boolean pendingShadowCapture = false;
+        long pendingShadowSnapshot = 0L;
+        float[] pendingShadowSunDirection = null;
         try {
             packProgram.bind();
             bound = true;
@@ -17510,6 +17615,56 @@ this.frameBufferOpen = false;
                     // Nothing to draw in this pass (e.g. empty gbuffers_water): leave the published colour
                     // owner (deferred1) untouched instead of allocating, clearing, or hijacking color0Tex.
                     return true;
+                }
+                if (shadowStage && PACK_SHADOW_CACHE) {
+                    // Pack shadow result cache (Angelica form): restore the captured terrain snapshot
+                    // into the live pair instead of recording the stage again. The decision sits here -
+                    // after the draw identity and extent are resolved, before any pair allocation,
+                    // clear consumption, handoff copy, acquire barrier or pass begin of a record - and
+                    // the restore itself is only the snapshot copies: colour slots and depth blit back
+                    // from the snapshot pair, which keeps holding the capture untouched. Returning true
+                    // leaves the stage's remaining work to the non-terrain casters' own paths, which
+                    // record fresh over the restored map exactly as Iris draws entities over a restored
+                    // snapshot. A latched game clear for this identity stays unconsumed and is applied
+                    // by the next recorded stage, ahead of its redraw. If any copy refuses (a pair was
+                    // evicted or resized underneath), the stage falls through and records - a partial
+                    // restore is harmless because the record clears and redraws the whole target.
+                    float[] sunDirection = celtium$packShadowSunDirection(matrices.modelView());
+                    boolean cacheTargetChanged = !this.packShadowCacheValid
+                            || drawIdentity != this.packShadowCacheIdentity
+                            || passW != this.packShadowCacheWidth
+                            || passH != this.packShadowCacheHeight;
+                    long cacheAgeNanos = this.packShadowCacheValid
+                            ? System.nanoTime() - this.packShadowCacheCaptureNanos : Long.MAX_VALUE;
+                    double cacheSunAngle = this.packShadowCacheValid
+                            ? celtium$packShadowSunAngleDegrees(this.packShadowCacheSunDirection, sunDirection)
+                            : 180.0;
+                    if (!celtium$packShadowCacheDue(this.packShadowCacheValid, cacheTargetChanged,
+                            cacheAgeNanos, cacheSunAngle,
+                            celtium$packShadowSunThresholdDegrees(this.packShadowCacheSunDirection))) {
+                        boolean restored = true;
+                        for (int s = 0; s < this.packShadowCacheColors && restored; s++) {
+                            restored = pairOwner.copyChainPairColorSlot(
+                                    this.packShadowCacheSnapshotIdentity, s, drawIdentity, s,
+                                    this.commandBuffer);
+                        }
+                        if (restored) {
+                            restored = pairOwner.copyChainPairDepth(
+                                    this.packShadowCacheSnapshotIdentity, drawIdentity, this.commandBuffer);
+                        }
+                        if (restored) {
+                            this.packShadowCacheRestored++;
+                            if (this.packShadowCacheRestored % 600L == 0L) {
+                                System.out.println("[Celtium] CELTIUM_PACK_SHADOW_CACHE restored="
+                                        + this.packShadowCacheRestored + " captured="
+                                        + this.packShadowCacheCaptured + " frame=" + this.frameId);
+                            }
+                            return true;
+                        }
+                    }
+                    pendingShadowCapture = true;
+                    pendingShadowSnapshot = celtium$packShadowSnapshotIdentity(drawIdentity);
+                    pendingShadowSunDirection = sunDirection;
                 }
                 int pairColors = celtium$packTerrainPairColorCount(targetColors,
                         pairOwner.chainPairColorCount(drawIdentity));
@@ -17971,6 +18126,37 @@ this.frameBufferOpen = false;
                         + " frame=" + this.frameId
                         + " skippedRegions=" + this.packTerrainSkippedRegions
                         + samplerSummary);
+            }
+            if (pendingShadowCapture && pairOwner != null) {
+                // The terrain record completed and its render pass has ended (the finally above ran
+                // vkCmdEndRenderPass and the attach release): capture the result into the snapshot
+                // pair - colour slots and depth blit-copied out of the live pair - and publish the
+                // snapshot state only when every copy was recorded, so a later restore never presents
+                // a half-captured map. The snapshot pair is ensured here, at capture time, never on
+                // the restore path, and it borrows no shared depth: its depth is its own image.
+                pairOwner.ensureChainPairColors(pendingShadowSnapshot, Math.max(1, targetColors),
+                        passW, passH, pairClass);
+                boolean capturedAll = true;
+                for (int s = 0; s < targetColors && capturedAll; s++) {
+                    capturedAll = pairOwner.copyChainPairColorSlot(drawIdentity, s,
+                            pendingShadowSnapshot, s, this.commandBuffer);
+                }
+                if (capturedAll) {
+                    capturedAll = pairOwner.copyChainPairDepth(drawIdentity, pendingShadowSnapshot,
+                            this.commandBuffer);
+                }
+                if (capturedAll) {
+                    this.packShadowCacheValid = true;
+                    this.packShadowCacheIdentity = drawIdentity;
+                    this.packShadowCacheSnapshotIdentity = pendingShadowSnapshot;
+                    this.packShadowCacheWidth = passW;
+                    this.packShadowCacheHeight = passH;
+                    this.packShadowCacheColors = targetColors;
+                    System.arraycopy(pendingShadowSunDirection, 0, this.packShadowCacheSunDirection,
+                            0, 3);
+                    this.packShadowCacheCaptureNanos = System.nanoTime();
+                    this.packShadowCacheCaptured++;
+                }
             }
             return true;
         } catch (RuntimeException | LinkageError err) {
