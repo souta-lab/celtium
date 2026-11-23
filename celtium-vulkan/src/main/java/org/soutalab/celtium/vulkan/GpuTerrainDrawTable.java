@@ -193,6 +193,18 @@ public final class GpuTerrainDrawTable {
             return this.maskGeneration != generation;
         }
 
+        /**
+         * Returns a table sharing this table's sorted {@link #entries} and {@link #remap} array
+         * with a freshly transcribed occlusion mask, avoiding an {@code O(E log E)} entry rebuild
+         * when the retained pass population is unchanged across frames.
+         */
+        public Table withMask(int[] maskWords, long maskGeneration,
+                              int maskBaseX, int maskBaseY, int maskBaseZ,
+                              int maskDimX, int maskDimY, int maskDimZ) {
+            return new Table(this.entries, this.remap, maskWords, maskGeneration, this.tableGeneration,
+                    maskBaseX, maskBaseY, maskBaseZ, maskDimX, maskDimY, maskDimZ);
+        }
+
         /** Packs the entries into {@code out} at {@code byteOffset}, std430 order. */
         public void packEntries(ByteBuffer out, int byteOffset) {
             for (int i = 0; i < this.entries.length; i++) {

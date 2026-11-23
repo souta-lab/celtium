@@ -141,8 +141,15 @@ public final class TerrainRenderer {
     /** {@return the shared vertex arena, creating it on first use}. */
     VulkanArena sharedVertexArena(VulkanContext context) {
         if (this.sharedVertexArena == null) {
+            // Mesh stages read the shared vertex arena as a storage buffer; gate the extra
+            // usage bit on both the mesh flag and device capability so non-mesh devices
+            // (HD 620 / UHD 630) and default-off runs keep the exact vertex-only buffer usage.
+            int usage = VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+                    | ((VulkanMeshTerrain.ENABLED || VulkanMeshTaskDraw.ENABLED)
+                            && context.meshShaderEnabled()
+                            ? VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0);
             this.sharedVertexArena = new VulkanArena(context, SHARED_VERTEX_ARENA_INITIAL_BYTES,
-                    VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertexStride());
+                    usage, vertexStride());
         }
         return this.sharedVertexArena;
     }

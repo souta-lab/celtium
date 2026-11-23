@@ -2843,6 +2843,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** Per-slot stage-4 table buffers: the finished frame's section-granular table, uploaded at the pass head. */
     private final VulkanHostBuffer[] celtium$meshTableBuffers =
             new VulkanHostBuffer[FrameSubmissionScheduler.FRAME_SLOTS];
+    /** Generation of the section-granular table currently packed into each slot's buffer (0 = none). */
+    private final long[] celtium$meshTableGeneration =
+            new long[FrameSubmissionScheduler.FRAME_SLOTS];
+    /** Monotonic stamp for cached stage-4/5 section tables; starts at 1 so 0 means "unpacked". */
+    private long celtium$meshNextTableGeneration = 1L;
     /** Pass heads that declined the mesh draw because the finished collection no longer covers the pass exactly. */
     private long celtium$meshCoverageMisses;
     /** Passes actually drawn through the stage-2 task draw by this wiring. */
@@ -2864,6 +2869,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         /** Ordinal assigned in first-collection order, the form the table's entry flags carry. */
         final int ordinal;
         final List<CeltiumMeshRegionBatch> regions = new ArrayList<CeltiumMeshRegionBatch>();
+        /** Cached sorted draw-source table for this retained population; reused across steady-state frames. */
+        GpuTerrainDrawTable.Table cachedTable;
+        /** Cached section directory over {@link #cachedTable}; avoids rebuilding per steady-state frame. */
+        SectionDirectory.Directory cachedDirectory;
+        /** Dictionary index per {@link #regions} slot so per-frame remap refresh is O(regions). */
+        int[] cachedRegionDictIndices;
+        /** Whether every entry in {@link #cachedTable} carries {@code FLAG_SECTION_BOX}. */
+        boolean cachedAllSectionGranular;
+        /** Generation stamp of {@link #cachedTable} / {@link #cachedDirectory} for slot upload skipping. */
+        long cachedTableGeneration;
 
         CeltiumMeshPass(int ordinal) {
             this.ordinal = ordinal;
@@ -17109,6 +17124,7 @@ this.frameBufferOpen = false;
                     this.celtium$meshTableBuffers[slot].delete();
                     this.celtium$meshTableBuffers[slot] = null;
                 }
+                this.celtium$meshTableGeneration[slot] = 0L;
             }
             celtium$deleteSettled();
         } catch (RuntimeException | LinkageError failure) {
@@ -19077,7 +19093,11 @@ this.frameBufferOpen = false;
         if (!SpirvShaders.SOLID_VERTEX.equals(pipeline.vertexModuleName())) {
             return false;
         }
-        CeltiumMeshPass collected = this.celtium$meshFinished.passes.remove(pass.name());
+        // Keep the retained pass in celtium$meshFinished across steady-state frames:
+        // when the mesh draw succeeds the region loop is skipped, so removing the entry
+        // here used to force every alternate frame to fall back to the CPU loop (50% ping-pong).
+        // It is evicted only on a coverage miss, when the region loop runs and re-collects.
+        CeltiumMeshPass collected = this.celtium$meshFinished.passes.get(pass.name());
         if (collected == null || collected.regions.isEmpty()) {
             return false;
         }
@@ -19100,20 +19120,24 @@ this.frameBufferOpen = false;
                 if (cached == null || !cached.isValidFor(renderList.getSectionsWithGeometry(),
                         renderList.getSectionsWithGeometryCount(), occlusionCamera.intX,
                         occlusionCamera.intY, occlusionCamera.intZ)) {
+                    this.celtium$meshFinished.passes.remove(pass.name());
                     return celtium$meshCoverageMiss(pass);
                 }
                 if (!(cached.getBatch() instanceof VulkanMultiDrawBatch)
                         || cached.getBatch().isEmpty()
                         || !((VulkanMultiDrawBatch) cached.getBatch()).unsortedOffsetsClean()) {
+                    this.celtium$meshFinished.passes.remove(pass.name());
                     return celtium$meshCoverageMiss(pass);
                 }
                 current.put(region.getId(), (VulkanMultiDrawBatch) cached.getBatch());
             }
             if (current.size() != collected.regions.size()) {
+                this.celtium$meshFinished.passes.remove(pass.name());
                 return celtium$meshCoverageMiss(pass);
             }
             for (CeltiumMeshRegionBatch retained : collected.regions) {
                 if (current.get(retained.region.getId()) != retained.batch) {
+                    this.celtium$meshFinished.passes.remove(pass.name());
                     return celtium$meshCoverageMiss(pass);
                 }
             }
@@ -19126,59 +19150,99 @@ this.frameBufferOpen = false;
                         new VulkanMeshTaskDraw(this.context));
                 this.celtium$meshStage2.beginSlot(this.frameSlot);
             }
-            // The table: one entry per retained command, section-granular where the
-            // batch kept the assembler's tag — the census' transcription, verbatim.
-            GpuTerrainDrawTable.Builder builder = new GpuTerrainDrawTable.Builder();
-            for (CeltiumMeshRegionBatch retained : collected.regions) {
-                RenderRegion region = retained.region;
-                VulkanMultiDrawBatch batch = retained.batch;
-                int frameIndex = this.terrain.writeRegionOffset(region, camera);
-                int dictIndex = builder.dictIndexFor(region.getId(), frameIndex);
-                int flags = (collected.ordinal << 8) | 0; // index source: shared quad buffer
-                for (int i = 0, size = batch.size(); i < size; i++) {
-                    int sectionTag = batch.sectionTag(i);
-                    if (sectionTag >= 0) {
-                        builder.add(new GpuTerrainDrawTable.Entry(batch.elementCount(i), 0,
-                                batch.baseVertex(i), dictIndex,
-                                region.getChunkX() + LocalSectionIndex.unpackX(sectionTag),
-                                region.getChunkY() + LocalSectionIndex.unpackY(sectionTag),
-                                region.getChunkZ() + LocalSectionIndex.unpackZ(sectionTag),
-                                flags | GpuTerrainDrawTable.FLAG_SECTION_BOX));
-                    } else {
-                        builder.add(new GpuTerrainDrawTable.Entry(batch.elementCount(i), 0,
-                                batch.baseVertex(i), dictIndex,
-                                region.getChunkX(), region.getChunkY(), region.getChunkZ(),
-                                flags));
+            // Build and cache the section-granular table and directory once per retained
+            // population; on subsequent steady-state frames reuse them and refresh only
+            // the per-frame region remap (O(regions)) and current-frame lattice mask.
+            if (collected.cachedTable == null) {
+                GpuTerrainDrawTable.Builder builder = new GpuTerrainDrawTable.Builder();
+                int regionCount = collected.regions.size();
+                int[] regionDictIndices = new int[regionCount];
+                for (int r = 0; r < regionCount; r++) {
+                    CeltiumMeshRegionBatch retained = collected.regions.get(r);
+                    RenderRegion region = retained.region;
+                    VulkanMultiDrawBatch batch = retained.batch;
+                    int frameIndex = this.terrain.writeRegionOffset(region, camera);
+                    int dictIndex = builder.dictIndexFor(region.getId(), frameIndex);
+                    regionDictIndices[r] = dictIndex;
+                    int flags = (collected.ordinal << 8) | 0; // index source: shared quad buffer
+                    for (int i = 0, size = batch.size(); i < size; i++) {
+                        int sectionTag = batch.sectionTag(i);
+                        if (sectionTag >= 0) {
+                            builder.add(new GpuTerrainDrawTable.Entry(batch.elementCount(i), 0,
+                                    batch.baseVertex(i), dictIndex,
+                                    region.getChunkX() + LocalSectionIndex.unpackX(sectionTag),
+                                    region.getChunkY() + LocalSectionIndex.unpackY(sectionTag),
+                                    region.getChunkZ() + LocalSectionIndex.unpackZ(sectionTag),
+                                    flags | GpuTerrainDrawTable.FLAG_SECTION_BOX));
+                        } else {
+                            builder.add(new GpuTerrainDrawTable.Entry(batch.elementCount(i), 0,
+                                    batch.baseVertex(i), dictIndex,
+                                    region.getChunkX(), region.getChunkY(), region.getChunkZ(),
+                                    flags));
+                        }
                     }
                 }
+                collected.cachedAllSectionGranular = builder.allSectionGranular();
+                collected.cachedTable = builder.build();
+                collected.cachedDirectory = SectionDirectory.build(collected.cachedTable);
+                collected.cachedRegionDictIndices = regionDictIndices;
+                collected.cachedTableGeneration = this.celtium$meshNextTableGeneration++;
+            } else {
+                for (int r = 0, n = collected.regions.size(); r < n; r++) {
+                    RenderRegion region = collected.regions.get(r).region;
+                    int frameIndex = this.terrain.writeRegionOffset(region, camera);
+                    collected.cachedTable.remap[collected.cachedRegionDictIndices[r]] = frameIndex;
+                }
             }
-            celtium$meshSupplyLatticeMask(builder, this.celtium$meshFinished);
-            GpuTerrainDrawTable.Table table = builder.build();
-            // Upload: this slot's stage-4 table buffer, in the census slot's form.
+            // Prefer the current frame's occlusion snapshot when available so retained
+            // steady-state passes evaluate against current-frame visibility rather than
+            // the collection frame's snapshot.
+            SectionLattice.VisibilitySnapshot maskSnapshot = this.celtium$censusSnapshot != null
+                    ? this.celtium$censusSnapshot : this.celtium$meshFinished.snapshot;
+            int maskVisibleFrame = this.celtium$censusSnapshot != null
+                    ? this.celtium$censusSnapshotFrame : this.celtium$meshFinished.visibleFrame;
+            GpuTerrainDrawTable.Table table = celtium$meshTableWithCurrentMask(
+                    collected.cachedTable, collected.cachedAllSectionGranular,
+                    maskSnapshot, maskVisibleFrame);
+            // Upload: this slot's stage-4/5 table buffer; skip re-packing when the slot
+            // already holds this table generation.
             VulkanHostBuffer tableBuffer = this.celtium$meshTableBuffers[this.frameSlot];
+            long tableBytes = Math.max(1L,
+                    (long) table.entries.length * GpuTerrainDrawTable.ENTRY_BYTES);
+            boolean tableNeedsPack = false;
             if (tableBuffer == null) {
-                tableBuffer = new VulkanHostBuffer(this.context,
-                        Math.max(1L, (long) table.entries.length * GpuTerrainDrawTable.ENTRY_BYTES),
+                tableBuffer = new VulkanHostBuffer(this.context, tableBytes,
                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
                 this.celtium$meshTableBuffers[this.frameSlot] = tableBuffer;
+                tableNeedsPack = true;
             } else {
-                tableBuffer.ensureCapacity(
-                        Math.max(1L, (long) table.entries.length * GpuTerrainDrawTable.ENTRY_BYTES));
+                long previousBuffer = tableBuffer.buffer();
+                tableBuffer.ensureCapacity(tableBytes);
+                if (tableBuffer.buffer() != previousBuffer) {
+                    tableNeedsPack = true;
+                }
             }
-            ByteBuffer view = MemoryUtil.memByteBuffer(tableBuffer.mappedAddress(),
-                    Math.max(1, table.entriesBytes()));
-            view.order(java.nio.ByteOrder.nativeOrder());
-            table.packEntries(view, 0);
+            if (tableNeedsPack
+                    || this.celtium$meshTableGeneration[this.frameSlot] != collected.cachedTableGeneration) {
+                ByteBuffer view = MemoryUtil.memByteBuffer(tableBuffer.mappedAddress(),
+                        Math.max(1, table.entriesBytes()));
+                view.order(java.nio.ByteOrder.nativeOrder());
+                table.packEntries(view, 0);
+                this.celtium$meshTableGeneration[this.frameSlot] = collected.cachedTableGeneration;
+            }
             float[] planes = GpuTerrainDrawTable.extractPlanes(
                     celtium$gpuTerrainCensusVp(matrices));
-            float maxDistance = this.celtium$meshFinished.searchDistance > 0.0f
-                    ? this.celtium$meshFinished.searchDistance
+            float activeSearchDistance = this.celtium$censusSearchDistance > 0.0f
+                    ? this.celtium$censusSearchDistance : this.celtium$meshFinished.searchDistance;
+            float maxDistance = activeSearchDistance > 0.0f
+                    ? activeSearchDistance
                     : GpuTerrainCulling.MAX_DISTANCE_BLOCKS;
             VulkanMeshTaskDraw.GateReason verdict = this.celtium$meshStage2.recordPassHead(
                     stack, this.commandBuffer, this.frameSlot, pipeline,
                     pipeline.descriptorSetHandle(this.frameSlot), vertexArena.buffer(),
                     this.sharedIndexBuffers.get(primitiveType), tableBuffer.buffer(),
-                    table, planes, (float) occlusionCamera.x, (float) occlusionCamera.y,
+                    table, collected.cachedDirectory, collected.cachedTableGeneration,
+                    planes, (float) occlusionCamera.x, (float) occlusionCamera.y,
                     (float) occlusionCamera.z, maxDistance, collected.ordinal, 0,
                     this.terrainBudget.capActive());
             if (verdict == VulkanMeshTaskDraw.GateReason.NONE) {
@@ -19211,15 +19275,15 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * The lattice-mask supply for a stage-4 table, transcribed from the census'
-     * (design section 3.4): the noted snapshot's visible set over section lattice
-     * indices, withheld unless every entry the builder holds is section-granular.
+     * Produces a table view carrying the current frame's lattice occlusion mask without
+     * re-sorting the cached entries, withheld unless every entry in {@code base} is
+     * section-granular (design section 3.4).
      */
-    private static void celtium$meshSupplyLatticeMask(GpuTerrainDrawTable.Builder builder,
-                                                      CeltiumMeshFrame frame) {
-        SectionLattice.VisibilitySnapshot snapshot = frame.snapshot;
-        if (snapshot == null || snapshot.dimX() <= 0 || !builder.allSectionGranular()) {
-            return;
+    private static GpuTerrainDrawTable.Table celtium$meshTableWithCurrentMask(
+            GpuTerrainDrawTable.Table base, boolean allSectionGranular,
+            SectionLattice.VisibilitySnapshot snapshot, int visibleFrame) {
+        if (snapshot == null || snapshot.dimX() <= 0 || !allSectionGranular) {
+            return base;
         }
         int[] frames = snapshot.visibleFrames();
         boolean[] installed = snapshot.installed();
@@ -19232,15 +19296,14 @@ this.frameBufferOpen = false;
         words[4] = snapshot.dimY();
         words[5] = snapshot.dimZ();
         for (int i = 0; i < cells; i++) {
-            if (installed[i] && frames[i] >= frame.visibleFrame) {
+            if (installed[i] && frames[i] >= visibleFrame) {
                 words[GpuTerrainDrawTable.MASK_HEADER_WORDS + (i >>> 5)] |= 1 << (i & 31);
             }
         }
-        builder.latticeMask(words, snapshot.baseX(), snapshot.baseY(), snapshot.baseZ(),
-                snapshot.dimX(), snapshot.dimY(), snapshot.dimZ(),
-                GpuTerrainDrawTable.latticeGeneration(snapshot.baseX(), snapshot.baseY(),
-                        snapshot.baseZ(), snapshot.dimX(), snapshot.dimY(), snapshot.dimZ(),
-                        frame.visibleFrame));
+        long generation = GpuTerrainDrawTable.latticeGeneration(snapshot.baseX(), snapshot.baseY(),
+                snapshot.baseZ(), snapshot.dimX(), snapshot.dimY(), snapshot.dimZ(), visibleFrame);
+        return base.withMask(words, generation, snapshot.baseX(), snapshot.baseY(), snapshot.baseZ(),
+                snapshot.dimX(), snapshot.dimY(), snapshot.dimZ());
     }
 
     private float[] celtium$gpuTerrainCensusVp(ChunkRenderMatrices matrices) {
@@ -24721,7 +24784,14 @@ this.frameBufferOpen = false;
             // no indices at all (audit #346). On success the previous buffer is retired, not deleted in place - a
             // command buffer from an earlier, still-in-flight slot can name it until the drain confirms the device
             // is done.
-            VulkanBuffer buffer = new VulkanBuffer(this.context, bytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+            // Mesh stages bind the shared index buffer as a storage buffer; gate the extra
+            // usage bit on both the mesh flag and device capability so non-mesh devices
+            // (HD 620 / UHD 630) and default-off runs keep the exact index-only buffer usage.
+            int indexUsage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT
+                    | ((VulkanMeshTerrain.ENABLED || VulkanMeshTaskDraw.ENABLED)
+                            && this.context.meshShaderEnabled()
+                            ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0);
+            VulkanBuffer buffer = new VulkanBuffer(this.context, bytes, indexUsage);
             try {
                 buffer.write(0, MemoryUtil.memAddress(data), bytes);
             } catch (RuntimeException | Error error) {
