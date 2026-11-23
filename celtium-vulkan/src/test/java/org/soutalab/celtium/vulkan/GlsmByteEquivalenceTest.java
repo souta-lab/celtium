@@ -1,6 +1,5 @@
 package org.soutalab.celtium.vulkan;
 
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.soutalab.celtium.vulkan.gl.GlsmPackState;
 import org.soutalab.celtium.vulkan.gl.ModGlslTranslator;
@@ -58,10 +57,8 @@ class GlsmByteEquivalenceTest {
         }
     }
 
-    @BeforeEach
-    void reset() {
-        ModProgramRegistry.clear();
-    }
+    // No registry reset: clear() is package-private to the .gl tests, so each test below uses its
+    // own program/shader ids, and the harvest counters are read as deltas.
 
     private static byte[] blockBytes(ByteBuffer buffer, int bytes) {
         byte[] out = new byte[bytes];
@@ -351,7 +348,9 @@ class GlsmByteEquivalenceTest {
         assertTrue(program.lowered().ok(), String.valueOf(program.lowered().failure()));
         float[] offset = {10.5f, -3.25f, 7.75f};
         float[] matrix = new float[16];
-        Arrays.setAll(matrix, i -> i * 0.5f);
+        for (int i = 0; i < matrix.length; i++) {
+            matrix[i] = i * 0.5f;
+        }
         writeFloats(181, "chunkOffset", offset);
         writeFloats(181, "dynM", matrix);
 
