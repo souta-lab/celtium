@@ -17870,6 +17870,8 @@ this.frameBufferOpen = false;
                                   Object view,
                                   boolean useBlockFaceCulling,
                                   ChunkPrimitiveType primitiveType) {
+        // Item 691: recHead covers the pass head up to recordPrepare - see FramePassTimings for the split.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("recHead");
         this.terrainStatistics.noteTerrainPasses();
         // One budget window per presented frame, shared by every pass of the frame (item 328, V-03). Rolling
         // it here also finishes the previous frame's window, whose line is printed below when it saw a drop
@@ -17889,8 +17891,10 @@ this.frameBufferOpen = false;
         int passAreaHeight = this.targetHeight;
         if (celtium$tryRenderPackTerrainPass(stack, matrices, renderLists, pass, occlusionCamera, camera, view,
                 useBlockFaceCulling, primitiveType)) {
+            org.soutalab.celtium.vulkan.FramePassTimings.end("recHead");
             return;
         }
+        org.soutalab.celtium.vulkan.FramePassTimings.end("recHead");
         org.soutalab.celtium.vulkan.FramePassTimings.begin("recordPrepare");
         try {
         org.soutalab.celtium.vulkan.FramePassTimings.begin("prepDescriptors");
@@ -18181,6 +18185,9 @@ this.frameBufferOpen = false;
             org.soutalab.celtium.vulkan.FramePassTimings.end("recordPrepare");
         }
 
+        // Item 691: recPassSetup covers prepare's end to the region loop; the pass-level recBind below
+        // nests inside it, the same containment the census already reads for prepBegin's children.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("recPassSetup");
         // Item 359: the statistics query brackets exactly this loop - the pre-terrain groups before it, and
         // the immediate tail and UI quads after it, are not terrain geometry and stay outside the count.
         int statisticsQuery = beginTerrainStatistics(pass);
@@ -18218,9 +18225,17 @@ this.frameBufferOpen = false;
         // the chain refuses is flushed out first and drawn directly, in the pass' order.
         this.terrain.bindSharedVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset);
         this.terrain.beginTerrainChain();
+        org.soutalab.celtium.vulkan.FramePassTimings.end("recPassSetup");
         try {
-        while (iterator.hasNext()) {
+        while (true) {
+            // Item 691: the iterator advance sat outside every bracket (recLoop opens after next()).
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("recIter");
+            if (!iterator.hasNext()) {
+                org.soutalab.celtium.vulkan.FramePassTimings.end("recIter");
+                break;
+            }
             ChunkRenderList renderList = iterator.next();
+            org.soutalab.celtium.vulkan.FramePassTimings.end("recIter");
             RenderRegion region;
             TerrainRenderer.RegionResources resources;
             CachedBatch cached;
@@ -18281,7 +18296,13 @@ this.frameBufferOpen = false;
                 org.soutalab.celtium.vulkan.FramePassTimings.end("recLoop");
             }
 
-            VulkanMultiDrawBatch batch = (VulkanMultiDrawBatch) cached.getBatch();
+            // Item 691: recCharge covers the span between recLoop and recBind - the cast, the budget
+            // charge below and the readback slot. The try-finally keeps the bracket paired on the
+            // budget drop's continue, the same shape recLoop itself uses.
+            org.soutalab.celtium.vulkan.FramePassTimings.begin("recCharge");
+            VulkanMultiDrawBatch batch;
+            try {
+            batch = (VulkanMultiDrawBatch) cached.getBatch();
 
             // The budget's draw cap (item 328, V-03): the batch is charged whole - vertices by the index
             // shape's rule, draws by its command count - and dropped whole when it would cross either cap,
@@ -18300,6 +18321,9 @@ this.frameBufferOpen = false;
                 // attributable to that pass.
                 this.readbackOffset = (long) batch.baseVertex(0) * this.commonVertexStride;
                 this.readbackRegion = resources;
+            }
+            } finally {
+                org.soutalab.celtium.vulkan.FramePassTimings.end("recCharge");
             }
             org.soutalab.celtium.vulkan.FramePassTimings.begin("recBind");
             long uniformStarted = System.nanoTime();
@@ -18493,6 +18517,8 @@ this.frameBufferOpen = false;
             }
             org.soutalab.celtium.vulkan.FramePassTimings.end("recDraw");
         }
+        // Item 691: recPassTail covers the loop's end to this method's end (see FramePassTimings).
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("recPassTail");
         // The pass' last chained run is recorded before the pass' tail (the immediate groups below draw
         // into this same pass and must follow the terrain), and before the render pass ends.
         this.terrain.endTerrainChain(this.commandBuffer);
@@ -18550,6 +18576,7 @@ this.frameBufferOpen = false;
         // worth the bytes of inlining them (see HugeMethodLimitTest).
         celtium$finishRoutedDepthPass(pass.name(), routedDepthIdentity, routedDepthKey, passAreaWidth, passAreaHeight);
         this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+        org.soutalab.celtium.vulkan.FramePassTimings.end("recPassTail");
     }
 
     /**
