@@ -4439,6 +4439,37 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /**
+     * Puts back a main-framebuffer clear that {@link #consumePendingClears()} drained because the draw
+     * queue was carrying it, after the group that carried it was discarded undrawn.
+     * <p>
+     * The restore is the record {@link #recordClear} made, replayed: the pending mask, the owner the
+     * latch resolves the image from, and the per-buffer value snapshots {@link #mainClearValues} reads -
+     * colour only when the mask names colour, depth only when it names depth, the same per-buffer rule
+     * the record follows, so a depth-only rescue cannot replace the colour an earlier colour clear was
+     * issued with. The frame machinery then applies the clear at the next pass begin, the route it would
+     * have taken had the queue never carried it.
+     */
+    public static void celtium$rependMainClear(int mask, int drawFbo, float[] rgba, double depth) {
+        CeltiumGlStub stub = installed;
+        if (stub == null || mask == 0) {
+            return;
+        }
+        if ((mask & 0x4000) != 0) {
+            stub.lastMainClearRed = rgba[0];
+            stub.lastMainClearGreen = rgba[1];
+            stub.lastMainClearBlue = rgba[2];
+            stub.lastMainClearAlpha = rgba[3];
+            stub.mainClearValuesKnown = true;
+        }
+        if ((mask & 0x0100) != 0) {
+            stub.lastMainClearDepth = depth;
+        }
+        stub.pendingClearDrawFbo = drawFbo;
+        stub.pendingClearIsMain = true;
+        stub.pendingClears.getAndUpdate(previous -> previous | mask);
+    }
+
+    /**
      * The colour and depth of the last {@code glClear} of the main framebuffer, as set when that clear was issued -
      * into {@code out} as {r,g,b,a}; {@return the depth}, or NaN when no main clear has been seen (use the live values).
      * <p>

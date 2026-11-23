@@ -307,6 +307,7 @@ final class BackendDiagnostics {
                 + " clearOrderZeroMask=" + b.clearOrderFlushesZeroMask
                 + " clearOrderSkipped=" + b.clearOrderSkipped + " clearOrderNoTargetMask=" + b.clearOrderNoTargetMask
                 + " mainClearsQueued=" + b.mainClearsQueuedCount()
+                + " mainClearsRescued=" + b.mainClearsRescuedCount()
                 + " mainClearRefusals=[" + b.mainClearRefusalSummary() + "]"
                 + " flushReasons=[" + b.flushReasonSummary() + " flushSiteCounts=" + b.flushSiteSummary() + "]"
                 + " offTargetByTarget=[" + b.offTargetSummary() + "] offTargetTargets=" + b.targetStatistics.offTargetTargetsCreated()
