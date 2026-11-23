@@ -396,6 +396,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean PACK_SHADOW_REBUILD_BUDGET =
             Boolean.getBoolean("celtium.vulkan.packShadowRebuildBudget");
+    /**
+     * E6 for the pack route's shadow stage only (pack-shadow-e6): when on, the shadow execution of
+     * {@link #celtium$tryRenderPackTerrainPass} binds the shared vertex buffer once at the pass head
+     * (every region's {@code vertexArena} is that same arena) and offers each region's batch to
+     * {@link TerrainRenderer#tryIndirectBatch} instead of recording a draw per command. Off by
+     * default - the recorded command stream is then exactly the base one.
+     */
+    private static final boolean PACK_SHADOW_E6 =
+            Boolean.getBoolean("celtium.vulkan.packShadowE6");
     private int packTerrainDrawnLogs;
     private int packTerrainRefusedLogs;
     private int packTerrainHandoffLogs;
@@ -17683,6 +17692,8 @@ this.frameBufferOpen = false;
             // shadow-diff-1: the rebuild budget governs this execution only when the flag is on and this
             // is the shadow stage; every other execution keeps the unconditional rebuild below.
             boolean budgetedShadow = PACK_SHADOW_REBUILD_BUDGET && shadowStage;
+            boolean shadowE6 = PACK_SHADOW_E6 && shadowStage;
+            boolean sharedIndexBound = false;
             boolean indexBound = false;
             LongBuffer regionVertexBuf = stack.mallocLong(1);
             LongBuffer regionVertexOffset = stack.longs(0L);
@@ -17694,6 +17705,9 @@ this.frameBufferOpen = false;
             try {
                 setViewportAndScissor(stack, passW, passH);
                 modPipeline.bindTerrainPipeline(this.commandBuffer);
+                if (shadowE6) {
+                    this.terrain.bindSharedVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset);
+                }
                 while (true) {
                     // Item 722 (E6, first stage): packRegionIter brackets one region's iteration head
                     // (advance, lookup, cached-batch validity; packRecordRebuild nests inside),
@@ -17826,16 +17840,38 @@ this.frameBufferOpen = false;
                     try {
                         modPipeline.bindTerrainUniformsAndSet(this.commandBuffer, pushUniforms, descSet, setScratch);
 
-                        this.terrain.bindVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset, resources);
-                        if (!indexBound) {
-                            this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
-                            indexBound = true;
+                        if (!shadowE6) {
+                            this.terrain.bindVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset, resources);
+                            if (!indexBound) {
+                                this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
+                                indexBound = true;
+                            }
                         }
                     } finally {
                         org.soutalab.celtium.vulkan.FramePassTimings.end("packRegionBind");
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("packRegionDraw");
                     try {
+                        boolean drewIndirect = false;
+                        if (shadowE6) {
+                            if (TERRAIN_INDIRECT_ENABLED) {
+                                drewIndirect = this.terrain.tryIndirectBatch(this.context, this.commandBuffer,
+                                        stack, this.sharedIndexBuffers, resources, batch, sortedPass, primitiveType, 0);
+                            } else {
+                                this.terrain.noteTerrainIndirectFallback();
+                                this.terrain.setLastTerrainIndirectFallback(
+                                        "the indirect path is off (-Dceltium.vulkan.indirectTerrain)");
+                            }
+                            if (drewIndirect) {
+                                drawnCommands += batch.size();
+                                sharedIndexBound = false;
+                            }
+                        }
+                        if (!drewIndirect) {
+                        if (shadowE6 && !sharedIndexBound) {
+                            this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
+                            sharedIndexBound = true;
+                        }
                         boolean arenaBound = false;
                         for (int cmd = 0; cmd < batch.size(); cmd++) {
                             long byteOffset = batch.indexByteOffset(cmd);
@@ -17866,6 +17902,12 @@ this.frameBufferOpen = false;
                         }
                         if (arenaBound) {
                             this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
+                        }
+                        if (shadowE6) {
+                            // The walk returns with the shared index buffer bound: it restores it
+                            // whenever it left for an arena, and otherwise the entry bind above stands.
+                            sharedIndexBound = true;
+                        }
                         }
                     } finally {
                         org.soutalab.celtium.vulkan.FramePassTimings.end("packRegionDraw");
