@@ -3135,6 +3135,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private boolean currentGroupPreTransformed;
     private boolean currentGroupUsed;
+    /**
+     * The open group's flush-accounting stamp (flight A1): decided where the group is created, read by the
+     * accept path's counter addition in the same call, and copied onto the group at close. A separate scratch
+     * rather than a read of the group-to-be because the addition runs before the group object exists.
+     */
+    private boolean currentGroupIndexFlushExempt;
     private int currentGroupFormatId;
     private int[] currentGroupState = new int[7];
     /**
@@ -3850,6 +3856,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * times a frame and each fill opened a window.
      */
     private static final int IMMEDIATE_FLUSH_INDICES = 32768;
+    /**
+     * Flight A1, off by default: a retained acceptance's indices stay out of {@code pendingImmediateIndices}.
+     * <p>
+     * The counter exists to bound the geometry a window holds - the transient geometry's consumption of the
+     * window's arena and index buffer. A retained group consumes none of that: it is recorded by binding its
+     * own device mesh out of the retained-geometry cache and drawing indexed from it, so its index count is a
+     * nominal value with no relation to the window's capacity. Counting it anyway made the retained traffic
+     * the threshold's main tripper - the flight-c4 census measured the size flush inside a retained acceptance
+     * at 95.2% of the cloud acceptance bracket - so each cloud cell's second colour-mask pass flushed the
+     * window mid-acceptance. With this on, the accept path skips the addition for a retained group and stamps
+     * the group {@link ImmediateGroup#indexFlushExempt}; the draw-side subtraction, the flush-end recompute
+     * and the abort re-adds all read the stamp, so the counter's three adjustment sites stay in agreement.
+     * Read once at class init, like the other per-run switches here.
+     */
+    private static final boolean RETAINED_INDEX_FLUSH_EXEMPT =
+            Boolean.getBoolean("celtium.vulkan.retainedIndexFlushExempt");
     /**
      * Per-call isolation/inspection switches, read once at class init: each of these was re-queried through
      * {@code Boolean.getBoolean}/{@code Integer.getInteger} on every call it gated - the format-refusal check ran
@@ -9926,6 +9948,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 this.currentGroupPolygonOffsetFactor = 0.0F;
                 this.currentGroupPolygonOffsetUnits = 0.0F;
                 this.currentGroupBatches = 0;
+                // Flight A1: the group's accounting stamp is decided here, where the retained offer is in
+                // hand - a retained offer always opens its own group (the split predicate above), so this is
+                // the one place the accept addition below and the close-side stamp take the same fact from.
+                this.currentGroupIndexFlushExempt = RETAINED_INDEX_FLUSH_EXEMPT && retained != null;
                 this.currentGroupViewportValues = currentViewport();
                 this.currentPreparedImmediate = prepared;
                 System.arraycopy(this.glProjection, 0, this.currentGroupProjection, 0, 16);
@@ -10272,7 +10298,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             }
             this.currentGroupUsed = true;
             this.currentGroupBatches++;
-            this.pendingImmediateIndices += indices.length;
+            if (!this.currentGroupIndexFlushExempt) {
+                this.pendingImmediateIndices += indices.length;
+            }
             if (retained != null) {
                 // A retained mesh is immutable and may be used by many queued draws. Seal this draw now so a later
                 // transient batch can never append into it; ordering/state capture still use the shared queue.
@@ -10350,7 +10378,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     // but the per-format histogram has no loss column, so it read as "accepted and never drawn".
                     for (ImmediateGroup group : this.recordedImmediateGroups) {
                         int batches = group.batches;
-                        this.pendingImmediateIndices += group.mesh.indexCount();
+                        // An exempt group (flight A1) was never counted at accept, so putting it back must not
+                        // put its indices in either - the re-add restores the pre-record count, nothing more.
+                        if (!group.indexFlushExempt) {
+                            this.pendingImmediateIndices += group.mesh.indexCount();
+                        }
                         this.immediateStatistics.addImmediateRecordedBatches(-(batches));
                         if (group.target != this.targetRegistry.mainIdentity()) this.offTargetRecordedBatches -= batches;
                     }
@@ -10737,17 +10769,32 @@ this.frameBufferOpen = false;
      * {@return the pending-index count after one group is drawn}, the accept path's flush bound.
      * <p>
      * The counter is the accept path's own: {@code pendingImmediateIndices} is incremented by the index count of
-     * every accepted batch and read against {@link #IMMEDIATE_FLUSH_INDICES} to bound how much geometry a window
-     * holds before it is drawn. A model-run group is drawn from the replay's instance buffer and its indices were
-     * never added at accept time, so subtracting it drove the counter negative - the baseline verify line carries
-     * {@code pendingImmediateIndices=-3168} beside {@code modelDraws=88}, and a negative counter can never reach the
-     * threshold, which is the bound the threshold exists for being dead rather than tight.
+     * every counted batch and read against {@link #IMMEDIATE_FLUSH_INDICES} to bound how much geometry a window
+     * holds before it is drawn. The second parameter names the groups the accept path never counted. A model-run
+     * group is drawn from the replay's instance buffer and its indices were never added at accept time, so
+     * subtracting it drove the counter negative - the baseline verify line carries
+     * {@code pendingImmediateIndices=-3168} beside {@code modelDraws=88}, and a negative counter can never reach
+     * the threshold, which is the bound the threshold exists for being dead rather than tight. Flight A1 added
+     * the second never-counted family: a retained group stamped {@link ImmediateGroup#indexFlushExempt}, whose
+     * indices the accept path deliberately skipped under its switch.
      * <p>
      * Static and package-private so the rule is pinned without a device: the two cases are "a group the accept path
      * counted" and "a group it did not", and the second must leave the counter alone rather than subtract from it.
      */
-    static int celtium$pendingIndicesAfterDraw(int pending, boolean modelRun, int indexCount) {
-        return modelRun ? pending : pending - indexCount;
+    static int celtium$pendingIndicesAfterDraw(int pending, boolean neverCounted, int indexCount) {
+        return neverCounted ? pending : pending - indexCount;
+    }
+
+    /**
+     * {@return whether a still-queued group counts toward the pending-index counter} at the flush-end recompute.
+     * The recompute is the counter's ground truth - it replaces the per-group decrements wholesale - so it must
+     * apply the same counted / never-counted split as the accept addition and the draw subtraction: model runs
+     * and, under flight A1's switch, exempt retained groups stand outside it, and a group without a mesh has no
+     * indices to count. Static and package-private so the rule is pinned without a device, beside
+     * {@link #celtium$pendingIndicesAfterDraw}.
+     */
+    static boolean celtium$countsTowardPendingIndices(ImmediateGroup group) {
+        return group.modelRun == null && !group.indexFlushExempt && group.mesh != null;
     }
 
     /**
@@ -13007,7 +13054,11 @@ this.frameBufferOpen = false;
                     }
                     for (ImmediateGroup group : this.recordedImmediateGroups) {
                         int batches = group.batches;
-                        this.pendingImmediateIndices += group.mesh.indexCount();
+                        // An exempt group (flight A1) was never counted at accept, so putting it back must not
+                        // put its indices in either - the re-add restores the pre-record count, nothing more.
+                        if (!group.indexFlushExempt) {
+                            this.pendingImmediateIndices += group.mesh.indexCount();
+                        }
                         this.immediateStatistics.addImmediateRecordedBatches(-(batches));
                         if (group.target != this.targetRegistry.mainIdentity()) this.offTargetRecordedBatches -= batches;
                     }
@@ -15350,6 +15401,7 @@ this.frameBufferOpen = false;
             celtium$noteFogCaptureDrift(group);
             group.geometryLease = this.currentGeometryLease;
             this.currentGeometryLease = null;
+            group.indexFlushExempt = this.currentGroupIndexFlushExempt;
             group.stamp = GroupStamp.obtain(this.frameId, (int) this.targetRegistry.generation(),
                     group.geometryLease != null, this.worldEpoch);
             this.groupQueueMutation++;
@@ -15380,6 +15432,7 @@ this.frameBufferOpen = false;
         }
         this.currentImmediateMesh = null;
         this.currentGroupUsed = false;
+        this.currentGroupIndexFlushExempt = false;
     }
 
 
@@ -24036,8 +24089,10 @@ this.frameBufferOpen = false;
                 // baseline line (which also carries `modelDraws=88`), and a negative counter can never reach
                 // IMMEDIATE_FLUSH_INDICES, so the bound the threshold exists for was dead. The recompute at the end
                 // of the flush already excludes model runs for the same reason; this is the other half of that rule.
+                // Flight A1's exempt retained groups stand in the same never-counted position, by their stamp.
                 this.pendingImmediateIndices = celtium$pendingIndicesAfterDraw(
-                        this.pendingImmediateIndices, group.modelRun != null, mesh.indexCount());
+                        this.pendingImmediateIndices, group.modelRun != null || group.indexFlushExempt,
+                        mesh.indexCount());
                 this.recordedImmediateGroups.add(group); // until submit success; not freed here
                 if (org.soutalab.celtium.vulkan.GpuPassTimingReport.enabled()) {
                     // Format, texture, index count and blend: enough to name which draw a large delta belongs to.
@@ -24097,10 +24152,12 @@ this.frameBufferOpen = false;
             // drifted upward, and the per-group model replays - decremented at draw but never counted at accept - had
             // been hiding the drift. With model replays drawn as instance runs the drift reached the flush threshold
             // and the window was flushed on almost every offer (leg prof-modelinst-1: 138 windows a frame, not 5).
+            // The counting predicate is the same split the accept addition and the draw subtraction apply, so the
+            // never-counted families (model runs, and flight A1's exempt retained groups) stay out here too.
             int stillQueued = 0;
             for (int i = 0; i < groups.size(); i++) {
                 ImmediateGroup kept = groups.get(i);
-                if (kept.modelRun == null && kept.mesh != null) {
+                if (celtium$countsTowardPendingIndices(kept)) {
                     stillQueued += kept.mesh.indexCount();
                 }
             }
