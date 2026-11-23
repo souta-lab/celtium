@@ -5085,7 +5085,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (!this.immediateWindowBusy && queuedGroupUsesTexture(glTextureId)) {
             FramePassTimings.begin("dynFlush");
             try {
-                celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_TEXTURE_ANNOUNCE);
+                celtium$flushPendingForTextureAnnounce(glTextureId);
             } finally {
                 FramePassTimings.end("dynFlush");
             }
@@ -5141,13 +5141,31 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return false;
     }
 
+    /**
+     * {@return whether a queued group this point's window would draw - one offered for the target now
+     * bound - samples this GL texture}. The target-filtered twin of {@link #queuedGroupUsesTexture}:
+     * a window draws only the current target's groups, so those are the only groups an ordering flush
+     * here can protect, which is what the E2 exemption's texture-announce case reads.
+     */
+    private boolean queuedDrawableGroupUsesTexture(int glTextureId) {
+        long current = this.targetRegistry.currentIdentity();
+        for (ImmediateGroup group : this.immediateGroups) {
+            if (group.target == current
+                    && (group.texture == glTextureId
+                            || (group.modelRun != null && group.modelRun.usesTexture(glTextureId)))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Called by the upload hook with the image the game is uploading, so the mirror need not read GL back. */
     public void announceTextureUpload(int glTextureId, java.awt.image.BufferedImage image) {
         // A queued group sampling this texture is drawn before its mirror changes: an ordering
         // flush, not a draw boundary (the window census' stamp).
         if (!this.immediateWindowBusy && queuedGroupUsesTexture(glTextureId)) {
             this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
-            celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_TEXTURE_ANNOUNCE);
+            celtium$flushPendingForTextureAnnounce(glTextureId);
         }
         if (this.textureRegistry == null) {
             this.textureRegistry = celtium$registry();
@@ -5233,7 +5251,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.animatedUploadFlushes++;
             FramePassTimings.begin("animFlush");
             try {
-                celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_TEXTURE_ANNOUNCE);
+                celtium$flushPendingForTextureAnnounce(bound);
             } finally {
                 FramePassTimings.end("animFlush");
             }
@@ -11725,18 +11743,27 @@ this.frameBufferOpen = false;
      * sites that open the frame's windows.
      */
     String flushReasonSummary() {
+        String base;
         if (this.flushReasons.isEmpty()) {
-            return "none";
+            base = "none";
+        } else {
+            java.util.List<java.util.Map.Entry<String, Integer>> rows =
+                    new java.util.ArrayList<java.util.Map.Entry<String, Integer>>(this.flushReasons.entrySet());
+            rows.sort((a, b) -> Integer.compare(b.getValue().intValue(), a.getValue().intValue()));
+            StringBuilder line = new StringBuilder();
+            for (int i = 0; i < rows.size() && i < 10; i++) {
+                if (i > 0) line.append(' ');
+                line.append(rows.get(i).getKey()).append('=').append(rows.get(i).getValue());
+            }
+            base = line.toString();
         }
-        java.util.List<java.util.Map.Entry<String, Integer>> rows =
-                new java.util.ArrayList<java.util.Map.Entry<String, Integer>>(this.flushReasons.entrySet());
-        rows.sort((a, b) -> Integer.compare(b.getValue().intValue(), a.getValue().intValue()));
-        StringBuilder line = new StringBuilder();
-        for (int i = 0; i < rows.size() && i < 10; i++) {
-            if (i > 0) line.append(' ');
-            line.append(rows.get(i).getKey()).append('=').append(rows.get(i).getValue());
+        if (this.glDrawExemptedBindFlushes > 0 || this.glDrawExemptedAnnounceFlushes > 0) {
+            // The E2 exemption's own count, on the same diagnostics line as the flush reasons: how many
+            // ordering flushes it let pass without a window, split by the cause it exempted.
+            base += " glDrawExempt[bindTarget=" + this.glDrawExemptedBindFlushes
+                    + " announce=" + this.glDrawExemptedAnnounceFlushes + "]";
         }
-        return line.toString();
+        return base;
     }
 
     /** Prints the flush-reason census, largest first, every {@link #FLUSH_REASON_FRAMES} frames. */
@@ -12448,16 +12475,35 @@ this.frameBufferOpen = false;
      * {@link #celtium$flushPendingForGlDrawCause} around an entrance's flush call and read where
      * {@code flushImmediateWindow} confirms a window. Save/restore scoping is the
      * {@code celtium$bindFromRawRegister} pattern: the stamp names the innermost entrance and cannot leak
-     * onto a later, unrelated flush. While the census is off the helper is the direct call it wraps.
+     * onto a later, unrelated flush. The stamp is maintained whether or not the census is counting: the
+     * E2 exemption ({@link #GL_DRAW_EXEMPT}) reads the same stamp on the shipping path, while the census'
+     * own counting stays gated inside {@link GlDrawWindowCensus#noteWindow}.
      */
     private int pendingGlDrawCause = GlDrawWindowCensus.CAUSE_OTHER;
 
+    /**
+     * The GL texture a texture announce's flush is ordered against, stamped beside
+     * {@link #pendingGlDrawCause} by {@link #celtium$flushPendingForTextureAnnounce}; 0 outside an
+     * announce, where the exemption reads "texture unknown" and does not fire.
+     */
+    private int pendingGlDrawTexture;
+
+    /**
+     * The E2 exemption (alpha): an ordering flush whose boundary the GL-less stub does not need opens no
+     * window - the pending groups stay queued and are drawn by the next window for their target, in queue
+     * order. On by default on the alpha line; {@code -Dceltium.vulkan.glDrawExempt=false} restores the
+     * pre-exemption path exactly. Which causes are exempt, and why those are the safe ones, is written at
+     * {@link #celtium$glDrawExemptApplies}.
+     */
+    private static final boolean GL_DRAW_EXEMPT =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glDrawExempt", "true"));
+
+    /** Ordering flushes the exemption let pass without a window, by cause. */
+    private long glDrawExemptedBindFlushes;
+    private long glDrawExemptedAnnounceFlushes;
+
     /** Runs the ordering flush under the E2 census' {@code cause} stamp for the window it may open. */
     void celtium$flushPendingForGlDrawCause(int cause) {
-        if (!GlDrawWindowCensus.enabled()) {
-            flushPendingBeforeGlDraw();
-            return;
-        }
         int previous = this.pendingGlDrawCause;
         this.pendingGlDrawCause = cause;
         try {
@@ -12467,18 +12513,70 @@ this.frameBufferOpen = false;
         }
     }
 
+    /** Runs a texture announce's ordering flush under its cause stamp and its texture stamp. */
+    void celtium$flushPendingForTextureAnnounce(int glTextureId) {
+        int previous = this.pendingGlDrawTexture;
+        this.pendingGlDrawTexture = glTextureId;
+        try {
+            celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_TEXTURE_ANNOUNCE);
+        } finally {
+            this.pendingGlDrawTexture = previous;
+        }
+    }
+
     /** Opens the window under the E2 census' {@code cause} stamp (the size trigger's direct call). */
     private void celtium$flushImmediateWindowForCause(int cause) {
-        if (!GlDrawWindowCensus.enabled()) {
-            flushImmediateWindow();
-            return;
-        }
         int previous = this.pendingGlDrawCause;
         this.pendingGlDrawCause = cause;
         try {
             flushImmediateWindow();
         } finally {
             this.pendingGlDrawCause = previous;
+        }
+    }
+
+    /**
+     * {@return whether the ordering flush in flight may skip its window under the E2 exemption},
+     * counting the skip it grants. Consulted only on the window path - never inside an open render
+     * pass, whose in-pass ordering draw is not a window and is never exempted - and only with groups
+     * queued, the open group already closed, so group boundaries are exactly what they would have
+     * been with the window; only the draw's timing moves.
+     * <p>
+     * The exempt causes, from the item-695 census' candidate list, after reading what each boundary
+     * actually orders:
+     * <ul>
+     *   <li><b>bind-framebuffer-target</b>: a bind reads nothing. The pending groups belong to the
+     *   target still bound, and every consumer of that target's image carries its own ordering point -
+     *   the chain-input flush before a post chain reads, the copy service's flushes before a copy or
+     *   read-back, the bind back to the main target, the frame-boundary drain - so the groups are
+     *   drawn, in order, by the next window for their target instead of by a window of their own
+     *   here.</li>
+     *   <li><b>texture-announce</b>: the flush exists for the queued groups that sample the announced
+     *   texture - their prepared descriptors would otherwise sample the image the announce is about
+     *   to replace. A window here draws only the current target's groups, so when no group for the
+     *   current target samples the texture, the window protects nothing it exists to protect (the
+     *   off-target samplers are not drawn by it either way) and only its fixed cost is real. When a
+     *   current-target group does sample the texture, the flush runs exactly as before.</li>
+     * </ul>
+     * Not exempt: bind-framebuffer-main (the render-to-texture handoff - the minimap pattern's last
+     * off-target groups are drawn by it), bind-framebuffer-raw, replay-offtarget (that flush <em>is</em>
+     * the off-target groups' draw into the open pass, not an ordering formality), and every unstamped
+     * entrance, which reads as {@code other}: unknown callers always flush.
+     */
+    private boolean celtium$glDrawExemptApplies() {
+        switch (this.pendingGlDrawCause) {
+            case GlDrawWindowCensus.CAUSE_BIND_FRAMEBUFFER_TARGET:
+                this.glDrawExemptedBindFlushes++;
+                return true;
+            case GlDrawWindowCensus.CAUSE_TEXTURE_ANNOUNCE:
+                if (this.pendingGlDrawTexture != 0
+                        && !queuedDrawableGroupUsesTexture(this.pendingGlDrawTexture)) {
+                    this.glDrawExemptedAnnounceFlushes++;
+                    return true;
+                }
+                return false;
+            default:
+                return false;
         }
     }
 
@@ -12641,6 +12739,15 @@ this.frameBufferOpen = false;
                 System.out.println("[Celtium] CELTIUM_REPLACE_DROP batches=" + dropped + " target=" + this.targetWidth
                         + "x" + this.targetHeight + " frameId=" + this.frameId);
             }
+            return;
+        }
+        if (GL_DRAW_EXEMPT && !(this.commandState != null && this.commandState.inRenderPass())
+                && celtium$glDrawExemptApplies()) {
+            // The E2 exemption: this boundary does not need the ordering, so no window opens and the
+            // groups stay queued for the next window of their own target. The open group was already
+            // closed above, so group boundaries are exactly what they would have been with the window;
+            // only the draw's timing moves. The flush's window tail work (raw writes, flush statistics)
+            // belongs to a window that did not happen and is left for the next one.
             return;
         }
         // Counted here, after the emptiness check: clearOrderFlushes counts *calls* (many return early), so it cannot
