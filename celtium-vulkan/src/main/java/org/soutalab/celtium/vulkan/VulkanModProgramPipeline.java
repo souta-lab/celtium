@@ -256,6 +256,17 @@ public final class VulkanModProgramPipeline {
     /** The set a token resolved on routes whose set names the textures alone (push, dynamic). */
     private long samplerTokenSet;
     private boolean samplerTokenSetResolved;
+    /**
+     * The set a token resolved on the non-dynamic uniform route for {@link #samplerTokenSlotSetSlot}:
+     * on this route a set's identity is the token's sampler/image inputs plus the staged uniform
+     * slot, so unlike the texture-only routes one memo per token is not enough - the memo is keyed
+     * by the slot the last token claim staged. A claim for another slot re-resolves and replaces
+     * the memo. The memo lives and dies with the token: beginning a token clears it, and the
+     * entry points that supersede a token (the array form, the explicit-handle form) zero
+     * {@link #liveSamplerToken}, which is what gates every read of it.
+     */
+    private long samplerTokenSlotSet;
+    private int samplerTokenSlotSetSlot = -1;
     /** Sets one pool holds, and max pools a pipeline may grow to (matches VulkanImmediateTexturePipeline). */
     private static final int MAX_SETS = 64;
     private static final int MAX_POOLS = 64;
@@ -1272,6 +1283,8 @@ public final class VulkanModProgramPipeline {
         this.samplerTokenHash = hash;
         this.samplerTokenSet = 0L;
         this.samplerTokenSetResolved = false;
+        this.samplerTokenSlotSet = 0L;
+        this.samplerTokenSlotSetSlot = -1;
         this.liveSamplerToken = ++this.samplerTokenSerial;
         return this.liveSamplerToken;
     }
@@ -1329,11 +1342,29 @@ public final class VulkanModProgramPipeline {
             }
             return this.samplerTokenSet;
         }
+        // Non-dynamic route: the set names the staged slot, so it cannot be the token's own the
+        // way the texture-only routes keep it - but it is a function of the token's inputs and
+        // the slot alone, and both are stable while the token lives (the token's arrays are its
+        // own and a claim presents the program's current slot). Memoize the resolved set by
+        // slot: a repeat claim for the same slot - the common case, every region of a pass whose
+        // program values did not change - returns it directly instead of re-running the route
+        // key hash, the two cache probes and the full snapshot match on every region, which is
+        // the per-region tail the packSamplerClaim bracket files. A claim for a different slot
+        // re-resolves through the cache and replaces the memo.
+        if (slot == this.samplerTokenSlotSetSlot && this.samplerTokenSlotSet != 0L) {
+            noteTokenSetHit();
+            return this.samplerTokenSlotSet;
+        }
         long hash = celtium$uniformRouteSetKey(this.samplerTokenHash, this.uniformBuffer.buffer(),
                 slot, false);
-        return allocateOrReuseDescriptorSet(hash, this.samplerTokenViews, this.samplerTokenSamplers,
+        long set = allocateOrReuseDescriptorSet(hash, this.samplerTokenViews, this.samplerTokenSamplers,
                 this.samplerTokenLayouts, this.samplerTokenImageViews,
                 celtium$routeSnapshotSlot(slot, false));
+        if (set != 0L) {
+            this.samplerTokenSlotSet = set;
+            this.samplerTokenSlotSetSlot = slot;
+        }
+        return set;
     }
 
     /** Files a token-resolved set with the censuses exactly as an allocateOrReuse fast-path hit. */
