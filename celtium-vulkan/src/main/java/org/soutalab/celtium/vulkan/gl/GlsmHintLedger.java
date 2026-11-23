@@ -31,6 +31,26 @@ public final class GlsmHintLedger {
     private GlsmHintLedger() {
     }
 
+    static {
+        // Doors whose receiving end this stage-3 landing rewired, registered with the owner
+        // they now write. The remaining doors register as their routes land; arrivals at an
+        // unregistered door are the ledger's unroutedArrivals() leftover list for merge.
+        CURRENT.registerDoor("glViewport", "viewport");
+        CURRENT.registerDoor("glClearColor", "clear");
+        CURRENT.registerDoor("glClearDepth", "clear");
+        CURRENT.registerDoor("glDepthMask", "enable");
+        CURRENT.registerDoor("glDepthFunc", "raster");
+        CURRENT.registerDoor("glLineWidth", "immediate");
+        CURRENT.registerDoor("glPointSize", "immediate");
+        CURRENT.registerDoor("glBindRenderbuffer", "clientArray");
+        CURRENT.registerDoor("glRenderbufferStorage", "clientArray");
+        CURRENT.registerDoor("glListBase", "displayList");
+        CURRENT.registerDoor("glPushAttrib", "attribStacks");
+        CURRENT.registerDoor("glPopAttrib", "attribStacks");
+        CURRENT.registerDoor("glPushClientAttrib", "attribStacks");
+        CURRENT.registerDoor("glPopClientAttrib", "attribStacks");
+    }
+
     public void registerDoor(String door, String ownerId) { this.doorOwners.put(door, ownerId); }
 
     /** @return the owner id a door writes, or null when the door has no GLSM receiving end yet. */
