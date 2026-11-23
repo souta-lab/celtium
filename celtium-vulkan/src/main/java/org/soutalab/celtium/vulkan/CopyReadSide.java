@@ -192,7 +192,7 @@ final class CopyReadSide {
             return "the depth copy rectangle " + x + "," + y + " " + width + "x" + height + " -> "
                     + xoffset + "," + yoffset + " is not inside the shared depth images";
         }
-        this.backend.flushPendingBeforeGlDraw();
+        this.backend.celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_COPY_ORDER);
         int sourceFrom = target.sharedDepthLayout(sourceKey);
         int destFrom = target.sharedDepthLayout(destKey);
         org.lwjgl.vulkan.VkCommandBuffer commands = this.backend.context.beginCommands();
@@ -521,7 +521,10 @@ final class CopyReadSide {
 
         @Override
         public void flushPendingBeforeGlDraw() {
-            CopyReadSide.this.backend.flushPendingBeforeGlDraw();
+            // The copy service's ordering flushes all arrive through this one delegation, so the E2
+            // census stamps them here (item 695): copy-order is the call point, whichever copy asked.
+            CopyReadSide.this.backend.celtium$flushPendingForGlDrawCause(
+                    GlDrawWindowCensus.CAUSE_COPY_ORDER);
         }
 
         @Override

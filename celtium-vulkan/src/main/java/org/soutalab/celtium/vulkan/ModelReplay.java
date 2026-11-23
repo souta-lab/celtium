@@ -429,7 +429,7 @@ final class ModelReplay {
                 b.modelOffTargetFlushedTarget = target;
                 long recordedBefore = b.immediateStatistics.immediateRecordedBatches();
                 long flushesBefore = b.immediateStatistics.actualFlushes();
-                b.flushPendingBeforeGlDraw();
+                b.celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_REPLAY_OFFTARGET);
                 if (b.modelOffTargetFlushLogs < b.MODEL_OFFTARGET_FLUSH_LOG_LIMIT) {
                     b.modelOffTargetFlushLogs++;
                     System.out.println("[Celtium] CELTIUM_MODEL_OFFTARGET_FLUSH batches+"
