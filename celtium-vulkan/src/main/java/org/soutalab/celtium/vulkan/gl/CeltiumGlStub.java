@@ -408,7 +408,9 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** The last {@code glPointSize} request. Points are not rasterized, so this exists for the query only. */
     volatile float pointSize = 1.0f;
     /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
-    volatile int currentProgram, compilingList, boundVertexArray, lastCalledList, listBase;
+    volatile int currentProgram, boundVertexArray;
+    // GAP-ST-7 rewired: compilingList/compilingMode, lastCalledList, executingList and listBase
+    // are GlsmDisplayListLedger's, as are the compiled-list/geometry/payload maps and counters below.
 
     /**
      * The programs a draw has been decoded under, so the first draw of each is reported once.
@@ -650,8 +652,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Releases a list's owned payloads; called when the list is replaced or deleted (#394). */
-    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<List<NativeGeometryBuffer>> displayListGeometry =
-            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
     private List<NativeGeometryBuffer> openListGeometry;
 
     /**
@@ -663,7 +663,9 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     long heldListGeometryBytes() {
         long bytes = 0L;
-        for (List<NativeGeometryBuffer> buffers : this.displayListGeometry.values()) {
+        for (List<?> rawBuffers : GlsmDisplayListLedger.current().geometryLists()) {
+            @SuppressWarnings("unchecked")
+            List<NativeGeometryBuffer> buffers = (List<NativeGeometryBuffer>) rawBuffers;
             for (int i = 0; i < buffers.size(); i++) {
                 NativeGeometryBuffer buffer = buffers.get(i);
                 bytes += (long) buffer.vertexCount() * buffer.stride();
@@ -673,7 +675,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private void releaseListPayloads(Integer list) {
-        List<NativeGeometryBuffer> geometry = this.displayListGeometry.remove(list.intValue());
+        List<NativeGeometryBuffer> geometry = GlsmDisplayListLedger.current().removeGeometry(list.intValue());
         if (geometry != null) {
             for (NativeGeometryBuffer buffer : geometry) buffer.close();
             this.listPayloadsReleased += geometry.size();
@@ -684,7 +686,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (legacyBytes > 0L) {
             this.legacyListRunBytes -= legacyBytes;
         }
-        List<java.nio.ByteBuffer> payloads = this.displayListPayloads.remove(list.intValue());
+        List<java.nio.ByteBuffer> payloads = GlsmDisplayListLedger.current().removePayloads(list.intValue());
         if (payloads == null) {
             return;
         }
@@ -694,8 +696,6 @@ public final class CeltiumGlStub implements FunctionProvider {
         this.listPayloadsReleased += payloads.size();
     }
 
-    /** The mode glNewList was given for {@link #compilingList}: GL_COMPILE or GL_COMPILE_AND_EXECUTE. */
-    volatile int compilingListMode;
     /**
      * The list {@code glCallList} is replaying right now, 0 outside a replay.
      *
@@ -703,7 +703,6 @@ public final class CeltiumGlStub implements FunctionProvider {
      * answer to "what is being drawn", which {@code GL_LIST_INDEX} cannot give: the query names the list being
      * compiled and stays 0 while a list is executed.
      */
-    private volatile int executingList;
     /**
      * The display lists this stub has compiled, keyed by list name.
      *
@@ -730,10 +729,6 @@ public final class CeltiumGlStub implements FunctionProvider {
      * are released when the list is replaced or deleted.
      */
     private List<java.nio.ByteBuffer> openListPayloads;
-
-    /** Owned payloads per compiled list name, released on replacement or deletion. */
-    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<List<java.nio.ByteBuffer>> displayListPayloads =
-            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
 
     /** Compiled commands whose pointer payload was copied into list-owned memory. */
     private long listPayloadsOwned;
@@ -766,8 +761,6 @@ public final class CeltiumGlStub implements FunctionProvider {
      * never had a second caller, and the replay path (one glCallList per compiled model draw) paid a boxing key per
      * lookup for it.
      */
-    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<List<Object[]>> displayLists =
-            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
     /**
      * Replays, recorded calls and unresolved calls per display-list id, for the verification line.
      *
@@ -824,12 +817,12 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static String listCensus() {
         CeltiumGlStub stub = installed;
         StringBuilder text = new StringBuilder();
-        text.append("compiled=").append(stub == null ? 0L : stub.displayListsCompiled)
-                .append(" replayed=").append(stub == null ? 0L : stub.displayListsReplayed)
-                .append(" unresolved=").append(stub == null ? 0L : stub.displayListsUnresolved)
+        text.append("compiled=").append(stub == null ? 0L : GlsmDisplayListLedger.current().compiled())
+                .append(" replayed=").append(stub == null ? 0L : GlsmDisplayListLedger.current().replayed())
+                .append(" unresolved=").append(stub == null ? 0L : GlsmDisplayListLedger.current().unresolved())
                 .append(" noList=").append(listCallsWithoutAList)
                 .append(" nestingOverflow=").append(listReplayNestingOverflow)
-                .append(" held=").append(stub == null ? 0 : stub.displayLists.size())
+                .append(" held=").append(stub == null ? 0 : GlsmDisplayListLedger.current().heldLists())
                 .append(" heldBytes=").append(stub == null ? 0L : stub.heldListGeometryBytes())
                 .append(" distinct=").append(ListCensus.REPLAYS.size());
         if (ListCensus.REPLAYS.isEmpty() && ListCensus.UNRESOLVED.isEmpty()) {
@@ -881,7 +874,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static boolean hasRecordedList(int list) {
         CeltiumGlStub stub = installed;
-        return stub != null && list > 0 && stub.displayLists.containsKey(list);
+        return stub != null && list > 0 && GlsmDisplayListLedger.current().hasList(list);
     }
 
     /**
@@ -913,7 +906,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** How deep a replay currently is. glCallList may appear inside a list; the spec puts the limit at 64 or more. */
     private int replayDepth;
     private static final int MAX_LIST_NESTING = 64;
-    private volatile long displayListsCompiled, displayListsReplayed, displayListsUnresolved;
     /** How many compiled lists print their contents, so a session with thousands of compiles cannot flood the log. */
     private static int listCompileLogs;
     private static final int LIST_COMPILE_LOGS = 16;
@@ -1088,8 +1080,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                 // it, and `unresolved` is the count that found nothing, which the spec says is ignored. The format is
                 // listCensus()'s, so this hook and the verification line cannot report two different shapes of the
                 // same measurement (the hook's output is not in the log, which round 20 measured; the line is).
-                if (installed != null && (installed.displayListsCompiled > 0 || installed.displayListsReplayed > 0
-                        || installed.displayListsUnresolved > 0)) {
+                if (installed != null && (GlsmDisplayListLedger.current().compiled() > 0 || GlsmDisplayListLedger.current().replayed() > 0
+                        || GlsmDisplayListLedger.current().unresolved() > 0)) {
                     celtium$printAtExit("CELTIUM_DISPLAY_LISTS " + listCensus());
                 }
             }, "celtium-noop-census"));
@@ -1156,7 +1148,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static int executingList() {
         CeltiumGlStub stub = installed;
-        return stub == null ? 0 : stub.executingList;
+        return stub == null ? 0 : GlsmDisplayListLedger.current().executingListId();
     }
 
     /**
@@ -1171,7 +1163,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static int compilingList() {
         CeltiumGlStub stub = installed;
-        return stub == null ? 0 : stub.compilingList;
+        return stub == null ? 0 : GlsmDisplayListLedger.current().compiling();
     }
 
     /**
@@ -1189,8 +1181,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return;
         }
-        stub.compilingList = list;
-        stub.compilingListMode = mode;
+        GlsmDisplayListLedger.current().compiling(list);
+        GlsmDisplayListLedger.current().compilingMode(mode);
         // Where the current colour and texture coordinate came from decides whether a compiled run keeps its baked
         // bytes or takes the values current at glCallList; see CompiledLegacyRun. A name of zero is not a list.
         if (list > 0) {
@@ -1233,8 +1225,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return;
         }
-        stub.compilingList = 0;
-        stub.compilingListMode = 0;
+        GlsmDisplayListLedger.current().compiling(0);
+        GlsmDisplayListLedger.current().compilingMode(0);
         stub.closeCompileState();
     }
 
@@ -2169,7 +2161,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         snapshot.viewportY = GlsmViewportState.current().y();
         snapshot.viewportWidth = GlsmViewportState.current().width();
         snapshot.viewportHeight = GlsmViewportState.current().height();
-        snapshot.listBase = stub.listBase;
+        snapshot.listBase = GlsmDisplayListLedger.current().listBase();
         snapshot.activeTextureUnit = stub.textures.activeUnit();
         snapshot.texture2d = stub.textures.texture2d();
         // GL_LIGHTING_BIT's restorable part. The authority is the backend's immediate-state mirror, which is where the
@@ -2313,7 +2305,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             restored |= LegacyAttribSnapshot.VIEWPORT_BIT;
         }
         if (restoresAttrib(snapshot, LegacyAttribSnapshot.LIST_BIT)) {
-            this.listBase = snapshot.listBase;
+            GlsmDisplayListLedger.current().listBase(snapshot.listBase);
             restored |= LegacyAttribSnapshot.LIST_BIT;
         }
         if (restoresAttrib(snapshot, LegacyAttribSnapshot.TEXTURE_BIT)) {
@@ -2803,7 +2795,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         long nested = stub.legacyCapture.nestedRefusals();
         long lists = stub.legacyCapture.listRefusals();
         long modes = stub.legacyCapture.modeRefusals();
-        stub.legacyCapture.begin(mode, textured, stub.compilingList != 0, LEGACY_MODE_GATE);
+        stub.legacyCapture.begin(mode, textured, GlsmDisplayListLedger.current().compiling() != 0, LEGACY_MODE_GATE);
         if (stub.legacyCapture.nestedRefusals() != nested && stub.legacyRefusalLogs < LEGACY_REFUSAL_LOG_LIMIT) {
             stub.legacyRefusalLogs++;
             System.out.println("[Celtium] CELTIUM_LEGACY_REFUSED mode=" + mode + " reason=a second glBegin before glEnd");
@@ -2811,7 +2803,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub.legacyCapture.listRefusals() != lists && stub.legacyRefusalLogs < LEGACY_REFUSAL_LOG_LIMIT) {
             stub.legacyRefusalLogs++;
             System.out.println("[Celtium] CELTIUM_LEGACY_REFUSED mode=" + mode
-                    + " reason=a display-list run could not be recorded (list " + stub.compilingList + ")");
+                    + " reason=a display-list run could not be recorded (list " + GlsmDisplayListLedger.current().compiling() + ")");
         }
         if (stub.legacyCapture.modeRefusals() != modes && stub.legacyModeRefusalsLogged < LEGACY_REFUSAL_LOG_LIMIT) {
             stub.legacyModeRefusalsLogged++;
@@ -2995,7 +2987,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         // Only a run this call opened is filled: a begin that refused (a display-list compile, a mode the renderer has
         // no draw for) has already named its reason, and appending into nothing would replace that name with a second
         // one that says the wrong thing.
-        if (stub.legacyCapture.begin(LEGACY_RECT_MODE, textured, stub.compilingList != 0, LEGACY_MODE_GATE)
+        if (stub.legacyCapture.begin(LEGACY_RECT_MODE, textured, GlsmDisplayListLedger.current().compiling() != 0, LEGACY_MODE_GATE)
                 && stub.legacyCapture.rect(x1, y1, x2, y2)) {
             celtium$legacyEnd();
         }
@@ -3137,7 +3129,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private boolean recordLegacyRunForList(int format, int stride, int count, int drawMode, long address,
                                            int attributes) {
         List<Object[]> open = this.openList;
-        if (open == null || this.compilingList <= 0 || count <= 0) {
+        if (open == null || GlsmDisplayListLedger.current().compiling() <= 0 || count <= 0) {
             return false;
         }
         long bytes = (long) count * (long) stride;
@@ -3163,7 +3155,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             String key = drawMode + "/" + count + "/" + format + "/" + attributes;
             if (this.legacyListRunSignatures.add(key)) {
                 this.legacyListRunLogs++;
-                System.out.println("[Celtium] CELTIUM_LEGACY_LIST_RUN list=" + this.compilingList + " mode=" + drawMode
+                System.out.println("[Celtium] CELTIUM_LEGACY_LIST_RUN list=" + GlsmDisplayListLedger.current().compiling() + " mode=" + drawMode
                         + " vertices=" + count + " format=" + format + " bytes=" + bytes + " attributes=" + attributes
                         + " (compiled into the list; glCallList replays it with the state current then)");
             }
@@ -3212,7 +3204,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         this.legacyListRunReplayRefusals++;
         if (this.legacyRefusalLogs < LEGACY_REFUSAL_LOG_LIMIT) {
             this.legacyRefusalLogs++;
-            System.out.println("[Celtium] CELTIUM_LEGACY_LIST_REPLAY_REFUSED list=" + this.lastCalledList
+            System.out.println("[Celtium] CELTIUM_LEGACY_LIST_REPLAY_REFUSED list=" + GlsmDisplayListLedger.current().lastCalled()
                     + " " + run.describe() + " reason="
                     + (backend == null ? "no backend" : backend.lastRefusal()));
         }
@@ -5111,7 +5103,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (open != null && fn.semantics != SEM_NEW_LIST && fn.semantics != SEM_END_LIST) {
             if (fn.semantics == SEM_DRAW_ARRAYS) {
                 drawArrays((int) c[0], (int) c[1], (int) c[2], true);
-                if (this.compilingListMode != GL_COMPILE_AND_EXECUTE) return 0L;
+                if (GlsmDisplayListLedger.current().compilingMode() != GL_COMPILE_AND_EXECUTE) return 0L;
             } else if (!notCompiledIntoDisplayList(fn.semantics)
                     && !fn.name.equals("glEnableClientState") && !fn.name.equals("glDisableClientState")) {
                 long[] recorded = c.clone();
@@ -5123,7 +5115,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     this.openListPayloads.add(owned);
                 }
                 open.add(new Object[] { fn, recorded });
-                if (this.compilingListMode != GL_COMPILE_AND_EXECUTE) {
+                if (GlsmDisplayListLedger.current().compilingMode() != GL_COMPILE_AND_EXECUTE) {
                     return 0L;
                 }
                 // GL_COMPILE_AND_EXECUTE: the command is stored *and* runs now. Falling through executes it; the stored
@@ -5409,7 +5401,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     }
                     if (listAbandonedLogs < 8) {
                         listAbandonedLogs++;
-                        System.out.println("[Celtium] CELTIUM_LIST_ABANDONED list=" + this.compilingList
+                        System.out.println("[Celtium] CELTIUM_LIST_ABANDONED list=" + GlsmDisplayListLedger.current().compiling()
                                 + " payloads=" + (this.openListPayloads == null ? 0 : this.openListPayloads.size())
                                 + " legacyRunBytes=" + this.openListLegacyRunBytes);
                     }
@@ -5419,17 +5411,17 @@ public final class CeltiumGlStub implements FunctionProvider {
                     this.closeCompileState();
                 }
                 this.openListGeometry = null;
-                this.compilingList = (int) c[0];
-                this.compilingListMode = (int) c[1]; // GL_LIST_MODE answers this, and the model capture asks for it
-                this.openList = this.compilingList == 0 ? null : new ArrayList<Object[]>();
-                if (this.compilingList > 0) {
-                    this.openCompileState(this.compilingListMode);
+                GlsmDisplayListLedger.current().compiling((int) c[0]);
+                GlsmDisplayListLedger.current().compilingMode((int) c[1]); // GL_LIST_MODE answers this, and the model capture asks for it
+                this.openList = GlsmDisplayListLedger.current().compiling() == 0 ? null : new ArrayList<Object[]>();
+                if (GlsmDisplayListLedger.current().compiling() > 0) {
+                    this.openCompileState(GlsmDisplayListLedger.current().compilingMode());
                 }
                 // The model capture takes a new generation per compile. The GlStateManager path notifies it; a mod
                 // that calls GL11.glNewList directly did not, so recompiling a name kept the mesh built from its
                 // previous contents and the new geometry was never drawn.
-                if (this.compilingList > 0) {
-                    org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listCompileStarted(this.compilingList);
+                if (GlsmDisplayListLedger.current().compiling() > 0) {
+                    org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listCompileStarted(GlsmDisplayListLedger.current().compiling());
                 }
                 return 0L;
             case SEM_END_LIST:
@@ -5439,19 +5431,18 @@ public final class CeltiumGlStub implements FunctionProvider {
                 if (compiled != null) {
                     // The spec replaces a name's contents at glEndList, so the payloads of the list this one displaces
                     // are unreachable from here on and are released now rather than held for the life of the process.
-                    releaseListPayloads(Integer.valueOf(this.compilingList));
-                    this.displayLists.put(this.compilingList, compiled);
-                    if (this.openListGeometry != null) this.displayListGeometry.put(this.compilingList, this.openListGeometry);
+                    releaseListPayloads(Integer.valueOf(GlsmDisplayListLedger.current().compiling()));
+                    GlsmDisplayListLedger.current().putList(GlsmDisplayListLedger.current().compiling(), compiled);
+                    if (this.openListGeometry != null) GlsmDisplayListLedger.current().putGeometry(GlsmDisplayListLedger.current().compiling(), this.openListGeometry);
                     if (this.openListPayloads != null) {
-                        this.displayListPayloads.put(this.compilingList, this.openListPayloads);
+                        GlsmDisplayListLedger.current().putPayloads(GlsmDisplayListLedger.current().compiling(), this.openListPayloads);
                     }
                     // The compiled legacy runs' bytes become this name's, and the release path above subtracts them
                     // from the same accounting when the name is replaced or deleted.
                     if (this.openListLegacyRunBytes > 0L) {
-                        this.legacyListRunBytesByList.put(this.compilingList, this.openListLegacyRunBytes);
+                        this.legacyListRunBytesByList.put(GlsmDisplayListLedger.current().compiling(), this.openListLegacyRunBytes);
                     }
-                    this.displayListsCompiled++;
-                    // What a compiled list holds, named once per list for the first few: a list that replays every
+                                        // What a compiled list holds, named once per list for the first few: a list that replays every
                     // frame and draws nothing is either not recorded at all (no line here) or recorded without a draw
                     // (draws=0), and the two need different fixes. The geometry bytes are the recorded
                     // COMPILED_ARRAYS payloads, which is what a replay can actually draw. Only lists carrying a
@@ -5470,7 +5461,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     }
                     if (listCompileLogs < LIST_COMPILE_LOGS && bytes >= 4096L) {
                         listCompileLogs++;
-                        System.out.println("[Celtium] CELTIUM_LIST_COMPILED list=" + this.compilingList
+                        System.out.println("[Celtium] CELTIUM_LIST_COMPILED list=" + GlsmDisplayListLedger.current().compiling()
                                 + " commands=" + compiled.size() + " draws=" + draws + " bytes=" + bytes
                                 + " legacyRunBytes=" + this.openListLegacyRunBytes
                                 + " backend=" + (org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends
@@ -5487,14 +5478,14 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.openListPayloads = null;
                 this.openListLegacyRunBytes = 0L;
                 this.openList = null;
-                this.compilingList = 0;
+                GlsmDisplayListLedger.current().compiling(0);
                 this.closeCompileState();
                 return 0L;
             case SEM_CALL_LIST:
                 replayDisplayList((int) c[0]);
                 return 0L;
             case SEM_LIST_BASE:
-                this.listBase = (int) c[0];
+                GlsmDisplayListLedger.current().listBase((int) c[0]);
                 return 0L;
             case SEM_CALL_LISTS:
                 callLists((int) c[0], (int) c[1], c[2]);
@@ -8938,7 +8929,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listsDeleted(first, range);
         for (int i = 0; i < range; i++) {
             Integer name = Integer.valueOf(first + i);
-            this.displayLists.remove(name.intValue());
+            GlsmDisplayListLedger.current().removeList(name.intValue());
             GlsmNameLedger.current().removeName(name.intValue());
             releaseListPayloads(name);
         }
@@ -8948,7 +8939,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static void celtium$listBase(int base) {
         CeltiumGlStub stub = installed;
         if (stub != null) {
-            stub.listBase = base;
+            GlsmDisplayListLedger.current().listBase(base);
         }
     }
 
@@ -9010,7 +9001,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 for (int byteIndex = 0; byteIndex < group; byteIndex++) {
                     int offset = org.lwjgl.system.MemoryUtil.memGetByte(
                             address + (long) index * group + byteIndex) & 0xFF;
-                    replayDisplayList(this.listBase + offset);
+                    replayDisplayList(GlsmDisplayListLedger.current().listBase() + offset);
                 }
             }
             return;
@@ -9027,7 +9018,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 case 0x1406: offset = (int) org.lwjgl.system.MemoryUtil.memGetFloat(address + (long) i * 4L); break;
                 default: return;
             }
-            replayDisplayList(this.listBase + offset);
+            replayDisplayList(GlsmDisplayListLedger.current().listBase() + offset);
         }
     }
 
@@ -9037,8 +9028,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         // VulkanModelQuadCapture's hook sits inside that compilation, so it saw the recording and refused the
         // quads with `reason=unknown-list list=0`, and the draw itself reached this no-op. Entities, the
         // player, held items, the sky, the stars and the horizon plane all arrive here.
-        this.lastCalledList = listId;
-        List<Object[]> list = this.displayLists.get(listId);
+        GlsmDisplayListLedger.current().noteCalled(listId);
+        List<Object[]> list = GlsmDisplayListLedger.current().list(listId);
         if (list == null) {
             // The spec: an undefined list is ignored, not an error. Counted so a silent miss is visible - and filed
             // under the id that missed, because "12 unresolved" says nothing about which lists a caller expected.
@@ -9052,13 +9043,13 @@ public final class CeltiumGlStub implements FunctionProvider {
             if (listId <= 0) {
                 listCallsWithoutAList++;
             } else {
-                this.displayListsUnresolved++;
+                GlsmDisplayListLedger.current().noteUnresolved();
                 ListCensus.UNRESOLVED.addTo(listId, 1);
             }
         } else if (this.replayDepth < MAX_LIST_NESTING) {
             this.replayDepth++;
-            int outerExecutingList = this.executingList;
-            this.executingList = listId;
+            int outerExecutingList = GlsmDisplayListLedger.current().executingListId();
+            GlsmDisplayListLedger.current().executingListId(listId);
             try {
                 for (int i = 0; i < list.size(); i++) {
                     Object[] call = list.get(i);
@@ -9077,9 +9068,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 // Restored to the outer list on the way out, and cleared only at the outermost exit: a quad
                 // drawn after the replay is not filed under the last list, and a quad the outer list draws
                 // after an inner list returns is not filed under the inner one either.
-                this.executingList = this.replayDepth == 0 ? 0 : outerExecutingList;
+                GlsmDisplayListLedger.current().executingListId(this.replayDepth == 0 ? 0 : outerExecutingList);
             }
-            this.displayListsReplayed++;
+            GlsmDisplayListLedger.current().noteReplayed();
             noteListReplayed(listId, list.size());
         } else {
             // The spec's floor for the nesting limit is 64 and this class stops there. A stopped replay used to be
