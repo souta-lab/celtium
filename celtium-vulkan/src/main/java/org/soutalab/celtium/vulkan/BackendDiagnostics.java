@@ -309,7 +309,7 @@ final class BackendDiagnostics {
                 + " mainClearsQueued=" + b.mainClearsQueuedCount()
                 + " mainClearsRescued=" + b.mainClearsRescuedCount()
                 + " mainClearRefusals=[" + b.mainClearRefusalSummary() + "]"
-                + " flushReasons=[" + b.flushReasonSummary() + " flushSiteCounts=" + b.flushSiteSummary() + "]"
+                + " flushCensus=[" + FlushBoundaryCensus.totalSummary() + " flushSiteCounts=" + b.flushSiteSummary() + "]"
                 + " offTargetByTarget=[" + b.offTargetSummary() + "] offTargetTargets=" + b.targetStatistics.offTargetTargetsCreated()
                 + " refusedBeforeAppend=" + b.immediateStatistics.refusedBeforeAppend()
                 + " partialMirrorRefusals=" + b.immediateStatistics.partialMirrorRefusals()

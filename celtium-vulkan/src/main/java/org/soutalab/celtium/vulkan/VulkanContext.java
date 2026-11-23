@@ -1101,6 +1101,7 @@ public final class VulkanContext {
                     VulkanContext.queueSubmitCalls++;
                         celtium$awaitPresenter();
                         check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit");
+                        FlushBoundaryCensus.noteMidFrameSubmit(FlushBoundaryCensus.SUBMIT_ONE_SHOT_UPLOAD);
                         // The queue accepted this one-shot submission, so the layout transitions recorded into
                         // it are fact now - and only now (the recording was opened in beginCommands). This path
                         // waits on its own fence below, so acceptance here is the exact point the frame path's
