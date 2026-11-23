@@ -2030,14 +2030,18 @@ public final class VulkanGlTexture {
         if (deferred) {
             // Recorded later as one copy per level for every sprite of the tick (see flushDeferredRegions); a patch
             // over a region still pending is ordered behind it by flushing first.
-            if (celtium$overlapsDeferred(x, y, pixelWidth, pixelHeight)) {
-                flushDeferredRegions();
+            boolean coalesced = ANIM_PATCH_DEDUP
+                    && celtium$coalesceDeferred(x, y, pixelWidth, pixelHeight, offsets, depth);
+            if (!coalesced) {
+                if (celtium$overlapsDeferred(x, y, pixelWidth, pixelHeight)) {
+                    flushDeferredRegions();
+                }
+                for (int level = 0; level < depth; level++) {
+                    celtium$deferRegion(level, offsets[level], x >> level, y >> level, pixelWidth >> level,
+                            pixelHeight >> level);
+                }
+                this.deferredDepth = Math.max(this.deferredDepth, depth);
             }
-            for (int level = 0; level < depth; level++) {
-                celtium$deferRegion(level, offsets[level], x >> level, y >> level, pixelWidth >> level,
-                        pixelHeight >> level);
-            }
-            this.deferredDepth = Math.max(this.deferredDepth, depth);
         } else {
         // Anything pending was staged earlier and must reach the image before this patch does.
         flushDeferredRegions();
@@ -4411,6 +4415,17 @@ public final class VulkanGlTexture {
      * reads as balanced; the order of the recordings and submissions is the evidence that is missing.
      */
     static final boolean LAYOUT_TRACE = Boolean.getBoolean("celtium.vulkan.layoutTrace");
+    /**
+     * {@code -Dceltium.vulkan.animPatchDedup=true}: the F2 patch dedup pair, declared here and read by both
+     * halves so they can never disagree about whether it is on. In
+     * {@link VulkanTextureRegistry#announceFullPixels} a region patch whose level-0 pixels hash to the value the
+     * mirror already holds for that exact region is not converted, staged or deferred again; here, a patch whose
+     * region is still pending deferred and arrives again with the identical rectangle replaces the pending
+     * region's staging offset instead of forcing the batch to flush first (see
+     * {@link #celtium$coalesceDeferred}). The default is off: unset, both paths run exactly as they did before
+     * the switch existed.
+     */
+    static final boolean ANIM_PATCH_DEDUP = Boolean.getBoolean("celtium.vulkan.animPatchDedup");
     /** Per image handle, the last 48 events of that image: a long-lived state needs its own history, not a shared ring. */
     private static final java.util.Map<Long, java.util.ArrayDeque<String>> LAYOUT_HISTORY =
             new java.util.LinkedHashMap<Long, java.util.ArrayDeque<String>>();
@@ -4557,6 +4572,62 @@ public final class VulkanGlTexture {
             }
         }
         return false;
+    }
+
+    /**
+     * F2 coalescing ({@link #ANIM_PATCH_DEDUP}): a patch whose level-0 rectangle is identical to a region still
+     * pending here, with no other pending region touching that rectangle, takes the pending region's place
+     * instead of forcing a flush. Per level, the pending region's staging offset is replaced by this patch's -
+     * its bytes are already staged - and a level this patch supplies that the pending one did not is deferred as
+     * usual; the superseded staging slice is left in the ring like any consumed slice. The image result is the
+     * one the flush-first order produces: a level's pending regions never overlap each other (a level-0 overlap
+     * flushes first, and scaled rectangles of disjoint level-0 rectangles stay disjoint), so no other region's
+     * texels are reordered or lost, and the rectangle ends up holding this patch's pixels, which is what
+     * applying the pending patch and then this one would leave. Rectangles that merely overlap keep the flush:
+     * their copies are ordered, and only an exact replacement is order-free.
+     *
+     * @return whether the patch was absorbed into the pending regions
+     */
+    private boolean celtium$coalesceDeferred(int x, int y, int w, int h, long[] offsets, int depth) {
+        int[] rects = this.deferredRects;
+        boolean identicalPending = false;
+        for (int i = 0; i < this.deferredCount; i++) {
+            int r = i * 5;
+            if (rects[r] != 0) {
+                continue;
+            }
+            if (rects[r + 1] == x && rects[r + 2] == y && rects[r + 3] == w && rects[r + 4] == h) {
+                identicalPending = true;
+            } else if (x < rects[r + 1] + rects[r + 3] && rects[r + 1] < x + w
+                    && y < rects[r + 2] + rects[r + 4] && rects[r + 2] < y + h) {
+                return false;
+            }
+        }
+        if (!identicalPending) {
+            return false;
+        }
+        for (int level = 0; level < depth; level++) {
+            int levelX = x >> level;
+            int levelY = y >> level;
+            int levelWidth = w >> level;
+            int levelHeight = h >> level;
+            boolean replaced = false;
+            rects = this.deferredRects;
+            for (int i = 0; i < this.deferredCount; i++) {
+                int r = i * 5;
+                if (rects[r] == level && rects[r + 1] == levelX && rects[r + 2] == levelY
+                        && rects[r + 3] == levelWidth && rects[r + 4] == levelHeight) {
+                    this.deferredOffsets[i] = offsets[level];
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced) {
+                celtium$deferRegion(level, offsets[level], levelX, levelY, levelWidth, levelHeight);
+            }
+        }
+        this.deferredDepth = Math.max(this.deferredDepth, depth);
+        return true;
     }
 
     /**

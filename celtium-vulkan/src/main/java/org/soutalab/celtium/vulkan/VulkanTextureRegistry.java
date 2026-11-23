@@ -50,6 +50,15 @@ public final class VulkanTextureRegistry {
         int width;
         int height;
         final VulkanGlTexture texture;
+        /**
+         * F2 dedup memo ({@code celtium.vulkan.animPatchDedup}): per patch rectangle, packed by
+         * {@link VulkanTextureRegistry#celtium$patchRegionKey}, the level-0 pixel hash of the last patch this
+         * registry applied there, packed with how many levels that application wrote (see
+         * {@link VulkanTextureRegistry#celtium$rememberAppliedPatch}). Null until the first patch lands with the
+         * switch on. The memo dies with the entry and is cleared whenever the image is written whole or rendered
+         * into, so a hit always names pixels the image still holds.
+         */
+        java.util.HashMap<Long, Long> appliedPatchHashes;
 
         Entry(int glId, int width, int height, VulkanGlTexture texture) {
             this.glId = glId;
@@ -1005,6 +1014,13 @@ public final class VulkanTextureRegistry {
         setAnnouncedGeneration(glTextureId, this.announceCounter);
         if (wholeTexture) {
             this.fullyInitialized.add(glTextureId);
+            // A whole write replaces every texel, so no remembered patch hash names what the image holds any
+            // more; every producer that fills an image whole (announcements, captures, the blank baseline)
+            // records through here, which is what makes this the one clearing point the dedup memo needs.
+            Entry filled = this.entries.get(glTextureId);
+            if (filled != null) {
+                filled.appliedPatchHashes = null;
+            }
             return;
         }
         Entry entry = this.entries.get(glTextureId);
@@ -1020,6 +1036,12 @@ public final class VulkanTextureRegistry {
     public void invalidateRenderedTexture(int id) {
         this.announcedImages.remove(id);
         this.staleIds.add(id);
+        Entry entry = this.entries.get(id);
+        if (entry != null) {
+            // Rendering into the image rewrites it outside any announcement, so remembered patch pixels are
+            // gone even though no CPU application replaced them.
+            entry.appliedPatchHashes = null;
+        }
     }
 
     /**
@@ -1496,6 +1518,59 @@ public final class VulkanTextureRegistry {
         return total;
     }
 
+    /** Packs a patch rectangle into one dedup-memo key, or -1 when a field does not fit its 16 bits. */
+    private static long celtium$patchRegionKey(int x, int y, int w, int h) {
+        if ((x | y | w | h) < 0 || x >= 65536 || y >= 65536 || w >= 65536 || h >= 65536) {
+            return -1L;
+        }
+        return ((long) x << 48) | ((long) y << 32) | ((long) w << 16) | (long) h;
+    }
+
+    /** FNV-1a over the level-0 texels a patch carries; the dedup memo's whole comparison. */
+    private static int celtium$patchPixelHash(int[] pixels, int texels) {
+        int hash = 0x811c9dc5;
+        for (int i = 0; i < texels; i++) {
+            hash = (hash ^ pixels[i]) * 0x01000193;
+        }
+        return hash;
+    }
+
+    /**
+     * Records one applied patch in the dedup memo: this rectangle now holds {@code hash}'s pixels down to
+     * {@code appliedLevels}. Any other remembered rectangle the patch overlaps is forgotten first - the patch
+     * rewrote part of it, so its hash no longer names what the image holds there. A same-rectangle entry keeps
+     * the deeper of the two level counts when the hash is unchanged, because a shallower re-application does not
+     * unwrite the levels a deeper one already delivered from the same level 0.
+     */
+    private static void celtium$rememberAppliedPatch(Entry entry, long regionKey, int hash, int appliedLevels,
+            int x, int y, int w, int h) {
+        java.util.HashMap<Long, Long> memo = entry.appliedPatchHashes;
+        if (memo == null) {
+            memo = new java.util.HashMap<Long, Long>();
+            entry.appliedPatchHashes = memo;
+        }
+        java.util.Iterator<java.util.Map.Entry<Long, Long>> it = memo.entrySet().iterator();
+        while (it.hasNext()) {
+            long key = it.next().getKey().longValue();
+            if (key == regionKey) {
+                continue;
+            }
+            int otherX = (int) (key >>> 48);
+            int otherY = (int) (key >>> 32) & 0xffff;
+            int otherW = (int) (key >>> 16) & 0xffff;
+            int otherH = (int) key & 0xffff;
+            if (x < otherX + otherW && otherX < x + w && y < otherY + otherH && otherY < y + h) {
+                it.remove();
+            }
+        }
+        Long previous = memo.get(Long.valueOf(regionKey));
+        int depth = appliedLevels;
+        if (previous != null && (int) (previous.longValue() >> 32) == hash) {
+            depth = Math.max(depth, (int) previous.longValue());
+        }
+        memo.put(Long.valueOf(regionKey), Long.valueOf(((long) hash << 32) | (depth & 0xffffffffL)));
+    }
+
     /**
      * Replaces a mirror's content with pixels the caller already has, when the write covers the whole texture.
      * <p>
@@ -1630,6 +1705,32 @@ public final class VulkanTextureRegistry {
         // configuration this project measured as the closest to the GL reference, and leaves no level stale. The
         // patchMipLevels property turns the per-level application off for measurement only; see PATCH_MIP_LEVELS.
         int appliedLevels = wholeTexture || !PATCH_MIP_LEVELS ? 1 : producerDepth;
+        // F2 B1 (celtium.vulkan.animPatchDedup): a patch whose level-0 pixels are the ones this region already
+        // holds - the repeat frame of a cyclic animation, a producer re-announcing an unchanged sprite - pays a
+        // per-level conversion, a staging copy and a deferred region below and changes no texel, so it is
+        // answered from the memo instead. The hash covers level 0 only: a producer's chain is generated from
+        // its level 0 (TextureUtil.generateMipmapData), so an equal level 0 carries the levels with it, and the
+        // memo records how many levels the application that set it wrote - a call supplying more levels than
+        // that is never skipped, because the levels above the recorded depth are not known to hold this call's
+        // chain. A miss costs the one hash.
+        long dedupRegionKey = -1L;
+        int dedupHash = 0;
+        if (!wholeTexture && VulkanGlTexture.ANIM_PATCH_DEDUP) {
+            int[] levelZero = data[0];
+            if (levelZero != null && levelZero.length >= width * height) {
+                dedupRegionKey = celtium$patchRegionKey(x, y, width, height);
+                if (dedupRegionKey >= 0L) {
+                    dedupHash = celtium$patchPixelHash(levelZero, width * height);
+                    Long applied = entry.appliedPatchHashes == null ? null
+                            : entry.appliedPatchHashes.get(Long.valueOf(dedupRegionKey));
+                    if (applied != null && (int) (applied.longValue() >> 32) == dedupHash
+                            && (int) applied.longValue() >= appliedLevels) {
+                        this.patchDedupSkips++;
+                        return true;
+                    }
+                }
+            }
+        }
         java.nio.ByteBuffer[] levelBytes = this.announceLevelBytes;
         if (levelBytes.length < appliedLevels) {
             levelBytes = new java.nio.ByteBuffer[appliedLevels];
@@ -1653,7 +1754,14 @@ public final class VulkanTextureRegistry {
             if (wholeTexture) {
                 entry.texture.uploadFromNamedImage(glTextureId, width, height, levelBytes[0]);
             } else {
-                entry.texture.uploadPatchedLevels(width, height, x, y, levelBytes, appliedLevels, glTextureId);
+                boolean appliedPatch = entry.texture.uploadPatchedLevels(width, height, x, y, levelBytes,
+                        appliedLevels, glTextureId);
+                if (appliedPatch && dedupRegionKey >= 0L) {
+                    // Only an application the texture accepted enters the memo; a refused patch (its return was
+                    // previously ignored here) must not let a later identical call skip into a refusal's place.
+                    celtium$rememberAppliedPatch(entry, dedupRegionKey, dedupHash, appliedLevels, x, y, width,
+                            height);
+                }
             }
             long applicationNanos = System.nanoTime() - applicationStart;
             if (wholeTexture) {
@@ -2167,6 +2275,8 @@ public final class VulkanTextureRegistry {
     private int readbacksSkippedAfterAnnouncement;
     /** CPU application cost, so "the update path is cheap" is a measurement and not an assumption. */
     private long patchCount;
+    /** Patches the F2 dedup answered from the memo instead of converting and staging (switch on only). */
+    private long patchDedupSkips;
     private long patchBytes;
     private long patchNanos;
     private long fullImageCount;
@@ -2405,7 +2515,8 @@ public final class VulkanTextureRegistry {
     public String patchCostSummary() {
         String costs = "patches=" + this.patchCount + "/" + this.patchBytes + "B/" + (this.patchNanos / 1000000L)
                 + "ms full=" + this.fullImageCount + "/" + this.fullImageBytes + "B/" + (this.fullImageNanos / 1000000L)
-                + "ms beforeInit=" + this.patchesBeforeInitialization + " forgotten=" + this.forgotten;
+                + "ms beforeInit=" + this.patchesBeforeInitialization + " forgotten=" + this.forgotten
+                + " dedupSkips=" + this.patchDedupSkips;
         // The GL-less split: which source filled a mirror when no readback could, how often a mirror was left without
         // content because neither was there, and how often a captured surface was refused because the level held no
         // game pixels at all (an allocation with a NULL data pointer - the stub's own answer, not a pixel guess).
@@ -2626,6 +2737,11 @@ public final class VulkanTextureRegistry {
         // Marked, not dropped: dropping meant the next use created a new image and view, which changed every descriptor
         // key in the immediate path and made the cache useless. The content is re-read into the same resources instead.
         this.staleIds.addAll(this.entries.keySet());
+        // The refresh this schedules rewrites mirrors outside any announcement, so remembered patch pixels no
+        // longer name what the images hold (the dedup memo's clearing rule, as in recordApplication).
+        for (Entry entry : this.entries.values()) {
+            entry.appliedPatchHashes = null;
+        }
     }
 
     /** Drops one mirror so the next use re-uploads it; used when a texture's contents are known to have changed. */
@@ -2639,6 +2755,8 @@ public final class VulkanTextureRegistry {
         }
         if (this.entries.containsKey((int) (glTextureId))) {
             this.staleIds.add(glTextureId);
+            // Same clearing rule as invalidateAll, for the one name whose contents are known to have changed.
+            this.entries.get((int) (glTextureId)).appliedPatchHashes = null;
         }
     }
 
