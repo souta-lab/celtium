@@ -250,10 +250,9 @@ public final class CeltiumGlStub implements FunctionProvider {
     // set", which is the same answer the maps gave for absent keys: GL treats an unqueried capability as disabled
     // and an unbound target as name 0.
     private static final int FLAT_MAP_SIZE = 0x10000;
-    final byte[] enables = new byte[FLAT_MAP_SIZE];
-    // A false value may be an observed disable or simply an untouched provider default. Native replacements
-    // can bypass callbacks, so the latter must never erase state captured through Minecraft's API.
-    private final boolean[] capabilityObserved = new boolean[FLAT_MAP_SIZE];
+    // GAP-ST-1 rewired: the enable/observed record is owned by GlsmEnableState (singleton). A false value there
+    // may be an observed disable or simply an untouched provider default; native replacements can bypass
+    // callbacks, so the latter must never erase state captured through Minecraft's API.
     private final int[] bufferBindings = new int[FLAT_MAP_SIZE];
     /** Bound texture name per (active unit, target). The game uses one unit; the key keeps the option open. A read
      * of an unbound (unit,target) returns -1 - never a valid GL name. */
@@ -2295,7 +2294,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             this.attribDepthFunc = snapshot.depthFunc;
             // GL_DEPTH_WRITEMASK is answered from the enable record when no backend mirror exists, and the restore has
             // to land there too or the query keeps reporting the pushed block's value.
-            this.enables[GlStateQueries.GL_DEPTH_WRITEMASK_CAP] = (byte) (snapshot.depthWrites ? 1 : 0);
+            GlsmEnableState.current().set(GlStateQueries.GL_DEPTH_WRITEMASK_CAP, snapshot.depthWrites);
             if (backend != null) {
                 backend.setDepthMask(snapshot.depthWrites);
                 backend.depthFunc(snapshot.depthFunc);
@@ -2425,7 +2424,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         CeltiumGlStub stub = installed;
         if (stub != null) {
             stub.attribDepthWrites = mask;
-            stub.enables[GlStateQueries.GL_DEPTH_WRITEMASK_CAP] = (byte) (mask ? 1 : 0);
+            GlsmEnableState.current().set(GlStateQueries.GL_DEPTH_WRITEMASK_CAP, mask);
         }
     }
 
@@ -2523,7 +2522,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         stub.clientAttribStack.addLast(new long[] {stub.vertexPointerSize, stub.vertexPointerType,
-                stub.vertexPointerStride, stub.vertexPointerOffset, stub.enables[0x8074],
+                stub.vertexPointerStride, stub.vertexPointerOffset, GlsmEnableState.current().enabled(0x8074) ? 1 : 0,
                 stub.vertexPointerNormalized ? 1L : 0L, stub.vertexPointerInteger ? 1L : 0L});
     }
 
@@ -2540,7 +2539,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         stub.vertexPointerType = (int) saved[1];
         stub.vertexPointerStride = (int) saved[2];
         stub.vertexPointerOffset = saved[3];
-        stub.enables[0x8074] = (byte) saved[4];
+        GlsmEnableState.current().set(0x8074, saved[4] != 0);
         stub.vertexPointerNormalized = saved.length > 5 && saved[5] != 0L;
         stub.vertexPointerInteger = saved.length > 6 && saved[6] != 0L;
         // The restored pointer is attribute 0's record too; the two views of it must not drift apart.
@@ -3657,12 +3656,12 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     public static boolean blendEnableRecorded() {
         CeltiumGlStub stub = installed;
-        return stub != null && stub.capabilityObserved[GL_BLEND];
+        return stub != null && GlsmEnableState.current().observed(GL_BLEND);
     }
 
     public static boolean cullEnableRecorded() {
         CeltiumGlStub stub = installed;
-        return stub != null && stub.capabilityObserved[GL_CULL_FACE];
+        return stub != null && GlsmEnableState.current().observed(GL_CULL_FACE);
     }
 
     public static boolean cullFaceRecorded() {
@@ -4060,7 +4059,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             case 0x8622: // GL_VERTEX_ATTRIB_ARRAY_ENABLED
                 // Attribute 0 keeps its two legacy spellings as well: the client-array enable and the capability
                 // record the enable route writes are the same fact in older dress.
-                return attrib.enabled || (index == 0 && (this.enables[0x8074] != 0 || this.enables[0x8622] != 0))
+                return attrib.enabled || (index == 0 && (GlsmEnableState.current().enabled(0x8074) || GlsmEnableState.current().enabled(0x8622)))
                         ? 1 : 0;
             case 0x8623: // GL_VERTEX_ATTRIB_ARRAY_SIZE
                 return attrib.size;
@@ -4728,7 +4727,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         this.textureBindings.defaultReturnValue(-1);
         // GL's initial GL_DEPTH_WRITEMASK is GL_TRUE. The record existed but started at zero, so a query before any
         // glDepthMask answered "writes disabled" - the opposite of the context's initial state.
-        this.enables[GlStateQueries.GL_DEPTH_WRITEMASK_CAP] = 1;
+        GlsmEnableState.current().set(GlStateQueries.GL_DEPTH_WRITEMASK_CAP, true);
     }
 
     // ---- FunctionProvider ------------------------------------------------------------
@@ -6992,10 +6991,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (capability == GL_SCISSOR_TEST) {
             this.scissorToggleCount++;
         }
-        if (capability < 0 || capability >= this.enables.length) {
+        if (capability < 0 || capability >= FLAT_MAP_SIZE) {
             return;
         }
-        byte next = (byte) (enabled ? 1 : 0);
         switch (capability) {
             case GL_FOG: org.soutalab.celtium.vulkan.ImmediateFogState.current().enabled(enabled); break;
             // The capabilities whose state the immediate pipeline reads from the backend's mirror. Vanilla reaches them
@@ -7025,11 +7023,10 @@ public final class CeltiumGlStub implements FunctionProvider {
             case GL_POLYGON_OFFSET_FILL: this.raster.polygonOffsetFillEnabled(enabled); break;
             case GL_TEXTURE_2D: this.textures.enabled2d(enabled); break;
             default:
-                if (this.enables[capability] != next && isDrawStateCapability(capability)) noteDrawStateBoundary();
+                if (GlsmEnableState.current().enabled(capability) != enabled && isDrawStateCapability(capability)) noteDrawStateBoundary();
                 break;
         }
-        this.enables[capability] = next;
-        this.capabilityObserved[capability] = true;
+        GlsmEnableState.current().set(capability, enabled);
     }
 
     static boolean isProxyTarget(int target) {
@@ -8381,7 +8378,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         String reason = null;
         if (storage == null && !clientMemory) {
             reason = "the bound array buffer " + buffer + " has no mirrored storage";
-        } else if (this.enables[GL_VERTEX_ARRAY] == 0 && this.enables[0x8622] == 0 && !position.enabled) {
+        } else if (!GlsmEnableState.current().enabled(GL_VERTEX_ARRAY) && !GlsmEnableState.current().enabled(0x8622) && !position.enabled) {
             // Core code enables attribute 0 instead of the legacy GL_VERTEX_ARRAY bit; both describe the same position
             // attribute the decode reads, so either enable makes this draw describable. The third spelling is the
             // VAO's own per-attribute enable, which is the only one a VAO setup leaves behind - the two global bits
@@ -8630,7 +8627,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                                 + stride + " otherArrays=" + celtium$otherArrayNames()
                                 + " v0..v3=[" + vertices + "] "
                                 + celtium$mirroredMatrices(backend)
-                                + " texture2dEnabled=" + (this.enables[GL_TEXTURE_2D] != 0)
+                                + " texture2dEnabled=" + GlsmEnableState.current().enabled(GL_TEXTURE_2D)
                                 + " site=[" + celtium$callSite(10) + "]");
                         GlDrawCensus.drawArrayFirst = "mode=" + mode + " first=" + first + " count=" + count + " stride="
                                 + stride + " format=" + formatId + " buffer=" + buffer
@@ -8694,7 +8691,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         int[] caps = { GL_NORMAL_ARRAY, GL_COLOR_ARRAY, GL_TEXTURE_COORD_ARRAY };
         String[] names = { "GL_NORMAL_ARRAY", "GL_COLOR_ARRAY", "GL_TEXTURE_COORD_ARRAY" };
         for (int i = 0; i < caps.length; i++) {
-            if ((this.enables[caps[i]] != 0)) {
+            if (GlsmEnableState.current().enabled(caps[i])) {
                 if (enabled.length() > 0) {
                     enabled.append(", ");
                 }
@@ -8712,13 +8709,13 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private int celtium$otherArrayMask() {
         int mask = 0;
-        if ((this.enables[GL_NORMAL_ARRAY] != 0)) {
+        if (GlsmEnableState.current().enabled(GL_NORMAL_ARRAY)) {
             mask |= 1;
         }
-        if ((this.enables[GL_COLOR_ARRAY] != 0)) {
+        if (GlsmEnableState.current().enabled(GL_COLOR_ARRAY)) {
             mask |= 2;
         }
-        if ((this.enables[GL_TEXTURE_COORD_ARRAY] != 0)) {
+        if (GlsmEnableState.current().enabled(GL_TEXTURE_COORD_ARRAY)) {
             mask |= 4;
         }
         return mask;
