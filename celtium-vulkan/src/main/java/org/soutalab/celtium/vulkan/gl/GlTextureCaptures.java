@@ -200,12 +200,12 @@ final class GlTextureCaptures {
         }
         if (!carriesPixels(pixels, stub.pixelUnpackBuffer)) {
             if (level == 0) {
-                stub.nullAllocatedNames.add(targetName);
+                GlsmNameLedger.current().addNullAllocated(targetName);
             }
             this.undefinedLevel(stub, targetName, level, width, extentHeight, depth);
             return;
         }
-        stub.nullAllocatedNames.remove(targetName);
+        GlsmNameLedger.current().removeNullAllocated(targetName);
         if (depth > 1) {
             // A 2D mirror cannot hold the remaining slices: the extent is recorded and the upload counted rather than
             // storing the first slice as if it were the whole image.
@@ -851,7 +851,7 @@ final class GlTextureCaptures {
      */
     /** {@return whether the texture was allocated with a NULL data pointer and no data has arrived since}. */
     boolean textureAllocatedWithoutData(CeltiumGlStub stub, int textureName) {
-        return stub.nullAllocatedNames.contains(textureName);
+        return GlsmNameLedger.current().isNullAllocated(textureName);
     }
 
     boolean textureLevelAllocatedWithoutPixels(int textureName, int level) {
