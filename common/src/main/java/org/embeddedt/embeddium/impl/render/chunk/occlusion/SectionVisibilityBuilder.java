@@ -24,6 +24,17 @@ public class SectionVisibilityBuilder {
     private static final int Y_SHIFT = BITS_PER_AXIS * 2;
 
     /**
+     * {@code -Dceltium.visibilityFloodEarlyOut=true}: stop the flood fill in
+     * {@link #computeWithFloodFill()} as soon as the accumulated encoding reaches
+     * {@link VisibilityEncoding#EVERYTHING}. The encoding only ever gains bits as
+     * regions are merged, and EVERYTHING is its maximum, so the sections the fill
+     * would still visit cannot change the result - the early return is output
+     * identical, it only skips the remaining regions' exploration. Off by default:
+     * with the flag unset the fill always runs to completion, exactly as before.
+     */
+    private static final boolean FLOOD_EARLY_OUT = Boolean.getBoolean("celtium.visibilityFloodEarlyOut");
+
+    /**
      * All indices that are touching the edge of a section. These are used as the starting points for the floodfill.
      */
     private static final int[] INDICES_TO_INITIATE_FLOODFILL = buildFloodfillIndices();
@@ -120,6 +131,11 @@ public class SectionVisibilityBuilder {
                     for (int dir2 = escapedFaces.nextSetBit(0); dir2 >= 0; dir2 = escapedFaces.nextSetBit(dir2+1)) {
                         resultEncoding |= 1L << VisibilityEncoding.bit(dir, dir2);
                     }
+                }
+                if (FLOOD_EARLY_OUT && resultEncoding == VisibilityEncoding.EVERYTHING) {
+                    // Every direction pair is already known visible; the regions
+                    // still unvisited can only re-derive bits that are already set.
+                    return resultEncoding;
                 }
             }
         }

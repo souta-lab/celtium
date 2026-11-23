@@ -2,7 +2,7 @@
 
 生成: `python3 scripts/instrument-index.py`。手で編集しない。
 
-システムプロパティの読み取りキー **370 個**／文字列内マーカー **592 個**。
+システムプロパティの読み取りキー **371 個**／文字列内マーカー **592 個**。
 機能設定・故障注入も含む。すべてが計測用スイッチという意味ではない。
 
 名前を検索してリンク先の実装を読む。既定値・有効条件・出力上限は推測で掲載しない。
@@ -46,6 +46,7 @@
 | [celtium.shaderc](#group-celtium-shaderc) | 2 |
 | [celtium.terrain](#group-celtium-terrain) | 4 |
 | [celtium.validation](#group-celtium-validation) | 1 |
+| [celtium.visibilityFloodEarlyOut](#group-celtium-visibilityFloodEarlyOut) | 1 |
 | [celtium.vulkan](#group-celtium-vulkan) | 258 |
 | [celtium.vulkanTerrain](#group-celtium-vulkanTerrain) | 1 |
 
@@ -339,6 +340,13 @@
 | キー | 読み取りAPI | 位置 |
 |---|---|---|
 | `celtium.validation` | `Boolean.getBoolean` | [HarnessConfig.java:70](<../common/src/main/java/org/soutalab/celtium/harness/HarnessConfig.java#L70>) |
+
+<a id="group-celtium-visibilityFloodEarlyOut"></a>
+## `celtium.visibilityFloodEarlyOut.*`
+
+| キー | 読み取りAPI | 位置 |
+|---|---|---|
+| `celtium.visibilityFloodEarlyOut` | `Boolean.getBoolean` | [SectionVisibilityBuilder.java:35](<../common/src/main/java/org/embeddedt/embeddium/impl/render/chunk/occlusion/SectionVisibilityBuilder.java#L35>) |
 
 <a id="group-celtium-vulkan"></a>
 ## `celtium.vulkan.*`
