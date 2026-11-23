@@ -86,7 +86,8 @@ public final class ModGlslTranslator {
     public record Result(String vertex, String fragment, List<Attribute> attributes, List<UniformMember> uniforms,
                          int uniformBlockSize, List<SamplerBinding> samplers, List<ImageBinding> images, List<String> varyings,
                          int fragOutputCount, boolean uniformsViaBuffer, Map<String, float[]> uniformDefaults,
-                         String failure) {
+                         String failure, String regionOffsetMember, List<String> sharedPerFrameMembers,
+                         List<UniformMember> extractedUniforms) {
         public boolean ok() {
             return this.failure == null;
         }
@@ -225,7 +226,7 @@ public final class ModGlslTranslator {
             return translateOrThrow(vertexSource, fragmentSource);
         } catch (IllegalArgumentException outside) {
             return new Result(null, null, List.of(), List.of(), 0, List.of(), List.of(), List.of(), 0, false,
-                    Map.of(), outside.getMessage());
+                    Map.of(), outside.getMessage(), null, List.of(), List.of());
         }
     }
 
@@ -399,6 +400,65 @@ public final class ModGlslTranslator {
             }
         }
 
+        // GLSM stage 1 (glsm-stage1-design.md §2.2/§2.3), behind -Dceltium.vulkan.glsmPackState and
+        // only on the buffer route, whose programs are the pack terrain programs this stage targets:
+        // the REGION member leaves the block for the indexed SSBO table the built-in route already
+        // proves (CeltiumRegionOffsets, binding after the block's own), and PER_FRAME standard
+        // members leave for the one shared block every program declares identically (binding after
+        // the table). The pipeline declares the same binding arithmetic. Extracted members stay in
+        // the reported interface as Result.extractedUniforms, so the registry still maps their
+        // locations and records their values - the values are what the harvester packs and what a
+        // region write records - they simply own no block bytes any more. A member the block-rename
+        // pass above claimed (its name collides with an input/output) is not extracted: its body
+        // references no longer spell the plain name this pass would rewrite.
+        String glsmRegionMember = null;
+        List<String> glsmSharedPerFrame = new ArrayList<>();
+        List<UniformMember> glsmExtracted = new ArrayList<>();
+        boolean glsmFragmentRegion = false;
+        if (GlsmPackState.ENABLED && uniformsViaBuffer) {
+            for (UniformMember m : members) {
+                GlsmPackState.Bucket bucket = GlsmPackState.classify(m.name(), m.type(), m.arrayLength());
+                if (bucket == GlsmPackState.Bucket.REGION && !uniformBlockRenames.containsKey(m.name())) {
+                    glsmRegionMember = m.name();
+                } else if (bucket == GlsmPackState.Bucket.PER_FRAME
+                        && !uniformBlockRenames.containsKey(m.name())) {
+                    glsmSharedPerFrame.add(m.name());
+                } else if (GlsmPackState.isRegionName(m.name())) {
+                    // A region-named member whose shape or rename state refused extraction: counted,
+                    // never silently left as a permanent fallback - the stage's exit condition reads this.
+                    GlsmPackState.noteRegionUnextractable();
+                }
+            }
+            if (glsmRegionMember != null || !glsmSharedPerFrame.isEmpty()) {
+                if (glsmRegionMember != null) {
+                    vertex = renameUniformReferences(vertex, vertexDecls,
+                            Map.of(glsmRegionMember, "celtium_regionOffset()"));
+                    boolean fragmentDeclares = fragmentDecls.stream().anyMatch(
+                            d -> "uniform".equals(d.qualifier) && glName(d.name).equals(glsmRegionMember));
+                    if (fragmentDeclares) {
+                        fragment = renameUniformReferences(fragment, fragmentDecls,
+                                Map.of(glsmRegionMember, "celtium_v_regionOffset"));
+                        glsmFragmentRegion = true;
+                    }
+                    GlsmPackState.noteRegionExtracted();
+                }
+                List<UniformMember> kept = new ArrayList<>();
+                int keptOffset = 0;
+                for (UniformMember m : members) {
+                    if (m.name().equals(glsmRegionMember) || glsmSharedPerFrame.contains(m.name())) {
+                        glsmExtracted.add(m);
+                        continue;
+                    }
+                    int[] layout = std140(m.type(), m.arrayLength());
+                    keptOffset = align(keptOffset, layout[0]);
+                    kept.add(new UniformMember(m.name(), m.type(), m.arrayLength(), keptOffset, layout[1]));
+                    keptOffset += layout[1];
+                }
+                members = kept;
+                blockSize = align(keptOffset, 16);
+            }
+        }
+
         List<Attribute> attributes = new ArrayList<>();
         Map<String, Declaration> vertexAttributes = new LinkedHashMap<>();
         java.util.BitSet attributeLocations = new java.util.BitSet();
@@ -461,7 +521,28 @@ public final class ModGlslTranslator {
                     .append(image.type).append(' ').append(glslName(image.name)).append(";\n");
         }
 
-        StringBuilder vs = new StringBuilder("#version 450\n").append(common);
+        // GLSM stage 1 headers: the shared per-frame block rides in the common header (both stages
+        // declare it identically, at the binding after the region table's), and the region table
+        // itself is vertex-only, exactly as the built-in route declares its binding-5 array. The
+        // shared block declares the full standard member set in the classification's fixed order -
+        // the layout GlsmPackState packs - whether or not this program reads every member.
+        if (!glsmSharedPerFrame.isEmpty()) {
+            common.append("layout(set = 0, binding = ").append(samplers.size() + images.size() + 2)
+                    .append(", std140) uniform CeltiumPerFrame {\n");
+            for (Map.Entry<String, String> member : GlsmPackState.PER_FRAME_MEMBERS.entrySet()) {
+                common.append("    ").append(member.getValue()).append(' ').append(member.getKey()).append(";\n");
+            }
+            common.append("};\n");
+        }
+        StringBuilder glsmVertexHeader = new StringBuilder();
+        if (glsmRegionMember != null) {
+            glsmVertexHeader.append("layout(std430, set = 0, binding = ")
+                    .append(samplers.size() + images.size() + 1)
+                    .append(") readonly buffer CeltiumRegionOffsets {\n    vec4 celtium_regionOffsets[];\n};\n")
+                    .append("vec3 celtium_regionOffset() { return celtium_regionOffsets[gl_InstanceIndex].xyz; }\n");
+        }
+
+        StringBuilder vs = new StringBuilder("#version 450\n").append(common).append(glsmVertexHeader);
         for (Attribute a : attributes) {
             vs.append("layout(location = ").append(a.location).append(") in ").append(a.type).append(' ')
                     .append(a.name).append(";\n");
@@ -563,6 +644,17 @@ public final class ModGlslTranslator {
             }
         }
 
+        // GLSM stage 1: a fragment stage that reads the region offset gets it through a flat varying
+        // the vertex stage fills from the table - the interface contract's own shape (the offset is
+        // vertex-supplied; fragment consumption travels by varying). Its location is claimed after
+        // every program varying, so it can never renumber one.
+        if (glsmFragmentRegion) {
+            int regionVaryingLocation = claimLocation(varyingLocations, -1, 1, "celtium region varying");
+            vs.append("layout(location = ").append(regionVaryingLocation)
+                    .append(") flat out vec3 celtium_v_regionOffset;\n");
+            fs.append("layout(location = ").append(regionVaryingLocation)
+                    .append(") flat in vec3 celtium_v_regionOffset;\n");
+        }
         vertex = renameMain(vertex, "vertex");
         fragment = renameMain(fragment, "fragment");
         fragment = FRAG_DATA0_PATTERN.matcher(
@@ -582,7 +674,9 @@ public final class ModGlslTranslator {
         vertex = lowerTextureCalls(lowerShadowCalls(guardFractionalPow(vertex)));
         fragment = lowerTextureCalls(lowerShadowCalls(guardFractionalPow(fragment)));
 
-        vs.append(vertex).append("\nvoid main() {\n    celtium_user_main();\n")
+        vs.append(vertex).append("\nvoid main() {\n")
+                .append(glsmFragmentRegion ? "    celtium_v_regionOffset = celtium_regionOffset();\n" : "")
+                .append("    celtium_user_main();\n")
                 // GL's clip depth is [-1, 1], Vulkan's [0, 1]. y is not flipped: like every other pass here the image
                 // keeps GL's row order (VulkanTerrainGpuBackend.remapClipDepth remaps depth only).
                 .append("    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;\n}\n");
@@ -591,7 +685,9 @@ public final class ModGlslTranslator {
                 Collections.unmodifiableList(members), blockSize, Collections.unmodifiableList(samplers),
                 Collections.unmodifiableList(images),
                 Collections.unmodifiableList(varyings), fragOutputCount, uniformsViaBuffer,
-                Collections.unmodifiableMap(uniformDefaults), null);
+                Collections.unmodifiableMap(uniformDefaults), null, glsmRegionMember,
+                Collections.unmodifiableList(glsmSharedPerFrame),
+                Collections.unmodifiableList(glsmExtracted));
     }
 
     /**

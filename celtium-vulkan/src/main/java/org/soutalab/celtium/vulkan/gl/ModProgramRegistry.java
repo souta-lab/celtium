@@ -54,6 +54,13 @@ public final class ModProgramRegistry {
         ModGlslTranslator.Result retainedPackResult;
         /** The compiled stages, when shaderc was available at link; null otherwise. */
         byte[] vertexSpirv;
+        /** GLSM stage 1: the frequency bucket of each uniform name (block members and the members the
+         *  translator extracted alike), built at link; null before the first successful link. */
+        Map<String, GlsmPackState.Bucket> uniformBuckets;
+        /** GLSM stage 1: a version per bucket, so a write advances only its own bucket's consumers.
+         *  The scalar {@link #uniformVersion} still exists for the DYNAMIC block's pack cache; what
+         *  changes under the flag is that REGION and PER_FRAME writes no longer advance it. */
+        final long[] bucketVersions = new long[GlsmPackState.Bucket.values().length];
         byte[] fragmentSpirv;
         String compileFailure;
 
@@ -88,6 +95,16 @@ public final class ModProgramRegistry {
             return this.uniformVersion;
         }
 
+        /** {@return the GLSM bucket version for {@code bucket}: how many writes that bucket has taken}. */
+        public long bucketVersion(GlsmPackState.Bucket bucket) {
+            return this.bucketVersions[bucket.ordinal()];
+        }
+
+        /** {@return the GLSM bucket {@code name} was classified into at link}, or null when unclassified. */
+        public GlsmPackState.Bucket uniformBucket(String name) {
+            return this.uniformBuckets == null ? null : this.uniformBuckets.get(name);
+        }
+
         public ByteBuffer cachedPackedUniforms() {
             return this.cachedPackedVersion == this.uniformVersion ? this.cachedPackedUniforms : null;
         }
@@ -119,6 +136,20 @@ public final class ModProgramRegistry {
          * classified distrusts the whole retained block, as does a write before the first link.
          */
         void bumpUniformVersion(String name) {
+            // GLSM stage 1: under the flag, a write advances its bucket's version; a REGION or
+            // PER_FRAME write owns no program-block bytes (the SSBO table / the shared block carry
+            // it), so it must not advance the scalar version the block pack cache keys on - that
+            // advance was the whole per-region re-derivation this stage removes. The value itself
+            // is already recorded by the caller, which is what the table write and the harvest read.
+            if (GlsmPackState.ENABLED && this.uniformBuckets != null) {
+                GlsmPackState.Bucket bucket = this.uniformBuckets.get(name);
+                if (bucket != null) {
+                    this.bucketVersions[bucket.ordinal()]++;
+                    if (bucket == GlsmPackState.Bucket.REGION || bucket == GlsmPackState.Bucket.PER_FRAME) {
+                        return;
+                    }
+                }
+            }
             this.uniformVersion++;
             Map<String, Integer> index = this.uniformMemberIndex;
             Integer member = index == null ? null : index.get(name);
@@ -311,7 +342,7 @@ public final class ModProgramRegistry {
         }
         p.lowered = stageFailure != null
                 ? new ModGlslTranslator.Result(null, null, List.of(), List.of(), 0, List.of(), List.of(), List.of(), 0,
-                        false, java.util.Map.of(), stageFailure)
+                        false, java.util.Map.of(), stageFailure, null, List.of(), List.of())
                 : ModGlslTranslator.translate(vertex, fragment);
         p.nameByLocation.clear();
         // A link starts the program's uniforms over, as in GL: the values a previous link's interface
@@ -324,6 +355,7 @@ public final class ModProgramRegistry {
         // The incremental packer's state belongs to the previous link's block too: the member order it
         // indexed and the block it retained both start over, and its first pack under this link is a full one.
         p.uniformMemberIndex = null;
+        p.uniformBuckets = null;
         p.uniformPackDirtyWords = null;
         p.uniformPackAllDirty = true;
         p.retainedPackedUniforms = null;
@@ -356,6 +388,25 @@ public final class ModProgramRegistry {
                 memberIndex.putIfAbsent(image.name(), -1);
             }
             p.uniformMemberIndex = memberIndex;
+            // GLSM stage 1: the translator's extracted members (REGION / PER_FRAME) own no block
+            // bytes, but their locations and values are still the program's interface - the guest
+            // writes them by location and the harvester / table read the recorded values - so they
+            // are mapped exactly like block members, and every uniform name gets its link-time
+            // bucket for bumpUniformVersion's per-bucket versions.
+            for (ModGlslTranslator.UniformMember extracted : p.lowered.extractedUniforms()) {
+                mapName(p, extracted.name());
+            }
+            Map<String, GlsmPackState.Bucket> buckets = new HashMap<>();
+            for (ModGlslTranslator.UniformMember member : p.lowered.uniforms()) {
+                buckets.put(member.name(),
+                        GlsmPackState.classify(member.name(), member.type(), member.arrayLength()));
+            }
+            for (ModGlslTranslator.UniformMember extracted : p.lowered.extractedUniforms()) {
+                buckets.put(extracted.name(),
+                        GlsmPackState.classify(extracted.name(), extracted.type(), extracted.arrayLength()));
+            }
+            p.uniformBuckets = buckets;
+            java.util.Arrays.fill(p.bucketVersions, 1L);
         }
         p.vertexSpirv = null;
         p.fragmentSpirv = null;
@@ -891,5 +942,6 @@ public final class ModProgramRegistry {
         DELETED_SHADERS.clear();
         unmatchedUniformWrites = 0;
         locationNameCollisions = 0;
+        GlsmPackState.clear();
     }
 }
