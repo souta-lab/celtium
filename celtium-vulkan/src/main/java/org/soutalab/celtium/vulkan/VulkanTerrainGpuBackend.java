@@ -17358,11 +17358,14 @@ this.frameBufferOpen = false;
         if (!PACK_TERRAIN_PROGRAMS || this.configuration == null || this.gpuStalled) {
             return false;
         }
-        org.embeddedt.embeddium.impl.gl.shader.GlProgram<? extends org.embeddedt.embeddium.impl.render.chunk.shader.ChunkShaderInterface> packProgram =
-                DemonicaTerrainBridge.packProgram(pass, this.configuration);
-        if (packProgram == null) {
+        // The Demonica connection's adjudicated state is the only go/no-go here: anything but
+        // OK - absent, or present without a program for this pass - falls back to the built-in
+        // terrain pass, and the bridge has already reported which of the two it was, and why.
+        DemonicaTerrainBridge.Status demonica = DemonicaTerrainBridge.state(pass, this.configuration);
+        if (demonica.state != DemonicaTerrainBridge.State.OK) {
             return false;
         }
+        org.embeddedt.embeddium.impl.gl.shader.GlProgram<? extends org.embeddedt.embeddium.impl.render.chunk.shader.ChunkShaderInterface> packProgram = demonica.program;
         org.embeddedt.embeddium.impl.render.chunk.shader.ChunkShaderInterface iface = packProgram.getInterface();
         if (iface == null) {
             return false;
