@@ -654,6 +654,45 @@ public final class VulkanTerrainPipeline {
         return layout;
     }
 
+    /**
+     * The {@code VkDescriptorSetLayout} of this pipeline's set 0.
+     * <p>
+     * Exposed for the mesh-shader sibling pipeline (item 652, stage 1): its layout carries this
+     * same set-0 layout as its own set 0, which is what makes the pass' descriptor bind survive
+     * the pipeline switch - the two layouts are compatible for set 0 because they name the same
+     * layout object, not merely an equal one.
+     *
+     * @return the native descriptor set layout handle, valid until {@link #delete()}
+     */
+    public long descriptorSetLayout() {
+        return descriptorSetLayout;
+    }
+
+    /** The front face this pipeline's rasterisation state was created with (mesh sibling mirror, item 652). */
+    int celtium$meshFrontFace() {
+        return this.frontFace;
+    }
+
+    /** Whether this pipeline culls back faces (mesh sibling mirror, item 652). */
+    boolean celtium$meshBlockFaceCulling() {
+        return this.blockFaceCulling;
+    }
+
+    /** Whether this pipeline blends (mesh sibling mirror, item 652). */
+    boolean celtium$meshBlended() {
+        return this.blended;
+    }
+
+    /** The fragment-discard specialization value this pipeline's fragment stage carries (mesh sibling mirror, item 652). */
+    boolean celtium$meshFragmentDiscard() {
+        return this.fragmentDiscard;
+    }
+
+    /** Whether this pipeline tests depth - the {@code noTerrainDepth} lab switch, read as the creation code reads it (item 652). */
+    boolean celtium$meshDepthTestEnabled() {
+        return !NO_TERRAIN_DEPTH;
+    }
+
     /** {@return the vertex input state this pipeline was created with} */
     public String vertexInputSummary() {
         return this.vertexInputSummary;

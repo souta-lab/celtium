@@ -264,7 +264,12 @@ abstract class CeltiumCompileShaders extends DefaultTask {
                 // A shader may need a newer SPIR-V environment than the rest: gl_DrawID (which the per-group data merge
                 // is built on) only exists from Vulkan 1.1, and asking for it at vulkan1.0 is a compile error. The marker
                 // is in the name rather than in the source so the toolchain stays one list.
-                def targetEnv = shader.name.contains('_vk11_') ? 'vulkan1.1' : 'vulkan1.0'
+                // Mesh and task stages are the second marker: glslang keys the stage off the file
+                // extension (.mesh / .task), and mesh shading is defined against the SPIR-V 1.4+
+                // environment, so those files compile for vulkan1.2 where the rest stay at 1.0.
+                def targetEnv = (shader.name.endsWith('.mesh') || shader.name.endsWith('.task'))
+                        ? 'vulkan1.2'
+                        : (shader.name.contains('_vk11_') ? 'vulkan1.1' : 'vulkan1.0')
                 result = getExecOperations().exec {
                     commandLine compiler, '-V', '--target-env', targetEnv, shader.absolutePath,
                             '-o', new File(directory, shader.name + '.spv').absolutePath
