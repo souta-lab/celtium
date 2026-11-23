@@ -211,7 +211,19 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
 
         this.processChunkEvents();
 
-        this.prepareFrame(shadowViewport, cameraState, false);
+        boolean prepareDirtied = this.prepareFrame(shadowViewport,
+                SHADOW_SETUP_PLAYER_VIEW ? playerViewport : shadowViewport, cameraState, false);
+
+        if (SHADOW_SETUP_PLAYER_VIEW) {
+            this.celtium$shadowPrepareJudged++;
+            if (!prepareDirtied) {
+                this.celtium$shadowPrepareSuppressed++;
+            }
+            if (this.celtium$shadowPrepareJudged % 600 == 0) {
+                System.out.println("[Celtium] CELTIUM_SHADOW_PREPARE judged=" + this.celtium$shadowPrepareJudged
+                        + " suppressed=" + this.celtium$shadowPrepareSuppressed);
+            }
+        }
 
         this.renderSectionManager.uploadChunks();
 
@@ -220,10 +232,38 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
         this.renderSectionManager.tickVisibleRenders();
     }
 
+    /**
+     * -Dceltium.shadowSetupPlayerView: judge the terrain search's dirtiness in the shadow pass against
+     * the player view instead of the shadow view. The published terrain lists were searched from the
+     * player view, and matchesPublishedViewport is an exact sameSearchView comparison, so the shadow
+     * viewport (an orthographic camera centred on the player) can never match it: without this, the
+     * shadow pass marks the graph dirty every frame and updateForShadowPass re-runs the full terrain
+     * search every frame, even with a perfectly still player camera. With it, the terrain search is
+     * skipped only under the same conditions the terrain pass itself skips it (camera state unchanged,
+     * player view identical to the published view, no chunk event or build completion raised a dirty
+     * mark of its own), so no staleness is introduced. Default off = the historical behaviour.
+     */
+    private static final boolean SHADOW_SETUP_PLAYER_VIEW = Boolean.getBoolean("celtium.shadowSetupPlayerView");
+
+    private long celtium$shadowPrepareJudged;
+    private long celtium$shadowPrepareSuppressed;
+
     // Steps common to both passes: camera-change detection, async task draining and chunk build scheduling.
     private void prepareFrame(Viewport viewport, CameraState cameraState, boolean updateChunksImmediately) {
+        prepareFrame(viewport, viewport, cameraState, updateChunksImmediately);
+    }
+
+    /**
+     * @param viewport   this pass's own viewport, published as the current viewport
+     * @param searchView the view the terrain search's dirtiness is judged against; the terrain pass
+     *                   passes its own viewport, the shadow pass may pass the player viewport (see
+     *                   {@link #SHADOW_SETUP_PLAYER_VIEW})
+     * @return whether this call marked the graph dirty
+     */
+    private boolean prepareFrame(Viewport viewport, Viewport searchView, CameraState cameraState,
+                                 boolean updateChunksImmediately) {
         boolean dirty = this.lastCameraState == null || !this.lastCameraState.equals(cameraState)
-                || !this.renderSectionManager.matchesPublishedViewport(viewport);
+                || !this.renderSectionManager.matchesPublishedViewport(searchView);
 
         if (dirty) {
             this.renderSectionManager.markGraphDirty();
@@ -235,6 +275,8 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
         this.renderSectionManager.runAsyncTasks();
 
         this.renderSectionManager.updateChunks(updateChunksImmediately);
+
+        return dirty;
     }
 
     protected void processChunkEvents() {
