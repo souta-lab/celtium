@@ -17717,6 +17717,15 @@ this.frameBufferOpen = false;
             // them at every region's claim - the per-region hash and snapshot verification the
             // array form pays is the residual B3 left behind (shadow-layerb-678 §5.4).
             long samplerToken = modPipeline.beginSamplerToken(samplerTextures, imageTextures);
+            // GLSM stage 1 (glsm-stage1-design.md §2.3): when the program's region offset was
+            // extracted into the pipeline's SSBO table, this loop delivers each region's offset by
+            // writing one vec4 into the table and stamping the slot as the draws' firstInstance -
+            // the CPU work per region is the table write alone, and the offset write through the
+            // interface below only records the value in the registry (its bucket version), without
+            // advancing the block version that used to force a pack+copy+claim per region.
+            boolean glsmRegionTable = org.soutalab.celtium.vulkan.gl.GlsmPackState.ENABLED
+                    && modPipeline.celtium$glsmRegionTable();
+            int glsmRegionSlot = 0;
             try {
                 setViewportAndScissor(stack, passW, passH);
                 modPipeline.bindTerrainPipeline(this.commandBuffer);
@@ -17820,11 +17829,15 @@ this.frameBufferOpen = false;
                         // between them brackets and counts itself inside the pipeline. The census
                         // counts the region here, where its stage is known.
                         org.soutalab.celtium.vulkan.PackUniformCensus.noteRegion(shadowStage);
-                        org.soutalab.celtium.vulkan.FramePassTimings.begin("packUniformOffset");
+                        // GLSM stage 1: on the table route the offset seam is the table write
+                        // below, not the uniform write, and the instrument name follows the seam
+                        // (design §4 item 3: the old bracket name is retired on this route).
+                        String packOffsetSeam = glsmRegionTable ? "packRegionOffsetTable" : "packUniformOffset";
+                        org.soutalab.celtium.vulkan.FramePassTimings.begin(packOffsetSeam);
                         try {
                             iface.setRegionOffset(regionOffsetX, regionOffsetY, regionOffsetZ);
                         } finally {
-                            org.soutalab.celtium.vulkan.FramePassTimings.end("packUniformOffset");
+                            org.soutalab.celtium.vulkan.FramePassTimings.end(packOffsetSeam);
                         }
                         org.soutalab.celtium.vulkan.FramePassTimings.begin("packSamplerClaim");
                         try {
@@ -17853,6 +17866,21 @@ this.frameBufferOpen = false;
                         org.soutalab.celtium.vulkan.PackUniformCensus.noteSkippedRegion();
                         continue;
                     }
+                    // GLSM stage 1: stamp this region's table slot. A full table skips the region
+                    // (counted like an exhausted claim): drawing it would read slot 0's offset,
+                    // another region's origin.
+                    int glsmFirstInstance = 0;
+                    if (glsmRegionTable) {
+                        int slot = modPipeline.celtium$writeRegionOffset(glsmRegionSlot,
+                                regionOffsetX, regionOffsetY, regionOffsetZ);
+                        if (slot < 0) {
+                            this.packTerrainSkippedRegions++;
+                            org.soutalab.celtium.vulkan.PackUniformCensus.noteSkippedRegion();
+                            continue;
+                        }
+                        glsmFirstInstance = slot;
+                        glsmRegionSlot++;
+                    }
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("packRegionBind");
                     try {
                         // E6: the vertex buffer is the pass-head bind above and the index buffer
@@ -17875,16 +17903,20 @@ this.frameBufferOpen = false;
                         // batch the preparation refuses (a mixed-source unsorted batch, a sorted
                         // batch with no index arena, a device without multiDrawIndirect) falls
                         // back to the direct walk, whose commands are the same ones in the same
-                        // order.
+                        // order. (GLSM stage 1 inverts exactly this on its route: the program reads
+                        // the offset from the table at gl_InstanceIndex, so the direct walk stamps
+                        // the region's slot as firstInstance and the indirect path, whose packets
+                        // stamp 0, is not used.)
                         boolean indirect = false;
-                        if (TERRAIN_INDIRECT_ENABLED) {
+                        if (TERRAIN_INDIRECT_ENABLED && !glsmRegionTable) {
                             indirect = this.terrain.tryIndirectBatch(this.context, this.commandBuffer,
                                     stack, this.sharedIndexBuffers, resources, batch, sortedPass,
                                     primitiveType, 0);
                         } else {
                             this.terrain.noteTerrainIndirectFallback();
-                            this.terrain.setLastTerrainIndirectFallback(
-                                    "the indirect path is off (-Dceltium.vulkan.indirectTerrain)");
+                            this.terrain.setLastTerrainIndirectFallback(glsmRegionTable
+                                    ? "GLSM stage 1: region offsets ride the draws' firstInstance, which the indirect packets stamp 0; the direct walk delivers them"
+                                    : "the indirect path is off (-Dceltium.vulkan.indirectTerrain)");
                         }
                         if (indirect) {
                             drawnCommands += batch.size();
@@ -17896,7 +17928,7 @@ this.frameBufferOpen = false;
                                 sharedIndexBound = true;
                             }
                             drawnCommands += celtium$drawPackBatchDirect(batch, resources,
-                                    sortedPass, primitiveType);
+                                    sortedPass, primitiveType, glsmFirstInstance);
                         }
                     } finally {
                         org.soutalab.celtium.vulkan.FramePassTimings.end("packRegionDraw");
@@ -17984,7 +18016,8 @@ this.frameBufferOpen = false;
     private int celtium$drawPackBatchDirect(VulkanMultiDrawBatch batch,
                                             TerrainRenderer.RegionResources resources,
                                             boolean sortedPass,
-                                            ChunkPrimitiveType primitiveType) {
+                                            ChunkPrimitiveType primitiveType,
+                                            int firstInstance) {
         int drawn = 0;
         boolean arenaBound = false;
         for (int cmd = 0; cmd < batch.size(); cmd++) {
@@ -18011,7 +18044,7 @@ this.frameBufferOpen = false;
                 arenaBound = arena;
             }
             vkCmdDrawIndexed(this.commandBuffer, batch.elementCount(cmd), 1, firstIndex,
-                    batch.baseVertex(cmd), 0);
+                    batch.baseVertex(cmd), firstInstance);
             drawn++;
         }
         if (arenaBound) {
