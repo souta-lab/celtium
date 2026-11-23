@@ -725,20 +725,20 @@ final class GlStateQueries {
                 }
                 return;
             case 0x0B00: // GL_CURRENT_COLOR
-                putFloatOrDouble(out, 0, stub.currentRed, asDouble);
-                putFloatOrDouble(out, 1, stub.currentGreen, asDouble);
-                putFloatOrDouble(out, 2, stub.currentBlue, asDouble);
-                putFloatOrDouble(out, 3, stub.currentAlpha, asDouble);
+                putFloatOrDouble(out, 0, GlsmImmediateState.current().red(), asDouble);
+                putFloatOrDouble(out, 1, GlsmImmediateState.current().green(), asDouble);
+                putFloatOrDouble(out, 2, GlsmImmediateState.current().blue(), asDouble);
+                putFloatOrDouble(out, 3, GlsmImmediateState.current().alpha(), asDouble);
                 return;
             case 0x0B70: // GL_DEPTH_RANGE
                 putFloatOrDouble(out, 0, 0.0f, asDouble);
                 putFloatOrDouble(out, 1, 1.0f, asDouble);
                 return;
             case 0x0B21: // GL_LINE_WIDTH
-                putFloatOrDouble(out, 0, stub.lineWidth, asDouble);
+                putFloatOrDouble(out, 0, GlsmImmediateState.current().lineWidth(), asDouble);
                 return;
             case 0x0B11: // GL_POINT_SIZE
-                putFloatOrDouble(out, 0, stub.pointSize, asDouble);
+                putFloatOrDouble(out, 0, GlsmImmediateState.current().pointSize(), asDouble);
                 return;
             case 0x8005: // GL_BLEND_COLOR - the constant blend colour is never recorded; GL's initial value is black
                 putFloatOrDouble(out, 0, 0.0f, asDouble);
