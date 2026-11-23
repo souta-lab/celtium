@@ -68,6 +68,37 @@ public final class GlsmDisplayListLedger {
     public void compiling(int list) { this.compilingList = list; }
     public int compiling() { return this.compilingList; }
 
+    // Rewiring additions (stage-3 routes): the compile mode, the executing list's id and
+    // the remove-and-return forms the stub's release path needs (it closes/frees what it
+    // removes, so a silent deleteList cannot serve it).
+    private int compilingMode;
+    private int executingListId;
+
+    public void compilingMode(int mode) { this.compilingMode = mode; }
+    public int compilingMode() { return this.compilingMode; }
+
+    public void executingListId(int list) { this.executingListId = list; this.executing = list != 0; }
+    public int executingListId() { return this.executingListId; }
+
+    public List<Object[]> removeList(int list) { this.version++; return this.lists.remove(list); }
+
+    @SuppressWarnings("unchecked")
+    public <T> java.util.List<T> removeGeometry(int list) {
+        this.version++;
+        return (java.util.List<T>) this.geometry.remove(list);
+    }
+
+    public java.util.List<java.nio.ByteBuffer> removePayloads(int list) {
+        this.version++;
+        return this.payloads.remove(list);
+    }
+
+    public java.util.Collection<List<?>> geometryLists() { return this.geometry.values(); }
+
+    public void noteCalled(int list) { this.lastCalledList = list; }
+    public void noteReplayed() { this.replayed++; this.version++; }
+    public void noteUnresolved() { this.unresolved++; this.version++; }
+
     public void called(int list, boolean resolved) {
         this.lastCalledList = list;
         this.executing = true;
