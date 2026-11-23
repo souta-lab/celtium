@@ -22,6 +22,7 @@ public final class GlsmClearState {
     private boolean pendingIsMain = true;
     private int mainClears, foreignClears;
     private float lastMainRed, lastMainGreen, lastMainBlue, lastMainAlpha;
+    private float lastForeignRed, lastForeignGreen, lastForeignBlue;
     private double lastMainDepth = 1.0;
     private boolean mainValuesKnown;
     private long version;
@@ -42,22 +43,60 @@ public final class GlsmClearState {
     public float alpha() { return this.alpha; }
     public double depth() { return this.depth; }
 
-    /** Latches a clear: ORs the mask into the pending set and snapshots the issue context. */
+    /**
+     * Latches a clear: ORs the mask into the pending set and snapshots the issue context.
+     * The snapshot follows the stub record's per-buffer rule: colour values are snapshotted
+     * only when the mask names colour (0x4000), depth only when it names depth (0x0100), so a
+     * later depth-only clear cannot replace the colour an earlier colour clear was issued with.
+     */
     public void issue(int mask, int drawFbo, boolean isMain) {
         this.pendingMask |= mask;
         this.pendingDrawFbo = drawFbo;
         this.pendingIsMain = isMain;
         if (isMain) {
             this.mainClears++;
-            this.lastMainRed = this.red; this.lastMainGreen = this.green;
-            this.lastMainBlue = this.blue; this.lastMainAlpha = this.alpha;
-            this.lastMainDepth = this.depth;
-            this.mainValuesKnown = true;
+            if ((mask & 0x4000) != 0) {
+                this.lastMainRed = this.red; this.lastMainGreen = this.green;
+                this.lastMainBlue = this.blue; this.lastMainAlpha = this.alpha;
+                this.mainValuesKnown = true;
+            }
+            if ((mask & 0x0100) != 0) {
+                this.lastMainDepth = this.depth;
+            }
         } else {
             this.foreignClears++;
+            this.lastForeignRed = this.red; this.lastForeignGreen = this.green;
+            this.lastForeignBlue = this.blue;
         }
         this.version++;
     }
+
+    /**
+     * Re-latches a main-framebuffer clear that was consumed because the draw queue carried
+     * it, after the carrying group was discarded undrawn (the stub's celtium$rependMainClear
+     * record, replayed): same per-buffer snapshot rule as {@link #issue}, no census counting.
+     */
+    public void repend(int mask, int drawFbo, float[] rgba, double depth) {
+        if ((mask & 0x4000) != 0) {
+            this.lastMainRed = rgba[0]; this.lastMainGreen = rgba[1];
+            this.lastMainBlue = rgba[2]; this.lastMainAlpha = rgba[3];
+            this.mainValuesKnown = true;
+        }
+        if ((mask & 0x0100) != 0) {
+            this.lastMainDepth = depth;
+        }
+        this.pendingMask |= mask;
+        this.pendingDrawFbo = drawFbo;
+        this.pendingIsMain = true;
+        this.version++;
+    }
+
+    public float lastMainRed() { return this.lastMainRed; }
+    public float lastMainGreen() { return this.lastMainGreen; }
+    public float lastMainBlue() { return this.lastMainBlue; }
+    public float lastForeignRed() { return this.lastForeignRed; }
+    public float lastForeignGreen() { return this.lastForeignGreen; }
+    public float lastForeignBlue() { return this.lastForeignBlue; }
 
     public boolean hasPending() { return this.pendingMask != 0; }
     public int pendingMask() { return this.pendingMask; }
