@@ -183,6 +183,38 @@ public class VintageRenderSectionManager extends RenderSectionManager {
     }
 
     @Override
+    protected boolean isSectionAddedEmptyFinal(RenderSection render) {
+        // isSectionVisuallyEmpty returns true both for a section that is genuinely empty (a
+        // received chunk whose storage slot is absent or empty, or a Y outside the storage
+        // array) and for a chunk the client has not received yet, where ChunkProviderClient
+        // answers with its blank EmptyChunk. Only the first is final: committing the second as
+        // EMPTY at add time guesses at geometry that has not arrived, and the section is never
+        // re-added, so the guess is permanent (item 683). Chunk.isEmpty is true only for the
+        // blank placeholder, never for a received chunk (the same distinction
+        // isSectionVisuallyEmpty relies on). The emptiness re-check closes the arrival race:
+        // if the chunk landed between the caller's verdict and this one and the slot now has
+        // blocks, the verdict is not final either and the section goes to initial build.
+        Chunk chunk = this.world.getChunk(render.getChunkX(), render.getChunkZ());
+
+        if (chunk.isEmpty()) {
+            return false;
+        }
+
+        return this.isSectionVisuallyEmpty(render.getChunkX(), render.getChunkY(), render.getChunkZ());
+    }
+
+    @Override
+    protected boolean isRebuildDataFinal(RenderSection render) {
+        // WorldSlice.prepare returns null both for a section that is genuinely empty (a received
+        // chunk whose storage slot is absent or empty) and for a chunk the client has not received
+        // yet, where ChunkProviderClient answers with its blank EmptyChunk. Only the first is
+        // final: committing the second as EMPTY would guess at geometry that has not arrived.
+        // Chunk.isEmpty is true only for the blank placeholder, never for a received chunk (the
+        // same distinction isSectionVisuallyEmpty relies on).
+        return !this.world.getChunk(render.getChunkX(), render.getChunkZ()).isEmpty();
+    }
+
+    @Override
     protected @Nullable ChunkBuilderTask<ChunkBuildOutput> createRebuildTask(RenderSection render, int frame) {
         ChunkRenderContext context = WorldSlice.prepare(this.world, new SectionPos(render.getChunkX(), render.getChunkY(), render.getChunkZ()), this.sectionCache);
 
