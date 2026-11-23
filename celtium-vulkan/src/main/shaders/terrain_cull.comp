@@ -1,0 +1,76 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "terrain_cull.glsl"
+
+// E10 (item 723) shadow generation: one invocation per DrawSourceTable entry. Applies
+// occlusion mask AND remap AND frustum AND distance (design section 2.4, plan H) and appends
+// the surviving VkDrawIndexedIndirectCommand to the output buffer. In E10-a the output is
+// read back and compared against the CPU's canonical list (census); nothing draws from it.
+//
+// Descriptor layout is design section 3.5: a compute-private set 0, independent of the
+// terrain graphics set.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer DrawSourceTable {
+    uint tableData[];
+};
+layout(set = 0, binding = 1, std430) readonly buffer RegionRemap {
+    int remapData[];
+};
+layout(set = 0, binding = 2, std430) readonly buffer OcclusionMask {
+    uint maskData[];
+};
+layout(set = 0, binding = 3, std430) buffer IndirectCommands {
+    uint outData[];
+};
+layout(set = 0, binding = 4, std430) buffer DrawCounts {
+    uint countData[];
+};
+
+layout(push_constant) uniform Push {
+    vec4 planes[6];
+    vec4 camera;      // xyz: camera position in blocks; w: max distance in blocks
+    ivec4 params;     // x: entry start, y: entry count, z: count slot, w: remap base
+    ivec4 params2;    // x: output base (commands), y: mask base (words), z: output capacity (commands), w: unused
+} push;
+
+void main() {
+    uint local = gl_GlobalInvocationID.x;
+    if (local >= uint(push.params.y)) {
+        return;
+    }
+    uint entry = uint(push.params.x) + local;
+    uint base = entry * 8u;
+    uint indexCount = tableData[base + 0u];
+    uint firstIndex = tableData[base + 1u];
+    int vertexOffset = int(tableData[base + 2u]);
+    int dictIndex = int(tableData[base + 3u]);
+    ivec3 section = ivec3(int(tableData[base + 4u]), int(tableData[base + 5u]), int(tableData[base + 6u]));
+
+    if (dictIndex < 0) {
+        return;
+    }
+    int frameIndex = remapData[push.params.w + dictIndex];
+    if (frameIndex < 0) {
+        return;
+    }
+    uint maskWord = maskData[push.params2.y + (dictIndex >> 5)];
+    if ((maskWord & (1u << (dictIndex & 31))) == 0u) {
+        return;
+    }
+    vec3 boxMin = vec3(section * 16);
+    if (!celtiumBoxVisible(boxMin, vec3(CELTIUM_REGION_SIZE_BLOCKS), push.planes, push.camera.xyz, push.camera.w)) {
+        return;
+    }
+    uint slot = atomicAdd(countData[push.params.z], 1u);
+    if (slot >= uint(push.params2.z)) {
+        return;
+    }
+    uint outBase = (uint(push.params2.x) + slot) * 5u;
+    outData[outBase + 0u] = indexCount;
+    outData[outBase + 1u] = 1u;
+    outData[outBase + 2u] = firstIndex;
+    outData[outBase + 3u] = uint(vertexOffset);
+    outData[outBase + 4u] = uint(frameIndex);
+}

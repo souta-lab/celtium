@@ -2666,6 +2666,21 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean TERRAIN_INDIRECT_ENABLED =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.indirectTerrain", "true"));
+    /**
+     * E10-a's shadow-generation census (item 723, {@link VulkanGpuTerrainCensus}): created
+     * lazily on the first terrain pass under {@code celtium.vulkan.gpuTerrainCulling.census},
+     * never when the flag is off — the off path allocates, binds and records nothing for it.
+     */
+    private VulkanGpuTerrainCensus gpuTerrainCensus;
+    /** The last frame the census rollover ran for; the rollover is once per frame, not per pass. */
+    private long gpuTerrainCensusFrame = -1L;
+    /** Set when census creation failed once: the census stays off rather than retrying per frame. */
+    private boolean gpuTerrainCensusFailed;
+    /** The frame's view-projection matrix for the census, computed once per frame on first use. */
+    private float[] gpuTerrainCensusVp;
+    private long gpuTerrainCensusVpFrame = -1L;
+    /** Whether the E10 gate line for the main-flag-only configuration has been printed. */
+    private boolean gpuTerrainGatePrinted;
     /** One {@code VkDrawIndexedIndirectCommand}: indexCount, instanceCount, firstIndex, vertexOffset, firstInstance. */
     /**
      * The within-leg equivalence check the plan's acceptance needs, and the reason it is a check rather than a picture.
@@ -16514,6 +16529,10 @@ this.frameBufferOpen = false;
             return;
         }
         try {
+            if (this.gpuTerrainCensus != null) {
+                this.gpuTerrainCensus.delete();
+                this.gpuTerrainCensus = null;
+            }
             celtium$deleteSettled();
         } catch (RuntimeException | LinkageError failure) {
             // One failing release must not strand the rest or the registration (issue #425): before this
@@ -17860,6 +17879,56 @@ this.frameBufferOpen = false;
         }
     }
 
+    /**
+     * E10-a census plumbing (item 723): once per frame, at a pass head — before this pass'
+     * render pass opens, which is where the census' compute dispatch and timestamps may be
+     * recorded — the finished frame's collection is dispatched and the slot's older result
+     * harvested (see {@link VulkanGpuTerrainCensus}). With the census flag off this returns
+     * on the first test and the pass records exactly what it recorded before E10.
+     * <p>
+     * The main flag without census has no E10-a behaviour beyond its gate line: E10-a is the
+     * premise and the instrument (design section 10), and the drawing switch is E10-b.
+     */
+    private void celtium$gpuTerrainCensusRollover() {
+        if (GpuTerrainCulling.ENABLED && !GpuTerrainCulling.CENSUS && !this.gpuTerrainGatePrinted) {
+            this.gpuTerrainGatePrinted = true;
+            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_CULLING_GATE enabled=true census=false"
+                    + " drawIndirectCount=" + this.context.drawIndirectCountEnabled()
+                    + " capabilityGate=" + GpuTerrainCulling.capabilityGate(
+                            this.context.drawIndirectCountEnabled(), false)
+                    + " mode=none (E10-a: premise and census only; drawing switch is E10-b)");
+        }
+        if (!GpuTerrainCulling.CENSUS || this.gpuTerrainCensusFailed) {
+            return;
+        }
+        if (this.gpuTerrainCensusFrame == this.frameId) {
+            return;
+        }
+        this.gpuTerrainCensusFrame = this.frameId;
+        try {
+            if (this.gpuTerrainCensus == null) {
+                this.gpuTerrainCensus = new VulkanGpuTerrainCensus(this.context);
+            }
+            if (this.commandBuffer != null) {
+                this.gpuTerrainCensus.rollover(this.commandBuffer, this.frameSlot);
+            }
+        } catch (RuntimeException | LinkageError error) {
+            this.gpuTerrainCensusFailed = true;
+            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_CENSUS_DISABLED at=rollover reason=" + error);
+        }
+    }
+
+    /** The frame's view-projection in column-major array form, computed once per frame. */
+    private float[] celtium$gpuTerrainCensusVp(ChunkRenderMatrices matrices) {
+        if (this.gpuTerrainCensusVp == null || this.gpuTerrainCensusVpFrame != this.frameId) {
+            float[] vp = new float[16];
+            new org.joml.Matrix4f(matrices.projection()).mul(matrices.modelView()).get(vp);
+            this.gpuTerrainCensusVp = vp;
+            this.gpuTerrainCensusVpFrame = this.frameId;
+        }
+        return this.gpuTerrainCensusVp;
+    }
+
     private void recordRenderPass(MemoryStack stack,
                                   VulkanTerrainPipeline pipeline,
                                   ChunkRenderMatrices matrices,
@@ -17870,6 +17939,7 @@ this.frameBufferOpen = false;
                                   Object view,
                                   boolean useBlockFaceCulling,
                                   ChunkPrimitiveType primitiveType) {
+        celtium$gpuTerrainCensusRollover();
         this.terrainStatistics.noteTerrainPasses();
         // One budget window per presented frame, shared by every pass of the frame (item 328, V-03). Rolling
         // it here also finishes the previous frame's window, whose line is printed below when it saw a drop
@@ -18383,6 +18453,16 @@ this.frameBufferOpen = false;
             org.soutalab.celtium.vulkan.FramePassTimings.end("recBind");
             org.soutalab.celtium.vulkan.FramePassTimings.begin("recDraw");
             boolean sortedPass = pass.isSorted();
+            // E10-a census collection (item 723): the batch's canonical commands join the
+            // frame's shadow-generation collection. Unsorted passes only — a sorted pass'
+            // order is semantics, and E10's first shape excludes it (design section 2.5).
+            // The flag test comes first, so the off path records nothing extra.
+            if (GpuTerrainCulling.CENSUS && this.gpuTerrainCensus != null && !sortedPass) {
+                this.gpuTerrainCensus.collect(pass.name(), this.frameId,
+                        celtium$gpuTerrainCensusVp(matrices),
+                        occlusionCamera.x, occlusionCamera.y, occlusionCamera.z,
+                        region, regionIndex, batch);
+            }
             // OPT-09/BH-36: the batch's commands as one indirect call when the device can carry it. The index source
             // has to be uniform across the whole batch for that to be legal - one indirect call binds one index buffer -
             // so the batch is offered to the indirect path only when every command reads the same one, and otherwise it
