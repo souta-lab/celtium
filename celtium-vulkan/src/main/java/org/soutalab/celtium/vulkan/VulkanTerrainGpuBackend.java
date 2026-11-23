@@ -21263,8 +21263,16 @@ this.frameBufferOpen = false;
     private org.lwjgl.vulkan.VkRenderPassBeginInfo celtium$terrainBeginInfo(long renderPass, long framebuffer,
                                                                               int width, int height) {
         if (this.cachedTerrainBegin == null) {
-            this.cachedTerrainBegin = org.lwjgl.vulkan.VkRenderPassBeginInfo.malloc();
-            this.cachedTerrainBeginArea = org.lwjgl.vulkan.VkRect2D.malloc();
+            // calloc, not malloc: the rebuild below writes every field of the begin info except pNext, and malloc
+            // memory is not zeroed, so a malloc'd struct handed the driver whatever the reused heap block last held
+            // as its pNext chain. A non-zero garbage pNext makes the driver walk a bogus extension chain inside
+            // vkCmdBeginRenderPass - the biyu_bu v0.3.2 crash (GTX 1650 Ti / 581.29, first splash flush at frame=0,
+            // nvoglv64.dll reading address -1) is that shape, and the window cache's fix (calloc + explicit
+            // pNext(0L)) is the shape this cache was copied from before that fix landed. The area rect is calloc'd
+            // for the same reason, even though both of its fields are rewritten: the cost is once per process, the
+            // failure mode is not worth re-deriving if a field is ever added.
+            this.cachedTerrainBegin = org.lwjgl.vulkan.VkRenderPassBeginInfo.calloc();
+            this.cachedTerrainBeginArea = org.lwjgl.vulkan.VkRect2D.calloc();
             this.cachedTerrainBeginValid = false;
         }
         if (!this.cachedTerrainBeginValid || renderPass != this.cachedTerrainBeginPass
@@ -21273,7 +21281,7 @@ this.frameBufferOpen = false;
             org.lwjgl.vulkan.VkRect2D area = this.cachedTerrainBeginArea;
             area.offset().set(0, 0);
             area.extent().set(width, height);
-            this.cachedTerrainBegin.sType$Default().renderPass(renderPass).framebuffer(framebuffer)
+            this.cachedTerrainBegin.sType$Default().pNext(0L).renderPass(renderPass).framebuffer(framebuffer)
                     .renderArea(area).clearValueCount(0).pClearValues(null);
             this.cachedTerrainBeginPass = renderPass;
             this.cachedTerrainBeginFramebuffer = framebuffer;
