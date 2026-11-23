@@ -219,11 +219,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * fed with this stub's own dispatch entries as method references.
      */
     private final GlTrampolines glTrampolines = new GlTrampolines(this::dispatch, this::legacyDispatch);
-    private final java.util.concurrent.atomic.AtomicLong nextSync = new java.util.concurrent.atomic.AtomicLong(1);
-    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet liveSync =
-            new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
-    private final it.unimi.dsi.fastutil.ints.IntOpenHashSet liveNames =
-            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
+    // GAP-ST-10 rewired: the live-name/sync ledger (and the sync id source) is GlsmNameLedger.
     /**
      * The GL state tables are open-addressed primitive maps, not ConcurrentHashMaps: every read and write happens on
      * the render thread by GL contract (the stub's callbacks are invoked by the backend there, never by a worker),
@@ -1137,7 +1133,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         int scalar = RenderObjectIds.reserve(range);
         for (int i = 0; i < range; i++) {
-            stub.liveNames.add(scalar + i);
+            GlsmNameLedger.current().addName(scalar + i);
         }
         return scalar;
     }
@@ -1392,7 +1388,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         for (int i = 0; i < count; i++) {
             int name = memGetInt(names + (long) i * 4L);
-            stub.liveNames.remove(name);
+            GlsmNameLedger.current().removeName(name);
             stub.deleteTexture(name);
         }
     }
@@ -1403,7 +1399,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null || names == 0L) return;
         for (int i = 0; i < count; i++) {
             int name = memGetInt(names + (long) i * 4L);
-            stub.liveNames.remove(name);
+            GlsmNameLedger.current().removeName(name);
             stub.forgetFramebuffer(name);
         }
     }
@@ -1553,9 +1549,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     private long depthCopiesSkipped;
 
-    /** Names allocated with a NULL data pointer (the render-target idiom), for the deferred-mirror classification. */
-    final it.unimi.dsi.fastutil.ints.IntOpenHashSet nullAllocatedNames =
-            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
+    // GAP-ST-10: the null-allocated classification also lives in GlsmNameLedger.
 
     /** GL_DEPTH_COMPONENT, DEPTH_COMPONENT16/24/32, DEPTH_COMPONENT32F, DEPTH24_STENCIL8, DEPTH32F_STENCIL8, DEPTH_STENCIL. */
     private static boolean isDepthInternalFormat(int internalFormat) {
@@ -2703,7 +2697,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static void celtium$deleteSync(long sync) {
         CeltiumGlStub stub = installed;
         if (stub != null) {
-            stub.liveSync.remove(sync);
+            GlsmNameLedger.current().removeSync(sync);
         }
     }
 
@@ -5247,7 +5241,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 getBooleans((int) a0, a1, fn);
                 return 0L;
             case SEM_IS_OBJECT:
-                return this.liveNames.contains((int) a0) || this.liveSync.contains(a0)
+                return GlsmNameLedger.current().isLive((int) a0) || GlsmNameLedger.current().isLiveSync(a0)
                         || "glIsBuffer".equals(fn.name) && NativeGeometryBuffer.find((int) a0) != null ? 1L : 0L;
             case SEM_DELETE:
                 delete(fn, c);
@@ -6088,15 +6082,14 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
             int scalar = RenderObjectIds.reserve(range);
             for (int i = 0; i < range; i++) {
-                this.liveNames.add(scalar + i);
+                GlsmNameLedger.current().addName(scalar + i);
             }
             return scalar;
         }
         if (fn.ret == R_LONG) {
             // Sync object (glFenceSync): ids come from the 64-bit space.
-            long sync = this.nextSync.getAndIncrement();
-            this.liveSync.add(sync);
-            this.liveNames.add((int) sync);
+            long sync = GlsmNameLedger.current().newSync();
+            GlsmNameLedger.current().addName((int) sync);
             return sync;
         }
         // Array form (glGenTextures, glCreateTextures...): the out[] is the LAST pointer arg; the count is the
@@ -6104,7 +6097,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         int outIndex = lastPointerArg(fn);
         if (outIndex < 0) {
             int scalar = RenderObjectIds.reserve(1);
-            this.liveNames.add(scalar);
+            GlsmNameLedger.current().addName(scalar);
             return scalar;
         }
         long out = c[outIndex];
@@ -6114,7 +6107,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         int n = countFromArgs(fn, c, outIndex);
         for (int i = 0; i < n; i++) {
             int name = RenderObjectIds.reserve(1);
-            this.liveNames.add(name);
+            GlsmNameLedger.current().addName(name);
             memPutInt(out + (long) i * 4L, name);
         }
         return 0L;
@@ -6153,7 +6146,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             boolean renderbuffers = "glDeleteRenderbuffers".equals(fn.name);
             for (int i = 0; i < count; i++) {
                 int name = memGetInt(names + (long) i * 4L);
-                this.liveNames.remove(name);
+                GlsmNameLedger.current().removeName(name);
                 if (vertexArrays) {
                     this.vaoAttribRecords.remove(name);
                     if (this.boundVertexArray == name) {
@@ -6190,10 +6183,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         if (fn.args.length == 1) {
             if (fn.args[0] == A_LONG) {
-                this.liveSync.remove(c[0]);
+                GlsmNameLedger.current().removeSync(c[0]);
             } else {
                 int name = (int) c[0];
-                this.liveNames.remove(name);
+                GlsmNameLedger.current().removeName(name);
                 if ("glDeleteBuffers".equals(fn.name)) {
                     forgetBuffer(name);
                 }
@@ -6267,7 +6260,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         // The "allocated without data" classification belongs to the deleted object (item 328, V-04): the
         // TextureUtil route removed it in forgetTextureAllocation, the raw route left it standing, and a
         // recycled name was then read as render-target idiom it never declared.
-        this.nullAllocatedNames.remove(name);
+        GlsmNameLedger.current().removeNullAllocated(name);
         if (!this.textureBindings.isEmpty()) {
             it.unimi.dsi.fastutil.longs.LongIterator bindings = this.textureBindings.keySet().iterator();
             while (bindings.hasNext()) {
@@ -7194,7 +7187,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static void forgetTextureAllocation(int name) {
         CeltiumGlStub stub0 = installed;
         if (stub0 != null) {
-            stub0.nullAllocatedNames.remove(name);
+            GlsmNameLedger.current().removeNullAllocated(name);
         }
         CeltiumGlStub stub = installed;
         if (stub != null && name > 0) {
@@ -8973,7 +8966,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         for (int i = 0; i < range; i++) {
             Integer name = Integer.valueOf(first + i);
             this.displayLists.remove(name.intValue());
-            this.liveNames.remove(name.intValue());
+            GlsmNameLedger.current().removeName(name.intValue());
             releaseListPayloads(name);
         }
     }
@@ -9005,19 +8998,19 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** {@code glIsTexture/glIsBuffer/...} from the transformer's route: whether the name was generated here. */
     public static boolean celtium$isObject(int name) {
         CeltiumGlStub stub = installed;
-        return stub != null && name != 0 && (stub.liveNames.contains(name) || stub.liveSync.contains(name));
+        return stub != null && name != 0 && (GlsmNameLedger.current().isLive(name) || GlsmNameLedger.current().isLiveSync(name));
     }
 
     /** {@code glIsSync} from the transformer's route: the sync names are 64-bit. */
     public static boolean celtium$isSync(long sync) {
         CeltiumGlStub stub = installed;
-        return stub != null && sync != 0L && stub.liveSync.contains(sync);
+        return stub != null && sync != 0L && GlsmNameLedger.current().isLiveSync(sync);
     }
 
     /** {@code glIsList} from the transformer's route: whether this stub compiled the name. */
     public static boolean celtium$isList(int list) {
         CeltiumGlStub stub = installed;
-        return stub != null && stub.liveNames.contains(list);
+        return stub != null && GlsmNameLedger.current().isLive(list);
     }
 
     /** Upper bound on one glCallLists run: a malformed count must not stall the render thread. */
