@@ -77,6 +77,15 @@ public final class MinecraftDynamicLightService implements DynamicLightService {
     private static long snapshotEmpty;
     private static boolean gatherFirstPrinted;
 
+    // Item 698 values print: the counters above say a gather happened and how many sources it
+    // kept, but not what it actually wrote - the scratch contents (camera-relative position and
+    // level per source) are the discriminator between "the values are wrong" and "the values are
+    // right but light nothing visible". Prints are budgeted (count changes plus a sparse periodic
+    // re-print) so a long session stays readable and under the log limiter's per-tag cap.
+    private static int gatherValuesChangePrints;
+    private static int gatherValuesPeriodicPrints;
+    private static int gatherValuesLastCount = -1;
+
     private MinecraftDynamicLightService() {
     }
 
@@ -158,6 +167,32 @@ public final class MinecraftDynamicLightService implements DynamicLightService {
             // In-run, once: a leg reads this without depending on shutdown-time log capture.
             System.out.println("[Celtium] CELTIUM_GATHER_FIRST count=" + count
                     + " snapshot=" + this.snapshotCount);
+        }
+        if (count > 0) {
+            boolean changed = count != gatherValuesLastCount;
+            boolean periodic = (gatherCalls & 4095L) == 0L;
+            if ((changed && gatherValuesChangePrints < 8)
+                    || (periodic && gatherValuesPeriodicPrints < 4)) {
+                if (changed) {
+                    gatherValuesChangePrints++;
+                } else {
+                    gatherValuesPeriodicPrints++;
+                }
+                gatherValuesLastCount = count;
+                StringBuilder line = new StringBuilder("[Celtium] CELTIUM_GATHER_VALUES count=");
+                line.append(count);
+                line.append(" cam=").append(cameraX).append(',').append(cameraY).append(',').append(cameraZ);
+                int shown = Math.min(count, 4);
+                for (int i = 0; i < shown; i++) {
+                    line.append(" src").append(i).append('=')
+                            .append(out[i * 4]).append(',').append(out[i * 4 + 1]).append(',')
+                            .append(out[i * 4 + 2]).append('@').append(out[i * 4 + 3]);
+                    line.append(" world").append(i).append('=')
+                            .append(this.snapshot[i * 4]).append(',').append(this.snapshot[i * 4 + 1])
+                            .append(',').append(this.snapshot[i * 4 + 2]);
+                }
+                System.out.println(line.toString());
+            }
         }
         return count;
     }

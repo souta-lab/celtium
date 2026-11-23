@@ -1038,6 +1038,9 @@ public final class TerrainRenderer {
     private static final boolean DYNAMIC_LIGHT_POISON = Boolean.getBoolean("celtium.dynamicLights.poison");
     private static boolean dynamicLightPoisonPrinted;
 
+    /** Item 698: whether the first non-empty real (non-poison) gather's UBO-bound values were printed. */
+    private static boolean dynamicLightUboValuesPrinted;
+
     /** Whether the current frame's sources have been gathered into {@link #dynamicLightBuffers}. */
     private boolean dynamicLightsGathered = true;
 
@@ -1126,6 +1129,26 @@ public final class TerrainRenderer {
             block.putFloat(base + 4, this.dynamicLightScratch[i * 4 + 1]);
             block.putFloat(base + 8, this.dynamicLightScratch[i * 4 + 2]);
             block.putFloat(base + 12, this.dynamicLightScratch[i * 4 + 3]);
+        }
+        if (count > 0 && !DYNAMIC_LIGHT_POISON && !dynamicLightUboValuesPrinted) {
+            dynamicLightUboValuesPrinted = true;
+            // Item 698: what the shader block actually received for the first real gather, read
+            // back from the bound block rather than the scratch, so a leg can separate "the
+            // service wrote the scratch" from "the renderer bound those values" in one run.
+            StringBuilder line = new StringBuilder("[Celtium] CELTIUM_DYN_UBO slot=");
+            line.append(this.dynamicLightSlot);
+            line.append(" count=").append(block.getFloat(0));
+            line.append(" cam=").append(block.getFloat(4)).append(',').append(block.getFloat(8))
+                    .append(',').append(block.getFloat(12));
+            int shown = Math.min(count, 4);
+            for (int i = 0; i < shown; i++) {
+                int base = 16 + i * 16;
+                line.append(" src").append(i).append('=')
+                        .append(block.getFloat(base)).append(',').append(block.getFloat(base + 4))
+                        .append(',').append(block.getFloat(base + 8)).append('@')
+                        .append(block.getFloat(base + 12));
+            }
+            System.out.println(line.toString());
         }
     }
 
