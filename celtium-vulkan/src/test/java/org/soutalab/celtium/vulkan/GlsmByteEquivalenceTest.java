@@ -158,8 +158,11 @@ class GlsmByteEquivalenceTest {
                     // (a legal glUniform1fv-style partial write of an array/vector member).
                     int length = random.nextInt(4) == 0 ? 1 + random.nextInt(fullLength) : fullLength;
                     float[] values = randomFloats(random, length);
+                    // Each twin gets its own array instance: the registry mutates a same-length
+                    // recorded array in place, so sharing one instance would let the first twin's
+                    // write rewrite the second twin's recorded value before its own write lands.
                     writeFloats(101, name, values);
-                    writeFloats(102, name, values);
+                    writeFloats(102, name, values.clone());
                 } else if (kind < 9) {
                     String name = intNames[random.nextInt(intNames.length)];
                     int[] values = new int[INT_MEMBERS.get(name)];
@@ -167,7 +170,7 @@ class GlsmByteEquivalenceTest {
                         values[i] = random.nextInt(2001) - 1000;
                     }
                     writeInts(101, name, values);
-                    writeInts(102, name, values);
+                    writeInts(102, name, values.clone());
                 } else {
                     // A sampler write takes a location and a value but owns no block bytes.
                     writeInts(101, "tex", new int[] {random.nextInt(8)});
