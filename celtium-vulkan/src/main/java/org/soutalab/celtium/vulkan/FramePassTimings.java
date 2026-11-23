@@ -284,7 +284,11 @@ public final class FramePassTimings {
             // pass). All four are inclusive and report-only: none joins TOP_LEVEL,
             // FrameBudgetTimings' OTHER_BUCKETS or its WORLD_PASS_MEMBERS, so nothing here is
             // subtracted anywhere.
-            "packRegionIter", "packRegionBind", "packRegionDraw", "packSamplerClaim"};
+            "packRegionIter", "packRegionBind", "packRegionDraw", "packSamplerClaim",
+            // GLSM stage 2 (S2-1): the confirmed-window filing at the flush boundary - the
+            // cause stamp spend, the trigger note and the census notes at the one commit
+            // point. Inclusive and report-only like every INSIDE name.
+            "flushBoundary"};
 
     private static final int CAPACITY = 512;
 
@@ -891,15 +895,16 @@ public final class FramePassTimings {
         // Item 678: the pack-uniform census prints on this same window cadence (its counters only
         // accumulate while an instrument here is enabled, so the ride costs nothing when off).
         PackUniformCensus.reportWindow(windowFrames);
-        // Item 695 (E2): the gl-draw window census rides the same cadence, on the same terms.
-        GlDrawWindowCensus.reportWindow(windowFrames);
+        // GLSM stage 2 (S2-1): the single flush-boundary census rides the same cadence and
+        // reconciles against the trigger sums before the window's trigger counts reset.
+        FlushBoundaryCensus.reportWindow(windowFrames, windowsByTriggerWindowSum(), windowsByTriggerTotalSum());
         if (ACCEPT_FLUSH) {
             System.out.println("[Celtium] CELTIUM_ACCEPT_FLUSH " + acceptFlushSummary());
             sizeFlushTripsWindow = 0L;
             sizeFlushTripsByRetainedWindow = 0L;
             sizeFlushTripPendingSumWindow = 0L;
-            Arrays.fill(windowsByTriggerWindow, 0L);
         }
+        Arrays.fill(windowsByTriggerWindow, 0L);
     }
 
     /**
@@ -970,12 +975,32 @@ public final class FramePassTimings {
         sizeFlushTripPendingSumWindow += pendingIndices;
     }
 
-    /** Counts one opened window under the trigger that opened it; see the {@code WINDOW_TRIGGER_*} kinds. */
+    /**
+     * Counts one opened window under the trigger that opened it; see the {@code WINDOW_TRIGGER_*} kinds.
+     * <p>
+     * Since GLSM stage 2 (S2-1) this counts unconditionally: the trigger counts are the
+     * derivation view {@link FlushBoundaryCensus} reconciles against, so gating them on the
+     * accept-flush switch would make the reconciliation compare against a population that
+     * only exists on census legs. The cost is two array increments per confirmed window.
+     */
     public static void noteWindowTrigger(int trigger) {
-        if (!ACCEPT_FLUSH) return;
         if (trigger < 0 || trigger >= WINDOW_TRIGGER_NAMES.length) return;
         windowsByTriggerWindow[trigger]++;
         windowsByTriggerTotal[trigger]++;
+    }
+
+    /** {@return the current report window's windows summed over triggers}, for the S2-1 reconciliation. */
+    static long windowsByTriggerWindowSum() {
+        long sum = 0L;
+        for (long count : windowsByTriggerWindow) sum += count;
+        return sum;
+    }
+
+    /** {@return the since-start windows summed over triggers}, for the S2-1 reconciliation. */
+    static long windowsByTriggerTotalSum() {
+        long sum = 0L;
+        for (long count : windowsByTriggerTotal) sum += count;
+        return sum;
     }
 
     /** {@return the accept-flush census line for the report print}: window counts, then run totals. */

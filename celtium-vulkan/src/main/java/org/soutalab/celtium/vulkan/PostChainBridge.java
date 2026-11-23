@@ -114,6 +114,7 @@ final class PostChainBridge {
             }
             b.frameTarget.recordReleaseBarriers(b.commandBuffer);
             b.frameCoordinator.submitCommands();
+            FlushBoundaryCensus.noteMidFrameSubmit(FlushBoundaryCensus.SUBMIT_CHAIN);
             submitted = true;
             // The chain's effect on the picture, asked where it can still be attributed: one readback of the frame image
             // immediately after this submission, before anything later in the frame can overwrite it, and one of the
@@ -284,7 +285,7 @@ b.frameBufferOpen = false;
         if (pending == 0) {
             return 0;
         }
-        b.celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_REPLAY_OFFTARGET);
+        b.celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_CHAIN_ORDER);
         if (b.chainInputBatchLogs <= 12) {
             System.out.println("[Celtium] CELTIUM_CHAIN_INPUT_FLUSH frame=" + b.frameId
                     + " target=" + b.targetRegistry.currentIdentity() + " groups=" + pending

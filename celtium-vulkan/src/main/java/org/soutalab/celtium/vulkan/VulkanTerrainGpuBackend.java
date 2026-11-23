@@ -5027,7 +5027,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (!this.immediateWindowBusy && queuedGroupUsesTexture(glTextureId)) {
             FramePassTimings.begin("dynFlush");
             try {
-                celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_TEXTURE_ANNOUNCE);
+                celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_TEXTURE_ANNOUNCE);
             } finally {
                 FramePassTimings.end("dynFlush");
             }
@@ -5089,7 +5089,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // flush, not a draw boundary (the window census' stamp).
         if (!this.immediateWindowBusy && queuedGroupUsesTexture(glTextureId)) {
             this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
-            celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_TEXTURE_ANNOUNCE);
+            celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_TEXTURE_ANNOUNCE);
         }
         if (this.textureRegistry == null) {
             this.textureRegistry = celtium$registry();
@@ -5175,7 +5175,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.animatedUploadFlushes++;
             FramePassTimings.begin("animFlush");
             try {
-                celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_TEXTURE_ANNOUNCE);
+                celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_TEXTURE_ANNOUNCE);
             } finally {
                 FramePassTimings.end("animFlush");
             }
@@ -5434,7 +5434,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // whose image is about to be dropped. Drawing it first, against the state it was recorded with, keeps the
             // delete's ordering (the same rule the announcement path already follows for the same reason).
             if (!this.immediateWindowBusy && queuedGroupUsesTexture(glTextureId)) {
-                celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_TEXTURE_LIFETIME);
+                celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_TEXTURE_LIFETIME);
             }
             this.textureRegistry.forgetTexture(glTextureId);
         }
@@ -6200,7 +6200,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         // The clear-order flush is an ordering flush, not a draw boundary (the window census' stamp).
         this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
-        celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_CLEAR_ORDER);
+        celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_CLEAR_ORDER);
         this.immediateStatistics.noteClearOrderFlushes();
     }
 
@@ -7981,9 +7981,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     : org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_VANILLA_BIND;
             celtium$flushPendingForGlDrawCause(this.flushEntryHint
                     == org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_RAW_REGISTER
-                    ? GlDrawWindowCensus.CAUSE_BIND_FRAMEBUFFER_RAW
-                    : isMain ? GlDrawWindowCensus.CAUSE_BIND_FRAMEBUFFER_MAIN
-                            : GlDrawWindowCensus.CAUSE_BIND_FRAMEBUFFER_TARGET);
+                    ? FlushBoundaryCensus.CAUSE_BIND_FRAMEBUFFER_RAW
+                    : isMain ? FlushBoundaryCensus.CAUSE_BIND_FRAMEBUFFER_MAIN
+                            : FlushBoundaryCensus.CAUSE_BIND_FRAMEBUFFER_TARGET);
         }
         if (targetIdentity != this.targetRegistry.currentIdentity() && this.currentImmediateMesh != null) {
             // A pass change is an ordering boundary: whatever is pending belongs to the pass that is ending, so it is closed
@@ -9031,7 +9031,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // Same reason as the pass entry: this method is called by the uploader hook directly, so reference mode has to
             // refuse it here as well.
             this.immediateLastRefusal = "reference render";
-            celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_BATCH_SUBMIT);
+            celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_BATCH_SUBMIT);
             return false;
         }
         // Content outside the world pass - the GUI, the font, the HUD, the hand - used to be refused here, which left it
@@ -9047,7 +9047,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
         if (this.gpuStalled) {
             this.immediateLastRefusal = "the GPU stalled; no further drawing until the renderer is rebuilt";
-            celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_BATCH_SUBMIT);
+            celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_BATCH_SUBMIT);
             return false;
         }
         if (!this.targetRegistry.currentIsMain()) {
@@ -9165,11 +9165,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // at the next flush, after the groups queued before them, which is the order the rule asks for.
             if (!RAW_WRITE_SAMPLE_GATE) {
                 this.rawWriteGateFlushes++;
-                celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_RAW_WRITE_GATE);
+                celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_RAW_WRITE_GATE);
                 celtium$applyPendingRawWrites();
             } else if (celtium$pendingRawWriteSamples(formatId)) {
                 this.rawWriteGateFlushes++;
-                celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_RAW_WRITE_GATE);
+                celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_RAW_WRITE_GATE);
                 celtium$applyPendingRawWrites();
             } else {
                 this.rawWriteGateSkips++;
@@ -9188,7 +9188,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // exactly the reference image the Vulkan path has to reproduce.
             this.immediateLastRefusal = "immediate drawing disabled by celtium.vulkan.immediate=false";
             // Order (S10): what is already accepted is drawn before this batch goes to GL.
-            celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_BATCH_SUBMIT);
+            celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_BATCH_SUBMIT);
             return false;
         }
         if (formatId == VulkanImmediateFormats.POSITION_COLOR && NativeTexGen.current().eyeLinearST()) {
@@ -9386,7 +9386,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (!supportedImmediateTarget()) {
             // The gate names the failing condition itself; overwriting it here is what hid which one refused 820
             // format-2 batches in a run.
-            celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_BATCH_SUBMIT);
+            celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_BATCH_SUBMIT);
             return false;
         }
         celtium$offerStage(5);
@@ -9506,7 +9506,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     this.textureUploadFailures++;
                     this.lastTextureUploadFailure = "immediate " + boundTexture;
                     this.immediateLastRefusal = "texture upload fault";
-                    celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_BATCH_SUBMIT);
+                    celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_BATCH_SUBMIT);
                     return false;
                 }
                 boundTexture = whiteTextureId();
@@ -9543,7 +9543,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     this.textureUploadFailures++;
                     this.lastTextureUploadFailure = "immediate " + boundTexture;
                     this.immediateLastRefusal = "texture upload fault";
-                    celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_BATCH_SUBMIT);
+                    celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_BATCH_SUBMIT);
                     return false;
                 }
             }
@@ -9635,7 +9635,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 celtium$offerStage(9);
                 celtium$recordCustomProgramRefusal(boundProgram, formatId, boundTexture);
                 org.soutalab.celtium.vulkan.FramePassTimings.end("offPrepare");
-                celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_BATCH_SUBMIT);
+                celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_BATCH_SUBMIT);
                 return false;
             }
             // Every preflight comes before the append (audit A08). It used to run after `copyVertices` had already put the
@@ -9761,7 +9761,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // The reason comes from prepareImmediate, which is the one place that knows which of its conditions failed.
                 this.immediateLastRefusal = "preflight: " + this.lastPrepareFailure;
                 this.immediateStatistics.noteRefusedBeforeAppend();
-                celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_BATCH_SUBMIT);
+                celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_BATCH_SUBMIT);
                 return false;
             }
             if (modDrawProgram != null) {
@@ -9769,7 +9769,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 if (prepared == null) {
                     this.immediateLastRefusal = "mod program: " + this.modPrograms.lastModProgramFailure;
                     this.immediateStatistics.noteRefusedBeforeAppend();
-                    celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_BATCH_SUBMIT);
+                    celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_BATCH_SUBMIT);
                     return false;
                 }
             }
@@ -9918,6 +9918,30 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     || (formatId == VulkanImmediateFormats.POSITION_COLOR_TEXGEN && this.groupChange.celtium$texGenMoved())
                     || this.groupChange.celtium$fogMoved()
                     || lightParamsMoved) {
+                // The S2-1 groupBreak view of the same decision, in the design's 5 classes, from the
+                // terms already computed above (no comparison is re-run for the census): target and
+                // viewport split the samePass term, pipeline takes the format / state-key / prepared
+                // terms, sampler-texture the texture term, and raster everything else that refused.
+                if (this.currentImmediateMesh != null) {
+                    int groupBreak;
+                    if (this.currentGroupTarget != this.targetRegistry.currentIdentity()) {
+                        groupBreak = FlushBoundaryCensus.GROUP_BREAK_TARGET;
+                    } else if (this.currentGroupViewport != this.currentViewportKey) {
+                        groupBreak = FlushBoundaryCensus.GROUP_BREAK_VIEWPORT;
+                    } else if (this.currentGroupFormatId != formatId
+                            || this.currentGroupStateKey != stateKey
+                            || this.currentPreparedImmediate == null
+                            || prepared == null
+                            || this.currentPreparedImmediate.pipeline != prepared.pipeline
+                            || this.currentPreparedImmediate.descriptor != prepared.descriptor) {
+                        groupBreak = FlushBoundaryCensus.GROUP_BREAK_PIPELINE;
+                    } else if (this.currentGroupTexture != boundTexture) {
+                        groupBreak = FlushBoundaryCensus.GROUP_BREAK_SAMPLER_TEXTURE;
+                    } else {
+                        groupBreak = FlushBoundaryCensus.GROUP_BREAK_RASTER;
+                    }
+                    FlushBoundaryCensus.noteGroupBreak(groupBreak);
+                }
                 // Which term refused the open group, counted. Asked only where a group is actually created (a few
                 // hundred times a frame, not per offer), and asked with the same live state the predicate just read.
                 // Behind the merge census flag: the classification repeats the predicate's matrix, colour, affine and
@@ -10381,7 +10405,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 if (retainedTrip) FramePassTimings.begin("acceptFlushRetained");
                 try {
                     FramePassTimings.begin("flush");
-                    try { celtium$flushImmediateWindowForCause(GlDrawWindowCensus.CAUSE_SIZE); }
+                    try { celtium$flushImmediateWindowForCause(FlushBoundaryCensus.CAUSE_SIZE); }
                     finally { FramePassTimings.end("flush"); }
                 }
                 catch (RuntimeException | LinkageError error) {
@@ -10498,7 +10522,7 @@ this.frameBufferOpen = false;
             // Order (S10): what is already accepted is drawn before this batch goes to GL.
             celtium$noteFlushSite(1);
             this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
-            celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_BATCH_SUBMIT);
+            celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_BATCH_SUBMIT);
             return false;
         }
     }
@@ -11570,77 +11594,6 @@ this.frameBufferOpen = false;
         }
     }
 
-    /** Opt-in: which call site opens each window flush, so the count can be attacked at its cause. */
-    private static final boolean FLUSH_REASON_CENSUS = Boolean.getBoolean("celtium.vulkan.flushReasonCensus");
-    private final java.util.Map<String, Integer> flushReasons = new java.util.HashMap<String, Integer>();
-    private static final int FLUSH_REASON_FRAMES = 600;
-
-    /** Records the call site of one flush, by the first stack frame outside this renderer. */
-    private void celtium$noteFlushReason() {
-        if (!FLUSH_REASON_CENSUS) {
-            return;
-        }
-        StackTraceElement[] trace = Thread.currentThread().getStackTrace();
-        String reason = "unknown";
-        for (StackTraceElement frame : trace) {
-            String type = frame.getClassName();
-            if (type.startsWith("org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend")
-                    || type.startsWith("java.")) {
-                // The census call itself lives in this class, and getStackTrace is java.lang.Thread.
-                continue;
-            }
-            reason = type.replaceAll("^.*\\.", "") + "." + frame.getMethodName();
-            break;
-        }
-        this.flushReasons.merge(reason, Integer.valueOf(1), Integer::sum);
-        this.flushReasonCount++;
-    }
-
-    private long flushReasonCount;
-
-    /**
-     * {@return the flush-reason census, largest first}, for the diagnostics line.
-     * <p>
-     * The census itself prints to stdout every {@link #FLUSH_REASON_FRAMES} frames, but the log limiter keeps only the
-     * first sixteen lines of a tag - and the first sixteen are all frame 0, the loading screen. The world phase's
-     * reasons never reached a reader. This summary rides the one-line diagnostics instead, so a leg names the call
-     * sites that open the frame's windows.
-     */
-    String flushReasonSummary() {
-        if (this.flushReasons.isEmpty()) {
-            return "none";
-        }
-        java.util.List<java.util.Map.Entry<String, Integer>> rows =
-                new java.util.ArrayList<java.util.Map.Entry<String, Integer>>(this.flushReasons.entrySet());
-        rows.sort((a, b) -> Integer.compare(b.getValue().intValue(), a.getValue().intValue()));
-        StringBuilder line = new StringBuilder();
-        for (int i = 0; i < rows.size() && i < 10; i++) {
-            if (i > 0) line.append(' ');
-            line.append(rows.get(i).getKey()).append('=').append(rows.get(i).getValue());
-        }
-        return line.toString();
-    }
-
-    /** Prints the flush-reason census, largest first, every {@link #FLUSH_REASON_FRAMES} frames. */
-    private void celtium$reportFlushReasons(boolean force) {
-        if (!FLUSH_REASON_CENSUS || this.flushReasons.isEmpty()) {
-            return;
-        }
-        if (!force && this.frameId % FLUSH_REASON_FRAMES != 0L) {
-            return;
-        }
-        java.util.List<java.util.Map.Entry<String, Integer>> rows =
-                new java.util.ArrayList<java.util.Map.Entry<String, Integer>>(this.flushReasons.entrySet());
-        rows.sort((a, b) -> Integer.compare(b.getValue().intValue(), a.getValue().intValue()));
-        StringBuilder line = new StringBuilder();
-        for (int i = 0; i < rows.size() && i < 10; i++) {
-            line.append(' ').append(rows.get(i).getKey()).append('=').append(rows.get(i).getValue());
-        }
-        System.out.println("[Celtium] CELTIUM_FLUSH_REASONS frame=" + this.frameId
-                + " windows=" + this.immediateStatistics.immediateWindows() + " [" + line + "]");
-        record("flush reasons frame=" + this.frameId + " [" + line + "]");
-    }
-
     /** GL names up to this bound are tracked in the per-name arrays above. */
     private static final int RAW_WRITE_TRACKED_IDS = 1 << 16;
     /**
@@ -11806,7 +11759,7 @@ this.frameBufferOpen = false;
                 this.pendingRawWrites.put(texture, new PendingRawWrite(mirror));
                 return true;
             }
-            celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_RAW_WRITE_GATE);
+            celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_RAW_WRITE_GATE);
         }
         try {
             mirror.uploadFromGlTexture(texture, org.lwjgl.opengl.GL11C.GL_TEXTURE_2D);
@@ -12199,7 +12152,6 @@ this.frameBufferOpen = false;
         GpuPassTimingReport.printIfDue(this.frameId, this.passTimings, this.immediatePassGpuNanos, this.frameGpuNanos,
                 this.frameHeadNanos, this.frameTailNanos, this.windowGpuCount, this.windowGpuMainNanos,
                 this.windowGpuOffNanos, this.windowGpuMaxNanos, this.gpuMarkTimeline);
-        celtium$reportFlushReasons(false);
         celtium$reportWindowSplitIfDue();
         DrawCounters.reportIfDue(this.frameId);
         this.frameCoordinator.celtium$finishFrameBuffer(true);
@@ -12238,7 +12190,7 @@ this.frameBufferOpen = false;
         try {
             // The boundary's own flush is the frame-end trigger for the window census.
             this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_FRAME_END;
-            flushPendingBeforeGlDraw();
+            celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_FRAME_END);
             celtium$applyPendingRawWrites();
             // After the frame's own recording and inside the still-open frame buffer: N bind+draw calls on a real mesh,
             // which is the only way to price the command itself without the rest of the frame in the way.
@@ -12332,35 +12284,39 @@ this.frameBufferOpen = false;
      * {@code celtium$bindFromRawRegister} pattern: the stamp names the innermost entrance and cannot leak
      * onto a later, unrelated flush. While the census is off the helper is the direct call it wraps.
      */
-    private int pendingGlDrawCause = GlDrawWindowCensus.CAUSE_OTHER;
+    private int pendingGlDrawCause = FlushBoundaryCensus.CAUSE_OTHER;
+    private int pendingFlushCauseSub;
 
     /** Runs the ordering flush under the E2 census' {@code cause} stamp for the window it may open. */
     void celtium$flushPendingForGlDrawCause(int cause) {
-        if (!GlDrawWindowCensus.enabled()) {
-            flushPendingBeforeGlDraw();
-            return;
-        }
+        celtium$flushPendingForGlDrawCause(cause, 0);
+    }
+
+    /** Runs the ordering flush under the census' {@code cause}/{@code sub} stamp for the window it may open. */
+    void celtium$flushPendingForGlDrawCause(int cause, int sub) {
         int previous = this.pendingGlDrawCause;
+        int previousSub = this.pendingFlushCauseSub;
         this.pendingGlDrawCause = cause;
+        this.pendingFlushCauseSub = sub;
         try {
             flushPendingBeforeGlDraw();
         } finally {
             this.pendingGlDrawCause = previous;
+            this.pendingFlushCauseSub = previousSub;
         }
     }
 
     /** Opens the window under the E2 census' {@code cause} stamp (the size trigger's direct call). */
     private void celtium$flushImmediateWindowForCause(int cause) {
-        if (!GlDrawWindowCensus.enabled()) {
-            flushImmediateWindow();
-            return;
-        }
         int previous = this.pendingGlDrawCause;
+        int previousSub = this.pendingFlushCauseSub;
         this.pendingGlDrawCause = cause;
+        this.pendingFlushCauseSub = 0;
         try {
             flushImmediateWindow();
         } finally {
             this.pendingGlDrawCause = previous;
+            this.pendingFlushCauseSub = previousSub;
         }
     }
 
@@ -12420,7 +12376,7 @@ this.frameBufferOpen = false;
         if (!IMMEDIATE_DRAWING_ENABLED) {
             // The refusal handoff is an ordering flush, not a draw boundary (the window census' stamp).
             this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
-            celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_REFUSAL_ORDER);
+            celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_REFUSAL_ORDER);
         }
     }
 
@@ -12506,7 +12462,6 @@ this.frameBufferOpen = false;
         }
         // Counted here, not at the entry: the open group is appended to the list by closeCurrentImmediateGroup above,
         // so at the entry almost every call looked empty and the census attributed only the loading phase.
-        celtium$noteFlushReason();
         if (this.targetRegistry.replacementInProgress()) {
             // No ordering flush across a framebuffer replacement: the pending groups were offered for a framebuffer whose
             // size no longer exists, and drawing them now would need the very wait that stalls the device. They are counted
@@ -12706,12 +12661,25 @@ this.frameBufferOpen = false;
                 || gllessTarget.frameImageAcquireNeeded();
         this.windowFrameImageAttached = frameImageAttached;
         this.immediateWindowBusy = true;
-        // The window is committed: count it under the trigger that opened it (flight-c4 census).
-        FramePassTimings.noteWindowTrigger(windowTrigger);
-        // The E2 census files the window under the cause its entrance stamped (item 695): counted here,
-        // where the window is confirmed, so the busy / empty / target-less early returns above are not
-        // windows and a window is never filed twice.
-        GlDrawWindowCensus.noteWindow(this.pendingGlDrawCause);
+        // The window is committed: file it at this one point, under the S2-1 flushBoundary seam.
+        // The trigger note (flight-c4), the cause note (the E2 census' successor), the actual-flush
+        // count and the hold key all read the same confirmed window, so the busy / empty /
+        // target-less early returns above are not windows and a window is never filed twice.
+        FramePassTimings.begin("flushBoundary");
+        try {
+            FramePassTimings.noteWindowTrigger(windowTrigger);
+            FlushBoundaryCensus.noteWindow(this.pendingGlDrawCause, this.pendingFlushCauseSub);
+            FlushBoundaryCensus.noteActualFlush();
+            FlushBoundaryCensus.noteMidFrameSubmit(FlushBoundaryCensus.SUBMIT_WINDOW);
+            long holdKey = this.targetRegistry.currentIdentity();
+            holdKey = holdKey * 31L + this.targetRegistry.slotFor(holdKey).ordinal();
+            holdKey = holdKey * 31L + this.targetRegistry.generation();
+            holdKey = holdKey * 31L + this.immediateState.stateVersion();
+            holdKey = holdKey * 31L + this.currentViewportKey;
+            FlushBoundaryCensus.noteHoldKey(holdKey);
+        } finally {
+            FramePassTimings.end("flushBoundary");
+        }
         // One snapshot instance serves every window flush; its chain arrays grow only when more pairs appear.
         org.soutalab.celtium.vulkan.FramePassTimings.begin("windowSetup");
         GllessFrameTarget.RecordingSnapshot recordingSnapshot;
@@ -16459,15 +16427,13 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * Prints the flush-reason census with the verification summary, which is known to reach the log.
+     * Prints the per-site flush counts with the verification summary, which is known to reach the log.
      * <p>
-     * The two halves have different prices and are therefore gated differently. {@code CELTIUM_FLUSH_SOURCES} is the
-     * stack-walk census ({@code -Dceltium.vulkan.flushReasonCensus}), which pays a {@code getStackTrace} per flush and
-     * is why it is opt-in. {@code CELTIUM_FLUSH_SITES} is the twelve-slot counter {@link #celtium$noteFlushSite} keeps
+     * {@code CELTIUM_FLUSH_SITES} is the twelve-slot counter {@link #celtium$noteFlushSite} keeps
      * on every call site, which costs one array increment and is always on - so it is printed whenever it holds
-     * anything, and a leg no longer needs the expensive census to say which sites opened its windows. Measured on leg
-     * {@code r41a-census}: the stack-walk census named the same sites the counters already had, at 13 post-chain
-     * windows a frame, so the free half is the half a round should read first.
+     * anything, and a leg no longer needs an expensive census to say which sites opened its windows. The
+     * stack-walk flush-reason census that used to ride beside it is gone (GLSM stage 2, S2-1): the single
+     * cause census is {@link FlushBoundaryCensus}, whose totals ride the diagnostics line.
      */
     private void celtium$reportFlushReasonsForSummary() {
         StringBuilder sites = new StringBuilder();
@@ -16480,18 +16446,6 @@ this.frameBufferOpen = false;
         if (sites.length() > 0) {
             System.out.println("[Celtium] CELTIUM_FLUSH_SITES" + sites);
         }
-        if (!FLUSH_REASON_CENSUS || this.flushReasons.isEmpty()) {
-            return;
-        }
-        java.util.List<java.util.Map.Entry<String, Integer>> rows =
-                new java.util.ArrayList<java.util.Map.Entry<String, Integer>>(this.flushReasons.entrySet());
-        rows.sort((a, b) -> Integer.compare(b.getValue().intValue(), a.getValue().intValue()));
-        StringBuilder line = new StringBuilder();
-        for (int i = 0; i < rows.size() && i < 12; i++) {
-            line.append(' ').append(rows.get(i).getKey()).append('=').append(rows.get(i).getValue());
-        }
-        System.out.println("[Celtium] CELTIUM_FLUSH_SOURCES total=" + this.flushReasonCount + " [" + line + "]");
-        record("flush sources total=" + this.flushReasonCount + " [" + line + "]");
     }
 
     private void celtium$printVerificationSummary(String trigger, boolean snapshot) {
@@ -21120,7 +21074,7 @@ this.frameBufferOpen = false;
                     if (!this.immediateWindowBusy && queuedGroupUsesTexture(id)) {
                         // An ordering flush (draw before the mirror is forgotten), not a draw boundary.
                         this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
-                        celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_TEXTURE_LIFETIME);
+                        celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_TEXTURE_LIFETIME);
                     }
                     this.textureRegistry.forgetTexture(id);
                 }
@@ -21381,7 +21335,8 @@ this.frameBufferOpen = false;
                 try {
                     // The swap-point drain is the frame-end trigger for the window census.
                     this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_FRAME_END;
-                    flushPendingBeforeGlDraw();
+                    celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_FRAME_END,
+                            FlushBoundaryCensus.SUB_FRAME_END_PRESENT);
                 } finally {
                     FramePassTimings.end("flush");
                 }
