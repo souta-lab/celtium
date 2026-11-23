@@ -217,6 +217,22 @@ public final class FramePassTimings {
             // slot-claim residue by containment. All three are inclusive and report-only: none joins
             // TOP_LEVEL, FrameBudgetTimings' OTHER_BUCKETS or its WORLD_PASS_MEMBERS, so nothing here is
             // subtracted anywhere.
+                        // Item 722 (optim-enum E6, first stage): the pack region loop's own seams, so a census can
+            // price what is left of the pack record cost once the uniform span (packRecordUniform and
+            // its item-678 children) is netted out. packRegionIter is one region's iteration head:
+            // the iterator advance, the region / storage lookup and the cached-batch validity check
+            // (packRecordRebuild nests inside it when a rebuild fires). packRegionBind is the
+            // per-region bind issuance after the uniform span: bindTerrainUniformsAndSet, the
+            // region vertex-buffer bind and the first shared index-buffer bind. packRegionDraw is
+            // the per-command loop: the index-buffer rebinds between the arena and the shared
+            // buffer, the vkCmdDrawIndexed calls and the closing shared-buffer restore.
+            // packSamplerClaim is the samplersAndImages call at this pack site alone (the E11
+            // observation point: the bracket's call count is the call count, its span is the
+            // sampler / image hash and snapshot check the token design would pre-pay once per
+            // pass). All four are inclusive and report-only: none joins TOP_LEVEL,
+            // FrameBudgetTimings' OTHER_BUCKETS or its WORLD_PASS_MEMBERS, so nothing here is
+            // subtracted anywhere.
+            "packRegionIter", "packRegionBind", "packRegionDraw", "packSamplerClaim",
             "packUniformOffset", "packUniformPack", "packUniformSetAlloc"};
 
     private static final int CAPACITY = 512;
