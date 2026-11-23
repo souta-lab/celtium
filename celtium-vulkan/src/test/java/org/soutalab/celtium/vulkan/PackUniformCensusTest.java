@@ -83,6 +83,65 @@ class PackUniformCensusTest {
                 lines.get(1));
     }
 
+    @Test void pipelineCountersStaySeparatePerPipelineAndRoute() {
+        PackUniformCensus.Ledger ledger = new PackUniformCensus.Ledger(false);
+        Object terrain = new Object();
+        Object nativePass = new Object();
+        ledger.notePipelineSetHit(terrain, "terrain");
+        ledger.notePipelineSetHit(terrain, "terrain");
+        ledger.notePipelineSetMiss(terrain, "terrain");
+        ledger.notePipelineSetAlloc(terrain, "terrain", 1);
+        ledger.notePipelineSetHit(nativePass, "native");
+        List<String> lines = ledger.windowLines(200);
+        assertEquals(2, lines.size(), "no aggregate activity, so only the pipeline lines print");
+        assertEquals("CELTIUM_PACK_UNIFORM_PIPELINE pipeline=1 route=terrain sets=1 maxSets=1"
+                + " hits=2 misses=1 allocs=1 allocFailures=0 capFailures=0", lines.get(0));
+        assertEquals("CELTIUM_PACK_UNIFORM_PIPELINE pipeline=2 route=native sets=0 maxSets=0"
+                + " hits=1 misses=0 allocs=0 allocFailures=0 capFailures=0", lines.get(1));
+    }
+
+    @Test void pipelinePopulationSurvivesTheWindowResetWhileCountersReset() {
+        PackUniformCensus.Ledger ledger = new PackUniformCensus.Ledger(false);
+        Object pipeline = new Object();
+        ledger.notePipelineSetAlloc(pipeline, "mod", 5);
+        ledger.notePipelineSetAlloc(pipeline, "mod", 9);
+        ledger.notePipelineSetAlloc(pipeline, "mod", 7);
+        List<String> first = ledger.windowLines(200);
+        assertEquals("CELTIUM_PACK_UNIFORM_PIPELINE pipeline=1 route=mod sets=7 maxSets=9"
+                + " hits=0 misses=0 allocs=3 allocFailures=0 capFailures=0", first.get(0));
+        ledger.notePipelineSetHit(pipeline, "mod");
+        List<String> second = ledger.windowLines(200);
+        assertEquals("CELTIUM_PACK_UNIFORM_PIPELINE pipeline=1 route=mod sets=7 maxSets=7"
+                + " hits=1 misses=0 allocs=0 allocFailures=0 capFailures=0", second.get(0),
+                "population is state and is kept; the window counters and max restart");
+        assertTrue(ledger.windowLines(200).isEmpty(), "an idle pipeline prints nothing");
+    }
+
+    @Test void capAndPoolFailuresLandInSeparateCounters() {
+        PackUniformCensus.Ledger ledger = new PackUniformCensus.Ledger(false);
+        Object pipeline = new Object();
+        ledger.notePipelineAllocFailure(pipeline, "terrain", true);
+        ledger.notePipelineAllocFailure(pipeline, "terrain", true);
+        ledger.notePipelineAllocFailure(pipeline, "terrain", false);
+        List<String> lines = ledger.windowLines(200);
+        assertEquals(1, lines.size());
+        assertEquals("CELTIUM_PACK_UNIFORM_PIPELINE pipeline=1 route=terrain sets=0 maxSets=0"
+                + " hits=0 misses=0 allocs=0 allocFailures=1 capFailures=2", lines.get(0));
+    }
+
+    @Test void failureOnlyWindowStillPrintsThePipelineLine() {
+        PackUniformCensus.Ledger ledger = new PackUniformCensus.Ledger(false);
+        Object quiet = new Object();
+        Object failing = new Object();
+        ledger.notePipelineSetAlloc(quiet, "mod", 3);
+        ledger.windowLines(200);
+        ledger.notePipelineAllocFailure(failing, "native", false);
+        List<String> lines = ledger.windowLines(200);
+        assertEquals(1, lines.size(), "the quiet pipeline stays silent; the failure alone opens a line");
+        assertTrue(lines.get(0).startsWith("CELTIUM_PACK_UNIFORM_PIPELINE pipeline=2 route=native"),
+                lines.get(0));
+    }
+
     @Test void laneCensusOffFilesNoLaneState() {
         PackUniformCensus.Ledger ledger = new PackUniformCensus.Ledger(false);
         Object key = new Object();

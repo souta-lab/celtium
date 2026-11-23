@@ -101,6 +101,37 @@ public final class PackUniformCensus {
         }
     }
 
+    /** A descriptor-set lookup on any pipeline route was served by an already-registered set. */
+    public static void notePipelineSetHit(Object pipeline, String route) {
+        if (counting()) {
+            LEDGER.notePipelineSetHit(pipeline, route);
+        }
+    }
+
+    /** A descriptor-set lookup on any pipeline route fell through to the allocate path. */
+    public static void notePipelineSetMiss(Object pipeline, String route) {
+        if (counting()) {
+            LEDGER.notePipelineSetMiss(pipeline, route);
+        }
+    }
+
+    /** The allocate path registered a fresh descriptor set on a pipeline; population is its new set count. */
+    public static void notePipelineSetAlloc(Object pipeline, String route, int population) {
+        if (counting()) {
+            LEDGER.notePipelineSetAlloc(pipeline, route, population);
+        }
+    }
+
+    /**
+     * A descriptor-set allocation on a pipeline failed: {@code capped} separates the 4096 cap guard
+     * (allocation never attempted) from descriptor-pool exhaustion (allocation attempted, returned 0).
+     */
+    public static void notePipelineAllocFailure(Object pipeline, String route, boolean capped) {
+        if (counting()) {
+            LEDGER.notePipelineAllocFailure(pipeline, route, capped);
+        }
+    }
+
     /**
      * One {@code packUniforms} execution at a terrain pack site: files the walk, the program's
      * first-sight line and, when the lane census is on, the block's lane diff.
@@ -147,8 +178,76 @@ public final class PackUniformCensus {
 
         private final IdentityHashMap<Object, ProgramState> programs = new IdentityHashMap<>();
 
+        private final IdentityHashMap<Object, PipelineState> pipelines = new IdentityHashMap<>();
+        private final List<PipelineState> pipelineOrder = new ArrayList<>();
+        private int pipelineSeq;
+
         Ledger(boolean laneCensus) {
             this.laneCensus = laneCensus;
+        }
+
+        private static final class PipelineState {
+            private int seq;
+            private String route;
+            private int sets;
+            private int maxSets;
+            private long hits;
+            private long misses;
+            private long allocs;
+            private long poolFailures;
+            private long capFailures;
+
+            private boolean active() {
+                return this.hits > 0L || this.misses > 0L || this.allocs > 0L
+                        || this.poolFailures > 0L || this.capFailures > 0L;
+            }
+
+            private void resetWindow() {
+                this.hits = 0L;
+                this.misses = 0L;
+                this.allocs = 0L;
+                this.poolFailures = 0L;
+                this.capFailures = 0L;
+                this.maxSets = this.sets;
+            }
+        }
+
+        private PipelineState pipelineState(Object pipeline, String route) {
+            PipelineState state = this.pipelines.get(pipeline);
+            if (state == null) {
+                state = new PipelineState();
+                state.seq = ++this.pipelineSeq;
+                state.route = route;
+                this.pipelines.put(pipeline, state);
+                this.pipelineOrder.add(state);
+            }
+            return state;
+        }
+
+        void notePipelineSetHit(Object pipeline, String route) {
+            pipelineState(pipeline, route).hits++;
+        }
+
+        void notePipelineSetMiss(Object pipeline, String route) {
+            pipelineState(pipeline, route).misses++;
+        }
+
+        void notePipelineSetAlloc(Object pipeline, String route, int population) {
+            PipelineState state = pipelineState(pipeline, route);
+            state.allocs++;
+            state.sets = population;
+            if (population > state.maxSets) {
+                state.maxSets = population;
+            }
+        }
+
+        void notePipelineAllocFailure(Object pipeline, String route, boolean capped) {
+            PipelineState state = pipelineState(pipeline, route);
+            if (capped) {
+                state.capFailures++;
+            } else {
+                state.poolFailures++;
+            }
         }
 
         private static final class ProgramState {
@@ -251,10 +350,29 @@ public final class PackUniformCensus {
             boolean active = this.regionsShadow > 0L || this.regionsGbuffers > 0L
                     || this.slotClaims > 0L || this.packWalks > 0L || this.setAllocs > 0L
                     || this.setHits > 0L || this.setMisses > 0L || this.skippedRegions > 0L;
-            if (!active) {
+            List<String> pipelineLines = new ArrayList<>();
+            for (PipelineState state : this.pipelineOrder) {
+                if (!state.active()) {
+                    continue;
+                }
+                pipelineLines.add("CELTIUM_PACK_UNIFORM_PIPELINE pipeline=" + state.seq
+                        + " route=" + state.route
+                        + " sets=" + state.sets
+                        + " maxSets=" + state.maxSets
+                        + " hits=" + state.hits
+                        + " misses=" + state.misses
+                        + " allocs=" + state.allocs
+                        + " allocFailures=" + state.poolFailures
+                        + " capFailures=" + state.capFailures);
+            }
+            if (!active && pipelineLines.isEmpty()) {
+                for (PipelineState state : this.pipelineOrder) {
+                    state.resetWindow();
+                }
                 return lines;
             }
-            lines.add("CELTIUM_PACK_UNIFORM frames=" + frames
+            if (active) {
+                lines.add("CELTIUM_PACK_UNIFORM frames=" + frames
                     + " regionsShadow=" + this.regionsShadow
                     + " regionsGbuffers=" + this.regionsGbuffers
                     + " slotClaims=" + this.slotClaims
@@ -263,6 +381,10 @@ public final class PackUniformCensus {
                     + " setHits=" + this.setHits
                     + " setMisses=" + this.setMisses
                     + " skippedRegions=" + this.skippedRegions);
+                lines.addAll(pipelineLines);
+            } else {
+                lines.addAll(pipelineLines);
+            }
             if (this.laneCensus) {
                 for (ProgramState state : this.programs.values()) {
                     if (state.laneHistogram == null) {
@@ -296,6 +418,9 @@ public final class PackUniformCensus {
                 if (state.laneHistogram != null) {
                     java.util.Arrays.fill(state.laneHistogram, 0L);
                 }
+            }
+            for (PipelineState state : this.pipelineOrder) {
+                state.resetWindow();
             }
             return lines;
         }

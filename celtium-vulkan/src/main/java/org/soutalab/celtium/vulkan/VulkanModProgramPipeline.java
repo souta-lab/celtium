@@ -206,6 +206,13 @@ public final class VulkanModProgramPipeline {
     }
     /** Whether the pass blends (its render state as built); the readback instrument looks for the blend-off copy. */
     boolean blends;
+    /**
+     * The item-719 census route tag for this pipeline's factory: {@code "mod"} for the prepared-draw
+     * factories, {@code "native"} for {@link #createForNativePass}, {@code "terrain"} for
+     * {@link #createForTerrain}. Stamped by the factory so the per-pipeline set census can split its
+     * lines by route without the census knowing the call sites.
+     */
+    String celtium$censusRoute = "mod";
     private long setLayout = VK_NULL_HANDLE;
     private long pipelineLayout = VK_NULL_HANDLE;
     private long pipeline = VK_NULL_HANDLE;
@@ -502,6 +509,7 @@ public final class VulkanModProgramPipeline {
         }
         VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, attrs,
                 java.util.Collections.unmodifiableList(bindings), List.of(), Math.max(0, pushBytes), false);
+        built.celtium$censusRoute = "native";
         try {
             built.createLayouts();
             built.createPipeline(vertexSpirv, fragmentSpirv, VulkanImmediateFormats.POSITION_TEX, renderPass, cull,
@@ -542,6 +550,7 @@ public final class VulkanModProgramPipeline {
                 lowered.samplers(), lowered.images(), lowered.uniformBlockSize(), viaBuffer);
         built.uniformRingSlots = TERRAIN_UNIFORM_RING_SLOTS;
         built.dynamicUniform = viaBuffer;
+        built.celtium$censusRoute = "terrain";
         try {
             built.createLayouts();
             built.createTerrainPipeline(program.vertexSpirv(), program.fragmentSpirv(), vertexFormat, renderPass,
@@ -1246,11 +1255,17 @@ public final class VulkanModProgramPipeline {
         // Item 678: the census counts this lookup's outcome for terrain pipelines only - the set
         // population the pack record span pays for. Other pipelines keep the bare returns.
         boolean censusTerrain = this.uniformRingSlots == TERRAIN_UNIFORM_RING_SLOTS;
+        // Item 719: the per-pipeline census counts every route; one counting() read gates it here
+        // and the facade re-checks, so the off path stays a boolean read like the other censuses.
+        boolean censusPipeline = PackUniformCensus.counting();
         if (key == this.lastSamplerKey && this.lastSamplerSet != 0L
                 && celtium$setInputsMatch(this.lastSamplerInputs, views, samplers, layouts, imageViews,
                         this.samplerCount, this.imageCount, uniformSlot)) {
             if (censusTerrain) {
                 PackUniformCensus.noteSetHit();
+            }
+            if (censusPipeline) {
+                PackUniformCensus.notePipelineSetHit(this, this.celtium$censusRoute);
             }
             return this.lastSamplerSet;
         }
@@ -1265,6 +1280,9 @@ public final class VulkanModProgramPipeline {
                 if (censusTerrain) {
                     PackUniformCensus.noteSetHit();
                 }
+                if (censusPipeline) {
+                    PackUniformCensus.notePipelineSetHit(this, this.celtium$censusRoute);
+                }
                 return cached;
             }
             // A hash collision: the cached set was written from different inputs and would sample another
@@ -1277,6 +1295,10 @@ public final class VulkanModProgramPipeline {
             if (censusTerrain) {
                 PackUniformCensus.noteSetMiss();
             }
+            if (censusPipeline) {
+                PackUniformCensus.notePipelineSetMiss(this, this.celtium$censusRoute);
+                PackUniformCensus.notePipelineAllocFailure(this, this.celtium$censusRoute, true);
+            }
             return 0L;
         }
         // Item 678: everything below is the miss path - allocate, write, update, register - and the
@@ -1286,9 +1308,17 @@ public final class VulkanModProgramPipeline {
             PackUniformCensus.noteSetMiss();
             FramePassTimings.begin("packUniformSetAlloc");
         }
+        if (censusPipeline) {
+            PackUniformCensus.notePipelineSetMiss(this, this.celtium$censusRoute);
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             long set = allocateDescriptorSet(stack);
             if (set == 0L) {
+                // Item 719: pool exhaustion was previously returned uncounted; file it separately
+                // from the cap guard above so the cliff's firing mode is distinguishable.
+                if (censusPipeline) {
+                    PackUniformCensus.notePipelineAllocFailure(this, this.celtium$censusRoute, false);
+                }
                 return 0L;
             }
             // The uniform binding is written when the caller staged a slot (uniformSlot >= 0) and, on
@@ -1331,6 +1361,9 @@ public final class VulkanModProgramPipeline {
             this.lastSamplerInputs = snapshot;
             if (censusTerrain) {
                 PackUniformCensus.noteSetAlloc();
+            }
+            if (censusPipeline) {
+                PackUniformCensus.notePipelineSetAlloc(this, this.celtium$censusRoute, this.setsByKey.size());
             }
             return set;
         } finally {
