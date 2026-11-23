@@ -239,6 +239,22 @@ public final class VulkanModProgramPipeline {
     private final long[] scratchImageViews;
     private long lastSamplerKey;
     private long lastSamplerSet;
+    // E11 (B0, shadow-layerb-678 §5.4): the pass-scoped sampler token. Within one pass execution
+    // the sampler/image inputs are invariant, yet every region's claim rehashed them and
+    // re-verified the set snapshot. A token pays that hash and snapshot once at the pass' head;
+    // region claims then present the token, and only the uniform slot - the one input that does
+    // change per region - is resolved per call. The token's arrays are its own, never the shared
+    // scratch: other claim entry points reuse the scratch and would rewrite a token pointing in.
+    private long samplerTokenSerial;
+    private long liveSamplerToken;
+    private long samplerTokenHash;
+    private long[] samplerTokenViews;
+    private long[] samplerTokenSamplers;
+    private int[] samplerTokenLayouts;
+    private long[] samplerTokenImageViews;
+    /** The set a token resolved on routes whose set names the textures alone (push, dynamic). */
+    private long samplerTokenSet;
+    private boolean samplerTokenSetResolved;
     /** Sets one pool holds, and max pools a pipeline may grow to (matches VulkanImmediateTexturePipeline). */
     private static final int MAX_SETS = 64;
     private static final int MAX_POOLS = 64;
@@ -1068,6 +1084,9 @@ public final class VulkanModProgramPipeline {
      */
     public long samplersAndImages(VulkanGlTexture[] textures, VulkanGlTexture[] imageTextures,
                                   ModProgramRegistry.Program program, long epoch) {
+        // An array-form claim supersedes any live sampler token: the token promised the inputs
+        // would only be presented through it for its pass' duration.
+        this.liveSamplerToken = 0L;
         if (this.samplerCount + this.imageCount == 0 && !this.uniformsViaBuffer) {
             return 0L;
         }
@@ -1117,6 +1136,116 @@ public final class VulkanModProgramPipeline {
         hash = celtium$uniformRouteSetKey(hash, this.uniformBuffer.buffer(), slot, false);
         return allocateOrReuseDescriptorSet(hash, views, samplers, layouts, imageViews,
                 celtium$routeSnapshotSlot(slot, false));
+    }
+
+    /**
+     * Begins a sampler token for one pass execution over {@code textures} / {@code imageTextures}
+     * (E11): hashes the sampler/image inputs once and snapshots them into the token's own arrays,
+     * and returns the token the pass' region claims present to
+     * {@link #samplersAndImages(long, ModProgramRegistry.Program, long)} instead of the arrays.
+     * Beginning a token supersedes any live one, and an array-form claim on this pipeline
+     * invalidates it - the token is a pass-scoped promise, made by the one caller that owns the
+     * arrays for the pass' duration, that the inputs are presented only through it.
+     */
+    public long beginSamplerToken(VulkanGlTexture[] textures, VulkanGlTexture[] imageTextures) {
+        if (this.samplerTokenViews == null) {
+            this.samplerTokenViews = this.samplerCount > 0 ? new long[this.samplerCount] : EMPTY_LONG;
+            this.samplerTokenSamplers = this.samplerCount > 0 ? new long[this.samplerCount] : EMPTY_LONG;
+            this.samplerTokenLayouts = this.samplerCount > 0 ? new int[this.samplerCount] : EMPTY_INT;
+            this.samplerTokenImageViews = this.imageCount > 0 ? new long[this.imageCount] : EMPTY_LONG;
+        }
+        long hash = 0x9E3779B97F4A7C15L;
+        for (int i = 0; i < this.samplerCount; i++) {
+            VulkanGlTexture tex = textures[i];
+            long view = tex.view();
+            long sampler = tex.sampler();
+            int layout = tex.samplingLayout();
+            this.samplerTokenViews[i] = view;
+            this.samplerTokenSamplers[i] = sampler;
+            this.samplerTokenLayouts[i] = layout;
+            hash = mix64(hash ^ tex.key()) ^ mix64(view ^ (sampler * 31L) ^ layout);
+        }
+        for (int i = 0; i < this.imageCount; i++) {
+            VulkanGlTexture img = imageTextures[i];
+            long view = img.view();
+            this.samplerTokenImageViews[i] = view;
+            hash = mix64(hash ^ img.key() ^ 0x517CC1B727220A95L) ^ mix64(view);
+        }
+        if (hash == 0L) {
+            hash = 1L;
+        }
+        this.samplerTokenHash = hash;
+        this.samplerTokenSet = 0L;
+        this.samplerTokenSetResolved = false;
+        this.liveSamplerToken = ++this.samplerTokenSerial;
+        return this.liveSamplerToken;
+    }
+
+    /**
+     * The token form of {@link #samplersAndImages(VulkanGlTexture[], VulkanGlTexture[], ModProgramRegistry.Program, long)}:
+     * the sampler/image half comes from the token, so per region only the uniform slot claim
+     * remains. On the routes whose set names the textures alone - the push route and B3's dynamic
+     * route, whose set is shared by every slot of the sampler group - the resolved set is the
+     * token's own, remembered after the first region. A token that is no longer live (superseded,
+     * or invalidated by an array-form claim) resolves to 0, which the caller refuses as a missing
+     * draw, exactly like an exhausted claim.
+     */
+    public long samplersAndImages(long token, ModProgramRegistry.Program program, long epoch) {
+        if (token == 0L || token != this.liveSamplerToken) {
+            return 0L;
+        }
+        if (this.samplerCount + this.imageCount == 0 && !this.uniformsViaBuffer) {
+            return 0L;
+        }
+        if (!this.uniformsViaBuffer) {
+            if (!this.samplerTokenSetResolved) {
+                this.samplerTokenSet = allocateOrReuseDescriptorSet(this.samplerTokenHash,
+                        this.samplerTokenViews, this.samplerTokenSamplers, this.samplerTokenLayouts,
+                        this.samplerTokenImageViews, -1);
+                this.samplerTokenSetResolved = this.samplerTokenSet != 0L;
+            } else {
+                noteTokenSetHit();
+            }
+            return this.samplerTokenSet;
+        }
+        if (program == null) {
+            return 0L;
+        }
+        int slot = uniformSlot(program, epoch);
+        if (slot < 0) {
+            return 0L;
+        }
+        if (this.dynamicUniform) {
+            // B3, as in the array form: the staged slot reaches the draw as the bind's dynamic
+            // offset, remembered here for the bindTerrainUniformsAndSet call that follows.
+            this.pendingDynamicOffset = celtium$uniformDynamicOffset(slot, this.uniformStride);
+            if (!this.samplerTokenSetResolved) {
+                long hash = celtium$uniformRouteSetKey(this.samplerTokenHash, this.uniformBuffer.buffer(),
+                        slot, true);
+                this.samplerTokenSet = allocateOrReuseDescriptorSet(hash,
+                        this.samplerTokenViews, this.samplerTokenSamplers, this.samplerTokenLayouts,
+                        this.samplerTokenImageViews, celtium$routeSnapshotSlot(slot, true));
+                this.samplerTokenSetResolved = this.samplerTokenSet != 0L;
+            } else {
+                noteTokenSetHit();
+            }
+            return this.samplerTokenSet;
+        }
+        long hash = celtium$uniformRouteSetKey(this.samplerTokenHash, this.uniformBuffer.buffer(),
+                slot, false);
+        return allocateOrReuseDescriptorSet(hash, this.samplerTokenViews, this.samplerTokenSamplers,
+                this.samplerTokenLayouts, this.samplerTokenImageViews,
+                celtium$routeSnapshotSlot(slot, false));
+    }
+
+    /** Files a token-resolved set with the censuses exactly as an allocateOrReuse fast-path hit. */
+    private void noteTokenSetHit() {
+        if (this.uniformRingSlots == TERRAIN_UNIFORM_RING_SLOTS) {
+            PackUniformCensus.noteSetHit();
+        }
+        if (PackUniformCensus.counting()) {
+            PackUniformCensus.notePipelineSetHit(this, this.celtium$censusRoute);
+        }
     }
 
     /**
@@ -1189,6 +1318,7 @@ public final class VulkanModProgramPipeline {
     }
 
     public long samplerSetForHandles(long[] views, long[] samplers, int[] layouts, long[] generations, int count) {
+        this.liveSamplerToken = 0L;
         if (this.samplerCount == 0 || count <= 0) {
             return 0L;
         }

@@ -17700,7 +17700,11 @@ this.frameBufferOpen = false;
             // shadow-diff-1: the rebuild budget governs this execution only when the flag is on and this
             // is the shadow stage; every other execution keeps the unconditional rebuild below.
             boolean budgetedShadow = PACK_SHADOW_REBUILD_BUDGET && shadowStage;
-            boolean indexBound = false;
+            // E6: whether the shared index buffer is the one currently bound, as the direct
+            // fallback loop's entry state. The indirect path manages its own binds through the
+            // renderer's belief, so a successful indirect region clears this - the next direct
+            // region rebinds the shared buffer before its merge-run walk.
+            boolean sharedIndexBound = false;
             LongBuffer regionVertexBuf = stack.mallocLong(1);
             LongBuffer regionVertexOffset = stack.longs(0L);
             LongBuffer setScratch = stack.mallocLong(1);
@@ -17708,9 +17712,19 @@ this.frameBufferOpen = false;
             int drawnSections = 0;
             boolean sortedPass = pass.isSorted();
 
+            // E11 (B0): the pass' sampler token. The sampler/image arrays above are resolved once
+            // for this execution and never mutated below, so the token begun here can speak for
+            // them at every region's claim - the per-region hash and snapshot verification the
+            // array form pays is the residual B3 left behind (shadow-layerb-678 §5.4).
+            long samplerToken = modPipeline.beginSamplerToken(samplerTextures, imageTextures);
             try {
                 setViewportAndScissor(stack, passW, passH);
                 modPipeline.bindTerrainPipeline(this.commandBuffer);
+                // E6: every region's geometry lives in the one shared vertex arena (kpi-4), so
+                // the vertex bind the loop used to record per region names the same buffer at
+                // offset 0 every time - the pass binds it once here, as the built-in path does,
+                // and the region draws below (indirect or direct) read it throughout.
+                this.terrain.bindSharedVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset);
                 while (true) {
                     // Item 722 (E6, first stage): packRegionIter brackets one region's iteration head
                     // (advance, lookup, cached-batch validity; packRecordRebuild nests inside),
@@ -17814,7 +17828,7 @@ this.frameBufferOpen = false;
                         }
                         org.soutalab.celtium.vulkan.FramePassTimings.begin("packSamplerClaim");
                         try {
-                            descSet = modPipeline.samplersAndImages(samplerTextures, imageTextures, modProgram, this.frameId);
+                            descSet = modPipeline.samplersAndImages(samplerToken, modProgram, this.frameId);
                         } finally {
                             org.soutalab.celtium.vulkan.FramePassTimings.end("packSamplerClaim");
                         }
@@ -17841,48 +17855,48 @@ this.frameBufferOpen = false;
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("packRegionBind");
                     try {
+                        // E6: the vertex buffer is the pass-head bind above and the index buffer
+                        // is the draw span's own business now (the indirect path binds through
+                        // the renderer's belief; the direct fallback binds at its entry), so the
+                        // only bind left per region is the uniform set itself.
                         modPipeline.bindTerrainUniformsAndSet(this.commandBuffer, pushUniforms, descSet, setScratch);
-
-                        this.terrain.bindVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset, resources);
-                        if (!indexBound) {
-                            this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
-                            indexBound = true;
-                        }
                     } finally {
                         org.soutalab.celtium.vulkan.FramePassTimings.end("packRegionBind");
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("packRegionDraw");
                     try {
-                        boolean arenaBound = false;
-                        for (int cmd = 0; cmd < batch.size(); cmd++) {
-                            long byteOffset = batch.indexByteOffset(cmd);
-                            boolean arena;
-                            int firstIndex;
-                            if (sortedPass) {
-                                if (resources.indexArena == null) continue;
-                                arena = true;
-                                firstIndex = (int) (byteOffset / 4);
-                            } else if (byteOffset == 0) {
-                                arena = false;
-                                firstIndex = 0;
-                            } else if (resources.indexArena != null) {
-                                arena = true;
-                                firstIndex = (int) (byteOffset / 4);
-                            } else {
-                                continue;
-                            }
-                            if (arena != arenaBound) {
-                                this.terrain.bindIndexBuffer(this.commandBuffer, arena
-                                        ? resources.indexArena.buffer()
-                                        : this.sharedIndexBuffers.get(primitiveType));
-                                arenaBound = arena;
-                            }
-                            vkCmdDrawIndexed(this.commandBuffer, batch.elementCount(cmd), 1, firstIndex,
-                                    batch.baseVertex(cmd), 0);
-                            drawnCommands++;
+                        // E6: the region's commands as one indirect call, in the built-in path's
+                        // shape (kpi-3/4) - the batch's retained packets are copied into the
+                        // frame's indirect page and drawn with the index buffer BH-02's rule
+                        // names for the whole batch. firstInstance stays 0, exactly as the direct
+                        // draws below pass it: the pack program reads its region offset from the
+                        // uniform block bound above, not from the binding-5 array the built-in
+                        // shader reads at gl_InstanceIndex, so no region index is stamped. A
+                        // batch the preparation refuses (a mixed-source unsorted batch, a sorted
+                        // batch with no index arena, a device without multiDrawIndirect) falls
+                        // back to the direct walk, whose commands are the same ones in the same
+                        // order.
+                        boolean indirect = false;
+                        if (TERRAIN_INDIRECT_ENABLED) {
+                            indirect = this.terrain.tryIndirectBatch(this.context, this.commandBuffer,
+                                    stack, this.sharedIndexBuffers, resources, batch, sortedPass,
+                                    primitiveType, 0);
+                        } else {
+                            this.terrain.noteTerrainIndirectFallback();
+                            this.terrain.setLastTerrainIndirectFallback(
+                                    "the indirect path is off (-Dceltium.vulkan.indirectTerrain)");
                         }
-                        if (arenaBound) {
-                            this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
+                        if (indirect) {
+                            drawnCommands += batch.size();
+                            sharedIndexBound = false;
+                        } else {
+                            if (!sharedIndexBound) {
+                                this.terrain.bindIndexBuffer(this.commandBuffer,
+                                        this.sharedIndexBuffers.get(primitiveType));
+                                sharedIndexBound = true;
+                            }
+                            drawnCommands += celtium$drawPackBatchDirect(batch, resources,
+                                    sortedPass, primitiveType);
                         }
                     } finally {
                         org.soutalab.celtium.vulkan.FramePassTimings.end("packRegionDraw");
@@ -17956,6 +17970,54 @@ this.frameBufferOpen = false;
                 }
             }
         }
+    }
+
+    /**
+     * The pack region loop's direct walk (E6's fallback): the batch's commands as individual
+     * draws, switching the bound index buffer between the shared quad buffer and the region's
+     * index arena as each command's source demands, and restoring the shared buffer at the end.
+     * The caller has bound the shared buffer on entry. Kept out of the pass method itself - it
+     * is one of the huge methods the bytecode limit watches.
+     *
+     * @return how many commands were drawn
+     */
+    private int celtium$drawPackBatchDirect(VulkanMultiDrawBatch batch,
+                                            TerrainRenderer.RegionResources resources,
+                                            boolean sortedPass,
+                                            ChunkPrimitiveType primitiveType) {
+        int drawn = 0;
+        boolean arenaBound = false;
+        for (int cmd = 0; cmd < batch.size(); cmd++) {
+            long byteOffset = batch.indexByteOffset(cmd);
+            boolean arena;
+            int firstIndex;
+            if (sortedPass) {
+                if (resources.indexArena == null) continue;
+                arena = true;
+                firstIndex = (int) (byteOffset / 4);
+            } else if (byteOffset == 0) {
+                arena = false;
+                firstIndex = 0;
+            } else if (resources.indexArena != null) {
+                arena = true;
+                firstIndex = (int) (byteOffset / 4);
+            } else {
+                continue;
+            }
+            if (arena != arenaBound) {
+                this.terrain.bindIndexBuffer(this.commandBuffer, arena
+                        ? resources.indexArena.buffer()
+                        : this.sharedIndexBuffers.get(primitiveType));
+                arenaBound = arena;
+            }
+            vkCmdDrawIndexed(this.commandBuffer, batch.elementCount(cmd), 1, firstIndex,
+                    batch.baseVertex(cmd), 0);
+            drawn++;
+        }
+        if (arenaBound) {
+            this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
+        }
+        return drawn;
     }
 
     /**
