@@ -963,19 +963,19 @@ final class GlStateQueries {
             // probe measured glIsEnabled(GL_DEPTH_TEST)=false against a captured depthTest=1.
             case CeltiumGlStub.GL_DEPTH_TEST: {
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                return vulkan != null ? vulkan.celtium$depthTestEnabled() : stub.enables[CeltiumGlStub.GL_DEPTH_TEST] != 0;
+                return vulkan != null ? vulkan.celtium$depthTestEnabled() : GlsmEnableState.current().enabled(CeltiumGlStub.GL_DEPTH_TEST);
             }
             case CeltiumGlStub.GL_ALPHA_TEST: {
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                return vulkan != null ? vulkan.celtium$alphaTestEnabled() : stub.enables[CeltiumGlStub.GL_ALPHA_TEST] != 0;
+                return vulkan != null ? vulkan.celtium$alphaTestEnabled() : GlsmEnableState.current().enabled(CeltiumGlStub.GL_ALPHA_TEST);
             }
             case 0x0B50: { // GL_LIGHTING
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                return vulkan != null ? vulkan.celtium$lightingEnabled() : stub.enables[0x0B50] != 0;
+                return vulkan != null ? vulkan.celtium$lightingEnabled() : GlsmEnableState.current().enabled(0x0B50);
             }
             default: break;
         }
-        return cap >= 0 && cap < stub.enables.length && stub.enables[cap] != 0;
+        return GlsmQueryFacade.current().isEnabled(cap);
     }
 
     /** Pixel/semantic routing - the layer the texture path plugs into. Nothing routes yet: calls no-op. */
