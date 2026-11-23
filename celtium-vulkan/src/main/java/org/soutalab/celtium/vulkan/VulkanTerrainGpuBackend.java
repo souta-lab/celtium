@@ -396,6 +396,87 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean PACK_SHADOW_REBUILD_BUDGET =
             Boolean.getBoolean("celtium.vulkan.packShadowRebuildBudget");
+    /**
+     * The OptiFine {@code shadowPassInterval} shape, applied to the pack route's shadow stage: when set to
+     * N &gt;= 2 via {@code -Dceltium.vulkan.packShadowInterval}, the shadow stage's terrain record runs at
+     * most once every N frames, and in between the shadow target keeps the previous record's contents (a
+     * skipped stage begins no pass, consumes no clear and records no barrier on the pair, so the images rest
+     * in their sampling layout holding the last recorded map). The interval is cut short - the stage records
+     * immediately - when the shadow view's quantised key changes (sun direction / shadow-camera movement:
+     * the movement the frame's sampling matrices would otherwise disagree with the stored map by more than
+     * one quantum) or when the draw target's identity or extent changes (a recreated target holds no valid
+     * map). 0 (the default) and 1 record every frame exactly as before and the state below is never touched.
+     * Distinct from item 690's E7 gate, which reuses the shadow <em>visibility search</em> upstream; this
+     * gate reuses the recorded <em>map</em> itself, inside the pack record path.
+     */
+    private static final int PACK_SHADOW_INTERVAL = celtium$packShadowInterval(
+            System.getProperty("celtium.vulkan.packShadowInterval"));
+    /** Frame of the last pack shadow stage this backend actually recorded; MIN_VALUE before the first. */
+    private long packShadowIntervalLastRecordFrame = Long.MIN_VALUE;
+    /** Quantised shadow view key at the last record; compared against the live key on every shadow stage. */
+    private long packShadowIntervalLastViewKey;
+    /** Draw identity / extent of the target the last record wrote into; a change forces a record. */
+    private long packShadowIntervalLastIdentity;
+    private int packShadowIntervalLastWidth;
+    private int packShadowIntervalLastHeight;
+    private long packShadowIntervalRecorded;
+    private long packShadowIntervalSkipped;
+
+    static int celtium$packShadowInterval(String property) {
+        if (property == null) {
+            return 0;
+        }
+        try {
+            int value = Integer.parseInt(property.trim());
+            return value < 0 ? 0 : Math.min(value, 240);
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
+    }
+
+    /**
+     * {@return a quantised key for the shadow view}: the model-view rotation (sun direction and shadow
+     * camera orientation) at 1/32 steps, its translation (shadow camera position) at 1-block steps, and the
+     * projection's focal elements at 1/32 steps. Two frames with the same key see the shadow volume from a
+     * view that agrees to within one quantum on every component, so a map recorded under one key is sampled
+     * under the other with sub-quantum drift only.
+     */
+    static long celtium$packShadowViewKey(Matrix4fc projection, Matrix4fc modelView) {
+        long key = 0x2545F4914F6CDD1DL;
+        key = celtium$packShadowKeyMix(key, Math.round(modelView.m00() * 32.0f));
+        key = celtium$packShadowKeyMix(key, Math.round(modelView.m01() * 32.0f));
+        key = celtium$packShadowKeyMix(key, Math.round(modelView.m02() * 32.0f));
+        key = celtium$packShadowKeyMix(key, Math.round(modelView.m10() * 32.0f));
+        key = celtium$packShadowKeyMix(key, Math.round(modelView.m11() * 32.0f));
+        key = celtium$packShadowKeyMix(key, Math.round(modelView.m12() * 32.0f));
+        key = celtium$packShadowKeyMix(key, Math.round(modelView.m20() * 32.0f));
+        key = celtium$packShadowKeyMix(key, Math.round(modelView.m21() * 32.0f));
+        key = celtium$packShadowKeyMix(key, Math.round(modelView.m22() * 32.0f));
+        key = celtium$packShadowKeyMix(key, Math.round(modelView.m30()));
+        key = celtium$packShadowKeyMix(key, Math.round(modelView.m31()));
+        key = celtium$packShadowKeyMix(key, Math.round(modelView.m32()));
+        key = celtium$packShadowKeyMix(key, Math.round(projection.m00() * 32.0f));
+        key = celtium$packShadowKeyMix(key, Math.round(projection.m11() * 32.0f));
+        return key;
+    }
+
+    private static long celtium$packShadowKeyMix(long key, long component) {
+        return (key ^ (component + 0x9E3779B97F4A7C15L)) * 0xBF58476D1CE4E5B9L;
+    }
+
+    /**
+     * {@return whether a pack shadow stage must record}: always when the interval is off or nothing has
+     * been recorded yet, otherwise only when the view key or the target changed (the interval's cut-short
+     * conditions) or the full interval has elapsed since the last record.
+     */
+    static boolean celtium$packShadowIntervalDue(int interval, long framesSinceRecord, boolean viewChanged,
+                                                 boolean targetChanged) {
+        if (interval < 2 || framesSinceRecord < 0L) {
+            return true;
+        }
+        return viewChanged || targetChanged || framesSinceRecord >= interval;
+    }
+
     private int packTerrainDrawnLogs;
     private int packTerrainRefusedLogs;
     private int packTerrainHandoffLogs;
@@ -17377,6 +17458,15 @@ this.frameBufferOpen = false;
         // shadow-diff-1: the same stage decision as the bracket's, kept as a boolean for the draw loop:
         // the rebuild budget discipline applies to the shadow stage only.
         boolean shadowStage = false;
+        // Pack shadow interval: a shadow record in flight, committed to the interval state fields only when
+        // the record completes (the commit sits before the final return below). A refusal after the gate
+        // falls back to the built-in path, which draws the stage itself - the interval state must not claim
+        // that record, so nothing is published from here on a failure path.
+        boolean pendingShadowRecord = false;
+        long pendingShadowViewKey = 0L;
+        long pendingShadowIdentity = 0L;
+        int pendingShadowWidth = 0;
+        int pendingShadowHeight = 0;
         try {
             packProgram.bind();
             bound = true;
@@ -17493,6 +17583,39 @@ this.frameBufferOpen = false;
                     // Nothing to draw in this pass (e.g. empty gbuffers_water): leave the published colour
                     // owner (deferred1) untouched instead of allocating, clearing, or hijacking color0Tex.
                     return true;
+                }
+                if (shadowStage && PACK_SHADOW_INTERVAL >= 2) {
+                    // Pack shadow interval: reuse the previously recorded shadow map instead of recording
+                    // the stage again. Returning true here - after the target's identity and extent are
+                    // resolved but before any pair allocation, clear consumption, handoff copy, acquire
+                    // barrier or pass begin - leaves the shadow pair exactly as the last recorded stage
+                    // left it: contents intact, resting in its sampling layout. The finally still restores
+                    // the pack program state this execution captured and closes the stage bracket, so a
+                    // skipped stage files only the bind/setupState cost under packRecordShadow, not the
+                    // record. A latched game clear for this identity stays unconsumed and is applied by the
+                    // next recorded stage, ahead of its redraw.
+                    long viewKey = celtium$packShadowViewKey(matrices.projection(), matrices.modelView());
+                    long framesSinceRecord = this.packShadowIntervalLastRecordFrame == Long.MIN_VALUE
+                            ? -1L : this.frameId - this.packShadowIntervalLastRecordFrame;
+                    boolean targetChanged = drawIdentity != this.packShadowIntervalLastIdentity
+                            || passW != this.packShadowIntervalLastWidth
+                            || passH != this.packShadowIntervalLastHeight;
+                    if (!celtium$packShadowIntervalDue(PACK_SHADOW_INTERVAL, framesSinceRecord,
+                            viewKey != this.packShadowIntervalLastViewKey, targetChanged)) {
+                        this.packShadowIntervalSkipped++;
+                        if (this.packShadowIntervalSkipped % 600L == 0L) {
+                            System.out.println("[Celtium] CELTIUM_PACK_SHADOW_INTERVAL interval="
+                                    + PACK_SHADOW_INTERVAL + " recorded=" + this.packShadowIntervalRecorded
+                                    + " skipped=" + this.packShadowIntervalSkipped
+                                    + " frame=" + this.frameId);
+                        }
+                        return true;
+                    }
+                    pendingShadowRecord = true;
+                    pendingShadowViewKey = viewKey;
+                    pendingShadowIdentity = drawIdentity;
+                    pendingShadowWidth = passW;
+                    pendingShadowHeight = passH;
                 }
                 int pairColors = celtium$packTerrainPairColorCount(targetColors,
                         pairOwner.chainPairColorCount(drawIdentity));
@@ -17908,6 +18031,16 @@ this.frameBufferOpen = false;
                         + " frame=" + this.frameId
                         + " skippedRegions=" + this.packTerrainSkippedRegions
                         + samplerSummary);
+            }
+            if (pendingShadowRecord) {
+                // The shadow record completed: publish the interval state, so following frames can reuse
+                // this map until the interval elapses or the view / target key moves.
+                this.packShadowIntervalLastRecordFrame = this.frameId;
+                this.packShadowIntervalLastViewKey = pendingShadowViewKey;
+                this.packShadowIntervalLastIdentity = pendingShadowIdentity;
+                this.packShadowIntervalLastWidth = pendingShadowWidth;
+                this.packShadowIntervalLastHeight = pendingShadowHeight;
+                this.packShadowIntervalRecorded++;
             }
             return true;
         } catch (RuntimeException | LinkageError err) {
