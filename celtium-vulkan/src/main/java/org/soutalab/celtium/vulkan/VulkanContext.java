@@ -2565,6 +2565,10 @@ public final class VulkanContext {
         if (took > pipelineCreationWorstNanos) {
             pipelineCreationWorstNanos = took;
         }
+        if (PipelineCreateCensus.ENABLED) {
+            int created = result == VK_SUCCESS ? Math.min(info.remaining(), pipelines.remaining()) : 0;
+            PipelineCreateCensus.noteGraphics(site, created, took);
+        }
         if (result == VK_SUCCESS) {
             int count = Math.min(info.remaining(), pipelines.remaining());
             if (count > 1) {
@@ -2627,8 +2631,9 @@ public final class VulkanContext {
 
     /** {@return the pipeline creations so far}: count, total and worst milliseconds. */
     public static String pipelineCreationSummary() {
-        return "pipelineCreations=" + pipelineCreations + " pipelineCreationMs=" + pipelineCreationNanos / 1_000_000L
+        String summary = "pipelineCreations=" + pipelineCreations + " pipelineCreationMs=" + pipelineCreationNanos / 1_000_000L
                 + " pipelineCreationWorstMs=" + pipelineCreationWorstNanos / 1_000_000L;
+        return PipelineCreateCensus.ENABLED ? summary + " " + PipelineCreateCensus.summaryLine() : summary;
     }
 
     /**

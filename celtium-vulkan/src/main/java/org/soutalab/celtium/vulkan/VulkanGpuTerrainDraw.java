@@ -203,7 +203,7 @@ final class VulkanGpuTerrainDraw {
             create.get(0).sType$Default().layout(this.pipelineLayout);
             create.get(0).stage().sType$Default().stage(VK_SHADER_STAGE_COMPUTE_BIT).module(module)
                     .pName(stack.UTF8("main"));
-            check(vkCreateComputePipelines(device, VK_NULL_HANDLE, create, null, handle),
+            check(PipelineCreateCensus.createComputeUncached(device, create, handle, "gpu-terrain-draw"),
                     "create draw compute pipeline");
             this.pipeline = handle.get(0);
         } finally {
