@@ -86,7 +86,7 @@ final class VulkanOpaqueCopy {
             create.get(0).sType$Default().layout(this.pipelineLayout);
             create.get(0).stage().sType$Default().stage(VK_SHADER_STAGE_COMPUTE_BIT).module(module)
                     .pName(stack.UTF8("main"));
-            check(vkCreateComputePipelines(device, VK_NULL_HANDLE, create, null, handle),
+            check(PipelineCreateCensus.createComputeUncached(device, create, handle, "opaque-copy"),
                     "create opaque-copy pipeline");
             this.pipeline = handle.get(0);
         } finally {

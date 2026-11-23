@@ -722,8 +722,8 @@ public final class VulkanModProgramPipeline {
                     .pViewportState(viewport).pRasterizationState(raster).pMultisampleState(multisample)
                     .pDepthStencilState(depth).pColorBlendState(blend).pDynamicState(dynamic)
                     .layout(this.pipelineLayout).renderPass(renderPass).subpass(0);
-            check(vkCreateGraphicsPipelines(this.context.device(), VK_NULL_HANDLE, info, null, handle),
-                    "vkCreateGraphicsPipelines(terrain mod program)");
+            check(PipelineCreateCensus.createGraphicsUncached(this.context.device(), info, handle,
+                    "terrain-mod-program-direct"), "vkCreateGraphicsPipelines(terrain mod program)");
             this.pipeline = handle.get(0);
         } finally {
             if (vertexModule != VK_NULL_HANDLE) vkDestroyShaderModule(this.context.device(), vertexModule, null);
