@@ -1811,8 +1811,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * rather than a count of anything.
      */
     private int immediateOfferCount;
-    /** The checkpoint the offer path last passed, so an unnamed refusal can still say where it stopped. */
-    private int offerStage;
+    /** The submit timings and offer-stage instruments live in {@link ImmediateOfferTimings} (item 704, R5 seam). */
     /**
      * Whether the immediate path draws, off by default.
      * <p>
@@ -1826,26 +1825,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private static final boolean IMMEDIATE_DRAWING_ENABLED = "true".equalsIgnoreCase(
             System.getProperty("celtium.vulkan.immediate", "true"));
 
-    /** Total time spent inside submitImmediateBatch, so the hot path's cost is measured rather than asserted. */
-    long immediateSubmitNanos;
-    /**
-     * Baseline at the first offer inside the world pass: menu/startup batches (atlas stitch, model init)
-     * hit the offer path thousands of times while the JIT is still cold, which inflates the cumulative
-     * immediateSubmitAvgNs far above what a steady-state call costs. The world-scoped average below
-     * subtracts the counters at the moment the world pass first activates.
-     */
-    long immediateSubmitBaselineNanos = -1;
-    long immediateSubmitBaselineOffered;
-    /** Calls whose body took over 200µs: separates steady per-call cost from spike pollution in the average. */
-    int immediateSubmitTailCalls;
-    /** Histogram-ish spread: under 5µs / 5-50 / 50-200 / tail, so the average can be read against the mass. */
-    int immediateSubmitUnder5, immediateSubmit5to50, immediateSubmit50to200;
-    /**
-     * What a tail call carried: a queue flush (immediateGroupsFlushed moved), a lazy texture mirror supply
-     * (lazyMirrorSupplies moved), both, or neither (GC pause, JIT deopt, shader compile - the residue).
-     */
-    int tailCarriedFlush, tailCarriedSupply, tailCarriedBoth, tailCarriedNeither;
-    private int submitFlushesAtEntry, submitSuppliesAtEntry;
     /** CPU time of the same three inner calls, so wall minus CPU says which one blocks in a native call. */
     long appendCpuNanos;
     long preflightCpuNanos;
@@ -2115,6 +2094,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /** The immediate domain's counters (refactoring plan R2). */
     final ImmediateStatistics immediateStatistics = new ImmediateStatistics();
+
+    /** The offer path's submit timings and offer-stage marks (item 704, R5 seam). */
+    final ImmediateOfferTimings offerTimings = new ImmediateOfferTimings();
 
     /**
      * Why accepted batches open new groups, by cause. The frame pays per group, so "too many groups" is only
@@ -4191,36 +4173,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * 65 drawn, so the loss is real and per-batch rather than inferred from a group total.
      */
 
-    /** {@return the per-offer-stage average nanoseconds, for the batch-timing summary}. */
-    String offerStageNanosSummary() {
-        StringBuilder text = new StringBuilder(" offerStages[nanosPerReached");
-        for (int stage = 1; stage < this.offerStageDeltas.length; stage++) {
-            long[] entry = this.offerStageDeltas[stage];
-            if (entry[1] > 0L) {
-                text.append(" s").append(stage).append('=').append(entry[0] / entry[1]);
-            }
-        }
-        return text.append(']').toString();
-    }
-
-    /**
-     * Sets the offer stage and counts how many offers reached it (BH-15's open question).
-     * <p>
-     * The stage field alone reaches a report only when a refusal names it, so an offer that stops between the offer
-     * increment and the acceptance increment leaves no trace: the terrain legs read {@code offTargetOffered=793} with
-     * {@code acceptedForOtherTargets=7} and every refusal counter at zero, which is a contradiction no existing
-     * counter resolves. This histogram is the counter that resolves it - the highest stage with a non-zero count is
-     * where the missing offers stop.
-     */
-    private void celtium$offerStage(int stage) {
-        if (BATCH_TIMINGS && stage > 0) {
-            this.offerStageMarks[stage - 1] = System.nanoTime();
-        }
-        this.offerStage = stage;
-        if (stage >= 0 && stage < this.offerStageReached.length) {
-            this.offerStageReached[stage]++;
-        }
-    }
+    /** The offer-stage summary and stage marking live in {@link ImmediateOfferTimings} (item 704, R5 seam). */
 
     /**
      * Prints where the chain pair is cleared in the frame, with the image and the identity that triggered it.
@@ -4246,7 +4199,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + " groupLoopCalls=" + this.immediateStatistics.groupLoopCalls()
                 + ""
                 + " offerCount=" + this.immediateOfferCount
-                + " offerTotalMillis=" + (this.immediateSubmitNanos / 1000000L)
+                + " offerTotalMillis=" + (this.offerTimings.immediateSubmitNanos / 1000000L)
                 + " offersLastFrame=" + this.immediateOffersLastFrame
                 + " windowsTotal=" + this.immediateStatistics.immediateWindows()
                 + " lastTerrainPassFrame=" + this.terrainStatistics.lastTerrainPassFrame()
@@ -4297,8 +4250,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             Integer.getInteger("celtium.vulkan.chainClearLog", 12).intValue();
     private int chainPairClearLogs;
 
-    /** Offers that reached each stage index; printed as {@code offerStages=[1:..,2:..]}. */
-    final int[] offerStageReached = new int[16];
 
 
     /**
@@ -6106,7 +6057,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (this.immediateLastRefusal != null && this.immediateLastRefusal.startsWith("unrecorded")) {
             // The refusal never named itself; the stage says where the batch stopped. Stages are set at the checkpoints of
             // the offer path below, so a number here is a location and not a guess.
-            return celtium$refusalText() + " stage=" + this.offerStage;
+            return celtium$refusalText() + " stage=" + this.offerTimings.offerStage;
         }
         return celtium$refusalText();
     }
@@ -9041,9 +8992,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // arrives this way.
         if (!this.worldPassActive || !this.worldSnapshotValid) {
             this.targetStatistics.noteOutsideWorldPassAccepted();
-        } else if (this.immediateSubmitBaselineNanos < 0) {
-            this.immediateSubmitBaselineNanos = this.immediateSubmitNanos;
-            this.immediateSubmitBaselineOffered = this.immediateStatistics.immediateBatchesOffered();
+        } else {
+            this.offerTimings.captureBaselineIfFirst(this.immediateStatistics.immediateBatchesOffered());
         }
         if (this.gpuStalled) {
             this.immediateLastRefusal = "the GPU stalled; no further drawing until the renderer is rebuilt";
@@ -9080,8 +9030,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             HudCensus.noteOffer(this.frameId);
         }
         long submitStart = timeBatch ? System.nanoTime() : 0L;
-        this.submitFlushesAtEntry = this.immediateStatistics.immediateGroupsFlushed();
-        this.submitSuppliesAtEntry = this.lazyMirrorSupplies;
+        this.offerTimings.noteSubmitEntry(this.immediateStatistics.immediateGroupsFlushed(),
+                this.lazyMirrorSupplies);
         try {
             boolean taken = submitImmediateBatchTimed(vertexFormat, vertexStride, formatId, vertexAddress,
                     vertexCount, drawMode, retained);
@@ -9097,24 +9047,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             if (screenBatch) org.soutalab.celtium.vulkan.FramePassTimings.end("screenBatch");
             if (timeBatch) {
                 long submitNanos = System.nanoTime() - submitStart;
-                this.immediateSubmitNanos += submitNanos;
-                FrameBudgetTimings.addBatch(submitNanos);
-                if (submitNanos > 200_000) {
-                    this.immediateSubmitTailCalls++;
+                if (this.offerTimings.recordSubmitNanos(submitNanos,
+                        this.immediateStatistics.immediateGroupsFlushed(), this.lazyMirrorSupplies)) {
                     this.immediateStatistics.addImmediateSubmitTailNanos(submitNanos);
-                    boolean carriedFlush = this.immediateStatistics.immediateGroupsFlushed() != this.submitFlushesAtEntry;
-                    boolean carriedSupply = this.lazyMirrorSupplies != this.submitSuppliesAtEntry;
-                    if (carriedFlush && carriedSupply) this.tailCarriedBoth++;
-                    else if (carriedFlush) this.tailCarriedFlush++;
-                    else if (carriedSupply) this.tailCarriedSupply++;
-                    else this.tailCarriedNeither++;
-                } else if (submitNanos > 50_000) {
-                    this.immediateSubmit50to200++;
-                } else if (submitNanos > 5_000) {
-                    this.immediateSubmit5to50++;
-                } else {
-                    this.immediateSubmitUnder5++;
                 }
+                FrameBudgetTimings.addBatch(submitNanos);
             }
         }
     }
@@ -9137,17 +9074,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 }
                 this.batchCheckNanos = 0L;
                 // The nine marks say which stage the rest of the batch's time is in; stages are monotonic within a batch.
-                long[][] deltas = this.offerStageDeltas;
-                for (int stage = 1; stage < this.offerStageMarks.length; stage++) {
-                    long from = this.offerStageMarks[stage - 1];
-                    long to = this.offerStageMarks[stage];
-                    if (from > 0L && to >= from) {
-                        deltas[stage][0] += to - from;
-                        deltas[stage][1]++;
-                    }
-                    this.offerStageMarks[stage - 1] = 0L;
-                }
-                this.offerStageMarks[this.offerStageMarks.length - 1] = 0L;
+                this.offerTimings.foldOfferStageDeltas();
             }
         }
     }
@@ -9196,39 +9123,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             formatId = VulkanImmediateFormats.POSITION_COLOR_TEXGEN;
         }
         if (FRAME_SIGNATURE) {
-            // Repeatability: if a frame's batch traffic is byte-for-byte the previous frame's, its recording could be
-            // reused instead of rebuilt. This hashes what decides a batch - format, state, texture, vertex count and the
-            // first and last vertex's bytes - per frame, and compares the result with the previous frame's.
-            //
-            // Opt-in, because it is the only per-offer work in this method whose answer nothing on the shipped path
-            // reads: the hash feeds one diagnostic counter (identicalFrameSignatures) and costs two memGetInt calls
-            // plus six multiplies on every one of the ~220 offers a frame. The question it was written to answer -
-            // "could a frame's recording be reused" - was answered by the census, and the reuse itself was never built.
-            long hash = this.frameBatchSignature;
-            hash = (hash ^ formatId) * 1099511628211L;
-            hash = (hash ^ (this.immediateState.boundTextureName())) * 1099511628211L;
-            hash = (hash ^ vertexCount) * 1099511628211L;
-            hash = (hash ^ vertexStride) * 1099511628211L;
-            if (vertexAddress != 0L && vertexCount > 0) {
-                hash = (hash ^ org.lwjgl.system.MemoryUtil.memGetInt(vertexAddress)) * 1099511628211L;
-                hash = (hash ^ org.lwjgl.system.MemoryUtil.memGetInt(vertexAddress + (long) vertexStride
-                        * (vertexCount - 1))) * 1099511628211L;
-            }
-            this.frameBatchSignature = hash;
+            celtium$noteFrameSignature(formatId, vertexStride, vertexCount, vertexAddress);
         }
-        if ((formatId == 1 || formatId == 2) && this.frameId > 300 && this.batchSiteSamples[formatId] < 3) {
-            // Which caller produces the HUD/text batches, once per format: the counters say how many there are and the
-            // formats say they are POSITION_COLOR and POSITION_TEX_COLOR, but not who draws them - and that decides whether
-            // the cost belongs to the font path, the GUI or the world.
-            this.batchSiteSamples[formatId]++;
-            StackTraceElement[] site = new Throwable().getStackTrace();
-            StringBuilder line = new StringBuilder("[Celtium] CELTIUM_BATCH_SITE format=" + formatId + " frames=");
-            for (int i = 1; i < Math.min(site.length, 9); i++) {
-                line.append(site[i].getClassName()).append('.').append(site[i].getMethodName()).append(' ');
-            }
-            System.out.println(line);
-        }
-        celtium$offerStage(1);
+        celtium$noteBatchSite(formatId);
+        this.offerTimings.celtium$offerStage(1);
         String reason = VulkanImmediateDrawer.unsupportedReason(drawMode);
         if (reason != null && VulkanImmediateDrawer.isLineMode(drawMode)) {
             // Lines are drawn, not refused. The refusal that used to be here was right about one thing - the
@@ -9261,60 +9159,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             celtium$flushBeforeRefusal();
             return false;
         }
-        if (formatId == 5 && this.lightCoordLogged < 4 && vertexAddress != 0 && vertexCount > 0) {
-            // The raw light coordinates of a particle batch, a few times. The shader's conversion is right and the layout is
-            // right, so what is left is whether the input matches what GL would use - the lightmap is at offset 24 in this
-            // layout. Values near 0 would mean the batch is unlit rather than lit differently.
-            this.lightCoordLogged++;
-            try {
-                long at = vertexAddress + 24;
-                int first = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(at));
-                int second = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(at + vertexStride));
-                int last = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(
-                        vertexAddress + 24 + (long) (vertexCount - 1) * vertexStride));
-                float vx = org.lwjgl.system.MemoryUtil.memGetFloat(at - 24);
-                float vy = org.lwjgl.system.MemoryUtil.memGetFloat(at - 24 + 4);
-                float vz = org.lwjgl.system.MemoryUtil.memGetFloat(at - 24 + 8);
-                System.out.println("[Celtium] CELTIUM_FMT5_POS first=(" + round3(vx) + "," + round3(vy) + "," + round3(vz)
-                        + ") camera=(" + round3(this.glModelView[12]) + "," + round3(this.glModelView[13]) + ","
-                        + round3(this.glModelView[14]) + ")");
-                System.out.println("[Celtium] CELTIUM_LIGHTCOORD fmt=5 stride=" + vertexStride + " count=" + vertexCount
-                        + " first=0x" + Integer.toHexString(first) + "(" + first + ")"
-                        + " second=0x" + Integer.toHexString(second) + "(" + second + ")"
-                        + " last=0x" + Integer.toHexString(last) + "(" + last + ")"
-                        + " u_first=" + round3((first & 0xFF) / 16.0f) + " v_first=" + round3(((first >> 8) & 0xFF) / 16.0f)
-                        + " uraw_first=" + round3(first / 256.0f));
-                // Every vertex field of the first two vertices, once: whether the zero lights travel with a colour that
-                // is also zero (padding never written) or a real particle that happened to be unlit.
-                if (this.lightCoordLogged == 1) {
-                    float tu0 = org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 12);
-                    float tv0 = org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 16);
-                    int c0 = org.lwjgl.system.MemoryUtil.memGetInt(vertexAddress + 20);
-                    int lu0 = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(vertexAddress + 24));
-                    int lv0 = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(vertexAddress + 26));
-                    long v1 = vertexAddress + vertexStride;
-                    float tu1 = org.lwjgl.system.MemoryUtil.memGetFloat(v1 + 12);
-                    float tv1 = org.lwjgl.system.MemoryUtil.memGetFloat(v1 + 16);
-                    int c1 = org.lwjgl.system.MemoryUtil.memGetInt(v1 + 20);
-                    int lu1 = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(v1 + 24));
-                    int lv1 = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(v1 + 26));
-                    System.out.println("[Celtium] CELTIUM_FMT5_VERTEX"
-                            + " v0 uv=(" + round3(tu0) + "," + round3(tv0) + ") color=0x"
-                            + Integer.toHexString(c0) + " lmap=(" + lu0 + "," + lv0 + ")"
-                            + " v1 uv=(" + round3(tu1) + "," + round3(tv1) + ") color=0x"
-                            + Integer.toHexString(c1) + " lmap=(" + lu1 + "," + lv1 + ")");
-                    StackTraceElement[] stack = new Throwable().getStackTrace();
-                    StringBuilder frames = new StringBuilder();
-                    for (int i = 1; i < Math.min(stack.length, 14); i++) {
-                        frames.append(" <- ").append(stack[i].getClassName()).append('.')
-                                .append(stack[i].getMethodName()).append(':').append(stack[i].getLineNumber());
-                    }
-                    System.out.println("[Celtium] CELTIUM_FMT5_SITE" + frames);
-                }
-            } catch (RuntimeException | LinkageError error) {
-                this.lightCoordLogged = 4;
-            }
-        }
+        celtium$noteLightCoords(formatId, vertexStride, vertexAddress, vertexCount);
         int expectedStride = celtium$expectedStride(formatId);
         // The property name says "present from composite", and that is what it is for - but with the check below it
         // currently presents nothing: measured compositePresentRefusals 1/frame and no present at all, because the
@@ -9324,7 +9169,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (BATCH_TIMINGS) {
             this.batchCheckNanos = System.nanoTime() - afterBatchStartNanos;
         }
-        celtium$offerStage(2);
+        this.offerTimings.celtium$offerStage(2);
         if (formatId == 2 && SKIP_GL_COMPOSITE && this.framePresentedFromVulkan > 0
                 && this.targetRegistry.currentIsMain()) {
             // The frame is already on the swapchain (a present really happened for it), so the game's own composite would
@@ -9342,7 +9187,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.glCompositesSkipped++;
             return true;
         }
-        celtium$offerStage(3);
+        this.offerTimings.celtium$offerStage(3);
         if (formatId == 2 && PRESENT_FROM_COMPOSITE && (this.targetRegistry.currentIsMain()
                 || celtium$samplesBoundFramebufferColor(this.immediateState.boundTextureName()))) {
             // The audit's S17: this layout is not only the screen composite. `Framebuffer.func_178038_a` uses it to blend
@@ -9382,14 +9227,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.immediateLastRefusal = "reentrant upload during bridge handoff";
             return false;
         }
-        celtium$offerStage(4);
+        this.offerTimings.celtium$offerStage(4);
         if (!supportedImmediateTarget()) {
             // The gate names the failing condition itself; overwriting it here is what hid which one refused 820
             // format-2 batches in a run.
             celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_BATCH_SUBMIT);
             return false;
         }
-        celtium$offerStage(5);
+        this.offerTimings.celtium$offerStage(5);
         if (!celtium$formatAccepted(formatId)) {
             // Attribution switch: restricting which layouts this backend accepts makes the image difference
             // measurable per format instead of as one aggregate number. Refused batches are drawn by GL as usual.
@@ -9402,7 +9247,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             celtium$flushBeforeRefusal();
             return false;
         }
-        celtium$offerStage(6);
+        this.offerTimings.celtium$offerStage(6);
         // COUNT is the range the formats class declares; the previous bound was POSITION_NORMAL, which stopped
         // being the highest id once the 32-byte mod layout (id 11) existed - mapped, in the acceptance mask, and
         // refused here as "no such layout" (measured: CELTIUM_REFUSALS_BY_FORMAT {11 no pipeline yet for a
@@ -9429,7 +9274,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             celtium$flushBeforeRefusal();
             return false;
         }
-        celtium$offerStage(7);
+        this.offerTimings.celtium$offerStage(7);
         if (vertexStride != expectedStride) {
             // Both sides named: the layout the mapping chose and the width it actually has. The pair disagreed in silence
             // for two layouts - id 9 was accepted at 24 bytes while its format is 28 - and a refusal that reads
@@ -9455,7 +9300,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             celtium$flushBeforeRefusal();
             return false;
         }
-        celtium$offerStage(8);
+        this.offerTimings.celtium$offerStage(8);
         if (formatId >= 2 && this.immediateState.boundTextureName() == 0 && !celtium$layoutHasNoTexture(formatId)) {
             this.immediateLastRefusal = "textured batch with no texture bound";
             // S10 is a GL-fallback rule: under GL-less the refused batch is drawn by nobody, so there is
@@ -9632,7 +9477,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                             ? this.modPrograms.celtium$executableModProgram(boundProgram, formatId)
                             : null;
             if (boundProgram != 0 && modDrawProgram == null && !untexturedFallback) {
-                celtium$offerStage(9);
+                this.offerTimings.celtium$offerStage(9);
                 celtium$recordCustomProgramRefusal(boundProgram, formatId, boundTexture);
                 org.soutalab.celtium.vulkan.FramePassTimings.end("offPrepare");
                 celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_BATCH_SUBMIT);
@@ -9666,7 +9511,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // interval that follows it averaged across whichever batches happened to mark both ends and read as an
             // artefact. From this point the marks measure the group decision and the append, which is where the accept
             // path's own cost lives.
-            celtium$offerStage(9);
+            this.offerTimings.celtium$offerStage(9);
             org.soutalab.celtium.vulkan.FramePassTimings.end("offPrepare");
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offMerge");
             long acceptDecideStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
@@ -9692,7 +9537,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 this.immediateStatistics.noteFastMergedBatches();
             }
             // Stage 10 marks the end of the fast-merge decision: the interval from stage 9 is what that decision costs.
-            celtium$offerStage(10);
+            this.offerTimings.celtium$offerStage(10);
             if (BATCH_TIMINGS && acceptDecideStart != 0L) {
                 this.acceptDecideNanos += System.nanoTime() - acceptDecideStart;
             }
@@ -9774,7 +9619,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 }
             }
             // Stage 11 marks the end of the preflight: the pipeline and descriptor are decided.
-            celtium$offerStage(11);
+            this.offerTimings.celtium$offerStage(11);
             // The pass identity joins the key here: a batch from another render target or viewport is not part of this
             // group, which is what stops two passes merging into one draw (audit S10).
             boolean samePass = this.currentGroupTarget == this.targetRegistry.currentIdentity()
@@ -10236,7 +10081,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 this.currentGroupLightmapImage = this.lightmapTexture;
             }
             // Stage 12 marks the end of the block that prepares the batch and opens its group.
-            celtium$offerStage(12);
+            this.offerTimings.celtium$offerStage(12);
             // Only a layout that samples a texture needs its bound name to have a mirror. Asked without that, this
             // refused every POSITION and POSITION_NORMAL batch that happened to be offered while a stale texture was
             // bound - measured on leg gv-vset-r30-site2, where the Sodium-style tooltip's own box (stride 12, four
@@ -10258,7 +10103,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 this.acceptPreflightNanos += now - acceptPreflightStart;
                 acceptPreflightStart = now;
             }
-            celtium$offerStage(13);
+            this.offerTimings.celtium$offerStage(13);
         if (formatId == 5 && !fastMerged && !canBuildDescriptor(boundTexture)) {
                 // The particle family is the one that dropped: every post-accept drop counted so far is format 5, which is
                 // the family whose descriptor needs the lightmap. Building it here, once, turns that drop into an ordinary
@@ -10344,103 +10189,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 }
             }
 
-            celtium$offerStage(14);
+            this.offerTimings.celtium$offerStage(14);
             if (formatId >= 0 && formatId < this.acceptedByFormat.length) {
 
                 this.acceptedByFormat[formatId]++;
 
             }
             this.immediateStatistics.noteFrameAccepted();
-            if (IMMEDIATE_WINDOWS_ENABLED && this.pendingImmediateIndices >= IMMEDIATE_FLUSH_INDICES) {
-                // The window flush is recorded *inside* the accept call, so `immediateSubmitNanos` - the number the
-                // plan read as "the accept path is 0.77 ms a frame" - contains it. The flush is already measured on
-                // its own (`flush`, `winRecord`), so counting it here as well made the accept path look like the
-                // frame's largest item when a third of it was the window it triggered. This bracket is the split:
-                // acceptSpanSummary's flushMs is the part of the accept average that belongs to the flush.
-                // Item 312 P0: this size-triggered window drains the same queue, so a gui window that
-                // fires here is paired for the flush fit too; without it, a HUD large enough to trip
-                // the threshold would drain unsampled and the fit would see only the small windows.
-                // Same identification as the ordering flush: the groups it drains carry the stamp.
-                // The busy case is excluded for the same reason the ordering flush returns early on
-                // it: flushImmediateWindow no-ops while a window is already recording, so the pending
-                // groups are not this call's to pair.
-                int hudP0WindowGroups = HUD_P0_FRAMES > 0 && !this.immediateWindowBusy
-                        ? this.immediateGroups.size() : 0;
-                long hudP0WindowStartedNanos = hudP0WindowGroups > 0
-                        && HudP0Census.guiClosedGroups(this.immediateGroups) > 0 ? System.nanoTime() : 0L;
-                long acceptFlushStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
-                // The flight-c4 census (flight-c3-desk section 4): this firing is a size trip, counted
-                // with the pending count it crossed at, and when the acceptance that tripped it is a
-                // retained one the flush it forces is timed under the acceptance's own bracket, so
-                // cloudAccept can be split into the acceptance and the window it tripped. The trip is
-                // counted either way; the bracket wraps only the retained case, and it closes in the
-                // finally below so a flush that threw still closes it.
-                FramePassTimings.noteSizeFlushTrip(retained != null, this.pendingImmediateIndices);
-                this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_SIZE;
-                boolean retainedTrip = retained != null;
-                if (retainedTrip) FramePassTimings.begin("acceptFlushRetained");
-                try {
-                    FramePassTimings.begin("flush");
-                    try { celtium$flushImmediateWindowForCause(GlDrawWindowCensus.CAUSE_SIZE); }
-                    finally { FramePassTimings.end("flush"); }
-                }
-                catch (RuntimeException | LinkageError error) {
-                    // Bounded, not latched (task-60). This catch used to call noteStalled(), which stops the renderer
-                    // for the rest of the session: measured on the loading screen's font path at frame 0, where the
-                    // latch then refused 678 of 723 draws and every later composite. A latch is only right for a
-                    // device that has genuinely stopped - and that path is the wait timeout, which still latches. A
-                    // window flush that throws is bounded to the window it belongs to: its batches are dropped and
-                    // counted, the frame is abandoned, and the next frame tries again.
-                    this.targetStatistics.noteWindowFlushFailures();
-                    this.lastWindowFlushFailure = describeWithOrigin(error);
-                    this.targetStatistics.setWindowFlushFailureFrame(this.frameId);
-                    // Retained, not dropped. The frame is abandoned, so a group whose recording already sits in the
-                    // abandoned command buffer has to be recorded again - and the abort branch's own contract is the
-                    // pattern: take the recording's counters back off, add its indices back, and put it at the front of
-                    // the queue. The unrecorded remainder never left the queue and stays where it is. Clearing the
-                    // whole queue here is what erased the window's entity and held-item batches; the drop was counted,
-                    // but the per-format histogram has no loss column, so it read as "accepted and never drawn".
-                    for (ImmediateGroup group : this.recordedImmediateGroups) {
-                        int batches = group.batches;
-                        // An exempt group (flight A1) was never counted at accept, so putting it back must not
-                        // put its indices in either - the re-add restores the pre-record count, nothing more.
-                        if (!group.indexFlushExempt) {
-                            this.pendingImmediateIndices += group.mesh.indexCount();
-                        }
-                        this.immediateStatistics.addImmediateRecordedBatches(-(batches));
-                        if (group.target != this.targetRegistry.mainIdentity()) this.offTargetRecordedBatches -= batches;
-                    }
-                    this.groupQueueMutation++;
-                    this.immediateGroups.addAll(0, this.recordedImmediateGroups);
-                    this.recordedImmediateGroups.clear();
-                    int retainedBatches = 0;
-                    for (ImmediateGroup group : this.immediateGroups) {
-                        retainedBatches += group.batches;
-                    }
-                    this.targetStatistics.addWindowFlushRetainedBatches(retainedBatches);
-                    // The frame is left open by the failure, and the semaphores it would wait on are never consumed;
-                    // abandoning it keeps the next beginFrame() from reporting an open frame instead of the failure.
-// An abandoned frame is not "the frame is still recording": the flag must not route the
-// next beginCommands into the buffer whose recording the abandon just discards.
-this.frameBufferOpen = false;
-                    this.frameTarget.abandonFrame("immediate window submit failure");
-                    record("window flush failed at frame " + this.frameId + " (" + this.lastWindowFlushFailure
-                            + "); retained " + retainedBatches + " accepted batches, none dropped, the next frame retries"
-                            + " (windowFlushFailures=" + this.targetStatistics.windowFlushFailures() + ")");
-                }
-                finally {
-                    // Counted on both paths: a flush that threw still spent the time, and leaving it out would make
-                    // the accept average look cheaper exactly on the legs where the flush is expensive.
-                    if (acceptFlushStart != 0L) this.acceptFlushNanos += System.nanoTime() - acceptFlushStart;
-                    // The retained trip's bracket closes on both paths too, for the same reason.
-                    if (retainedTrip) FramePassTimings.end("acceptFlushRetained");
-                    // The fit pair follows the same rule: the ordering flush's note is in its finally
-                    // too, so a window that threw is paired at both recording points or at neither.
-                    if (hudP0WindowStartedNanos != 0L) {
-                        this.hudP0FlushFit.note(hudP0WindowGroups, System.nanoTime() - hudP0WindowStartedNanos);
-                    }
-                }
-            }
+            celtium$flushSizeTriggeredWindow(retained);
             if (this.immediateStatistics.immediateBatchesOffered() % 500 == 0 && VulkanDiagnostics.enabled()) {
                 StringBuilder histogram = new StringBuilder("immediate formats offered/accepted:");
                 for (int id = 0; id < this.immediateOfferedByFormat.length; id++) {
@@ -10500,6 +10256,193 @@ this.frameBufferOpen = false;
             this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
             celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_BATCH_SUBMIT);
             return false;
+        }
+    }
+
+    private void celtium$noteFrameSignature(int formatId, int vertexStride, int vertexCount, long vertexAddress) {
+        // Repeatability: if a frame's batch traffic is byte-for-byte the previous frame's, its recording could be
+        // reused instead of rebuilt. This hashes what decides a batch - format, state, texture, vertex count and the
+        // first and last vertex's bytes - per frame, and compares the result with the previous frame's.
+        //
+        // Opt-in, because it is the only per-offer work in this method whose answer nothing on the shipped path
+        // reads: the hash feeds one diagnostic counter (identicalFrameSignatures) and costs two memGetInt calls
+        // plus six multiplies on every one of the ~220 offers a frame. The question it was written to answer -
+        // "could a frame's recording be reused" - was answered by the census, and the reuse itself was never built.
+        long hash = this.frameBatchSignature;
+        hash = (hash ^ formatId) * 1099511628211L;
+        hash = (hash ^ (this.immediateState.boundTextureName())) * 1099511628211L;
+        hash = (hash ^ vertexCount) * 1099511628211L;
+        hash = (hash ^ vertexStride) * 1099511628211L;
+        if (vertexAddress != 0L && vertexCount > 0) {
+            hash = (hash ^ org.lwjgl.system.MemoryUtil.memGetInt(vertexAddress)) * 1099511628211L;
+            hash = (hash ^ org.lwjgl.system.MemoryUtil.memGetInt(vertexAddress + (long) vertexStride
+                    * (vertexCount - 1))) * 1099511628211L;
+        }
+        this.frameBatchSignature = hash;
+    }
+
+    private void celtium$noteBatchSite(int formatId) {
+        if ((formatId == 1 || formatId == 2) && this.frameId > 300 && this.batchSiteSamples[formatId] < 3) {
+            // Which caller produces the HUD/text batches, once per format: the counters say how many there are and the
+            // formats say they are POSITION_COLOR and POSITION_TEX_COLOR, but not who draws them - and that decides whether
+            // the cost belongs to the font path, the GUI or the world.
+            this.batchSiteSamples[formatId]++;
+            StackTraceElement[] site = new Throwable().getStackTrace();
+            StringBuilder line = new StringBuilder("[Celtium] CELTIUM_BATCH_SITE format=" + formatId + " frames=");
+            for (int i = 1; i < Math.min(site.length, 9); i++) {
+                line.append(site[i].getClassName()).append('.').append(site[i].getMethodName()).append(' ');
+            }
+            System.out.println(line);
+        }
+    }
+
+    private void celtium$noteLightCoords(int formatId, int vertexStride, long vertexAddress, int vertexCount) {
+        if (formatId == 5 && this.lightCoordLogged < 4 && vertexAddress != 0 && vertexCount > 0) {
+            // The raw light coordinates of a particle batch, a few times. The shader's conversion is right and the layout is
+            // right, so what is left is whether the input matches what GL would use - the lightmap is at offset 24 in this
+            // layout. Values near 0 would mean the batch is unlit rather than lit differently.
+            this.lightCoordLogged++;
+            try {
+                long at = vertexAddress + 24;
+                int first = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(at));
+                int second = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(at + vertexStride));
+                int last = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(
+                        vertexAddress + 24 + (long) (vertexCount - 1) * vertexStride));
+                float vx = org.lwjgl.system.MemoryUtil.memGetFloat(at - 24);
+                float vy = org.lwjgl.system.MemoryUtil.memGetFloat(at - 24 + 4);
+                float vz = org.lwjgl.system.MemoryUtil.memGetFloat(at - 24 + 8);
+                System.out.println("[Celtium] CELTIUM_FMT5_POS first=(" + round3(vx) + "," + round3(vy) + "," + round3(vz)
+                        + ") camera=(" + round3(this.glModelView[12]) + "," + round3(this.glModelView[13]) + ","
+                        + round3(this.glModelView[14]) + ")");
+                System.out.println("[Celtium] CELTIUM_LIGHTCOORD fmt=5 stride=" + vertexStride + " count=" + vertexCount
+                        + " first=0x" + Integer.toHexString(first) + "(" + first + ")"
+                        + " second=0x" + Integer.toHexString(second) + "(" + second + ")"
+                        + " last=0x" + Integer.toHexString(last) + "(" + last + ")"
+                        + " u_first=" + round3((first & 0xFF) / 16.0f) + " v_first=" + round3(((first >> 8) & 0xFF) / 16.0f)
+                        + " uraw_first=" + round3(first / 256.0f));
+                // Every vertex field of the first two vertices, once: whether the zero lights travel with a colour that
+                // is also zero (padding never written) or a real particle that happened to be unlit.
+                if (this.lightCoordLogged == 1) {
+                    float tu0 = org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 12);
+                    float tv0 = org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 16);
+                    int c0 = org.lwjgl.system.MemoryUtil.memGetInt(vertexAddress + 20);
+                    int lu0 = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(vertexAddress + 24));
+                    int lv0 = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(vertexAddress + 26));
+                    long v1 = vertexAddress + vertexStride;
+                    float tu1 = org.lwjgl.system.MemoryUtil.memGetFloat(v1 + 12);
+                    float tv1 = org.lwjgl.system.MemoryUtil.memGetFloat(v1 + 16);
+                    int c1 = org.lwjgl.system.MemoryUtil.memGetInt(v1 + 20);
+                    int lu1 = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(v1 + 24));
+                    int lv1 = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(v1 + 26));
+                    System.out.println("[Celtium] CELTIUM_FMT5_VERTEX"
+                            + " v0 uv=(" + round3(tu0) + "," + round3(tv0) + ") color=0x"
+                            + Integer.toHexString(c0) + " lmap=(" + lu0 + "," + lv0 + ")"
+                            + " v1 uv=(" + round3(tu1) + "," + round3(tv1) + ") color=0x"
+                            + Integer.toHexString(c1) + " lmap=(" + lu1 + "," + lv1 + ")");
+                    StackTraceElement[] stack = new Throwable().getStackTrace();
+                    StringBuilder frames = new StringBuilder();
+                    for (int i = 1; i < Math.min(stack.length, 14); i++) {
+                        frames.append(" <- ").append(stack[i].getClassName()).append('.')
+                                .append(stack[i].getMethodName()).append(':').append(stack[i].getLineNumber());
+                    }
+                    System.out.println("[Celtium] CELTIUM_FMT5_SITE" + frames);
+                }
+            } catch (RuntimeException | LinkageError error) {
+                this.lightCoordLogged = 4;
+            }
+        }
+    }
+
+    private void celtium$flushSizeTriggeredWindow(NativeGeometryBuffer retained) {
+        if (IMMEDIATE_WINDOWS_ENABLED && this.pendingImmediateIndices >= IMMEDIATE_FLUSH_INDICES) {
+            // The window flush is recorded *inside* the accept call, so `immediateSubmitNanos` - the number the
+            // plan read as "the accept path is 0.77 ms a frame" - contains it. The flush is already measured on
+            // its own (`flush`, `winRecord`), so counting it here as well made the accept path look like the
+            // frame's largest item when a third of it was the window it triggered. This bracket is the split:
+            // acceptSpanSummary's flushMs is the part of the accept average that belongs to the flush.
+            // Item 312 P0: this size-triggered window drains the same queue, so a gui window that
+            // fires here is paired for the flush fit too; without it, a HUD large enough to trip
+            // the threshold would drain unsampled and the fit would see only the small windows.
+            // Same identification as the ordering flush: the groups it drains carry the stamp.
+            // The busy case is excluded for the same reason the ordering flush returns early on
+            // it: flushImmediateWindow no-ops while a window is already recording, so the pending
+            // groups are not this call's to pair.
+            int hudP0WindowGroups = HUD_P0_FRAMES > 0 && !this.immediateWindowBusy
+                    ? this.immediateGroups.size() : 0;
+            long hudP0WindowStartedNanos = hudP0WindowGroups > 0
+                    && HudP0Census.guiClosedGroups(this.immediateGroups) > 0 ? System.nanoTime() : 0L;
+            long acceptFlushStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
+            // The flight-c4 census (flight-c3-desk section 4): this firing is a size trip, counted
+            // with the pending count it crossed at, and when the acceptance that tripped it is a
+            // retained one the flush it forces is timed under the acceptance's own bracket, so
+            // cloudAccept can be split into the acceptance and the window it tripped. The trip is
+            // counted either way; the bracket wraps only the retained case, and it closes in the
+            // finally below so a flush that threw still closes it.
+            FramePassTimings.noteSizeFlushTrip(retained != null, this.pendingImmediateIndices);
+            this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_SIZE;
+            boolean retainedTrip = retained != null;
+            if (retainedTrip) FramePassTimings.begin("acceptFlushRetained");
+            try {
+                FramePassTimings.begin("flush");
+                try { celtium$flushImmediateWindowForCause(GlDrawWindowCensus.CAUSE_SIZE); }
+                finally { FramePassTimings.end("flush"); }
+            }
+            catch (RuntimeException | LinkageError error) {
+                // Bounded, not latched (task-60). This catch used to call noteStalled(), which stops the renderer
+                // for the rest of the session: measured on the loading screen's font path at frame 0, where the
+                // latch then refused 678 of 723 draws and every later composite. A latch is only right for a
+                // device that has genuinely stopped - and that path is the wait timeout, which still latches. A
+                // window flush that throws is bounded to the window it belongs to: its batches are dropped and
+                // counted, the frame is abandoned, and the next frame tries again.
+                this.targetStatistics.noteWindowFlushFailures();
+                this.lastWindowFlushFailure = describeWithOrigin(error);
+                this.targetStatistics.setWindowFlushFailureFrame(this.frameId);
+                // Retained, not dropped. The frame is abandoned, so a group whose recording already sits in the
+                // abandoned command buffer has to be recorded again - and the abort branch's own contract is the
+                // pattern: take the recording's counters back off, add its indices back, and put it at the front of
+                // the queue. The unrecorded remainder never left the queue and stays where it is. Clearing the
+                // whole queue here is what erased the window's entity and held-item batches; the drop was counted,
+                // but the per-format histogram has no loss column, so it read as "accepted and never drawn".
+                for (ImmediateGroup group : this.recordedImmediateGroups) {
+                    int batches = group.batches;
+                    // An exempt group (flight A1) was never counted at accept, so putting it back must not
+                    // put its indices in either - the re-add restores the pre-record count, nothing more.
+                    if (!group.indexFlushExempt) {
+                        this.pendingImmediateIndices += group.mesh.indexCount();
+                    }
+                    this.immediateStatistics.addImmediateRecordedBatches(-(batches));
+                    if (group.target != this.targetRegistry.mainIdentity()) this.offTargetRecordedBatches -= batches;
+                }
+                this.groupQueueMutation++;
+                this.immediateGroups.addAll(0, this.recordedImmediateGroups);
+                this.recordedImmediateGroups.clear();
+                int retainedBatches = 0;
+                for (ImmediateGroup group : this.immediateGroups) {
+                    retainedBatches += group.batches;
+                }
+                this.targetStatistics.addWindowFlushRetainedBatches(retainedBatches);
+                // The frame is left open by the failure, and the semaphores it would wait on are never consumed;
+                // abandoning it keeps the next beginFrame() from reporting an open frame instead of the failure.
+// An abandoned frame is not "the frame is still recording": the flag must not route the
+// next beginCommands into the buffer whose recording the abandon just discards.
+this.frameBufferOpen = false;
+                this.frameTarget.abandonFrame("immediate window submit failure");
+                record("window flush failed at frame " + this.frameId + " (" + this.lastWindowFlushFailure
+                        + "); retained " + retainedBatches + " accepted batches, none dropped, the next frame retries"
+                        + " (windowFlushFailures=" + this.targetStatistics.windowFlushFailures() + ")");
+            }
+            finally {
+                // Counted on both paths: a flush that threw still spent the time, and leaving it out would make
+                // the accept average look cheaper exactly on the legs where the flush is expensive.
+                if (acceptFlushStart != 0L) this.acceptFlushNanos += System.nanoTime() - acceptFlushStart;
+                // The retained trip's bracket closes on both paths too, for the same reason.
+                if (retainedTrip) FramePassTimings.end("acceptFlushRetained");
+                // The fit pair follows the same rule: the ordering flush's note is in its finally
+                // too, so a window that threw is paired at both recording points or at neither.
+                if (hudP0WindowStartedNanos != 0L) {
+                    this.hudP0FlushFit.note(hudP0WindowGroups, System.nanoTime() - hudP0WindowStartedNanos);
+                }
+            }
         }
     }
 
@@ -20042,15 +19985,7 @@ this.frameBufferOpen = false;
     /** Time the current batch spent in the pre-draw checks, reported by the batch-timing summary. */
     private long batchCheckNanos;
 
-    /**
-     * Timestamps of the offer stages of the current batch, in nanoseconds.
-     * <p>
-     * Sized to the stage numbering, which runs to 11: the first version had nine entries and an index out of range for the
-     * last two stages, so the measurement stopped exactly where the queueing work begins.
-     */
-    private final long[] offerStageMarks = new long[16];
-
-    /** Per-stage totals and counts: [stage][0] nanos, [stage][1] batches that reached it. */
+    /** The offer-stage marks and deltas live in {@link ImmediateOfferTimings} (item 704, R5 seam). */
 
     /**
      * Per-batch cumulative times for the three spans of the accept path, filled only with batch timings on. The stage
@@ -20186,7 +20121,6 @@ this.frameBufferOpen = false;
                 // from the accept total before calling the accept path the frame's largest item.
                 + " flushMs=" + (this.acceptFlushNanos / 1000000L) + "]" + parts.append(']') + calls.append(']');
     }
-    private final long[][] offerStageDeltas = new long[16][2];
 
     /**
      * Measurement switch: counts this frame's immediate groups by the state that decides whether they could share one

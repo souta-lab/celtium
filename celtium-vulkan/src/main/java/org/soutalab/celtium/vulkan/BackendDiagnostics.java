@@ -45,7 +45,7 @@ final class BackendDiagnostics {
                 // Where a batch's time goes, per batch, with -Dceltium.vulkan.batchTimings=true. The counters existed but
                 // were never printed, so the question "is the per-batch cost the state capture, the key, the program query or
                 // the preparation" had no answer in a run.
-                + (b.BATCH_TIMINGS ? b.immediateStatistics.batchTimingSummary() + b.offerStageNanosSummary() : "")
+                + (b.BATCH_TIMINGS ? b.immediateStatistics.batchTimingSummary() + b.offerTimings.offerStageNanosSummary() : "")
                 // "off" rather than "0/0": the per-frame hash is opt-in, and a counter that can only read zero would
                 // invite "no two frames were identical" from a number that was never measured.
                 + " identicalFrameSignatures=" + (b.FRAME_SIGNATURE
@@ -639,16 +639,16 @@ final class BackendDiagnostics {
                 + " derivedWorst[" + (b.derivedProjectionWorst == null ? "none" : b.derivedProjectionWorst) + "]"
                 + " matrixDump[" + (b.matrixDump == null ? "none" : b.matrixDump) + "]"
                 + " immediateSubmitAvgNs=" + (b.immediateStatistics.immediateBatchesOffered() == 0 ? 0
-                : b.immediateSubmitNanos / b.immediateStatistics.immediateBatchesOffered())
-                + " immediateSubmitWorldAvgNs=" + (b.immediateSubmitBaselineNanos < 0
-                        || b.immediateStatistics.immediateBatchesOffered() <= b.immediateSubmitBaselineOffered ? 0
-                : (b.immediateSubmitNanos - b.immediateSubmitBaselineNanos)
-                        / (b.immediateStatistics.immediateBatchesOffered() - b.immediateSubmitBaselineOffered))
-                + " submitBuckets=[<5us:" + b.immediateSubmitUnder5 + " 5-50:" + b.immediateSubmit5to50
-                + " 50-200:" + b.immediateSubmit50to200 + " >200us:" + b.immediateSubmitTailCalls
+                : b.offerTimings.immediateSubmitNanos / b.immediateStatistics.immediateBatchesOffered())
+                + " immediateSubmitWorldAvgNs=" + (b.offerTimings.immediateSubmitBaselineNanos < 0
+                        || b.immediateStatistics.immediateBatchesOffered() <= b.offerTimings.immediateSubmitBaselineOffered ? 0
+                : (b.offerTimings.immediateSubmitNanos - b.offerTimings.immediateSubmitBaselineNanos)
+                        / (b.immediateStatistics.immediateBatchesOffered() - b.offerTimings.immediateSubmitBaselineOffered))
+                + " submitBuckets=[<5us:" + b.offerTimings.immediateSubmitUnder5 + " 5-50:" + b.offerTimings.immediateSubmit5to50
+                + " 50-200:" + b.offerTimings.immediateSubmit50to200 + " >200us:" + b.offerTimings.immediateSubmitTailCalls
                 + " tailMillis=" + (b.immediateStatistics.immediateSubmitTailNanos() / 1000000L) + "]"
-                + " tailCarried=[flush:" + b.tailCarriedFlush + " supply:" + b.tailCarriedSupply
-                + " both:" + b.tailCarriedBoth + " neither:" + b.tailCarriedNeither + "]"
+                + " tailCarried=[flush:" + b.offerTimings.tailCarriedFlush + " supply:" + b.offerTimings.tailCarriedSupply
+                + " both:" + b.offerTimings.tailCarriedBoth + " neither:" + b.offerTimings.tailCarriedNeither + "]"
                 // Audit B03/B04: what the descriptor pools did (pools, growths, sets, cached texture keys,
                 // refusals) and the wait-outcome matrix (completions, timeouts, lost devices, unconfirmed waits),
                 // in the run's own report rather than only on stdout at teardown - the teardown path is not reached
@@ -1100,9 +1100,9 @@ final class BackendDiagnostics {
     /** {@return the offer-stage histogram}, so a stopped offer names its branch. */
     String offerStageSummary() {
         StringBuilder text = new StringBuilder();
-        for (int i = 0; i < b.offerStageReached.length; i++) {
-            if (b.offerStageReached[i] != 0) {
-                text.append(i).append(':').append(b.offerStageReached[i]).append(' ');
+        for (int i = 0; i < b.offerTimings.offerStageReached.length; i++) {
+            if (b.offerTimings.offerStageReached[i] != 0) {
+                text.append(i).append(':').append(b.offerTimings.offerStageReached[i]).append(' ');
             }
         }
         return text.length() == 0 ? "none" : text.toString().trim();

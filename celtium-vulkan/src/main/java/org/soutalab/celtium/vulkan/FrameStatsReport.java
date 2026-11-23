@@ -80,8 +80,8 @@ final class FrameStatsReport {
         long descriptorBindTotal = VulkanImmediateTexturePipeline.DESCRIPTOR_BIND_NANOS;
         long pipelineBindDelta = pipelineBindTotal - this.lastPipelineBindNanos;
         long descriptorBindDelta = descriptorBindTotal - this.lastDescriptorBindNanos;
-        long submitDelta = b.immediateSubmitNanos - this.lastImmediateSubmitNanos;
-        this.lastImmediateSubmitNanos = b.immediateSubmitNanos;
+        long submitDelta = b.offerTimings.immediateSubmitNanos - this.lastImmediateSubmitNanos;
+        this.lastImmediateSubmitNanos = b.offerTimings.immediateSubmitNanos;
         long acceptDecideDelta = b.acceptDecideNanos - this.lastAcceptDecideNanos;
         long acceptPreflightDelta = b.acceptPreflightNanos - this.lastAcceptPreflightNanos;
         long acceptTailDelta = b.acceptTailNanos - this.lastAcceptTailNanos;
@@ -218,7 +218,7 @@ final class FrameStatsReport {
                 + " fps[p50=" + String.format(java.util.Locale.ROOT, "%.1f", 1e9 / Math.max(1L, p50)) + "] "
                 + org.soutalab.celtium.vulkan.FrameCoordinator.submitQueueSummary()
                 + " " + org.soutalab.celtium.vulkan.VulkanContext.batchedSubmitSummary()
-                + (VulkanTerrainGpuBackend.BATCH_TIMINGS ? b.offerStageNanosSummary() + " " + b.acceptSpanSummary() + " "
+                + (VulkanTerrainGpuBackend.BATCH_TIMINGS ? b.offerTimings.offerStageNanosSummary() + " " + b.acceptSpanSummary() + " "
                         + b.batchDistSummary() : "")
                 + " append[ms=" + (b.immediateStatistics.appendNanos() / 1000000L) + "]"
                 + " prepare[nanos=" + b.immediateStatistics.prepareImmediateNanos()
