@@ -51,6 +51,14 @@ import static org.lwjgl.vulkan.VK10.*;
  * reproduce them; and the population model itself assumes the unsorted batch form (a
  * sorted batch is tainted by construction here).
  * <p>
+ * The ordered generation variant ({@link GpuTerrainCulling#ORDERED_GENERATION}, default
+ * off) is preparation for a later sorted-pass consumer, landed shader-side first: its
+ * shader zero-fills rejected entries into their own slots instead of appending through
+ * the atomic counter, so its list is dense and in entry order and is drawn with a plain
+ * indirect draw — no count buffer, no {@code drawIndirectCount} gate. It changes nothing
+ * about which passes this executor serves: the target set above is unchanged, and no
+ * sorted pass is armed by it.
+ * <p>
  * Why the reproduction must be exact: the generated commands carry the collection frame's
  * command decomposition (index counts and arena vertex offsets) and the current frame's
  * region indices (through the remap). A region whose batch was rebuilt, deferred or first
@@ -89,6 +97,8 @@ final class VulkanGpuTerrainDraw {
     private long setLayout;
     private long pipelineLayout;
     private long pipeline;
+    /** Ordered-generation pipeline (terrain_cull_ordered.comp); created only when the flag is on. */
+    private long orderedPipeline;
     private boolean disabled;
     private boolean gatePrinted;
 
@@ -100,6 +110,7 @@ final class VulkanGpuTerrainDraw {
 
     // Armed state for the pass currently recording (set at the pass head, consumed at its end).
     private boolean armed;
+    private boolean armedOrdered;
     private int armedSlot;
     private int armedVisitCount;
     private int armedCommandCount;
@@ -200,6 +211,7 @@ final class VulkanGpuTerrainDraw {
                     + " drawIndirectCount="
                     + context.drawIndirectCountEnabled()
                     + " maxDrawIndirectCount=" + context.maxDrawIndirectCount()
+                    + " generation=" + (GpuTerrainCulling.ORDERED_GENERATION ? "ordered" : "append")
                     + " mode=gpu-draw (E10-b: per-pass executor, previous-frame generation)");
         }
     }
@@ -222,7 +234,18 @@ final class VulkanGpuTerrainDraw {
                 .pSetLayouts(stack.longs(this.setLayout)).pPushConstantRanges(range);
         check(vkCreatePipelineLayout(device, layoutInfo, null, handle), "create draw pipeline layout");
         this.pipelineLayout = handle.get(0);
-        ByteBuffer code = SpirvShaders.load("terrain_cull.comp");
+        this.pipeline = createComputePipeline(stack, "terrain_cull.comp");
+        if (GpuTerrainCulling.ORDERED_GENERATION) {
+            // The ordered variant shares this layout, so its pipeline differs only in the
+            // shader module; it exists only in the configuration that can bind it.
+            this.orderedPipeline = createComputePipeline(stack, "terrain_cull_ordered.comp");
+        }
+    }
+
+    private long createComputePipeline(MemoryStack stack, String shaderName) {
+        VkDevice device = this.context.device();
+        LongBuffer handle = stack.mallocLong(1);
+        ByteBuffer code = SpirvShaders.load(shaderName);
         long module = 0L;
         try {
             VkShaderModuleCreateInfo shaderInfo = VkShaderModuleCreateInfo.calloc(stack).sType$Default().pCode(code);
@@ -234,7 +257,7 @@ final class VulkanGpuTerrainDraw {
                     .pName(stack.UTF8("main"));
             check(vkCreateComputePipelines(device, VK_NULL_HANDLE, create, null, handle),
                     "create draw compute pipeline");
-            this.pipeline = handle.get(0);
+            return handle.get(0);
         } finally {
             if (module != 0L) {
                 vkDestroyShaderModule(device, module, null);
@@ -334,10 +357,12 @@ final class VulkanGpuTerrainDraw {
                 this.fallbackTainted++;
                 this.ready = null;
             } else if (GpuTerrainCulling.capabilityGate(
-                    this.context.drawIndirectCountEnabled(), budgetActive)
+                    this.context.drawIndirectCountEnabled(), budgetActive,
+                    GpuTerrainCulling.ORDERED_GENERATION)
                     != GpuTerrainCulling.GateReason.NONE) {
-                // A configuration-level gate (no drawIndirectCount, or a frame budget cap
-                // is in force): the collection is kept, as the gate is a property of the
+                // A configuration-level gate (no drawIndirectCount — append form only, the
+                // ordered form draws without it — or a frame budget cap in force): the
+                // collection is kept, as the gate is a property of the
                 // configuration rather than of this frame's population.
                 this.fallbackGate++;
             } else if (GpuTerrainDrawTable.frameGate(this.ready.table,
@@ -366,6 +391,7 @@ final class VulkanGpuTerrainDraw {
                         GpuTerrainDrawTable.extractPlanes(viewProjection),
                         (float) cameraX, (float) cameraY, (float) cameraZ);
                 this.armed = true;
+                this.armedOrdered = GpuTerrainCulling.ORDERED_GENERATION;
                 this.armedSlot = slotIndex;
                 this.armedVisitCount = visits.size();
                 this.armedCommandCount = this.ready.commandCount;
@@ -433,6 +459,8 @@ final class VulkanGpuTerrainDraw {
             return;
         }
         this.armed = false;
+        boolean ordered = this.armedOrdered;
+        this.armedOrdered = false;
         if (visitedCount != this.armedVisitCount) {
             System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW_MISMATCH pass=" + this.passName
                     + " visited=" + visitedCount
@@ -441,8 +469,16 @@ final class VulkanGpuTerrainDraw {
             return;
         }
         Slot slot = this.slots[this.armedSlot];
-        VK12.vkCmdDrawIndexedIndirectCount(commandBuffer, slot.out.buffer(), 0L,
-                slot.counts.buffer(), 0L, this.armedCommandCount, GpuTerrainDrawTable.COMMAND_BYTES);
+        if (ordered) {
+            // Ordered form: the generated list is dense over the whole entry range (every
+            // rejected entry is a zeroed command), so a plain indirect draw over the armed
+            // command count reproduces it exactly, with no count buffer involved.
+            vkCmdDrawIndexedIndirect(commandBuffer, slot.out.buffer(), 0L,
+                    this.armedCommandCount, GpuTerrainDrawTable.COMMAND_BYTES);
+        } else {
+            VK12.vkCmdDrawIndexedIndirectCount(commandBuffer, slot.out.buffer(), 0L,
+                    slot.counts.buffer(), 0L, this.armedCommandCount, GpuTerrainDrawTable.COMMAND_BYTES);
+        }
     }
 
     /** Uploads one finalized frame into the slot and records its generation dispatch. */
@@ -465,17 +501,23 @@ final class VulkanGpuTerrainDraw {
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             ensureDescriptors(stack, slot);
+            boolean ordered = GpuTerrainCulling.ORDERED_GENERATION;
             // The count slot is zeroed by fill, in the command buffer (design section 4.3
             // step 1), so the zeroing is ordered against the dispatch by the barrier below
-            // rather than by host-write visibility alone.
-            vkCmdFillBuffer(commandBuffer, slot.counts.buffer(), 0L, 4L, 0);
+            // rather than by host-write visibility alone. The ordered form has no append
+            // counter to zero — its shader never touches the count buffer — so the fill
+            // is append-form only.
+            if (!ordered) {
+                vkCmdFillBuffer(commandBuffer, slot.counts.buffer(), 0L, 4L, 0);
+            }
             VkMemoryBarrier.Buffer barrier = VkMemoryBarrier.calloc(1, stack).sType$Default()
                     .srcAccessMask(VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
                     .dstAccessMask(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
             vkCmdPipelineBarrier(commandBuffer,
                     VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, barrier, null, null);
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, this.pipeline);
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+                    ordered ? this.orderedPipeline : this.pipeline);
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, this.pipelineLayout, 0,
                     stack.longs(slot.descriptorSet), null);
             ByteBuffer push = stack.malloc(PUSH_BYTES);
@@ -576,6 +618,9 @@ final class VulkanGpuTerrainDraw {
             if (slot.mask != null) slot.mask.delete();
             if (slot.out != null) slot.out.delete();
             if (slot.counts != null) slot.counts.delete();
+        }
+        if (this.orderedPipeline != 0L) {
+            vkDestroyPipeline(device, this.orderedPipeline, null);
         }
         if (this.pipeline != 0L) {
             vkDestroyPipeline(device, this.pipeline, null);

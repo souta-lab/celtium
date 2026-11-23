@@ -1,0 +1,88 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "terrain_cull.glsl"
+
+// E10 translucent preparation (ordered generation variant of terrain_cull.comp): one
+// invocation per DrawSourceTable entry, and the invocation OWNS the output slot equal to
+// its entry index. Every rejection path writes a zeroed VkDrawIndexedIndirectCommand into
+// its own slot instead of returning early, so the generated list is dense and in entry
+// order — the property a later ordered (sorted) consumer needs — and the pass can draw it
+// with a plain vkCmdDrawIndexedIndirect over the full entry count, with no atomic append
+// counter and no drawIndirectCount dependency. The descriptor layout (set 0, bindings
+// 0-4) and the 144-byte push block are identical to terrain_cull.comp, so the executor's
+// layout, slots and descriptors serve both pipelines unchanged; binding 4 (the append
+// count buffer) is declared for that identity and never touched here.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer DrawSourceTable {
+    uint tableData[];
+};
+layout(set = 0, binding = 1, std430) readonly buffer RegionRemap {
+    int remapData[];
+};
+layout(set = 0, binding = 2, std430) readonly buffer OcclusionMask {
+    uint maskData[];
+};
+layout(set = 0, binding = 3, std430) buffer IndirectCommands {
+    uint outData[];
+};
+layout(set = 0, binding = 4, std430) buffer DrawCounts {
+    uint countData[];
+};
+
+layout(push_constant) uniform Push {
+    vec4 planes[6];
+    vec4 camera;      // xyz: camera position in blocks; w: max distance in blocks
+    ivec4 params;     // x: entry start, y: entry count, z: count slot, w: remap base
+    ivec4 params2;    // x: output base (commands), y: mask base (words), z: output capacity (commands), w: unused
+} push;
+
+void main() {
+    uint local = gl_GlobalInvocationID.x;
+    if (local >= uint(push.params.y)) {
+        return;
+    }
+    // The owned output slot: this entry's index within the pass' entry range.
+    uint slot = local;
+    if (slot >= uint(push.params2.z)) {
+        return;
+    }
+    uint outBase = (uint(push.params2.x) + slot) * 5u;
+    // Zero-fill first: every rejection below leaves this zeroed command in place, and a
+    // zero-index-count command draws nothing.
+    outData[outBase + 0u] = 0u;
+    outData[outBase + 1u] = 0u;
+    outData[outBase + 2u] = 0u;
+    outData[outBase + 3u] = 0u;
+    outData[outBase + 4u] = 0u;
+
+    uint entry = uint(push.params.x) + local;
+    uint base = entry * 8u;
+    uint indexCount = tableData[base + 0u];
+    uint firstIndex = tableData[base + 1u];
+    int vertexOffset = int(tableData[base + 2u]);
+    int dictIndex = int(tableData[base + 3u]);
+    ivec3 section = ivec3(int(tableData[base + 4u]), int(tableData[base + 5u]), int(tableData[base + 6u]));
+
+    if (dictIndex < 0) {
+        return;
+    }
+    int frameIndex = remapData[push.params.w + dictIndex];
+    if (frameIndex < 0) {
+        return;
+    }
+    uint maskWord = maskData[push.params2.y + (dictIndex >> 5)];
+    if ((maskWord & (1u << (dictIndex & 31))) == 0u) {
+        return;
+    }
+    vec3 boxMin = vec3(section * 16);
+    if (!celtiumBoxVisible(boxMin, vec3(CELTIUM_REGION_SIZE_BLOCKS), push.planes, push.camera.xyz, push.camera.w)) {
+        return;
+    }
+    outData[outBase + 0u] = indexCount;
+    outData[outBase + 1u] = 1u;
+    outData[outBase + 2u] = firstIndex;
+    outData[outBase + 3u] = uint(vertexOffset);
+    outData[outBase + 4u] = uint(frameIndex);
+}

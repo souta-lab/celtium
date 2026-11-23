@@ -30,6 +30,20 @@ public final class GpuTerrainCulling {
     public static final boolean CENSUS = Boolean.getBoolean("celtium.vulkan.gpuTerrainCulling.census");
 
     /**
+     * Ordered generation variant (translucent preparation, shader side only): the executor
+     * generates with {@code terrain_cull_ordered.comp}, where each invocation owns the
+     * output slot equal to its entry index and zero-fills rejected entries, instead of the
+     * atomic-append form. The generated list is therefore dense and in entry order, and the
+     * pass draws it with a plain {@code vkCmdDrawIndexedIndirect} over the full entry
+     * count — which is why the {@code drawIndirectCount} capability gate does not apply to
+     * this form (see {@link #capabilityGate(boolean, boolean, boolean)}). Default off; with
+     * it off the executor is exactly the append form. This flag does not arm any sorted
+     * pass: the backend's sorted-pass exclusion is unchanged.
+     */
+    public static final boolean ORDERED_GENERATION =
+            Boolean.getBoolean("celtium.vulkan.gpuTerrainCulling.orderedGeneration");
+
+    /**
      * Distance limit, in blocks, for the census visibility test. The CPU search distance is
      * decided inside the chunk render-list manager and is not plumbed to the Vulkan backend in
      * E10-a, so the census takes its limit from here; the default is far beyond any render
@@ -70,7 +84,18 @@ public final class GpuTerrainCulling {
      * @return the first gate that applies, or {@link GateReason#NONE}
      */
     public static GateReason capabilityGate(boolean drawIndirectCountEnabled, boolean budgetActive) {
-        if (!drawIndirectCountEnabled) {
+        return capabilityGate(drawIndirectCountEnabled, budgetActive, false);
+    }
+
+    /**
+     * The capability gate with the generation form stated. The ordered form draws with a
+     * plain indirect draw over a fixed count, so {@code drawIndirectCount} is not a
+     * requirement for it and {@link GateReason#NO_DRAW_INDIRECT_COUNT} never applies;
+     * the frame budget gate applies to both forms unchanged.
+     */
+    public static GateReason capabilityGate(boolean drawIndirectCountEnabled, boolean budgetActive,
+                                            boolean orderedGeneration) {
+        if (!orderedGeneration && !drawIndirectCountEnabled) {
             return GateReason.NO_DRAW_INDIRECT_COUNT;
         }
         if (budgetActive) {
