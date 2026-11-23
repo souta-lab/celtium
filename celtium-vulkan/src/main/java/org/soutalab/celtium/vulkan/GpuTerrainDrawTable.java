@@ -503,6 +503,69 @@ public final class GpuTerrainDrawTable {
         return g ^ (g >>> 29);
     }
 
+    /**
+     * The CPU mirror of deterministic-slot generation (the shader's issuance mode 1,
+     * Angelica T1 form): like {@link #generate}, except the output is exactly
+     * {@code entryCount} commands long — entry {@code i}'s command sits at slot
+     * {@code i - entryStart}, and a culled entry's slot is a zero command
+     * ({@code indexCount = 0, instanceCount = 0}, all other fields 0). The list length
+     * is therefore known without any count buffer, which is the property a drawing
+     * consumer needs to issue it with a plain indirect draw. Use
+     * {@link #stripZeroCommands} to recover the surviving list for comparison against
+     * a canonical list.
+     */
+    public static int[] generateDeterministicSlot(Table table, int entryStart, int entryCount,
+                                                  float[] planes, float cameraX, float cameraY,
+                                                  float cameraZ, float maxDistance) {
+        int[] out = new int[entryCount * COMMAND_INTS];
+        for (int i = entryStart; i < entryStart + entryCount; i++) {
+            Entry e = table.entries[i];
+            if (e.dictIndex < 0 || e.dictIndex >= table.remap.length) {
+                continue;
+            }
+            int frameIndex = table.remap[e.dictIndex];
+            if (frameIndex < 0) {
+                continue;
+            }
+            if (!maskAllows(table, e)) {
+                continue;
+            }
+            if (!isVisible(planes, cameraX, cameraY, cameraZ, maxDistance, e)) {
+                continue;
+            }
+            int slot = (i - entryStart) * COMMAND_INTS;
+            out[slot] = e.indexCount;
+            out[slot + 1] = 1;
+            out[slot + 2] = e.firstIndex;
+            out[slot + 3] = e.vertexOffset;
+            out[slot + 4] = frameIndex;
+        }
+        return out;
+    }
+
+    /**
+     * Drops the zero commands of a deterministic-slot list ({@code indexCount = 0} and
+     * {@code instanceCount = 0}), preserving slot order. A genuine command can never be
+     * a zero command: generation writes {@code instanceCount = 1} for every survivor.
+     */
+    public static int[] stripZeroCommands(int[] commands) {
+        int survivors = 0;
+        for (int i = 0; i + COMMAND_INTS <= commands.length; i += COMMAND_INTS) {
+            if (commands[i] != 0 || commands[i + 1] != 0) {
+                survivors++;
+            }
+        }
+        int[] out = new int[survivors * COMMAND_INTS];
+        int written = 0;
+        for (int i = 0; i + COMMAND_INTS <= commands.length; i += COMMAND_INTS) {
+            if (commands[i] != 0 || commands[i + 1] != 0) {
+                System.arraycopy(commands, i, out, written, COMMAND_INTS);
+                written += COMMAND_INTS;
+            }
+        }
+        return out;
+    }
+
     /** The outcome of comparing a CPU canonical command list with a generated one. */
     public static final class Diff {
         public final int cpuCount;
