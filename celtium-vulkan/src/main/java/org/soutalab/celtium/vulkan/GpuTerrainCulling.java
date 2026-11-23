@@ -4,11 +4,13 @@ package org.soutalab.celtium.vulkan;
  * E10 (item 723): GPU-driven terrain visibility tests and indirect command generation.
  * <p>
  * This class is the flag and capability-gate surface of the design in
- * {@code e10-design.md}. Stage E10-a (this stage) ships two things only: the
+ * {@code e10-design.md}. Stage E10-a shipped two things only: the
  * {@code drawIndirectCount} device capability is queried and enabled in
  * {@link VulkanContext} (reported there as part of {@code CELTIUM_DEVICE_FEATURES}), and the
- * shadow-generation census below. No drawing path changes in E10-a; the drawing switch is
- * E10-b and is gated on the census results, per design sections 5, 7 and 10.
+ * shadow-generation census below. Stage E10-b adds the drawing switch
+ * ({@link VulkanGpuTerrainDraw}): with the main flag on, the SOLID pass' draws are
+ * GPU-generated whenever the frame's population reproduces the collected one, and the
+ * census keeps its independent shadow-generation role.
  * <p>
  * Flags follow the house rule for structural experiments (A1 / B3 shape): opt-in, default off.
  * With both flags off, nothing in this area is allocated, bound or recorded, and the terrain
@@ -16,7 +18,7 @@ package org.soutalab.celtium.vulkan;
  */
 public final class GpuTerrainCulling {
 
-    /** Master switch for E10. In E10-a it changes no drawing; it only arms the gate report. */
+    /** Master switch for E10. From E10-b it arms the drawing executor as well as the gate report. */
     public static final boolean ENABLED = Boolean.getBoolean("celtium.vulkan.gpuTerrainCulling");
 
     /**

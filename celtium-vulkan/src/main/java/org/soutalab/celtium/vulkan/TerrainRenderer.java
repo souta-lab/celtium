@@ -1431,6 +1431,11 @@ public final class TerrainRenderer {
         return index;
     }
 
+    /** {@return the binding-5 write cursor: the index the next {@link #writeRegionOffset} call will take}. */
+    int regionOffsetWriteCursor() {
+        return this.regionOffsetWriteCursor;
+    }
+
     /** Whether the pass being recorded samples the shadow map (item 537); set by the backend before the pass. */
     private boolean shadowLookupEnabled;
     /** How much of the sky-lit light a shadowed fragment keeps lost (0 = no darkening, 1 = all sky light). */
