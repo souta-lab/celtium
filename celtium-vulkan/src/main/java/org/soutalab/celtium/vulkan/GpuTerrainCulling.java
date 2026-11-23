@@ -41,6 +41,25 @@ public final class GpuTerrainCulling {
             Boolean.getBoolean("celtium.vulkan.gpuTerrainCulling.shadowCensus");
 
     /**
+     * Shadow-stage executor arm (E10 shadow arm): a second, independent
+     * {@link VulkanGpuTerrainDraw} instance (pass ordinal 3, name {@code shadow}) fed from
+     * the pack route's shadow stage, in the design section 5.3 (c) shadow-generation form:
+     * the collection, the arm judgement and the generation dispatch all run, and the
+     * executor's counters price the generation for the shadow population, while the pack
+     * loop's own draws are never replaced. The generated commands could not be issued on
+     * the pack route even in principle today: a pack program's region offset rides its
+     * per-region uniform block ({@code iface.setRegionOffset} claims a ring slot per
+     * region), while generated commands deliver the region through
+     * {@code firstInstance} into the binding-5 SSBO, which pack programs do not read.
+     * Switching issuance on is follow-up work, gated on the mod program lowering gaining
+     * an indexed region-offset delivery. Independent of {@link #SHADOW_CENSUS} and of
+     * {@link #ENABLED}: either shadow stream may be armed alone, and this arm never
+     * changes what is drawn.
+     */
+    public static final boolean SHADOW_DRAW =
+            Boolean.getBoolean("celtium.vulkan.gpuTerrainCulling.shadowDraw");
+
+    /**
      * Distance limit, in blocks, for the census visibility test. The CPU search distance is
      * decided inside the chunk render-list manager and is not plumbed to the Vulkan backend in
      * E10-a, so the census takes its limit from here; the default is far beyond any render

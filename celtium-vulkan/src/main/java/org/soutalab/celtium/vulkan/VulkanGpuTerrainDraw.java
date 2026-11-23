@@ -59,6 +59,10 @@ final class VulkanGpuTerrainDraw {
     private static final int PRINT_EVERY_PASS_HEADS = 60;
 
     private final VulkanContext context;
+    /** This instance's pass ordinal, carried in each collected entry's flags at {@code ordinal << 8}. */
+    private final int passOrdinal;
+    /** This instance's pass name, used in its printed lines. */
+    private final String passName;
     private long setLayout;
     private long pipelineLayout;
     private long pipeline;
@@ -157,8 +161,23 @@ final class VulkanGpuTerrainDraw {
         }
     }
 
+    /** The camera-side executor: pass ordinal 0 (SOLID), the E10-b shape. */
     VulkanGpuTerrainDraw(VulkanContext context) {
+        this(context, 0, "solid");
+    }
+
+    /**
+     * A pass-specialised executor, in the cutout arm's shape: the pass ordinal rides each
+     * entry's flags ({@code ordinal << 8}) and the pass name rides the printed lines, so
+     * several passes' executors can coexist without their populations or counters being
+     * attributable to the wrong pass. The shadow arm uses ordinal 3, name {@code shadow},
+     * and only ever runs {@link #generationHead} — its generated list is priced, never
+     * issued (see {@link GpuTerrainCulling#SHADOW_DRAW}).
+     */
+    VulkanGpuTerrainDraw(VulkanContext context, int passOrdinal, String passName) {
         this.context = context;
+        this.passOrdinal = passOrdinal;
+        this.passName = passName;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             createPipeline(stack);
         }
@@ -167,10 +186,17 @@ final class VulkanGpuTerrainDraw {
         }
         if (!this.gatePrinted) {
             this.gatePrinted = true;
-            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW created drawIndirectCount="
-                    + context.drawIndirectCountEnabled()
-                    + " maxDrawIndirectCount=" + context.maxDrawIndirectCount()
-                    + " mode=gpu-draw (E10-b: SOLID pass, previous-frame generation)");
+            if (passOrdinal == 0) {
+                System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW created drawIndirectCount="
+                        + context.drawIndirectCountEnabled()
+                        + " maxDrawIndirectCount=" + context.maxDrawIndirectCount()
+                        + " mode=gpu-draw (E10-b: SOLID pass, previous-frame generation)");
+            } else {
+                System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW created pass=" + passName
+                        + " drawIndirectCount=" + context.drawIndirectCountEnabled()
+                        + " maxDrawIndirectCount=" + context.maxDrawIndirectCount()
+                        + " mode=shadow-generation (E10 shadow arm: generation priced, draws unchanged)");
+            }
         }
     }
 
@@ -221,6 +247,7 @@ final class VulkanGpuTerrainDraw {
         if (!this.disabled) {
             this.disabled = true;
             System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW_DISABLED at=" + what
+                    + (this.passOrdinal == 0 ? "" : " pass=" + this.passName)
                     + " reason=" + error);
         }
     }
@@ -253,7 +280,7 @@ final class VulkanGpuTerrainDraw {
             }
             int dictIndex = frame.builder.dictIndexFor(region.getId(), frameIndex);
             frame.dictOrder.add(dictIndex);
-            int flags = 0; // pass ordinal 0 (SOLID only); index source: shared quad buffer
+            int flags = this.passOrdinal << 8; // this instance's pass ordinal; index source: shared quad buffer
             for (int i = 0, size = batch.size(); i < size; i++) {
                 frame.builder.add(new GpuTerrainDrawTable.Entry(batch.elementCount(i), 0,
                         batch.baseVertex(i), dictIndex,
@@ -350,6 +377,92 @@ final class VulkanGpuTerrainDraw {
             return armedNow;
         } catch (RuntimeException error) {
             disable("passHead", error);
+            return false;
+        }
+    }
+
+    /**
+     * The shadow-generation head (design section 5.3 (c)), for an instance whose pass is
+     * drawn by another route — the pack route's shadow stage: finalizes the previous
+     * frame's collection, runs the same arm judgement as {@link #passHead} (capability
+     * gates, then the exact-reproduction test against this frame's pre-enumerated
+     * population), and on an exact reproduction rewrites the remap, uploads the table and
+     * records the generation dispatch, exactly as the drawing head does. The one
+     * difference is the point of the form: the generated list is never issued — no
+     * {@code recordDraw} follows, the pass' own loop draws unchanged — so what the arm
+     * buys is the shadow population's reproduction rate and the generation's measured
+     * price (the dispatch sits in the frame's command stream, where a timestamp bracket
+     * can separate it), plus the arm path itself, ready for the issuance switch when the
+     * pack program lowering can deliver a region offset to generated commands.
+     *
+     * @param visits            the regions the pass' loop will draw, in visit order, or
+     *                          {@code null} when any region's drawn batch is unpredictable
+     * @param regionOffsetCursor the binding-5 index the loop's first region takes;
+     *                          visit position {@code p} takes {@code regionOffsetCursor + p}
+     *                          (the pack route assigns no binding-5 indices, so the shadow
+     *                          arm passes 0 and the remap is the visit order itself)
+     * @return whether the generation dispatch was recorded for this frame
+     */
+    boolean generationHead(VkCommandBuffer commandBuffer, int slotIndex, List<Visit> visits,
+                           int regionOffsetCursor, float[] viewProjection, double cameraX, double cameraY,
+                           double cameraZ, boolean budgetActive) {
+        if (this.disabled) {
+            return false;
+        }
+        try {
+            if (this.collecting != null) {
+                this.ready = buildFrame(this.collecting);
+                this.collecting = null;
+            }
+            this.passHeads++;
+            boolean generated = false;
+            if (this.ready == null) {
+                this.fallbackNoReady++;
+            } else if (this.ready.tainted) {
+                this.fallbackTainted++;
+                this.ready = null;
+            } else if (GpuTerrainCulling.capabilityGate(
+                    this.context.drawIndirectCountEnabled(), budgetActive)
+                    != GpuTerrainCulling.GateReason.NONE) {
+                this.fallbackGate++;
+            } else if (GpuTerrainDrawTable.frameGate(this.ready.table,
+                    this.context.maxDrawIndirectCount(), this.ready.table.maskGeneration)
+                    != GpuTerrainCulling.GateReason.NONE) {
+                this.fallbackGate++;
+                this.ready = null;
+            } else if (visits == null || !reproduces(visits)) {
+                this.fallbackPopulation++;
+                this.ready = null;
+            } else {
+                int[] remap = new int[this.ready.table.remap.length];
+                Arrays.fill(remap, -1);
+                for (int p = 0; p < visits.size(); p++) {
+                    int dict = this.ready.dictOrder[p];
+                    if (dict >= 0) {
+                        remap[dict] = regionOffsetCursor + p;
+                    }
+                }
+                Slot slot = this.slots[slotIndex];
+                dispatch(commandBuffer, slot, this.ready, remap,
+                        GpuTerrainDrawTable.extractPlanes(viewProjection),
+                        (float) cameraX, (float) cameraY, (float) cameraZ);
+                this.framesArmed++;
+                this.armedCommands += this.ready.commandCount;
+                generated = true;
+            }
+            if (this.passHeads % PRINT_EVERY_PASS_HEADS == 0) {
+                System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW pass=" + this.passName
+                        + " mode=shadow-generation heads=" + this.passHeads
+                        + " generated=" + this.framesArmed
+                        + " generatedCommands=" + this.armedCommands
+                        + " fallbacks=[noReady=" + this.fallbackNoReady
+                        + " tainted=" + this.fallbackTainted
+                        + " gate=" + this.fallbackGate
+                        + " population=" + this.fallbackPopulation + "]");
+            }
+            return generated;
+        } catch (RuntimeException error) {
+            disable("generationHead", error);
             return false;
         }
     }
