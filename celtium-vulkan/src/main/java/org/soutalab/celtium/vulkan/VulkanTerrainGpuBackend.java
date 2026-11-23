@@ -2705,6 +2705,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private long shadowGpuTerrainCensusFrame = -1L;
     /** Set when shadow census creation failed once: the stream stays off rather than retrying. */
     private boolean shadowGpuTerrainCensusFailed;
+    /**
+     * The shadow stage's own E10 executor arm (E10 shadow arm): a second
+     * {@link VulkanGpuTerrainDraw} (pass ordinal 3, name {@code shadow}) fed from the pack
+     * route's shadow stage, in the design section 5.3 (c) shadow-generation form — it
+     * collects, judges and dispatches generation, but the pack loop's draws are never
+     * replaced (a pack program cannot read the generated commands' region delivery; see
+     * {@link GpuTerrainCulling#SHADOW_DRAW}). Created lazily on the first shadow stage
+     * under {@code celtium.vulkan.gpuTerrainCulling.shadowDraw}; never created while off.
+     */
+    private VulkanGpuTerrainDraw shadowGpuTerrainDraw;
+    /** The last frame the shadow arm's stage head ran for; once per frame, not per stage. */
+    private long shadowGpuTerrainDrawFrame = -1L;
+    /** Set when shadow arm creation failed once: the arm stays off rather than retrying. */
+    private boolean shadowGpuTerrainDrawFailed;
     /** Whether the E10 gate line for the main-flag-only configuration has been printed. */
     private boolean gpuTerrainGatePrinted;
     /** One {@code VkDrawIndexedIndirectCommand}: indexCount, instanceCount, firstIndex, vertexOffset, firstInstance. */
@@ -16727,6 +16741,10 @@ this.frameBufferOpen = false;
                 this.shadowGpuTerrainCensus.delete();
                 this.shadowGpuTerrainCensus = null;
             }
+            if (this.shadowGpuTerrainDraw != null) {
+                this.shadowGpuTerrainDraw.delete();
+                this.shadowGpuTerrainDraw = null;
+            }
             celtium$deleteSettled();
         } catch (RuntimeException | LinkageError failure) {
             // One failing release must not strand the rest or the registration (issue #425): before this
@@ -17439,6 +17457,12 @@ this.frameBufferOpen = false;
                 // here, at the stage head - this stage's render pass has not opened yet,
                 // which is where the census' compute dispatch may be recorded.
                 celtium$shadowGpuTerrainCensusRollover();
+                // E10 shadow arm: the executor's generation head at the same position -
+                // it finalizes the previous frame's shadow collection and, on an exact
+                // reproduction, records the generation dispatch here, before the render
+                // pass opens. The loop below draws unchanged either way.
+                celtium$shadowGpuTerrainDrawStageHead(matrices, renderLists, pass,
+                        occlusionCamera, useBlockFaceCulling, view);
             }
             var vertexType = this.configuration.getVertexTypeForPass(pass);
             var vertexFormat = vertexType == null ? null : vertexType.getVertexFormat();
@@ -17734,6 +17758,10 @@ this.frameBufferOpen = false;
             // region's remap value is its visit order among the stage's drawn regions).
             float[] shadowCensusVp = null;
             int shadowCensusRegionOrdinal = 0;
+            // E10 shadow arm: the same visit ordinal for the executor's collection. Its
+            // counter is separate from the census' because the two flags arm independently,
+            // so either hook may run without the other.
+            int shadowDrawRegionOrdinal = 0;
 
             try {
                 setViewportAndScissor(stack, passW, passH);
@@ -17831,6 +17859,23 @@ this.frameBufferOpen = false;
                                 shadowCensusVp,
                                 occlusionCamera.x, occlusionCamera.y, occlusionCamera.z,
                                 region, shadowCensusRegionOrdinal++, batch);
+                    }
+                    // E10 shadow arm: the executor's collect hook, immediately after the
+                    // census hook and under the same conditions (shadow stage, unsorted
+                    // pass only), feeding the arm's own instance under the same light
+                    // view-projection. The frame index is the visit ordinal, as the census
+                    // uses: the pack route assigns no binding-5 region indices.
+                    if (shadowStage && GpuTerrainCulling.SHADOW_DRAW
+                            && this.shadowGpuTerrainDraw != null && !sortedPass) {
+                        if (shadowCensusVp == null) {
+                            shadowCensusVp = new float[16];
+                            new org.joml.Matrix4f(matrices.projection()).mul(matrices.modelView())
+                                    .get(shadowCensusVp);
+                        }
+                        this.shadowGpuTerrainDraw.collect(this.frameId,
+                                shadowCensusVp,
+                                occlusionCamera.x, occlusionCamera.y, occlusionCamera.z,
+                                region, shadowDrawRegionOrdinal++, batch);
                     }
                     float regionOffsetX = (region.getOriginX() - camera.intX) - camera.fracX;
                     float regionOffsetY = (region.getOriginY() - camera.intY) - camera.fracY;
@@ -18207,6 +18252,51 @@ this.frameBufferOpen = false;
             this.shadowGpuTerrainCensusFailed = true;
             System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_CENSUS_DISABLED at=rollover"
                     + " stream=shadow reason=" + error);
+        }
+    }
+
+    /**
+     * The shadow arm's stage head (E10 shadow arm): once per frame, at the pack route's
+     * shadow stage head — the same position as the shadow census rollover, after the stage
+     * is known and before its render pass opens — the previous frame's shadow collection is
+     * finalized and this frame's population pre-enumerated with the camera head's own
+     * enumerator ({@link #celtium$gpuTerrainVisitList}, same arguments); on an exact
+     * reproduction the executor records its generation dispatch here. The differences from
+     * the camera head are the pack route's facts: the region offset cursor is 0 (the pack
+     * route assigns no binding-5 indices, so the remap is the visit order), the
+     * view-projection is this stage's own matrices (the light's projection x modelView,
+     * the shadow census' formula — never the camera frame's cached VP), and the result is
+     * never handed to the draw loop: the pack loop draws unchanged, in the design section
+     * 5.3 (c) shadow-generation form. With the shadow draw flag off this returns on the
+     * first test and the stage records exactly what it recorded before.
+     */
+    private void celtium$shadowGpuTerrainDrawStageHead(ChunkRenderMatrices matrices,
+            ChunkRenderListIterable renderLists, TerrainRenderPass pass,
+            CameraTransform occlusionCamera, boolean useBlockFaceCulling, Object view) {
+        if (!GpuTerrainCulling.SHADOW_DRAW || this.shadowGpuTerrainDrawFailed
+                || this.commandBuffer == null) {
+            return;
+        }
+        if (this.shadowGpuTerrainDrawFrame == this.frameId) {
+            return;
+        }
+        this.shadowGpuTerrainDrawFrame = this.frameId;
+        try {
+            if (this.shadowGpuTerrainDraw == null) {
+                this.shadowGpuTerrainDraw = new VulkanGpuTerrainDraw(this.context, 3, "shadow");
+            }
+            List<VulkanGpuTerrainDraw.Visit> visits = celtium$gpuTerrainVisitList(
+                    renderLists, pass, useBlockFaceCulling, view, occlusionCamera);
+            float[] vp = new float[16];
+            new org.joml.Matrix4f(matrices.projection()).mul(matrices.modelView()).get(vp);
+            this.shadowGpuTerrainDraw.generationHead(this.commandBuffer, this.frameSlot, visits,
+                    0, vp,
+                    occlusionCamera.x, occlusionCamera.y, occlusionCamera.z,
+                    this.terrainBudget.drawCapsActive());
+        } catch (RuntimeException | LinkageError error) {
+            this.shadowGpuTerrainDrawFailed = true;
+            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW_DISABLED at=shadowStageHead"
+                    + " pass=shadow reason=" + error);
         }
     }
 
