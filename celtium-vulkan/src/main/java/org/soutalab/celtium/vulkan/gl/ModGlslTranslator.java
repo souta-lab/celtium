@@ -418,7 +418,8 @@ public final class ModGlslTranslator {
         if (GlsmPackState.ENABLED && uniformsViaBuffer) {
             for (UniformMember m : members) {
                 GlsmPackState.Bucket bucket = GlsmPackState.classify(m.name(), m.type(), m.arrayLength());
-                if (bucket == GlsmPackState.Bucket.REGION && !uniformBlockRenames.containsKey(m.name())) {
+                if (bucket == GlsmPackState.Bucket.REGION && glsmRegionMember == null
+                        && !uniformBlockRenames.containsKey(m.name())) {
                     glsmRegionMember = m.name();
                 } else if (bucket == GlsmPackState.Bucket.PER_FRAME
                         && !uniformBlockRenames.containsKey(m.name())) {
