@@ -170,16 +170,6 @@ public final class VulkanModProgramPipeline {
     private static final int UNIFORM_RING_SLOTS = 32;
     /** Ring depth of a shader-pack terrain pipeline: one claim per region per pass, and two frames in flight. */
     private static final int TERRAIN_UNIFORM_RING_SLOTS = 2048;
-    /**
-     * Item 678 Layer B, B1: pack a program's uniform block incrementally - rewrite only the members whose
-     * values changed since the last pack (the registry tracks them per member) into a block the program
-     * retains, instead of walking every member on every version change. The census behind it (M5) is that
-     * a region step changes one member (the region offset) while the frame's members change once per frame,
-     * so the per-region walk is almost all repetition. Off by default: the off route is the original full
-     * walk, byte for byte, and the on route is built to produce the identical block.
-     */
-    private static final boolean PACK_UNIFORM_INCREMENTAL =
-            Boolean.getBoolean("celtium.vulkan.packUniformIncremental");
     /** This pipeline's ring depth: {@link #UNIFORM_RING_SLOTS}, or {@link #TERRAIN_UNIFORM_RING_SLOTS} for terrain. */
     private int uniformRingSlots = UNIFORM_RING_SLOTS;
     /**
@@ -1734,9 +1724,9 @@ public final class VulkanModProgramPipeline {
         if (cached != null) {
             return cached;
         }
-        // GLSM stage 1 absorbs the B1 flag: with glsmPackState on, the incremental packer is the
-        // DYNAMIC bucket's packer, so the block pack is incremental whichever flag selected it.
-        if (PACK_UNIFORM_INCREMENTAL || GlsmPackState.ENABLED) {
+        // GLSM stage 1 absorbed the B1 flag (removed at the on-default landing): the incremental
+        // packer is the DYNAMIC bucket's packer, selected by the GLSM flag alone.
+        if (GlsmPackState.ENABLED) {
             ByteBuffer retained = packUniformsIncremental(program);
             if (retained != null) {
                 return retained;
