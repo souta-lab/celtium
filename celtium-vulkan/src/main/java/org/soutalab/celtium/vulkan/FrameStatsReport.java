@@ -228,7 +228,7 @@ final class FrameStatsReport {
                                 / Math.max(1L, this.debugFrameReports))
                 + "]"
                 + (VulkanTerrainGpuBackend.FRAME_STATS ? " loop[" + celtium$gameLoopSummary() + "]" : "")
-                + " texCopy[calls=" + b.textureCopyCalls + " totalMs=" + (b.textureCopyNanos / 1000000L) + "]"
+                + " texCopy[calls=" + b.copyReadSide.textureCopyCalls + " totalMs=" + (b.copyReadSide.textureCopyNanos / 1000000L) + "]"
                 + " copyBlit[refusals=" + b.textureCopyService.textureCopyBlitRefusals()
                 + " last=" + b.textureCopyService.lastTextureCopyBlitRefusal() + "]"
                 + " lazyMirror[supplies=" + b.lazyMirrorSupplies + " rawWriteRefreshes=" + b.rawWriteRefreshes
