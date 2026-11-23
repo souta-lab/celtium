@@ -167,6 +167,17 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap chainPairOwners =
             new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
     /**
+     * The chain pairs flattened in the map's own iteration order, for {@link #snapshotRecording}: a snapshot is
+     * taken for every window flush (~23 a frame) while the map changes only when a pair is created, retired or
+     * the target is deleted, so the entry-set walk - an entry set, an iterator and an entry object per pair,
+     * every window - is paid once per change instead of once per window. The three mutation sites set
+     * {@link #chainPairOrderDirty}; the refill walk is the same one the snapshot used to run, so the snapshot
+     * arrays are filled in exactly the order they were before.
+     */
+    private long[] chainPairOrderKeys = new long[0];
+    private Pair[] chainPairOrder = new Pair[0];
+    private boolean chainPairOrderDirty = true;
+    /**
      * Chain-pair image-set changes so far; the source of {@link #chainPairGeneration}. Created <em>and</em> retired
      * count, because the number a framebuffer is stamped with has to change for either - see
      * {@link #celtium$nextPairGeneration}.
@@ -785,6 +796,28 @@ public final class GllessFrameTarget implements FrameImageTarget {
         private int[] chainColorLayouts;
     }
 
+    /** Refills {@link #chainPairOrder} from the map when a mutation since the last refill marked it stale. */
+    private void celtium$refreshChainPairOrder() {
+        if (!this.chainPairOrderDirty) {
+            return;
+        }
+        this.chainPairOrderDirty = false;
+        int size = this.chainPairs.size();
+        if (this.chainPairOrder.length != size) {
+            this.chainPairOrderKeys = new long[size];
+            this.chainPairOrder = new Pair[size];
+        }
+        int n = 0;
+        it.unimi.dsi.fastutil.objects.ObjectIterator<it.unimi.dsi.fastutil.longs.Long2ObjectMap.Entry<Pair>> it =
+                this.chainPairs.long2ObjectEntrySet().fastIterator();
+        while (it.hasNext()) {
+            it.unimi.dsi.fastutil.longs.Long2ObjectMap.Entry<Pair> entry = it.next();
+            this.chainPairOrderKeys[n] = entry.getLongKey();
+            this.chainPairOrder[n] = entry.getValue();
+            n++;
+        }
+    }
+
     /**
      * Fills {@code snapshot} (or a new one when null) and returns it. The window flush takes one snapshot per window
      * (~10 a frame); reusing the object keeps its chain arrays too - they are grown only when more pairs appear.
@@ -805,24 +838,20 @@ public final class GllessFrameTarget implements FrameImageTarget {
         snapshot.latchedAlpha = this.gameClearLatchedAlpha;
         snapshot.latchedDepth = this.gameClearLatchedDepth;
         snapshot.defaultAcquired = this.defaultPair.acquired;
-        int size = this.chainPairs.size();
+        celtium$refreshChainPairOrder();
+        int size = this.chainPairOrder.length;
         if (snapshot.chainKeys == null || snapshot.chainKeys.length < size) {
             snapshot.chainKeys = new long[size];
             snapshot.chainAcquired = new boolean[size];
             snapshot.chainColorLayouts = new int[size];
         }
-        int n = 0;
-        it.unimi.dsi.fastutil.objects.ObjectIterator<it.unimi.dsi.fastutil.longs.Long2ObjectMap.Entry<Pair>> it =
-                this.chainPairs.long2ObjectEntrySet().fastIterator();
-        while (it.hasNext()) {
-            it.unimi.dsi.fastutil.longs.Long2ObjectMap.Entry<Pair> entry = it.next();
-            Pair pair = entry.getValue();
-            snapshot.chainKeys[n] = entry.getLongKey();
-            snapshot.chainAcquired[n] = pair.acquired;
-            snapshot.chainColorLayouts[n] = pair.colorImageLayout;
-            n++;
+        for (int i = 0; i < size; i++) {
+            Pair pair = this.chainPairOrder[i];
+            snapshot.chainKeys[i] = this.chainPairOrderKeys[i];
+            snapshot.chainAcquired[i] = pair.acquired;
+            snapshot.chainColorLayouts[i] = pair.colorImageLayout;
         }
-        snapshot.chainCount = n;
+        snapshot.chainCount = size;
         return snapshot;
     }
 
@@ -1373,6 +1402,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
         Pair created = new Pair("chain-" + Long.toHexString(identity));
         this.chainPairs.put(identity, created);
+        this.chainPairOrderDirty = true;
         return created;
     }
 
@@ -1385,6 +1415,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
     public void retireChainPair(long identity) {
         Pair pair = this.chainPairs.remove(identity);
         if (pair != null) {
+            this.chainPairOrderDirty = true;
             if (pair.colorImage != 0L) this.chainPairOwners.remove(pair.colorImage);
             long[] extras = pair.extraColorImageSnapshot();
             if (extras != null) {
@@ -3714,6 +3745,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             pair.release();
         }
         this.chainPairs.clear();
+        this.chainPairOrderDirty = true;
         this.chainPairOwners.clear();
         // The shared depth images are the store's own: pairs only borrowed them, so they are destroyed here,
         // after the pairs have handed their references back. delete() runs with the GPU settled, in place.
