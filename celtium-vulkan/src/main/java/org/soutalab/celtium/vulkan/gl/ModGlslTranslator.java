@@ -434,8 +434,9 @@ public final class ModGlslTranslator {
                 if (glsmRegionMember != null) {
                     vertex = renameUniformReferences(vertex, vertexDecls,
                             Map.of(glsmRegionMember, "celtium_regionOffset()"));
+                    final String regionMemberForLambda = glsmRegionMember;
                     boolean fragmentDeclares = fragmentDecls.stream().anyMatch(
-                            d -> "uniform".equals(d.qualifier) && glName(d.name).equals(glsmRegionMember));
+                            d -> "uniform".equals(d.qualifier) && glName(d.name).equals(regionMemberForLambda));
                     if (fragmentDeclares) {
                         fragment = renameUniformReferences(fragment, fragmentDecls,
                                 Map.of(glsmRegionMember, "celtium_v_regionOffset"));
