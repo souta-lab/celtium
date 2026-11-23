@@ -119,13 +119,29 @@ public class WorldSlice implements CeleritasBlockAccess {
 
     public static ChunkRenderContext prepare(World world, SectionPos origin, ClonedChunkSectionCache sectionCache) {
         Chunk chunk = world.getChunk(origin.x(), origin.z());
-        ExtendedBlockStorage section = chunk.getBlockStorageArray()[origin.y()];
+        ExtendedBlockStorage[] storageArray = chunk.getBlockStorageArray();
+        // Range-guarded lookup: for every valid section Y this is the array access it replaces, and
+        // an out-of-range Y now reads as an absent section so the prepare-null census can count it
+        // (Y_OUT_OF_RANGE) instead of the caller taking an ArrayIndexOutOfBoundsException.
+        ExtendedBlockStorage section = origin.y() >= 0 && origin.y() < storageArray.length ? storageArray[origin.y()] : null;
 
         // If the chunk section is absent or empty, simply terminate now. There will never be anything in this chunk
         // section to render, so we need to signal that a chunk render task shouldn't created. This saves a considerable
         // amount of time in queueing instant build tasks and greatly accelerates how quickly the world can be loaded.
         if (section == null || section.isEmpty()) {
+            if (PrepareNullCensus.enabled()) {
+                // The caller fabricates an EMPTY build output from this null, so the reason split
+                // (data not arrived vs legitimately empty) is what decides whether that commit is
+                // a measurement or a guess. See PrepareNullCensus (item 701).
+                PrepareNullCensus.GLOBAL.recordNull(PrepareNullCensus.classifyForNullBranch(
+                        chunk.isEmpty(), storageArray.length, origin.y(),
+                        section == null, section != null && section.isEmpty()));
+            }
             return null;
+        }
+
+        if (PrepareNullCensus.enabled()) {
+            PrepareNullCensus.GLOBAL.recordContext();
         }
 
         StructureBoundingBox volume = new StructureBoundingBox(origin.minX() - NEIGHBOR_BLOCK_RADIUS,
