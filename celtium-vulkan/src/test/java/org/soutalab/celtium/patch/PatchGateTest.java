@@ -37,7 +37,7 @@ class PatchGateTest {
 
         assertEquals(snapshot, registered);
         assertEquals(snapshot, discovered, "the input list is not modified");
-        assertEquals(99, registered.size());
+        assertEquals(100, registered.size());
     }
 
     @Test
@@ -54,7 +54,7 @@ class PatchGateTest {
 
         List<String> registered = PatchGate.register(discovered, ledger);
 
-        assertEquals(84, registered.size());
+        assertEquals(85, registered.size());
         for (String member : PatchGroups.get("tweaks").members()) {
             assertFalse(registered.contains(member), member + " should have been filtered with its group");
         }

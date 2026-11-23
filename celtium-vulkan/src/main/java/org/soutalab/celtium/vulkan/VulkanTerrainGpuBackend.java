@@ -8243,6 +8243,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     this.submissionStatistics.frameArenaFallbackGroups(),
                     this.immediateLastRefusal, this.immediateStatistics);
         }
+        if (UpstreamArrivalCensus.ENABLED) {
+            // The upstream stages of the same ended frame (item 727), printed from this same point with the
+            // same frame number so the CELTIUM_UPSTREAM and CELTIUM_GROUP_DECAY lines align frame for frame.
+            UpstreamArrivalCensus.frameEnd(this.frameId - 1);
+        }
         this.immediateOffersLastFrame = this.immediateOffersThisFrame;
         this.immediateOffersThisFrame = 0;
         // Third trigger for the counter summary: a fixture that exits without tearing its world down never reaches the

@@ -228,6 +228,10 @@ public abstract class WorldVertexBufferUploaderMixin {
     private void celtium$offerBatch(BufferBuilder buffer, CallbackInfo info) {
         TerrainGpuBackend backend = TerrainGpuBackends.current();
         if (backend == null || buffer == null) {
+            if (org.soutalab.celtium.vulkan.UpstreamArrivalCensus.ENABLED) {
+                org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteHookExit(
+                        org.soutalab.celtium.vulkan.UpstreamArrivalCensus.EXIT_NULL);
+            }
             return;
         }
         // A display list being compiled does not draw: GL_COMPILE stores the commands and glCallList replays them.
@@ -238,6 +242,10 @@ public abstract class WorldVertexBufferUploaderMixin {
         // still runs, because it is the only place a list's call site is named.
         int celtium$compilingList = celtium$listIndex();
         if (celtium$compilingList > 0) {
+            if (org.soutalab.celtium.vulkan.UpstreamArrivalCensus.ENABLED) {
+                org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteHookExit(
+                        org.soutalab.celtium.vulkan.UpstreamArrivalCensus.EXIT_COMPILING);
+            }
             celtium$noteCompileOrigin(celtium$compilingList);
             return;
         }
@@ -249,6 +257,9 @@ public abstract class WorldVertexBufferUploaderMixin {
                     "list-index-query-failed");
         }
         celtium$offers++;
+        if (org.soutalab.celtium.vulkan.UpstreamArrivalCensus.ENABLED) {
+            org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteHookEntry();
+        }
         if (celtium$offers % 1000 == 0 && org.soutalab.celtium.vulkan.VulkanDiagnostics.enabled()) {
             // The decision, from the side that makes it: offers, how many the backend accepted, and how often the
             // vanilla body still completed. The audit asked for exactly this pair, because the image comparisons could
@@ -275,10 +286,19 @@ public abstract class WorldVertexBufferUploaderMixin {
             }
             ByteBuffer data = celtium$byteBuffer(buffer);
             if (data == null || vertices <= 0) {
+                if (org.soutalab.celtium.vulkan.UpstreamArrivalCensus.ENABLED) {
+                    org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteHookExit(vertices <= 0
+                            ? org.soutalab.celtium.vulkan.UpstreamArrivalCensus.EXIT_EMPTY
+                            : org.soutalab.celtium.vulkan.UpstreamArrivalCensus.EXIT_NO_DATA);
+                }
                 return;
             }
             long address = org.lwjgl.system.MemoryUtil.memAddress(data);
             if (address == 0L) {
+                if (org.soutalab.celtium.vulkan.UpstreamArrivalCensus.ENABLED) {
+                    org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteHookExit(
+                            org.soutalab.celtium.vulkan.UpstreamArrivalCensus.EXIT_NO_DATA);
+                }
                 return;
             }
             int formatId = celtium$formatId(format);
@@ -288,6 +308,9 @@ public abstract class WorldVertexBufferUploaderMixin {
             // batches arrive and are declined" is to count them here, before any decision is made.
             if (formatId >= 0 && formatId < celtium$arrivalsByFormat.length) {
                 celtium$arrivalsByFormat[formatId]++;
+                if (org.soutalab.celtium.vulkan.UpstreamArrivalCensus.ENABLED) {
+                    org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteArrival(formatId);
+                }
                 // Source vertices, counted here - after the empty-batch and no-data returns above, so a finished
                 // batch with no vertices is never counted - and from `vertices`, the count the buffer itself
                 // carries before the repack below rewrites the layout.
@@ -410,6 +433,9 @@ public abstract class WorldVertexBufferUploaderMixin {
             try {
                 celtium$noteProbedTextureSite();
                 celtium$noteProbedFormatSite(formatId);
+                if (org.soutalab.celtium.vulkan.UpstreamArrivalCensus.ENABLED) {
+                    org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteSubmit();
+                }
                 accepted = backend.submitImmediateBatch(format, submitStride, formatId, submitAddress, vertices, mode);
                 if (!accepted) {
                     // Why a batch was not taken, by format. The refusals were recorded in the backend, but only some families
@@ -525,6 +551,10 @@ public abstract class WorldVertexBufferUploaderMixin {
             // Never let the offer break the draw: the original body stays in charge when anything goes wrong. But say
             // what happened, once per distinct kind of failure - this catch hid the reason acceptance was zero for
             // several rounds while the counters said "refused" and nothing said why.
+            if (org.soutalab.celtium.vulkan.UpstreamArrivalCensus.ENABLED) {
+                org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteHookExit(
+                        org.soutalab.celtium.vulkan.UpstreamArrivalCensus.EXIT_SWALLOWED);
+            }
             if (celtium$swallowed < 3) {
                 celtium$swallowed++;
                 StackTraceElement[] trace = error.getStackTrace();
@@ -535,6 +565,9 @@ public abstract class WorldVertexBufferUploaderMixin {
         }
         if (accepted) {
             celtium$acceptedByBackend++;
+            if (org.soutalab.celtium.vulkan.UpstreamArrivalCensus.ENABLED) {
+                org.soutalab.celtium.vulkan.UpstreamArrivalCensus.noteAccepted();
+            }
             // The original body resets the builder after uploading. Cancelling skips that, so it is done here; without
             // it Minecraft would re-upload the same vertices on the next draw.
             try {
