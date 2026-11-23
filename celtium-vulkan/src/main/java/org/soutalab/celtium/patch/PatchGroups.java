@@ -288,7 +288,7 @@ public final class PatchGroups {
               "core.ShaderUniformAccessor"
         );
         group("tweaks", "speed and diagnostics", false,
-              "the light epoch, tick timing, join/watch observation, the funnel summary print, the empty outline composite skip, the EnumFacing.getFacingFromVector replacement and the options screen override disappear; the drawn picture is expected to be unchanged, which makes this the first injection candidate",
+              "the light epoch, tick timing, join/watch observation, the funnel summary print, the empty outline composite skip, the EnumFacing.getFacingFromVector replacement, the Demonica shadow frustum init cache (E7 remaining branch, itself behind -Dceltium.shadowFrustumInitCache default off) and the options screen override disappear; the drawn picture is expected to be unchanged, which makes this the first injection candidate",
               "core.WorldLightEpochMixin",
               "core.MinecraftTickTimingMixin",
               "core.MinecraftTickSplitMixin",
@@ -302,6 +302,7 @@ public final class PatchGroups {
               "core.IntegratedServerShutdownMixin",
               "core.crash.SplashProgressCallableMixin",
               "core.RenderGlobalOutlineCompositeMixin",
+              "core.DemonicaShadowFrustumInitCacheMixin",
               "core.MixinDirection",
               "features.options.MixinGuiOptions"
         );
