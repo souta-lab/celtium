@@ -399,7 +399,7 @@ final class GlTextureCaptures {
         int y = yOffset;
         if (stub.pixelUnpackBuffer > 0 && stub.pboUploadLogs < 8) {
             stub.pboUploadLogs++;
-            ByteBuffer storage = stub.bufferStore.get(stub.pixelUnpackBuffer);
+            ByteBuffer storage = GlsmBufferState.current().storage(stub.pixelUnpackBuffer);
             System.out.println("[Celtium] CELTIUM_PBO_UPLOAD texture=" + name + " level=" + level + " at=" + x + ","
                     + y + " size=" + width + "x" + height + " format=0x" + Integer.toHexString(format) + " type=0x"
                     + Integer.toHexString(type) + " buffer=" + stub.pixelUnpackBuffer + " offset=" + pixels
@@ -583,7 +583,7 @@ final class GlTextureCaptures {
         if (stub.pixelUnpackBuffer > 0) {
             // With an unpack buffer bound, pixels is an offset into it. The buffer's storage is this stub's own block,
             // so the offset is resolved to an address inside it - bounds-checked against the buffer's logical size.
-            ByteBuffer storage = stub.bufferStore.get(stub.pixelUnpackBuffer);
+            ByteBuffer storage = GlsmBufferState.current().storage(stub.pixelUnpackBuffer);
             int logicalSize = storage == null ? 0
                     : stub.logicalSizeOf(stub.pixelUnpackBuffer, storage.capacity());
             if (storage != null && width > 0 && height > 0
