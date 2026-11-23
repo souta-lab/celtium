@@ -353,6 +353,18 @@ public abstract class RenderSectionManager {
     // Lab switch: -Dceltium.shadowSearchReuse (default off; off is the pre-change behaviour, submit
     // every frame). While on, a CELTIUM_SHADOW_SEARCH_REUSE line is printed every 600 shadow passes so
     // a leg can read the skip rate the bracket attribution has to match.
+    //
+    // e78 census instrument (alpha-shadow-e78b): the counters above only ever counted with the switch
+    // on, so the off arm - the control the census compares against - had no submit rate of its own, and
+    // a submit carried no reason. The gate now counts every pass it is consulted on in both modes
+    // (passes / submitted / skipped, cumulative), and every 600 passes prints one
+    // CELTIUM_SHADOW_SEARCH_REUSE line carrying the window's submitted/skipped counts, the window
+    // length, and the miss breakdown for that window: missFirst (no key yet), missCamera (shadow
+    // camera left its section), missLight (light direction crossed a 1/32 quantum), missEvents (chunk
+    // add/remove since the keyed search), missStale (only the 500 ms age cap tripped), missUnkeyed
+    // (frustum carries no keyable occlusion view; switch on only - with the switch off every pass is
+    // simply a submit). A miss with several moved inputs is charged to the first in that order. The
+    // line is untagged on purpose: the [Celtium] log limiter would cap it at 16 lines per tag.
 
     private static final boolean SHADOW_SEARCH_REUSE = Boolean.getBoolean("celtium.shadowSearchReuse");
     private static final long SHADOW_SEARCH_REUSE_MAX_AGE_NANOS = 500_000_000L;
@@ -369,13 +381,34 @@ public abstract class RenderSectionManager {
     private int celtium$shadowChunkEvents;
     private long celtium$shadowSearchesSubmitted;
     private long celtium$shadowSearchesSkipped;
+    private long celtium$shadowPassesSeen;
+    private long celtium$shadowWindowSubmitted;
+    private long celtium$shadowWindowSkipped;
+    private long celtium$shadowMissFirst;
+    private long celtium$shadowMissCamera;
+    private long celtium$shadowMissLight;
+    private long celtium$shadowMissEvents;
+    private long celtium$shadowMissStale;
+    private long celtium$shadowMissUnkeyed;
+    private long celtium$shadowWindowStartNanos;
 
     private boolean celtium$shouldSubmitShadowSearch(Viewport shadowViewport) {
+        this.celtium$shadowPassesSeen++;
+        if (this.celtium$shadowWindowStartNanos == 0L) {
+            this.celtium$shadowWindowStartNanos = System.nanoTime();
+        }
         if (!SHADOW_SEARCH_REUSE) {
+            this.celtium$shadowSearchesSubmitted++;
+            this.celtium$shadowWindowSubmitted++;
+            this.celtium$shadowSearchWindowTick();
             return true;
         }
         if (!(shadowViewport.getFrustum() instanceof ShadowSearchFrustum searchFrustum)
                 || !searchFrustum.supportsOcclusionSearch()) {
+            this.celtium$shadowSearchesSubmitted++;
+            this.celtium$shadowWindowSubmitted++;
+            this.celtium$shadowMissUnkeyed++;
+            this.celtium$shadowSearchWindowTick();
             return true;
         }
         var chunk = shadowViewport.getChunkCoord();
@@ -394,11 +427,24 @@ public abstract class RenderSectionManager {
                 && now - this.celtium$lastShadowSearchNanos < SHADOW_SEARCH_REUSE_MAX_AGE_NANOS;
         if (reusable) {
             this.celtium$shadowSearchesSkipped++;
-            if ((this.celtium$shadowSearchesSubmitted + this.celtium$shadowSearchesSkipped) % 600 == 0) {
-                System.out.println("CELTIUM_SHADOW_SEARCH_REUSE submitted=" + this.celtium$shadowSearchesSubmitted
-                        + " skipped=" + this.celtium$shadowSearchesSkipped);
-            }
+            this.celtium$shadowWindowSkipped++;
+            this.celtium$shadowSearchWindowTick();
             return false;
+        }
+        if (!this.celtium$shadowSearchKeyValid) {
+            this.celtium$shadowMissFirst++;
+        } else if (chunk.x() != this.celtium$shadowSearchChunkX
+                || chunk.y() != this.celtium$shadowSearchChunkY
+                || chunk.z() != this.celtium$shadowSearchChunkZ) {
+            this.celtium$shadowMissCamera++;
+        } else if (lightX != this.celtium$shadowSearchLightX
+                || lightY != this.celtium$shadowSearchLightY
+                || lightZ != this.celtium$shadowSearchLightZ) {
+            this.celtium$shadowMissLight++;
+        } else if (this.celtium$shadowChunkEvents != this.celtium$shadowSearchEventsAtSearch) {
+            this.celtium$shadowMissEvents++;
+        } else {
+            this.celtium$shadowMissStale++;
         }
         this.celtium$shadowSearchKeyValid = true;
         this.celtium$shadowSearchChunkX = chunk.x();
@@ -410,7 +456,37 @@ public abstract class RenderSectionManager {
         this.celtium$shadowSearchEventsAtSearch = this.celtium$shadowChunkEvents;
         this.celtium$lastShadowSearchNanos = now;
         this.celtium$shadowSearchesSubmitted++;
+        this.celtium$shadowWindowSubmitted++;
+        this.celtium$shadowSearchWindowTick();
         return true;
+    }
+
+    private void celtium$shadowSearchWindowTick() {
+        if (this.celtium$shadowPassesSeen % 600 != 0) {
+            return;
+        }
+        long now = System.nanoTime();
+        System.out.println("CELTIUM_SHADOW_SEARCH_REUSE submitted=" + this.celtium$shadowSearchesSubmitted
+                + " skipped=" + this.celtium$shadowSearchesSkipped
+                + " passes=" + this.celtium$shadowPassesSeen
+                + " wSubmitted=" + this.celtium$shadowWindowSubmitted
+                + " wSkipped=" + this.celtium$shadowWindowSkipped
+                + " missFirst=" + this.celtium$shadowMissFirst
+                + " missCamera=" + this.celtium$shadowMissCamera
+                + " missLight=" + this.celtium$shadowMissLight
+                + " missEvents=" + this.celtium$shadowMissEvents
+                + " missStale=" + this.celtium$shadowMissStale
+                + " missUnkeyed=" + this.celtium$shadowMissUnkeyed
+                + " windowMs=" + (now - this.celtium$shadowWindowStartNanos) / 1_000_000L);
+        this.celtium$shadowWindowSubmitted = 0;
+        this.celtium$shadowWindowSkipped = 0;
+        this.celtium$shadowMissFirst = 0;
+        this.celtium$shadowMissCamera = 0;
+        this.celtium$shadowMissLight = 0;
+        this.celtium$shadowMissEvents = 0;
+        this.celtium$shadowMissStale = 0;
+        this.celtium$shadowMissUnkeyed = 0;
+        this.celtium$shadowWindowStartNanos = now;
     }
 
     private void updateCameraPosition(Viewport positionedViewport) {
