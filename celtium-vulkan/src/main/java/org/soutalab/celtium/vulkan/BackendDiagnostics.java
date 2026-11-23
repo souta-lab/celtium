@@ -681,11 +681,11 @@ final class BackendDiagnostics {
 
     /** The bounded window diagnostics {@link #b.drawPendingImmediate(Long)} used to run inline; see the call site. */
     void celtium$windowDiagnostics(long target) {
-        if (b.DUMP_TEXTURE_IDS != null && b.dumpedTextureImages < 8 && b.presentHookCalls >= 120) {
+        if (TextureIdProbes.DUMP_TEXTURE_IDS != null && b.textureProbes.dumpedTextureImages < 8 && b.presentHookCalls >= 120) {
             for (int di = 0; di < b.immediateGroups.size(); di++) {
                 ImmediateGroup dumpGroup = b.immediateGroups.get(di);
-                if (!b.DUMP_TEXTURE_IDS.contains(dumpGroup.texture)
-                        || !b.dumpedTextureIds.add(dumpGroup.texture)) {
+                if (!TextureIdProbes.DUMP_TEXTURE_IDS.contains(dumpGroup.texture)
+                        || !b.textureProbes.dumpedTextureIds.add(dumpGroup.texture)) {
                     // Once per texture: the same id drawn every frame used to spend the whole budget on itself.
                     continue;
                 }
@@ -693,10 +693,10 @@ final class BackendDiagnostics {
                 if (dumpImage == null || dumpImage.image() == 0L) {
                     continue;
                 }
-                b.dumpedTextureImages++;
+                b.textureProbes.dumpedTextureImages++;
                 java.nio.file.Path path = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"),
                         "celtium-tex-" + dumpGroup.texture + "-" + dumpImage.width() + "x" + dumpImage.height()
-                                + "-n" + b.dumpedTextureImages + ".png");
+                                + "-n" + b.textureProbes.dumpedTextureImages + ".png");
                 boolean wrote = b.textureCopyService.celtium$dumpImage(dumpImage.image(), dumpImage.width(),
                         dumpImage.height(), path);
                 System.out.println("[Celtium] CELTIUM_TEXTURE_IMAGE id=" + dumpGroup.texture + " path=" + path
