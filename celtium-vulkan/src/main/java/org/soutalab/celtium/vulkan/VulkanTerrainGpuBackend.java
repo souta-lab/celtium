@@ -23339,7 +23339,13 @@ this.frameBufferOpen = false;
         return result == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST;
     }
 
-    boolean settleGpu(String reason) {
+    /** The read side's door to {@link #settleGpu}: the settle itself stays private, under the declaration
+     *  the device-lost contract pins, so {@code CopyReadSide} comes through here. */
+    boolean celtium$settleGpuForReadSide(String reason) {
+        return settleGpu(reason);
+    }
+
+    private boolean settleGpu(String reason) {
         celtium$watchDeviceWait(reason);
         if (this.gpuStalled) {
             // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded

@@ -1054,7 +1054,7 @@ final class CopyReadSide {
         // framebuffer, and the validation layer caught the first attempt doing exactly this -
         // "vkDestroyFramebuffer(): can't be called on VkFramebuffer ... that is currently in use by VkCommandBuffer".
         // The same rule as delete() and region eviction, applied to the path a resize takes.
-        if (!this.backend.settleGpu("frame target recreation")) {
+        if (!this.backend.celtium$settleGpuForReadSide("frame target recreation")) {
             // Fail closed: without a settled GPU the old target cannot be released, so no new one is built either.
             return false;
         }
