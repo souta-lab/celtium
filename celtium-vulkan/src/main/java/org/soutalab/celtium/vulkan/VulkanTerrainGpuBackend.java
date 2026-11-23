@@ -14289,6 +14289,23 @@ this.frameBufferOpen = false;
         return RETIRE_RECORDING_GUARD && (this.frameBufferOpen || this.immediateWindowBusy);
     }
 
+    /**
+     * {@return whether the queue holds any group for {@code targetIdentity}, of any kind} - mesh,
+     * model run or retained. The terrain pass tail asks this before paying {@code drawPendingImmediate}'s
+     * entry cost: unlike {@link #countGroupsForTarget} this counts model runs and mesh-less groups too,
+     * because the flush would process those, and it keeps no cache, because the queue's membership is
+     * exactly what the caller is about to test once. A plain field scan - no statistics, no allocation.
+     */
+    boolean celtium$queuedForTarget(long targetIdentity) {
+        java.util.List<ImmediateGroup> groups = this.immediateGroups;
+        for (int i = 0; i < groups.size(); i++) {
+            if (groups.get(i).target == targetIdentity) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     int countGroupsForTarget(long targetIdentity) {
         if (this.immediateGroups.isEmpty()) {
             return 0;
@@ -18805,9 +18822,17 @@ this.frameBufferOpen = false;
         }
         endTerrainStatistics(statisticsQuery, pass);
 
-        if (this.currentImmediateMesh != null || !this.immediateGroups.isEmpty()) {
+        if (this.currentImmediateMesh != null || this.pendingModelActive
+                || this.fontBatch.celtium$hasPendingWork()
+                || celtium$queuedForTarget(this.activeImmediateTarget)) {
             // The terrain pass's tail: everything still pending is drawn inside this pass, after the sections, so it
-            // tests against the depth the terrain of this pass wrote.
+            // tests against the depth the terrain of this pass wrote. The gate is the membership question the
+            // flush's own loop asks first for every group: with no group for this pass' target, no open mesh, no
+            // held model run and no pending font batch, the call would scan and rebuild the whole queue to draw
+            // nothing - and a frame's queue routinely holds only other targets' groups (the routed and chain-pair
+            // traffic) while its three terrain passes run. Everything the skipped call would have done is either
+            // re-done at the next real flush's head (record reset, bind and bias cache invalidation) or an
+            // identity rebuild (kept list, pending-index recompute), so the recorded command stream is unchanged.
             this.immediateDrawSite = "terrain-pass-tail";
             drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
         }
