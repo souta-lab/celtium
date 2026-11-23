@@ -1360,14 +1360,14 @@ b.frameBufferOpen = false;
         if (!b.CHAIN_FRAME_DUMP) {
             return;
         }
-        if (b.chainFrameDumps >= b.CHAIN_FRAME_DUMPS) {
+        if (b.copyReadSide.chainFrameDumps >= b.CHAIN_FRAME_DUMPS) {
             return;
         }
-        b.chainFrameDumps++;
+        b.copyReadSide.chainFrameDumps++;
         // Which chain this is: a run holds several, and the frame image is only expected to carry the output of the one
         // whose output target is `main`. The identity is the first pass's program, how many passes there are, whether
         // that first pass reads and the last one writes the frame image, and the framebuffer ids involved.
-        String identity = "chain=" + b.chainFrameDumps + " passes=" + passes.size()
+        String identity = "chain=" + b.copyReadSide.chainFrameDumps + " passes=" + passes.size()
                 + " first=" + passes.get(0).program + " last=" + passes.get(passes.size() - 1).program
                 + " inIsMain=" + passes.get(0).inIsMain + " outIsMain=" + passes.get(passes.size() - 1).outIsMain
                 + " outFbId=" + passes.get(passes.size() - 1).outFbId

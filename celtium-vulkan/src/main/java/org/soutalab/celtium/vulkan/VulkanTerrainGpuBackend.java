@@ -590,12 +590,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             Integer.getInteger("celtium.clearlatch.lines", 6).intValue();
     private String lastOffTargetFailure = "none";
 
-    private VulkanGlTexture atlasTexture;
+    VulkanGlTexture atlasTexture;
     VulkanGlTexture lightmapTexture;
-    private int atlasGlId = -1;
-    private int lightmapGlId = -1;
-    private long atlasRefreshCountdown;
-    private long lightmapRefreshCountdown;
+    int atlasGlId = -1;
+    int lightmapGlId = -1;
+    long atlasRefreshCountdown;
+    long lightmapRefreshCountdown;
 
     private long commandPool;
     VkCommandBuffer commandBuffer;
@@ -794,7 +794,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             throw new IllegalArgumentException("submit failure injection requires the target acceptance fixture");
         this.failImmediateSubmits = count;
     }
-    private int currentGroupBatches;
+    int currentGroupBatches;
     int[] currentGroupViewportValues;
     /** The lighting generation the open group was created under; see {@code VulkanGlState.lightGeneration()}. */
     private long currentGroupLightGeneration;
@@ -802,7 +802,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private final BackendReport report = new BackendReport();
 
     /** Presents seen, so the summary has a trigger on a path that runs while a GUI screen is open. */
-    private int celtium$presentCount;
+    int celtium$presentCount;
 
     /**
      * Groups whose clip came from the live record because the group opened with the scissor disabled.
@@ -1945,8 +1945,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** What the swapchain said about the last present: the report boolean alone does not say why it failed. */
     private String lastPresentResult = "none";
     /** Frames presented from Vulkan, and the attempts that did not reach the queue. */
-    private int framePresentedFromVulkan;
-    private int presentAttempts;
+    int framePresentedFromVulkan;
+    int presentAttempts;
     /**
      * Present calls the entry point declined before reaching the swapchain, so the reason in
      * {@code presentSkipReason} can be counted instead of only recorded. The fixture's picture assertion compares the
@@ -1954,18 +1954,18 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * were declined, and presents that failed - which those two counters alone cannot tell apart (measured in the
      * 268-mod E2E leg: 146 presents against 153 world frames).
      */
-    private int presentSkips;
+    int presentSkips;
     /** {@link #presentSkips} split by the gate that returned: no target/stalled, no swapchain, no completed frame,
      * target unavailable. Printed on the CELTIUM_PRESENT heartbeat, so a long run of skips names its gate. */
     private final int[] presentSkipsByReason = new int[4];
     private int presentFailures;
     /** Frame composites left to the present path because Vulkan had already shown the frame. */
     private int glCompositesSkipped;
-    private int gameFramebufferAdopted;
-    private boolean gameFramebufferIsShared;
+    int gameFramebufferAdopted;
+    boolean gameFramebufferIsShared;
     /** The first GL error seen after the swap and the point that saw it, or null/0. */
-    private String firstGlErrorWhere;
-    private int firstGlErrorCode;
+    String firstGlErrorWhere;
+    int firstGlErrorCode;
     /** A completed frame's content is in the shared image and has not been presented yet. */
     private boolean lastFrameReachedQueue;
     /** The frame identity whose work was last queued, so a present can say how far behind the game it is. */
@@ -1973,7 +1973,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private long presentLagMax;
     private long presentLagOne;
     private long presentLagMore;
-    private boolean presentedImageDumpRequested;
+    boolean presentedImageDumpRequested;
     /** A presented frame has not reached the game's swap point yet, and how many swaps that skipped. */
     private boolean swapPendingFromVulkan;
     private int glSwapsSkipped;
@@ -2052,7 +2052,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private final java.util.Map<String, Long> seenDumpWriteSerialByName = new java.util.HashMap<>();
     /** The presented-frame count that wrote each dump file, by file name. */
-    private final java.util.Map<String, Integer> presentedDumpWrittenFrames = new java.util.HashMap<>();
+    final java.util.Map<String, Integer> presentedDumpWrittenFrames = new java.util.HashMap<>();
     /** How many times the present-time drain of pending immediate work failed, bounded for reporting. */
     private int presentFlushFailures;
     /**
@@ -2101,7 +2101,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     long currentFramebufferIdentity;
     int chainAdoptionsRefused;
     /** How many lightmap identity lines have been recorded; bounded. */
-    private int lightmapIdentityLogs;
+    int lightmapIdentityLogs;
     /**
      * The publication census, whose ownership moved to {@link PublishedFrameTextures} in refactoring plan R1b: the
      * framebuffer-identity to colour-texture map, the GL-name to published-texture map and the counters. Which image a
@@ -2460,22 +2460,22 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private int atlasReestablished;
     private int lightmapReestablished;
     /** The GL texture unit the light map is bound on, passed in from the mod side; -1 until it is known. */
-    private int lightmapUnit = -1;
+    int lightmapUnit = -1;
     /**
      * The light-map coordinate pair the game last set, captured per draw from
      * {@code OpenGlHelper.setLightmapTextureCoords} (see {@code LightmapCoordsMixin}). It is per draw and not per
      * frame on purpose: it changes for every entity, TESR, held item and layer, and the group enqueued while it holds
      * belongs to that draw.
      */
-    private float lightmapCoordX;
-    private float lightmapCoordY;
+    float lightmapCoordX;
+    float lightmapCoordY;
     /**
      * Whether the light-map texture unit is enabled right now, from {@code EntityRenderer.enableLightmap()} /
      * {@code disableLightmap()} (SRG {@code func_180436_i} / {@code func_175072_h}). Defaults to <em>enabled</em> so a
      * dropped hook leaves the captured coordinate in place - the behaviour before this rule - rather than drawing every
      * entity full-bright. The two counters below are what say the hook ran.
      */
-    private boolean lightmapUnitEnabled = true;
+    boolean lightmapUnitEnabled = true;
     /** Light maps taken again on demand inside the reallocation window, and the last failure doing so. */
     private int lightmapSuppliedOnDemand;
     private String lastLightmapSupplyFailure = "none";
@@ -2643,14 +2643,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * resolved to an image the faces never wrote and returned uniform white. The read has to follow the image the
      * draws actually wrote, and this is that fact.
      */
-    private long lastDrawnOffTargetIdentity;
-    private long lastDrawnOffTargetFrame = -1L;
+    long lastDrawnOffTargetIdentity;
+    long lastDrawnOffTargetFrame = -1L;
     /**
      * The present that last accepted a batch for {@link #lastDrawnOffTargetIdentity}, which is what "this frame" means
      * for a read that resolves through the last drawn target: {@code frameId} does not advance while a screen is up,
      * so a test against it stayed true for a whole screen session. See {@link #celtium$frameSerial()}.
      */
-    private long lastDrawnOffTargetPresent = -1L;
+    long lastDrawnOffTargetPresent = -1L;
 
     /** Set when a wait timed out: no further recording or submission happens until the renderer is rebuilt. */
     boolean gpuStalled;
@@ -3131,7 +3131,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * would have split on a different GUI matrix can still join this group.
      */
     private boolean currentGroupPreTransformed;
-    private boolean currentGroupUsed;
+    boolean currentGroupUsed;
     private int currentGroupFormatId;
     private int[] currentGroupState = new int[7];
     /**
@@ -3203,7 +3203,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** {@code -Dceltium.vulkan.skipPresent=true}: record and submit, never present (isolation for the Wayland fault). */
     private static final boolean SKIP_PRESENT = Boolean.getBoolean("celtium.vulkan.skipPresent");
     /** Frame-target recreations refused because a recording was open; each is retried on the next recording. */
-    private long frameTargetRecreationDeferred;
+    long frameTargetRecreationDeferred;
     /** {@code -Dceltium.vulkan.debugFullscreenAfterFrames=N}: ask SDL for fullscreen on the Nth present (debug only). */
     private static final int DEBUG_FULLSCREEN_AFTER_FRAMES =
             Integer.getInteger("celtium.vulkan.debugFullscreenAfterFrames", -1);
@@ -3261,13 +3261,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * with the value semantics {@link VulkanGlTexture#mirrorDumpConfigured()} defines (set and
      * non-empty); this field used to be an existence test on that property, so naming it at all - even
      * {@code =false}, even empty - turned the splash and box probes' readbacks on while the dumps they
-     * feed wrote nothing (bughunt 09-03). The separate {@code -Dceltium.mirrorDump} key below is not a
-     * switch: it is the probe spec naming which mirrors {@code celtium$mirrorProbe} dumps.
+     * feed wrote nothing (bughunt 09-03). The separate {@code -Dceltium.mirrorDump} key (held in
+     * {@code CopyReadSide} with the probe) is not a switch: it is the probe spec naming which mirrors
+     * {@code celtium$mirrorProbe} dumps.
      */
     private static final boolean MIRROR_DUMP_ON = VulkanGlTexture.mirrorDumpConfigured();
     private static final int FRAME_DUMP_EVERY = HarnessConfig.integer("frameDumpEvery", 60);
     private static final int FRAME_DUMP_COUNT = HarnessConfig.integer("frameDumpCount", 0);
-    private static final String MIRROR_DUMP_SPEC = System.getProperty("celtium.mirrorDump");
     private static final boolean SWAPCHAIN_PROBE = Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY);
     int frameIntervalCount;
 
@@ -4096,8 +4096,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private int blackTextureSubstitutions;
     private int immediateTextureInvalidations;
     private int directMirrorRefreshes;
-    private int atlasSourceGlId = -1;
-    private int lightmapSourceGlId = -1;
+    int atlasSourceGlId = -1;
+    int lightmapSourceGlId = -1;
     private int immediatePresentFailures;
     /**
      * How often every mirror is marked stale, in frames. Zero means never.
@@ -4231,9 +4231,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     /** The image/frame/completion-epoch of the last recorded group, for the copy's completion fact. */
-    private long lastDrawnImage;
-    private long lastDrawnFrame = -1L;
-    private long lastDrawnEpoch = -1L;
+    long lastDrawnImage;
+    long lastDrawnFrame = -1L;
+    long lastDrawnEpoch = -1L;
 
     /** Ids a delete has forgotten, so a stale upload cannot silently recreate their mirror. */
     private final it.unimi.dsi.fastutil.ints.IntOpenHashSet forgottenByDelete =
@@ -4390,8 +4390,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return wanted;
     }
 
-    private final float[] glProjection = new float[16];
-    private final float[] glModelView = new float[16];
+    final float[] glProjection = new float[16];
+    final float[] glModelView = new float[16];
 
     /** A/B-only switch for proving the exact same JAR fixes deferred font-state ordering. Default on. */
     private static final boolean FONT_DRAW_STATE_BOUNDARY_ENABLED =
@@ -5292,7 +5292,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * for it. Without it the mirror is left content-less (round 8's honest state) while the pixels for it were already
      * in this process; the terrain pass then skips a frame it could have drawn.
      */
-    private void celtium$establishAtlasImage(int glTextureId, VulkanGlTexture image, String what) {
+    void celtium$establishAtlasImage(int glTextureId, VulkanGlTexture image, String what) {
         if (this.textureRegistry != null && this.textureRegistry.canSkipReadback(glTextureId)
                 && !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureHasPendingPatches(glTextureId, 0)) {
             // Pending backlog patches are real un-applied writes: skipping the re-read while they wait would
@@ -6503,9 +6503,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (mainFramebuffer) {
             // The game's own framebuffer has just told us the drawable size; a cached read that disagrees is stale
             // (a resize happened) and must not be served. This is what makes the cache safe for the resize paths.
-            int[] cached = windowSizeCache;
+            int[] cached = CopyReadSide.windowSizeCache;
             if (cached != null && (cached[0] != width || cached[1] != height)) {
-                windowSizeCache = null;
+                CopyReadSide.windowSizeCache = null;
             }
             if (this.frameTarget != null && !this.frameTarget.matches(width, height)) {
                 this.targetRegistry.noteReplacementAnnounced();
@@ -7457,7 +7457,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     /** {@return the identity a GL framebuffer name was reported under}, or {@link Long#MIN_VALUE} when unknown. */
-    private long celtium$identityForFramebufferName(int framebufferObject) {
+    long celtium$identityForFramebufferName(int framebufferObject) {
         return this.targetRegistry.identityForFramebufferName(framebufferObject);
     }
 
@@ -7869,7 +7869,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     /** The colour texture name standing for a framebuffer identity, or 0 when none was reported. */
-    private int framebufferColorTextureName(long identity) {
+    int framebufferColorTextureName(long identity) {
         long[] entry = framebufferColorTexture(identity);
         return entry == null ? 0 : (int) entry[0];
     }
@@ -14109,7 +14109,7 @@ this.frameBufferOpen = false;
     private static final boolean RETIRE_RECORDING_GUARD =
             Boolean.parseBoolean(System.getProperty("celtium.vulkan.retireRecordingGuard", "true"));
 
-    private boolean celtium$recordingOpen() {
+    boolean celtium$recordingOpen() {
         return RETIRE_RECORDING_GUARD && (this.frameBufferOpen || this.immediateWindowBusy);
     }
 
@@ -18327,7 +18327,7 @@ this.frameBufferOpen = false;
             // world has been drawn for a while and then reports the rows the terrain actually draws with.
             // Bounded by checks as well as by rows: a scene whose rows repeat never reaches six distinct ones, and the
             // row string was then built on every pass for the rest of the run.
-            if (this.groupDepthRowsSeen < 6 && this.presentHookCalls > 100 && this.groupDepthRowChecks++ < 2048) {
+            if (this.groupDepthRowsSeen < 6 && this.presentHookCalls > 100 && this.copyReadSide.groupDepthRowChecks++ < 2048) {
                 // The depth row of the projection each group draws with, plus the model-view translation, so a model group and
                 // an immediate group can be told apart and compared: the order instrument said the terrain ran first, so the
                 // depth values are what is left.
@@ -19071,7 +19071,7 @@ this.frameBufferOpen = false;
      * @return whether they were all freed: false when the settle did not land, in which case nothing was touched and
      *     the caller must keep the target these handles name (see {@link #celtium$frameTargetReplaceable})
      */
-    private boolean destroyFramebuffer() {
+    boolean destroyFramebuffer() {
         // Full target teardown settles once and then frees every framebuffer in place; mid-session replacements
         // retire instead (FramebufferCache). VUID-vkDestroyFramebuffer-framebuffer-00892 is what the settle is for.
         if (this.framebufferCache == null || this.framebufferCache.isEmpty()) {
@@ -21231,864 +21231,137 @@ this.frameBufferOpen = false;
 
     // ---- glCopyTexImage2D / glCopyTexSubImage2D: the read side of the copy --------------------------------------
     //
-    // The main menu's panorama is the measured caller (GuiMainMenu.renderSkybox -> drawPanorama -> 7x
-    // rotateAndBlurSkybox): 384 quads are drawn into the default framebuffer with a 256x256 viewport and then copied
-    // into a 256x256 dynamic texture with glCopyTexSubImage2D(3553, 0, 0, 0, 0, 0, 256, 256), seven times, each copy
-    // followed by three blur quads. Under GL-less the stub has no framebuffer to read, so those copies were a named
-    // refusal and the skybox texture kept the flat colour the game had uploaded - the menu's background.
-    //
-    // What the copy needs is the pixels the game's own draws put in the bound read framebuffer, and this renderer owns
-    // that image: identity 0 is the GL-less default framebuffer, whose draws the off-target pass puts in the frame
-    // target's default pair (see GllessFrameTarget.pairLabelForIdentity), and the game's main identity is drawn into
-    // the frame image the present path blits from. Nothing else is served: a read of a framebuffer this renderer does
-    // not own (a mod's own FBO) stays a refusal rather than reading whatever happens to be bound.
+    // The read side lives in CopyReadSide (refactoring plan R11): the colour and depth copies, the readbacks,
+    // the chain-time dumps, the present counters, the light-map coordinates, the frame target's adoption and
+    // establishment, the mirror probes and refreshes. What stays here is the side's instance, the copy
+    // service's field under the name its readers have always used, and one delegating door per entry the
+    // rest of the renderer calls - so no caller of the backend changed.
 
-    /** How many chain-time image dumps have been written (bounded; see {@code celtium$dumpImagesAtChainTime}). */
-    int chainFrameDumps;
+    /** The copy read side (R11). Declared before {@link #textureCopyService}, whose service it builds. */
+    final CopyReadSide copyReadSide = new CopyReadSide(this);
 
     /**
-     * The texture-copy path, extracted (task-63 / R1a). Every counter the summary reads lives in the service and is
-     * read back through its accessors, so the summary's strings are unchanged while the state has one owner.
-     * <p>
-     * The service's {@code Host} surface is the temporary boundary the plan records: it exposes the backend fields the
-     * copy path reads today, and the follow-up (OPT-26/27) narrows it to a {@code ReadSource} - image/view, extent,
-     * layout, generation and a content version - plus the explicit ordering operations.
+     * The texture-copy path's service, built by {@link #copyReadSide}. Kept as a field under this name
+     * because the frame summary, the diagnostics and the teardown read it here - one of them reflectively.
      */
-    final TextureCopyService textureCopyService = new TextureCopyService(new CopyHost());
+    final TextureCopyService textureCopyService = this.copyReadSide.textureCopyService;
 
-    /** Cumulative wall time of the game's copyTexSubImage calls: three a frame in the menu, and each is a GPU round trip. */
-    long textureCopyCalls;
-    long textureCopyNanos;
-
-    /**
-     * Serves one {@code glCopyTexImage2D}/{@code glCopyTexSubImage2D} from an image this renderer owns.
-     * <p>
-     * The caller is the GL-less stub, which knows the destination texture name, the level and offset the copy names,
-     * and the source rectangle. The pixels come from the same route the presented-image dump uses (a transfer-source
-     * copy into a host-visible buffer), but of a rectangle of the owned image rather than of the whole swapchain image
-     * at the swap point.
-     * <p>
-     * The copy is synchronous on purpose. The game draws the faces, copies them and then draws the blur from the copy
-     * in the same frame: a read that returned the previous frame's content would put the blur on the wrong pixels, and
-     * the ordering is the game's, not the renderer's to defer. So the pending groups are flushed (which submits and
-     * waits - the same immediate-window path an ordering flush uses) before the rectangle is read.
-     * <p>
-     * One readback per frame per destination rectangle. The menu asks for the same 256x256 region seven times a frame
-     * (GuiMainMenu.rotateAndBlurSkybox, each pass followed by three blur quads), and seven queue waits per frame is a
-     * menu that stutters: measured as the cost this method reports. The later requests in the same frame are answered
-     * from the content the first one read, which is a stated simplification - vanilla's passes each see the blur the
-     * pass before them drew - and the counter {@code textureCopiesReusedInFrame} says how many were answered that way,
-     * so the difference is visible rather than implied.
-     *
-     * @param destName the GL texture name the copy writes into
-     * @param level    the destination level; only level 0 is served, because the mirror's patch path is level 0
-     * @param xoffset  the destination offset inside that level
-     * @param yoffset  the destination offset inside that level
-     * @param x        the source rectangle's left edge in the read framebuffer
-     * @param y        the source rectangle's bottom edge in the read framebuffer (GL's origin)
-     * @param width    the source rectangle's width, also the copied width
-     * @param height   the source rectangle's height, also the copied height
-     * @param readFbo  the framebuffer the game bound for reading
-     * @return {@code "served"} when the pixels reached the destination mirror, otherwise a reason that names itself
-     */
     public String celtium$serveTextureCopy(int destName, int level, int xoffset, int yoffset,
             int x, int y, int width, int height, int readFbo) {
-        // The depth route first: a copy whose destination is a recorded depth texture, out of a read
-        // framebuffer that records a depth attachment, is a GPU depth copy between the two textures' shared
-        // depth images - not a colour readback. The colour service has no depth resolution and refuses such
-        // a copy by name ("framebuffer N is not an image this renderer owns"); the measured case is Iris's
-        // pre-translucent shadow depth copy, refused every leg until this route existed.
-        if (level == 0 && destName != 0
-                && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferForDepthTexture(destName) != 0) {
-            int sourceDepthTexture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
-                    .celtium$framebufferDepthTexture(readFbo);
-            if (sourceDepthTexture != 0) {
-                return celtium$serveDepthCopy(sourceDepthTexture, destName, x, y, width, height,
-                        xoffset, yoffset);
-            }
-        }
-        // Thin delegate: the copy path lives in TextureCopyService, and this signature is what the GL-less stub calls.
-        long copyStarted = System.nanoTime();
-        String copyResult = this.textureCopyService.serveTextureCopy(destName, level, xoffset, yoffset, x, y, width,
-                height, readFbo);
-        this.textureCopyNanos += System.nanoTime() - copyStarted;
-        this.textureCopyCalls++;
-        return copyResult;
+        return this.copyReadSide.celtium$serveTextureCopy(destName, level, xoffset, yoffset, x, y, width, height,
+                readFbo);
     }
 
-    /** Depth copies served on the native route, counted apart from the colour service's served/refused. */
-    private int depthCopiesServed;
-    /** Bounded CELTIUM_DEPTH_COPY lines. */
-    private int depthCopyLogs;
-
-    /**
-     * Serves one depth copy between two depth textures' shared depth images, natively: the pending groups
-     * flush first (the colour service's ordering contract — the copy must read what the game has already
-     * drawn), then a {@code vkCmdCopyImage} over the depth aspect is recorded and submitted ahead of
-     * everything the game records from here on. No host readback: the destination is a GPU depth texture
-     * the same frame's programs sample, which is the whole shape the colour service cannot serve.
-     * <p>
-     * Layout discipline is the shared store's: each image is transitioned from its recorded layout to its
-     * transfer layout, the source is restored to the layout it came from, and the destination is left in
-     * {@code SHADER_READ_ONLY_OPTIMAL} — its next reader is a sampler, and any later attachment or copy
-     * transitions from the recorded layout, which the store now names.
-     *
-     * @return {@code "served"} when the copy was recorded and submitted, otherwise a reason that names itself
-     */
     public String celtium$serveDepthCopy(int sourceDepthTexture, int destDepthTexture,
             int x, int y, int width, int height, int xoffset, int yoffset) {
-        if (sourceDepthTexture == 0 || destDepthTexture == 0 || width <= 0 || height <= 0) {
-            return "invalid depth copy arguments: source=" + sourceDepthTexture + " dest=" + destDepthTexture
-                    + " " + width + "x" + height;
-        }
-        GllessFrameTarget target = offTargetTarget();
-        if (target == null) {
-            return "the depth copy has no frame target to serve from";
-        }
-        long sourceKey = RenderTargetRegistry.rawColorTextureIdentity(sourceDepthTexture);
-        long destKey = RenderTargetRegistry.rawColorTextureIdentity(destDepthTexture);
-        long sourceImage = target.sharedDepthImage(sourceKey);
-        long destImage = target.sharedDepthImage(destKey);
-        if (sourceImage == 0L) {
-            // Registration normally lands at bind/attach time. A source whose framebuffer was only ever attached
-            // before this backend existed registers here instead — too late for this frame's copy (the pass has
-            // already drawn into whatever target it drew into, not into a pair created now), so the refusal
-            // stands, but the store is filled for the frames that follow.
-            int sourceFbo = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
-                    .celtium$framebufferForDepthTexture(sourceDepthTexture);
-            if (sourceFbo != 0) celtium$registerRawFramebuffer(sourceFbo, false);
-            return "the depth copy's source texture " + sourceDepthTexture
-                    + " is not in the shared depth store (its framebuffer's pair never borrowed it)";
-        }
-        if (destImage == 0L) {
-            // The destination's content is defined by this copy, so registering it now is exact rather than late:
-            // its framebuffer's pair borrows the shared depth image and the copy lands in it below.
-            int destFbo = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
-                    .celtium$framebufferForDepthTexture(destDepthTexture);
-            if (destFbo != 0) celtium$registerRawFramebuffer(destFbo, false);
-            destImage = target.sharedDepthImage(destKey);
-            if (destImage == 0L) {
-                return "the depth copy's destination texture " + destDepthTexture
-                        + " is not in the shared depth store (its framebuffer's pair never borrowed it)";
-            }
-        }
-        if (sourceImage == destImage) {
-            // A copy whose two names resolve to the one shared image - the same depth texture on both sides, or
-            // two names over one borrowed depth - is a feedback loop: the barrier below would carry two
-            // conflicting transitions for one image in a single call, vkCmdCopyImage would read and write the
-            // same image with possibly overlapping rectangles, and the store would end up with two different
-            // layouts recorded for it. Refused by name, like this method's other refusals.
-            // Bughunt 2026-11-21 lane 01, finding 4.
-            return "the depth copy's source texture " + sourceDepthTexture + " and destination texture "
-                    + destDepthTexture + " resolve to the same shared depth image";
-        }
-        int[] sourceExtent = target.sharedDepthExtent(sourceKey);
-        int[] destExtent = target.sharedDepthExtent(destKey);
-        if (sourceExtent == null || destExtent == null
-                || x < 0 || y < 0 || x + width > sourceExtent[0] || y + height > sourceExtent[1]
-                || xoffset < 0 || yoffset < 0 || xoffset + width > destExtent[0]
-                || yoffset + height > destExtent[1]) {
-            return "the depth copy rectangle " + x + "," + y + " " + width + "x" + height + " -> "
-                    + xoffset + "," + yoffset + " is not inside the shared depth images";
-        }
-        flushPendingBeforeGlDraw();
-        int sourceFrom = target.sharedDepthLayout(sourceKey);
-        int destFrom = target.sharedDepthLayout(destKey);
-        org.lwjgl.vulkan.VkCommandBuffer commands = this.context.beginCommands();
-        try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
-            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer barriers =
-                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(2, stack);
-            org.lwjgl.vulkan.VkImageMemoryBarrier sourceBarrier = barriers.get(0);
-            sourceBarrier.sType$Default().image(sourceImage)
-                    .oldLayout(sourceFrom).newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
-                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .srcAccessMask(depthLayoutAccess(sourceFrom))
-                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT);
-            sourceBarrier.subresourceRange().set(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
-            org.lwjgl.vulkan.VkImageMemoryBarrier destBarrier = barriers.get(1);
-            destBarrier.sType$Default().image(destImage)
-                    .oldLayout(destFrom).newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
-                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .srcAccessMask(depthLayoutAccess(destFrom))
-                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT);
-            destBarrier.subresourceRange().set(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
-            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commands,
-                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barriers);
-
-            org.lwjgl.vulkan.VkImageCopy.Buffer region = org.lwjgl.vulkan.VkImageCopy.calloc(1, stack);
-            region.get(0).srcSubresource().set(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1);
-            region.get(0).srcOffset().set(x, y, 0);
-            region.get(0).dstSubresource().set(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1);
-            region.get(0).dstOffset().set(xoffset, yoffset, 0);
-            region.get(0).extent().set(width, height, 1);
-            org.lwjgl.vulkan.VK10.vkCmdCopyImage(commands, sourceImage,
-                    org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destImage,
-                    org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
-
-            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer back =
-                    org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(2, stack);
-            org.lwjgl.vulkan.VkImageMemoryBarrier sourceBack = back.get(0);
-            sourceBack.sType$Default().image(sourceImage)
-                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
-                    .newLayout(sourceFrom == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED
-                            ? GllessFrameTarget.DEPTH_RENDER_LAYOUT : sourceFrom)
-                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT)
-                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
-                            | org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
-                            | org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT);
-            sourceBack.subresourceRange().set(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
-            org.lwjgl.vulkan.VkImageMemoryBarrier destBack = back.get(1);
-            destBack.sType$Default().image(destImage)
-                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
-                    .newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT)
-                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT);
-            destBack.subresourceRange().set(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
-            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commands,
-                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, back);
-
-            int sourceFinalLayout = sourceFrom == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED
-                    ? GllessFrameTarget.DEPTH_RENDER_LAYOUT : sourceFrom;
-            VulkanGlTexture.noteExternalForeignLayout(commands, sourceImage, sourceFinalLayout);
-            VulkanGlTexture.noteExternalForeignLayout(commands, destImage,
-                    org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-            org.lwjgl.vulkan.VkCommandBuffer submitted = commands;
-            commands = null;
-            this.context.celtium$submitDeferred(submitted, 0L);
-            this.context.celtium$flushBatchedSubmits();
-        } catch (RuntimeException | LinkageError error) {
-            if (commands != null && !this.context.celtium$isDeviceLost()) {
-                this.context.celtium$abandonCommands(commands);
-            }
-            if (this.context.celtium$isDeviceLost()) {
-                throw error;
-            }
-            return "the native depth copy threw: " + error;
-        }
-        target.noteSharedDepthLayout(sourceKey,
-                sourceFrom == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED
-                        ? GllessFrameTarget.DEPTH_RENDER_LAYOUT : sourceFrom);
-        target.noteSharedDepthLayout(destKey, org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        this.depthCopiesServed++;
-        if (this.depthCopyLogs < 8) {
-            this.depthCopyLogs++;
-            // The source layout is the difference between serving the depth the pass drew and serving an image the
-            // barrier treated as undefined (item 332): a copy whose oldLayout is UNDEFINED discards the content it
-            // reads, so a SERVED line alone cannot say the shadow pass reached the copy's source. With this field the
-            // acceptance leg reads "served, and it was the attachment layout" from one line.
-            System.out.println("[Celtium] CELTIUM_DEPTH_COPY source=" + sourceDepthTexture + " dest="
-                    + destDepthTexture + " " + width + "x" + height + " servedFrom=native-depth"
-                    + " sourceLayout=" + celtium$layoutName(sourceFrom)
-                    + " served=" + this.depthCopiesServed);
-        }
-        return "served";
+        return this.copyReadSide.celtium$serveDepthCopy(sourceDepthTexture, destDepthTexture, x, y, width, height,
+                xoffset, yoffset);
     }
 
-    /** {@return the name of a Vulkan image layout, for the census lines that have to be read against a claim}. */
     static String celtium$layoutName(int layout) {
-        switch (layout) {
-            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED:
-                return "UNDEFINED";
-            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL:
-                return "GENERAL";
-            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
-                return "SHADER_READ_ONLY";
-            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
-                return "TRANSFER_SRC";
-            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
-                return "TRANSFER_DST";
-            case org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
-                return "DEPTH_RENDER_LAYOUT";
-            default:
-                return "layout-" + layout;
-        }
+        return CopyReadSide.celtium$layoutName(layout);
     }
 
-    /** {@return the access mask a depth image in {@code layout} may have pending}, for the copy's barriers. */
-    private static int depthLayoutAccess(int layout) {
-        if (layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED) {
-            return 0;
-        }
-        if (layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-            return org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT;
-        }
-        if (layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
-            return org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT;
-        }
-        if (layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-            return org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT;
-        }
-        return org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
-                | org.lwjgl.vulkan.VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    }
-
-    /**
-     * Serves one {@code glReadPixels} from an image this renderer owns.
-     * <p>
-     * The caller is the GL-less stub, which knows the bound read framebuffer's GL name and the rectangle, format and
-     * destination address the game asked for. The pixels come from the same readback the texture-copy path uses
-     * (transfer-source copy into a host-visible buffer) after the same ordering contract: pending groups flush, the
-     * frame's recordings submit, and the device is confirmed idle - the synchronous answer GL owes, which a noop left
-     * as a zeroed buffer for every caller that ever asked (the validation fixture's format-2 readback is the measured
-     * case; vanilla's ScreenShotHelper is the mod-facing one).
-     *
-     * @param readFbo the GL name bound to {@code GL_READ_FRAMEBUFFER} (0 = the window)
-     * @param address the caller's destination address
-     * @return whether the pixels were written
-     */
     public boolean celtium$readPixels(int readFbo, int x, int y, int width, int height,
             int format, int type, long address) {
-        return this.textureCopyService.celtium$readPixels(readFbo, x, y, width, height, format, type, address);
+        return this.copyReadSide.celtium$readPixels(readFbo, x, y, width, height, format, type, address);
     }
 
-    /** The backend side of {@code glGetTexImage}, which is the read the game's own screenshot makes. */
     public boolean celtium$getTexImage(int textureName, int level, int format, int type, long address) {
-        return this.textureCopyService.celtium$getTexImage(textureName, level, format, type, address);
+        return this.copyReadSide.celtium$getTexImage(textureName, level, format, type, address);
     }
 
-    /** As {@link #celtium$getTexImage(int, int, int, int, long)}, bounded to a pack buffer's remaining bytes. */
-    public boolean celtium$getTexImage(int textureName, int level, int format, int type, long address, long capacity) {
-        return this.textureCopyService.celtium$getTexImage(textureName, level, format, type, address, capacity);
+    public boolean celtium$getTexImage(int textureName, int level, int format, int type, long address,
+            long capacity) {
+        return this.copyReadSide.celtium$getTexImage(textureName, level, format, type, address, capacity);
     }
 
-    /**
-     * The backend side of {@link TextureCopyService.Host}: one method per fact the copy path reads.
-     * <p>
-     * Non-static so it reads the backend's own state, and every method is either a direct field read or the same call
-     * the copy path made before the extraction - so the surface can be checked by reading it rather than by diffing the
-     * moved code. Nothing here writes backend state; the four operations (flush, idle wait, diagnostics, registry) are
-     * the copy's own ordering and reporting needs. This is the temporary boundary the refactoring plan records: the
-     * follow-up narrows it to a ReadSource (image/view, extent, layout, generation, content version).
-     */
-    private final class CopyHost implements TextureCopyService.Host {
-        @Override
-        public VulkanContext context() {
-            return VulkanTerrainGpuBackend.this.context;
-        }
-
-        @Override
-        public FrameImageTarget frameTarget() {
-            return VulkanTerrainGpuBackend.this.frameTarget;
-        }
-
-        @Override
-        public GllessFrameTarget offTargetTarget() {
-            return VulkanTerrainGpuBackend.this.offTargetTarget();
-        }
-
-        @Override
-        public int targetWidth() {
-            return VulkanTerrainGpuBackend.this.targetWidth;
-        }
-
-        @Override
-        public int targetHeight() {
-            return VulkanTerrainGpuBackend.this.targetHeight;
-        }
-
-        /** Bumped whenever the frame target is destroyed, so groups of the old target can be told apart. */
-        @Override
-        public long targetGeneration() {
-            return VulkanTerrainGpuBackend.this.targetRegistry.generation();
-        }
-
-        @Override
-        public long frameId() {
-            return VulkanTerrainGpuBackend.this.frameId;
-        }
-
-        /**
-         * The present serial, which is the counter the copy reuse set is keyed on: it advances for a screen's frame as
-         * well, where {@link #frameId()} does not (see {@link TextureCopyService.Host#presentSerial()}).
-         */
-        @Override
-        public long presentSerial() {
-            return VulkanTerrainGpuBackend.this.celtium$presentCount;
-        }
-
-        /** The identity of the main framebuffer, so an unfiltered flush can mean "main" rather than "everything". */
-        @Override
-        public long mainTargetIdentity() {
-            return VulkanTerrainGpuBackend.this.targetRegistry.mainIdentity();
-        }
-
-        @Override
-        public int framebufferColorTextureName(long identity) {
-            return VulkanTerrainGpuBackend.this.framebufferColorTextureName(identity);
-        }
-
-        @Override
-        public long currentRenderTarget() {
-            return VulkanTerrainGpuBackend.this.targetRegistry.currentIdentity();
-        }
-
-        @Override
-        public boolean currentRenderTargetIsMain() {
-            return VulkanTerrainGpuBackend.this.targetRegistry.currentIsMain();
-        }
-
-        @Override
-        public long lastDrawnOffTargetIdentity() {
-            return VulkanTerrainGpuBackend.this.lastDrawnOffTargetIdentity;
-        }
-
-        @Override
-        public long lastDrawnOffTargetFrame() {
-            return VulkanTerrainGpuBackend.this.lastDrawnOffTargetFrame;
-        }
-
-        @Override
-        public long lastDrawnOffTargetPresent() {
-            return VulkanTerrainGpuBackend.this.lastDrawnOffTargetPresent;
-        }
-
-        @Override
-        public long lastDrawnImage() {
-            return VulkanTerrainGpuBackend.this.lastDrawnImage;
-        }
-
-        @Override
-        public long lastDrawnFrame() {
-            return VulkanTerrainGpuBackend.this.lastDrawnFrame;
-        }
-
-        @Override
-        public long lastDrawnEpoch() {
-            return VulkanTerrainGpuBackend.this.lastDrawnEpoch;
-        }
-
-        @Override
-        public long passAttachedColorImage() {
-            return VulkanTerrainGpuBackend.this.passAttachedColorImage;
-        }
-
-        @Override
-        public int passSubmissions() {
-            return VulkanTerrainGpuBackend.this.terrainStatistics.passSubmissions();
-        }
-
-        @Override
-        public int immediateWindowsThisFrame() {
-            return VulkanTerrainGpuBackend.this.immediateStatistics.immediateWindowsThisFrame();
-        }
-
-        @Override
-        public boolean immediateWindowBusy() {
-            return VulkanTerrainGpuBackend.this.immediateWindowBusy;
-        }
-
-        @Override
-        public int immediateGroupCount() {
-            return VulkanTerrainGpuBackend.this.immediateGroups.size();
-        }
-
-        @Override
-        public boolean worldPassActive() {
-            return VulkanTerrainGpuBackend.this.worldPassActive;
-        }
-
-        public boolean hasPendingImmediateWork() {
-            // The group being filled counts: the panorama copies a rectangle it drew into in the same call sequence,
-            // so the draw is in this group and not in a queued one when the copy asks whether anything is pending.
-            return VulkanTerrainGpuBackend.this.currentGroupUsed
-                    || !VulkanTerrainGpuBackend.this.immediateGroups.isEmpty();
-        }
-
-        @Override
-        public int recordedImmediateGroupCount() {
-            return VulkanTerrainGpuBackend.this.recordedImmediateGroups.size();
-        }
-
-        @Override
-        public int currentGroupBatches() {
-            return VulkanTerrainGpuBackend.this.currentGroupBatches;
-        }
-
-        @Override
-        public VulkanTextureRegistry registry() {
-            return VulkanTerrainGpuBackend.this.celtium$registry();
-        }
-
-        @Override
-        public void flushPendingBeforeGlDraw() {
-            VulkanTerrainGpuBackend.this.flushPendingBeforeGlDraw();
-        }
-
-        @Override
-        public boolean submitCopySource() {
-            if (VulkanTerrainGpuBackend.this.immediateWindowBusy
-                    || VulkanTerrainGpuBackend.this.gpuStalled
-                    || VulkanTerrainGpuBackend.this.context.celtium$isDeviceLost()
-                    || hasPendingImmediateWork()) return false;
-            VulkanTerrainGpuBackend.this.submitOpenFrameBuffer();
-            if (VulkanTerrainGpuBackend.this.frameBufferOpen
-                    || VulkanTerrainGpuBackend.this.commandState.recording()) return false;
-            VulkanTerrainGpuBackend.this.context.celtium$flushBatchedSubmits();
-            return !VulkanTerrainGpuBackend.this.gpuStalled
-                    && !VulkanTerrainGpuBackend.this.context.celtium$isDeviceLost();
-        }
-
-        @Override
-        public boolean waitForIdle() {
-            return VulkanTerrainGpuBackend.this.waitForIdle();
-        }
-
-        @Override
-        public long identityForColorTexture(int glTextureName) {
-            return VulkanTerrainGpuBackend.this.celtium$framebufferIdentityForColorTexture(glTextureName);
-        }
-
-        @Override
-        public long identityForFramebufferName(int framebufferObject) {
-            return VulkanTerrainGpuBackend.this.celtium$identityForFramebufferName(framebufferObject);
-        }
-
-        @Override
-        public void record(String diagnostic) {
-            VulkanTerrainGpuBackend.this.record(diagnostic);
-        }
-
-        @Override
-        public String describe(Throwable error) {
-            return VulkanTerrainGpuBackend.describe(error);
-        }
-    }
-
-
-    /**
-     * Reads one owned image out and writes it, with its mean and opaque fraction on the line that names it.
-     * <p>
-     * Orientation, measured by proj-channel against the presented dump of the same frame: this readback's rows are
-     * bottom-up relative to the presented-image dump, so comparing the two PNGs directly reports a ~98 % difference
-     * that is pure orientation - {@code flipud} of one side differs on 0 of 921,600 pixels. Anyone comparing a
-     * chain-time dump with a presented dump has to flip one of them first.
-     */
     void celtium$dumpOwnedImage(String stage, long image, String base, String identity, int width,
             int height) {
-        if (image == 0L || width <= 0 || height <= 0) {
-            return;
-        }
-        int[] pixels = celtium$readImageRectangle(image, 0, 0, width, height);
-        if (pixels == null) {
-            System.out.println("[Celtium] CELTIUM_CHAIN_FRAME_DUMP stage=" + stage + " readback=failed " + identity);
-            return;
-        }
-        long red = 0L;
-        long green = 0L;
-        long blue = 0L;
-        int opaque = 0;
-        for (int pixel : pixels) {
-            red += (pixel >> 16) & 0xFF;
-            green += (pixel >> 8) & 0xFF;
-            blue += pixel & 0xFF;
-            if (((pixel >>> 24) & 0xFF) >= 0x80) {
-                opaque++;
-            }
-        }
-        int count = Math.max(1, pixels.length);
-        java.nio.file.Path path = java.nio.file.Paths.get(stage.equals("frame") ? base
-                : base.replaceFirst("\\.png$", "") + "-" + stage + ".png");
-        boolean written = false;
-        try {
-            java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(width, height,
-                    java.awt.image.BufferedImage.TYPE_INT_ARGB);
-            out.setRGB(0, 0, width, height, pixels, 0, width);
-            if (path.getParent() != null) {
-                java.nio.file.Files.createDirectories(path.getParent());
-            }
-            written = javax.imageio.ImageIO.write(out, "png", path.toFile());
-        } catch (java.io.IOException | RuntimeException | LinkageError error) {
-            record("chain frame dump write failed: " + describe(error));
-        }
-        System.out.println("[Celtium] CELTIUM_CHAIN_FRAME_DUMP stage=" + stage + " path=" + path
-                + " written=" + written + " " + width + "x" + height
-                + " mean=" + (red / count) + "," + (green / count) + "," + (blue / count)
-                + " opaque=" + opaque + "/" + pixels.length + " " + identity);
+        this.copyReadSide.celtium$dumpOwnedImage(stage, image, base, identity, width, height);
     }
 
-    /** {@return the image a copy's read framebuffer names, or 0 when this renderer does not own it}. */
-
-
-
-
-    /** Reverses a {@code width x height} rectangle's row order in place; the copy's GL-to-Vulkan row mapping. */
-
-
-    /** {@return how many of the read pixels are not pure white}; a mean cannot tell that apart. */
-
-
-    /**
-     * {@return rectangle {@code width x height} at {@code x,y} of an owned colour image as ARGB texels}, or null.
-     * <p>
-     * The image is a colour attachment in {@code VK_IMAGE_LAYOUT_GENERAL} (both the off-target pairs and the frame image
-     * are), and GENERAL is a legal transfer source - but the next frame attaches the image again, so the barrier pair
-     * below is GENERAL to TRANSFER_SRC and back to GENERAL and the target's own layout bookkeeping stays true. The copy
-     * goes through {@code VulkanContext.beginCommands}/{@code endCommands}, which waits for the queue before allocating
-     * and after submitting: that is the same route the swapchain's own presented-image readback takes.
-     */
     int[] celtium$readImageRectangle(long image, int x, int y, int width, int height) {
-        // Thin delegate, kept because the chain-time dump (celtium$dumpOwnedImage) reads through this name; the
-        // implementation moved to TextureCopyService with the rest of the copy path.
-        return this.textureCopyService.readImageRectangle(image, x, y, width, height);
+        return this.copyReadSide.celtium$readImageRectangle(image, x, y, width, height);
     }
 
-    /** {@return whether a requested presented-image dump has been written}. */
     public boolean celtium$presentedImageDumpWritten() {
-        return this.presentedImageDumpRequested && this.swapchain != null && this.swapchain.lastDumpWritten();
+        return this.copyReadSide.celtium$presentedImageDumpWritten();
     }
 
-    /** {@return how many frames have been presented from Vulkan so far}. */
     public int celtium$presentedFrameCount() {
-        return this.framePresentedFromVulkan;
+        return this.copyReadSide.celtium$presentedFrameCount();
     }
 
-    /**
-     * {@return how many present calls the entry point declined before reaching the swapchain}.
-     * <p>
-     * Read beside {@link #celtium$presentAttempts()} and {@link #celtium$presentedFrameCount()} it turns a deficit
-     * between the fixture's world frames and the presented counter into an attribution: a declined call is a frame that
-     * was drawn and never offered to the swapchain, a failed attempt is one the swapchain refused.
-     */
     public int celtium$presentSkips() {
-        return this.presentSkips;
+        return this.copyReadSide.celtium$presentSkips();
     }
 
-    /** {@return how many present calls reached the swapchain present}. */
     public int celtium$presentAttempts() {
-        return this.presentAttempts;
+        return this.copyReadSide.celtium$presentAttempts();
     }
 
-    /**
-     * {@return how many per-frame present calls arrived at all}.
-     * <p>
-     * The third term of the same arithmetic: a frame that never reaches the entry point is neither declined nor
-     * failed, and only the entry counter can tell that apart from a present the renderer refused. It is not reset when
-     * a world adopts the window-time backend, so it spans the whole process while
-     * {@link #celtium$presentedFrameCount()} restarts with the world.
-     */
     public int celtium$presentHookCalls() {
-        return this.presentHookCalls;
+        return this.copyReadSide.celtium$presentHookCalls();
     }
 
-    /**
-     * {@return the presented-frame count of the present that wrote the named presented-image dump}, or -1 when no
-     * write of that name has been recorded.
-     * <p>
-     * The fixture's file observation cannot name the frame on its own: it runs once per render tick, and several
-     * presents fit inside that window at startup, so "the file appeared while the counter read N" is N frames
-     * late. The write happens inside the present, which is what makes this the authoritative binding; the file
-     * name is the key because several requests can be pending at once.
-     */
     public int celtium$presentedDumpWrittenFrameFor(String fileName) {
-        if (fileName == null) {
-            return -1;
-        }
-        Integer frame = this.presentedDumpWrittenFrames.get(fileName);
-        return frame == null ? -1 : frame.intValue();
+        return this.copyReadSide.celtium$presentedDumpWrittenFrameFor(fileName);
     }
 
-    /**
-     * Tells the renderer which texture unit Minecraft's light map is bound on.
-     * <p>
-     * The value lives in a Minecraft class, which this module deliberately does not depend on, so the mod side passes the
-     * number in. It is needed because the reallocation path zeroes the light map's GL id, and a batch that arrives inside
-     * that window is otherwise refused with no way to take the mirror again: with the unit known, the binding is asked of
-     * GL exactly as the model draw asks for its texture.
-     */
     public void celtium$setLightmapUnit(int unit) {
-        this.lightmapUnit = unit;
+        this.copyReadSide.celtium$setLightmapUnit(unit);
     }
 
-    /**
-     * The light-map coordinate pair of the draw that is about to happen, captured from
-     * {@code OpenGlHelper.setLightmapTextureCoords} (SRG {@code func_77475_a}) by {@code LightmapCoordsMixin}.
-     * <p>
-     * This is the world light level, and it exists nowhere else for the model batch: the ITEM layout's vertices carry
-     * position, texture, colour and normal, the trailing normal carries the fixed-function lighting, and the light
-     * level only ever travelled as a texture coordinate on unit 1. Under the GL-less window that call is a no-op, so
-     * without this capture a light-map sampler would read one wrong texel for every batch - which is why the term
-     * could not be added to the shader alone.
-     */
     @Override
     public void setLightmapCoords(float x, float y) {
-        this.lightmapCoordX = x;
-        this.lightmapCoordY = y;
-        this.immediateStatistics.noteLightmapCoordCalls();
-        this.immediateStatistics.noteImmediateStateCalls();
+        this.copyReadSide.setLightmapCoords(x, y);
     }
 
-    /** {@return whether a light-map coordinate has been captured since the renderer came up}. */
-    private boolean lightmapCoordKnown() {
-        return this.immediateStatistics.lightmapCoordCalls() > 0;
-    }
-
-    /** The light-map coordinate pair the last capture stored, as {x, y}. */
     private float[] lightmapCoords() {
-        // Held by queued groups and never written after: equal pairs share one array (2% of the client thread's
-        // allocation was these two floats, one pair per model instance).
-        float[] last = this.lastLightmapCoords;
-        if (last != null && last[0] == this.lightmapCoordX && last[1] == this.lightmapCoordY) {
-            return last;
-        }
-        last = new float[] {this.lightmapCoordX, this.lightmapCoordY};
-        this.lastLightmapCoords = last;
-        return last;
+        return this.copyReadSide.lightmapCoords();
     }
 
-    private float[] lastLightmapCoords;
-
-    /**
-     * The full-bright light-map coordinate, the pair {@code GuiContainer.java:107} sets before it draws its items:
-     * {@code OpenGlHelper.setLightmapTextureCoords(OpenGlHelper.lightmapTexUnit, 240.0F, 240.0F)}. The light map's
-     * texel there is its brightest, which is what "GUI items are drawn full-bright" is in a renderer whose lit layouts
-     * always sample the light map.
-     */
-    private static final float[] FULL_BRIGHT_LIGHTMAP = {240.0F, 240.0F};
-
-    /**
-     * {@code -Dceltium.vulkan.lightmapFullBrightGui=false} turns the rule off, for measurements: the same jar, the same
-     * scene and the same tick then draw a GUI item with the world's light, which is the "before" half of the pair
-     * without rebuilding a jar that differs in anything else.
-     */
-    private static final boolean LIGHTMAP_FULL_BRIGHT_GUI = !"false".equalsIgnoreCase(
-            System.getProperty("celtium.vulkan.lightmapFullBrightGui", "true"));
-
-    /**
-     * The light-map coordinate a group offered now must be drawn with: the captured world light where the light-map
-     * texture unit was **enabled**, the full-bright pair where it was disabled.
-     * <p>
-     * The key is the unit's own enable state, not the pass, because that is what real OpenGL modulates by. The unit is
-     * enabled in exactly three brackets - {@code RenderGlobal.renderEntities} ({@code RenderGlobal.java:1166}/{@code :1205}),
-     * the first-person hand ({@code EntityRenderer.java:825}/{@code :827}, inside {@code renderWorldPass}) and the
-     * block-entity section ({@code EntityRenderer.java:1434}/{@code :1403}) - and disabled everywhere else, including
-     * the whole GUI stage: {@code GuiIngame.renderHotbar} never sets the coordinate while
-     * {@code GuiContainer.java:107} sets {@code (240,240)} for its own items. This renderer's lit layouts always sample
-     * the light map, so a draw made with the unit disabled has to be given the full-bright texel, or the coordinate the
-     * world last set (the player's own light, {@code ItemRenderer.setLightmap()}) reaches the hotbar and a GUI item in a
-     * dark place is drawn with the cave's light.
-     * <p>
-     * The state is a hook on {@code EntityRenderer.enableLightmap}/{@code disableLightmap} (SRG
-     * {@code func_180436_i}/{@code func_175072_h}, resolved from the SRG table rather than guessed) and it defaults to
-     * <em>enabled</em>: a hook that never fires leaves every group on the captured coordinate, which is the behaviour
-     * this renderer had before the rule, so a silently dropped injection degrades to the status quo rather than to a
-     * frame of full-bright entities. {@code lightmapUnitEnables}/{@code lightmapUnitDisables} in the census say whether
-     * the hook ran at all.
-     * <p>
-     * The model path uses this too. Its GUI-stage content is the inventory's player model and any TESR item - a chest,
-     * a shulker box, a banner, which {@code RenderItem.renderItem} sends through
-     * {@code getTileEntityItemStackRenderer().renderByItem} ({@code RenderItem.java:144-148}) - and both are drawn with
-     * the unit disabled, so both are full-bright under real GL. The inventory's player model is the reason this is
-     * checked rather than assumed: {@code GuiInventory.java:154-165} only <em>disables</em> the unit at the end of its
-     * draw, it never enables it, so nothing lights that model by the world either.
-     */
     float[] celtium$lightmapForGroup() {
-        if (!this.lightmapUnitEnabled && LIGHTMAP_FULL_BRIGHT_GUI) {
-            this.immediateStatistics.noteLightmapFullBrightGroups();
-            return FULL_BRIGHT_LIGHTMAP;
-        }
-        return lightmapCoordKnown() ? lightmapCoords() : null;
+        return this.copyReadSide.celtium$lightmapForGroup();
     }
 
-    /**
-     * Points the game's main framebuffer at the shared images so the frame is produced in Vulkan-owned memory.
-     * <p>
-     * On by default since both GPUs accepted it with the same picture: AMD 0.001 mean absolute difference and 0.00 % of
-     * pixels over 8 against the GL path in the same scene, Intel 0.026 and 0.02 %, both PASSED with no GL error and
-     * nothing left refused for a reason of its own. Set {@code -Dceltium.vulkan.adoptGameFramebuffer=false} to go back to
-     * the per-frame copy into OpenGL's framebuffer, which is what the migration still supports but no longer uses.
-     */
-    private static final boolean ADOPT_GAME_FRAMEBUFFER =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.adoptGameFramebuffer", "true"));
-
-    /**
-     * Prepares the frame target for whatever framebuffer is bound right now and answers whether it is ready.
-     * <p>
-     * The adoption runs after the game has bound its framebuffer, not before: {@code ensureFrameTarget} reads the size of
-     * the bound colour texture, and before the bind that is still the previous framebuffer. Doing it in that order made a
-     * resized window keep the old shared images - measured: after a mid-run resize the game bound a 1024x640 framebuffer
-     * while the shared images were 1280x720, {@code adoptableFramebuffer} answered 0, and no present came from Vulkan
-     * again (265 presents against 785 in the same duration without a resize).
-     */
     public boolean celtium$ensureTargetForBoundFramebuffer() {
-        boolean ready = ensureFrameTarget();
-        if (ready) {
-            // The shared images match the framebuffer that is bound now, so the replacement window is over and ordering
-            // flushes are meaningful again.
-            this.targetRegistry.noteReplacementSettled();
-        }
-        return ready;
+        return this.copyReadSide.celtium$ensureTargetForBoundFramebuffer();
     }
 
-    /**
-     * Ensures the frame target, falling back to the framebuffer object's own size when the bound attachment cannot be
-     * measured.
-     * <p>
-     * The bind-returns hook has the framebuffer object, whose {@code framebufferWidth}/{@code framebufferHeight} stay
-     * correct even when the colour attachment is a shared image that was released with a previous backend instance -
-     * reading that attachment gives 0x0, and without a size no target can be built, which is the deadlock the Nether
-     * dimension transfer left behind (every pass skipped on "no frame target"). The size hint is only used for the
-     * game's main framebuffer, whose logical size is the same size the target must cover anyway.
-     */
     public boolean celtium$ensureTargetForBoundFramebuffer(int widthHint, int heightHint) {
-        boolean ready = ensureFrameTarget();
-        if (!ready && widthHint > 0 && heightHint > 0) {
-            ready = ensureFrameTarget(widthHint, heightHint);
-        }
-        if (ready) {
-            this.targetRegistry.noteReplacementSettled();
-        }
-        return ready;
+        return this.copyReadSide.celtium$ensureTargetForBoundFramebuffer(widthHint, heightHint);
     }
 
     public int celtium$adoptableFramebuffer(int width, int height) {
-        if (!ADOPT_GAME_FRAMEBUFFER || this.frameTarget == null) {
-            return 0;
-        }
-        return this.frameTarget.adoptableFramebuffer(width, height);
+        return this.copyReadSide.celtium$adoptableFramebuffer(width, height);
     }
 
     public int celtium$adoptedColorTexture() {
-        return this.frameTarget == null ? 0 : this.frameTarget.sharedColorTexture();
+        return this.copyReadSide.celtium$adoptedColorTexture();
     }
 
     public int celtium$adoptedDepthTexture() {
-        return this.frameTarget == null ? 0 : this.frameTarget.sharedDepthTexture();
+        return this.copyReadSide.celtium$adoptedDepthTexture();
     }
 
     public void celtium$noteFramebufferAdopted() {
-        this.gameFramebufferAdopted++;
-        this.gameFramebufferIsShared = true;
-        if (this.frameTarget != null) {
-            this.frameTarget.noteGameFramebufferAdopted();
-        }
+        this.copyReadSide.celtium$noteFramebufferAdopted();
     }
 
     public boolean celtium$isSharedFramebuffer(int framebufferObject) {
-        return ADOPT_GAME_FRAMEBUFFER && this.frameTarget != null
-                && this.frameTarget.isSharedFramebuffer(framebufferObject);
+        return this.copyReadSide.celtium$isSharedFramebuffer(framebufferObject);
     }
 
-    /**
-     * Records the first GL error seen at a named point after the swap, and where it was seen.
-     * <p>
-     * Reading a GL error clears it, so only the first probe that finds one can speak: it names the window the error was
-     * produced in. Probes after it will read zero whatever happens, which is why the point is recorded with the code.
-     */
     public void celtium$noteGlErrorAt(String where, int error) {
-        if (error != 0 && this.firstGlErrorWhere == null) {
-            this.firstGlErrorWhere = where;
-            this.firstGlErrorCode = error;
-        }
+        this.copyReadSide.celtium$noteGlErrorAt(where, error);
     }
+
+
+    // The model-draw switches and the fence/descriptor fault switches stay on the backend, declared
+    // inside the read side's old region: their readers are the model path (ModelReplay reads the two
+    // MODEL fields directly) and the fence/descriptor paths, not the read side.
 
     /** {@return whether the native model draw experiment is enabled}. */
     public static boolean modelDrawEnabled() {
@@ -22131,491 +21404,48 @@ this.frameBufferOpen = false;
         return descriptorSet;
     }
 
-    /** Static probe for the font-glyph diagnostic: the mirror dims for a bound GL name, or "none"/"nobackend". */
     public static String celtium$mirrorDims(int glTextureId) {
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-        if (backend instanceof VulkanTerrainGpuBackend vulkan) {
-            return vulkan.celtium$registry().celtium$entryDims(glTextureId);
-        }
-        return "nobackend";
+        return CopyReadSide.celtium$mirrorDims(glTextureId);
     }
 
-    /** The box-glyph hunt: the mirror's own pixels, read back, so "the GPU image holds the rasterised sheet" is
-     *  measured and not assumed. {@code -Dceltium.mirrorDump=<name>:<path>} dumps the whole level-0 rect once. */
     public static String celtium$mirrorProbe(int glTextureId) {
-        org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
-                org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
-        if (!(backend instanceof VulkanTerrainGpuBackend vulkan)) {
-            return "nobackend";
-        }
-        String spec = MIRROR_DUMP_SPEC;
-        String dumpPath = null;
-        if (spec != null) {
-            // Comma-separated <name>:<path> pairs so one leg can dump several mirrors; a path prefix without a
-            // name ("all=/tmp/m-") dumps every texture the probe touches, named by its GL id.
-            for (String pair : spec.split(",")) {
-                int colon = pair.indexOf(':');
-                if (colon > 0) {
-                    if ("all".equals(pair.substring(0, colon))) {
-                        dumpPath = pair.substring(colon + 1) + glTextureId + ".png";
-                        break;
-                    }
-                    if (pair.substring(0, colon).equals(Integer.toString(glTextureId))) {
-                        dumpPath = pair.substring(colon + 1);
-                        break;
-                    }
-                }
-            }
-        }
-        if (dumpPath == null) {
-            return "skip";
-        }
-        org.soutalab.celtium.vulkan.VulkanGlTexture texture = vulkan.celtium$registry().get(glTextureId);
-        if (texture == null) {
-            return "nomirror";
-        }
-        int w = texture.width(), h = texture.height();
-        int[] pixels = vulkan.textureCopyService.readImageRectangle(texture.image(), 0, 0, Math.min(w, 1024), h);
-        try {
-            java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(Math.min(w, 1024), h,
-                    java.awt.image.BufferedImage.TYPE_INT_ARGB);
-            out.setRGB(0, 0, Math.min(w, 1024), h, pixels, 0, Math.min(w, 1024));
-            javax.imageio.ImageIO.write(out, "png", new java.io.File(dumpPath));
-            return "dumped";
-        } catch (Throwable t) {
-            return "fail:" + t;
-        }
+        return CopyReadSide.celtium$mirrorProbe(glTextureId);
     }
 
-    /**
-     * The one texture registry.
-     * <p>
-     * It was created inline at five call sites, which is five chances for two registries to exist and for the image the
-     * backend samples to differ from the image the announcements patch - the split this change removes. Creation stays lazy
-     * because the first texture registration happens before any world draw.
-     */
     VulkanTextureRegistry celtium$registry() {
-        if (this.textureRegistry == null) {
-            this.textureRegistry = new VulkanTextureRegistry(this.context);
-        }
-        return this.textureRegistry;
+        return this.copyReadSide.celtium$registry();
     }
 
-    /**
-     * {@return one line's worth of what this renderer holds for a texture name, for the legacy-run census}.
-     * <p>
-     * The menu's missing background has two candidate homes - the quad was never written, or it was written sampling a
-     * mirror with no content - and the capture alone cannot tell them apart. The size and completeness of the mirror
-     * the run's texture resolves to is the fact that separates them; the source label says which route filled it.
-     */
     public String celtium$textureCensus(int glTextureId) {
-        if (glTextureId <= 0) {
-            return "none";
-        }
-        try {
-            VulkanGlTexture texture = celtium$registry().get(glTextureId);
-            if (texture == null) {
-                return "absent source=" + celtium$registry().celtium$mirrorSourceFor(glTextureId);
-            }
-            return texture.width() + "x" + texture.height() + " full=" + texture.hasFullContent()
-                    + " source=" + celtium$registry().celtium$mirrorSourceFor(glTextureId);
-        } catch (RuntimeException | LinkageError error) {
-            return "unreadable:" + error.getClass().getSimpleName();
-        }
+        return this.copyReadSide.celtium$textureCensus(glTextureId);
     }
 
-    /**
-     * {@return the mirrored matrices an immediate group is about to be transformed by}.
-     * <p>
-     * Printed beside a legacy run because the placement of a quad is decided here: a full-screen background that
-     * arrives with an on-screen GL rectangle and is still absent from the frame cannot be explained by the vertices,
-     * and the projection's two diagonal terms plus the modelview's translation are what say whether the group landed
-     * where the game asked for.
-     */
     public String celtium$immediateMatrixState() {
-        // The modelview's z translation is printed with the x and y: the GUI's ortho maps z=0 to the near plane and
-        // the overlay rendering puts the eye at z=-2000, so a group recorded without that translation lands outside
-        // the clip volume and vanishes even though its x/y rectangle is on screen.
-        return "proj=" + round3(this.glProjection[0]) + "," + round3(this.glProjection[5])
-                + " mv=" + round3(this.glModelView[0]) + "," + round3(this.glModelView[5])
-                + " mvT=" + round3(this.glModelView[12]) + "," + round3(this.glModelView[13]) + ","
-                + round3(this.glModelView[14]);
+        return this.copyReadSide.celtium$immediateMatrixState();
     }
 
     private boolean ensureFrameTarget() {
-        // The window's own framebuffer size is what the frame target must match: it is the drawable the swapchain
-        // presents, and it does not move when the game binds one of its own framebuffers. Sizing from the GL viewport
-        // instead adopted whatever framebuffer was bound last - the splash's own FBO during startup - so the target
-        // (and with it the pairs and every name published over them) was created at the wrong size and then rebuilt
-        // when the main framebuffer arrived, which threw the splash's pixels away and left the composite sampling an
-        // empty image: the white loading screen. The main framebuffer's reported size is the second choice, the
-        // viewport the last.
-        int[] window = cachedWindowFramebufferSize();
-        if (window[0] > 0 && window[1] > 0) {
-            return ensureFrameTarget(window[0], window[1]);
-        }
-        int[] drawable = currentViewport();
-        int width = this.mainFramebufferWidth > 0 ? this.mainFramebufferWidth : drawable[2];
-        int height = this.mainFramebufferHeight > 0 ? this.mainFramebufferHeight : drawable[3];
-        return ensureFrameTarget(width, height);
+        return this.copyReadSide.ensureFrameTarget();
     }
 
-    /**
-     * Ensures the frame target exists for the given size, without asking the bound framebuffer how big it is.
-     * <p>
-     * The adoption path passes the framebuffer object's own width and height, which are the authoritative size there.
-     * A world change recreates the renderer and this backend but not the framebuffer, and a size cached from the old
-     * target would otherwise leave the target, and with it every draw, unrecoverable.
-     */
     private boolean ensureFrameTarget(int width, int height) {
-        if (this.frameTarget != null && this.frameTarget.matches(width, height)) {
-            return true;
-        }
-        if (this.frameTarget != null && celtium$recordingOpen()) {
-            // A size change can arrive while the frame's unified command buffer is still recording - the real launch
-            // does exactly this once, when the window it opened at 854x480 goes fullscreen at the monitor size, and the
-            // first attempt released the old pair's images and its framebuffer under the open recording. The validation
-            // layer named it (VUID-vkEndCommandBuffer-commandBuffer-00059: two images and a framebuffer destroyed while
-            // bound) and the next submission took the device down, which was the black screen. A target whose size has
-            // to change is therefore refused for this recording and rebuilt on the next one, when nothing is open.
-            this.frameTargetRecreationDeferred++;
-            if (this.frameTargetRecreationDeferred <= 8) {
-                System.out.println("[Celtium] CELTIUM_FRAME_TARGET_DEFERRED from=" + this.targetWidth + "x"
-                        + this.targetHeight + " to=" + width + "x" + height
-                        + " count=" + this.frameTargetRecreationDeferred + " (a recording is open)");
-            }
-            return false;
-        }
-        // The GPU must be finished with the old target before any of it is released: a resize recreates the game's
-        // framebuffer, and the validation layer caught the first attempt doing exactly this -
-        // "vkDestroyFramebuffer(): can't be called on VkFramebuffer ... that is currently in use by VkCommandBuffer".
-        // The same rule as delete() and region eviction, applied to the path a resize takes.
-        if (!settleGpu("frame target recreation")) {
-            // Fail closed: without a settled GPU the old target cannot be released, so no new one is built either.
-            return false;
-        }
-        if (!celtium$frameTargetReplaceable(destroyFramebuffer())) {
-            // The framebuffers could not be freed, so they still name the old target's views: deleting them here is
-            // what left a later window's begin pointing at a dead view (issue #423, item 372 hole 1). Same direction
-            // as the failed settle above - the old target keeps drawing, the recreation is retried on a later frame.
-            record("frame target " + width + "x" + height + " recreation refused: its framebuffers could not be freed");
-            return false;
-        }
-        if (this.frameTarget != null) {
-            this.frameTarget.delete();
-            this.frameTarget = null;
-            // Groups recorded against the old target may still be queued; the generation is what lets the draw refuse them
-            // instead of binding a render pass that no longer exists. Both the recreate path and the teardown path bump it.
-            this.targetRegistry.noteFrameTargetReplaced();
-        }
-        try {
-            // There is no GL side to share images with: the frame lands in an owned target whose semaphores are
-            // signalled and consumed by Vulkan submissions alone.
-            this.frameTarget = GllessFrameTarget.create(this.context, width, height);
-            if (this.gameFramebufferIsShared) {
-                this.frameTarget.noteGameFramebufferAdopted();
-            }
-            this.targetWidth = width;
-            this.targetHeight = height;
-            // B10 of the maximum audit: the post chain's executor holds the frame target every `main` pass input/output
-            // resolves against, and it used to keep the one it was created with. The old target's images are destroyed
-            // just above, so the executor has to move with the replacement before any chain is recorded against it;
-            // otherwise a chain recorded after this point would name freed memory. The generation is the target
-            // replacement count, and the executor refuses a recording whose generation moved underneath it.
-            if (this.postChain != null) {
-                this.postChain.adoptFrameTarget(this.frameTarget, this.targetRegistry.generation());
-            }
-            return true;
-        } catch (RuntimeException | LinkageError error) {
-            record("frame target " + width + "x" + height + " failed: " + describe(error));
-            return false;
-        }
+        return this.copyReadSide.ensureFrameTarget(width, height);
     }
-
-
-
-
-
-    /** Reused by the GL fallback below: the immediate path asks for the viewport once per group, and a fresh direct
-     * buffer per call was ~1.4% of the client thread's samples on the dense world scene (JFR line census). */
-    private static final IntBuffer VIEWPORT_SCRATCH = org.lwjgl.BufferUtils.createIntBuffer(4);
-
-    private static long lastViewportPacked = Long.MIN_VALUE;
-    private static int[] lastViewport;
 
     private static int[] currentViewport() {
-        // Under the GL-less window the answer is the rectangle the game last set, kept by the stub: asking GL through
-        // the direct buffer below costs an allocation and a query for every group.
-        long packed = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$viewportPacked();
-        if (packed >= 0L) {
-            // Held by queued groups and never written: the same rectangle shares one array (a new one per group was
-            // 1.7% of the client thread's allocation). Render thread only.
-            if (packed == lastViewportPacked && lastViewport != null) {
-                return lastViewport;
-            }
-            lastViewportPacked = packed;
-            return lastViewport = new int[] { (int) ((packed >> 48) & 0xFFFF) - (((packed >> 48) & 0x8000) != 0 ? 0x10000 : 0),
-                    (int) ((packed >> 32) & 0xFFFF) - (((packed >> 32) & 0x8000) != 0 ? 0x10000 : 0),
-                    (int) ((packed >> 16) & 0xFFFF), (int) (packed & 0xFFFF) };
-        }
-        IntBuffer viewport = VIEWPORT_SCRATCH;
-        org.lwjgl.opengl.GL11C.glGetIntegerv(org.lwjgl.opengl.GL11C.GL_VIEWPORT, viewport);
-
-        int width = viewport.get(2);
-        int height = viewport.get(3);
-
-        // GL's default viewport is the whole drawable, and under the GL-less window the stub answers this query with
-        // zeros, so a zero here means "never set" rather than "no area". Measured on leg gv-cohort-mesh1: the sections
-        // were built (sectionsWithGeometry=67) and the render lists were full, but CELTIUM_REFUSALS_BY_FORMAT read
-        // "target: the viewport 0,0 0x0 has no area" for 140+ draws per frame, so no draw reached the backend and the
-        // present had nothing to take. windowFramebufferSize() is the drawable the default would have described.
-        if (width <= 0 || height <= 0) {
-            int[] drawable = cachedWindowFramebufferSize();
-            if (drawable[0] > 0 && drawable[1] > 0) {
-                return new int[] { 0, 0, drawable[0], drawable[1] };
-            }
-        }
-
-        return new int[] { viewport.get(0), viewport.get(1), width, height };
+        return CopyReadSide.currentViewport();
     }
-
-    /**
-     * Last window drawable size, and when it was read. {@code glfwGetFramebufferSize} on X11 is a server round-trip
-     * and the viewport fallback asks for it on paths that run many times per frame: JFR native samples measured
-     * {@code GLFW.nglfwGetFramebufferSize} as the top native frame on the client thread (502 of 1,348 samples, ~4% of
-     * the thread's own CPU) with this fallback as the only per-frame caller.
-     */
-    private static int[] windowSizeCache;
-    private static long windowSizeCacheNanos;
-    /**
-     * How long a cached drawable size is trusted. The cache is also dropped the moment the game's own framebuffer
-     * reports a different size ({@link #celtium$noteBindSize}), so a resize is picked up on the bind that follows it,
-     * not after this interval; the interval only bounds the case where nothing binds (early startup).
-     */
-    private static final long WINDOW_SIZE_CACHE_NANOS = 200_000_000L;
 
     private static int[] cachedWindowFramebufferSize() {
-        int[] cached = windowSizeCache;
-        long now = System.nanoTime();
-        if (cached != null && now - windowSizeCacheNanos < WINDOW_SIZE_CACHE_NANOS) {
-            return cached;
-        }
-        int[] fresh = windowFramebufferSize();
-        if (fresh[0] > 0 && fresh[1] > 0) {
-            windowSizeCache = fresh;
-            windowSizeCacheNanos = now;
-        }
-        return fresh;
+        return CopyReadSide.cachedWindowFramebufferSize();
     }
 
-    /**
-     * {@return the GLFW window's framebuffer size}, or {@code {0, 0}} when the window is unknown or has no drawable.
-     * <p>
-     * The window handle is the current context under a real GL configuration and comes from {@code Display} under the
-     * GL-less window, where there is no context to ask (reflective, because celtium-vulkan does not depend on the
-     * lwjglxx shim). This is the size the frame target must have: it is the drawable the swapchain presents.
-     */
-    private static int[] windowFramebufferSize() {
-        // SDL first: on Cleanroom 0.7 the GLFW classes are not on the runtime classpath, so this method used to throw
-        // NoClassDefFoundError the first time the swap chain asked how large the drawable is.
-        if (CeltiumWindow.sdl()) {
-            int[] pixels = new int[] {0, 0};
-            if (CeltiumWindow.sdlPixelSize(pixels)) {
-                return pixels;
-            }
-        }
-        long window = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
-        if (window == 0L) {
-            try {
-                Class<?> display = Class.forName("org.lwjgl.opengl.Display");
-                window = ((Long) display.getMethod("getWindow").invoke(null)).longValue();
-            } catch (ReflectiveOperationException | LinkageError ignored) {
-                // No window handle from here; the caller falls back to the framebuffer or the viewport.
-            }
-        }
-        if (window == 0L) {
-            return new int[] {0, 0};
-        }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            IntBuffer width = stack.mallocInt(1);
-            IntBuffer height = stack.mallocInt(1);
-            org.lwjgl.glfw.GLFW.glfwGetFramebufferSize(window, width, height);
-            return new int[] {width.get(0), height.get(0)};
-        }
-    }
-
-    private int groupDepthRowChecks;
-
-    /**
-     * Takes both directly sampled textures' mirrors: the block atlas and the light map.
-     * <p>
-     * Two methods rather than one, because the atlas's "no storage yet" answer used to be a {@code return} from this
-     * method - and the atlas block sits above the light map's, so a frame in which the atlas had no extent also skipped
-     * the light map's establishment. Each texture's answer now ends its own method.
-     */
     private void refreshTextures() {
-        refreshAtlasMirror();
-        refreshLightmapMirror();
+        this.copyReadSide.refreshTextures();
     }
 
-    /** Takes the block atlas's mirror when its name is known, on the cadence the terrain sampler needs. */
-    private void refreshAtlasMirror() {
-        // A terrain material names the atlas and lightmap resources. Whichever GUI/entity texture happened to be
-        // bound last is not the terrain material, and querying that binding must not mutate the active unit.
-        //
-        // The fallback that used to sit here asked the same source a second time when the first answer was <= 0, so it
-        // could never change the answer: the GL binding is not available without a GL context, and 1.12.2 binds the
-        // atlas through paths that skip the call (leg gv-cohort-dev10: atlasGlId stayed -1, the pass was skipped and
-        // draws stayed 0). The atlas object owns its name, and that is the one source this reads.
-        int atlasId = LightmapIdSource.atlasTextureId();
-        // CELTIUM_TEXTURE_DIAG: off by default. The atlas is the texture whose mip state matters, and this is the
-        // only method that ever mirrors it, so the question is asked here - with the binding read rather than set, so
-        // nothing the game is drawing can be disturbed.
-        if (TEXTURE_DIAGNOSTICS && atlasId != 0 && this.diagnosedTextures.add(atlasId)) {
-            int levels = 0;
-            while (levels < 16 && org.lwjgl.opengl.GL11.glGetTexLevelParameteri(
-                    org.lwjgl.opengl.GL11.GL_TEXTURE_2D, levels, org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH) > 0) {
-                levels++;
-            }
-            System.out.println("[Celtium] CELTIUM_TEXTURE_DIAG atlas=" + atlasId + " levels=" + levels
-                    + " maxLevel=" + org.lwjgl.opengl.GL11.glGetTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x813D)
-                    + " minLod=" + org.lwjgl.opengl.GL11.glGetTexParameterf(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x813A)
-                    + " maxLod=" + org.lwjgl.opengl.GL11.glGetTexParameterf(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x813B)
-                    + " minFilter=" + org.lwjgl.opengl.GL11.glGetTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x2801)
-                    + " magFilter=" + org.lwjgl.opengl.GL11.glGetTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x2800)
-                    + " atlasSize=" + org.lwjgl.opengl.GL11.glGetTexLevelParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH)
-                    + "x" + org.lwjgl.opengl.GL11.glGetTexLevelParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0, org.lwjgl.opengl.GL11.GL_TEXTURE_HEIGHT));
-        }
-
-
-        if (atlasId != 0 && (this.atlasTexture == null || atlasId != this.atlasGlId || this.atlasRefreshCountdown <= 0)) {
-            try {
-                // The image this call supplies, decided before anything is handed to the field. A name change is a
-                // reallocation: the registry entry for the old name was retired with it, so binding the kept object
-                // samples a dead image - measured as a fully black terrain after the reload re-stitched the atlas
-                // under a new GL name while this field still held the old mirror.
-                VulkanGlTexture image = this.atlasTexture != null && atlasId == this.atlasGlId
-                        ? this.atlasTexture : null;
-                if (image == null) {
-                    int[] size = textureSize(atlasId);
-                    if (size[0] <= 0 || size[1] <= 0) {
-                        // No storage to mirror yet. Creating an image of an unknown size is what produced a 1x1
-                        // mirror that the upload then had to replace, so the frame is skipped and the question is
-                        // asked again when the atlas exists.
-                        this.atlasRefreshCountdown = 0;
-                        return;
-                    }
-                    // The registry owns the image; the backend samples that same object, so an announced patch and the
-                    // descriptor look at one image instead of two.
-                    image = celtium$registry().imageFor(atlasId, size[0], size[1], true);
-                }
-                this.celtium$establishAtlasImage(atlasId, image, "atlas");
-                // The field names the mirror only once its supply has run. The terrain pass's skip guard asks this
-                // field for null, so assigning before the supply - which is what this method did - is how a supply that
-                // threw left an image no upload ever filled in the field: the pass then drew it as the atlas instead of
-                // skipping with the reason recorded. A mirror this id already had stays in the field across a failed
-                // re-supply, because that image was established by an earlier one.
-                this.atlasTexture = image;
-                // The terrain sampler asks the atlas for its GL name to read the game's GL_TEXTURE_MAX_LEVEL.
-                image.noteGlTextureName(atlasId);
-                this.atlasSourceGlId = atlasId;
-                int[] atlasSize = textureSize(atlasId);
-                record("block atlas: gl texture " + atlasId + " " + atlasSize[0] + "x" + atlasSize[1]);
-                this.atlasGlId = atlasId;
-                this.atlasRefreshCountdown = 400;
-            } catch (RuntimeException | LinkageError error) {
-                record("block atlas upload failed: " + describe(error));
-                this.atlasRefreshCountdown = 400;
-            }
-        }
-        this.atlasRefreshCountdown--;
-    }
-
-    /**
-     * Takes the light map mirror: the one route that can establish it, plus the per-frame refresh it needs.
-     * <p>
-     * The light map changes every frame (torch flicker, sun angle, weather), and it is small, so it is refreshed every
-     * frame instead of on a cadence: a stale copy shows up as a small uniform colour shift against the OpenGL render.
-     */
-    private void refreshLightmapMirror() {
-        int lightmapId = LightmapIdSource.lightmapTextureId();
-        if (lightmapId <= 0) {
-            // No name to mirror: the source is not installed yet, or it answered its "cannot answer" -1. A negative id
-            // used to reach imageFor() as an extent of 0x0, which threw IllegalArgumentException into the catch below on
-            // every frame of the window before the game side installed the supplier.
-            this.lightmapRefreshCountdown--;
-            return;
-        }
-        if (!(this.lightmapTexture == null || lightmapId != this.lightmapGlId
-                || this.lightmapRefreshCountdown <= 0)) {
-            this.lightmapRefreshCountdown--;
-            return;
-        }
-        try {
-            if (this.lightmapTexture == null || lightmapId != this.lightmapGlId) {
-                // A different name owns a different mirror. The old image stays in the registry under the name it was
-                // created for; what must not happen is this field naming it for the new id.
-                this.lightmapTexture = null;
-                this.lightmapGlId = lightmapId;
-                // The one route that can establish the light map: the DynamicTexture's own pixels answer both its
-                // content and, when the stub recorded no extent, its size. Creating the image here and supplying it
-                // below was the route that could not succeed - its readback always misses the light map's NULL-data
-                // level - and the content-less field it left behind switched the working route off for the rest of the
-                // run (see ensureLightmapMirror).
-                ensureLightmapMirror();
-            }
-            if (this.lightmapTexture != null) {
-                if (this.lightmapIdentityLogs < 4) {
-                    this.lightmapIdentityLogs++;
-                    org.soutalab.celtium.vulkan.VulkanGlTexture registryEntry =
-                            celtium$registry().get(lightmapId);
-                    record("lightmap identity: glId=" + lightmapId
-                            + " boundView=" + Long.toHexString(this.lightmapTexture.view())
-                            + " boundFull=" + this.lightmapTexture.hasFullContent()
-                            + " registryView=" + (registryEntry == null ? "none"
-                                    : Long.toHexString(registryEntry.view()))
-                            + " registryFull=" + (registryEntry == null ? "none"
-                                    : Boolean.toString(registryEntry.hasFullContent()))
-                            + " same=" + (registryEntry == this.lightmapTexture));
-                }
-                // Back on the announcement path, which is the light map's real source: the black it produced was the
-                // announced array's shape (one int[] per row where the consumer reads one int[] for the whole of level
-                // 0), not this call. With the producer fixed, an announcement-only run measures the same band as the
-                // readback did - 102.4/63.9/58.5 - so the readback detour is gone and the image has one owner again.
-                this.celtium$establishAtlasImage(lightmapId, this.lightmapTexture, "lightmap");
-                this.lightmapSourceGlId = lightmapId;
-                int[] lightmapSize = textureSize(lightmapId);
-                record("lightmap: gl texture " + lightmapId + " " + lightmapSize[0] + "x" + lightmapSize[1]);
-                this.lightmapGlId = lightmapId;
-                this.lightmapRefreshCountdown = 1;
-            } else {
-                // Nothing could supply it this pass. The field stays null so the pass-skip guard names the light map as
-                // the mirror that is missing, instead of drawing with an image no upload ever filled; the next
-                // attempt is the one ensureLightmapMirror bounds by the level's content serial.
-                this.lightmapRefreshCountdown = 1;
-            }
-        } catch (RuntimeException | LinkageError error) {
-            record("lightmap upload failed: " + describe(error));
-            this.lightmapRefreshCountdown = 1;
-        }
-        this.lightmapRefreshCountdown--;
-    }
-
-    /**
-     * The size of a GL texture's level 0, asked through the binding rather than through direct state access.
-     * <p>
-     * The extent comes from the allocation the stub recorded, not from a bound GL query: {@code glGetTextureLevelParameteri}
-     * needs GL 4.5 or {@code ARB_direct_state_access}, and there is no context to ask anyway.
-     */
     private static int[] textureSize(int texture) {
-        if (texture == 0) {
-            return new int[] { 0, 0 };
-        }
-        // Native GL bind/query entry points may be replaced; the named allocation owns this texture's extent.
-        return new int[] {
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(texture, 0, 0x1000),
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(texture, 0, 0x1001) };
+        return CopyReadSide.textureSize(texture);
     }
 
     // ------------------------------------------------------------------ command resources
@@ -24509,7 +23339,7 @@ this.frameBufferOpen = false;
         return result == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST;
     }
 
-    private boolean settleGpu(String reason) {
+    boolean settleGpu(String reason) {
         celtium$watchDeviceWait(reason);
         if (this.gpuStalled) {
             // A stalled GPU means the last command buffer may never have been begun and never submitted, so its recorded
@@ -24899,7 +23729,7 @@ this.frameBufferOpen = false;
      * order, and {@code withFrameSemaphores=false} leaves the frame's acquire signal for the boundary's own
      * submission to consume - the semaphore pair is signalled and waited exactly once, as it always was.
      */
-    private void submitOpenFrameBuffer() {
+    void submitOpenFrameBuffer() {
         if (!this.frameBufferOpen || this.immediateWindowBusy) {
             return;
         }
@@ -24920,8 +23750,8 @@ this.frameBufferOpen = false;
      */
     private static final int IDLE_WAIT_RETRIES = 3;
     /** The game's main framebuffer's own size, reported on its bind; 0 until it has been reported. */
-    private int mainFramebufferWidth;
-    private int mainFramebufferHeight;
+    int mainFramebufferWidth;
+    int mainFramebufferHeight;
 
     // ------------------------------------------------------------------ shared resources
 
