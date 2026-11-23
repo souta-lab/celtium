@@ -21521,8 +21521,15 @@ this.frameBufferOpen = false;
     private org.lwjgl.vulkan.VkRenderPassBeginInfo celtium$windowBeginInfo(long renderPass, long framebuffer,
                                                                           int width, int height) {
         if (this.cachedWindowBegin == null) {
-            this.cachedWindowBegin = org.lwjgl.vulkan.VkRenderPassBeginInfo.malloc();
-            this.cachedWindowBeginArea = org.lwjgl.vulkan.VkRect2D.malloc();
+            // calloc, not malloc: the rebuild below writes every field of the begin info except pNext, and malloc
+            // memory is not zeroed, so a malloc'd struct handed the driver whatever the reused heap block last held
+            // as its pNext chain. A non-zero garbage pNext makes the driver walk a bogus extension chain inside
+            // vkCmdBeginRenderPass - the biyu_bu v0.3.2 crash (GTX 1650 Ti / 581.29, first splash flush at frame=0,
+            // nvoglv64.dll reading address -1) is that shape. The area rect is calloc'd for the same reason, even
+            // though both of its fields are rewritten: the cost is once per process, the failure mode is not worth
+            // re-deriving if a field is ever added.
+            this.cachedWindowBegin = org.lwjgl.vulkan.VkRenderPassBeginInfo.calloc();
+            this.cachedWindowBeginArea = org.lwjgl.vulkan.VkRect2D.calloc();
             this.cachedWindowBeginValid = false;
         }
         // Compared field by field, not by a hash: two different framebuffers whose hash collided would have recorded a
@@ -21533,7 +21540,7 @@ this.frameBufferOpen = false;
             org.lwjgl.vulkan.VkRect2D area = this.cachedWindowBeginArea;
             area.offset().set(0, 0);
             area.extent().set(width, height);
-            this.cachedWindowBegin.sType$Default().renderPass(renderPass).framebuffer(framebuffer)
+            this.cachedWindowBegin.sType$Default().pNext(0L).renderPass(renderPass).framebuffer(framebuffer)
                     .renderArea(area);
             // The chain-pair pass clears its depth attachment, so it needs a clear value for it: the count must cover
             // the highest attachment index with a CLEAR load op (VUID-VkRenderPassBeginInfo-clearValueCount-00902,
