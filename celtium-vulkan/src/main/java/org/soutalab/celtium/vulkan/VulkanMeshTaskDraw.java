@@ -117,9 +117,14 @@ public final class VulkanMeshTaskDraw {
             LongBuffer handle = stack.mallocLong(1);
             VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(4, stack);
             for (int i = 0; i < 4; i++) {
+                // Binding 1 (the draw table) is also read by the mesh stage - it resolves
+                // the payload's entry range there (stage 3, terrain_section.mesh) - so its
+                // flags name both stages; the other three are the task stage's alone.
+                int stageFlags = EXTMeshShader.VK_SHADER_STAGE_TASK_BIT_EXT
+                        | (i == 1 ? EXTMeshShader.VK_SHADER_STAGE_MESH_BIT_EXT : 0);
                 bindings.get(i).binding(i).descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
                         .descriptorCount(1)
-                        .stageFlags(EXTMeshShader.VK_SHADER_STAGE_TASK_BIT_EXT);
+                        .stageFlags(stageFlags);
             }
             VkDescriptorSetLayoutCreateInfo setInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack)
                     .sType$Default().pBindings(bindings);
@@ -149,9 +154,11 @@ public final class VulkanMeshTaskDraw {
     }
 
     /**
-     * Records the stage-2 task draw for one pass of one frame into {@code commandBuffer},
-     * which the caller must be recording outside any render pass (the pass-head seat the
-     * compute generation also uses). Uploads this frame's directory, remap and mask into
+     * Records the stage-2 task draw for one pass of one frame into {@code commandBuffer}.
+     * Seat note (stage 3): the draw is a graphics-pipeline draw, so the recording must be
+     * inside the pass' render pass - {@link VulkanMeshStage2Pipeline#recordPassHead},
+     * the stage-3 caller, records it there; the "pass head" is the head of the pass'
+     * in-render-pass recording, not a pre-pass seat. Uploads this frame's directory, remap and mask into
      * the slot first; the table is bound from {@code tableBuffer}, the E10 slot's handle,
      * whose contents the caller has already uploaded for the same frame.
      *
