@@ -925,8 +925,10 @@ public final class CeltiumGlStub implements FunctionProvider {
      * are anonymous. Recorded rather than no-opped for the same reason the buffer storage is mirrored: a draw that
      * arrives without it cannot be decoded, and guessing a layout would submit the wrong bytes rather than none.
      */
-    private volatile int vertexPointerSize, vertexPointerType, vertexPointerStride;
-    private volatile long vertexPointerOffset;
+    // GAP-ST-8 rewired: the legacy vertex-pointer tuple lives in GlsmClientArrayState
+    // (clientPointer(GL_VERTEX_ARRAY)); VERTEX_POINTER below is that live record.
+    private static final GlsmClientArrayState.Pointer VERTEX_POINTER =
+            GlsmClientArrayState.current().clientPointer(0x8074, true);
     /** The split client arrays, for the stride-48 repack; a normal is recorded but never drawn. */
     private volatile int texCoordPointerSize, texCoordPointerType, texCoordPointerStride;
     private volatile long texCoordPointerOffset;
@@ -1965,14 +1967,15 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static void celtium$bindRenderbuffer(int target, int renderbuffer) {
         CeltiumGlStub stub = installed;
         if (stub != null) {
-            stub.boundRenderbuffer = renderbuffer;
+            GlsmClientArrayState.current().bindRenderbuffer(renderbuffer);
         }
     }
 
     public static void celtium$renderbufferStorage(int width, int height) {
         CeltiumGlStub stub = installed;
-        if (stub != null && stub.boundRenderbuffer > 0 && width > 0 && height > 0) {
-            stub.renderbufferDims.put(stub.boundRenderbuffer, new int[] {width, height});
+        if (stub != null && GlsmClientArrayState.current().boundRenderbuffer() > 0 && width > 0 && height > 0) {
+            GlsmClientArrayState.current().renderbufferStorage(
+                    GlsmClientArrayState.current().boundRenderbuffer(), width, height);
         }
     }
 
@@ -1982,7 +1985,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null || out == 0L) {
             return;
         }
-        int[] dims = stub.renderbufferDims.get(stub.boundRenderbuffer);
+        int[] dims = GlsmClientArrayState.current().renderbufferSize(GlsmClientArrayState.current().boundRenderbuffer());
         int value = 0;
         if (dims != null) {
             if (pname == 0x8D42) {
@@ -2488,9 +2491,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return;
         }
-        GlsmAttribStacks.current().pushClient(new long[] {stub.vertexPointerSize, stub.vertexPointerType,
-                stub.vertexPointerStride, stub.vertexPointerOffset, GlsmEnableState.current().enabled(0x8074) ? 1 : 0,
-                stub.vertexPointerNormalized ? 1L : 0L, stub.vertexPointerInteger ? 1L : 0L});
+        GlsmAttribStacks.current().pushClient(new long[] {VERTEX_POINTER.size, VERTEX_POINTER.type,
+                VERTEX_POINTER.stride, VERTEX_POINTER.offset, GlsmEnableState.current().enabled(0x8074) ? 1 : 0,
+                VERTEX_POINTER.normalized ? 1L : 0L, VERTEX_POINTER.integer ? 1L : 0L});
     }
 
     public static void celtium$popClientAttrib() {
@@ -2502,21 +2505,21 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (saved == null) {
             return;
         }
-        stub.vertexPointerSize = (int) saved[0];
-        stub.vertexPointerType = (int) saved[1];
-        stub.vertexPointerStride = (int) saved[2];
-        stub.vertexPointerOffset = saved[3];
+        VERTEX_POINTER.size = (int) saved[0];
+        VERTEX_POINTER.type = (int) saved[1];
+        VERTEX_POINTER.stride = (int) saved[2];
+        VERTEX_POINTER.offset = saved[3];
         GlsmEnableState.current().set(0x8074, saved[4] != 0);
-        stub.vertexPointerNormalized = saved.length > 5 && saved[5] != 0L;
-        stub.vertexPointerInteger = saved.length > 6 && saved[6] != 0L;
+        VERTEX_POINTER.normalized = saved.length > 5 && saved[5] != 0L;
+        VERTEX_POINTER.integer = saved.length > 6 && saved[6] != 0L;
         // The restored pointer is attribute 0's record too; the two views of it must not drift apart.
         VaoAttrib attrib = stub.boundAttribs()[0];
-        attrib.size = stub.vertexPointerSize;
-        attrib.type = stub.vertexPointerType;
-        attrib.stride = stub.vertexPointerStride;
-        attrib.offset = stub.vertexPointerOffset;
-        attrib.normalized = stub.vertexPointerNormalized;
-        attrib.integer = stub.vertexPointerInteger;
+        attrib.size = VERTEX_POINTER.size;
+        attrib.type = VERTEX_POINTER.type;
+        attrib.stride = VERTEX_POINTER.stride;
+        attrib.offset = VERTEX_POINTER.offset;
+        attrib.normalized = VERTEX_POINTER.normalized;
+        attrib.integer = VERTEX_POINTER.integer;
         attrib.pointerSet = true;
     }
 
@@ -2527,10 +2530,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         return bound < 0 ? 0 : bound;
     }
 
-    /** Bound renderbuffer name and its recorded extent. */
-    int boundRenderbuffer;
-    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]> renderbufferDims =
-            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]>();
+    // GAP-ST-8: the bound renderbuffer and its recorded extent are GlsmClientArrayState's too.
 
     /** The generic vertex attributes one VAO record carries; GL guarantees at least sixteen. */
     private static final int MAX_VERTEX_ATTRIBS = 16;
@@ -2586,12 +2586,12 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** Copies attribute 0's record into the legacy single-pointer fields the client-array paths read. */
     private void celtium$noteAttribZero() {
         VaoAttrib position = boundAttribs()[0];
-        this.vertexPointerSize = position.size;
-        this.vertexPointerType = position.type;
-        this.vertexPointerStride = position.stride;
-        this.vertexPointerOffset = position.offset;
-        this.vertexPointerNormalized = position.normalized;
-        this.vertexPointerInteger = position.integer;
+        VERTEX_POINTER.size = position.size;
+        VERTEX_POINTER.type = position.type;
+        VERTEX_POINTER.stride = position.stride;
+        VERTEX_POINTER.offset = position.offset;
+        VERTEX_POINTER.normalized = position.normalized;
+        VERTEX_POINTER.integer = position.integer;
     }
 
     /** {@code glVertexAttribIPointer}: recorded per attribute like the float form; the decode refuses integer types. */
@@ -2654,20 +2654,18 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Whether the generic attribute pointer asked for normalization, and whether it is an integer attribute. */
-    private boolean vertexPointerNormalized;
-    private boolean vertexPointerInteger;
 
     /** Records the client vertex-array pointer, as the stub's own {@code glVertexPointer} case does. */
     public static void celtium$vertexPointer(int size, int type, int stride, long pointer) {
         CeltiumGlStub stub = installed;
         if (stub != null) {
-            stub.vertexPointerSize = size;
-            stub.vertexPointerType = type;
-            stub.vertexPointerStride = stride;
-            stub.vertexPointerOffset = pointer;
+            VERTEX_POINTER.size = size;
+            VERTEX_POINTER.type = type;
+            VERTEX_POINTER.stride = stride;
+            VERTEX_POINTER.offset = pointer;
             // The legacy pointer is a float, unnormalized attribute: both generic flags reset with it.
-            stub.vertexPointerNormalized = false;
-            stub.vertexPointerInteger = false;
+            VERTEX_POINTER.normalized = false;
+            VERTEX_POINTER.integer = false;
             // The same fact in the VAO's per-attribute record, so a VAO swap cannot resurrect an older pointer.
             VaoAttrib attrib = stub.boundAttribs()[0];
             attrib.size = size;
@@ -5511,10 +5509,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                 // GL keeps one client vertex-array pointer; the last glVertexPointer wins, exactly as it does in a
                 // driver. The pointer is a byte offset into the bound array buffer (GL_ARRAY_BUFFER) - the value the
                 // game passes when a buffer is bound, which is the only case drawArrays() decodes.
-                this.vertexPointerSize = (int) c[0];
-                this.vertexPointerType = (int) c[1];
-                this.vertexPointerStride = (int) c[2];
-                this.vertexPointerOffset = c[3];
+                VERTEX_POINTER.size = (int) c[0];
+                VERTEX_POINTER.type = (int) c[1];
+                VERTEX_POINTER.stride = (int) c[2];
+                VERTEX_POINTER.offset = c[3];
                 VaoAttrib pointerAttrib = boundAttribs()[0];
                 pointerAttrib.size = (int) c[0];
                 pointerAttrib.type = (int) c[1];
@@ -6150,9 +6148,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                     }
                 }
                 if (renderbuffers) {
-                    this.renderbufferDims.remove(name);
-                    if (this.boundRenderbuffer == name) {
-                        this.boundRenderbuffer = 0;
+                    GlsmClientArrayState.current().removeRenderbufferSize(name);
+                    if (GlsmClientArrayState.current().boundRenderbuffer() == name) {
+                        GlsmClientArrayState.current().bindRenderbuffer(0);
                     }
                 }
                 if (textures) {
@@ -7467,13 +7465,13 @@ public final class CeltiumGlStub implements FunctionProvider {
         PARTICLE_UV_LINES.incrementAndGet();
         StringBuilder uvs = new StringBuilder();
         for (int i = 0; i < 4 && i < count; i++) {
-            long at = address + (long) i * this.vertexPointerStride + 12L;
+            long at = address + (long) i * VERTEX_POINTER.stride + 12L;
             float u = MemoryUtil.memGetFloat(at);
             float v = MemoryUtil.memGetFloat(at + 4L);
             uvs.append(i == 0 ? "" : " ").append('(').append(celtium$round3(u)).append(',').append(celtium$round3(v))
                     .append(") cell=").append(Math.round(u * 16.0f)).append(',').append(Math.round(v * 16.0f));
         }
-        System.out.println("[Celtium] CELTIUM_PARTICLE_UV count=" + count + " stride=" + this.vertexPointerStride
+        System.out.println("[Celtium] CELTIUM_PARTICLE_UV count=" + count + " stride=" + VERTEX_POINTER.stride
                 + " uvs=[" + uvs + "]");
     }
 
@@ -7996,11 +7994,11 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         GlDrawCensus.DrawElementCensus.CALLS.incrementAndGet();
-        int stride = this.vertexPointerStride;
-        if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT
+        int stride = VERTEX_POINTER.stride;
+        if (VERTEX_POINTER.size != 3 || VERTEX_POINTER.type != GL_FLOAT
                 || (stride != 12 && stride != 16 && stride != 20 && stride != 24 && stride != 32)) {
-            GlDrawCensus.celtium$noteDrawElementRefusal("vertex pointer size=" + this.vertexPointerSize + " type=0x"
-                    + Integer.toHexString(this.vertexPointerType) + " stride=" + stride
+            GlDrawCensus.celtium$noteDrawElementRefusal("vertex pointer size=" + VERTEX_POINTER.size + " type=0x"
+                    + Integer.toHexString(VERTEX_POINTER.type) + " stride=" + stride
                     + " is not a float3 layout this decode serves");
             GlDrawCensus.celtium$reportDrawElements();
             return;
@@ -8038,7 +8036,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         int vertexCapacity;
         if (clientVertices) {
             // No array buffer bound: the pointer glVertexPointer was given is a client address, the legacy spelling.
-            vertexBase = this.vertexPointerOffset;
+            vertexBase = VERTEX_POINTER.offset;
             if (vertexBase == 0L) {
                 GlDrawCensus.celtium$noteDrawElementRefusal(
                         "the client vertex pointer is null, so there is no vertex array to read");
@@ -8048,7 +8046,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         } else {
             int logicalVertexSize = bound != null ? vertices.capacity()
                     : this.logicalSizeOf(boundName, vertices.capacity());
-            long offset = this.vertexPointerOffset;
+            long offset = VERTEX_POINTER.offset;
             if (offset < 0L || offset > logicalVertexSize) {
                 GlDrawCensus.celtium$noteDrawElementRefusal("the vertex pointer offset " + offset + " is outside the "
                         + logicalVertexSize + "-byte buffer");
@@ -8237,10 +8235,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         // repackPaddedTexColor on the first run where the projection guard stopped refusing these draws).
         this.drawClientMemory = clientMemory;
         this.texColorRepackArmed = false;
-        long offset = this.vertexPointerOffset;
+        long offset = VERTEX_POINTER.offset;
         // A stride of 0 is GL's tightly-packed spelling: the attribute's own size in floats, not a stride of zero.
-        int pointerStride = this.vertexPointerStride != 0 ? this.vertexPointerStride
-                : this.vertexPointerType == GL_FLOAT ? this.vertexPointerSize * 4 : this.vertexPointerStride;
+        int pointerStride = VERTEX_POINTER.stride != 0 ? VERTEX_POINTER.stride
+                : VERTEX_POINTER.type == GL_FLOAT ? VERTEX_POINTER.size * 4 : VERTEX_POINTER.stride;
         long end = 0L;
         long asked = 0L;
         int formatId = 0;
@@ -8262,9 +8260,9 @@ public final class CeltiumGlStub implements FunctionProvider {
             GlDrawCensus.DRAWARRAY_EMPTY.incrementAndGet();
             celtium$reportDrawArrays();
             return;
-        } else if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT) {
-            reason = "vertex pointer size=" + this.vertexPointerSize + " type=0x"
-                    + Integer.toHexString(this.vertexPointerType)
+        } else if (VERTEX_POINTER.size != 3 || VERTEX_POINTER.type != GL_FLOAT) {
+            reason = "vertex pointer size=" + VERTEX_POINTER.size + " type=0x"
+                    + Integer.toHexString(VERTEX_POINTER.type)
                     + " is not the float3 position every layout this path decodes uses";
         } else {
             String[] layoutRefusal = new String[1];
@@ -8491,8 +8489,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                                 + " col0..col3=[" + colours + "]"
                                 + " uv0..uv3=[" + uvs + "]"
                                 + " buffer=" + buffer + " clientMemory=" + clientMemory + " pointerOffset=" + offset
-                                + " pointerSize=" + this.vertexPointerSize + " pointerType=0x"
-                                + Integer.toHexString(this.vertexPointerType) + " pointerStride="
+                                + " pointerSize=" + VERTEX_POINTER.size + " pointerType=0x"
+                                + Integer.toHexString(VERTEX_POINTER.type) + " pointerStride="
                                 + stride + " otherArrays=" + celtium$otherArrayNames()
                                 + " v0..v3=[" + vertices + "] "
                                 + celtium$mirroredMatrices(backend)
@@ -8543,7 +8541,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         System.out.println("[Celtium] CELTIUM_DRAWARRAY_REFUSAL_CONTEXT drawFbo=" + this.drawFbo
                 + " readFbo=" + this.readFbo
                 + " viewport=" + GlsmViewportState.current().width() + "x" + GlsmViewportState.current().height()
-                + " stride=" + this.vertexPointerStride
+                + " stride=" + VERTEX_POINTER.stride
                 + " otherArrays=" + celtium$otherArrayNames()
                 + " reason=" + shortReason
                 + " site=[" + celtium$callSite(8) + "]");
@@ -9231,13 +9229,13 @@ public final class CeltiumGlStub implements FunctionProvider {
                 || !org.soutalab.celtium.vulkan.VulkanDiagnostics.withinLimit(CLIENT_TUPLES.size(), 12)) {
             return;
         }
-        String key = this.vertexPointerStride + "/" + formatId + "/" + celtium$otherArrayMask();
+        String key = VERTEX_POINTER.stride + "/" + formatId + "/" + celtium$otherArrayMask();
         if (!CLIENT_TUPLES.add(key)) {
             return;
         }
-        System.out.println("[Celtium] CELTIUM_CLIENT_ARRAY stride=" + this.vertexPointerStride
+        System.out.println("[Celtium] CELTIUM_CLIENT_ARRAY stride=" + VERTEX_POINTER.stride
                 + " format=" + formatId + " otherArrays=" + celtium$otherArrayNames()
-                + " count=" + count + " pointer=0x" + Long.toHexString(this.vertexPointerOffset)
+                + " count=" + count + " pointer=0x" + Long.toHexString(VERTEX_POINTER.offset)
                 + " readableRanges=" + readableMappingRanges
                 + " mappingFailure=" + readableMappingFailure
                 + " site=[" + celtium$callSite(8) + "]");
