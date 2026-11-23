@@ -21,6 +21,9 @@ public final class GlsmClientArrayState {
         public long offset;
         public int buffer;
         public boolean enabled;
+        /** The legacy vertex pointer's normalised/integer spellings (the stub record carries both). */
+        public boolean normalized;
+        public boolean integer;
     }
 
     private static final GlsmClientArrayState CURRENT = new GlsmClientArrayState();
@@ -75,6 +78,8 @@ public final class GlsmClientArrayState {
     public void bindRenderbuffer(int name) { this.boundRenderbuffer = name; this.version++; }
 
     public int boundRenderbuffer() { return this.boundRenderbuffer; }
+
+    public void removeRenderbufferSize(int name) { this.renderbufferSizes.remove(name); this.version++; }
 
     public void renderbufferStorage(int name, int width, int height) {
         this.renderbufferSizes.put(name, new int[] {width, height});
