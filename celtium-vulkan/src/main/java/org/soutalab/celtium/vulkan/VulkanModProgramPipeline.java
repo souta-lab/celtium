@@ -280,6 +280,16 @@ public final class VulkanModProgramPipeline {
             new java.util.WeakHashMap<>();
     /** The epoch the shared per-frame buffer was last packed for. */
     private static long sharedPerFrameEpoch = Long.MIN_VALUE;
+    /**
+     * This pipeline's last offer to the harvester: the program, its epoch, its lowering and its
+     * PER_FRAME bucket version at the offer. A repeat offer with all four unchanged - the common
+     * case, one per region claim in a pass - is a proven no-op and skips the walk (see
+     * {@link #harvestPerFrame}).
+     */
+    private ModProgramRegistry.Program lastHarvestProgram;
+    private long lastHarvestEpoch = Long.MIN_VALUE;
+    private ModGlslTranslator.Result lastHarvestLowering;
+    private long lastHarvestPerFrameVersion = Long.MIN_VALUE;
 
     private VulkanModProgramPipeline(VulkanContext context, List<ModGlslTranslator.Attribute> attributes,
                                      List<ModGlslTranslator.SamplerBinding> samplers,
@@ -1401,7 +1411,29 @@ public final class VulkanModProgramPipeline {
      * the program block's own rule.
      */
     private void harvestPerFrame(ModProgramRegistry.Program program, long epoch) {
+        // The claim path calls this once per region, but the harvest walk's outcome depends only
+        // on the offering program's PER_FRAME values: while the program, its lowering and its
+        // PER_FRAME bucket version are unchanged since this pipeline's last offer - and the
+        // shared block is already packed for the epoch - a repeat offer can neither add a member
+        // to the harvest nor count a new divergence, because every write to a PER_FRAME member
+        // advances that bucket's version, and only when a component's bits actually change. The
+        // walk is therefore skipped outright on a repeat offer. One honest accounting change: a
+        // divergence is now counted once per distinct offer instead of once per region claim -
+        // the census reads the count as "the guest broke cross-program equality", which the
+        // per-claim repetition only inflated.
+        if (epoch == sharedPerFrameEpoch
+                && program == this.lastHarvestProgram
+                && epoch == this.lastHarvestEpoch
+                && program.lowered() == this.lastHarvestLowering
+                && program.bucketVersion(GlsmPackState.Bucket.PER_FRAME)
+                        == this.lastHarvestPerFrameVersion) {
+            return;
+        }
         java.util.Map<String, float[]> harvested = GlsmPackState.harvest(program, epoch);
+        this.lastHarvestProgram = program;
+        this.lastHarvestEpoch = epoch;
+        this.lastHarvestLowering = program.lowered();
+        this.lastHarvestPerFrameVersion = program.bucketVersion(GlsmPackState.Bucket.PER_FRAME);
         if (epoch == sharedPerFrameEpoch) {
             return;
         }
