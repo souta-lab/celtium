@@ -69,9 +69,10 @@ class GpuTerrainDrawTableTest {
         assertEquals(4, table.entries[2].sectionX);
         assertEquals(5, table.remap[regionB]);
         assertEquals(3, table.remap[regionA]);
-        // Every collected region's mask bit is set.
+        // Every collected region's mask bit is set (past the segment header words).
         for (int dict = 0; dict < 2; dict++) {
-            assertTrue((table.maskWords[dict >>> 5] & (1 << (dict & 31))) != 0);
+            assertTrue((table.maskWords[GpuTerrainDrawTable.MASK_HEADER_WORDS + (dict >>> 5)]
+                    & (1 << (dict & 31))) != 0);
         }
     }
 

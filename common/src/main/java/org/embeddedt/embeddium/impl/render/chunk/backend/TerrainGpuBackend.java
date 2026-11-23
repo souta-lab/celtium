@@ -6,6 +6,7 @@ import org.embeddedt.embeddium.impl.render.chunk.RenderSectionManager;
 import org.embeddedt.embeddium.impl.render.chunk.compile.ChunkTaskOutput;
 import org.embeddedt.embeddium.impl.render.chunk.compile.executor.ChunkJobResult;
 import org.embeddedt.embeddium.impl.render.chunk.lists.ChunkRenderListIterable;
+import org.embeddedt.embeddium.impl.render.chunk.occlusion.SectionLattice;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.embeddedt.embeddium.impl.render.viewport.CameraTransform;
 
@@ -27,6 +28,21 @@ public interface TerrainGpuBackend {
      */
     void render(ChunkRenderMatrices matrices, ChunkRenderListIterable renderLists, TerrainRenderPass pass,
                 CameraTransform occlusionCamera, CameraTransform camera, Object view, boolean profile);
+
+    /**
+     * Tells the backend which search produced the lists it is about to draw: that search's visibility
+     * snapshot, the frame the snapshot's stamps are read against, and the search distance in blocks.
+     * Called by the section manager once per render layer, immediately before {@link #render}, with the
+     * values of the render list manager whose lists are being drawn, so the three always belong to the
+     * same search as those lists.
+     * <p>
+     * The default ignores the context: a backend that makes no use of the culler's visible set outside
+     * the lists themselves needs none of it. The Vulkan backend's GPU-culling census is the first
+     * consumer (E10-b preparation): the snapshot is the occlusion mask's supply and the distance is the
+     * visibility test's limit, replacing the census's property-supplied stand-ins.
+     */
+    default void noteSearchContext(SectionLattice.VisibilitySnapshot snapshot, int visibleFrame, float searchDistance) {
+    }
 
     // ---------------------------------------------------------------- immediate-mode drawing (Forge API swap)
 

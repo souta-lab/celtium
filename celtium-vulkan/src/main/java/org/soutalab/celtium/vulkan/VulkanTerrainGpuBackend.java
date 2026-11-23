@@ -23,6 +23,7 @@ import org.embeddedt.embeddium.impl.render.chunk.lists.ChunkRenderList;
 import org.embeddedt.embeddium.impl.render.chunk.lists.ChunkRenderListIterable;
 import org.embeddedt.embeddium.impl.render.chunk.multidraw.BatchAssembler;
 import org.embeddedt.embeddium.impl.render.chunk.multidraw.CachedBatch;
+import org.embeddedt.embeddium.impl.render.chunk.occlusion.SectionLattice;
 import org.embeddedt.embeddium.impl.render.chunk.region.RenderRegion;
 import org.embeddedt.embeddium.impl.render.chunk.region.RenderRegionManager;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
@@ -2682,6 +2683,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** The frame's view-projection matrix for the census, computed once per frame on first use. */
     private float[] gpuTerrainCensusVp;
     private long gpuTerrainCensusVpFrame = -1L;
+    /**
+     * The search context most recently noted through {@link #noteSearchContext} (E10-b
+     * preparation): held here so a census created later in the frame still receives the
+     * context of the lists being drawn, and forwarded to the census whenever it exists.
+     */
+    private SectionLattice.VisibilitySnapshot celtium$censusSnapshot;
+    private int celtium$censusSnapshotFrame;
+    private float celtium$censusSearchDistance;
     /** Whether the E10 gate line for the main-flag-only configuration has been printed. */
     private boolean gpuTerrainGatePrinted;
     /** One {@code VkDrawIndexedIndirectCommand}: indexCount, instanceCount, firstIndex, vertexOffset, firstInstance. */
@@ -18078,6 +18087,25 @@ this.frameBufferOpen = false;
     }
 
     /**
+     * E10-b preparation: the search context of the lists about to be drawn, noted by the
+     * section manager once per render layer. Stored on the backend and forwarded to the
+     * census, which captures it into the frame collection it opens during this frame's
+     * recording — the mask supply and the distance limit of the census's visibility test
+     * (design sections 3.4 and 5). Costs nothing while the census flag is off: three field
+     * writes and a null check.
+     */
+    @Override
+    public void noteSearchContext(SectionLattice.VisibilitySnapshot snapshot, int visibleFrame,
+                                  float searchDistance) {
+        this.celtium$censusSnapshot = snapshot;
+        this.celtium$censusSnapshotFrame = visibleFrame;
+        this.celtium$censusSearchDistance = searchDistance;
+        if (this.gpuTerrainCensus != null) {
+            this.gpuTerrainCensus.noteContext(snapshot, visibleFrame, searchDistance);
+        }
+    }
+
+    /**
      * E10-a census plumbing (item 723): once per frame, at a pass head — before this pass'
      * render pass opens, which is where the census' compute dispatch and timestamps may be
      * recorded — the finished frame's collection is dispatched and the slot's older result
@@ -18106,6 +18134,8 @@ this.frameBufferOpen = false;
         try {
             if (this.gpuTerrainCensus == null) {
                 this.gpuTerrainCensus = new VulkanGpuTerrainCensus(this.context);
+                this.gpuTerrainCensus.noteContext(this.celtium$censusSnapshot,
+                        this.celtium$censusSnapshotFrame, this.celtium$censusSearchDistance);
             }
             if (this.commandBuffer != null) {
                 this.gpuTerrainCensus.rollover(this.commandBuffer, this.frameSlot);
