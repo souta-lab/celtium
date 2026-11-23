@@ -81,11 +81,13 @@ public final class GlDrawWindowCensus {
     public static final int CAUSE_SIZE = 11;
     /** The raw-write sample gate inside a batch submission, and the raw-write application's own flush. */
     public static final int CAUSE_RAW_WRITE_GATE = 12;
+    /** The pack terrain pass head's ordering flush (alpha-optifine-ordering), behind its own switch. */
+    public static final int CAUSE_PACK_ORDER = 13;
 
     static final String[] CAUSE_NAMES = {
             "other", "bind-framebuffer-main", "bind-framebuffer-target", "bind-framebuffer-raw",
             "texture-announce", "texture-lifetime", "batch-submit", "copy-order",
-            "replay-offtarget", "clear-order", "refusal-order", "size", "raw-write-gate"};
+            "replay-offtarget", "clear-order", "refusal-order", "size", "raw-write-gate", "pack-order"};
 
     private static final Ledger LEDGER = new Ledger();
 

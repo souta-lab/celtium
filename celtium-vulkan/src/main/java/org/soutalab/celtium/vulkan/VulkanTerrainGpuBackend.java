@@ -396,6 +396,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     private static final boolean PACK_SHADOW_REBUILD_BUDGET =
             Boolean.getBoolean("celtium.vulkan.packShadowRebuildBudget");
+    /**
+     * The pack route's pass-head ordering rule (alpha-optifine-ordering): when on, a committed pack
+     * terrain execution first runs the ordering flush for the stage's bound target, so the draws the
+     * guest already issued for that target - sky before the SOLID stage, the deferred chain before
+     * the translucent stage - are recorded before this stage's terrain, in the guest's own order.
+     * The pack route records natively and passes no GL draw entrance, so without the rule those
+     * groups reach the image only at the next stub boundary, after this stage's terrain; the
+     * world-to-GUI, copy and present boundaries already restore the order the same way. The flush's
+     * own target filter keeps other targets' groups queued, so the rule never widens into the
+     * all-target drain that was reverted (e87aa0ec1). Off by default - the drain is then never
+     * consulted from this path and the queue behaves exactly as before.
+     */
+    private static final boolean PACK_PASS_HEAD_ORDER_DRAIN =
+            Boolean.getBoolean("celtium.vulkan.packPassHeadOrderDrain");
+    private long packOrderDrainCalls;
+    private long packOrderDrainGroups;
+    private int packOrderDrainLogs;
     private int packTerrainDrawnLogs;
     private int packTerrainRefusedLogs;
     private int packTerrainHandoffLogs;
@@ -17402,6 +17419,29 @@ this.frameBufferOpen = false;
             // stages' record file under separate names, so a terrainRecord spike names its owner.
             shadowStage = DemonicaTerrainBridge.shadowsBeingRendered();
             packStageBracket = shadowStage ? "packRecordShadow" : "packRecordGbuffers";
+            if (PACK_PASS_HEAD_ORDER_DRAIN
+                    && (this.currentImmediateMesh != null || !this.immediateGroups.isEmpty())) {
+                // alpha-optifine-ordering: the pass-head ordering rule (see the switch). The drain is
+                // deliberately outside the stage bracket below - its window is the previous stage's
+                // leftover, not this stage's record cost - and it is counted only when it drew, on the
+                // endWorldPassFlush discipline: a call that found nothing for this target, or returned
+                // early, must not read as a handoff.
+                int pendingBefore = this.immediateGroups.size();
+                this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
+                celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_PACK_ORDER);
+                int drained = pendingBefore - this.immediateGroups.size();
+                if (drained > 0) {
+                    this.packOrderDrainCalls++;
+                    this.packOrderDrainGroups += drained;
+                    if (this.packOrderDrainLogs < 8) {
+                        this.packOrderDrainLogs++;
+                        System.out.println("[Celtium] CELTIUM_PACK_ORDER_DRAIN stage="
+                                + (shadowStage ? "shadow" : "gbuffers")
+                                + " pass=" + pass.name() + " groups=" + drained
+                                + " frame=" + this.frameId);
+                    }
+                }
+            }
             org.soutalab.celtium.vulkan.FramePassTimings.begin(packStageBracket);
             var vertexType = this.configuration.getVertexTypeForPass(pass);
             var vertexFormat = vertexType == null ? null : vertexType.getVertexFormat();
