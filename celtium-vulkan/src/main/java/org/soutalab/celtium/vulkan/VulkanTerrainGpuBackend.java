@@ -17042,6 +17042,14 @@ this.frameBufferOpen = false;
 
     public void delete() {
         this.presentSwapchain.freeCachedWindowBegin();
+        if (this.cachedTerrainBegin != null) {
+            this.cachedTerrainBegin.free();
+            this.cachedTerrainBegin = null;
+        }
+        if (this.cachedTerrainBeginArea != null) {
+            this.cachedTerrainBeginArea.free();
+            this.cachedTerrainBeginArea = null;
+        }
         if (this.groupViewportScratch != null) {
             this.groupViewportScratch.free();
             this.groupViewportScratch = null;
@@ -19574,11 +19582,7 @@ this.frameBufferOpen = false;
             }
         }
         org.soutalab.celtium.vulkan.FramePassTimings.end("prepRoute");
-        begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
-                .renderPass(renderPass)
-                .framebuffer(terrainFramebuffer);
-        begin.renderArea().offset().set(0, 0);
-        begin.renderArea().extent().set(passAreaWidth, passAreaHeight);
+        begin = celtium$terrainBeginInfo(renderPass, terrainFramebuffer, passAreaWidth, passAreaHeight);
         timestampSlot = this.timestampsUsable && this.timestampSlots < WINDOW_SLOT_BASE
                 ? this.timestampSlots : -1;
         gpuMark("terrain-begin");
@@ -21899,6 +21903,58 @@ this.frameBufferOpen = false;
 
 
 
+
+    /** The terrain begin struct reused across passes, in the window cache's shape; see below. */
+    private org.lwjgl.vulkan.VkRenderPassBeginInfo cachedTerrainBegin;
+    private org.lwjgl.vulkan.VkRect2D cachedTerrainBeginArea;
+    private long cachedTerrainBeginPass;
+    private long cachedTerrainBeginFramebuffer;
+    private int cachedTerrainBeginWidth = -1;
+    private int cachedTerrainBeginHeight = -1;
+    private boolean cachedTerrainBeginValid;
+
+    /**
+     * {@return the terrain pass' render-pass begin info}, reusing the struct and its render area
+     * while the pass, the framebuffer and the extent stay the same.
+     * <p>
+     * The terrain bracket used to calloc a begin struct on the memory stack and refill it on every
+     * pass, although its four inputs change only when the routed target does - the same shape the
+     * window path's {@link #celtium$windowBeginInfo} cache already answers for its windows. The
+     * terrain pass attaches no clear values (its attachments load), so the cached struct names none,
+     * explicitly, where the stack calloc's zeroing used to say it implicitly. Compared field by
+     * field, not by a hash, for the window cache's reason.
+     */
+    private org.lwjgl.vulkan.VkRenderPassBeginInfo celtium$terrainBeginInfo(long renderPass, long framebuffer,
+                                                                              int width, int height) {
+        if (this.cachedTerrainBegin == null) {
+            // calloc, not malloc: the rebuild below writes every field of the begin info except pNext, and malloc
+            // memory is not zeroed, so a malloc'd struct handed the driver whatever the reused heap block last held
+            // as its pNext chain. A non-zero garbage pNext makes the driver walk a bogus extension chain inside
+            // vkCmdBeginRenderPass - the biyu_bu v0.3.2 crash (GTX 1650 Ti / 581.29, first splash flush at frame=0,
+            // nvoglv64.dll reading address -1) is that shape, and the window cache's fix (calloc + explicit
+            // pNext(0L)) is the shape this cache was copied from before that fix landed. The area rect is calloc'd
+            // for the same reason, even though both of its fields are rewritten: the cost is once per process, the
+            // failure mode is not worth re-deriving if a field is ever added.
+            this.cachedTerrainBegin = org.lwjgl.vulkan.VkRenderPassBeginInfo.calloc();
+            this.cachedTerrainBeginArea = org.lwjgl.vulkan.VkRect2D.calloc();
+            this.cachedTerrainBeginValid = false;
+        }
+        if (!this.cachedTerrainBeginValid || renderPass != this.cachedTerrainBeginPass
+                || framebuffer != this.cachedTerrainBeginFramebuffer
+                || width != this.cachedTerrainBeginWidth || height != this.cachedTerrainBeginHeight) {
+            org.lwjgl.vulkan.VkRect2D area = this.cachedTerrainBeginArea;
+            area.offset().set(0, 0);
+            area.extent().set(width, height);
+            this.cachedTerrainBegin.sType$Default().pNext(0L).renderPass(renderPass).framebuffer(framebuffer)
+                    .renderArea(area).clearValueCount(0).pClearValues(null);
+            this.cachedTerrainBeginPass = renderPass;
+            this.cachedTerrainBeginFramebuffer = framebuffer;
+            this.cachedTerrainBeginWidth = width;
+            this.cachedTerrainBeginHeight = height;
+            this.cachedTerrainBeginValid = true;
+        }
+        return this.cachedTerrainBegin;
+    }
 
     /** Counts one window opening against the frame that asked for it, printing the first few callers. */
     private void celtium$noteWindowOpenSite() {

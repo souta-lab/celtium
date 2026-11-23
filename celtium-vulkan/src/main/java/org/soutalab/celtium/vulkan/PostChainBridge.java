@@ -713,6 +713,16 @@ b.frameBufferOpen = false;
     private long[] cachedPairIdentities = new long[0];
 
     /**
+     * The chain-pair colour slot each cached name's image fills, resolved with the rest of the cache.
+     * <p>
+     * The walk used to re-resolve this per name per pass through
+     * {@code chainPairColorSlotForImage} - a pair lookup plus a slot scan - although the answer only
+     * changes when the pair generation changes, which is already part of the cache key (the same
+     * argument as {@link #cachedPairIdentities}). -1 for a name that fills no slot.
+     */
+    private int[] cachedPairSlots = new int[0];
+
+    /**
      * The shared depth store key each cached name stands for, 0 for a colour name, resolved with the rest of the
      * cache: the walk reports a depth wrapper's layout moves into the store under this key, and resolving it per
      * window would be the same per-name lookup the pair-identity cache exists to avoid.
@@ -865,6 +875,7 @@ b.frameBufferOpen = false;
         this.cachedWrappers = new VulkanGlTexture[size];
         this.cachedImages = new long[size];
         this.cachedPairIdentities = new long[size];
+        this.cachedPairSlots = new int[size];
         this.cachedDepthKeys = new long[size];
         for (int i = 0; i < size; i++) {
             int name = b.publishedTextures.publishedKeyAt(i);
@@ -875,6 +886,8 @@ b.frameBufferOpen = false;
             this.cachedImages[i] = image;
             this.cachedPairIdentities[i] = pairOwner == null || image == 0L
                     ? Long.MIN_VALUE : pairOwner.chainPairIdentityForImage(image);
+            this.cachedPairSlots[i] = pairOwner == null || this.cachedPairIdentities[i] == Long.MIN_VALUE
+                    ? -1 : pairOwner.chainPairColorSlotForImage(this.cachedPairIdentities[i], image);
             this.cachedDepthKeys[i] = b.publishedFrameDepthKeys.get(name);
         }
     }
@@ -892,16 +905,15 @@ b.frameBufferOpen = false;
     }
 
     /**
-     * Records a layout move in the pair that owns the image, at the slot the image fills: slot 0's record is
-     * the pair's own, a tuple slot's record is what that slot's acquire barrier reads as its source layout.
+     * Records a layout move in the pair that owns the image, at the slot the cache resolved for it:
+     * slot 0's record is the pair's own, a tuple slot's record is what that slot's acquire barrier
+     * reads as its source layout.
+     *
+     * @return whether the pair's record changed - a settled name (the record already names this
+     *         layout) writes nothing, and its caller skips the layout report for it too
      */
-    private void notePairColorLayout(GllessFrameTarget pairOwner, long identity, long image, int layout) {
-        int slot = pairOwner.chainPairColorSlotForImage(identity, image);
-        if (slot > 0) {
-            pairOwner.noteChainPairColorLayoutAt(identity, slot, layout);
-        } else if (slot == 0) {
-            pairOwner.noteChainPairColorLayout(identity, layout);
-        }
+    private boolean notePairColorLayout(GllessFrameTarget pairOwner, long identity, int slot, int layout) {
+        return pairOwner.noteChainPairColorLayoutAtSlotIfChanged(identity, slot, layout);
     }
 
     /**
@@ -1019,6 +1031,10 @@ b.frameBufferOpen = false;
             // vocabulary has no GENERAL in it, so the hand-back target comes from the same decision the report
             // below uses, with the owner's own attachment layout as the depth answer.
             long depthKey = this.cachedDepthKeys[cachedIndex];
+            int pairSlot = this.cachedPairSlots[cachedIndex];
+            // Whether this name's pair record actually moves below: a settled name writes nothing
+            // and earns no layout report (the report's summary cannot have changed through it).
+            boolean pairRecordChanged = false;
             if (general) {
                 if (depthKey != 0L) {
                     entryValue.ensureHandBackLayout(b.commandBuffer, celtium$publishedHandBackLayout(true, true,
@@ -1032,7 +1048,7 @@ b.frameBufferOpen = false;
                 // because the image is still in GENERAL and a record left at SHADER_READ_ONLY would be stale.
                 b.publishedTextures.noteSkippedForAttach();
                 if (pairOwner != null && publishedImageIdentity != Long.MIN_VALUE) {
-                    notePairColorLayout(pairOwner, publishedImageIdentity, publishedImageHandleValue,
+                    pairRecordChanged = notePairColorLayout(pairOwner, publishedImageIdentity, pairSlot,
                             org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
                 }
             } else {
@@ -1043,10 +1059,13 @@ b.frameBufferOpen = false;
             // skipped the transition and recorded GENERAL above, so writing SHADER_READ_ONLY_OPTIMAL here would
             // overwrite the true GENERAL layout with a stale sampling layout.
             if (general && pairOwner != null && publishedImageIdentity != Long.MIN_VALUE) {
-                notePairColorLayout(pairOwner, publishedImageIdentity, publishedImageHandleValue,
+                pairRecordChanged = notePairColorLayout(pairOwner, publishedImageIdentity, pairSlot,
                         celtium$publishedHandBackLayout(false, true, 0));
-                celtium$reportPairLayout("hand-back");
-            } else if (!general && pairOwner != null && publishedImageIdentity != Long.MIN_VALUE) {
+                if (pairRecordChanged) {
+                    celtium$reportPairLayout("hand-back");
+                }
+            } else if (!general && pairOwner != null && publishedImageIdentity != Long.MIN_VALUE
+                    && pairRecordChanged) {
                 celtium$reportPairLayout("sampling");
             }
             // A depth publication's layout record is the shared depth store, not a pair, so the wrapper's move is
@@ -1060,7 +1079,23 @@ b.frameBufferOpen = false;
             // depth the binary synthesis wrote GENERAL on the hand-back side: a layout the depth owner never
             // uses, over an image the hand-back above moved to the owner's attachment layout (item 537 wall (c)).
             if (depthKey != 0L && pairOwner != null) {
-                pairOwner.noteSharedDepthLayout(depthKey, entryValue.foreignLayoutIn(b.commandBuffer));
+                // The destination is the value the transition above was told to reach, on both
+                // deterministic routes: the hand-back names DEPTH_RENDER_LAYOUT, the sampling side
+                // names the wrapper's sampling layout. Reading it back through foreignLayoutIn -
+                // a synchronized lookup over two shared maps - per depth name per pass bought
+                // nothing on those routes. The pair-name sampling route is the exception: it
+                // records no transition, so the image stays wherever it was, and only the read-back
+                // knows that value. The store write itself is skipped when it already names the
+                // destination (a settled depth name).
+                int depthDestination;
+                if (general) {
+                    depthDestination = GllessFrameTarget.DEPTH_RENDER_LAYOUT;
+                } else if (pairImageName) {
+                    depthDestination = entryValue.foreignLayoutIn(b.commandBuffer);
+                } else {
+                    depthDestination = entryValue.samplingLayout();
+                }
+                pairOwner.noteSharedDepthLayoutIfChanged(depthKey, depthDestination);
             }
         }
         if (!general && attachImages == null && PUBLISH_WALK_ONCE) {
