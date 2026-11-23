@@ -18691,7 +18691,7 @@ this.frameBufferOpen = false;
             // is drawn directly with the reason counted. BH-02's rule decides which source that is.
             boolean indirect = false;
             if (TERRAIN_INDIRECT_ENABLED) {
-                indirect = this.terrain.offerChainedBatch(this.context, this.commandBuffer, this.sharedIndexBuffers, resources, batch, sortedPass, primitiveType, regionIndex);
+                indirect = this.terrain.offerChainedBatch(this.context, this.commandBuffer, this.sharedIndexBuffers, resources, batch, sortedPass, primitiveType, regionIndex, pipeline);
             } else {
                 this.terrain.noteTerrainIndirectFallback();
                 this.terrain.setLastTerrainIndirectFallback("the indirect path is off (-Dceltium.vulkan.indirectTerrain)");

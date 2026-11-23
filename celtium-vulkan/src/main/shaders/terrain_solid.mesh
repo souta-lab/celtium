@@ -1,0 +1,317 @@
+#version 450
+#extension GL_EXT_mesh_shader : require
+
+// ============================================================================================
+// Celtium - native Vulkan terrain renderer - SOLID pass - MESH stage (item 652, stage 1).
+//
+// The proof form of the mesh-shader terrain path. It draws exactly what the indirect path
+// draws for the same batch - the same meshed data, the same triangles - by re-issuing the
+// batch's indirect draw records from the GPU side: one workgroup per quad, reading the
+// shared vertex arena and the shared quad index buffer as storage buffers and emitting the
+// quad's six indexed corners as two triangles. Nothing is culled here that the CPU did not
+// already cull when it assembled the batch, no vertex data is regenerated, and the fragment
+// stage is the ordinary terrain_solid.frag, whose inputs the per-vertex outputs below mirror
+// location for location. The point of this stage is only that the pipeline runs on a real
+// device and produces the same picture (design section 3, stage 1); the GPU-driven form
+// (task shaders issuing per section) is stage 2, a separate item.
+//
+// The per-vertex computation is a faithful port of terrain_solid.vert's main(): the same
+// unpack of the 24-byte COMPACT chunk vertex, the same region-offset read, the same lightmap
+// sample (textureLod at 0.0, which is what the vertex stage's texture() amounts to - a
+// non-fragment stage has no derivatives and samples the base level), the same dynamic-light
+// raise and the same shadow colour. Two substitutions only: gl_InstanceIndex is the record's
+// firstInstance (the value the indirect path stamps into the command, which the vertex stage
+// reads as its instance index), and gl_VertexIndex is the vertex id the index buffer names.
+//
+// --------------------------------------------------------------------------------------------
+// RESOURCE DESIGN
+// --------------------------------------------------------------------------------------------
+//   PUSH CONSTANTS - "PushConstants", 144 bytes:
+//       offset   0 : mat4 u_ProjectionMatrix     (same block the vertex stage reads)
+//       offset  64 : mat4 u_ModelViewMatrix
+//       offset 128 : uint u_FirstRecord          first record of this dispatch in binding 2
+//       offset 132 : uint u_RecordCount          records this dispatch covers
+//       offset 136 : uint u_Reserved0            (kept zero; the block is one struct)
+//       offset 140 : uint u_Reserved1
+//     The terrain pipeline layout's push range is the vertex stage's 128 bytes; this path has
+//     its own layout (VulkanMeshTerrain) whose range is the mesh stage's 144.
+//
+//   DESCRIPTOR SET 0: identical to terrain_solid.vert's set - binding 0 the solid uniforms,
+//   binding 1 the light map, binding 3 the dynamic light block, binding 5 the per-region
+//   offsets. The set itself is the pass' own, bound by the pass exactly as for the vertex
+//   path; only the pipeline changes.
+//
+//   DESCRIPTOR SET 1 (this path only, MESH stage):
+//     binding 0 : storage buffer "CeltiumVertexArena" - the shared vertex arena as uint
+//                 words; one COMPACT vertex is 6 words (24 bytes).
+//     binding 1 : storage buffer "CeltiumIndexArena" - the batch's index buffer as uint
+//                 indices (the shared quad index buffer for unsorted batches).
+//     binding 2 : storage buffer "CeltiumMeshRecords" - the batch's draw records, in the
+//                 VkDrawIndexedIndirectCommand layout (20 bytes each, std430 stride 20):
+//                 indexCount / instanceCount / firstIndex / vertexOffset / firstInstance.
+//
+//   WORKGROUP SHAPE: local size 1, one workgroup per quad. The workgroup finds its record by
+//   walking the dispatch's records and accumulating their quad counts (indexCount / 6) - a
+//   linear scan, chosen because a batch carries at most a few hundred records and this stage
+//   is a proof, not the optimised form. It emits the quad's six indexed corners as six
+//   vertices and two primitives, duplicating the shared corners: the indexed draw's two
+//   triangles read exactly the same six index values in the same order, so the emitted
+//   triangles are the drawn triangles whatever the quad pattern is.
+// ============================================================================================
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(triangles, max_vertices = 6, max_primitives = 2) out;
+
+// --------------------------------------------------------------------------------------------
+// Push constants - see the design block above.
+// --------------------------------------------------------------------------------------------
+layout(push_constant) uniform PushConstants {
+    mat4 u_ProjectionMatrix; // offset   0
+    mat4 u_ModelViewMatrix;  // offset  64
+    uint u_FirstRecord;      // offset 128
+    uint u_RecordCount;      // offset 132
+    uint u_Reserved0;        // offset 136
+    uint u_Reserved1;        // offset 140
+} pc;
+
+// --------------------------------------------------------------------------------------------
+// Descriptor set 0 - declarations identical to terrain_solid.vert.
+// --------------------------------------------------------------------------------------------
+layout(std140, set = 0, binding = 0) uniform CeltiumSolidUniforms {
+    vec4  u_RegionOffset;           // offset  0
+    vec4  u_FogColor;               // offset 16
+    float u_FogDensity;             // offset 32
+    float u_FogStart;               // offset 36
+    float u_FogEnd;                 // offset 40
+    float u_MipBiasAdd;             // offset 44
+    int   u_FogMode;                // offset 48
+    int   u_FogShape;               // offset 52
+    int   u_FragmentDiscardEnabled; // offset 56
+    int   u_ChunkFadeEnabled;       // offset 60
+    vec4  u_ChunkFadeParams;        // offset 64
+    int   u_SolidTerrain;           // offset 80 (fragment stage only)
+    int   u_ShadowEnabled;          // offset 84 item 537
+    float u_ShadowDarkness;         // offset 88
+    mat4  u_ShadowMatrix;           // offset 96
+} celtium;
+
+layout(std430, set = 0, binding = 5) readonly buffer CeltiumRegionOffsets {
+    vec4 u_RegionOffsets[];
+};
+
+layout(set = 0, binding = 1) uniform sampler2D u_LightTex;
+
+layout(std140, set = 0, binding = 3) uniform CeltiumDynamicLights {
+    vec4 u_DynamicLightInfo;  // offset  0: x = live source count (0..32), yzw = camera position (world)
+    vec4 u_DynamicLights[32]; // offset 16: xyz = camera-relative position, w = light level 0..15
+} dynLights;
+
+// --------------------------------------------------------------------------------------------
+// Descriptor set 1 - this path's own inputs (see the design block).
+// --------------------------------------------------------------------------------------------
+layout(std430, set = 1, binding = 0) readonly buffer CeltiumVertexArena {
+    uint u_VertexWords[];
+};
+
+layout(std430, set = 1, binding = 1) readonly buffer CeltiumIndexArena {
+    uint u_Indices[];
+};
+
+struct MeshDrawRecord {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int  vertexOffset;
+    uint firstInstance;
+};
+
+layout(std430, set = 1, binding = 2) readonly buffer CeltiumMeshRecords {
+    MeshDrawRecord u_Records[];
+};
+
+// --------------------------------------------------------------------------------------------
+// Varyings - per-vertex outputs; locations and types match terrain_solid.frag's inputs.
+// --------------------------------------------------------------------------------------------
+layout(location = 0) out vec4 v_Color[6];
+layout(location = 1) out vec4 v_RdhFactor[6];
+layout(location = 2) out vec2 v_QuadCoord[6];
+layout(location = 3) out vec2 v_TexCoord[6];
+layout(location = 4) out float v_FragDistance[6];
+layout(location = 5) flat out float v_MaterialMipBias[6];
+layout(location = 6) flat out float v_MaterialAlphaCutoff[6];
+layout(location = 7) out vec4 v_ShadowPos[6];
+layout(location = 8) out vec4 v_ShadowColor[6];
+
+// --------------------------------------------------------------------------------------------
+// Helpers - verbatim from terrain_solid.vert (the compression constants, the chunk material
+// table, the fog distance and the dynamic raise are the vertex stage's own, so the two stages
+// cannot drift apart in what they compute for a vertex).
+// --------------------------------------------------------------------------------------------
+const float VERT_POS_SCALE = 32.0 / 2097152.0; // exact power of two: 2^-16
+const float VERT_POS_OFFSET = -8.0;
+const float VERT_TEX_SCALE = 1.0 / 131072.0;   // exact power of two: 2^-17
+
+uvec3 _get_relative_chunk_coord(uint pos) {
+    // Packing scheme is defined by LocalSectionIndex
+    return uvec3(pos) >> uvec3(5u, 0u, 2u) & uvec3(7u, 3u, 7u);
+}
+
+vec3 _get_draw_translation(uint pos) {
+    return _get_relative_chunk_coord(pos) * vec3(16.0);
+}
+
+const uint MATERIAL_USE_MIP_OFFSET = 0u;
+const uint MATERIAL_ALPHA_CUTOFF_OFFSET = 1u;
+
+const float[4] ALPHA_CUTOFF = float[4](0.0, 0.1, 0.5, 1.0);
+
+float _material_mip_bias(uint material) {
+    return ((material >> MATERIAL_USE_MIP_OFFSET) & 1u) != 0u ? 0.0 : -4.0;
+}
+
+float _material_alpha_cutoff(uint material) {
+    return ALPHA_CUTOFF[(material >> MATERIAL_ALPHA_CUTOFF_OFFSET) & 3u];
+}
+
+const int FOG_SHAPE_SPHERICAL = 0;
+const int FOG_SHAPE_CYLINDRICAL = 1;
+const int FOG_SHAPE_PLANAR = 2;
+
+float getFragDistance(int fogShape, vec3 position) {
+    // Use the maximum of the horizontal and vertical distance to get cylindrical fog if fog shape is cylindrical
+    if (fogShape == FOG_SHAPE_CYLINDRICAL) {
+        return max(length(position.xz), abs(position.y));
+    } else {
+        return length(position);
+    }
+}
+
+vec4 _sample_lightmap(sampler2D lightMap, vec2 uv) {
+    // The vertex stage's texture() at LOD 0, written explicitly: a mesh stage has no implicit
+    // derivatives, and the half-texel centre expression is the vertex stage's own (see the
+    // comment there for why (uv + 8) / 256 with the 16-texel clamp is the right centre).
+    return textureLod(lightMap, clamp((vec2(uv) + 8.0) / 256.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)), 0.0);
+}
+
+float _dynamic_block_light(vec3 position) {
+    float level = 0.0;
+    int count = int(dynLights.u_DynamicLightInfo.x + 0.5);
+    // Both the sources and this vertex's position are camera-relative, so the position is used
+    // as-is (the vertex stage's comment on item 430 covers why the header camera is not
+    // subtracted a second time).
+    vec3 relativePosition = position;
+    for (int i = 0; i < 32; i++) {
+        if (i >= count) {
+            break;
+        }
+        vec4 source = dynLights.u_DynamicLights[i];
+        level = max(level, source.w - distance(relativePosition, source.xyz));
+    }
+    return level;
+}
+
+// --------------------------------------------------------------------------------------------
+// One vertex, computed exactly as terrain_solid.vert's main() computes it, from the arena
+// words of the 24-byte COMPACT vertex:
+//   word 0 : a_PosId x (low 16) | y (high 16)     word 3 : a_TexCoord (two u16)
+//   word 1 : a_PosId z (low 16) | w (high 16)     word 4 : a_LightCoord (u32)
+//   word 2 : a_Color (RGBA8 unorm)                word 5 : a_RdhFactor (RGBA8 snorm)
+// --------------------------------------------------------------------------------------------
+void emitVertex(int slot, uint vertexId, uint firstInstance) {
+    uint base = vertexId * 6u;
+    uvec4 a_PosId = uvec4(
+            u_VertexWords[base + 0u] & 0xFFFFu, u_VertexWords[base + 0u] >> 16u,
+            u_VertexWords[base + 1u] & 0xFFFFu, u_VertexWords[base + 1u] >> 16u);
+    vec4 a_Color = unpackUnorm4x8(u_VertexWords[base + 2u]);
+    uvec2 a_TexCoord = uvec2(
+            u_VertexWords[base + 3u] & 0xFFFFu, u_VertexWords[base + 3u] >> 16u);
+    uint a_LightCoord = u_VertexWords[base + 4u];
+    vec4 a_RdhFactor = unpackSnorm4x8(u_VertexWords[base + 5u]);
+
+    // ---- _vert_init(), USE_VERTEX_COMPRESSION branch (terrain_solid.vert, verbatim) --------
+    uint packed_draw_params = (a_LightCoord & 0xFFFFu);
+
+    uvec3 position = (a_PosId.xyz << 5u) | ((uvec3(a_PosId.w) >> uvec3(0u, 5u, 10u)) & uvec3(0x1Fu));
+    uvec2 tex_coord = (a_TexCoord << 2u) | ((uvec2(packed_draw_params) >> uvec2(4u, 6u)) & uvec2(0x3u));
+
+    vec3 _vert_position = (vec3(position) * VERT_POS_SCALE + VERT_POS_OFFSET);
+    vec2 _vert_tex_diffuse_coord = (vec2(tex_coord) * VERT_TEX_SCALE);
+    vec4 _vert_color = a_Color;
+    vec4 _vert_rdh_factor = a_RdhFactor;
+
+    uint _material_params = (packed_draw_params) & 0xFu;
+    uint _draw_id = (packed_draw_params >> 8) & 0xFFu;
+    ivec2 _vert_tex_light_coord = ivec2((uvec2((a_LightCoord >> 16) & 0xFFFFu) >> uvec2(0u, 8u)) & uvec2(0xFFu));
+
+    // ---- main() (terrain_solid.vert, with firstInstance for gl_InstanceIndex) --------------
+    vec3 translation = u_RegionOffsets[firstInstance].xyz + _get_draw_translation(_draw_id);
+    vec3 worldPosition = _vert_position + translation;
+
+    v_FragDistance[slot] = getFragDistance(celtium.u_FogShape, worldPosition);
+
+    gl_MeshVerticesEXT[slot].gl_Position =
+            pc.u_ProjectionMatrix * pc.u_ModelViewMatrix * vec4(worldPosition, 1.0);
+
+    v_RdhFactor[slot] = _vert_rdh_factor * 2.0;
+    vec2 lightCoord = vec2(_vert_tex_light_coord);
+    float dynamicLevel = _dynamic_block_light(worldPosition);
+    if (dynamicLevel > 0.0) {
+        lightCoord.x = max(lightCoord.x, min(dynamicLevel, 15.0) * 16.0);
+    }
+    vec4 lightColor = _sample_lightmap(u_LightTex, lightCoord);
+    v_Color[slot] = _vert_color * lightColor;
+    if (celtium.u_ShadowEnabled != 0) {
+        v_ShadowPos[slot] = celtium.u_ShadowMatrix * vec4(worldPosition, 1.0);
+        vec2 shadowedCoord = vec2(lightCoord.x, lightCoord.y * (1.0 - celtium.u_ShadowDarkness));
+        v_ShadowColor[slot] = _vert_color * _sample_lightmap(u_LightTex, shadowedCoord);
+    } else {
+        v_ShadowPos[slot] = vec4(0.0);
+        v_ShadowColor[slot] = v_Color[slot];
+    }
+    v_RdhFactor[slot].rgb *= lightColor.rgb;
+
+    // The vertex stage's corner selector is gl_VertexIndex & 3; the id here is the same value
+    // (the index buffer's entry for this corner, plus the record's vertex offset).
+    int corner = int(vertexId) & 3;
+    v_QuadCoord[slot] = vec2(corner >= 2 ? 1.0 : 0.0,
+            corner == 1 || corner == 2 ? 1.0 : 0.0);
+    v_TexCoord[slot] = _vert_tex_diffuse_coord;
+
+    v_MaterialMipBias[slot] = _material_mip_bias(_material_params) + celtium.u_MipBiasAdd;
+    v_MaterialAlphaCutoff[slot] = _material_alpha_cutoff(_material_params);
+}
+
+void main() {
+    // Find this workgroup's quad: walk the dispatch's records, accumulating quad counts,
+    // until the running total covers gl_WorkGroupID.x (see the design block for why a scan).
+    uint quadIndex = gl_WorkGroupID.x;
+    uint recordIndex = pc.u_FirstRecord;
+    uint recordEnd = pc.u_FirstRecord + pc.u_RecordCount;
+    uint quadBase = 0u;
+    MeshDrawRecord rec;
+    bool found = false;
+    while (recordIndex < recordEnd) {
+        rec = u_Records[recordIndex];
+        uint quads = rec.indexCount / 6u;
+        if (quadIndex < quadBase + quads) {
+            found = true;
+            break;
+        }
+        quadBase += quads;
+        recordIndex++;
+    }
+    if (!found) {
+        SetMeshOutputsEXT(0u, 0u);
+        return;
+    }
+    uint localQuad = quadIndex - quadBase;
+    uint firstIndex = rec.firstIndex + localQuad * 6u;
+
+    SetMeshOutputsEXT(6u, 2u);
+    for (int k = 0; k < 6; k++) {
+        uint vertexId = u_Indices[firstIndex + uint(k)] + uint(rec.vertexOffset);
+        emitVertex(k, vertexId, rec.firstInstance);
+    }
+    gl_PrimitiveTriangleIndicesEXT[0] = uvec3(0u, 1u, 2u);
+    gl_PrimitiveTriangleIndicesEXT[1] = uvec3(3u, 4u, 5u);
+}
