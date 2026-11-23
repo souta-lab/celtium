@@ -17878,37 +17878,8 @@ this.frameBufferOpen = false;
                                         this.sharedIndexBuffers.get(primitiveType));
                                 sharedIndexBound = true;
                             }
-                            boolean arenaBound = false;
-                            for (int cmd = 0; cmd < batch.size(); cmd++) {
-                                long byteOffset = batch.indexByteOffset(cmd);
-                                boolean arena;
-                                int firstIndex;
-                                if (sortedPass) {
-                                    if (resources.indexArena == null) continue;
-                                    arena = true;
-                                    firstIndex = (int) (byteOffset / 4);
-                                } else if (byteOffset == 0) {
-                                    arena = false;
-                                    firstIndex = 0;
-                                } else if (resources.indexArena != null) {
-                                    arena = true;
-                                    firstIndex = (int) (byteOffset / 4);
-                                } else {
-                                    continue;
-                                }
-                                if (arena != arenaBound) {
-                                    this.terrain.bindIndexBuffer(this.commandBuffer, arena
-                                            ? resources.indexArena.buffer()
-                                            : this.sharedIndexBuffers.get(primitiveType));
-                                    arenaBound = arena;
-                                }
-                                vkCmdDrawIndexed(this.commandBuffer, batch.elementCount(cmd), 1, firstIndex,
-                                        batch.baseVertex(cmd), 0);
-                                drawnCommands++;
-                            }
-                            if (arenaBound) {
-                                this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
-                            }
+                            drawnCommands += celtium$drawPackBatchDirect(batch, resources,
+                                    sortedPass, primitiveType);
                         }
                     } finally {
                         org.soutalab.celtium.vulkan.FramePassTimings.end("packRegionDraw");
@@ -17982,6 +17953,54 @@ this.frameBufferOpen = false;
                 }
             }
         }
+    }
+
+    /**
+     * The pack region loop's direct walk (E6's fallback): the batch's commands as individual
+     * draws, switching the bound index buffer between the shared quad buffer and the region's
+     * index arena as each command's source demands, and restoring the shared buffer at the end.
+     * The caller has bound the shared buffer on entry. Kept out of the pass method itself - it
+     * is one of the huge methods the bytecode limit watches.
+     *
+     * @return how many commands were drawn
+     */
+    private int celtium$drawPackBatchDirect(VulkanMultiDrawBatch batch,
+                                            TerrainRenderer.RegionResources resources,
+                                            boolean sortedPass,
+                                            ChunkPrimitiveType primitiveType) {
+        int drawn = 0;
+        boolean arenaBound = false;
+        for (int cmd = 0; cmd < batch.size(); cmd++) {
+            long byteOffset = batch.indexByteOffset(cmd);
+            boolean arena;
+            int firstIndex;
+            if (sortedPass) {
+                if (resources.indexArena == null) continue;
+                arena = true;
+                firstIndex = (int) (byteOffset / 4);
+            } else if (byteOffset == 0) {
+                arena = false;
+                firstIndex = 0;
+            } else if (resources.indexArena != null) {
+                arena = true;
+                firstIndex = (int) (byteOffset / 4);
+            } else {
+                continue;
+            }
+            if (arena != arenaBound) {
+                this.terrain.bindIndexBuffer(this.commandBuffer, arena
+                        ? resources.indexArena.buffer()
+                        : this.sharedIndexBuffers.get(primitiveType));
+                arenaBound = arena;
+            }
+            vkCmdDrawIndexed(this.commandBuffer, batch.elementCount(cmd), 1, firstIndex,
+                    batch.baseVertex(cmd), 0);
+            drawn++;
+        }
+        if (arenaBound) {
+            this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
+        }
+        return drawn;
     }
 
     /**
