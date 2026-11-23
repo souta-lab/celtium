@@ -24,9 +24,9 @@ import static org.lwjgl.vulkan.VK10.*;
  * does the executor rewrite the remap with this frame's binding-5 indices, upload the
  * table, and record the generation dispatch; the pass' region loop then records no
  * per-batch draws, and one {@code vkCmdDrawIndexedIndirectCount} at the loop's end draws
- * the generated list. Any doubt — no collection, a capability gate, a tainted or
- * non-reproducing population — leaves the pass on the CPU path, with the reason counted
- * below rather than silent (design section 5.2).
+ * the generated list. Any doubt — no collection, a capability gate, a tainted or empty
+ * or non-reproducing population — leaves the pass on the CPU path, with the reason
+ * counted below rather than silent (design section 5.2).
  * <p>
  * Why the reproduction must be exact: the generated commands carry the collection frame's
  * command decomposition (index counts and arena vertex offsets) and the current frame's
@@ -83,6 +83,7 @@ final class VulkanGpuTerrainDraw {
     private long armedCommands;
     private long fallbackNoReady;
     private long fallbackTainted;
+    private long fallbackEmpty;
     private long fallbackGate;
     private long fallbackPopulation;
 
@@ -298,6 +299,27 @@ final class VulkanGpuTerrainDraw {
             } else if (this.ready.tainted) {
                 this.fallbackTainted++;
                 this.ready = null;
+            } else if (this.ready.commandCount == 0) {
+                // A finalized table with no commands at all. Arming it would record a
+                // zero-group dispatch ((0 + 255) / 256 == 0 in dispatch) and, at the
+                // loop's end, an IndirectCount draw whose host draw count is also zero:
+                // the degenerate issuance forms whose behaviour varies most by driver.
+                // The warning is recorded from the GL side in
+                // naughthirium-code-reference.md (B8): Naughthirium's drawcount=0
+                // avoidance was reverted for driver compatibility, and a GPU culler's
+                // count of zero is a normal case to be received on the submission side.
+                // The GPU-side zero is NOT this case and stays issued exactly as
+                // generated — a live table whose entries the current frame's frustum,
+                // mask and remap tests cull to a count-buffer value of 0 still draws
+                // through recordDraw untouched, and the pass is never skipped for it.
+                // Only the host-degenerate table is refused, here, in the same counted
+                // shape as the other fallbacks; the pass takes the CPU path, which
+                // draws the (empty) population through the normal route. Whether a
+                // collected batch can carry zero commands is a property of the batch
+                // assembler, not of this executor — the executor does not rest the
+                // safety of its recording on another component's unstated invariant.
+                this.fallbackEmpty++;
+                this.ready = null;
             } else if (GpuTerrainCulling.capabilityGate(
                     this.context.drawIndirectCountEnabled(), budgetActive)
                     != GpuTerrainCulling.GateReason.NONE) {
@@ -344,6 +366,7 @@ final class VulkanGpuTerrainDraw {
                         + " armedCommands=" + this.armedCommands
                         + " fallbacks=[noReady=" + this.fallbackNoReady
                         + " tainted=" + this.fallbackTainted
+                        + " empty=" + this.fallbackEmpty
                         + " gate=" + this.fallbackGate
                         + " population=" + this.fallbackPopulation + "]");
             }
