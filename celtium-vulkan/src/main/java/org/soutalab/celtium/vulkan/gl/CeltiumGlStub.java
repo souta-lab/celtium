@@ -2210,11 +2210,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         snapshot.fogColor[3] = fog.colorAlpha();
         stub.attribPushes++;
         stub.noteAttribMask(mask);
-        if (stub.attribStack.size() >= MAX_ATTRIB_DEPTH) {
+        if (!GlsmAttribStacks.current().pushServer(snapshot)) {
             stub.attribOverflow++;
             return;
         }
-        stub.attribStack.addLast(snapshot);
     }
 
     /**
@@ -2231,7 +2230,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return;
         }
-        LegacyAttribSnapshot snapshot = stub.attribStack.pollLast();
+        LegacyAttribSnapshot snapshot = GlsmAttribStacks.current().popServer();
         if (snapshot == null) {
             stub.attribUnmatchedPops++;
             return;
@@ -2487,9 +2486,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         return line.append(']').toString();
     }
 
-    /** Bounded legacy server-attribute stack. */
-    private final java.util.ArrayDeque<LegacyAttribSnapshot> attribStack =
-            new java.util.ArrayDeque<LegacyAttribSnapshot>();
+    // GAP-ST-6 rewired: both attribute stacks are owned by GlsmAttribStacks (same bound).
     /** GL's own stack has no documented limit; this one is bounded so an unbalanced mod cannot grow it forever. */
     private static final int MAX_ATTRIB_DEPTH = 64;
 
@@ -2503,7 +2500,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return;
         }
-        stub.clientAttribStack.addLast(new long[] {stub.vertexPointerSize, stub.vertexPointerType,
+        GlsmAttribStacks.current().pushClient(new long[] {stub.vertexPointerSize, stub.vertexPointerType,
                 stub.vertexPointerStride, stub.vertexPointerOffset, GlsmEnableState.current().enabled(0x8074) ? 1 : 0,
                 stub.vertexPointerNormalized ? 1L : 0L, stub.vertexPointerInteger ? 1L : 0L});
     }
@@ -2513,7 +2510,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return;
         }
-        long[] saved = stub.clientAttribStack.pollLast();
+        long[] saved = GlsmAttribStacks.current().popClient();
         if (saved == null) {
             return;
         }
@@ -2535,8 +2532,6 @@ public final class CeltiumGlStub implements FunctionProvider {
         attrib.pointerSet = true;
     }
 
-    /** Bounded legacy client-attribute stack. */
-    private final java.util.ArrayDeque<long[]> clientAttribStack = new java.util.ArrayDeque<long[]>();
 
     /** {@return the name bound to a texture target on the active unit, or zero when unbound}. */
     int textureBindingOrZero(int target) {
