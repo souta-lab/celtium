@@ -988,6 +988,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
         try (MemoryStack stack = stackPush()) {
             org.lwjgl.vulkan.VkImageSubresourceRange range =
                     org.lwjgl.vulkan.VkImageSubresourceRange.calloc(stack).levelCount(1).layerCount(1);
+            // Both transitions are recorded before either clear: they share the one dependency below, and the
+            // colour clear sitting between them used to split them into two barrier calls for no ordering gain.
+            recordGameClearsToTransfer(command, color, depth);
             if (color) {
                 float[] rgba = this.clearColourScratch;
                 if (latched || initializeOnly) {
@@ -1014,7 +1017,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 // cube visible only where it was drawn directly, against the accepted (98,102,96)).
                 value.float32(3, 1.0f);
                 range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
-                recordColorToTransfer(command, this.colorImage);
                 org.lwjgl.vulkan.VK10.vkCmdClearColorImage(command, this.colorImage,
                         DEPTH_TRANSFER_LAYOUT, value, range);
             }
@@ -1026,7 +1028,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         org.lwjgl.vulkan.VkClearDepthStencilValue.calloc(stack);
                 value.depth((float) depthValue).stencil(0);
                 range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
-                recordDepthToTransfer(command, this.depthImage, DEPTH_RENDER_LAYOUT);
                 org.lwjgl.vulkan.VK10.vkCmdClearDepthStencilImage(command, this.depthImage, DEPTH_TRANSFER_LAYOUT,
                         value, range);
             }
@@ -1050,22 +1051,57 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
-     * Moves a depth image from its attachment layout to the transfer layout a clear needs. Everything that can have
-     * touched it before - earlier windows' depth tests and writes, an earlier clear - is covered by ALL_COMMANDS.
+     * Moves the images {@link #applyGameClears} is about to clear into the transfer layout those clears need, in
+     * one {@code vkCmdPipelineBarrier} when both are cleared.
+     * <p>
+     * The colour and depth transitions are the same dependency - {@code ALL_COMMANDS} to {@code TRANSFER} - on two
+     * images of one frame, the same shape {@code Pair.toTransfer} already fuses for the pair clear. They used to be
+     * two calls, one per image, with the colour clear recorded between them; both clears that follow are
+     * {@code TRANSFER}-stage writes, so recording the depth transition before the colour clear changes no ordering
+     * the GPU has to honour, and it waits for less, because the barrier's source stage is {@code ALL_COMMANDS} and
+     * the colour clear has not been recorded yet. Everything that can have touched either image before - earlier
+     * windows' attachment and depth tests and writes, an earlier clear - is covered by {@code ALL_COMMANDS}.
+     * <p>
+     * The colour half moves a GENERAL image to the transfer layout a clear uses, after whatever touched it before.
+     * Colour clears run in TRANSFER_DST_OPTIMAL instead of GENERAL, which lets Intel's driver use a CCS fast clear
+     * where it otherwise writes the whole surface: under INTEL_MEASURE on the UHD 630 the three "slow color clear"s
+     * a frame (263 us) became fast clears (17 us) plus partial resolves (62 us), and the draws that follow on the
+     * compressed surface cost less as well. The depth half starts from {@link #DEPTH_RENDER_LAYOUT}, the layout
+     * {@link #applyGameClears} always clears from, so its source mask is the non-UNDEFINED one the old per-image
+     * helper computed for that caller.
      */
-    private void recordDepthToTransfer(VkCommandBuffer command, long image, int from) {
+    private void recordGameClearsToTransfer(VkCommandBuffer command, boolean color, boolean depth) {
+        if (!color && !depth) {
+            // A stencil-only clear names neither image (the frame has no stencil), so nothing moves.
+            return;
+        }
         try (MemoryStack stack = stackPush()) {
-            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
-            barrier.get(0).sType$Default().image(image)
-                    .oldLayout(from).newLayout(DEPTH_TRANSFER_LAYOUT)
-                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .srcAccessMask(from == VK_IMAGE_LAYOUT_UNDEFINED ? 0
-                            : VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
-                    .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
-            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            VkImageMemoryBarrier.Buffer barriers =
+                    VkImageMemoryBarrier.calloc((color ? 1 : 0) + (depth ? 1 : 0), stack);
+            int index = 0;
+            if (color) {
+                VkImageMemoryBarrier barrier = barriers.get(index++);
+                barrier.sType$Default().image(this.colorImage)
+                        .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(DEPTH_TRANSFER_LAYOUT)
+                        .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                        .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                        .srcAccessMask(colorToTransferSrcAccessMask())
+                        .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+                barrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            }
+            if (depth) {
+                VkImageMemoryBarrier barrier = barriers.get(index);
+                barrier.sType$Default().image(this.depthImage)
+                        .oldLayout(DEPTH_RENDER_LAYOUT).newLayout(DEPTH_TRANSFER_LAYOUT)
+                        .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                        .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                        .srcAccessMask(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                                | VK_ACCESS_TRANSFER_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+                barrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            }
             vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    0, null, null, barrier);
+                    0, null, null, barriers);
         }
     }
 
@@ -1096,15 +1132,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
-     * Moves a GENERAL colour image to the transfer layout a clear uses, after whatever touched it before.
-     * <p>
-     * Colour clears run in TRANSFER_DST_OPTIMAL instead of GENERAL, which lets Intel's driver use a CCS fast clear
-     * where it otherwise writes the whole surface: under INTEL_MEASURE on the UHD 630 the three "slow color clear"s
-     * a frame (263 us) became fast clears (17 us) plus partial resolves (62 us), and the draws that follow on the
-     * compressed surface cost less as well.
-     */
-    /**
-     * {@return the source access mask for {@link #recordColorToTransfer}}, covering prior colour attachment,
+     * {@return the source access mask for {@link #recordGameClearsToTransfer}}, covering prior colour attachment,
      * transfer, and shader accesses so RDNA3/PAL flushes and resolves DCC/CB caches cleanly (issue #422 (a)).
      */
     static int colorToTransferSrcAccessMask() {
@@ -1132,21 +1160,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
         int src = firstAcquire ? 0 : generalAccess;
         int dst = attachmentAccess | VK_ACCESS_TRANSFER_WRITE_BIT;
         return new int[] { src, dst };
-    }
-
-    private void recordColorToTransfer(VkCommandBuffer command, long image) {
-        try (MemoryStack stack = stackPush()) {
-            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
-            barrier.get(0).sType$Default().image(image)
-                    .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(DEPTH_TRANSFER_LAYOUT)
-                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .srcAccessMask(colorToTransferSrcAccessMask())
-                    .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
-            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
-            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    0, null, null, barrier);
-        }
     }
 
     /** {@return the layout the main depth image rests in}, for a readback that must name it. */
@@ -3549,43 +3562,67 @@ public final class GllessFrameTarget implements FrameImageTarget {
          */
         private void recordAcquire(VkCommandBuffer command) {
             int queueFamily = context.queueFamilyIndex();
+            // A private depth is UNDEFINED here, as the colour is. A borrowed (shared) depth may already
+            // hold another pair's pass: the barrier then starts from the store's recorded layout and waits
+            // for those writes instead of discarding them - a layout transition preserves content unless
+            // the old layout is UNDEFINED, which for a shared image it is only on its first pair's acquire.
+            int depthFrom = depthLayout();
             try (MemoryStack stack = stackPush()) {
-                VkImageMemoryBarrier.Buffer colorBarriers = VkImageMemoryBarrier.calloc(1, stack);
-                VkImageMemoryBarrier colorBarrier = colorBarriers.get(0);
-                colorBarrier.sType$Default()
-                        .image(this.colorImage)
-                        .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED).newLayout(VK_IMAGE_LAYOUT_GENERAL)
-                        .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
-                        .srcAccessMask(0).dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
-                colorBarrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+                if (depthFrom == VK_IMAGE_LAYOUT_UNDEFINED) {
+                    // Both images arrive from UNDEFINED with a zero source access mask under the same
+                    // TOP_OF_PIPE to TRANSFER dependency, so the two moves belong in one barrier call -
+                    // the same fusion Pair.toTransfer already makes for the pair clear.
+                    VkImageMemoryBarrier.Buffer barriers = VkImageMemoryBarrier.calloc(2, stack);
+                    VkImageMemoryBarrier colorBarrier = barriers.get(0);
+                    colorBarrier.sType$Default()
+                            .image(this.colorImage)
+                            .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                            .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                            .srcAccessMask(0).dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+                    colorBarrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
 
-                VkImageMemoryBarrier.Buffer depthBarriers = VkImageMemoryBarrier.calloc(1, stack);
-                VkImageMemoryBarrier depthBarrier = depthBarriers.get(0);
-                // A private depth is UNDEFINED here, as the colour is. A borrowed (shared) depth may already
-                // hold another pair's pass: the barrier then starts from the store's recorded layout and waits
-                // for those writes instead of discarding them - a layout transition preserves content unless
-                // the old layout is UNDEFINED, which for a shared image it is only on its first pair's acquire.
-                int depthFrom = depthLayout();
-                depthBarrier.sType$Default()
-                        .image(this.depthImage)
-                        .oldLayout(depthFrom).newLayout(DEPTH_TRANSFER_LAYOUT)
-                        .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
-                        .srcAccessMask(depthFrom == VK_IMAGE_LAYOUT_UNDEFINED ? 0
-                                : VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT
-                                        | VK_ACCESS_SHADER_READ_BIT)
-                        .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
-                depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+                    VkImageMemoryBarrier depthBarrier = barriers.get(1);
+                    depthBarrier.sType$Default()
+                            .image(this.depthImage)
+                            .oldLayout(depthFrom).newLayout(DEPTH_TRANSFER_LAYOUT)
+                            .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                            .srcAccessMask(0)
+                            .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+                    depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
 
-                vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                        0, null, null, colorBarriers);
-                // The depth barrier rides in its own call when the depth already holds content: TOP_OF_PIPE
-                // supports no access flags at all, so a barrier that names the previous writes (the shared
-                // case above) under it is exactly VUID-vkCmdPipelineBarrier-pImageMemoryBarriers-02819 -
-                // measured on the first leg whose pairs borrowed a written shared depth (leg 16, item 333).
-                // ALL_COMMANDS as the source stage covers every stage those writes could have come from.
-                vkCmdPipelineBarrier(command, depthFrom == VK_IMAGE_LAYOUT_UNDEFINED
-                                ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, depthBarriers);
+                    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barriers);
+                } else {
+                    VkImageMemoryBarrier.Buffer colorBarriers = VkImageMemoryBarrier.calloc(1, stack);
+                    VkImageMemoryBarrier colorBarrier = colorBarriers.get(0);
+                    colorBarrier.sType$Default()
+                            .image(this.colorImage)
+                            .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                            .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                            .srcAccessMask(0).dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+                    colorBarrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+
+                    VkImageMemoryBarrier.Buffer depthBarriers = VkImageMemoryBarrier.calloc(1, stack);
+                    VkImageMemoryBarrier depthBarrier = depthBarriers.get(0);
+                    depthBarrier.sType$Default()
+                            .image(this.depthImage)
+                            .oldLayout(depthFrom).newLayout(DEPTH_TRANSFER_LAYOUT)
+                            .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                            .srcAccessMask(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                                    | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT)
+                            .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+                    depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+
+                    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, colorBarriers);
+                    // The depth barrier rides in its own call when the depth already holds content: TOP_OF_PIPE
+                    // supports no access flags at all, so a barrier that names the previous writes (the shared
+                    // case above) under it is exactly VUID-vkCmdPipelineBarrier-pImageMemoryBarriers-02819 -
+                    // measured on the first leg whose pairs borrowed a written shared depth (leg 16, item 333).
+                    // ALL_COMMANDS as the source stage covers every stage those writes could have come from.
+                    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, depthBarriers);
+                }
                 // The barrier above is the move, so this is where the pair's own record of it belongs.
                 this.colorImageLayout = VK_IMAGE_LAYOUT_GENERAL;
                 depthLayout(command, DEPTH_TRANSFER_LAYOUT);
