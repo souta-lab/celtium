@@ -18,9 +18,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 /**
  * GLSM stage 1 landing condition [b], the flag-on half: what the translator extracts, and that the
  * extracted routes carry the same values the block route carried. These tests only mean anything
- * with {@code -Dceltium.vulkan.glsmPackState=true} in the test JVM (the flag is a static final);
- * without it they abstain instead of passing vacuously. The merge-phase run sets it via
- * {@code JAVA_TOOL_OPTIONS} for this class only.
+ * with GLSM on in the test JVM (the flag is a static final, default on since the on-default
+ * landing); a test JVM that opts out with {@code -Dceltium.vulkan.glsmPackState=false} abstains
+ * instead of passing vacuously.
  * <ul>
  * <li>(2) PER_FRAME: both stages of every program declare the one shared block, textually
  * identical across programs, and the registry keeps the extracted members' values and buckets -
@@ -37,7 +37,7 @@ class GlsmExtractionEquivalenceTest {
     @BeforeEach
     void reset() {
         assumeTrue(GlsmPackState.ENABLED,
-                "needs -Dceltium.vulkan.glsmPackState=true in the test JVM");
+                "needs GLSM on in the test JVM (default; abstains on -Dceltium.vulkan.glsmPackState=false)");
         ModProgramRegistry.clear();
         GlsmPackState.clear();
     }

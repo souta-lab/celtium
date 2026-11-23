@@ -10,8 +10,9 @@ import java.util.Set;
  * The registry's single scalar uniform version made every write - including the chunk interface's
  * per-region offset write - invalidate a program's whole uniform block, so the terrain pack loop
  * re-packed, re-copied and re-claimed the block for every region. This class is the classification
- * and shared-state half of the fix, behind {@code -Dceltium.vulkan.glsmPackState} (default off; the
- * off route is the original code path byte for byte):
+ * and shared-state half of the fix, behind {@code -Dceltium.vulkan.glsmPackState} (default on since
+ * the stage-1 on-default landing; {@code -Dceltium.vulkan.glsmPackState=false} opts out to the
+ * original code path byte for byte):
  * <ul>
  * <li>Every lowered block member is classified at link into a frequency bucket
  * ({@link Bucket}). The classification is static and name-isolated here, so the census the design
@@ -34,8 +35,9 @@ import java.util.Set;
  * write ever reaches is never dirtied, so the incremental packer never rewrites it after the
  * first full pack.</li>
  * <li>Everything else is {@code DYNAMIC}: program-private, packed by the member-dirty incremental
- * packer alpha-pack-uniform built (its {@code -Dceltium.vulkan.packUniformIncremental} flag is
- * absorbed here - with GLSM on, the incremental packer is the DYNAMIC packer).</li>
+ * packer alpha-pack-uniform built (its {@code -Dceltium.vulkan.packUniformIncremental} flag was
+ * absorbed here and removed at the on-default landing - the incremental packer is the DYNAMIC
+ * packer, selected by this flag alone).</li>
  * </ul>
  * Angelica (LGPL-3.0) is the reference for the per-frame shared block's shape - one block, packed
  * once per frame, declared whole by every program - reimplemented here against celtium's own
@@ -43,8 +45,12 @@ import java.util.Set;
  */
 public final class GlsmPackState {
 
-    /** Whether the GLSM pack-state route is on: {@code -Dceltium.vulkan.glsmPackState}, default off. */
-    public static final boolean ENABLED = Boolean.getBoolean("celtium.vulkan.glsmPackState");
+    /**
+     * Whether the GLSM pack-state route is on: {@code -Dceltium.vulkan.glsmPackState}, default on
+     * (the tree's default-on form; only an explicit {@code false} opts out).
+     */
+    public static final boolean ENABLED =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glsmPackState", "true"));
 
     /** The frequency bucket a lowered block member belongs to; decided at link, never per frame. */
     public enum Bucket {
