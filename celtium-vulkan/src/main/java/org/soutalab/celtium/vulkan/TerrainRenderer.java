@@ -771,10 +771,12 @@ public final class TerrainRenderer {
         // Stamp this region's index into every copied command's firstInstance field (offset 16
         // of the 20-byte command, agera-kpi-3): the vertex shader reads its region offset from
         // the binding-5 array at gl_InstanceIndex, which equals firstInstance for these
-        // single-instance draws. The batch's retained encoding keeps its zeros - only the page
-        // copy is stamped, one int per command over bytes the copy just touched.
-        for (int i = 0; i < size; i++) {
-            MemoryUtil.memPutInt(packets + (long) i * INDIRECT_COMMAND_BYTES + 16, firstInstance);
+        // single-instance draws. The batch's retained encoding already carries zeros at offset 16,
+        // so firstInstance == 0 (all pack-route batches and region 0) needs no per-command stamp.
+        if (firstInstance != 0) {
+            for (int i = 0; i < size; i++) {
+                MemoryUtil.memPutInt(packets + (long) i * INDIRECT_COMMAND_BYTES + 16, firstInstance);
+            }
         }
         long afterPacket = System.nanoTime();
         this.indirectPacketNanos += afterPacket - afterSetup;

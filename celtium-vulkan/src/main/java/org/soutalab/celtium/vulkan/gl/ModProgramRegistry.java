@@ -35,6 +35,7 @@ public final class ModProgramRegistry {
         final IntArrayList shaders = new IntArrayList();
         ModGlslTranslator.Result lowered;
         final Int2ObjectOpenHashMap<String> nameByLocation = new Int2ObjectOpenHashMap<>();
+        final Int2ObjectOpenHashMap<ModGlslTranslator.UniformMember> memberByLocation = new Int2ObjectOpenHashMap<>();
         final Map<String, float[]> floatValues = new HashMap<>();
         final Map<String, int[]> intValues = new HashMap<>();
         int uniformWrites;
@@ -99,6 +100,89 @@ public final class ModProgramRegistry {
         public void cachePackedUniforms(long version, ByteBuffer packed) {
             this.cachedPackedUniforms = packed;
             this.cachedPackedVersion = version;
+        }
+
+        /**
+         * Incrementally patches a single non-array scalar float uniform in the already-packed block when
+         * {@link #cachedPackedUniforms} was current at {@code prevVersion}, avoiding a full-block clear and
+         * all-member walk on the next {@code packUniforms} call.
+         */
+        void patchCachedFloat1(int location, String name, long prevVersion, float x) {
+            ByteBuffer buf = this.cachedPackedUniforms;
+            if (buf == null || this.cachedPackedVersion != prevVersion) {
+                return;
+            }
+            ModGlslTranslator.UniformMember member = this.memberByLocation.get(location);
+            if (member == null || member.arrayLength() != 0 || !"float".equals(member.type())
+                    || !name.equals(member.name())) {
+                return;
+            }
+            int offset = member.offset();
+            if (offset < 0 || offset + 4 > buf.capacity()) {
+                return;
+            }
+            buf.putFloat(offset, x);
+            this.cachedPackedVersion = this.uniformVersion;
+        }
+
+        void patchCachedFloat2(int location, String name, long prevVersion, float x, float y) {
+            ByteBuffer buf = this.cachedPackedUniforms;
+            if (buf == null || this.cachedPackedVersion != prevVersion) {
+                return;
+            }
+            ModGlslTranslator.UniformMember member = this.memberByLocation.get(location);
+            if (member == null || member.arrayLength() != 0 || !"vec2".equals(member.type())
+                    || !name.equals(member.name())) {
+                return;
+            }
+            int offset = member.offset();
+            if (offset < 0 || offset + 8 > buf.capacity()) {
+                return;
+            }
+            buf.putFloat(offset, x);
+            buf.putFloat(offset + 4, y);
+            this.cachedPackedVersion = this.uniformVersion;
+        }
+
+        void patchCachedFloat3(int location, String name, long prevVersion, float x, float y, float z) {
+            ByteBuffer buf = this.cachedPackedUniforms;
+            if (buf == null || this.cachedPackedVersion != prevVersion) {
+                return;
+            }
+            ModGlslTranslator.UniformMember member = this.memberByLocation.get(location);
+            if (member == null || member.arrayLength() != 0 || !"vec3".equals(member.type())
+                    || !name.equals(member.name())) {
+                return;
+            }
+            int offset = member.offset();
+            if (offset < 0 || offset + 12 > buf.capacity()) {
+                return;
+            }
+            buf.putFloat(offset, x);
+            buf.putFloat(offset + 4, y);
+            buf.putFloat(offset + 8, z);
+            this.cachedPackedVersion = this.uniformVersion;
+        }
+
+        void patchCachedFloat4(int location, String name, long prevVersion, float x, float y, float z, float w) {
+            ByteBuffer buf = this.cachedPackedUniforms;
+            if (buf == null || this.cachedPackedVersion != prevVersion) {
+                return;
+            }
+            ModGlslTranslator.UniformMember member = this.memberByLocation.get(location);
+            if (member == null || member.arrayLength() != 0 || !"vec4".equals(member.type())
+                    || !name.equals(member.name())) {
+                return;
+            }
+            int offset = member.offset();
+            if (offset < 0 || offset + 16 > buf.capacity()) {
+                return;
+            }
+            buf.putFloat(offset, x);
+            buf.putFloat(offset + 4, y);
+            buf.putFloat(offset + 8, z);
+            buf.putFloat(offset + 12, w);
+            this.cachedPackedVersion = this.uniformVersion;
         }
 
         /** {@return whether both stages are compiled to SPIR-V} and the program could therefore run natively. */
@@ -246,6 +330,7 @@ public final class ModProgramRegistry {
                         false, java.util.Map.of(), stageFailure)
                 : ModGlslTranslator.translate(vertex, fragment);
         p.nameByLocation.clear();
+        p.memberByLocation.clear();
         // A link starts the program's uniforms over, as in GL: the values a previous link's interface
         // collected belong to that interface, and a same-named member of the new one must not inherit them.
         p.floatValues.clear();
@@ -256,6 +341,8 @@ public final class ModProgramRegistry {
         if (p.lowered.ok()) {
             for (ModGlslTranslator.UniformMember member : p.lowered.uniforms()) {
                 mapName(p, member.name());
+                p.memberByLocation.put(location(member.name()), member);
+                p.memberByLocation.put(location(member.name() + "[0]"), member);
             }
             for (ModGlslTranslator.SamplerBinding sampler : p.lowered.samplers()) {
                 mapName(p, sampler.name());
@@ -427,12 +514,16 @@ public final class ModProgramRegistry {
         float[] existing = p.floatValues.get(name);
         if (existing != null && existing.length == 1) {
             if (Float.floatToRawIntBits(existing[0]) != Float.floatToRawIntBits(x)) {
+                long prevVersion = p.uniformVersion;
                 existing[0] = x;
                 p.uniformVersion++;
+                p.patchCachedFloat1(location, name, prevVersion, x);
             }
         } else {
+            long prevVersion = p.uniformVersion;
             p.floatValues.put(name, new float[] {x});
             p.uniformVersion++;
+            p.patchCachedFloat1(location, name, prevVersion, x);
         }
         p.uniformWrites++;
     }
@@ -449,13 +540,17 @@ public final class ModProgramRegistry {
         if (existing != null && existing.length == 2) {
             if (Float.floatToRawIntBits(existing[0]) != Float.floatToRawIntBits(x)
                     || Float.floatToRawIntBits(existing[1]) != Float.floatToRawIntBits(y)) {
+                long prevVersion = p.uniformVersion;
                 existing[0] = x;
                 existing[1] = y;
                 p.uniformVersion++;
+                p.patchCachedFloat2(location, name, prevVersion, x, y);
             }
         } else {
+            long prevVersion = p.uniformVersion;
             p.floatValues.put(name, new float[] {x, y});
             p.uniformVersion++;
+            p.patchCachedFloat2(location, name, prevVersion, x, y);
         }
         p.uniformWrites++;
     }
@@ -473,14 +568,18 @@ public final class ModProgramRegistry {
             if (Float.floatToRawIntBits(existing[0]) != Float.floatToRawIntBits(x)
                     || Float.floatToRawIntBits(existing[1]) != Float.floatToRawIntBits(y)
                     || Float.floatToRawIntBits(existing[2]) != Float.floatToRawIntBits(z)) {
+                long prevVersion = p.uniformVersion;
                 existing[0] = x;
                 existing[1] = y;
                 existing[2] = z;
                 p.uniformVersion++;
+                p.patchCachedFloat3(location, name, prevVersion, x, y, z);
             }
         } else {
+            long prevVersion = p.uniformVersion;
             p.floatValues.put(name, new float[] {x, y, z});
             p.uniformVersion++;
+            p.patchCachedFloat3(location, name, prevVersion, x, y, z);
         }
         p.uniformWrites++;
     }
@@ -499,15 +598,19 @@ public final class ModProgramRegistry {
                     || Float.floatToRawIntBits(existing[1]) != Float.floatToRawIntBits(y)
                     || Float.floatToRawIntBits(existing[2]) != Float.floatToRawIntBits(z)
                     || Float.floatToRawIntBits(existing[3]) != Float.floatToRawIntBits(w)) {
+                long prevVersion = p.uniformVersion;
                 existing[0] = x;
                 existing[1] = y;
                 existing[2] = z;
                 existing[3] = w;
                 p.uniformVersion++;
+                p.patchCachedFloat4(location, name, prevVersion, x, y, z, w);
             }
         } else {
+            long prevVersion = p.uniformVersion;
             p.floatValues.put(name, new float[] {x, y, z, w});
             p.uniformVersion++;
+            p.patchCachedFloat4(location, name, prevVersion, x, y, z, w);
         }
         p.uniformWrites++;
     }
