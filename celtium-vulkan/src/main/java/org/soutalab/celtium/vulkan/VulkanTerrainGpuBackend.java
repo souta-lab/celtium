@@ -18799,18 +18799,27 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("recPassTail");
         // The pass' last chained run is recorded before the pass' tail (the immediate groups below draw
         // into this same pass and must follow the terrain), and before the render pass ends.
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("tailChain");
         this.terrain.endTerrainChain(this.commandBuffer);
         } finally {
             this.terrain.clearPassFog();
         }
+        org.soutalab.celtium.vulkan.FramePassTimings.end("tailChain");
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("tailStats");
         endTerrainStatistics(statisticsQuery, pass);
+        org.soutalab.celtium.vulkan.FramePassTimings.end("tailStats");
 
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("tailImm");
         if (this.currentImmediateMesh != null || !this.immediateGroups.isEmpty()) {
+            if (org.soutalab.celtium.vulkan.FramePassTimings.countsCallsEnabled()) {
+                org.soutalab.celtium.vulkan.DrawCounters.noteTailImmediateFire();
+            }
             // The terrain pass's tail: everything still pending is drawn inside this pass, after the sections, so it
             // tests against the depth the terrain of this pass wrote.
             this.immediateDrawSite = "terrain-pass-tail";
             drawPendingImmediate(Long.valueOf(this.activeImmediateTarget));
         }
+        org.soutalab.celtium.vulkan.FramePassTimings.end("tailImm");
 
         if (this.uiTestEnabled && pass.isSorted()) {
             drawUiTestQuad(primitiveType);
@@ -18819,6 +18828,7 @@ this.frameBufferOpen = false;
             drawImmediateIsolationQuad();
         }
 
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("tailEndPass");
         vkCmdEndRenderPass(this.commandBuffer);
         gpuMark("terrain-end");
         this.commandState.endPass();
@@ -18850,10 +18860,13 @@ this.frameBufferOpen = false;
             }
             this.readbackDone = true;
         }
+        org.soutalab.celtium.vulkan.FramePassTimings.end("tailEndPass");
+        org.soutalab.celtium.vulkan.FramePassTimings.begin("tailRelease");
         // One call: this method is one of the renderer's largest, and a routed pass' census and hand-back are not
         // worth the bytes of inlining them (see HugeMethodLimitTest).
         celtium$finishRoutedDepthPass(pass.name(), routedDepthIdentity, routedDepthKey, passAreaWidth, passAreaHeight);
         this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+        org.soutalab.celtium.vulkan.FramePassTimings.end("tailRelease");
         org.soutalab.celtium.vulkan.FramePassTimings.end("recPassTail");
     }
 

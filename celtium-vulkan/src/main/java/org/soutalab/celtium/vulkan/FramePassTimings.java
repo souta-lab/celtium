@@ -90,6 +90,14 @@ public final class FramePassTimings {
             // FrameBudgetTimings' OTHER_BUCKETS or its WORLD_PASS_MEMBERS - they sit inside the terrain
             // bucket through terrainRecord, so the other-split needs no new member for them.
             "recHead", "recPassSetup", "recIter", "recCharge", "recPassTail",
+            // E5 pass-tail decomposition (e5-passtail-design section 2.1): recPassTail's children at their
+            // real seams - tailChain is the chain close plus the pass-fog finally, tailStats the statistics
+            // end, tailImm the immediate tail (the condition check plus drawPendingImmediate when it fires),
+            // tailEndPass vkCmdEndRenderPass through the readback copies (gpu mark, timestamp inside), and
+            // tailRelease the routed hand-back plus the release barriers. The UI test quads stay uninstrumented
+            // (disabled outside the test property). All five are inclusive INSIDE names under recPassTail:
+            // reported, never subtracted, and none joins TOP_LEVEL, OTHER_BUCKETS or WORLD_PASS_MEMBERS.
+            "tailChain", "tailStats", "tailImm", "tailEndPass", "tailRelease",
             "terrainTarget", "terrainSetup", "terrainClose", "terrainPrep", "terrainCapacity", "terrainSharedIndex", "terrainPreflush", "flushCloseGroup",
             "winBarrier", "winRecord", "winSubmit", "winEnd", "winBeginPass", "winTransition",
             // The terrain pass' three unmeasured spans: the fixed prepare work before recording (frame target,

@@ -24,6 +24,18 @@ public final class DrawCounters {
     private static long lastReportedIndexed;
     private static long lastReportedFrame = -1L;
 
+    /** How often the terrain pass tail actually entered drawPendingImmediate (E5 pass-tail census). */
+    private static long TAIL_IMMEDIATE_FIRES;
+
+    /** One terrain pass tail fired its immediate draw (mesh pending or groups queued). */
+    public static void noteTailImmediateFire() {
+        TAIL_IMMEDIATE_FIRES++;
+    }
+
+    public static long tailImmediateFires() {
+        return TAIL_IMMEDIATE_FIRES;
+    }
+
     /** Per-frame work counters for the KPI: what the flush records and how often state is rebound. */
     private static long IMMEDIATE_GROUPS;
     private static long PIPELINE_BINDS;
@@ -103,6 +115,7 @@ public final class DrawCounters {
         System.out.println("[Celtium] CELTIUM_DRAWS frame=" + frameId
                 + " indexed=" + indexed + " indirect=" + INDIRECT + " nonIndexed=" + NON_INDEXED
                 + " perFrame=" + (frames > 0 ? (delta / frames) : 0)
+                + " tailImmFires=" + TAIL_IMMEDIATE_FIRES
                 + " uploadsPerFrame=" + (frames > 0 ? (uploadDelta / frames) : 0)
                 + " uploadKBPerFrame=" + (frames > 0 ? (bytesDelta / frames / 1024L) : 0));
     }
