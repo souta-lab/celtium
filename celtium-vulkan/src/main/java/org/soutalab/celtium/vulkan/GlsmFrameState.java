@@ -406,6 +406,18 @@ public final class GlsmFrameState {
             return this.clearCollisions;
         }
 
+        /**
+         * {@return how many clears came from the latch and how many were read live}, in
+         * the registry's {@code clearAttribution()} naming, so a diagnostics reader sees
+         * the same keys whichever owner the flag selected (S2-1 absorb connection: the
+         * registry's {@code latchedClearsApplied} / {@code liveClearsApplied} counters are
+         * absorbed here on the on path, not duplicated).
+         */
+        public String clearAttribution() {
+            return "latched=" + this.latchedClearsApplied + " live=" + this.liveClearsApplied
+                    + " collisions=" + this.clearCollisions;
+        }
+
         // ------------------------------------------------------------ routes and accounting
 
         /** Counts a clear that took the named route (the backend's route sites call this). */
@@ -465,6 +477,31 @@ public final class GlsmFrameState {
                     + " pending=" + pendingIssues() + " carried=" + this.carriedOutstanding
                     + " dropped=" + this.droppedTotal + " holds=" + identityHolds()
                     + " collisions=" + this.clearCollisions;
+        }
+
+        /**
+         * {@return the route counts as one line, keyed by the legacy counter names} the
+         * backend's individual counters used before the absorb (S2-1 absorb connection):
+         * {@code QUEUED} is the on-path successor of {@code gameClearsQueued},
+         * {@code IN_PASS} of {@code gameClearsAppliedInPass}, {@code STANDALONE} of
+         * {@code gameClearsSubmittedStandalone}, {@code LATCH} of
+         * {@code gameClearsLatchedForPairs}, {@code CARRIED} of
+         * {@code mainClearsQueued} (the queue-carried main clear) and {@code RESCUED} of
+         * {@code mainClearsRescued}. The correspondence is by route, not by identity of
+         * values: the legacy counters also count the off path and the main/group split,
+         * so a leg compares shapes and the {@link #identityHolds()} verdict, never a
+         * numeric equality against a legacy run.
+         */
+        public String routeSummary() {
+            StringBuilder line = new StringBuilder();
+            for (ClearRoute route : ClearRoute.values()) {
+                if (line.length() > 0) {
+                    line.append(' ');
+                }
+                line.append(route.name()).append('=')
+                        .append(this.routeCounts[route.ordinal()]);
+            }
+            return line.toString();
         }
     }
 }

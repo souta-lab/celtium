@@ -310,6 +310,11 @@ final class BackendDiagnostics {
                 + " mainClearsRescued=" + b.mainClearsRescuedCount()
                 + " mainClearRefusals=[" + b.mainClearRefusalSummary() + "]"
                 + " flushCensus=[" + FlushBoundaryCensus.totalSummary() + " flushSiteCounts=" + b.flushSiteSummary() + "]"
+                + " clearState=[" + (GlsmFrameState.ENABLED
+                        ? b.glsmFrameState.clearState().accountingSummary()
+                                + " routes=[" + b.glsmFrameState.clearState().routeSummary() + "]"
+                                + " attribution=[" + b.glsmFrameState.clearState().clearAttribution() + "]"
+                        : "off") + "]"
                 + " offTargetByTarget=[" + b.offTargetSummary() + "] offTargetTargets=" + b.targetStatistics.offTargetTargetsCreated()
                 + " refusedBeforeAppend=" + b.immediateStatistics.refusedBeforeAppend()
                 + " partialMirrorRefusals=" + b.immediateStatistics.partialMirrorRefusals()

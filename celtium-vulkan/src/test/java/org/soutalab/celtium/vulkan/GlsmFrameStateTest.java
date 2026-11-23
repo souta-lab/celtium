@@ -175,4 +175,21 @@ class GlsmFrameStateTest {
         assertEquals(1L, state.droppedTotal());
         assertTrue(state.identityHolds());
     }
+
+    @Test
+    void absorbSummariesNameRoutesAndAttribution() {
+        ClearState state = newState();
+        state.noteRoute(ClearRoute.QUEUED);
+        state.noteRoute(ClearRoute.QUEUED);
+        state.noteRoute(ClearRoute.RESCUED);
+        String routes = state.routeSummary();
+        assertTrue(routes.contains("QUEUED=2"), routes);
+        assertTrue(routes.contains("RESCUED=1"), routes);
+        assertTrue(routes.contains("STANDALONE=0"), routes);
+        state.latch(78L, 0x4000, 0.0F, 0.0F, 0.0F, 1.0F, 1.0D, 8);
+        assertTrue(state.noteClear(78L, ImageSlot.DEFAULT_PAIR, true, true));
+        String attribution = state.clearAttribution();
+        assertTrue(attribution.contains("latched=1"), attribution);
+        assertTrue(attribution.contains("live=0"), attribution);
+    }
 }

@@ -12615,7 +12615,7 @@ this.frameBufferOpen = false;
      * {@code celtium$bindFromRawRegister} pattern: the stamp names the innermost entrance and cannot leak
      * onto a later, unrelated flush. The stamp is maintained whether or not the census is counting: the
      * E2 exemption ({@link #GL_DRAW_EXEMPT}) reads the same stamp on the shipping path, while the census'
-     * own counting stays gated inside {@link GlDrawWindowCensus#noteWindow}.
+     * own counting stays gated inside {@link FlushBoundaryCensus#noteWindow}.
      */
     private int pendingGlDrawCause = FlushBoundaryCensus.CAUSE_OTHER;
     private int pendingFlushCauseSub;
@@ -12665,7 +12665,7 @@ this.frameBufferOpen = false;
         int previous = this.pendingGlDrawTexture;
         this.pendingGlDrawTexture = glTextureId;
         try {
-            celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_TEXTURE_ANNOUNCE);
+            celtium$flushPendingForGlDrawCause(FlushBoundaryCensus.CAUSE_TEXTURE_ANNOUNCE);
         } finally {
             this.pendingGlDrawTexture = previous;
         }
@@ -12715,10 +12715,10 @@ this.frameBufferOpen = false;
      */
     private boolean celtium$glDrawExemptApplies() {
         switch (this.pendingGlDrawCause) {
-            case GlDrawWindowCensus.CAUSE_BIND_FRAMEBUFFER_TARGET:
+            case FlushBoundaryCensus.CAUSE_BIND_FRAMEBUFFER_TARGET:
                 this.glDrawExemptedBindFlushes++;
                 return true;
-            case GlDrawWindowCensus.CAUSE_TEXTURE_ANNOUNCE:
+            case FlushBoundaryCensus.CAUSE_TEXTURE_ANNOUNCE:
                 if (this.pendingGlDrawTexture != 0
                         && !queuedDrawableGroupUsesTexture(this.pendingGlDrawTexture)) {
                     this.glDrawExemptedAnnounceFlushes++;
