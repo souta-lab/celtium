@@ -15,11 +15,11 @@ import static org.lwjgl.vulkan.VK10.*;
 
 /**
  * E10-b's production executor (item 723, design {@code e10-design.md} sections 3-5): the
- * drawing switch on top of E10-a's chassis. While the SOLID pass records on the current CPU
+ * drawing switch on top of E10-a's chassis. While a target pass records on the current CPU
  * path, this class collects the pass' draw population exactly as the census does; at the
- * next frame's SOLID pass head — outside the render pass, where the design's section 4.3
- * recording order puts the dispatch — the finished collection is finalized and the frame
- * about to record is pre-enumerated by the backend. Only when the pre-enumeration
+ * next frame's pass head for that same pass — outside the render pass, where the design's
+ * section 4.3 recording order puts the dispatch — the finished collection is finalized and
+ * the frame about to record is pre-enumerated by the backend. Only when the pre-enumeration
  * reproduces the collection exactly (same regions, same order, same cached batch objects)
  * does the executor rewrite the remap with this frame's binding-5 indices, upload the
  * table, and record the generation dispatch; the pass' region loop then records no
@@ -27,6 +27,29 @@ import static org.lwjgl.vulkan.VK10.*;
  * the generated list. Any doubt — no collection, a capability gate, a tainted or
  * non-reproducing population — leaves the pass on the CPU path, with the reason counted
  * below rather than silent (design section 5.2).
+ * <p>
+ * One instance serves one pass, and the backend holds one instance per target pass. The
+ * target set is the design's first shape (sections 2.5 and 3.5): SOLID plus the cutout
+ * family ({@code cutout}, {@code cutout_mipped}). A cutout pass differs from SOLID only in
+ * its fragment stage — alpha-tested discard is a property of the pass' own pipeline, which
+ * the executor never binds or modifies — while everything generation depends on is the
+ * same: the batches are unsorted with the uniform shared index source (a command is
+ * {@code elementCount} indices of the shared quad pattern at the batch's
+ * {@code baseVertex}), and the draws are order-independent, because the pass writes depth
+ * and does not blend, so the compute shader's atomic append order cannot change the
+ * picture. Per-pass instances are not merely organisational: two passes of one frame can
+ * record into the same frame slot, and a slot's buffers are host-written at the pass head,
+ * so two armed passes sharing one slot set would overwrite each other's table before the
+ * earlier dispatch has executed.
+ * <p>
+ * Sorted passes stay out, for reasons that are structural rather than cautious (recorded
+ * in full in {@code alpha-e10-cutout.md}): generation appends through an atomic counter
+ * and preserves no order, while a sorted pass' recording order is blending semantics —
+ * including the reverse iteration of the translucent pass when face sorting is off;
+ * sorted batches read per-region index arenas at per-command firstIndex values instead of
+ * the one shared index buffer an indirect draw binds, so a single generated draw cannot
+ * reproduce them; and the population model itself assumes the unsorted batch form (a
+ * sorted batch is tainted by construction here).
  * <p>
  * Why the reproduction must be exact: the generated commands carry the collection frame's
  * command decomposition (index counts and arena vertex offsets) and the current frame's
@@ -59,6 +82,10 @@ final class VulkanGpuTerrainDraw {
     private static final int PRINT_EVERY_PASS_HEADS = 60;
 
     private final VulkanContext context;
+    /** This instance's pass ordinal, written into its table entries' flags (bits 8..15). */
+    private final int passOrdinal;
+    /** This instance's pass name, carried by the printed lines so passes are told apart. */
+    private final String passName;
     private long setLayout;
     private long pipelineLayout;
     private long pipeline;
@@ -157,8 +184,10 @@ final class VulkanGpuTerrainDraw {
         }
     }
 
-    VulkanGpuTerrainDraw(VulkanContext context) {
+    VulkanGpuTerrainDraw(VulkanContext context, int passOrdinal, String passName) {
         this.context = context;
+        this.passOrdinal = passOrdinal;
+        this.passName = passName;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             createPipeline(stack);
         }
@@ -167,10 +196,11 @@ final class VulkanGpuTerrainDraw {
         }
         if (!this.gatePrinted) {
             this.gatePrinted = true;
-            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW created drawIndirectCount="
+            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW created pass=" + this.passName
+                    + " drawIndirectCount="
                     + context.drawIndirectCountEnabled()
                     + " maxDrawIndirectCount=" + context.maxDrawIndirectCount()
-                    + " mode=gpu-draw (E10-b: SOLID pass, previous-frame generation)");
+                    + " mode=gpu-draw (E10-b: per-pass executor, previous-frame generation)");
         }
     }
 
@@ -220,14 +250,15 @@ final class VulkanGpuTerrainDraw {
     private void disable(String what, RuntimeException error) {
         if (!this.disabled) {
             this.disabled = true;
-            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW_DISABLED at=" + what
+            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW_DISABLED pass=" + this.passName
+                    + " at=" + what
                     + " reason=" + error);
         }
     }
 
     /**
      * Collects one region's batch into the current frame's collection. Called from the
-     * backend's region loop for the SOLID pass only, with the same population the census
+     * backend's region loop for this instance's pass only, with the same population the census
      * collects: batches without the uniform shared index source taint the collection (the
      * frame can never be generated for), rather than being silently dropped from it — the
      * visit sequence must stay exact for the reproduction test at the next pass head.
@@ -253,7 +284,11 @@ final class VulkanGpuTerrainDraw {
             }
             int dictIndex = frame.builder.dictIndexFor(region.getId(), frameIndex);
             frame.dictOrder.add(dictIndex);
-            int flags = 0; // pass ordinal 0 (SOLID only); index source: shared quad buffer
+            // Pass ordinal in flags bits 8..15 (see GpuTerrainDrawTable.Entry.passOrdinal);
+            // the index-source bit stays 0: the shared quad buffer, as every unsorted
+            // target pass' batches are built. SOLID's ordinal is 0, so its entries are
+            // bit-identical to the single-pass executor's.
+            int flags = this.passOrdinal << 8;
             for (int i = 0, size = batch.size(); i < size; i++) {
                 frame.builder.add(new GpuTerrainDrawTable.Entry(batch.elementCount(i), 0,
                         batch.baseVertex(i), dictIndex,
@@ -266,8 +301,8 @@ final class VulkanGpuTerrainDraw {
     }
 
     /**
-     * The SOLID pass head, called by the backend after the pack route has refused the pass
-     * and before its render pass opens: finalizes the previous frame's collection, tests
+     * This instance's pass head, called by the backend after the pack route has refused the
+     * pass and before its render pass opens: finalizes the previous frame's collection, tests
      * this frame's pre-enumerated population against it, and — only on an exact
      * reproduction — rewrites the remap with this frame's binding-5 indices, uploads the
      * table into the frame slot and records the generation dispatch into the pass' command
@@ -339,7 +374,8 @@ final class VulkanGpuTerrainDraw {
                 armedNow = true;
             }
             if (this.passHeads % PRINT_EVERY_PASS_HEADS == 0) {
-                System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW passHeads=" + this.passHeads
+                System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW pass=" + this.passName
+                        + " passHeads=" + this.passHeads
                         + " armed=" + this.framesArmed
                         + " armedCommands=" + this.armedCommands
                         + " fallbacks=[noReady=" + this.fallbackNoReady
@@ -398,7 +434,8 @@ final class VulkanGpuTerrainDraw {
         }
         this.armed = false;
         if (visitedCount != this.armedVisitCount) {
-            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW_MISMATCH visited=" + visitedCount
+            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW_MISMATCH pass=" + this.passName
+                    + " visited=" + visitedCount
                     + " expected=" + this.armedVisitCount + " (executor disabled)");
             this.disabled = true;
             return;

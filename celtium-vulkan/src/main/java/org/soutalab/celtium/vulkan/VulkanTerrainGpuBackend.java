@@ -2682,16 +2682,26 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** The frame's view-projection matrix for the census, computed once per frame on first use. */
     private float[] gpuTerrainCensusVp;
     private long gpuTerrainCensusVpFrame = -1L;
+    /** E10-b pass ordinals, written into the executors' table entries (flags bits 8..15). */
+    private static final int GPU_DRAW_PASS_SOLID = 0;
+    private static final int GPU_DRAW_PASS_CUTOUT = 1;
+    private static final int GPU_DRAW_PASS_CUTOUT_MIPPED = 2;
+    private static final int GPU_DRAW_PASS_COUNT = 3;
     /**
-     * E10-b's drawing executor (item 723, {@link VulkanGpuTerrainDraw}): created lazily on
-     * the first SOLID pass under {@code celtium.vulkan.gpuTerrainCulling}, never when the
-     * flag is off — the off path allocates, binds and records nothing for it.
+     * E10-b's drawing executors (item 723, {@link VulkanGpuTerrainDraw}): one per target
+     * pass, created lazily at that pass' first head under
+     * {@code celtium.vulkan.gpuTerrainCulling}, never when the flag is off — the off path
+     * allocates, binds and records nothing for them. Per-pass instances are required, not
+     * cosmetic: two passes of one frame can record into the same frame slot, and a slot's
+     * buffers are host-written at the pass head, so passes sharing one executor's slot set
+     * would overwrite each other's uploaded table before the earlier pass' dispatch has
+     * executed.
      */
-    private VulkanGpuTerrainDraw gpuTerrainDraw;
-    /** Set when executor creation or its pass head failed once: it stays off rather than retrying per frame. */
+    private final VulkanGpuTerrainDraw[] gpuTerrainDraws = new VulkanGpuTerrainDraw[GPU_DRAW_PASS_COUNT];
+    /** Set when executor creation or a pass head failed once: it stays off rather than retrying per frame. */
     private boolean gpuTerrainDrawFailed;
-    /** The last frame the executor's pass head ran for; the pass head is once per frame, not per pass. */
-    private long gpuTerrainDrawFrame = -1L;
+    /** The last frame each target pass' head ran for (one entry per GPU_DRAW_PASS_* ordinal); a pass head is once per frame per pass. */
+    private final long[] gpuTerrainDrawHeadFrames = {-1L, -1L, -1L};
     /** Whether the E10 gate line for the main-flag-only configuration has been printed. */
     private boolean gpuTerrainGatePrinted;
     /** One {@code VkDrawIndexedIndirectCommand}: indexCount, instanceCount, firstIndex, vertexOffset, firstInstance. */
@@ -16706,9 +16716,11 @@ this.frameBufferOpen = false;
                 this.gpuTerrainCensus.delete();
                 this.gpuTerrainCensus = null;
             }
-            if (this.gpuTerrainDraw != null) {
-                this.gpuTerrainDraw.delete();
-                this.gpuTerrainDraw = null;
+            for (int i = 0; i < this.gpuTerrainDraws.length; i++) {
+                if (this.gpuTerrainDraws[i] != null) {
+                    this.gpuTerrainDraws[i].delete();
+                    this.gpuTerrainDraws[i] = null;
+                }
             }
             celtium$deleteSettled();
         } catch (RuntimeException | LinkageError failure) {
@@ -18110,7 +18122,7 @@ this.frameBufferOpen = false;
                     + " drawIndirectCount=" + this.context.drawIndirectCountEnabled()
                     + " capabilityGate=" + GpuTerrainCulling.capabilityGate(
                             this.context.drawIndirectCountEnabled(), this.terrainBudget.drawCapsActive())
-                    + " mode=gpu-draw (E10-b: SOLID pass; the census, when on, is independent)");
+                    + " mode=gpu-draw (E10-b: solid + cutout passes; the census, when on, is independent)");
         }
         if (!GpuTerrainCulling.CENSUS || this.gpuTerrainCensusFailed) {
             return;
@@ -18143,21 +18155,49 @@ this.frameBufferOpen = false;
         return this.gpuTerrainCensusVp;
     }
 
-    /** Whether this pass is E10-b's target: the vanilla SOLID pass (the design's first shape, section 2.5). */
-    private static boolean celtium$gpuTerrainDrawTarget(TerrainRenderPass pass) {
-        return !pass.isSorted() && !pass.supportsFragmentDiscard() && "solid".equals(pass.name());
+    /**
+     * The E10-b pass ordinal of a pass, or -1 when the pass is not an executor target.
+     * The targets are the design's first shape (sections 2.5 and 3.5): SOLID and the
+     * cutout family — the depth-writing, order-independent built-in passes. Fragment
+     * discard does not exclude a pass: it is a property of the pass' own fragment
+     * pipeline, and the cutout passes' batches have the same unsorted form and uniform
+     * shared index source as SOLID's, so the generated commands are interchangeable with
+     * the recorded ones. Sorted and reverse-order passes are excluded on semantics, not
+     * caution: generation appends atomically and preserves no order, a sorted pass'
+     * recording order is blending semantics (the translucent pass iterates in reverse
+     * even when face sorting is off), and sorted batches read per-region index arenas
+     * instead of the one shared index buffer an indirect draw binds. Pass names are the
+     * key because the set is closed — the vanilla configuration builds exactly these
+     * names ({@code VintageRenderPassConfigurationBuilder}); custom-layer fallback
+     * passes, which are property-identical but mod-named, stay out until targeting is
+     * deliberately widened from names to properties.
+     */
+    private static int celtium$gpuTerrainDrawPassOrdinal(TerrainRenderPass pass) {
+        if (pass.isSorted() || pass.isReverseOrder()) {
+            return -1;
+        }
+        switch (pass.name()) {
+            case "solid":
+                return GPU_DRAW_PASS_SOLID;
+            case "cutout":
+                return GPU_DRAW_PASS_CUTOUT;
+            case "cutout_mipped":
+                return GPU_DRAW_PASS_CUTOUT_MIPPED;
+            default:
+                return -1;
+        }
     }
 
     /**
-     * E10-b pass head (item 723): at the SOLID pass' head — after the pack route has refused
-     * the pass and before its render pass opens — the previous frame's collection is
-     * finalized and this frame's region population is pre-enumerated; when the two agree
-     * exactly, the executor records the generation dispatch here (outside the render pass,
-     * as the design's section 4.3 order requires) and the pass' region loop records no
-     * per-batch draws, ending with the executor's one IndirectCount draw instead. Any doubt
-     * at all — no collection, a capability gate, a population that does not reproduce —
-     * leaves the pass on the current path, with the reason counted by the executor rather
-     * than silent.
+     * E10-b pass head (item 723): at a target pass' head — after the pack route has refused
+     * the pass and before its render pass opens — the previous frame's collection for that
+     * pass is finalized and this frame's region population is pre-enumerated; when the two
+     * agree exactly, the pass' executor records the generation dispatch here (outside the
+     * render pass, as the design's section 4.3 order requires) and the pass' region loop
+     * records no per-batch draws, ending with the executor's one IndirectCount draw
+     * instead. Any doubt at all — no collection, a capability gate, a population that does
+     * not reproduce — leaves the pass on the current path, with the reason counted by the
+     * executor rather than silent.
      *
      * @return whether the pass' draws are GPU-generated this frame
      */
@@ -18167,27 +18207,31 @@ this.frameBufferOpen = false;
         if (!GpuTerrainCulling.ENABLED || this.gpuTerrainDrawFailed || this.commandBuffer == null) {
             return false;
         }
-        if (!celtium$gpuTerrainDrawTarget(pass)) {
+        int ordinal = celtium$gpuTerrainDrawPassOrdinal(pass);
+        if (ordinal < 0) {
             return false;
         }
-        if (this.gpuTerrainDrawFrame == this.frameId) {
+        if (this.gpuTerrainDrawHeadFrames[ordinal] == this.frameId) {
             return false;
         }
-        this.gpuTerrainDrawFrame = this.frameId;
+        this.gpuTerrainDrawHeadFrames[ordinal] = this.frameId;
         try {
-            if (this.gpuTerrainDraw == null) {
-                this.gpuTerrainDraw = new VulkanGpuTerrainDraw(this.context);
+            VulkanGpuTerrainDraw draw = this.gpuTerrainDraws[ordinal];
+            if (draw == null) {
+                draw = new VulkanGpuTerrainDraw(this.context, ordinal, pass.name());
+                this.gpuTerrainDraws[ordinal] = draw;
             }
             List<VulkanGpuTerrainDraw.Visit> visits = celtium$gpuTerrainVisitList(
                     renderLists, pass, useBlockFaceCulling, view, occlusionCamera);
-            return this.gpuTerrainDraw.passHead(this.commandBuffer, this.frameSlot, visits,
+            return draw.passHead(this.commandBuffer, this.frameSlot, visits,
                     this.terrain.regionOffsetWriteCursor(),
                     celtium$gpuTerrainCensusVp(matrices),
                     occlusionCamera.x, occlusionCamera.y, occlusionCamera.z,
                     this.terrainBudget.drawCapsActive());
         } catch (RuntimeException | LinkageError error) {
             this.gpuTerrainDrawFailed = true;
-            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW_DISABLED at=passHead reason=" + error);
+            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW_DISABLED at=passHead pass="
+                    + pass.name() + " reason=" + error);
             return false;
         }
     }
@@ -18263,15 +18307,18 @@ this.frameBufferOpen = false;
             org.soutalab.celtium.vulkan.FramePassTimings.end("recHead");
             return;
         }
-        // E10-b (item 723): the SOLID pass' generation dispatch is recorded here, before the
+        // E10-b (item 723): a target pass' generation dispatch is recorded here, before the
         // render pass opens; when it arms, the region loop below records no per-batch draws
-        // and the pass ends with the executor's single IndirectCount draw instead. The
-        // collection gate is the same target test the pass head applies, kept as a local so
+        // and the pass ends with its executor's single IndirectCount draw instead. The
+        // collection gate is the same target test the pass head applies, kept as locals so
         // the loop's collection and the pass head's arming can never disagree about which
-        // pass is SOLID.
-        boolean gpuDrawTargetPass = GpuTerrainCulling.ENABLED && celtium$gpuTerrainDrawTarget(pass);
+        // passes are targets; the executor reference is resolved once, after the head has
+        // had its chance to create the pass' instance.
+        int gpuDrawOrdinal = GpuTerrainCulling.ENABLED ? celtium$gpuTerrainDrawPassOrdinal(pass) : -1;
+        boolean gpuDrawTargetPass = gpuDrawOrdinal >= 0;
         boolean gpuDrawArmed = celtium$gpuTerrainDrawPassHead(pass, renderLists, matrices, occlusionCamera,
                 useBlockFaceCulling, view);
+        VulkanGpuTerrainDraw gpuDraw = gpuDrawTargetPass ? this.gpuTerrainDraws[gpuDrawOrdinal] : null;
         int gpuDrawVisited = 0;
         org.soutalab.celtium.vulkan.FramePassTimings.end("recHead");
         org.soutalab.celtium.vulkan.FramePassTimings.begin("recordPrepare");
@@ -18796,11 +18843,12 @@ this.frameBufferOpen = false;
                         occlusionCamera.x, occlusionCamera.y, occlusionCamera.z,
                         region, regionIndex, batch);
             }
-            // E10-b collection (item 723): the same population, kept by the drawing executor
-            // as the next frame's generation source. SOLID only — the executor's first
-            // shape — and only under the main flag; the census above is independent of it.
-            if (gpuDrawTargetPass && this.gpuTerrainDraw != null) {
-                this.gpuTerrainDraw.collect(this.frameId,
+            // E10-b collection (item 723): the same population, kept by the pass' drawing
+            // executor as the next frame's generation source. Target passes only — solid
+            // and the cutout family — and only under the main flag; the census above is
+            // independent of it.
+            if (gpuDrawTargetPass && gpuDraw != null) {
+                gpuDraw.collect(this.frameId,
                         celtium$gpuTerrainCensusVp(matrices),
                         occlusionCamera.x, occlusionCamera.y, occlusionCamera.z,
                         region, regionIndex, batch);
@@ -18927,13 +18975,13 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("recPassTail");
         // The pass' last chained run is recorded before the pass' tail (the immediate groups below draw
         // into this same pass and must follow the terrain), and before the render pass ends.
-        if (gpuDrawArmed && this.gpuTerrainDraw != null) {
+        if (gpuDrawArmed && gpuDraw != null) {
             // E10-b: the pass' terrain draws, generated on the GPU at the pass head, are
             // issued here as one IndirectCount draw. The generated commands' only index
             // source is the shared quad buffer by construction of the collection, so it is
             // bound explicitly — in an armed pass no chain flush has bound anything.
             this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
-            this.gpuTerrainDraw.recordDraw(this.commandBuffer, gpuDrawVisited);
+            gpuDraw.recordDraw(this.commandBuffer, gpuDrawVisited);
         }
         this.terrain.endTerrainChain(this.commandBuffer);
         } finally {

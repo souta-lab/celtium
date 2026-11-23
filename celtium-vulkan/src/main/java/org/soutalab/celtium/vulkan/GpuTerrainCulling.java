@@ -8,7 +8,7 @@ package org.soutalab.celtium.vulkan;
  * {@code drawIndirectCount} device capability is queried and enabled in
  * {@link VulkanContext} (reported there as part of {@code CELTIUM_DEVICE_FEATURES}), and the
  * shadow-generation census below. Stage E10-b adds the drawing switch
- * ({@link VulkanGpuTerrainDraw}): with the main flag on, the SOLID pass' draws are
+ * ({@link VulkanGpuTerrainDraw}): with the main flag on, a target pass' draws are
  * GPU-generated whenever the frame's population reproduces the collected one, and the
  * census keeps its independent shadow-generation role.
  * <p>
