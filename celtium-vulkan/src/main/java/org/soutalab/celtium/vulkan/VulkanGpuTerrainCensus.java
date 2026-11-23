@@ -54,6 +54,8 @@ final class VulkanGpuTerrainCensus {
     private long queryPool;
     private boolean disabled;
     private boolean gatePrinted;
+    /** The pass stream this instance serves, printed on its lines; null = the camera stream. */
+    private final String streamLabel;
 
     private final Slot[] slots = new Slot[FrameSubmissionScheduler.FRAME_SLOTS];
 
@@ -129,6 +131,16 @@ final class VulkanGpuTerrainCensus {
     }
 
     VulkanGpuTerrainCensus(VulkanContext context) {
+        this(context, null);
+    }
+
+    /**
+     * @param streamLabel the pass stream this instance serves, printed on the census lines
+     *                    so two streams' output stays attributable; null for the original
+     *                    camera stream, whose lines keep their E10-a form
+     */
+    VulkanGpuTerrainCensus(VulkanContext context, String streamLabel) {
+        this.streamLabel = streamLabel;
         this.context = context;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkPhysicalDeviceProperties properties = VkPhysicalDeviceProperties.calloc(stack);
@@ -153,7 +165,10 @@ final class VulkanGpuTerrainCensus {
                     + " maxDrawIndirectCount=" + context.maxDrawIndirectCount()
                     + " capabilityGate=" + GpuTerrainCulling.capabilityGate(
                             context.drawIndirectCountEnabled(), false)
-                    + " mode=shadow-generation (E10-a: drawing unchanged)");
+                    + (this.streamLabel == null
+                            ? " mode=shadow-generation (E10-a: drawing unchanged)"
+                            : " mode=shadow-generation stream=" + this.streamLabel
+                                    + " (E10 shadow preparation: drawing unchanged)"));
         }
     }
 
@@ -200,11 +215,16 @@ final class VulkanGpuTerrainCensus {
         return this.disabled;
     }
 
+    /** The stream tag appended to this instance's lines, or empty for the camera stream. */
+    private String streamSuffix() {
+        return this.streamLabel == null ? "" : " stream=" + this.streamLabel;
+    }
+
     private void disable(String what, RuntimeException error) {
         if (!this.disabled) {
             this.disabled = true;
             System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_CENSUS_DISABLED at=" + what
-                    + " reason=" + error);
+                    + " reason=" + error + streamSuffix());
         }
     }
 
@@ -331,7 +351,8 @@ final class VulkanGpuTerrainCensus {
             this.computeNanosMax = Math.max(this.computeNanosMax, gpuNanos);
         }
         if (this.framesHarvested % PRINT_EVERY_FRAMES == 0) {
-            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_CENSUS frames=" + this.framesHarvested
+            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_CENSUS" + streamSuffix()
+                    + " frames=" + this.framesHarvested
                     + " entries=" + this.totalEntries
                     + " cpuCommands=" + this.totalCpuCommands
                     + " gpuCommands=" + this.totalGpuCommands

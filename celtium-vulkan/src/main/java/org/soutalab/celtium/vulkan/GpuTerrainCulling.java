@@ -28,6 +28,17 @@ public final class GpuTerrainCulling {
     public static final boolean CENSUS = Boolean.getBoolean("celtium.vulkan.gpuTerrainCulling.census");
 
     /**
+     * Shadow-stage census stream (E10 shadow preparation): a second, independent census
+     * instance fed from the pack route's shadow stage. The shadow population is drawn under
+     * the light's view-projection, which the camera stream's per-frame collection cannot
+     * hold (one plane set per frame), so the streams never share an instance. Independent
+     * of {@link #CENSUS}: either stream may be armed alone. Census only — never changes
+     * what is drawn.
+     */
+    public static final boolean SHADOW_CENSUS =
+            Boolean.getBoolean("celtium.vulkan.gpuTerrainCulling.shadowCensus");
+
+    /**
      * Distance limit, in blocks, for the census visibility test. The CPU search distance is
      * decided inside the chunk render-list manager and is not plumbed to the Vulkan backend in
      * E10-a, so the census takes its limit from here; the default is far beyond any render

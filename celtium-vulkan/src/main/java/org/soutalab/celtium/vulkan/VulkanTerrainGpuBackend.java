@@ -2682,6 +2682,19 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** The frame's view-projection matrix for the census, computed once per frame on first use. */
     private float[] gpuTerrainCensusVp;
     private long gpuTerrainCensusVpFrame = -1L;
+    /**
+     * The shadow stage's own E10 census stream (E10 shadow preparation): a second
+     * {@link VulkanGpuTerrainCensus} fed from the pack route's shadow stage. The shadow
+     * population is collected under the light's view-projection, which the camera stream's
+     * per-frame collection cannot hold (one plane set per frame), so the two streams never
+     * share an instance. Created lazily on the first shadow stage under
+     * {@code celtium.vulkan.gpuTerrainCulling.shadowCensus}; never created while off.
+     */
+    private VulkanGpuTerrainCensus shadowGpuTerrainCensus;
+    /** The last frame the shadow census rollover ran for; once per frame, not per stage. */
+    private long shadowGpuTerrainCensusFrame = -1L;
+    /** Set when shadow census creation failed once: the stream stays off rather than retrying. */
+    private boolean shadowGpuTerrainCensusFailed;
     /** Whether the E10 gate line for the main-flag-only configuration has been printed. */
     private boolean gpuTerrainGatePrinted;
     /** One {@code VkDrawIndexedIndirectCommand}: indexCount, instanceCount, firstIndex, vertexOffset, firstInstance. */
@@ -16696,6 +16709,10 @@ this.frameBufferOpen = false;
                 this.gpuTerrainCensus.delete();
                 this.gpuTerrainCensus = null;
             }
+            if (this.shadowGpuTerrainCensus != null) {
+                this.shadowGpuTerrainCensus.delete();
+                this.shadowGpuTerrainCensus = null;
+            }
             celtium$deleteSettled();
         } catch (RuntimeException | LinkageError failure) {
             // One failing release must not strand the rest or the registration (issue #425): before this
@@ -17403,6 +17420,12 @@ this.frameBufferOpen = false;
             shadowStage = DemonicaTerrainBridge.shadowsBeingRendered();
             packStageBracket = shadowStage ? "packRecordShadow" : "packRecordGbuffers";
             org.soutalab.celtium.vulkan.FramePassTimings.begin(packStageBracket);
+            if (shadowStage) {
+                // E10 shadow preparation: dispatch the finished frame's shadow collection
+                // here, at the stage head - this stage's render pass has not opened yet,
+                // which is where the census' compute dispatch may be recorded.
+                celtium$shadowGpuTerrainCensusRollover();
+            }
             var vertexType = this.configuration.getVertexTypeForPass(pass);
             var vertexFormat = vertexType == null ? null : vertexType.getVertexFormat();
             if (vertexFormat == null) {
@@ -17690,6 +17713,13 @@ this.frameBufferOpen = false;
             int drawnCommands = 0;
             int drawnSections = 0;
             boolean sortedPass = pass.isSorted();
+            // E10 shadow preparation: this execution's collection state for the shadow
+            // census stream - the light view-projection, computed on first use, and the
+            // region ordinal that stands in for the binding-5 index the pack route never
+            // assigns (its region offsets ride the program's uniform block, so a collected
+            // region's remap value is its visit order among the stage's drawn regions).
+            float[] shadowCensusVp = null;
+            int shadowCensusRegionOrdinal = 0;
 
             try {
                 setViewportAndScissor(stack, passW, passH);
@@ -17770,6 +17800,23 @@ this.frameBufferOpen = false;
                     }
                     if (!(cached.getBatch() instanceof VulkanMultiDrawBatch batch) || batch.isEmpty()) {
                         continue;
+                    }
+                    // E10 shadow preparation: the built-in loop's census hook, mirrored for
+                    // the shadow stream. The batch's canonical commands join the shadow
+                    // collection under the light's view-projection. Unsorted passes only -
+                    // a sorted pass' order is semantics - and the flag test comes first,
+                    // so with the flag off the stage records nothing extra.
+                    if (shadowStage && GpuTerrainCulling.SHADOW_CENSUS
+                            && this.shadowGpuTerrainCensus != null && !sortedPass) {
+                        if (shadowCensusVp == null) {
+                            shadowCensusVp = new float[16];
+                            new org.joml.Matrix4f(matrices.projection()).mul(matrices.modelView())
+                                    .get(shadowCensusVp);
+                        }
+                        this.shadowGpuTerrainCensus.collect(pass.name(), this.frameId,
+                                shadowCensusVp,
+                                occlusionCamera.x, occlusionCamera.y, occlusionCamera.z,
+                                region, shadowCensusRegionOrdinal++, batch);
                     }
                     float regionOffsetX = (region.getOriginX() - camera.intX) - camera.fracX;
                     float regionOffsetY = (region.getOriginY() - camera.intY) - camera.fracY;
@@ -18113,6 +18160,37 @@ this.frameBufferOpen = false;
         } catch (RuntimeException | LinkageError error) {
             this.gpuTerrainCensusFailed = true;
             System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_CENSUS_DISABLED at=rollover reason=" + error);
+        }
+    }
+
+    /**
+     * The shadow stream's rollover (E10 shadow preparation): once per frame, at the shadow
+     * stage's head — after the stage is known to be the shadow stage and before its render
+     * pass opens, the same recording position the camera stream's rollover uses at a pass
+     * head — the finished frame's shadow collection is dispatched and the slot's older
+     * result harvested (see {@link VulkanGpuTerrainCensus}). With the shadow census flag
+     * off this returns on the first test and the stage records exactly what it recorded
+     * before.
+     */
+    private void celtium$shadowGpuTerrainCensusRollover() {
+        if (!GpuTerrainCulling.SHADOW_CENSUS || this.shadowGpuTerrainCensusFailed) {
+            return;
+        }
+        if (this.shadowGpuTerrainCensusFrame == this.frameId) {
+            return;
+        }
+        this.shadowGpuTerrainCensusFrame = this.frameId;
+        try {
+            if (this.shadowGpuTerrainCensus == null) {
+                this.shadowGpuTerrainCensus = new VulkanGpuTerrainCensus(this.context, "shadow");
+            }
+            if (this.commandBuffer != null) {
+                this.shadowGpuTerrainCensus.rollover(this.commandBuffer, this.frameSlot);
+            }
+        } catch (RuntimeException | LinkageError error) {
+            this.shadowGpuTerrainCensusFailed = true;
+            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_CENSUS_DISABLED at=rollover"
+                    + " stream=shadow reason=" + error);
         }
     }
 
