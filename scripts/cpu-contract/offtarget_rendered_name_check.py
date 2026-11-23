@@ -117,6 +117,7 @@ public class RenderTargetRegistry {
         public int width() { return 0; }
         public int height() { return 0; }
         public int layout() { return 0; }
+        public int recordedLayout() { return 0; }
         public long generation() { return 0L; }
     }
     public Collection<NamedTargetSpec> namedTargets() { return Collections.emptyList(); }

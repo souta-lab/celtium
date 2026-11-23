@@ -14,8 +14,11 @@ BRIDGE = ROOT / "forge122/src/main/java/org/taumc/celeritas/interfaces/LoadingPr
 def main():
     loading = (CORE / "LoadingScreenRendererMixin.java").read_text()
     minecraft = (CORE / "MinecraftMixin.java").read_text()
-    assert 'method = "resize(II)V"' in minecraft and 'opcode = Opcodes.PUTFIELD' in minecraft
-    assert 'target = "Lnet/minecraft/client/Minecraft;loadingScreen:Lnet/minecraft/client/LoadingScreenRenderer;"' in minecraft
+    # Hook names are written in both MCP and SRG forms (bughunt LANE-07; the item-430 lesson was a
+    # hook named in one form only, silently unbound in the other environment), and @At targets carry
+    # the SRG form, so the field target names field_71461_s rather than loadingScreen.
+    assert 'method = {"resize(II)V", "func_71370_a(II)V"}' in minecraft and 'opcode = Opcodes.PUTFIELD' in minecraft
+    assert 'target = "Lnet/minecraft/client/Minecraft;field_71461_s:Lnet/minecraft/client/LoadingScreenRenderer;"' in minecraft
     assert '<init>' not in loading, "unrelated progress-renderer construction must remain untouched"
     selector = method(minecraft, "private void celtium$replaceLoadingScreen(")
     transfer = method(loading, "public void celtium$copyLoadingTask(")
