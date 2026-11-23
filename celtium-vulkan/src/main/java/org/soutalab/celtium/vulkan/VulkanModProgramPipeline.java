@@ -1465,6 +1465,11 @@ public final class VulkanModProgramPipeline {
         }
     }
 
+    /** {@return the GLSM region table's slot capacity, for a caller's upfront fit check}. */
+    public int celtium$glsmRegionTableSlots() {
+        return REGION_TABLE_SLOTS;
+    }
+
     /** {@return whether this pipeline delivers region offsets through the GLSM SSBO table}. */
     public boolean celtium$glsmRegionTable() {
         return this.glsmActive && this.glsmRegionMember != null && this.regionOffsetTable != null;

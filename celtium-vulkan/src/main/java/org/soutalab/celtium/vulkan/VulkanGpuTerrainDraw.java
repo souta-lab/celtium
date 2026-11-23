@@ -85,6 +85,8 @@ final class VulkanGpuTerrainDraw {
     private long passHeads;
     private long framesArmed;
     private long armedCommands;
+    /** Shadow-arm frames whose generated list was actually issued by {@link #recordDraw}. */
+    private long framesIssued;
     private long fallbackNoReady;
     private long fallbackTainted;
     private long fallbackEmpty;
@@ -172,8 +174,10 @@ final class VulkanGpuTerrainDraw {
      * entry's flags ({@code ordinal << 8}) and the pass name rides the printed lines, so
      * several passes' executors can coexist without their populations or counters being
      * attributable to the wrong pass. The shadow arm uses ordinal 3, name {@code shadow},
-     * and only ever runs {@link #generationHead} — its generated list is priced, never
-     * issued (see {@link GpuTerrainCulling#SHADOW_DRAW}).
+     * and runs {@link #generationHead}, which arms the generated list for issuance; the
+     * backend issues it (one {@link #recordDraw} at the loop's end) only on the GLSM
+     * region-table route, and cancels the arm everywhere else, where the generation is
+     * priced and the loop draws unchanged (see {@link GpuTerrainCulling#SHADOW_DRAW}).
      */
     VulkanGpuTerrainDraw(VulkanContext context, int passOrdinal, String passName) {
         this.context = context;
@@ -196,7 +200,7 @@ final class VulkanGpuTerrainDraw {
                 System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW created pass=" + passName
                         + " drawIndirectCount=" + context.drawIndirectCountEnabled()
                         + " maxDrawIndirectCount=" + context.maxDrawIndirectCount()
-                        + " mode=shadow-generation (E10 shadow arm: generation priced, draws unchanged)");
+                        + " mode=shadow-generation+issuance (E10 shadow issuance: issued on the GLSM region-table route, generation-only otherwise)");
             }
         }
     }
@@ -405,25 +409,28 @@ final class VulkanGpuTerrainDraw {
     }
 
     /**
-     * The shadow-generation head (design section 5.3 (c)), for an instance whose pass is
-     * drawn by another route — the pack route's shadow stage: finalizes the previous
-     * frame's collection, runs the same arm judgement as {@link #passHead} (capability
-     * gates, then the exact-reproduction test against this frame's pre-enumerated
-     * population), and on an exact reproduction rewrites the remap, uploads the table and
-     * records the generation dispatch, exactly as the drawing head does. The one
-     * difference is the point of the form: the generated list is never issued — no
-     * {@code recordDraw} follows, the pass' own loop draws unchanged — so what the arm
-     * buys is the shadow population's reproduction rate and the generation's measured
-     * price (the dispatch sits in the frame's command stream, where a timestamp bracket
-     * can separate it), plus the arm path itself, ready for the issuance switch when the
-     * pack program lowering can deliver a region offset to generated commands.
+     * The shadow head (design section 5.3 (c) plus the issuance switch), for the pack
+     * route's shadow stage: finalizes the previous frame's collection, runs the same arm
+     * judgement as {@link #passHead} (capability gates, then the exact-reproduction test
+     * against this frame's pre-enumerated population), and on an exact reproduction
+     * rewrites the remap, uploads the table and records the generation dispatch, exactly
+     * as the drawing head does. On that success it also arms the generated list for
+     * issuance ({@link #armed}), in the camera head's own shape: the backend then either
+     * issues it with one {@link #recordDraw} at its loop's end — only on the GLSM
+     * region-table route, where the pack program reads its region offset from the
+     * pipeline's {@code CeltiumRegionOffsets} SSBO table at {@code gl_InstanceIndex}, so
+     * the generated commands' {@code firstInstance} delivery (the remap below, visit
+     * order from cursor 0, exactly the slots the loop stamps into that table) reaches the
+     * program — or cancels the arm with {@link #cancelArmed} and draws its loop
+     * unchanged, which keeps the generation-only pricing form on every other route.
      *
      * @param visits            the regions the pass' loop will draw, in visit order, or
      *                          {@code null} when any region's drawn batch is unpredictable
-     * @param regionOffsetCursor the binding-5 index the loop's first region takes;
+     * @param regionOffsetCursor the table index the loop's first region takes;
      *                          visit position {@code p} takes {@code regionOffsetCursor + p}
-     *                          (the pack route assigns no binding-5 indices, so the shadow
-     *                          arm passes 0 and the remap is the visit order itself)
+     *                          (the pack loop stamps its GLSM table from slot 0 in visit
+     *                          order, so the shadow arm passes 0 and the remap is the
+     *                          visit order itself)
      * @return whether the generation dispatch was recorded for this frame
      */
     boolean generationHead(VkCommandBuffer commandBuffer, int slotIndex, List<Visit> visits,
@@ -432,6 +439,7 @@ final class VulkanGpuTerrainDraw {
         if (this.disabled) {
             return false;
         }
+        this.armed = false;
         try {
             if (this.collecting != null) {
                 this.ready = buildFrame(this.collecting);
@@ -469,6 +477,10 @@ final class VulkanGpuTerrainDraw {
                 dispatch(commandBuffer, slot, this.ready, remap,
                         GpuTerrainDrawTable.extractPlanes(viewProjection),
                         (float) cameraX, (float) cameraY, (float) cameraZ);
+                this.armed = true;
+                this.armedSlot = slotIndex;
+                this.armedVisitCount = visits.size();
+                this.armedCommandCount = this.ready.commandCount;
                 this.framesArmed++;
                 this.armedCommands += this.ready.commandCount;
                 generated = true;
@@ -477,6 +489,7 @@ final class VulkanGpuTerrainDraw {
                 System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW pass=" + this.passName
                         + " mode=shadow-generation heads=" + this.passHeads
                         + " generated=" + this.framesArmed
+                        + " issued=" + this.framesIssued
                         + " generatedCommands=" + this.armedCommands
                         + " fallbacks=[noReady=" + this.fallbackNoReady
                         + " tainted=" + this.fallbackTainted
@@ -528,20 +541,48 @@ final class VulkanGpuTerrainDraw {
      * broke — this pass was under-drawn, and the executor disables itself rather than
      * risk a second frame.
      */
-    void recordDraw(VkCommandBuffer commandBuffer, int visitedCount) {
+    boolean recordDraw(VkCommandBuffer commandBuffer, int visitedCount) {
         if (!this.armed) {
-            return;
+            return false;
         }
         this.armed = false;
         if (visitedCount != this.armedVisitCount) {
             System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW_MISMATCH visited=" + visitedCount
                     + " expected=" + this.armedVisitCount + " (executor disabled)");
             this.disabled = true;
-            return;
+            return false;
         }
         Slot slot = this.slots[this.armedSlot];
         VK12.vkCmdDrawIndexedIndirectCount(commandBuffer, slot.out.buffer(), 0L,
                 slot.counts.buffer(), 0L, this.armedCommandCount, GpuTerrainDrawTable.COMMAND_BYTES);
+        this.framesIssued++;
+        return true;
+    }
+
+    /** Whether a head armed a generated list that no loop end has consumed or cancelled yet. */
+    boolean armed() {
+        return this.armed;
+    }
+
+    /** The visit count the armed frame's loop end must reproduce for {@link #recordDraw} to issue. */
+    int armedVisitCount() {
+        return this.armedVisitCount;
+    }
+
+    /** The generated command count of the armed (or just-issued) frame. */
+    int armedCommandCount() {
+        return this.armedCommandCount;
+    }
+
+    /**
+     * Cancels an armed generated list without issuing it: the caller's route cannot
+     * deliver the generated commands' region indices to its program (the pack route off
+     * the GLSM region-table route), so its loop draws unchanged and the generation stands
+     * as pricing only. No counter moves — the arm judgement already counted the frame as
+     * generated, and a route decision is not a fallback of the population.
+     */
+    void cancelArmed() {
+        this.armed = false;
     }
 
     /** Uploads one finalized frame into the slot and records its generation dispatch. */

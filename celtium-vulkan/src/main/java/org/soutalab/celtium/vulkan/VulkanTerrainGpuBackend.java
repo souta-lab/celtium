@@ -2794,11 +2794,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** Set when shadow census creation failed once: the stream stays off rather than retrying. */
     private boolean shadowGpuTerrainCensusFailed;
     /**
-     * The shadow stage's own E10 executor arm (E10 shadow arm): a second
+     * The shadow stage's own E10 executor arm (E10 shadow arm + issuance): a second
      * {@link VulkanGpuTerrainDraw} (pass ordinal 3, name {@code shadow}) fed from the pack
-     * route's shadow stage, in the design section 5.3 (c) shadow-generation form — it
-     * collects, judges and dispatches generation, but the pack loop's draws are never
-     * replaced (a pack program cannot read the generated commands' region delivery; see
+     * route's shadow stage. It collects, judges and dispatches generation (design section
+     * 5.3 (c)); when this stage's program is on the GLSM region-table route, the pack loop
+     * also issues its generated list as the stage's one draw (see
      * {@link GpuTerrainCulling#SHADOW_DRAW}). Created lazily on the first shadow stage
      * under {@code celtium.vulkan.gpuTerrainCulling.shadowDraw}; never created while off.
      */
@@ -2807,6 +2807,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private long shadowGpuTerrainDrawFrame = -1L;
     /** Set when shadow arm creation failed once: the arm stays off rather than retrying. */
     private boolean shadowGpuTerrainDrawFailed;
+    /** Whether this frame's shadow stage head recorded a generation dispatch (its arm is pending a route decision). */
+    private boolean shadowGpuTerrainDrawGenerated;
+    /** This frame's pre-enumerated shadow visit count, as the stage head resolved it. */
+    private int shadowGpuTerrainDrawVisits;
     /** Whether the E10 gate line for the main-flag-only configuration has been printed. */
     private boolean gpuTerrainGatePrinted;
     /** One {@code VkDrawIndexedIndirectCommand}: indexCount, instanceCount, firstIndex, vertexOffset, firstInstance. */
@@ -17734,7 +17738,9 @@ this.frameBufferOpen = false;
                 // E10 shadow arm: the executor's generation head at the same position -
                 // it finalizes the previous frame's shadow collection and, on an exact
                 // reproduction, records the generation dispatch here, before the render
-                // pass opens. The loop below draws unchanged either way.
+                // pass opens, and arms the generated list. The loop below issues that
+                // list when this stage's program is on the GLSM region-table route and
+                // draws unchanged otherwise (the arm is cancelled at the loop's head).
                 celtium$shadowGpuTerrainDrawStageHead(matrices, renderLists, pass,
                         occlusionCamera, useBlockFaceCulling, view);
             }
@@ -18115,6 +18121,26 @@ this.frameBufferOpen = false;
             boolean glsmRegionTable = org.soutalab.celtium.vulkan.gl.GlsmPackState.ENABLED
                     && modPipeline.celtium$glsmRegionTable();
             int glsmRegionSlot = 0;
+            // E10 shadow issuance: the stage head armed a generated list for this frame;
+            // it is issuable only here, where the stage's own program is known to deliver
+            // region offsets through the GLSM table (the generated commands' firstInstance
+            // is the table slot the loop stamps in visit order, from 0 — the remap the
+            // head built). The fit check is upfront: the whole visit list must fit the
+            // table, so no region can be stamped past its end mid-loop. Any other route
+            // cancels the arm and the loop below is the generation-only form, unchanged.
+            boolean shadowIssuanceArmed = false;
+            int shadowIssuanceVisited = 0;
+            if (shadowStage && this.shadowGpuTerrainDraw != null
+                    && this.shadowGpuTerrainDraw.armed()) {
+                if (glsmRegionTable && this.shadowGpuTerrainDrawGenerated
+                        && this.shadowGpuTerrainDrawVisits
+                                <= modPipeline.celtium$glsmRegionTableSlots()) {
+                    shadowIssuanceArmed = true;
+                } else {
+                    this.shadowGpuTerrainDraw.cancelArmed();
+                }
+                this.shadowGpuTerrainDrawGenerated = false;
+            }
             try {
                 setViewportAndScissor(stack, passW, passH);
                 modPipeline.bindTerrainPipeline(this.commandBuffer);
@@ -18123,6 +18149,48 @@ this.frameBufferOpen = false;
                 // offset 0 every time - the pass binds it once here, as the built-in path does,
                 // and the region draws below (indirect or direct) read it throughout.
                 this.terrain.bindSharedVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset);
+                if (shadowIssuanceArmed) {
+                    // E10 shadow issuance: one claim and one bind serve the whole stage —
+                    // on the GLSM route the per-region span's only varying input is the
+                    // table slot, which is not in the block, so the set the loop used to
+                    // claim per region is region-independent (the built-in route's "one
+                    // descriptor bind serves every region of a pass", carried to the pack
+                    // route). A failed claim cancels the arm before any draw is
+                    // suppressed, and the loop falls back to its per-region form intact.
+                    long issuedDescSet;
+                    ByteBuffer issuedPushUniforms;
+                    org.soutalab.celtium.vulkan.FramePassTimings.begin("packRecordUniform");
+                    try {
+                        org.soutalab.celtium.vulkan.PackUniformCensus.noteRegion(shadowStage);
+                        org.soutalab.celtium.vulkan.FramePassTimings.begin("packSamplerClaim");
+                        try {
+                            issuedDescSet = modPipeline.samplersAndImages(samplerToken, modProgram, this.frameId);
+                        } finally {
+                            org.soutalab.celtium.vulkan.FramePassTimings.end("packSamplerClaim");
+                        }
+                        if (modPipeline.uniformsViaBuffer()) {
+                            issuedPushUniforms = null;
+                        } else {
+                            org.soutalab.celtium.vulkan.FramePassTimings.begin("packUniformPack");
+                            try {
+                                issuedPushUniforms = VulkanModProgramPipeline.packUniforms(modProgram);
+                            } finally {
+                                org.soutalab.celtium.vulkan.FramePassTimings.end("packUniformPack");
+                            }
+                            modPipeline.celtium$notePushPack(modProgram, issuedPushUniforms);
+                        }
+                    } finally {
+                        org.soutalab.celtium.vulkan.FramePassTimings.end("packRecordUniform");
+                    }
+                    if (issuedDescSet == 0L && (modPipeline.uniformsViaBuffer()
+                            || !samplers.isEmpty() || !imageBindings.isEmpty())) {
+                        shadowIssuanceArmed = false;
+                        this.shadowGpuTerrainDraw.cancelArmed();
+                    } else {
+                        modPipeline.bindTerrainUniformsAndSet(this.commandBuffer,
+                                issuedPushUniforms, issuedDescSet, setScratch);
+                    }
+                }
                 while (true) {
                     // Item 722 (E6, first stage): packRegionIter brackets one region's iteration head
                     // (advance, lookup, cached-batch validity; packRecordRebuild nests inside),
@@ -18262,6 +18330,16 @@ this.frameBufferOpen = false;
                         } finally {
                             org.soutalab.celtium.vulkan.FramePassTimings.end(packOffsetSeam);
                         }
+                        if (shadowIssuanceArmed) {
+                            // E10 shadow issuance: the stage's one claim and bind were
+                            // recorded before the loop; the per-region span keeps only
+                            // the offset write above (the registry value, whose table
+                            // delivery is stamped below). A non-zero sentinel keeps the
+                            // exhausted-claim skip below from firing for a bind that
+                            // already happened.
+                            descSet = 1L;
+                            pushUniforms = null;
+                        } else {
                         org.soutalab.celtium.vulkan.FramePassTimings.begin("packSamplerClaim");
                         try {
                             descSet = modPipeline.samplersAndImages(samplerToken, modProgram, this.frameId);
@@ -18278,6 +18356,7 @@ this.frameBufferOpen = false;
                                 org.soutalab.celtium.vulkan.FramePassTimings.end("packUniformPack");
                             }
                             modPipeline.celtium$notePushPack(modProgram, pushUniforms);
+                        }
                         }
                     } finally {
                         org.soutalab.celtium.vulkan.FramePassTimings.end("packRecordUniform");
@@ -18331,7 +18410,13 @@ this.frameBufferOpen = false;
                         // the region's slot as firstInstance and the indirect path, whose packets
                         // stamp 0, is not used.)
                         boolean indirect = false;
-                        if (TERRAIN_INDIRECT_ENABLED && !glsmRegionTable) {
+                        if (shadowIssuanceArmed) {
+                            // E10 shadow issuance: this region's commands are in the
+                            // GPU-generated list the stage head dispatched; nothing is
+                            // recorded for it here, and the stage's one generated draw
+                            // is recorded after the loop, in the camera executor's
+                            // issued shape.
+                        } else if (TERRAIN_INDIRECT_ENABLED && !glsmRegionTable) {
                             indirect = this.terrain.tryIndirectBatch(this.context, this.commandBuffer,
                                     stack, this.sharedIndexBuffers, resources, batch, sortedPass,
                                     primitiveType, 0);
@@ -18341,7 +18426,10 @@ this.frameBufferOpen = false;
                                     ? "GLSM stage 1: region offsets ride the draws' firstInstance, which the indirect packets stamp 0; the direct walk delivers them"
                                     : "the indirect path is off (-Dceltium.vulkan.indirectTerrain)");
                         }
-                        if (indirect) {
+                        if (shadowIssuanceArmed) {
+                            // The generated draw at the loop's end accounts these
+                            // commands once, from the executor's armed count.
+                        } else if (indirect) {
                             drawnCommands += batch.size();
                             sharedIndexBound = false;
                         } else {
@@ -18357,6 +18445,22 @@ this.frameBufferOpen = false;
                         org.soutalab.celtium.vulkan.FramePassTimings.end("packRegionDraw");
                     }
                     drawnSections += renderList.getSectionsWithGeometryCount();
+                }
+                if (shadowIssuanceArmed && this.shadowGpuTerrainDraw != null) {
+                    // E10 shadow issuance: the stage's terrain draws, generated on the
+                    // GPU at the stage head, are issued here as one IndirectCount draw —
+                    // the camera executor's loop-end shape. The generated commands' only
+                    // index source is the shared quad buffer by construction of the
+                    // collection (the shadow arm collects unsorted batches only), so it
+                    // is bound explicitly. recordDraw re-checks the loop's visited count
+                    // against the head's prediction and withholds the draw (disabling
+                    // the executor) on any mismatch, as on the camera route.
+                    int issuedCommands = this.shadowGpuTerrainDraw.armedCommandCount();
+                    this.terrain.bindIndexBuffer(this.commandBuffer,
+                            this.sharedIndexBuffers.get(primitiveType));
+                    if (this.shadowGpuTerrainDraw.recordDraw(this.commandBuffer, shadowIssuanceVisited)) {
+                        drawnCommands += issuedCommands;
+                    }
                 }
             } finally {
                 vkCmdEndRenderPass(this.commandBuffer);
@@ -18718,19 +18822,22 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * The shadow arm's stage head (E10 shadow arm): once per frame, at the pack route's
-     * shadow stage head — the same position as the shadow census rollover, after the stage
-     * is known and before its render pass opens — the previous frame's shadow collection is
-     * finalized and this frame's population pre-enumerated with the camera head's own
-     * enumerator ({@link #celtium$gpuTerrainVisitList}, same arguments); on an exact
-     * reproduction the executor records its generation dispatch here. The differences from
-     * the camera head are the pack route's facts: the region offset cursor is 0 (the pack
-     * route assigns no binding-5 indices, so the remap is the visit order), the
-     * view-projection is this stage's own matrices (the light's projection x modelView,
-     * the shadow census' formula — never the camera frame's cached VP), and the result is
-     * never handed to the draw loop: the pack loop draws unchanged, in the design section
-     * 5.3 (c) shadow-generation form. With the shadow draw flag off this returns on the
-     * first test and the stage records exactly what it recorded before.
+     * The shadow arm's stage head (E10 shadow arm + issuance): once per frame, at the pack
+     * route's shadow stage head — the same position as the shadow census rollover, after
+     * the stage is known and before its render pass opens — the previous frame's shadow
+     * collection is finalized and this frame's population pre-enumerated with the camera
+     * head's own enumerator ({@link #celtium$gpuTerrainVisitList}, same arguments); on an
+     * exact reproduction the executor records its generation dispatch here and arms the
+     * generated list. The differences from the camera head are the pack route's facts: the
+     * region offset cursor is 0 (the pack loop stamps its GLSM region table from slot 0 in
+     * visit order, so the remap is the visit order), and the view-projection is this
+     * stage's own matrices (the light's projection x modelView, the shadow census'
+     * formula — never the camera frame's cached VP). The armed list is handed to this
+     * stage's own loop, which issues it only when the stage's program is on the GLSM
+     * region-table route and cancels the arm otherwise; the outcome is kept in
+     * {@link #shadowGpuTerrainDrawGenerated} / {@link #shadowGpuTerrainDrawVisits} for
+     * that decision. With the shadow draw flag off this returns on the first test and the
+     * stage records exactly what it recorded before.
      */
     private void celtium$shadowGpuTerrainDrawStageHead(ChunkRenderMatrices matrices,
             ChunkRenderListIterable renderLists, TerrainRenderPass pass,
@@ -18743,6 +18850,8 @@ this.frameBufferOpen = false;
             return;
         }
         this.shadowGpuTerrainDrawFrame = this.frameId;
+        this.shadowGpuTerrainDrawGenerated = false;
+        this.shadowGpuTerrainDrawVisits = 0;
         try {
             if (this.shadowGpuTerrainDraw == null) {
                 this.shadowGpuTerrainDraw = new VulkanGpuTerrainDraw(this.context, 3, "shadow");
@@ -18751,12 +18860,15 @@ this.frameBufferOpen = false;
                     renderLists, pass, useBlockFaceCulling, view, occlusionCamera);
             float[] vp = new float[16];
             new org.joml.Matrix4f(matrices.projection()).mul(matrices.modelView()).get(vp);
-            this.shadowGpuTerrainDraw.generationHead(this.commandBuffer, this.frameSlot, visits,
+            this.shadowGpuTerrainDrawVisits = visits == null ? 0 : visits.size();
+            this.shadowGpuTerrainDrawGenerated = this.shadowGpuTerrainDraw.generationHead(
+                    this.commandBuffer, this.frameSlot, visits,
                     0, vp,
                     occlusionCamera.x, occlusionCamera.y, occlusionCamera.z,
                     this.terrainBudget.drawCapsActive());
         } catch (RuntimeException | LinkageError error) {
             this.shadowGpuTerrainDrawFailed = true;
+            this.shadowGpuTerrainDrawGenerated = false;
             System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_DRAW_DISABLED at=shadowStageHead"
                     + " pass=shadow reason=" + error);
         }
