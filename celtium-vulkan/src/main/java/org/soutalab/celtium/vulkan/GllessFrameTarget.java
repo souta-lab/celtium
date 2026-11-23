@@ -1133,6 +1133,19 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return new int[] { src, dst };
     }
 
+    // The six mask pairs recordLayoutBarriers can ask for, computed once at class load by the pinned function
+    // above: the recording runs per window and per pass (~26 a frame on the measured scene), the pairs are pure
+    // functions of (release, firstAcquire, depth), and the release pairs ignore firstAcquire - so recomputing
+    // them, and allocating the two int[2] results, on every record bought nothing. The function itself stays
+    // the single source of the values (and the one the test pins); these are its outputs, not a second copy of
+    // its arithmetic.
+    private static final int[] COLOR_MASKS_ACQUIRE_FIRST = layoutBarrierAccessMasks(false, true, false);
+    private static final int[] COLOR_MASKS_ACQUIRE = layoutBarrierAccessMasks(false, false, false);
+    private static final int[] COLOR_MASKS_RELEASE = layoutBarrierAccessMasks(true, false, false);
+    private static final int[] DEPTH_MASKS_ACQUIRE_FIRST = layoutBarrierAccessMasks(false, true, true);
+    private static final int[] DEPTH_MASKS_ACQUIRE = layoutBarrierAccessMasks(false, false, true);
+    private static final int[] DEPTH_MASKS_RELEASE = layoutBarrierAccessMasks(true, false, true);
+
     private void recordColorToTransfer(VkCommandBuffer command, long image) {
         try (MemoryStack stack = stackPush()) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
@@ -1220,8 +1233,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
      */
     private void recordLayoutBarriers(VkCommandBuffer command, boolean release) {
         boolean first = this.firstAcquire && !release;
-        int[] colorMasks = layoutBarrierAccessMasks(release, first, false);
-        int[] depthMasks = layoutBarrierAccessMasks(release, first, true);
+        int[] colorMasks = release ? COLOR_MASKS_RELEASE
+                : first ? COLOR_MASKS_ACQUIRE_FIRST : COLOR_MASKS_ACQUIRE;
+        int[] depthMasks = release ? DEPTH_MASKS_RELEASE
+                : first ? DEPTH_MASKS_ACQUIRE_FIRST : DEPTH_MASKS_ACQUIRE;
         int queueFamily = this.context.queueFamilyIndex();
         try (MemoryStack stack = stackPush()) {
             VkImageMemoryBarrier.Buffer barriers = VkImageMemoryBarrier.calloc(2, stack);
