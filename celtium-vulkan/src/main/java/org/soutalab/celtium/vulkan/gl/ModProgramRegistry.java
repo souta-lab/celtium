@@ -41,6 +41,17 @@ public final class ModProgramRegistry {
         long uniformVersion = 1L;
         ByteBuffer cachedPackedUniforms;
         long cachedPackedVersion = -1L;
+        /** Block member index per uniform name, in the lowered block's member order; -1 for a name that takes a
+         *  location but is not a block member (a sampler or image unit). Built at link; null before the first. */
+        Map<String, Integer> uniformMemberIndex;
+        /** Block members whose values changed since the retained pack was written, a bitset over member indices. */
+        long[] uniformPackDirtyWords;
+        /** Whether the retained pack cannot be trusted member-by-member and must be rewritten in full. */
+        boolean uniformPackAllDirty = true;
+        /** The block the incremental packer last wrote, kept across versions so unchanged members survive. */
+        ByteBuffer retainedPackedUniforms;
+        /** The lowering {@link #retainedPackedUniforms} was packed for; a re-link replaces it and forces a full pack. */
+        ModGlslTranslator.Result retainedPackResult;
         /** The compiled stages, when shaderc was available at link; null otherwise. */
         byte[] vertexSpirv;
         byte[] fragmentSpirv;
@@ -99,6 +110,63 @@ public final class ModProgramRegistry {
         public void cachePackedUniforms(long version, ByteBuffer packed) {
             this.cachedPackedUniforms = packed;
             this.cachedPackedVersion = version;
+        }
+
+        /**
+         * Advances the uniform version for a value change to {@code name}, remembering which block member
+         * changed so the incremental packer can rewrite just that member into the retained block. A name that
+         * is not a block member (a sampler or image unit) leaves the block's bytes alone; a name the link never
+         * classified distrusts the whole retained block, as does a write before the first link.
+         */
+        void bumpUniformVersion(String name) {
+            this.uniformVersion++;
+            Map<String, Integer> index = this.uniformMemberIndex;
+            Integer member = index == null ? null : index.get(name);
+            if (member == null) {
+                this.uniformPackAllDirty = true;
+            } else if (member >= 0) {
+                int word = member >>> 6;
+                if (this.uniformPackDirtyWords == null) {
+                    this.uniformPackDirtyWords = new long[word + 1];
+                } else if (word >= this.uniformPackDirtyWords.length) {
+                    this.uniformPackDirtyWords = java.util.Arrays.copyOf(this.uniformPackDirtyWords, word + 1);
+                }
+                this.uniformPackDirtyWords[word] |= 1L << (member & 63);
+            }
+        }
+
+        /** {@return whether the retained incremental pack must be rewritten in full}. */
+        public boolean uniformPackAllDirty() {
+            return this.uniformPackAllDirty;
+        }
+
+        /** {@return the live dirty bitset over block members for the incremental packer}, or null when none. */
+        public long[] uniformPackDirtyWords() {
+            return this.uniformPackDirtyWords;
+        }
+
+        /** Marks every member packed: the retained block now matches the current values. */
+        public void consumeUniformPackDirty() {
+            if (this.uniformPackDirtyWords != null) {
+                java.util.Arrays.fill(this.uniformPackDirtyWords, 0L);
+            }
+            this.uniformPackAllDirty = false;
+        }
+
+        /** {@return the block the incremental packer last wrote}, or null before its first pack. */
+        public ByteBuffer retainedPackedUniforms() {
+            return this.retainedPackedUniforms;
+        }
+
+        /** {@return the lowering the retained block was packed for}. */
+        public ModGlslTranslator.Result retainedPackResult() {
+            return this.retainedPackResult;
+        }
+
+        /** Keeps the block the incremental packer wrote, and the lowering it was written for. */
+        public void retainPackedUniforms(ByteBuffer packed, ModGlslTranslator.Result result) {
+            this.retainedPackedUniforms = packed;
+            this.retainedPackResult = result;
         }
 
         /** {@return whether both stages are compiled to SPIR-V} and the program could therefore run natively. */
@@ -253,6 +321,13 @@ public final class ModProgramRegistry {
         p.cachedPackedUniforms = null;
         p.cachedPackedVersion = -1L;
         p.uniformVersion++;
+        // The incremental packer's state belongs to the previous link's block too: the member order it
+        // indexed and the block it retained both start over, and its first pack under this link is a full one.
+        p.uniformMemberIndex = null;
+        p.uniformPackDirtyWords = null;
+        p.uniformPackAllDirty = true;
+        p.retainedPackedUniforms = null;
+        p.retainedPackResult = null;
         if (p.lowered.ok()) {
             for (ModGlslTranslator.UniformMember member : p.lowered.uniforms()) {
                 mapName(p, member.name());
@@ -266,6 +341,21 @@ public final class ModProgramRegistry {
             for (ModGlslTranslator.ImageBinding image : p.lowered.images()) {
                 mapName(p, image.name());
             }
+            // The incremental packer's name classification, in the same pass that maps the locations:
+            // block members by their index in the lowered member order, samplers and images as -1 (they
+            // take locations and values but no block bytes). A name collision keeps the member reading -
+            // the block is the side a missed dirty bit would silently corrupt.
+            Map<String, Integer> memberIndex = new HashMap<>();
+            for (int i = 0; i < p.lowered.uniforms().size(); i++) {
+                memberIndex.put(p.lowered.uniforms().get(i).name(), i);
+            }
+            for (ModGlslTranslator.SamplerBinding sampler : p.lowered.samplers()) {
+                memberIndex.putIfAbsent(sampler.name(), -1);
+            }
+            for (ModGlslTranslator.ImageBinding image : p.lowered.images()) {
+                memberIndex.putIfAbsent(image.name(), -1);
+            }
+            p.uniformMemberIndex = memberIndex;
         }
         p.vertexSpirv = null;
         p.fragmentSpirv = null;
@@ -407,11 +497,11 @@ public final class ModProgramRegistry {
                 }
             }
             if (changed) {
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.floatValues.put(name, values);
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -428,11 +518,11 @@ public final class ModProgramRegistry {
         if (existing != null && existing.length == 1) {
             if (Float.floatToRawIntBits(existing[0]) != Float.floatToRawIntBits(x)) {
                 existing[0] = x;
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.floatValues.put(name, new float[] {x});
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -451,11 +541,11 @@ public final class ModProgramRegistry {
                     || Float.floatToRawIntBits(existing[1]) != Float.floatToRawIntBits(y)) {
                 existing[0] = x;
                 existing[1] = y;
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.floatValues.put(name, new float[] {x, y});
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -476,11 +566,11 @@ public final class ModProgramRegistry {
                 existing[0] = x;
                 existing[1] = y;
                 existing[2] = z;
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.floatValues.put(name, new float[] {x, y, z});
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -503,11 +593,11 @@ public final class ModProgramRegistry {
                 existing[1] = y;
                 existing[2] = z;
                 existing[3] = w;
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.floatValues.put(name, new float[] {x, y, z, w});
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -555,7 +645,7 @@ public final class ModProgramRegistry {
             p.floatValues.put(name, dst);
         }
         if (changed) {
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -578,11 +668,11 @@ public final class ModProgramRegistry {
                 }
             }
             if (changed) {
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.intValues.put(name, values);
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -599,11 +689,11 @@ public final class ModProgramRegistry {
         if (existing != null && existing.length == 1) {
             if (existing[0] != x) {
                 existing[0] = x;
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.intValues.put(name, new int[] {x});
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -621,11 +711,11 @@ public final class ModProgramRegistry {
             if (existing[0] != x || existing[1] != y) {
                 existing[0] = x;
                 existing[1] = y;
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.intValues.put(name, new int[] {x, y});
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -644,11 +734,11 @@ public final class ModProgramRegistry {
                 existing[0] = x;
                 existing[1] = y;
                 existing[2] = z;
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.intValues.put(name, new int[] {x, y, z});
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -668,11 +758,11 @@ public final class ModProgramRegistry {
                 existing[1] = y;
                 existing[2] = z;
                 existing[3] = w;
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.intValues.put(name, new int[] {x, y, z, w});
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -703,7 +793,7 @@ public final class ModProgramRegistry {
             p.intValues.put(name, dst);
         }
         if (changed) {
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
