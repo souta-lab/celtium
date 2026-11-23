@@ -23,7 +23,8 @@ public final class GlsmBufferState {
     public static GlsmBufferState current() { return CURRENT; }
 
     private final int[] bindings = new int[FLAT_MAP_SIZE];
-    private final Map<Integer, ByteBuffer> store = new HashMap<Integer, ByteBuffer>();
+    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ByteBuffer> store =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ByteBuffer>();
     /** Readable ranges per buffer name: {address, length} pairs, S-24. */
     private final Map<Integer, long[]> readableRanges = new HashMap<Integer, long[]>();
 
@@ -52,8 +53,8 @@ public final class GlsmBufferState {
         return target >= 0 && target < FLAT_MAP_SIZE ? this.bindings[target] : 0;
     }
 
-    /** The live storage map BufferStorageRecord operates on. */
-    public Map<Integer, ByteBuffer> store() { return this.store; }
+    /** The live storage map BufferStorageRecord operates on (the stub's fastutil shape). */
+    public it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ByteBuffer> store() { return this.store; }
 
     public void putStorage(int name, ByteBuffer buffer) { this.store.put(name, buffer); this.version++; }
 
@@ -73,12 +74,19 @@ public final class GlsmBufferState {
     /** @return {address, length} for the name, or null when no range was recorded. */
     public long[] readableRange(int name) { return this.readableRanges.get(name); }
 
+    /**
+     * Records a pixel-store value with the stub record's exact semantics: unpack alignment is
+     * sanitised to a legal GL value (1, 2 or 8, else 4), lengths and skips clamp at zero, and
+     * GL_UNPACK_ROW_LENGTH is 0x0CF2 (the landed owner keyed it at 0x0CF7, which is
+     * GL_UNPACK_IMAGE_HEIGHT - corrected here at the rewiring, before any route read it).
+     * PACK_* pnames keep their own fields, as landed.
+     */
     public void pixelStore(int pname, int value) {
         switch (pname) {
-            case 0x0CF5: this.unpackAlignment = value; break;   // GL_UNPACK_ALIGNMENT
-            case 0x0CF7: this.unpackRowLength = value; break;   // GL_UNPACK_ROW_LENGTH
-            case 0x0CF4: this.unpackSkipPixels = value; break;  // GL_UNPACK_SKIP_PIXELS
-            case 0x0CF3: this.unpackSkipRows = value; break;    // GL_UNPACK_SKIP_ROWS
+            case 0x0CF5: this.unpackAlignment = value == 1 || value == 2 || value == 8 ? value : 4; break;
+            case 0x0CF2: this.unpackRowLength = Math.max(0, value); break;
+            case 0x0CF4: this.unpackSkipPixels = Math.max(0, value); break;
+            case 0x0CF3: this.unpackSkipRows = Math.max(0, value); break;
             case 0x0D05: this.packAlignment = value; break;     // GL_PACK_ALIGNMENT
             case 0x0D02: this.packRowLength = value; break;     // GL_PACK_ROW_LENGTH
             case 0x0D04: this.packSkipPixels = value; break;    // GL_PACK_SKIP_PIXELS
@@ -88,10 +96,25 @@ public final class GlsmBufferState {
         this.version++;
     }
 
+    public int unpackAlignment() { return this.unpackAlignment; }
+    public int unpackRowLength() { return this.unpackRowLength; }
+    public int unpackSkipPixels() { return this.unpackSkipPixels; }
+    public int unpackSkipRows() { return this.unpackSkipRows; }
+
+    /** Clears every target binding that names {@code name} (the stub forgetBuffer sweep). */
+    public void unbindName(int name) {
+        for (int target = 0; target < FLAT_MAP_SIZE; target++) {
+            if (this.bindings[target] == name) {
+                this.bindings[target] = 0;
+                this.version++;
+            }
+        }
+    }
+
     public int pixelStore(int pname) {
         switch (pname) {
             case 0x0CF5: return this.unpackAlignment;
-            case 0x0CF7: return this.unpackRowLength;
+            case 0x0CF2: return this.unpackRowLength;
             case 0x0CF4: return this.unpackSkipPixels;
             case 0x0CF3: return this.unpackSkipRows;
             case 0x0D05: return this.packAlignment;
