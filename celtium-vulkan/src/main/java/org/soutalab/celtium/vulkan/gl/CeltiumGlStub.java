@@ -1010,6 +1010,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     (java.util.function.IntFunction<org.lwjgl.PointerBuffer>) org.lwjgl.BufferUtils::createPointerBuffer);
             org.lwjgl.opengl.GL.setCapabilities((org.lwjgl.opengl.GLCapabilities) capabilities);
             capabilitiesInstalled = true;
+            GlsmHintLedger.current().noteCapabilitiesInstalled(extensions.size());
             celtium$printAtExit("CELTIUM_GLSTUB LWJGL3 capabilities installed first from the stub provider: extensions="
                     + extensions.size() + " thread=" + Thread.currentThread().getName());
         } catch (Throwable error) {
@@ -1029,6 +1030,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static synchronized CeltiumGlStub install() {
         if (installed == null) {
             installed = new CeltiumGlStub();
+            GlsmHintLedger.current().noteStubInstalled();
+            GlsmHintLedger.current().noteFunctionProviderInstalled();
             org.lwjgl.system.Configuration.OPENGL_EXPLICIT_INIT.set(true);
             org.lwjgl.opengl.GL.create(installed);
             // No GLCapabilities is built here on purpose. Measured 2026-10-15: installing one converts LWJGL3's
@@ -1937,6 +1940,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glPointSize} from the transformer's route: recorded for the query, since points are not rasterized. */
     public static void celtium$pointSize(float size) {
+        GlsmHintLedger.current().noteArrival("glPointSize");
         CeltiumGlStub stub = installed;
         if (stub != null && size > 0.0f) {
             GlsmImmediateState.current().pointSize(size);
@@ -1955,6 +1959,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Renderbuffer storage, recorded so its size queries answer the extent the caller asked for. */
     public static void celtium$bindRenderbuffer(int target, int renderbuffer) {
+        GlsmHintLedger.current().noteArrival("glBindRenderbuffer");
         CeltiumGlStub stub = installed;
         if (stub != null) {
             GlsmClientArrayState.current().bindRenderbuffer(renderbuffer);
@@ -1962,6 +1967,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     public static void celtium$renderbufferStorage(int width, int height) {
+        GlsmHintLedger.current().noteArrival("glRenderbufferStorage");
         CeltiumGlStub stub = installed;
         if (stub != null && GlsmClientArrayState.current().boundRenderbuffer() > 0 && width > 0 && height > 0) {
             GlsmClientArrayState.current().renderbufferStorage(
@@ -2072,6 +2078,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glLineWidth} from the transformer's route: the requested width the narrowing report compares against. */
     public static void celtium$lineWidth(float width) {
+        GlsmHintLedger.current().noteArrival("glLineWidth");
         CeltiumGlStub stub = installed;
         if (stub != null && width > 0.0f) {
             GlsmImmediateState.current().lineWidth(width);
@@ -2120,6 +2127,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * older snapshot rather than nothing.
      */
     public static void celtium$pushAttrib(int mask) {
+        GlsmHintLedger.current().noteArrival("glPushAttrib");
         CeltiumGlStub stub = installed;
         if (stub == null) {
             return;
@@ -2207,6 +2215,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * mask was removed once the mask-selective behaviour was adopted (item 396).
      */
     public static void celtium$popAttrib() {
+        GlsmHintLedger.current().noteArrival("glPopAttrib");
         CeltiumGlStub stub = installed;
         if (stub == null) {
             return;
@@ -2380,6 +2389,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The stub's record of a raw or managed {@code glDepthMask}, for the push snapshot and the query fallback. */
     public static void celtium$noteDepthMask(boolean mask) {
+        GlsmHintLedger.current().noteArrival("glDepthMask");
         CeltiumGlStub stub = installed;
         if (stub != null) {
             stub.attribDepthWrites = mask;
@@ -2389,6 +2399,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The stub's record of a raw or managed {@code glDepthFunc}. */
     public static void celtium$noteDepthFunc(int func) {
+        GlsmHintLedger.current().noteArrival("glDepthFunc");
         CeltiumGlStub stub = installed;
         if (stub != null) {
             stub.attribDepthFunc = func;
@@ -2474,6 +2485,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * next vanilla draw decoded with the mod's pointer.
      */
     public static void celtium$pushClientAttrib() {
+        GlsmHintLedger.current().noteArrival("glPushClientAttrib");
         CeltiumGlStub stub = installed;
         if (stub == null) {
             return;
@@ -2484,6 +2496,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     public static void celtium$popClientAttrib() {
+        GlsmHintLedger.current().noteArrival("glPopClientAttrib");
         CeltiumGlStub stub = installed;
         if (stub == null) {
             return;
@@ -3503,6 +3516,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * (this method, which the hint calls) and the stub's own dispatch table (SEM_VIEWPORT).
      */
     public static void celtium$viewport(int x, int y, int width, int height) {
+        GlsmHintLedger.current().noteArrival("glViewport");
         GlsmViewportState.current().set(x, y, width, height);
     }
 
@@ -4205,6 +4219,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     public static void celtium$clearColor(float red, float green, float blue, float alpha) {
+        GlsmHintLedger.current().noteArrival("glClearColor");
         CeltiumGlStub stub = installed;
         if (stub != null) {
             stub.recordClearColor(red, green, blue, alpha);
@@ -4212,6 +4227,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     public static void celtium$clearDepth(double depth) {
+        GlsmHintLedger.current().noteArrival("glClearDepth");
         CeltiumGlStub stub = installed;
         if (stub != null) {
             stub.recordClearDepth(depth);
@@ -8939,6 +8955,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glListBase} from the transformer's route. */
     public static void celtium$listBase(int base) {
+        GlsmHintLedger.current().noteArrival("glListBase");
         CeltiumGlStub stub = installed;
         if (stub != null) {
             GlsmDisplayListLedger.current().listBase(base);
