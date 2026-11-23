@@ -35,6 +35,13 @@ public final class GlsmViewportState {
         this.version++;
     }
 
+    /** Window-creation initialisation: sets the raw rectangle only, without marking a game-set
+     * viewport as seen (the stub's initializeWindowRectangles never recorded the packed form). */
+    public void initialize(int x, int y, int width, int height) {
+        this.x = x; this.y = y; this.width = width; this.height = height;
+        this.version++;
+    }
+
     public int x() { return this.x; }
     public int y() { return this.y; }
     public int width() { return this.width; }
