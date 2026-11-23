@@ -536,10 +536,10 @@ final class GlStateQueries {
                 return;
             }
             case 0x0BA2: // GL_VIEWPORT
-                memPutInt(out, stub.viewportX);
-                memPutInt(out + 4, stub.viewportY);
-                memPutInt(out + 8, stub.viewportW);
-                memPutInt(out + 12, stub.viewportH);
+                memPutInt(out, GlsmViewportState.current().x());
+                memPutInt(out + 4, GlsmViewportState.current().y());
+                memPutInt(out + 8, GlsmViewportState.current().width());
+                memPutInt(out + 12, GlsmViewportState.current().height());
                 return;
             case 0x0C23: { // GL_COLOR_WRITEMASK - four integers, R,G,B,A
                 int mask = stub.raster.colorMask();
@@ -655,10 +655,10 @@ final class GlStateQueries {
                 return;
             }
             case 0x0BA2: { // GL_VIEWPORT
-                putFloatOrDouble(out, 0, stub.viewportX, asDouble);
-                putFloatOrDouble(out, 1, stub.viewportY, asDouble);
-                putFloatOrDouble(out, 2, stub.viewportW, asDouble);
-                putFloatOrDouble(out, 3, stub.viewportH, asDouble);
+                putFloatOrDouble(out, 0, GlsmViewportState.current().x(), asDouble);
+                putFloatOrDouble(out, 1, GlsmViewportState.current().y(), asDouble);
+                putFloatOrDouble(out, 2, GlsmViewportState.current().width(), asDouble);
+                putFloatOrDouble(out, 3, GlsmViewportState.current().height(), asDouble);
                 return;
             }
             case 0x0C10: { // GL_SCISSOR_BOX
