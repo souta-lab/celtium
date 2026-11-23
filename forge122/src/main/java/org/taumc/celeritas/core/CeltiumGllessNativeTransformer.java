@@ -38,6 +38,15 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
     private static final String GET_ERROR_DESC = "()I";
     private static final String IDENTITY = "Celtium (GL-less Vulkan)";
     /** State setters the stub answers with SEM_NOOP; see the direct-return branch for why the name is enough. */
+    // GAP-INT-2 exclusion (stage-3 routes): the state-bearing subset named by
+    // org.soutalab.celtium.vulkan.gl.GlsmVoidNoopRoutes (15 names: the stencil family,
+    // glClearStencil, glDepthMask, glDepthFunc, glBlendColor, glPolygonMode,
+    // glSampleCoverage, glBindSampler, glBindBufferBase, glBindBufferRange) is NOT listed
+    // here any more. A direct call to one of them must not be dropped as a no-op before it
+    // can reach the state record its route names; names with an unconditional route above
+    // (glDepthFunc, glDepthMask) are answered there, the rest now fall through to the
+    // counted fallback instead of vanishing, until the merge phase delivers them to the
+    // owners GlsmVoidNoopRoutes names. The pure no-op remainder stays listed by design.
     private static final java.util.Set<String> VOID_NOOPS = new java.util.HashSet<>(java.util.Arrays.asList(
             // The routes are consulted before this set, so a name that has one must not be listed here: it would look
             // like the answer came from the set and would shadow the route outright if the two were ever evaluated in
@@ -45,14 +54,13 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             // and are therefore absent.
             "glLightf", "glLighti", "glLightiv", "glLightModelf", "glLightModeli",
             "glLightModeliv", "glColorMaterial", "glMaterialf", "glMaterialfv", "glMateriali", "glShadeModel",
-            "glStencilFunc", "glStencilFuncSeparate", "glStencilOp",
-            "glStencilOpSeparate", "glStencilMask", "glStencilMaskSeparate", "glNormal3f", "glNormal3b", "glNormal3fv",
+                        "glNormal3f", "glNormal3b", "glNormal3fv",
             // These texcoord/vertex names also have legacy-capture routes: the route is consulted before this set,
             // so an entry here never answers them (the listing is kept for the names that have no route).
             "glTexCoord2f", "glTexCoord2d", "glVertex3f",
             // The uniform setters, the shader source, attachment and link are routed to ModProgramRegistry
             // (celtium$routeModProgram, 2026-11-05) and are therefore absent.
-            "glClearStencil", "glVertex2i", "glLineStipple",
+            "glVertex2i", "glLineStipple",
             // The attribute stacks and the mod-shader entry points are listed no-ops as well: GL-less has no attribute
             // stack to push, and a mod's GL program is a stub whose uniforms nothing reads. Their combined call volume
             // in the measured session was 3.4e3.
@@ -74,15 +82,12 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             "glIndexd", "glIndexs",
             // The rest of the raster/clear state that the table lists as a no-op on purpose (the Vulkan side mirrors
             // that state through the GlStateManager hooks, not through these raw setters).
-            "glDepthMask", "glDepthFunc", "glDepthRange", "glBlendColor",
-            // glColorMaski and the indexed blend setters are routed to the single target's state below.
+            "glDepthRange",             // glColorMaski and the indexed blend setters are routed to the single target's state below.
             // glClearBufferfv/iv/fi are routed to the clear record below; the no-op set is consulted first.
-            "glStencilFuncSeparate", "glStencilOpSeparate", "glStencilMaskSeparate",
-            "glPolygonMode", "glHint", "glSampleCoverage", "glLogicOp", "glClampColor",
+                        "glHint", "glLogicOp", "glClampColor",
             "glReadBuffer", "glDrawBuffer", "glDrawBuffers",
             "glPrimitiveRestartIndex", "glSampleMaski", "glProvokingVertex",
-            "glBindSampler", "glBindBufferBase", "glBindBufferRange",
-            "glAlphaFunc", "glSecondaryColor3f"));
+                        "glAlphaFunc", "glSecondaryColor3f"));
 
     @Override
     public byte[] transform(String name, String transformedName, byte[] basicClass) {
