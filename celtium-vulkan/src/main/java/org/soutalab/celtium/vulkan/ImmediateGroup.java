@@ -71,6 +71,16 @@ public final class ImmediateGroup {
     /** Set for a group that stands for a run of model instances ({@link VulkanModelInstances}); drawn as one call. */
     VulkanModelInstances.Run modelRun;
     /**
+     * Whether this group's indices stand outside the accept path's flush accounting (flight A1): stamped at
+     * accept time from the group's own creation, read at every place the counter is later adjusted - the
+     * draw-side subtraction, the flush-end recompute and the two abort re-adds. An exempt group's indices were
+     * never added to {@code pendingImmediateIndices}, so none of those places may subtract, recount or re-add
+     * them either; the one-sided version of that mistake is the {@code -3168} defect the model-run rule fixed.
+     * Set only for a retained group accepted under {@code -Dceltium.vulkan.retainedIndexFlushExempt}; with the
+     * switch off no group carries the mark and the accounting is the old one.
+     */
+    boolean indexFlushExempt;
+    /**
      * The fixed-function lighting payload for a lit group: twenty floats laid out as five vec4 - the two light
      * directions already rotated into model space, the scene ambient, and each light's diffuse. {@code null} for an
      * unlit group, which is also how the draw loop knows whether to write the extended push range.
@@ -339,6 +349,7 @@ public final class ImmediateGroup {
     /** Clears the fields the accept path may set after construction; {@link #reset} and {@link #recycle} share it. */
     private void clearForReuse() {
         this.modelRun = null;
+        this.indexFlushExempt = false;
         this.color = null;
         this.combineColor = null;
         this.texMatrix = null;

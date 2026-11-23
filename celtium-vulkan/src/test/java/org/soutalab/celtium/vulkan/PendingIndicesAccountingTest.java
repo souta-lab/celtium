@@ -8,12 +8,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * The accept path's flush bound, checked without a device.
  * <p>
- * {@code pendingImmediateIndices} is incremented by the index count of every accepted batch and read against
+ * {@code pendingImmediateIndices} is incremented by the index count of every counted batch and read against
  * {@code IMMEDIATE_FLUSH_INDICES} to bound how much geometry a window holds before it is drawn. The draw side
  * subtracted every drawn group's index count, including the model-run groups whose indices the accept path never
  * added - the baseline verify line carries {@code pendingImmediateIndices=-3168} beside {@code modelDraws=88}. A
  * negative counter can never reach the threshold, so the bound was dead rather than tight, and the pending geometry
- * was unbounded until the next ordering flush.
+ * was unbounded until the next ordering flush. Flight A1 put a second family on the never-counted side - a
+ * retained group accepted under {@code -Dceltium.vulkan.retainedIndexFlushExempt} - and it goes through the same
+ * parameter, so the same one-sided mistake is available to it; the cases below cover both families.
  * <p>
  * What these tests can prove: the arithmetic of the two cases. They prove nothing about a frame - a green test here
  * is not evidence that any window was bounded.
@@ -41,6 +43,26 @@ class PendingIndicesAccountingTest {
         }
         assertEquals(0, pending, "32 model runs on an empty queue leave the bound where it was");
         assertTrue(pending >= 0, "and never below zero, which is what made the threshold unreachable");
+    }
+
+    @Test
+    void anExemptRetainedGroupIsNotSubtracted() {
+        // Flight A1: the accept path skipped this group's indices under the exemption, so the draw side must
+        // skip them too - the same never-counted case as a model run, reached through the group's stamp.
+        assertEquals(1000, VulkanTerrainGpuBackend.celtium$pendingIndicesAfterDraw(1000, true, 100),
+                "an exempt retained group was never counted, so drawing it must leave the counter alone");
+    }
+
+    @Test
+    void countedAndNeverCountedDrawsInterleavedDrainExactly() {
+        int pending = 0;
+        pending += 100; // a counted transient batch is accepted
+        // an exempt retained batch is accepted: the accept path adds nothing for it
+        pending = VulkanTerrainGpuBackend.celtium$pendingIndicesAfterDraw(pending, true, 20_736);
+        assertEquals(100, pending, "the exempt draw leaves the counted remainder untouched");
+        pending = VulkanTerrainGpuBackend.celtium$pendingIndicesAfterDraw(pending, false, 100);
+        assertEquals(0, pending, "the counted draw then drains the counter exactly");
+        assertTrue(pending >= 0, "and the interleaving never drove it negative");
     }
 
     @Test
