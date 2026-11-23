@@ -301,4 +301,96 @@ class ModProgramRegistryTest {
             assertTrue(ModProgramRegistry.linkInfoLog(5) != null);
         }
     }
+
+    @Test
+    void incrementalFloatPatchUpdatesCachedBlockWithoutFullRepack() {
+        ModProgramRegistry.shaderSource(101,
+                "uniform vec4 u_FogColor; varying vec2 uv;\n"
+                        + "void main() { gl_FragColor = u_FogColor; }");
+        ModProgramRegistry.shaderSource(100,
+                "uniform float u_Time; uniform vec2 u_Scale; uniform vec3 u_RegionOffset;\n"
+                        + "attribute vec3 position; varying vec2 uv;\n"
+                        + "void main() { gl_Position = vec4(position + u_RegionOffset, u_Time); uv = u_Scale; }");
+        ModProgramRegistry.attach(41, 101);
+        ModProgramRegistry.attach(41, 100);
+        ModProgramRegistry.Program program = ModProgramRegistry.link(41);
+        assertTrue(program.lowered().ok(), program.lowered().failure());
+
+        int timeOff = program.lowered().uniforms().stream()
+                .filter(u -> u.name().equals("u_Time")).findFirst().orElseThrow().offset();
+        int scaleOff = program.lowered().uniforms().stream()
+                .filter(u -> u.name().equals("u_Scale")).findFirst().orElseThrow().offset();
+        int regionOff = program.lowered().uniforms().stream()
+                .filter(u -> u.name().equals("u_RegionOffset")).findFirst().orElseThrow().offset();
+        int fogOff = program.lowered().uniforms().stream()
+                .filter(u -> u.name().equals("u_FogColor")).findFirst().orElseThrow().offset();
+
+        ModProgramRegistry.uniformFloat1(41, ModProgramRegistry.location("u_Time"), 1.5f);
+        ModProgramRegistry.uniformFloat2(41, ModProgramRegistry.location("u_Scale"), 2.0f, 3.0f);
+        ModProgramRegistry.uniformFloat3(41, ModProgramRegistry.location("u_RegionOffset"), 16.0f, 0.0f, -32.0f);
+        ModProgramRegistry.uniformFloat4(41, ModProgramRegistry.location("u_FogColor"), 0.25f, 0.5f, 0.75f, 1.0f);
+
+        java.nio.ByteBuffer packed = org.soutalab.celtium.vulkan.VulkanModProgramPipeline.packUniforms(program);
+        assertEquals(16.0f, packed.getFloat(regionOff));
+        assertEquals(0.0f, packed.getFloat(regionOff + 4));
+        assertEquals(-32.0f, packed.getFloat(regionOff + 8));
+
+        // Region-offset update via uniformFloat3 patches the cached block in place without invalidating it.
+        ModProgramRegistry.uniformFloat3(41, ModProgramRegistry.location("u_RegionOffset"), -64.0f, 12.5f, 48.0f);
+        assertTrue(program.cachedPackedUniforms() != null,
+                "single-member vec3 update must keep the packed block valid via in-place patch");
+        java.nio.ByteBuffer patched = org.soutalab.celtium.vulkan.VulkanModProgramPipeline.packUniforms(program);
+        assertEquals(1.5f, patched.getFloat(timeOff));
+        assertEquals(2.0f, patched.getFloat(scaleOff));
+        assertEquals(3.0f, patched.getFloat(scaleOff + 4));
+        assertEquals(-64.0f, patched.getFloat(regionOff));
+        assertEquals(12.5f, patched.getFloat(regionOff + 4));
+        assertEquals(48.0f, patched.getFloat(regionOff + 8));
+        assertEquals(0.25f, patched.getFloat(fogOff));
+        assertEquals(1.0f, patched.getFloat(fogOff + 12));
+
+        // Scalar, vec2, and vec4 updates patch in place as well.
+        ModProgramRegistry.uniformFloat1(41, ModProgramRegistry.location("u_Time"), 4.25f);
+        ModProgramRegistry.uniformFloat2(41, ModProgramRegistry.location("u_Scale"), 5.0f, 6.0f);
+        ModProgramRegistry.uniformFloat4(41, ModProgramRegistry.location("u_FogColor"), 0.1f, 0.2f, 0.3f, 0.4f);
+        assertTrue(program.cachedPackedUniforms() != null);
+        assertEquals(4.25f, patched.getFloat(timeOff));
+        assertEquals(5.0f, patched.getFloat(scaleOff));
+        assertEquals(6.0f, patched.getFloat(scaleOff + 4));
+        assertEquals(0.1f, patched.getFloat(fogOff));
+        assertEquals(0.4f, patched.getFloat(fogOff + 12));
+
+        // A non-patched write invalidates the cache so packUniforms runs a full repack; subsequent writes resume patching.
+        ModProgramRegistry.uniformFloats(41, ModProgramRegistry.location("u_FogColor"),
+                new float[] {0.9f, 0.8f, 0.7f, 0.6f});
+        assertNull(program.cachedPackedUniforms());
+        java.nio.ByteBuffer repacked = org.soutalab.celtium.vulkan.VulkanModProgramPipeline.packUniforms(program);
+        assertEquals(0.9f, repacked.getFloat(fogOff));
+        assertEquals(0.6f, repacked.getFloat(fogOff + 12));
+        ModProgramRegistry.uniformFloat3(41, ModProgramRegistry.location("u_RegionOffset"), 1.0f, 2.0f, 3.0f);
+        assertTrue(program.cachedPackedUniforms() != null);
+        assertEquals(1.0f, repacked.getFloat(regionOff));
+        assertEquals(2.0f, repacked.getFloat(regionOff + 4));
+        assertEquals(3.0f, repacked.getFloat(regionOff + 8));
+    }
+
+    @Test
+    void mismatchedWidthFloatWriteFallsBackToFullRepack() {
+        ModProgramRegistry.shaderSource(103,
+                "uniform vec4 u_Tint; varying vec2 uv;\n"
+                        + "void main() { gl_FragColor = u_Tint; }");
+        ModProgramRegistry.shaderSource(102,
+                "attribute vec2 position; varying vec2 uv;\n"
+                        + "void main() { gl_Position = vec4(position, 0.0, 1.0); uv = position; }");
+        ModProgramRegistry.attach(42, 103);
+        ModProgramRegistry.attach(42, 102);
+        ModProgramRegistry.Program program = ModProgramRegistry.link(42);
+        assertTrue(program.lowered().ok(), program.lowered().failure());
+        org.soutalab.celtium.vulkan.VulkanModProgramPipeline.packUniforms(program);
+        assertTrue(program.cachedPackedUniforms() != null);
+
+        // Writing 3 floats to a vec4 member must not patch in place (it leaves the cache stale for full repack).
+        ModProgramRegistry.uniformFloat3(42, ModProgramRegistry.location("u_Tint"), 1.0f, 2.0f, 3.0f);
+        assertNull(program.cachedPackedUniforms());
+    }
 }

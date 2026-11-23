@@ -17700,13 +17700,21 @@ this.frameBufferOpen = false;
             // shadow-diff-1: the rebuild budget governs this execution only when the flag is on and this
             // is the shadow stage; every other execution keeps the unconditional rebuild below.
             boolean budgetedShadow = PACK_SHADOW_REBUILD_BUDGET && shadowStage;
-            boolean indexBound = false;
             LongBuffer regionVertexBuf = stack.mallocLong(1);
             LongBuffer regionVertexOffset = stack.longs(0L);
             LongBuffer setScratch = stack.mallocLong(1);
+            IntBuffer dynamicOffsetScratch = stack.mallocInt(1);
             int drawnCommands = 0;
             int drawnSections = 0;
             boolean sortedPass = pass.isSorted();
+            long lastBoundVertexBuffer = 0L;
+            // On the dynamic-uniform terrain route, samplers and storage images are invariant across the
+            // entire pass and the descriptor set names the uniform ring's base; resolve it once here so
+            // the region loop only stages the per-region uniform ring slot and dynamic offset.
+            long passDynamicDescSet = modPipeline.isDynamicUniform()
+                    ? modPipeline.resolveDynamicPassDescriptorSet(samplerTextures, imageTextures)
+                    : 0L;
+            this.terrain.invalidateIndexBufferBelief();
 
             try {
                 setViewportAndScissor(stack, passW, passH);
@@ -17814,7 +17822,13 @@ this.frameBufferOpen = false;
                         }
                         org.soutalab.celtium.vulkan.FramePassTimings.begin("packSamplerClaim");
                         try {
-                            descSet = modPipeline.samplersAndImages(samplerTextures, imageTextures, modProgram, this.frameId);
+                            if (passDynamicDescSet != 0L) {
+                                int slot = modPipeline.stageDynamicTerrainUniformSlot(modProgram, this.frameId);
+                                descSet = slot >= 0 ? passDynamicDescSet : 0L;
+                            } else {
+                                descSet = modPipeline.samplersAndImages(samplerTextures, imageTextures, modProgram,
+                                        this.frameId);
+                            }
                         } finally {
                             org.soutalab.celtium.vulkan.FramePassTimings.end("packSamplerClaim");
                         }
@@ -17841,48 +17855,26 @@ this.frameBufferOpen = false;
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("packRegionBind");
                     try {
-                        modPipeline.bindTerrainUniformsAndSet(this.commandBuffer, pushUniforms, descSet, setScratch);
+                        modPipeline.bindTerrainUniformsAndSet(this.commandBuffer, pushUniforms, descSet, setScratch,
+                                dynamicOffsetScratch);
 
-                        this.terrain.bindVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset, resources);
-                        if (!indexBound) {
-                            this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
-                            indexBound = true;
+                        long regionVertexBufferHandle = resources.vertexArena.buffer().buffer();
+                        if (regionVertexBufferHandle != lastBoundVertexBuffer) {
+                            this.terrain.bindVertexBuffer(this.commandBuffer, regionVertexBuf, regionVertexOffset,
+                                    resources);
+                            lastBoundVertexBuffer = regionVertexBufferHandle;
                         }
                     } finally {
                         org.soutalab.celtium.vulkan.FramePassTimings.end("packRegionBind");
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("packRegionDraw");
                     try {
-                        boolean arenaBound = false;
-                        for (int cmd = 0; cmd < batch.size(); cmd++) {
-                            long byteOffset = batch.indexByteOffset(cmd);
-                            boolean arena;
-                            int firstIndex;
-                            if (sortedPass) {
-                                if (resources.indexArena == null) continue;
-                                arena = true;
-                                firstIndex = (int) (byteOffset / 4);
-                            } else if (byteOffset == 0) {
-                                arena = false;
-                                firstIndex = 0;
-                            } else if (resources.indexArena != null) {
-                                arena = true;
-                                firstIndex = (int) (byteOffset / 4);
-                            } else {
-                                continue;
-                            }
-                            if (arena != arenaBound) {
-                                this.terrain.bindIndexBuffer(this.commandBuffer, arena
-                                        ? resources.indexArena.buffer()
-                                        : this.sharedIndexBuffers.get(primitiveType));
-                                arenaBound = arena;
-                            }
-                            vkCmdDrawIndexed(this.commandBuffer, batch.elementCount(cmd), 1, firstIndex,
-                                    batch.baseVertex(cmd), 0);
-                            drawnCommands++;
-                        }
-                        if (arenaBound) {
-                            this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
+                        if (TERRAIN_INDIRECT_ENABLED
+                                && this.terrain.tryIndirectBatch(this.context, this.commandBuffer, stack,
+                                        this.sharedIndexBuffers, resources, batch, sortedPass, primitiveType, 0)) {
+                            drawnCommands += batch.size();
+                        } else {
+                            drawnCommands += celtium$drawPackRegionDirect(resources, batch, sortedPass, primitiveType);
                         }
                     } finally {
                         org.soutalab.celtium.vulkan.FramePassTimings.end("packRegionDraw");
@@ -17956,6 +17948,54 @@ this.frameBufferOpen = false;
                 }
             }
         }
+    }
+
+    /**
+     * Direct-draw fallback for a single pack-route terrain region when {@link TerrainRenderer#tryIndirectBatch}
+     * cannot issue the batch as one {@code vkCmdDrawIndexedIndirect} (device lacks {@code multiDrawIndirect},
+     * indirect terrain disabled, or mixed index sources).
+     */
+    private int celtium$drawPackRegionDirect(TerrainRenderer.RegionResources resources,
+                                             VulkanMultiDrawBatch batch,
+                                             boolean sortedPass,
+                                             ChunkPrimitiveType primitiveType) {
+        VulkanBuffer sharedIndex = this.sharedIndexBuffers.get(primitiveType);
+        this.terrain.bindIndexBuffer(this.commandBuffer, sharedIndex);
+        boolean arenaBound = false;
+        int drawn = 0;
+        for (int cmd = 0; cmd < batch.size(); cmd++) {
+            long byteOffset = batch.indexByteOffset(cmd);
+            boolean arena;
+            int firstIndex;
+            if (sortedPass) {
+                if (resources.indexArena == null) {
+                    continue;
+                }
+                arena = true;
+                firstIndex = (int) (byteOffset / 4);
+            } else if (byteOffset == 0) {
+                arena = false;
+                firstIndex = 0;
+            } else if (resources.indexArena != null) {
+                arena = true;
+                firstIndex = (int) (byteOffset / 4);
+            } else {
+                continue;
+            }
+            if (arena != arenaBound) {
+                this.terrain.bindIndexBuffer(this.commandBuffer, arena
+                        ? resources.indexArena.buffer()
+                        : sharedIndex);
+                arenaBound = arena;
+            }
+            vkCmdDrawIndexed(this.commandBuffer, batch.elementCount(cmd), 1, firstIndex,
+                    batch.baseVertex(cmd), 0);
+            drawn++;
+        }
+        if (arenaBound) {
+            this.terrain.bindIndexBuffer(this.commandBuffer, sharedIndex);
+        }
+        return drawn;
     }
 
     /**

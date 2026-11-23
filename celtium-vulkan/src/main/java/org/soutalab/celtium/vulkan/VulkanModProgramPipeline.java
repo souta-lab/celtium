@@ -7,6 +7,7 @@ import org.soutalab.celtium.vulkan.gl.ModGlslTranslator;
 import org.soutalab.celtium.vulkan.gl.ModProgramRegistry;
 
 import java.nio.ByteBuffer;
+import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 import java.util.HashMap;
 import java.util.List;
@@ -1059,6 +1060,68 @@ public final class VulkanModProgramPipeline {
     }
 
     /**
+     * Resolves (or allocates once) the shared descriptor set for a dynamic-uniform terrain pass whose
+     * sampler and storage-image bindings stay fixed for the entire pass. On the dynamic route the set
+     * names the uniform ring's base and is independent of the per-region staged slot, so resolving it
+     * once at pass head avoids re-hashing and re-verifying every sampler binding on every region.
+     *
+     * @return the shared descriptor set handle, or {@code 0L} when this pipeline is not on the dynamic
+     *         route or set allocation failed
+     */
+    public long resolveDynamicPassDescriptorSet(VulkanGlTexture[] textures, VulkanGlTexture[] imageTextures) {
+        if (!this.dynamicUniform || !this.uniformsViaBuffer || this.uniformBuffer == null) {
+            return 0L;
+        }
+        long hash = 0x9E3779B97F4A7C15L;
+        long[] views = this.scratchViews;
+        long[] samplers = this.scratchSamplers;
+        int[] layouts = this.scratchLayouts;
+        for (int i = 0; i < this.samplerCount; i++) {
+            VulkanGlTexture tex = textures[i];
+            long view = tex.view();
+            long sampler = tex.sampler();
+            int layout = tex.samplingLayout();
+            views[i] = view;
+            samplers[i] = sampler;
+            layouts[i] = layout;
+            hash = mix64(hash ^ tex.key()) ^ mix64(view ^ (sampler * 31L) ^ layout);
+        }
+        long[] imageViews = this.scratchImageViews;
+        for (int i = 0; i < this.imageCount; i++) {
+            VulkanGlTexture img = imageTextures[i];
+            long view = img.view();
+            imageViews[i] = view;
+            hash = mix64(hash ^ img.key() ^ 0x517CC1B727220A95L) ^ mix64(view);
+        }
+        if (hash == 0L) {
+            hash = 1L;
+        }
+        hash = celtium$uniformRouteSetKey(hash, this.uniformBuffer.buffer(), 0, true);
+        return allocateOrReuseDescriptorSet(hash, views, samplers, layouts, imageViews,
+                celtium$routeSnapshotSlot(0, true));
+    }
+
+    /**
+     * Stages {@code program}'s current uniform block into this pipeline's uniform ring for {@code epoch}
+     * and remembers the resulting dynamic offset for the immediately following
+     * {@link #bindTerrainUniformsAndSet} call. Paired with {@link #resolveDynamicPassDescriptorSet} so
+     * the per-region loop skips redundant sampler/image hashing and descriptor-set lookup.
+     *
+     * @return the claimed ring slot, or {@code -1} when the ring is exhausted or the route does not apply
+     */
+    public int stageDynamicTerrainUniformSlot(ModProgramRegistry.Program program, long epoch) {
+        if (!this.dynamicUniform || !this.uniformsViaBuffer || program == null) {
+            return -1;
+        }
+        int slot = uniformSlot(program, epoch);
+        if (slot < 0) {
+            return -1;
+        }
+        this.pendingDynamicOffset = celtium$uniformDynamicOffset(slot, this.uniformStride);
+        return slot;
+    }
+
+    /**
      * Builds the one descriptor set from sampler bindings followed by storage-image bindings - and, on the
      * uniform-buffer route, the block's binding, which names the ring slot {@code program}'s current uniform
      * values were staged into for {@code epoch} (the caller's frame counter). On the dynamic route the set
@@ -1539,6 +1602,11 @@ public final class VulkanModProgramPipeline {
         return this.uniformsViaBuffer;
     }
 
+    /** {@return whether this pipeline binds its uniform ring slot via a dynamic descriptor offset} */
+    public boolean isDynamicUniform() {
+        return this.dynamicUniform;
+    }
+
     public List<ModGlslTranslator.SamplerBinding> samplers() {
         return this.samplers;
     }
@@ -1582,6 +1650,31 @@ public final class VulkanModProgramPipeline {
                     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout,
                             0, setScratch, stack.ints(this.pendingDynamicOffset));
                 }
+            } else {
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout,
+                        0, setScratch, null);
+            }
+        }
+        if (this.pushBytes > 0 && pushUniforms != null) {
+            pushUniforms.position(0).limit(this.pushBytes);
+            vkCmdPushConstants(commandBuffer, this.pipelineLayout,
+                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, pushUniforms);
+            VulkanPushCache.SHARED.invalidate();
+        }
+    }
+
+    /**
+     * Binds descriptor set and/or push constants for one region's terrain draws, reusing the caller's
+     * pre-allocated 1-element dynamic-offset scratch buffer to avoid a per-region {@link MemoryStack} push.
+     */
+    void bindTerrainUniformsAndSet(VkCommandBuffer commandBuffer, ByteBuffer pushUniforms, long descriptorSet,
+                                   LongBuffer setScratch, IntBuffer dynamicOffsetScratch) {
+        if (descriptorSet != 0L) {
+            setScratch.put(0, descriptorSet);
+            if (this.dynamicUniform) {
+                dynamicOffsetScratch.put(0, this.pendingDynamicOffset);
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout,
+                        0, setScratch, dynamicOffsetScratch);
             } else {
                 vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this.pipelineLayout,
                         0, setScratch, null);
