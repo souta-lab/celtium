@@ -6405,6 +6405,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     public void flushBeforeClear(int mask) {
+        org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.current()
+                .note(org.soutalab.celtium.vulkan.gl.FlushBoundaryCensus.Reason.ORDERING);
         if (this.immediateWindowBusy) return; // bridge GL state restore must not recursively flush
         if (mask == 0) {
             this.clearOrderFlushesZeroMask++;

@@ -4323,7 +4323,10 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static int consumePendingClears() {
         CeltiumGlStub stub = installed;
-        return stub == null ? 0 : GlsmClearState.current().consumePending();
+        if (stub == null) return 0;
+        int consumed = GlsmClearState.current().consumePending();
+        if (consumed != 0) FlushBoundaryCensus.current().note(FlushBoundaryCensus.Reason.CLEAR_CONSUME);
+        return consumed;
     }
 
     /**
@@ -5533,6 +5536,11 @@ public final class CeltiumGlStub implements FunctionProvider {
                 return 0L;
             case SEM_NOOP:
             default:
+                // GAP-FL-1 (F-11 specification): a guest glFlush/glFinish is counted in the flush
+                // census as an arrival and never becomes a boundary.
+                if ("glFlush".equals(fn.name) || "glFinish".equals(fn.name)) {
+                    FlushBoundaryCensus.current().noteGuestFlush();
+                }
                 // A no-op is only safe for state the Vulkan side owns. For the transforms the state mirror is
                 // supposed to follow, a no-op means the hook that should have mirrored the call never ran - which is
                 // the silent fallback this class cannot afford, because without a context nothing else applies the
@@ -6416,6 +6424,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             this.readFbo = name;
         }
         this.framebufferBindSerial++;
+        FlushBoundaryCensus.current().note(FlushBoundaryCensus.Reason.FBO_BIND);
         // The registration the renderer makes from a raw bind (identity, records, pair, shared-depth borrow)
         // is triggered here rather than in the hint's report: every raw bind lands in this record, including
         // the ones GLSM's state cache and the vanilla-bracket suppression kept the hint's report from ever
