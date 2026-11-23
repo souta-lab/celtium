@@ -610,8 +610,8 @@ final class GlTextureCaptures {
         if (pixels == 0L || width <= 0 || height <= 0) {
             return null;
         }
-        if ((stub.unpackRowLength != 0 && stub.unpackRowLength != width)
-                || stub.unpackSkipPixels != 0 || stub.unpackSkipRows != 0) {
+        if ((GlsmBufferState.current().unpackRowLength() != 0 && GlsmBufferState.current().unpackRowLength() != width)
+                || GlsmBufferState.current().unpackSkipPixels() != 0 || GlsmBufferState.current().unpackSkipRows() != 0) {
             return null;
         }
         long bytes = (long) width * (long) height * 4L;
@@ -621,7 +621,7 @@ final class GlTextureCaptures {
         boolean bgra = format == CeltiumGlStub.GL_BGRA;
         if (type == CeltiumGlStub.GL_UNSIGNED_BYTE && (format == CeltiumGlStub.GL_RGBA || bgra)) {
             int rowBytes = width * 4;
-            int stride = aligned(rowBytes, stub.unpackAlignment);
+            int stride = aligned(rowBytes, GlsmBufferState.current().unpackAlignment());
             ByteBuffer source = MemoryUtil.memByteBuffer(pixels, (int) ((long) (height - 1) * stride + rowBytes));
             ByteBuffer out = ByteBuffer.allocateDirect((int) bytes);
             long outAddress = memAddress(out);
@@ -648,7 +648,7 @@ final class GlTextureCaptures {
         if (type == CeltiumGlStub.GL_UNSIGNED_BYTE && format == CeltiumGlStub.GL_RGB) {
             // Three bytes per pixel, expanded with an opaque alpha; the source rows carry GL's alignment padding.
             int rowBytes = width * 3;
-            int stride = aligned(rowBytes, stub.unpackAlignment);
+            int stride = aligned(rowBytes, GlsmBufferState.current().unpackAlignment());
             ByteBuffer source = MemoryUtil.memByteBuffer(pixels, (int) ((long) (height - 1) * stride + rowBytes));
             ByteBuffer out = ByteBuffer.allocateDirect((int) bytes);
             for (int row = 0; row < height; row++) {
@@ -667,7 +667,7 @@ final class GlTextureCaptures {
             // The packed forms read the 32-bit word in host order. _REV puts the first component in the least
             // significant bits - for GL_BGRA that is the game's own 0xAARRGGBB int - and the plain form puts it in the
             // most significant bits (Xaero's Minimap uploads its tiles as GL_BGRA/GL_UNSIGNED_INT_8_8_8_8).
-            int stride = aligned(width * 4, stub.unpackAlignment);
+            int stride = aligned(width * 4, GlsmBufferState.current().unpackAlignment());
             ByteBuffer source = MemoryUtil.memByteBuffer(pixels, (height - 1) * stride + width * 4)
                     .order(java.nio.ByteOrder.nativeOrder());
             ByteBuffer out = ByteBuffer.allocateDirect((int) bytes);

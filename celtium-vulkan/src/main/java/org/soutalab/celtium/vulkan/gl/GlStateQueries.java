@@ -212,7 +212,7 @@ final class GlStateQueries {
      */
     static int celtium$currentProgram() {
         CeltiumGlStub stub = CeltiumGlStub.installed;
-        return stub == null ? Integer.MIN_VALUE : stub.currentProgram;
+        return stub == null ? Integer.MIN_VALUE : GlsmQueryFacade.current().currentProgram();
     }
 
     /**
@@ -236,7 +236,7 @@ final class GlStateQueries {
         if (stub == null) {
             return;
         }
-        stub.currentProgram = program;
+        GlsmShaderLedger.current().useProgram(program);
         if (program != 0 && stub.celtium$programBinds.add(program)) {
             System.out.println("[Celtium] CELTIUM_PROGRAM_BOUND program=" + program
                     + " site=[" + CeltiumGlStub.celtium$callSite() + "]");
@@ -356,9 +356,9 @@ final class GlStateQueries {
             case 0x8CA5: // GL_STENCIL_BACK_WRITEMASK - no stencil state is kept; GL's default makes every bit writable
                 return 0xFF;
             case 0x0B33: // GL_LIST_INDEX - the display list being compiled, which the model path keys on
-                return stub.compilingList;
+                return GlsmDisplayListLedger.current().compiling();
             case 0x8B8D: // GL_CURRENT_PROGRAM
-                return stub.currentProgram;
+                return GlsmQueryFacade.current().currentProgram();
             case 0x0BC1: { // GL_ALPHA_TEST_FUNC
                 // The mirror is the authority while a backend exists; without one the stub's own record is, which is
                 // what the attribute stack puts back and what a mod's raw glAlphaFunc reported here.
@@ -407,7 +407,7 @@ final class GlStateQueries {
             case 0x0C02: // GL_READ_BUFFER
                 return stub.readFbo == 0 ? 0x0405 : 0x8CE0;
             case 0x0BA0: // GL_MATRIX_MODE - the stack glMatrixMode selected, as GL reports it
-                return stub.matrixMode;
+                return GlsmMatrixMode.current().get();
             case 0x0B74: { // GL_DEPTH_FUNC
                 // Answered from the mirror: raw glDepthFunc and GlStateManager both feed it, and neither necessarily
                 // touches this stub's own enable record. With no backend the stub's record is the answer, the same one
@@ -418,13 +418,13 @@ final class GlStateQueries {
             case 0x0D05: // GL_PACK_ALIGNMENT
                 return 4;
             case 0x0CF5: // GL_UNPACK_ALIGNMENT - the recorded value the upload conversion reads rows with
-                return stub.unpackAlignment;
+                return GlsmBufferState.current().unpackAlignment();
             case 0x0CF2: // GL_UNPACK_ROW_LENGTH
-                return stub.unpackRowLength;
+                return GlsmBufferState.current().unpackRowLength();
             case 0x0CF3: // GL_UNPACK_SKIP_ROWS - the same pnames the pixelStore setter uses
-                return stub.unpackSkipRows;
+                return GlsmBufferState.current().unpackSkipRows();
             case 0x0CF4: // GL_UNPACK_SKIP_PIXELS
-                return stub.unpackSkipPixels;
+                return GlsmBufferState.current().unpackSkipPixels();
             case 0x0D02: // GL_PACK_ROW_LENGTH - the readback paths write tightly packed rows
             case 0x0D03: // GL_PACK_SKIP_ROWS
             case 0x0D04: // GL_PACK_SKIP_PIXELS
@@ -565,10 +565,10 @@ final class GlStateQueries {
                 // driver and got 0, refused the quad with `reason=unknown-list`, and nothing drew the model - so the
                 // recording side of display lists was never reached even after the lists were implemented. The stub
                 // already tracked the open list; it simply did not answer the question about it.
-                value = stub.compilingList;
+                value = GlsmDisplayListLedger.current().compiling();
                 break;
             case 0x0B30: // GL_LIST_MODE - GL_COMPILE (0x1300) or GL_COMPILE_AND_EXECUTE (0x1301); 0 when none is open
-                value = stub.compilingList == 0 ? 0 : stub.compilingListMode;
+                value = GlsmDisplayListLedger.current().compiling() == 0 ? 0 : GlsmDisplayListLedger.current().compilingMode();
                 break;
             default:
                 value = getIntegerValue(stub, pname);
