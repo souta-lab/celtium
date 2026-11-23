@@ -12108,6 +12108,7 @@ this.frameBufferOpen = false;
         celtium$reportFlushReasons(false);
         celtium$reportWindowSplitIfDue();
         DrawCounters.reportIfDue(this.frameId);
+        celtium$closeLayoutSegmentAtBoundary();
         this.frameCoordinator.celtium$finishFrameBuffer(true);
     }
 
@@ -12836,7 +12837,7 @@ this.frameBufferOpen = false;
                             org.soutalab.celtium.vulkan.FramePassTimings.begin("winBarrier");
                             gpuMark("pre-acq2");
                             if (gllessTarget != null) {
-                                gllessTarget.recordAcquireBarriers(this.commandBuffer, frameImageAttached);
+                                gllessTarget.requireAttachmentBarriers(this.commandBuffer, frameImageAttached);
                             } else {
                                 this.frameTarget.recordAcquireBarriers(this.commandBuffer);
                             }
@@ -12863,7 +12864,7 @@ this.frameBufferOpen = false;
                                 this.wsMark = System.nanoTime();
                             }
                             if (gllessTarget != null) {
-                                gllessTarget.recordReleaseBarriers(this.commandBuffer,
+                                gllessTarget.releaseBarriersOrHoldSegment(this.commandBuffer,
                                         this.windowFrameImageAttached);
                             } else {
                                 this.frameTarget.recordReleaseBarriers(this.commandBuffer);
@@ -17955,7 +17956,7 @@ this.frameBufferOpen = false;
         gpuMark("pre-acq4");
         org.soutalab.celtium.vulkan.FramePassTimings.begin("prepAcquire");
         try {
-        this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+        celtium$prepAcquireBarriers();
         } finally {
             org.soutalab.celtium.vulkan.FramePassTimings.end("prepAcquire");
         }
@@ -18150,6 +18151,7 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("prepBeginPass");
         try {
         long passBeginStarted = System.nanoTime();
+        celtium$prepAttachAfterPublish();
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         this.terrainPassBeginNanos += System.nanoTime() - passBeginStarted;
         this.activeImmediateTarget = this.targetRegistry.currentIdentity();
@@ -18549,7 +18551,70 @@ this.frameBufferOpen = false;
         // One call: this method is one of the renderer's largest, and a routed pass' census and hand-back are not
         // worth the bytes of inlining them (see HugeMethodLimitTest).
         celtium$finishRoutedDepthPass(pass.name(), routedDepthIdentity, routedDepthKey, passAreaWidth, passAreaHeight);
-        this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+        celtium$passEndReleaseBarriers();
+    }
+
+    /**
+     * The terrain pass head under layout ownership (E1(b) + E3, {@link LayoutOwnership}).
+     * <p>
+     * Flag off, or a target that is not the GL-less owned one: the legacy acquire, unchanged. Flag on: any
+     * segment a previous pass or window left open is closed here, because the publish walk further down this
+     * method (the published chain's sampling transitions) is an outside consumer that must find the frame
+     * image in GENERAL; the matching acquire is deferred to {@link #celtium$prepAttachAfterPublish}, after
+     * the walk, so the walk and the pass it precedes do not pay a release / acquire pair between them.
+     */
+    private void celtium$prepAcquireBarriers() {
+        if (LayoutOwnership.ENABLED && this.frameTarget instanceof GllessFrameTarget glless) {
+            glless.requireGeneralBarriers(this.commandBuffer, true);
+            this.layoutSegmentReacquirePending = true;
+        } else {
+            this.frameTarget.recordAcquireBarriers(this.commandBuffer);
+        }
+    }
+
+    /** The deferred acquire of {@link #celtium$prepAcquireBarriers}, recorded after the publish walk. */
+    private void celtium$prepAttachAfterPublish() {
+        if (!this.layoutSegmentReacquirePending) {
+            return;
+        }
+        this.layoutSegmentReacquirePending = false;
+        if (this.frameTarget instanceof GllessFrameTarget glless) {
+            glless.requireAttachmentBarriers(this.commandBuffer, true);
+        }
+    }
+
+    /**
+     * The terrain pass end under layout ownership: flag on, the segment stays open for the next consecutive
+     * pass or window instead of handing the images back at every pass boundary; flag off, the legacy release.
+     */
+    private void celtium$passEndReleaseBarriers() {
+        if (LayoutOwnership.ENABLED && this.frameTarget instanceof GllessFrameTarget glless) {
+            glless.releaseBarriersOrHoldSegment(this.commandBuffer, true);
+        } else {
+            this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+        }
+    }
+
+    /**
+     * Closes any open layout-ownership segment into the still-open frame buffer, at a boundary that is about
+     * to end and submit it (the frame boundary, or a mid-frame ordering finish a copy / readback waits on).
+     * Outside consumers after the boundary - present, copies, GL - then find the frame image in GENERAL,
+     * exactly as the per-pass releases used to leave it. A no-op with the flag off.
+     */
+    private void celtium$closeLayoutSegmentAtBoundary() {
+        if (!LayoutOwnership.ENABLED) {
+            return;
+        }
+        if (this.frameTarget instanceof GllessFrameTarget glless && glless.frameSegmentOpen()) {
+            glless.requireGeneralBarriers(this.commandBuffer, true);
+        }
+        if (LayoutOwnership.AUDIT && this.frameId % 300L == 0L) {
+            long[] counts = LayoutOwnership.auditCounts();
+            System.out.println("[Celtium] CELTIUM_LAYOUT_OWNER acquireRecorded=" + counts[0]
+                    + " acquireSkippedOwned=" + counts[1] + " releaseRecorded=" + counts[2]
+                    + " heldAtPassEnd=" + counts[3] + " segmentCloses=" + counts[4]
+                    + " frame=" + this.frameId);
+        }
     }
 
     /**
@@ -22891,6 +22956,12 @@ this.frameBufferOpen = false;
      */
     int passVpX, passVpY, passVpW, passVpH;
     int passScX, passScY, passScW, passScH;
+    /**
+     * E3: a terrain pass head closed the previous segment for the publish walk and owes the pass its acquire
+     * after the walk ({@code celtium$prepAcquireBarriers} / {@code celtium$prepAttachAfterPublish}). Only
+     * ever set with the layout-ownership flag on.
+     */
+    boolean layoutSegmentReacquirePending;
     float passBiasC = Float.NaN, passBiasS = Float.NaN;
     /**
      * OPT-12: {vertexBuffer, indexBuffer, vertexBindOffset, indexBindOffset, pipeline, descriptorSet} - what the
@@ -23743,6 +23814,7 @@ this.frameBufferOpen = false;
             vkCmdEndRenderPass(this.commandBuffer);
             this.commandState.endPass();
         }
+        celtium$closeLayoutSegmentAtBoundary();
         this.frameCoordinator.celtium$finishFrameBuffer(false);
         this.context.celtium$flushBatchedSubmits();
     }

@@ -195,6 +195,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private boolean frameOpen;
     private boolean deleted;
     private boolean firstAcquire = true;
+    /**
+     * Whether a layout-ownership segment is open (E3, {@link LayoutOwnership}): an acquire was recorded into
+     * the current segment and the matching release has not been recorded yet, so the frame images are held for
+     * attachment use and outside consumers must not find them yet. The colour image's tracked layout cannot
+     * carry this fact - its render layout <em>is</em> GENERAL, so owned and handed-back read the same there -
+     * which is why the segment state is its own field; it is part of {@link RecordingSnapshot}, so a discarded
+     * recording rolls it back with the rest of the owner state (BH-26).
+     */
+    private boolean frameSegmentOpen;
     /** The first acquire clears both images whatever the game asked: their content starts undefined. */
     private boolean neverCleared = true;
 
@@ -766,6 +775,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
      */
     public static final class RecordingSnapshot {
         private boolean firstAcquire;
+        private boolean frameSegmentOpen;
         private boolean neverCleared;
         private int colorImageLayout;
         private int depthImageLayout;
@@ -794,6 +804,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             snapshot = new RecordingSnapshot();
         }
         snapshot.firstAcquire = this.firstAcquire;
+        snapshot.frameSegmentOpen = this.frameSegmentOpen;
         snapshot.neverCleared = this.neverCleared;
         snapshot.colorImageLayout = this.colorImageLayout;
         snapshot.depthImageLayout = this.depthImageLayout;
@@ -835,6 +846,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
             return;
         }
         this.firstAcquire = snapshot.firstAcquire;
+        this.frameSegmentOpen = snapshot.frameSegmentOpen;
         this.neverCleared = snapshot.neverCleared;
         this.colorImageLayout = snapshot.colorImageLayout;
         this.depthImageLayout = snapshot.depthImageLayout;
@@ -1212,6 +1224,76 @@ public final class GllessFrameTarget implements FrameImageTarget {
         // Depth stays in its attachment layout across windows: moving it to GENERAL and back at every window would
         // resolve HiZ each time on the hardware this layout exists for.
         this.depthImageLayout = DEPTH_RENDER_LAYOUT;
+    }
+
+    /** {@return whether a layout-ownership segment is currently open on this target}. */
+    public boolean frameSegmentOpen() {
+        return this.frameSegmentOpen;
+    }
+
+    /**
+     * The segment-aware acquire (E1(b) + E3, {@link LayoutOwnership}).
+     * <p>
+     * With the flag off - or for a window that does not attach the frame image - this is exactly
+     * {@link #recordAcquireBarriers(VkCommandBuffer, boolean)}. With the flag on and a segment already open,
+     * the barrier pair is skipped: the images are already in their attachment layouts, and the implicit
+     * external subpass dependencies of the intervening render passes carry the attachment accesses (the
+     * step-0 inventory in {@link LayoutOwnership}). A pending game clear still forces the full acquire,
+     * because the acquire is the vehicle that applies clears. The depth image never changes layout under
+     * ownership - it rests in its attachment layout either way; only its redundant same-layout dependency
+     * barrier is aggregated with the colour one.
+     */
+    public void requireAttachmentBarriers(VkCommandBuffer commandBuffer, boolean frameImageAttached) {
+        if (!LayoutOwnership.ENABLED || !frameImageAttached) {
+            recordAcquireBarriers(commandBuffer, frameImageAttached);
+            return;
+        }
+        if (this.frameSegmentOpen && !LayoutOwnership.acquireNeeded(this.frameSegmentOpen,
+                frameImageAcquireNeeded())) {
+            LayoutOwnership.noteAcquireSkippedOwned();
+            return;
+        }
+        recordAcquireBarriers(commandBuffer, true);
+        this.frameSegmentOpen = true;
+        LayoutOwnership.noteAcquireRecorded();
+    }
+
+    /**
+     * The segment-aware hand-back: records the release and closes the segment. Every outside consumer of the
+     * frame image (the published-chain sampling walk, a copy / readback ordering point, the frame boundary)
+     * goes through here before it touches the image, which is what keeps the outside contract - the image is
+     * in GENERAL outside a segment - true under aggregation. With the flag off this is exactly
+     * {@link #recordReleaseBarriers(VkCommandBuffer, boolean)}.
+     */
+    public void requireGeneralBarriers(VkCommandBuffer commandBuffer, boolean frameImageAttached) {
+        if (!LayoutOwnership.ENABLED) {
+            recordReleaseBarriers(commandBuffer, frameImageAttached);
+            return;
+        }
+        if (frameImageAttached && this.frameSegmentOpen) {
+            recordReleaseBarriers(commandBuffer, true);
+            this.frameSegmentOpen = false;
+            LayoutOwnership.noteReleaseRecorded();
+            LayoutOwnership.noteSegmentClose();
+            return;
+        }
+        // No segment is open, so there is no barrier to record; the bookkeeping half of the release still runs
+        // so the depth layout line stays exactly where the legacy release leaves it.
+        recordReleaseBarriers(commandBuffer, false);
+    }
+
+    /**
+     * The pass / window end under ownership: instead of handing the images back, the segment stays open so
+     * the next consecutive pass or window reuses the acquire. The hand-back is deferred to the next
+     * {@link #requireGeneralBarriers} - a consumer, an ordering point or the frame boundary. With the flag
+     * off this is exactly {@link #recordReleaseBarriers(VkCommandBuffer, boolean)}.
+     */
+    public void releaseBarriersOrHoldSegment(VkCommandBuffer commandBuffer, boolean frameImageAttached) {
+        if (!LayoutOwnership.holdAtPassEnd() || !frameImageAttached || !this.frameSegmentOpen) {
+            recordReleaseBarriers(commandBuffer, frameImageAttached);
+            return;
+        }
+        LayoutOwnership.noteReleaseHeldAtPassEnd();
     }
 
     /**
