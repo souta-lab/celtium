@@ -46,6 +46,11 @@ public final class GlsmNameLedger {
 
     public boolean isNullAllocated(int name) { return this.nullAllocatedNames.contains(name); }
 
+    /** Adds only the null-allocated classification (the name's liveness is recorded separately). */
+    public void addNullAllocated(int name) { this.nullAllocatedNames.add(name); }
+
+    public void removeNullAllocated(int name) { this.nullAllocatedNames.remove(name); }
+
     public int liveCount() { return this.liveNames.size(); }
 
     /** Sync objects live in a 64-bit namespace the int name ledger cannot hold. */
