@@ -18305,6 +18305,12 @@ this.frameBufferOpen = false;
         if (this.celtium$meshStage2Failed || this.celtium$meshFinished == null) {
             return false;
         }
+        // Stage 3's scope is the SOLID pass only; recordPassHead would refuse any
+        // other pass pipeline as NO_PIPELINE, so decline here without spending the
+        // coverage walk or the table build on it.
+        if (!SpirvShaders.SOLID_VERTEX.equals(pipeline.vertexModuleName())) {
+            return false;
+        }
         CeltiumMeshPass collected = this.celtium$meshFinished.passes.remove(pass.name());
         if (collected == null || collected.regions.isEmpty()) {
             return false;
@@ -19053,12 +19059,14 @@ this.frameBufferOpen = false;
                         occlusionCamera.x, occlusionCamera.y, occlusionCamera.z,
                         region, regionIndex, batch);
             }
-            // Mesh stage 4 collection (item 677): the same population as the census —
-            // unsorted passes, batches on the uniform shared index source — retained as
-            // (region, batch) pairs for the next frame's pass head. The stage-2 gate test
-            // comes first, so an unarmed build records nothing extra here.
+            // Mesh stage 4 collection (item 677): the census' population narrowed to
+            // stage 3's scope — unsorted SOLID passes, batches on the uniform shared
+            // index source — retained as (region, batch) pairs for the next frame's
+            // pass head. The stage-2 gate test comes first, so an unarmed build
+            // records nothing extra here.
             if (!sortedPass && VulkanMeshTaskDraw.available(this.context)
-                    && batch.unsortedOffsetsClean()) {
+                    && batch.unsortedOffsetsClean()
+                    && SpirvShaders.SOLID_VERTEX.equals(pipeline.vertexModuleName())) {
                 celtium$meshCollect(pass.name(), region, batch);
             }
             // OPT-09/BH-36: the batch's commands as one indirect call when the device can carry it. The index source
