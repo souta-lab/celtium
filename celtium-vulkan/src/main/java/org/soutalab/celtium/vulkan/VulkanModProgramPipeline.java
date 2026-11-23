@@ -171,6 +171,14 @@ public final class VulkanModProgramPipeline {
     private static final int TERRAIN_UNIFORM_RING_SLOTS = 2048;
     /** This pipeline's ring depth: {@link #UNIFORM_RING_SLOTS}, or {@link #TERRAIN_UNIFORM_RING_SLOTS} for terrain. */
     private int uniformRingSlots = UNIFORM_RING_SLOTS;
+    /**
+     * Whether the uniform binding is a dynamic uniform buffer (item 678 Layer B, B3): the descriptor set
+     * names the ring's base and the staged slot travels as the bind's dynamic offset, so one set serves
+     * every slot of a sampler group instead of one set per (sampler group, slot). Terrain pipelines on
+     * the buffer route only - the post chain's ring-32 pipelines keep the plain binding, whose sets the
+     * prepared-draw path binds without dynamic offsets.
+     */
+    private boolean dynamicUniform;
     private VulkanUniformBuffer uniformBuffer;
     /** The constant-attribute ring (binding 1, stride 0); null for a pipeline whose layout feeds every attribute. */
     private VulkanUniformBuffer constantRing;
@@ -527,6 +535,7 @@ public final class VulkanModProgramPipeline {
         VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, lowered.attributes(),
                 lowered.samplers(), lowered.images(), lowered.uniformBlockSize(), viaBuffer);
         built.uniformRingSlots = TERRAIN_UNIFORM_RING_SLOTS;
+        built.dynamicUniform = viaBuffer;
         try {
             built.createLayouts();
             built.createTerrainPipeline(program.vertexSpirv(), program.fragmentSpirv(), vertexFormat, renderPass,
@@ -756,7 +765,7 @@ public final class VulkanModProgramPipeline {
                 // range it replaces did.
                 bindings.get(this.samplerCount + this.imageCount)
                         .binding(this.samplerCount + this.imageCount)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(1)
+                        .descriptorType(celtium$uniformBindingType(this.dynamicUniform)).descriptorCount(1)
                         .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT);
             }
             VkDescriptorSetLayoutCreateInfo setInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack).sType$Default()
@@ -803,7 +812,7 @@ public final class VulkanModProgramPipeline {
                 .descriptorCount(MAX_SETS * this.samplerCount);
         if (this.imageCount > 0) sizes.get(sizeIndex++).type(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
                 .descriptorCount(MAX_SETS * this.imageCount);
-        if (this.uniformsViaBuffer) sizes.get(sizeIndex).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+        if (this.uniformsViaBuffer) sizes.get(sizeIndex).type(celtium$uniformBindingType(this.dynamicUniform))
                 .descriptorCount(MAX_SETS);
         VkDescriptorPoolCreateInfo poolInfo = VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
                 .maxSets(MAX_SETS).pPoolSizes(sizes);
@@ -849,6 +858,15 @@ public final class VulkanModProgramPipeline {
         }
         long mask = alignment - 1;
         return (int) ((blockBytes + mask) & ~mask);
+    }
+
+    /**
+     * {@return the uniform binding's descriptor type}: dynamic on the B3 route, where the staged slot is
+     * supplied as the bind's dynamic offset, plain where the set itself names the slot's offset. Static and
+     * pure so the choice is pinned without a device.
+     */
+    static int celtium$uniformBindingType(boolean dynamicUniform) {
+        return dynamicUniform ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     }
 
     private void createPipeline(byte[] vertexSpirv, byte[] fragmentSpirv, int formatId, long renderPass, int cull,
