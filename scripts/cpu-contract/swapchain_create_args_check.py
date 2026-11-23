@@ -10,6 +10,12 @@ org.soutalab.celtium.vulkan.SwapchainCreateArguments.select(...), which is the s
 VulkanSwapchain.createSwapchain calls to fill VkSwapchainCreateInfoKHR. The expectations are asserted here, and every
 measured field is printed, so a failure says which condition moved.
 
+The usage expectations were revised with issue #422 (bd004afbc): the present path's default usage is
+transfer-only, so under the default mode a surface without TRANSFER_DST is refused by name and a
+surface without COLOR_ATTACHMENT is usable. The BH-18 colour-attachment expectations are still
+exercised, through the explicit opt-back-in mode select(..., false) - the mode VulkanSwapchain
+chooses when celtium.vulkan.presentTransferOnly=false.
+
 Usage: python3 scripts/cpu-contract/swapchain_create_args_check.py
 Exit: 0 when every condition holds, 1 otherwise.
 """
@@ -105,11 +111,20 @@ public final class SwapchainCreateArgsProbe {
                 800, 600, 3);
         check("alpha == 0", "refused by name", r.refusal != null, r.refusal);
 
-        // 4. TRANSFER_DST not offered: dropped, and named.
+        // 4. TRANSFER_DST not offered. Since issue #422 the default present usage is transfer-only
+        // (the present path only blits/clears swapchain images, and displayable DCC compression
+        // collides with colour attachments on RDNA3), so the default mode cannot write to this
+        // surface at all and refuses it by name. The colour-attachment mode - the explicit
+        // opt-back-in - drops the missing bit and names it, as BH-18 originally specified.
         System.out.println("scenario: no TRANSFER_DST");
         r = SwapchainCreateArguments.select(
                 surface(2, 0, USAGE_COLOR | USAGE_SRC, ALPHA_OPAQUE, 800, 600, 1, 1, 4096, 4096, BGRA, 0),
                 800, 600, 3);
+        check("no TRANSFER_DST", "transfer-only default refuses by name",
+                r.refusal != null && r.refusal.contains("transfer-destination"), r.refusal);
+        r = SwapchainCreateArguments.select(
+                surface(2, 0, USAGE_COLOR | USAGE_SRC, ALPHA_OPAQUE, 800, 600, 1, 1, 4096, 4096, BGRA, 0),
+                800, 600, 3, false);
         check("no TRANSFER_DST", "usage keeps COLOR_ATTACHMENT and TRANSFER_SRC",
                 r.usage == (USAGE_COLOR | USAGE_SRC), "0x" + Integer.toHexString(r.usage));
         check("no TRANSFER_DST", "the dropped bit is named", "TRANSFER_DST".equals(r.droppedUsage), r.droppedUsage);
@@ -160,12 +175,23 @@ public final class SwapchainCreateArgsProbe {
         check("min=0", "the broken answer is named", r.imageCountNote.contains("minImageCount=0"),
                 r.imageCountNote);
 
-        // 7. No colour attachment: refused by name rather than asked for.
+        // 7. No colour attachment: the transfer-only default never attaches swapchain images as
+        // colour attachments, so this surface is usable and the chosen mode is named; the
+        // colour-attachment mode refuses by name rather than asking for a usage the surface does
+        // not offer.
         System.out.println("scenario: no COLOR_ATTACHMENT");
         r = SwapchainCreateArguments.select(
                 surface(2, 0, USAGE_SRC | USAGE_DST, ALPHA_OPAQUE, 800, 600, 1, 1, 4096, 4096, BGRA, 0),
                 800, 600, 3);
-        check("no COLOR_ATTACHMENT", "refused by name", r.refusal != null, r.refusal);
+        check("no COLOR_ATTACHMENT", "transfer-only default accepts with transfer usage",
+                r.refusal == null && r.usage == (USAGE_DST | USAGE_SRC),
+                "0x" + Integer.toHexString(r.usage));
+        check("no COLOR_ATTACHMENT", "the transfer-only mode is named",
+                "transfer-only".equals(r.droppedUsage), r.droppedUsage);
+        r = SwapchainCreateArguments.select(
+                surface(2, 0, USAGE_SRC | USAGE_DST, ALPHA_OPAQUE, 800, 600, 1, 1, 4096, 4096, BGRA, 0),
+                800, 600, 3, false);
+        check("no COLOR_ATTACHMENT", "colour mode refuses by name", r.refusal != null, r.refusal);
 
         System.out.println();
         System.out.println(failures == 0 ? "BH-18 contract: all conditions hold"

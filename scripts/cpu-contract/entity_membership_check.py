@@ -87,7 +87,7 @@ public class EntityCacheProbe {
   Method hook=ChunkEntityMembershipMixin.class.getDeclaredMethod("celtium$entityMembershipChanged",
    org.spongepowered.asm.mixin.injection.callback.CallbackInfo.class);
   String[] targets=hook.getAnnotation(org.spongepowered.asm.mixin.injection.Inject.class).method();
-  if(!new HashSet<>(Arrays.asList(targets)).equals(Set.of("func_76612_a","func_76608_a","func_76631_c")))
+  if(!new HashSet<>(Arrays.asList(targets)).equals(Set.of("func_76612_a","func_76622_b","func_76608_a","func_76631_c")))
    throw new AssertionError("membership hook target changed");
   Method unload=ChunkEntityMembershipMixin.class.getDeclaredMethod("celtium$entityMembershipUnloaded",
    org.spongepowered.asm.mixin.injection.callback.CallbackInfo.class);
