@@ -349,31 +349,15 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** GL_DRAW_FRAMEBUFFER / GL_READ_FRAMEBUFFER bindings; GL_FRAMEBUFFER sets both. */
     volatile int drawFbo, readFbo;
     /** The colour and depth glClear will use, and the buffers it was asked to clear and nobody consumed yet. */
-    private volatile float clearRed, clearGreen, clearBlue = 0.0f, clearAlpha = 1.0f;
-    private volatile double clearDepth = 1.0;
-    /** The GL framebuffer name bound when the pending clear was issued; 0 is the default framebuffer. */
-    private volatile int pendingClearDrawFbo;
-    /** Whether the backend's routing considered the bound framebuffer the main one when the clear was issued. */
-    private volatile boolean pendingClearIsMain = true;
+    // GAP-ST-4 rewired: current clear values, the pending latch and the issue-time snapshots
+    // are owned by GlsmClearState.
 
     /** Clears seen for the framebuffer the game calls its main one, and for every other target. */
-    private int mainClears;
-    private int foreignClears;
     /** Bounded caller log for main-framebuffer clears: which caller clears it, and how often. */
     private static final boolean CLEAR_CALLERS =
             Boolean.parseBoolean(System.getProperty("celtium.vulkan.clearCallers", "false"));
     private static final int CLEAR_CALLER_LINES = 16;
     private int mainClearCallerLogs;
-    private float lastForeignClearRed;
-    private float lastForeignClearGreen;
-    private float lastForeignClearBlue;
-    private float lastMainClearRed;
-    /** The alpha and depth of the last main-framebuffer clear, as the game set them when it issued that clear. */
-    private float lastMainClearAlpha;
-    private double lastMainClearDepth = 1.0D;
-    private boolean mainClearValuesKnown;
-    private float lastMainClearGreen;
-    private float lastMainClearBlue;
 
     /** {@return the main/foreign clear census and the last main clear colour}, for the verification line. */
     public static String clearCensus() {
@@ -381,9 +365,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return "main=none foreign=none colour=none";
         }
-        return "main=" + stub.mainClears + "/" + stub.lastMainClearRed + "," + stub.lastMainClearGreen + ","
-                + stub.lastMainClearBlue + " foreign=" + stub.foreignClears + "/" + stub.lastForeignClearRed + ","
-                + stub.lastForeignClearGreen + "," + stub.lastForeignClearBlue;
+        GlsmClearState clear = GlsmClearState.current();
+        return "main=" + clear.mainClears() + "/" + clear.lastMainRed() + "," + clear.lastMainGreen() + ","
+                + clear.lastMainBlue() + " foreign=" + clear.foreignClears() + "/" + clear.lastForeignRed() + ","
+                + clear.lastForeignGreen() + "," + clear.lastForeignBlue();
     }
 
     /**
@@ -420,8 +405,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** Set by the backend after each bind, so a clear is classified by routing rather than by a raw GL name. */
     private volatile boolean drawFramebufferIsMain = true;
 
-    private final java.util.concurrent.atomic.AtomicInteger pendingClears =
-            new java.util.concurrent.atomic.AtomicInteger();
     /** Fixed-pipeline state the getters answer from, at the values a fresh GL context starts them at. */
     volatile float currentRed = 1.0f, currentGreen = 1.0f, currentBlue = 1.0f, currentAlpha = 1.0f;
     /** Scratch the clear-value query fills through {@link #mainClearValues(float[])}. */
@@ -3829,7 +3812,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return false;
         }
-        return stub.pendingClears.get() != 0 && stub.pendingClearIsMain;
+        return GlsmClearState.current().hasPending() && GlsmClearState.current().pendingIsMain();
     }
 
     /**
@@ -3841,7 +3824,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null) {
             return -1;
         }
-        return stub.pendingClears.get() == 0 ? -1 : stub.pendingClearDrawFbo;
+        return GlsmClearState.current().pendingDrawFbo();
     }
 
     /**
@@ -3853,7 +3836,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static boolean hasPendingClears() {
         CeltiumGlStub stub = installed;
-        return stub != null && stub.pendingClears.get() != 0;
+        return stub != null && GlsmClearState.current().hasPending();
     }
 
     /** Uniform-block introspection: no block or active uniform exists, so the integer answer is zero. */
@@ -4144,27 +4127,23 @@ public final class CeltiumGlStub implements FunctionProvider {
             float green = org.lwjgl.system.MemoryUtil.memGetFloat(value + 4L);
             float blue = org.lwjgl.system.MemoryUtil.memGetFloat(value + 8L);
             float alpha = org.lwjgl.system.MemoryUtil.memGetFloat(value + 12L);
-            float oldRed = stub.clearRed, oldGreen = stub.clearGreen, oldBlue = stub.clearBlue, oldAlpha = stub.clearAlpha;
+            GlsmClearState clear = GlsmClearState.current();
+            float oldRed = clear.red(), oldGreen = clear.green(), oldBlue = clear.blue(), oldAlpha = clear.alpha();
             try {
-                stub.clearRed = red;
-                stub.clearGreen = green;
-                stub.clearBlue = blue;
-                stub.clearAlpha = alpha;
+                clear.clearColor(red, green, blue, alpha);
                 stub.recordClear(0x4000);
             } finally {
-                stub.clearRed = oldRed;
-                stub.clearGreen = oldGreen;
-                stub.clearBlue = oldBlue;
-                stub.clearAlpha = oldAlpha;
+                clear.clearColor(oldRed, oldGreen, oldBlue, oldAlpha);
             }
         } else if (buffer == 0x1801) { // GL_DEPTH
             double depth = org.lwjgl.system.MemoryUtil.memGetFloat(value);
-            double old = stub.clearDepth;
+            GlsmClearState clear = GlsmClearState.current();
+            double old = clear.depth();
             try {
-                stub.clearDepth = depth;
+                clear.clearDepth(depth);
                 stub.recordClear(0x0100);
             } finally {
-                stub.clearDepth = old;
+                clear.clearDepth(old);
             }
         }
     }
@@ -4175,12 +4154,13 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null || buffer != 0x84F9) { // GL_DEPTH_STENCIL
             return;
         }
-        double old = stub.clearDepth;
+        GlsmClearState clear = GlsmClearState.current();
+        double old = clear.depth();
         try {
-            stub.clearDepth = depth;
+            clear.clearDepth(depth);
             stub.recordClear(0x4100);
         } finally {
-            stub.clearDepth = old;
+            clear.clearDepth(old);
         }
     }
 
@@ -4287,45 +4267,21 @@ public final class CeltiumGlStub implements FunctionProvider {
     private void recordClear(int mask) {
         mask = celtium$effectiveClearMask(mask);
         // The routing owner, not raw name 0, distinguishes the game's main framebuffer from other targets.
-        this.pendingClearDrawFbo = this.drawFbo;
-        this.pendingClearIsMain = this.drawFramebufferIsMain;
-        // How often the game clears what it calls its main framebuffer, and with what colour. The E2E scene's black
-        // horizon needed exactly this: the model says the world frame clears that framebuffer with the fog colour every
-        // frame, while a census of the routes said the clear never reached the delivered image.
-        if (this.drawFramebufferIsMain) {
-            this.mainClears++;
-            if (CLEAR_CALLERS && this.mainClearCallerLogs < CLEAR_CALLER_LINES) {
-                // Which caller clears the main framebuffer, and how often: 23 a frame is not vanilla's one, and the
-                // answer decides whether the clear-order flush can ever be skipped for it.
-                this.mainClearCallerLogs++;
-                StackTraceElement[] stack = Thread.currentThread().getStackTrace();
-                StringBuilder callers = new StringBuilder(200);
-                for (int i = 2; i < Math.min(stack.length, 11); i++) {
-                    callers.append(" <- ").append(stack[i].getClassName()).append('#').append(stack[i].getMethodName());
-                }
-                System.out.println("[Celtium] CELTIUM_MAIN_CLEAR mask=0x" + Integer.toHexString(mask)
-                        + " colour=(" + this.clearRed + "," + this.clearGreen + "," + this.clearBlue + ","
-                        + this.clearAlpha + ") callers=" + callers);
+        // How often the game clears what it calls its main framebuffer, and with what colour, is the
+        // GlsmClearState census (GAP-ST-4): issue() latches the pending mask and snapshots per buffer.
+        if (this.drawFramebufferIsMain && CLEAR_CALLERS && this.mainClearCallerLogs < CLEAR_CALLER_LINES) {
+            this.mainClearCallerLogs++;
+            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+            StringBuilder callers = new StringBuilder(200);
+            for (int i = 2; i < Math.min(stack.length, 11); i++) {
+                callers.append(" <- ").append(stack[i].getClassName()).append('#').append(stack[i].getMethodName());
             }
-            // Per buffer: a later depth-only clear must not replace the colour the colour clear was issued with.
-            if ((mask & 0x4000) != 0) {
-                this.lastMainClearRed = this.clearRed;
-                this.lastMainClearGreen = this.clearGreen;
-                this.lastMainClearBlue = this.clearBlue;
-                this.lastMainClearAlpha = this.clearAlpha;
-                this.mainClearValuesKnown = true;
-            }
-            if ((mask & 0x0100) != 0) {
-                this.lastMainClearDepth = this.clearDepth;
-            }
-        } else {
-            this.foreignClears++;
-            this.lastForeignClearRed = this.clearRed;
-            this.lastForeignClearGreen = this.clearGreen;
-            this.lastForeignClearBlue = this.clearBlue;
+            GlsmClearState clear = GlsmClearState.current();
+            System.out.println("[Celtium] CELTIUM_MAIN_CLEAR mask=0x" + Integer.toHexString(mask)
+                    + " colour=(" + clear.red() + "," + clear.green() + "," + clear.blue() + ","
+                    + clear.alpha() + ") callers=" + callers);
         }
-        int pendingMask = mask;
-        this.pendingClears.getAndUpdate(previous -> previous | pendingMask);
+        GlsmClearState.current().issue(mask, this.drawFbo, this.drawFramebufferIsMain);
         if (this.drawFramebufferIsMain) {
             // The main framebuffer's clear can be carried by the draw queue instead of by the latch: the backend
             // attached it to the last queued group of the frame image when the ordering flush was asked for
@@ -4386,14 +4342,11 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private void recordClearColor(float red, float green, float blue, float alpha) {
-        this.clearRed = red;
-        this.clearGreen = green;
-        this.clearBlue = blue;
-        this.clearAlpha = alpha;
+        GlsmClearState.current().clearColor(red, green, blue, alpha);
     }
 
     private void recordClearDepth(double depth) {
-        this.clearDepth = Math.max(0.0D, Math.min(1.0D, depth));
+        GlsmClearState.current().clearDepth(Math.max(0.0D, Math.min(1.0D, depth)));
     }
 
     /**
@@ -4405,7 +4358,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static int consumePendingClears() {
         CeltiumGlStub stub = installed;
-        return stub == null ? 0 : stub.pendingClears.getAndSet(0);
+        return stub == null ? 0 : GlsmClearState.current().consumePending();
     }
 
     /**
@@ -4424,19 +4377,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub == null || mask == 0) {
             return;
         }
-        if ((mask & 0x4000) != 0) {
-            stub.lastMainClearRed = rgba[0];
-            stub.lastMainClearGreen = rgba[1];
-            stub.lastMainClearBlue = rgba[2];
-            stub.lastMainClearAlpha = rgba[3];
-            stub.mainClearValuesKnown = true;
-        }
-        if ((mask & 0x0100) != 0) {
-            stub.lastMainClearDepth = depth;
-        }
-        stub.pendingClearDrawFbo = drawFbo;
-        stub.pendingClearIsMain = true;
-        stub.pendingClears.getAndUpdate(previous -> previous | mask);
+        GlsmClearState.current().repend(mask, drawFbo, rgba, depth);
     }
 
     /**
@@ -4450,15 +4391,12 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static double mainClearValues(float[] out) {
         CeltiumGlStub stub = installed;
-        if (stub == null || !stub.mainClearValuesKnown) {
+        if (stub == null || !GlsmClearState.current().mainValuesKnown()) {
             clearColor(out);
             return Double.NaN;
         }
-        out[0] = stub.lastMainClearRed;
-        out[1] = stub.lastMainClearGreen;
-        out[2] = stub.lastMainClearBlue;
-        out[3] = stub.lastMainClearAlpha;
-        return stub.lastMainClearDepth;
+        GlsmClearState.current().mainValues(out);
+        return GlsmClearState.current().lastMainDepth();
     }
 
     /** The colour the game last asked {@code glClear} to use, into {@code out} as {r,g,b,a}. */
@@ -4471,16 +4409,17 @@ public final class CeltiumGlStub implements FunctionProvider {
             out[3] = 1.0f;
             return;
         }
-        out[0] = stub.clearRed;
-        out[1] = stub.clearGreen;
-        out[2] = stub.clearBlue;
-        out[3] = stub.clearAlpha;
+        GlsmClearState clear = GlsmClearState.current();
+        out[0] = clear.red();
+        out[1] = clear.green();
+        out[2] = clear.blue();
+        out[3] = clear.alpha();
     }
 
     /** The depth the game last asked {@code glClear} to use. */
     public static double clearDepth() {
         CeltiumGlStub stub = installed;
-        return stub == null ? 1.0 : stub.clearDepth;
+        return stub == null ? 1.0 : GlsmClearState.current().depth();
     }
 
     // ---- texture captures: the answers the mirrors read --------------------------------------------------
