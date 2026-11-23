@@ -844,17 +844,21 @@ public abstract class RenderSectionManager {
 
         var results = this.collectChunkBuildResults();
 
-        if (results.isEmpty()) {
+        if (results.isEmpty() && this.streamSpreadQueue.isEmpty()) {
             return;
         }
 
         // Ensure occlusion threads are stopped at this point, as we're about to mutate render section data.
         this.finishAllGraphUpdates();
 
-        this.processChunkBuildResults(results);
+        if (STREAM_SPREAD) {
+            this.celtium$spreadUploadChunks(results);
+        } else {
+            this.processChunkBuildResults(results);
 
-        for (var result : results) {
-            result.output().delete();
+            for (var result : results) {
+                result.output().delete();
+            }
         }
 
         // Forcefully mark the graph as needing updates if the previous render list detected an overflow of the
@@ -863,6 +867,137 @@ public abstract class RenderSectionManager {
         if (this.renderListManager.getRebuildLists().hasAdditionalUpdates()
                 || (this.isInShadowPass() && this.shadowRenderListManager != null && this.shadowRenderListManager.getRebuildLists().hasAdditionalUpdates())) {
             this.markGraphDirty();
+        }
+    }
+
+    // ---------------------------------------------------------------- stream spreading (QUEUE 728, F1)
+
+    /**
+     * {@code -Dceltium.streamSpread=true}: spread the section rebuild/upload work of a streaming burst over
+     * several frames instead of paying it inside the one frame the build results land in.
+     * <p>
+     * The measured shape this answers (e9-post-a1-census, fixture-agera / HD 620, flight seed 12345678): in the
+     * window where chunk streaming overlaps the tick, the frame p50 difference against plain frames is +5.82 ms
+     * and does not move with unrelated landings, the setupTerrain tail (p99eq - p50) reaches 28.6 ms, and the
+     * steady windows still throw a sporadic single-window upload burst (~+1.0 ms in one window's mean). The work
+     * is not removed; it is paced by {@link StreamSpreadBudget}, a token bucket in measured microseconds.
+     * <p>
+     * The deferral lives here, not in the terrain backend, because the commit contract lives here: a result is
+     * committed (last-built frame, section info, build token) and its output deleted only when it is processed.
+     * A deferred holder keeps its output alive and its section un-committed until its slice runs, in arrival
+     * order - the same guarantee the BH-25 failed-upload path gets from {@code consumeFailedUploads}, which the
+     * backend-side {@code celtium.vulkan.uploadBudget} queue does not have (its caller commits and deletes every
+     * result of the batch whether or not the backend queued it). Off by default; when off, {@link #uploadChunks}
+     * runs the unmodified path.
+     */
+    private static final boolean STREAM_SPREAD = Boolean.getBoolean("celtium.streamSpread");
+
+    /** The per-window pacing budget in microseconds; see {@link StreamSpreadBudget}. */
+    private static final long STREAM_SPREAD_BUDGET_MICROS =
+            Long.getLong("celtium.streamSpreadBudgetMicros", 1200L).longValue();
+
+    /** Holders processed per slice; a slice is the unit the bucket is debited for. Kept below the backend
+     * budget's burst threshold (32) so the two queues can never both engage on one call. */
+    private static final int STREAM_SPREAD_SLICE = 8;
+
+    /** The oldest deferred holder's maximum wait before the queue is drained regardless of credit (pop-in bound). */
+    private static final long STREAM_SPREAD_MAX_WAIT_NANOS = 250_000_000L;
+
+    /** The queue depth above which the queue is drained regardless of credit (the holders pin mesh buffers). */
+    private static final int STREAM_SPREAD_MAX_QUEUED = 4096;
+
+    /** Deferred results, in arrival order. Only ever touched on the render thread, like the commit path itself. */
+    private final ArrayDeque<ChunkJobResult.Success<? extends ChunkTaskOutput>> streamSpreadQueue = new ArrayDeque<>();
+
+    /** The pacing bucket; created lazily so a run with spreading off allocates nothing. */
+    private StreamSpreadBudget streamSpreadBudget;
+
+    /** When the oldest queued holder arrived; valid only while the queue is non-empty. */
+    private long streamSpreadOldestNanos;
+
+    // What the spreading did, so a leg can tell "the budget engaged" from "it was never asked" (the same
+    // positive-control rule as the backend budget's deferredUploads counters).
+    private long streamSpreadCalls;
+    private long streamSpreadProcessed;
+    private long streamSpreadMaxQueued;
+    private long streamSpreadForcedDrains;
+    private long streamSpreadSpentMicros;
+    private long streamSpreadPrintedProcessed;
+
+    /**
+     * The spreading form of {@link #uploadChunks}' processing step: queue the new results behind any deferred
+     * ones, then process slices while the bucket has credit. At least one slice is processed per call whenever
+     * the queue is non-empty, so the queue always makes progress; a holder that waited past
+     * {@link #STREAM_SPREAD_MAX_WAIT_NANOS}, or a queue past {@link #STREAM_SPREAD_MAX_QUEUED}, drains in full.
+     */
+    private void celtium$spreadUploadChunks(ArrayList<ChunkJobResult.Success<? extends ChunkTaskOutput>> results) {
+        if (!results.isEmpty()) {
+            if (this.streamSpreadQueue.isEmpty()) {
+                this.streamSpreadOldestNanos = System.nanoTime();
+            }
+            this.streamSpreadQueue.addAll(results);
+            if (this.streamSpreadQueue.size() > this.streamSpreadMaxQueued) {
+                this.streamSpreadMaxQueued = this.streamSpreadQueue.size();
+            }
+        }
+
+        long now = System.nanoTime();
+        if (this.streamSpreadBudget == null) {
+            this.streamSpreadBudget = new StreamSpreadBudget(STREAM_SPREAD_BUDGET_MICROS, now);
+        }
+        this.streamSpreadBudget.refill(now);
+
+        boolean forced = now - this.streamSpreadOldestNanos > STREAM_SPREAD_MAX_WAIT_NANOS
+                || this.streamSpreadQueue.size() > STREAM_SPREAD_MAX_QUEUED;
+        if (forced) {
+            this.streamSpreadForcedDrains++;
+        }
+
+        int slices = 0;
+        while (!this.streamSpreadQueue.isEmpty()) {
+            if (!forced && slices > 0 && !this.streamSpreadBudget.hasCredit()) {
+                break;
+            }
+            ArrayList<ChunkJobResult.Success<? extends ChunkTaskOutput>> slice = new ArrayList<>(STREAM_SPREAD_SLICE);
+            while (slice.size() < STREAM_SPREAD_SLICE && !this.streamSpreadQueue.isEmpty()) {
+                slice.add(this.streamSpreadQueue.pollFirst());
+            }
+            long started = System.nanoTime();
+            this.processChunkBuildResults(slice);
+            long spentMicros = (System.nanoTime() - started) / 1000L;
+            this.streamSpreadBudget.debit(spentMicros);
+            this.streamSpreadSpentMicros += spentMicros;
+            this.streamSpreadProcessed += slice.size();
+            slices++;
+            // The unspread path deletes every result it was handed, including the ones filtering dropped;
+            // a processed slice gets exactly that treatment. A deferred holder's output stays alive.
+            for (var result : slice) {
+                result.output().delete();
+            }
+        }
+
+        if (!this.streamSpreadQueue.isEmpty()) {
+            // The call ends with work still queued: that is the engagement a leg reads as its positive control.
+            this.streamSpreadCalls++;
+        } else if (this.streamSpreadProcessed > this.streamSpreadPrintedProcessed) {
+            this.streamSpreadPrintedProcessed = this.streamSpreadProcessed;
+            System.out.println("[Celtium] CELTIUM_STREAM_SPREAD processed=" + this.streamSpreadProcessed
+                    + " spreadCalls=" + this.streamSpreadCalls
+                    + " spentMicros=" + this.streamSpreadSpentMicros
+                    + " maxQueued=" + this.streamSpreadMaxQueued
+                    + " forcedDrains=" + this.streamSpreadForcedDrains
+                    + " budgetMicros=" + STREAM_SPREAD_BUDGET_MICROS);
+        }
+        if (this.streamSpreadQueue.isEmpty()) {
+            this.streamSpreadOldestNanos = System.nanoTime();
+        }
+    }
+
+    /** Deletes the outputs of any results still deferred at teardown, so their mesh buffers are not leaked. */
+    private void celtium$deleteDeferredSpreadResults() {
+        ChunkJobResult.Success<? extends ChunkTaskOutput> holder;
+        while ((holder = this.streamSpreadQueue.pollFirst()) != null) {
+            holder.output().delete();
         }
     }
 
@@ -1187,6 +1322,7 @@ public abstract class RenderSectionManager {
                 result.output().delete(); // delete resources for any pending tasks (including those that were cancelled)
             }
         });
+        failure = destroyStage(failure, this::celtium$deleteDeferredSpreadResults);
         failure = destroyStage(failure, this.renderListManager::destroy);
         if (this.shadowRenderListManager != null) {
             failure = destroyStage(failure, this.shadowRenderListManager::destroy);
