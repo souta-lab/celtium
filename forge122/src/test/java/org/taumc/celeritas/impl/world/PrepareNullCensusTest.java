@@ -92,4 +92,34 @@ class PrepareNullCensusTest {
         assertEquals(1, census.printedLines());
         assertEquals(200, census.snapshot().nulls());
     }
+
+    @Test
+    void recordAddEmptyCountsReasonsSeparatelyAndPrintsAddEmptyAtLineEnd() {
+        // Item 683: sections committed EMPTY at add time never reach prepare, so the add path
+        // must land in the same reason buckets (the leg splits the population by reason) while
+        // staying separable from prepare-path counts: it must not bump the prepare call count,
+        // and the printed line must carry its share at the line end as addEmpty=.
+        var census = new PrepareNullCensus(24);
+
+        var originalOut = System.out;
+        var captured = new java.io.ByteArrayOutputStream();
+        System.setOut(new java.io.PrintStream(captured));
+        try {
+            census.recordAddEmpty(PrepareNullCensus.Reason.BLANK_CHUNK);
+        } finally {
+            System.setOut(originalOut);
+        }
+
+        var snapshot = census.snapshot();
+        assertEquals(0, snapshot.calls);
+        assertEquals(1, snapshot.blankChunk);
+        assertEquals(1, snapshot.nulls());
+        assertEquals(1, census.printedLines());
+
+        var line = captured.toString().strip();
+        org.junit.jupiter.api.Assertions.assertTrue(line.startsWith("[Celtium] CELTIUM_PREPARE_NULL calls=0"),
+                "unexpected census line: " + line);
+        org.junit.jupiter.api.Assertions.assertTrue(line.endsWith(" addEmpty=1"),
+                "add-path share must be the line-end addEmpty field: " + line);
+    }
 }
