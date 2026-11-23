@@ -47,6 +47,23 @@ public abstract class MultiDrawBatch {
     }
 
     /**
+     * Marks the section the following draw commands belong to, called by the batch assembler once per
+     * section before that section's commands are appended. The default retains nothing: most backends
+     * never need to know which section a command came from. A backend that does (the Vulkan backend's
+     * GPU-culling census, which culls per section rather than per region) overrides this and stamps
+     * every appended command with the most recent value.
+     * <p>
+     * A command grown by {@link #mergeIntoLastCommand} keeps the section of the append that created it.
+     * That is sound because the assembler only ever merges runs of one section into that section's own
+     * last command; a merge never crosses a section boundary.
+     *
+     * @param localSectionIndex the section's index within its region
+     *        ({@link org.embeddedt.embeddium.impl.render.chunk.LocalSectionIndex} space)
+     */
+    public void beginSection(int localSectionIndex) {
+    }
+
+    /**
      * Appends one draw command to the batch. If {@code elementCount} is 0, the command is discarded
      * and {@link #size()} does not advance.
      */
