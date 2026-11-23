@@ -409,7 +409,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * of the pair disturb the "cached" map. The redraw gate is Angelica's pair of conditions: the sun's
      * rotation since the capture reaching {@code 0.03} degrees (the {@code ShadowGraphGate} threshold,
      * scaled by elevation) or the snapshot's age exceeding 250 ms (at most four terrain redraws a
-     * second). Entity and other non-terrain casters are never part of the snapshot: they are recorded by
+     * second), plus the caster-set condition from the same relay list: the shadow camera having moved
+     * a block or more since the capture (a new shadow list's worth of casters). Entity and other non-terrain casters are never part of the snapshot: they are recorded by
      * their own paths after the terrain stage, fresh every frame, over the restored terrain map. Off by
      * default - the state below is then never touched and the stage records exactly as before.
      */
@@ -429,6 +430,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private int packShadowCacheColors;
     /** Sun direction at the capture (unit vector, world space as read from the shadow model-view). */
     private final float[] packShadowCacheSunDirection = new float[3];
+    /** Shadow camera position at the capture (the shadow model-view's translation components). */
+    private final float[] packShadowCacheCameraPosition = new float[3];
     /** {@code System.nanoTime()} of the capture; the 250 ms age cap is measured against it. */
     private long packShadowCacheCaptureNanos;
     private long packShadowCacheCaptured;
@@ -481,17 +484,27 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return PACK_SHADOW_CACHE_SUN_THRESHOLD_DEGREES / scale;
     }
 
+    /** {@return the shadow camera position read from a shadow model-view's translation}. */
+    static float[] celtium$packShadowCameraPosition(org.joml.Matrix4fc modelView) {
+        return new float[]{modelView.m30(), modelView.m31(), modelView.m32()};
+    }
+
     /**
      * {@return whether a pack shadow stage must record terrain instead of restoring the snapshot}:
      * always when no snapshot is valid or the target changed, otherwise only when the snapshot aged
-     * past 250 ms or the sun rotated at least the elevation-scaled threshold since the capture.
+     * past 250 ms, the sun rotated at least the elevation-scaled threshold since the capture, or the
+     * shadow camera moved at least one block - the caster-set change Angelica's relay conditions
+     * name as "a new shadow list arrived": a snapshot holds the casters of the volume it was captured
+     * in, and a camera that left that volume by a block would present another volume's shadows.
      */
     static boolean celtium$packShadowCacheDue(boolean valid, boolean targetChanged, long ageNanos,
-                                              double sunAngleDegrees, double sunThresholdDegrees) {
+                                              double sunAngleDegrees, double sunThresholdDegrees,
+                                              boolean cameraMoved) {
         if (!valid || targetChanged) {
             return true;
         }
-        return ageNanos > PACK_SHADOW_CACHE_MAX_AGE_NANOS || sunAngleDegrees >= sunThresholdDegrees;
+        return ageNanos > PACK_SHADOW_CACHE_MAX_AGE_NANOS || sunAngleDegrees >= sunThresholdDegrees
+                || cameraMoved;
     }
     private int packTerrainDrawnLogs;
     private int packTerrainRefusedLogs;
@@ -17499,6 +17512,7 @@ this.frameBufferOpen = false;
         boolean pendingShadowCapture = false;
         long pendingShadowSnapshot = 0L;
         float[] pendingShadowSunDirection = null;
+        float[] pendingShadowCameraPosition = null;
         try {
             packProgram.bind();
             bound = true;
@@ -17630,6 +17644,7 @@ this.frameBufferOpen = false;
                     // evicted or resized underneath), the stage falls through and records - a partial
                     // restore is harmless because the record clears and redraws the whole target.
                     float[] sunDirection = celtium$packShadowSunDirection(matrices.modelView());
+                    float[] cameraPosition = celtium$packShadowCameraPosition(matrices.modelView());
                     boolean cacheTargetChanged = !this.packShadowCacheValid
                             || drawIdentity != this.packShadowCacheIdentity
                             || passW != this.packShadowCacheWidth
@@ -17639,9 +17654,17 @@ this.frameBufferOpen = false;
                     double cacheSunAngle = this.packShadowCacheValid
                             ? celtium$packShadowSunAngleDegrees(this.packShadowCacheSunDirection, sunDirection)
                             : 180.0;
+                    boolean cacheCameraMoved = false;
+                    if (this.packShadowCacheValid) {
+                        float dx = cameraPosition[0] - this.packShadowCacheCameraPosition[0];
+                        float dy = cameraPosition[1] - this.packShadowCacheCameraPosition[1];
+                        float dz = cameraPosition[2] - this.packShadowCacheCameraPosition[2];
+                        cacheCameraMoved = dx * dx + dy * dy + dz * dz >= 1.0f;
+                    }
                     if (!celtium$packShadowCacheDue(this.packShadowCacheValid, cacheTargetChanged,
                             cacheAgeNanos, cacheSunAngle,
-                            celtium$packShadowSunThresholdDegrees(this.packShadowCacheSunDirection))) {
+                            celtium$packShadowSunThresholdDegrees(this.packShadowCacheSunDirection),
+                            cacheCameraMoved)) {
                         boolean restored = true;
                         for (int s = 0; s < this.packShadowCacheColors && restored; s++) {
                             restored = pairOwner.copyChainPairColorSlot(
@@ -17665,6 +17688,7 @@ this.frameBufferOpen = false;
                     pendingShadowCapture = true;
                     pendingShadowSnapshot = celtium$packShadowSnapshotIdentity(drawIdentity);
                     pendingShadowSunDirection = sunDirection;
+                    pendingShadowCameraPosition = cameraPosition;
                 }
                 int pairColors = celtium$packTerrainPairColorCount(targetColors,
                         pairOwner.chainPairColorCount(drawIdentity));
@@ -18153,6 +18177,8 @@ this.frameBufferOpen = false;
                     this.packShadowCacheHeight = passH;
                     this.packShadowCacheColors = targetColors;
                     System.arraycopy(pendingShadowSunDirection, 0, this.packShadowCacheSunDirection,
+                            0, 3);
+                    System.arraycopy(pendingShadowCameraPosition, 0, this.packShadowCacheCameraPosition,
                             0, 3);
                     this.packShadowCacheCaptureNanos = System.nanoTime();
                     this.packShadowCacheCaptured++;
