@@ -73,6 +73,11 @@ public final class TerrainFrameBudget {
         this(MAX_VERTICES, MAX_DRAWS, REBUILD_CAP, REBUILD_TARGET_NANOS);
     }
 
+    /** {@return whether a draw cap (vertices or draws) is in force; an uncapped budget never drops a batch}. */
+    public boolean drawCapsActive() {
+        return this.maxVertices > 0 || this.maxDraws > 0;
+    }
+
     TerrainFrameBudget(long maxVertices, int maxDraws, int rebuildCap, long rebuildTargetNanos) {
         this.maxVertices = maxVertices;
         this.maxDraws = maxDraws;
