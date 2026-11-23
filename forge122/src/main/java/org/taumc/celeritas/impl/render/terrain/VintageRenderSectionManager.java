@@ -194,6 +194,17 @@ public class VintageRenderSectionManager extends RenderSectionManager {
     }
 
     @Override
+    protected boolean isRebuildDataFinal(RenderSection render) {
+        // WorldSlice.prepare returns null both for a section that is genuinely empty (a received
+        // chunk whose storage slot is absent or empty) and for a chunk the client has not received
+        // yet, where ChunkProviderClient answers with its blank EmptyChunk. Only the first is
+        // final: committing the second as EMPTY would guess at geometry that has not arrived.
+        // Chunk.isEmpty is true only for the blank placeholder, never for a received chunk (the
+        // same distinction isSectionVisuallyEmpty relies on).
+        return !this.world.getChunk(render.getChunkX(), render.getChunkZ()).isEmpty();
+    }
+
+    @Override
     protected boolean allowImportantRebuilds() {
         return !CeleritasVintage.options().performance.alwaysDeferChunkUpdates;
     }
