@@ -841,9 +841,13 @@ public final class VulkanSwapchain {
             reasons.add("no window handle was available for a Vulkan surface");
             return null;
         }
-        if (!context.hasDeviceExtension("VK_KHR_swapchain")
-                || !(SWAPCHAIN_REQUESTED || PRESENT_FROM_COMPOSITE)) {
-            reasons.add("the device was not created with VK_KHR_swapchain enabled (the swapchain probe enables it)");
+        // Only the device contract gates creation: the extension is enabled unconditionally at device
+        // creation, and this create() is reached from the window-backend present path, which runs on either
+        // setting of presentFromComposite. Refusing here when neither the probe nor presentFromComposite was
+        // set made presentFromComposite=false retry a creation that could never succeed until the bounded
+        // escalation crashed the run.
+        if (!context.hasDeviceExtension("VK_KHR_swapchain")) {
+            reasons.add("the device was not created with VK_KHR_swapchain enabled");
             return null;
         }
         // SDL first: Cleanroom 0.7 owns the window through SDL 3 and has no GLFW on the runtime classpath at all, so
