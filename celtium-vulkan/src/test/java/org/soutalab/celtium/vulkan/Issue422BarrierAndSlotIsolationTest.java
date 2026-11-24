@@ -66,6 +66,37 @@ class Issue422BarrierAndSlotIsolationTest {
     }
 
     @Test
+    void selfTransitionDetectionRequiresBothImagesSettled() {
+        int general = VK10.VK_IMAGE_LAYOUT_GENERAL;
+        int depthLayout = VK10.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        assertTrue(GllessFrameTarget.layoutsAreSelfTransitions(general, general, depthLayout, depthLayout));
+        // The first acquire leaves UNDEFINED on both images: a real transition is owed.
+        assertTrue(!GllessFrameTarget.layoutsAreSelfTransitions(
+                VK10.VK_IMAGE_LAYOUT_UNDEFINED, general, VK10.VK_IMAGE_LAYOUT_UNDEFINED, depthLayout));
+        // An acquire after an outside phase left the colour image read-only also owes its transition.
+        assertTrue(!GllessFrameTarget.layoutsAreSelfTransitions(
+                VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, general, depthLayout, depthLayout));
+        assertTrue(!GllessFrameTarget.layoutsAreSelfTransitions(
+                general, general, VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, depthLayout));
+    }
+
+    @Test
+    void selfTransitionMasksAreTheUnionOfTheImagePairs() {
+        for (boolean release : new boolean[] { false, true }) {
+            int[] color = GllessFrameTarget.layoutBarrierAccessMasks(release, false, false);
+            int[] depth = GllessFrameTarget.layoutBarrierAccessMasks(release, false, true);
+            int[] union = GllessFrameTarget.selfTransitionBarrierMasks(release, false);
+            assertEquals(color[0] | depth[0], union[0]);
+            assertEquals(color[1] | depth[1], union[1]);
+            // The union must never narrow either side (issue #422 (a) full-mask rule).
+            assertEquals(union[0], union[0] | color[0] | depth[0]);
+            assertEquals(union[1], union[1] | color[1] | depth[1]);
+        }
+        // A first acquire keeps the VUID-02819 shape even in union form: no source accesses at TOP_OF_PIPE.
+        assertEquals(0, GllessFrameTarget.selfTransitionBarrierMasks(false, true)[0]);
+    }
+
+    @Test
     void colorToTransferCoversPriorReadsAndWrites() {
         int mask = GllessFrameTarget.colorToTransferSrcAccessMask();
         assertTrue((mask & VK10.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT) != 0);

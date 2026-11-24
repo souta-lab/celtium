@@ -64,6 +64,7 @@ import org.lwjgl.vulkan.VkImageMemoryBarrier;
 import org.lwjgl.vulkan.VkImageSubresourceRange;
 import org.lwjgl.vulkan.VkImageViewCreateInfo;
 import org.lwjgl.vulkan.VkMemoryAllocateInfo;
+import org.lwjgl.vulkan.VkMemoryBarrier;
 import org.lwjgl.vulkan.VkMemoryRequirements;
 import org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties;
 import org.lwjgl.vulkan.VkQueue;
@@ -1292,6 +1293,30 @@ public final class GllessFrameTarget implements FrameImageTarget {
      */
     private void recordLayoutBarriers(VkCommandBuffer command, boolean release) {
         boolean first = this.firstAcquire && !release;
+        int colorOldLayout = release ? COLOR_RENDER_LAYOUT : this.colorImageLayout;
+        int colorNewLayout = release ? VK_IMAGE_LAYOUT_GENERAL : COLOR_RENDER_LAYOUT;
+        int depthOldLayout = release ? DEPTH_RENDER_LAYOUT : this.depthImageLayout;
+        int srcStage = first ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        if (layoutsAreSelfTransitions(colorOldLayout, colorNewLayout, depthOldLayout, DEPTH_RENDER_LAYOUT)) {
+            // Steady state (every terrain pass after the first, and every release): both images already sit
+            // in the layout this barrier would move them to, so the two image barriers perform no layout
+            // transition at all - they are purely the execution and memory dependency the frame render pass
+            // relies on (it declares no subpass dependencies; see VulkanTerrainPipeline.buildFrameRenderPass).
+            // One memory barrier with the union of the two images' access masks carries a dependency that is
+            // at least as strong, at the same stages, and skips the per-image transition bookkeeping the
+            // driver records for each image barrier. The queue families are this queue on both sides of the
+            // image form, which a memory barrier leaves untouched either way.
+            int[] masks = selfTransitionBarrierMasks(release, first);
+            try (MemoryStack stack = stackPush()) {
+                VkMemoryBarrier.Buffer memoryBarrier = VkMemoryBarrier.calloc(1, stack);
+                memoryBarrier.get(0).sType$Default()
+                        .srcAccessMask(masks[0])
+                        .dstAccessMask(masks[1]);
+                vkCmdPipelineBarrier(command, srcStage, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        0, memoryBarrier, null, null);
+            }
+            return;
+        }
         int[] colorMasks = layoutBarrierAccessMasks(release, first, false);
         int[] depthMasks = layoutBarrierAccessMasks(release, first, true);
         int queueFamily = this.context.queueFamilyIndex();
@@ -1304,8 +1329,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     // The colour image's true layout is whatever the last phase left it in - acquire, release or the
                     // present's own transition - so it is tracked rather than assumed, the way the present path
                     // reports the layout it restored through noteColorImageLayout.
-                    .oldLayout(release ? COLOR_RENDER_LAYOUT : this.colorImageLayout)
-                    .newLayout(release ? VK_IMAGE_LAYOUT_GENERAL : COLOR_RENDER_LAYOUT)
+                    .oldLayout(colorOldLayout)
+                    .newLayout(colorNewLayout)
                     .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
                     .srcAccessMask(colorMasks[0])
                     // Acquire can be followed by a game transfer clear before the attachment pass.
@@ -1315,17 +1340,46 @@ public final class GllessFrameTarget implements FrameImageTarget {
             VkImageMemoryBarrier depthBarrier = barriers.get(1);
             depthBarrier.sType$Default()
                     .image(this.depthImage)
-                    .oldLayout(release ? DEPTH_RENDER_LAYOUT : this.depthImageLayout)
+                    .oldLayout(depthOldLayout)
                     .newLayout(DEPTH_RENDER_LAYOUT)
                     .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
                     .srcAccessMask(depthMasks[0])
                     .dstAccessMask(depthMasks[1]);
             depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
 
-            vkCmdPipelineBarrier(command,
-                    first ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            vkCmdPipelineBarrier(command, srcStage,
                     VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barriers);
         }
+    }
+
+    /**
+     * {@return whether both layout moves {@link #recordLayoutBarriers} is about to record leave their image in
+     * the layout it already occupies}.
+     * <p>
+     * Only then may the pair of image barriers be recorded as one memory barrier: a memory barrier performs
+     * no layout transition, so substituting it where a real transition is owed (the first acquire out of
+     * {@code UNDEFINED}, or an acquire after the present path left the colour image elsewhere) would lose the
+     * transition itself, not just its cost.
+     */
+    static boolean layoutsAreSelfTransitions(int colorOldLayout, int colorNewLayout,
+            int depthOldLayout, int depthNewLayout) {
+        return colorOldLayout == colorNewLayout && depthOldLayout == depthNewLayout;
+    }
+
+    /**
+     * {@return the {@code [srcAccessMask, dstAccessMask]} pair for the memory-barrier form of
+     * {@link #recordLayoutBarriers}}: the union of the colour and depth pairs from
+     * {@link #layoutBarrierAccessMasks(boolean, boolean, boolean)}.
+     * <p>
+     * The union is deliberate: a memory barrier scopes its dependency to all memory rather than to one image,
+     * so its masks must cover every access either image barrier covered. The result is a dependency at least
+     * as strong as the pair it replaces - never a narrowing - which is what keeps the substitution inside the
+     * issue #422 (a) full-mask rule.
+     */
+    static int[] selfTransitionBarrierMasks(boolean release, boolean firstAcquire) {
+        int[] color = layoutBarrierAccessMasks(release, firstAcquire, false);
+        int[] depth = layoutBarrierAccessMasks(release, firstAcquire, true);
+        return new int[] { color[0] | depth[0], color[1] | depth[1] };
     }
 
     @Override
