@@ -2,6 +2,8 @@ package org.soutalab.celtium.vulkan;
 
 import java.util.ArrayDeque;
 
+import org.soutalab.celtium.vulkan.gl.GlsmMatrixMode;
+
 /**
  * The renderer state that Minecraft's and Forge's {@code GlStateManager} calls are translated into.
  * <p>
@@ -30,7 +32,9 @@ public final class VulkanGlState {
     private final ArrayDeque<float[]> textureStack0 = new ArrayDeque<float[]>();
     private final ArrayDeque<float[]> textureStack1 = new ArrayDeque<float[]>();
 
-    private int matrixMode = MATRIX_MODE_MODELVIEW;
+    // M-3 rewired: the matrix mode has no per-instance field any more. GlsmMatrixMode is the single
+    // owner for both routes (the stub route writes it in GL enum values; this class converts to and
+    // from its ordinals in matrixMode()/matrixMode(int)). See GlsmMatrixMode's javadoc.
     /** GL's two blend equations; {@code GL_FUNC_ADD} is GL's initial state and what the pipelines baked alone. */
     /** Which channels a write may touch: bit 0 red, 1 green, 2 blue, 3 alpha (Vulkan's own component bits). */
     private boolean depthTestEnabled = true;
@@ -170,6 +174,10 @@ public final class VulkanGlState {
     VulkanGlState(NativeRasterState raster, NativeTextureBindings textures) {
         this.raster = raster;
         this.textures = textures;
+        // M-3: construction used to initialise a per-instance MODELVIEW field. The shared record is
+        // initialised instead, preserving the "a fresh state starts in MODELVIEW, as GL does" meaning
+        // existing callers and tests rely on. In production this runs once, at backend construction.
+        GlsmMatrixMode.current().set(GlsmMatrixMode.MODELVIEW);
         this.modelViewStack.push(newIdentity());
         this.projectionStack.push(newIdentity());
         this.textureStack0.push(newIdentity());
@@ -185,7 +193,7 @@ public final class VulkanGlState {
      * belongs to whoever holds the top, and nothing may keep a reference to it after popping.
      */
     public void pushMatrix() {
-        ArrayDeque<float[]> stack = stack(this.matrixMode);
+        ArrayDeque<float[]> stack = stack(matrixMode());
         float[] pushed;
         if (this.matrixScratchPoolSize > 0) {
             int idx = --this.matrixScratchPoolSize;
@@ -200,7 +208,7 @@ public final class VulkanGlState {
     }
 
     public void popMatrix() {
-        ArrayDeque<float[]> stack = stack(this.matrixMode);
+        ArrayDeque<float[]> stack = stack(matrixMode());
         if (stack.size() > 1) {
             float[] popped = stack.pop();
             if (popped != null && this.matrixScratchPoolSize < MATRIX_POOL_LIMIT) {
@@ -212,7 +220,7 @@ public final class VulkanGlState {
 
     /** Replaces the active matrix with the identity, the {@code glLoadIdentity} case. */
     public void loadIdentity() {
-        System.arraycopy(IDENTITY, 0, top(this.matrixMode), 0, MATRIX_FLOATS);
+        System.arraycopy(IDENTITY, 0, top(matrixMode()), 0, MATRIX_FLOATS);
         noteMatrixMutation();
     }
 
@@ -225,7 +233,7 @@ public final class VulkanGlState {
         // Applied directly rather than by building a translation matrix and running the 4x4 multiply: in column-major
         // order a translation only rewrites column 3, and the three columns before it are unchanged. This is the call a
         // tile entity renderer makes per part, so the 64 multiply-adds it used to spend are worth not spending.
-        float[] m = top(this.matrixMode);
+        float[] m = top(matrixMode());
         float tx = (float) x;
         float ty = (float) y;
         float tz = (float) z;
@@ -243,7 +251,7 @@ public final class VulkanGlState {
     public void scale(double x, double y, double z) {
         // Same argument as translate: M * S with a diagonal S scales each of the first three columns and leaves the
         // fourth alone, so the product is three column writes per column rather than a full multiply.
-        float[] m = top(this.matrixMode);
+        float[] m = top(matrixMode());
         float sx = (float) x;
         float sy = (float) y;
         float sz = (float) z;
@@ -268,7 +276,7 @@ public final class VulkanGlState {
             // Columns a and b of the product are m*(c*ea + s*eb) and m*(-s*ea + c*eb) for the axis's right-handed pair.
             int a = axis == 0 ? 4 : axis == 1 ? 8 : 0;
             int b = axis == 0 ? 8 : axis == 1 ? 0 : 4;
-            float[] m = top(this.matrixMode);
+            float[] m = top(matrixMode());
             for (int row = 0; row < 4; row++) {
                 float ma = m[a + row];
                 float mb = m[b + row];
@@ -304,7 +312,7 @@ public final class VulkanGlState {
         // a rotation's fourth column is exactly (0,0,0,1), so only the first three columns of the product can differ
         // from the matrix's own. That is 36 multiply-adds instead of 64, on a call a tile entity renderer makes per
         // part - rotate is 1.1% of the frame's samples in the warm profile.
-        float[] m = top(this.matrixMode);
+        float[] m = top(matrixMode());
         for (int row = 0; row < 4; row++) {
             float x0 = m[row];
             float x1 = m[4 + row];
@@ -353,7 +361,7 @@ public final class VulkanGlState {
         if (matrix == null || matrix.length < MATRIX_FLOATS) {
             throw new IllegalArgumentException("a matrix must have at least " + MATRIX_FLOATS + " floats");
         }
-        System.arraycopy(matrix, 0, top(this.matrixMode), 0, MATRIX_FLOATS);
+        System.arraycopy(matrix, 0, top(matrixMode()), 0, MATRIX_FLOATS);
         noteMatrixMutation();
     }
 
@@ -362,7 +370,7 @@ public final class VulkanGlState {
         if (matrix == null || matrix.length < MATRIX_FLOATS) {
             throw new IllegalArgumentException("a matrix must have at least " + MATRIX_FLOATS + " floats");
         }
-        float[] top = top(this.matrixMode);
+        float[] top = top(matrixMode());
         multiply(top, matrix, this.multiplyResult);
         System.arraycopy(this.multiplyResult, 0, top, 0, MATRIX_FLOATS);
         noteMatrixMutation();
@@ -415,8 +423,21 @@ public final class VulkanGlState {
         noteMatrixMutation(mode);
     }
 
+    /**
+     * {@return the active matrix mode as this class's ordinal} ({@link #MATRIX_MODE_MODELVIEW} and
+     * friends). The single owner is {@link GlsmMatrixMode}, which holds GL enum values; the conversion
+     * lives here so that owner stays in GL terms. An unrecognised GL value reads as MODELVIEW, the
+     * same fall-through the backend's GL-to-ordinal mapping and {@code stack(int)}'s default use.
+     */
     public int matrixMode() {
-        return this.matrixMode;
+        int glMode = GlsmMatrixMode.current().get();
+        if (glMode == GlsmMatrixMode.PROJECTION) {
+            return MATRIX_MODE_PROJECTION;
+        }
+        if (glMode == GlsmMatrixMode.TEXTURE) {
+            return MATRIX_MODE_TEXTURE;
+        }
+        return MATRIX_MODE_MODELVIEW;
     }
 
     /**
@@ -431,8 +452,20 @@ public final class VulkanGlState {
         setMatrix(MATRIX_MODE_MODELVIEW, modelView);
     }
 
+    /**
+     * Sets the active matrix mode from this class's ordinal, writing through to the single owner
+     * {@link GlsmMatrixMode} in GL enum terms, so a mode set here is the mode the stub route's
+     * redundant-call skip sees (and vice versa). An unrecognised ordinal writes MODELVIEW, matching
+     * the getter's fall-through.
+     */
     public void matrixMode(int mode) {
-        this.matrixMode = mode;
+        if (mode == MATRIX_MODE_PROJECTION) {
+            GlsmMatrixMode.current().set(GlsmMatrixMode.PROJECTION);
+        } else if (mode == MATRIX_MODE_TEXTURE) {
+            GlsmMatrixMode.current().set(GlsmMatrixMode.TEXTURE);
+        } else {
+            GlsmMatrixMode.current().set(GlsmMatrixMode.MODELVIEW);
+        }
     }
 
     /**
@@ -476,7 +509,7 @@ public final class VulkanGlState {
 
     /** Records that a matrix on the active stack moved: the mode decides which version that is. */
     private void noteMatrixMutation() {
-        noteMatrixMutation(this.matrixMode);
+        noteMatrixMutation(matrixMode());
     }
 
     /** Records that a matrix on the named stack moved. */

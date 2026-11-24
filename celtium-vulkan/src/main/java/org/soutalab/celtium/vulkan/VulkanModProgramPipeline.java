@@ -3,6 +3,7 @@ package org.soutalab.celtium.vulkan;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.*;
+import org.soutalab.celtium.vulkan.gl.GlsmPackState;
 import org.soutalab.celtium.vulkan.gl.ModGlslTranslator;
 import org.soutalab.celtium.vulkan.gl.ModProgramRegistry;
 
@@ -239,14 +240,73 @@ public final class VulkanModProgramPipeline {
     private final long[] scratchImageViews;
     private long lastSamplerKey;
     private long lastSamplerSet;
+    // E11 (B0, shadow-layerb-678 §5.4): the pass-scoped sampler token. Within one pass execution
+    // the sampler/image inputs are invariant, yet every region's claim rehashed them and
+    // re-verified the set snapshot. A token pays that hash and snapshot once at the pass' head;
+    // region claims then present the token, and only the uniform slot - the one input that does
+    // change per region - is resolved per call. The token's arrays are its own, never the shared
+    // scratch: other claim entry points reuse the scratch and would rewrite a token pointing in.
+    private long samplerTokenSerial;
+    private long liveSamplerToken;
+    private long samplerTokenHash;
+    private long[] samplerTokenViews;
+    private long[] samplerTokenSamplers;
+    private int[] samplerTokenLayouts;
+    private long[] samplerTokenImageViews;
+    /** The set a token resolved on routes whose set names the textures alone (push, dynamic). */
+    private long samplerTokenSet;
+    private boolean samplerTokenSetResolved;
     /** Sets one pool holds, and max pools a pipeline may grow to (matches VulkanImmediateTexturePipeline). */
     private static final int MAX_SETS = 64;
     private static final int MAX_POOLS = 64;
+
+    /** GLSM stage 1: the program's extracted region-offset member name, or null when not extracted. */
+    private final String glsmRegionMember;
+    /** GLSM stage 1: the PER_FRAME member names this program had harvested into the shared block. */
+    private final List<String> glsmSharedPerFrame;
+    /** GLSM stage 1 active for this pipeline: flag on, buffer route, and something was extracted. */
+    private final boolean glsmActive;
+    /** This pipeline's region-offset SSBO table (vec4 per slot); null unless {@link #glsmActive}. */
+    private VulkanUniformBuffer regionOffsetTable;
+    /** Slots the region table holds: one vec4 per region of a pass, with the built-in route's headroom. */
+    private static final int REGION_TABLE_SLOTS = 4096;
+    /**
+     * The one shared per-frame block buffer, per context: every GLSM pipeline's sets name this same
+     * buffer at the shared binding, and the harvester writes it once per epoch. Owned by no single
+     * pipeline (pipelines come and go per program), so it is never deleted with one - it lives as
+     * long as its context's pipelines do and is retired with the device at shutdown.
+     */
+    private static final java.util.WeakHashMap<VulkanContext, VulkanUniformBuffer> SHARED_PER_FRAME_BUFFERS =
+            new java.util.WeakHashMap<>();
+    /** The epoch the shared per-frame buffer was last packed for. */
+    private static long sharedPerFrameEpoch = Long.MIN_VALUE;
+    /**
+     * This pipeline's last offer to the harvester: the program, its epoch, its lowering and its
+     * PER_FRAME bucket version at the offer. A repeat offer with all four unchanged - the common
+     * case, one per region claim in a pass - is a proven no-op and skips the walk (see
+     * {@link #harvestPerFrame}).
+     */
+    private ModProgramRegistry.Program lastHarvestProgram;
+    private long lastHarvestEpoch = Long.MIN_VALUE;
+    private ModGlslTranslator.Result lastHarvestLowering;
+    private long lastHarvestPerFrameVersion = Long.MIN_VALUE;
 
     private VulkanModProgramPipeline(VulkanContext context, List<ModGlslTranslator.Attribute> attributes,
                                      List<ModGlslTranslator.SamplerBinding> samplers,
                                      List<ModGlslTranslator.ImageBinding> images, int pushBytes,
                                      boolean uniformsViaBuffer) {
+        this(context, attributes, samplers, images, pushBytes, uniformsViaBuffer, null, List.of());
+    }
+
+    private VulkanModProgramPipeline(VulkanContext context, List<ModGlslTranslator.Attribute> attributes,
+                                     List<ModGlslTranslator.SamplerBinding> samplers,
+                                     List<ModGlslTranslator.ImageBinding> images, int pushBytes,
+                                     boolean uniformsViaBuffer, String glsmRegionMember,
+                                     List<String> glsmSharedPerFrame) {
+        this.glsmRegionMember = glsmRegionMember;
+        this.glsmSharedPerFrame = glsmSharedPerFrame;
+        this.glsmActive = GlsmPackState.ENABLED && uniformsViaBuffer
+                && (glsmRegionMember != null || !glsmSharedPerFrame.isEmpty());
         this.context = context;
         this.attributes = attributes;
         this.samplers = samplers;
@@ -435,7 +495,8 @@ public final class VulkanModProgramPipeline {
                                                   int formatId, VulkanImmediateTexturePipeline like) {
         ModGlslTranslator.Result lowered = program.lowered();
         VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, lowered.attributes(), lowered.samplers(),
-                lowered.images(), lowered.uniformBlockSize(), lowered.uniformsViaBuffer());
+                lowered.images(), lowered.uniformBlockSize(), lowered.uniformsViaBuffer(),
+                lowered.regionOffsetMember(), lowered.sharedPerFrameMembers());
         if (!lowered.images().isEmpty() && !context.celtium$storageImagesWithoutFormat()) {
             throw new IllegalStateException("storage images without format qualifiers are not supported by this device "
                     + "(shaderStorageImageRead/WriteWithoutFormat=false)");
@@ -464,7 +525,8 @@ public final class VulkanModProgramPipeline {
                                                   long renderPass, int colorAttachments) {
         ModGlslTranslator.Result lowered = program.lowered();
         VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, lowered.attributes(), lowered.samplers(),
-                lowered.images(), lowered.uniformBlockSize(), lowered.uniformsViaBuffer());
+                lowered.images(), lowered.uniformBlockSize(), lowered.uniformsViaBuffer(),
+                lowered.regionOffsetMember(), lowered.sharedPerFrameMembers());
         if (!lowered.images().isEmpty() && !context.celtium$storageImagesWithoutFormat()) {
             throw new IllegalStateException("storage images without format qualifiers are not supported by this device "
                     + "(shaderStorageImageRead/WriteWithoutFormat=false)");
@@ -547,7 +609,8 @@ public final class VulkanModProgramPipeline {
         ModGlslTranslator.Result lowered = program.lowered();
         boolean viaBuffer = lowered.uniformsViaBuffer();
         VulkanModProgramPipeline built = new VulkanModProgramPipeline(context, lowered.attributes(),
-                lowered.samplers(), lowered.images(), lowered.uniformBlockSize(), viaBuffer);
+                lowered.samplers(), lowered.images(), lowered.uniformBlockSize(), viaBuffer,
+                lowered.regionOffsetMember(), lowered.sharedPerFrameMembers());
         built.uniformRingSlots = TERRAIN_UNIFORM_RING_SLOTS;
         built.dynamicUniform = viaBuffer;
         built.celtium$censusRoute = "terrain";
@@ -669,8 +732,8 @@ public final class VulkanModProgramPipeline {
                     .pViewportState(viewport).pRasterizationState(raster).pMultisampleState(multisample)
                     .pDepthStencilState(depth).pColorBlendState(blend).pDynamicState(dynamic)
                     .layout(this.pipelineLayout).renderPass(renderPass).subpass(0);
-            check(vkCreateGraphicsPipelines(this.context.device(), VK_NULL_HANDLE, info, null, handle),
-                    "vkCreateGraphicsPipelines(terrain mod program)");
+            check(PipelineCreateCensus.createGraphicsUncached(this.context.device(), info, handle,
+                    "terrain-mod-program-direct"), "vkCreateGraphicsPipelines(terrain mod program)");
             this.pipeline = handle.get(0);
         } finally {
             if (vertexModule != VK_NULL_HANDLE) vkDestroyShaderModule(this.context.device(), vertexModule, null);
@@ -764,7 +827,9 @@ public final class VulkanModProgramPipeline {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer handle = stack.mallocLong(1);
             VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(
-                    this.samplerCount + this.imageCount + (this.uniformsViaBuffer ? 1 : 0), stack);
+                    this.samplerCount + this.imageCount + (this.uniformsViaBuffer ? 1 : 0)
+                            + (this.glsmActive && this.glsmRegionMember != null ? 1 : 0)
+                            + (this.glsmActive && !this.glsmSharedPerFrame.isEmpty() ? 1 : 0), stack);
             for (int i = 0; i < this.samplerCount; i++) {
                 bindings.get(i).binding(i).descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                         .descriptorCount(1).stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT);
@@ -774,13 +839,33 @@ public final class VulkanModProgramPipeline {
                         .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE).descriptorCount(1)
                         .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT);
             }
+            // The struct slots below are sequential positions in the bindings array; the binding
+            // NUMBERS are a separate axis (the GLSM shared block is always declared at +2 by the
+            // lowering, whether or not a region table occupies +1). Conflating the two made the
+            // shared-only layout write one slot past the array's end, failing every such pipeline.
+            int bindingSlot = this.samplerCount + this.imageCount;
             if (this.uniformsViaBuffer) {
                 // The binding the lowering named for the block: after every sampler and storage image. Both
                 // stages read the block (the fixed-function matrices live in the vertex stage), as the push
                 // range it replaces did.
-                bindings.get(this.samplerCount + this.imageCount)
+                bindings.get(bindingSlot++)
                         .binding(this.samplerCount + this.imageCount)
                         .descriptorType(celtium$uniformBindingType(this.dynamicUniform)).descriptorCount(1)
+                        .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT);
+            }
+            if (this.glsmActive && this.glsmRegionMember != null) {
+                // GLSM stage 1: the region-offset SSBO table, at the binding the lowering named
+                // (after the block's own). Vertex-only, as the built-in route's binding 5 is.
+                bindings.get(bindingSlot++)
+                        .binding(this.samplerCount + this.imageCount + 1)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(1)
+                        .stageFlags(VK_SHADER_STAGE_VERTEX_BIT);
+            }
+            if (this.glsmActive && !this.glsmSharedPerFrame.isEmpty()) {
+                // GLSM stage 1: the shared per-frame block, after the region table's binding.
+                bindings.get(bindingSlot++)
+                        .binding(this.samplerCount + this.imageCount + 2)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(1)
                         .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT);
             }
             VkDescriptorSetLayoutCreateInfo setInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack).sType$Default()
@@ -813,7 +898,24 @@ public final class VulkanModProgramPipeline {
                 this.uniformBuffer = new VulkanUniformBuffer(this.context,
                         (long) this.uniformStride * this.uniformRingSlots);
             }
+            if (this.glsmActive) {
+                if (this.glsmRegionMember != null) {
+                    this.regionOffsetTable = new VulkanUniformBuffer(this.context,
+                            (long) REGION_TABLE_SLOTS * 16L, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+                }
+                sharedPerFrameBuffer(this.context);
+            }
         }
+    }
+
+    /** {@return the one shared per-frame block buffer for {@code context}}, creating it on first use. */
+    private static synchronized VulkanUniformBuffer sharedPerFrameBuffer(VulkanContext context) {
+        VulkanUniformBuffer buffer = SHARED_PER_FRAME_BUFFERS.get(context);
+        if (buffer == null) {
+            buffer = new VulkanUniformBuffer(context, GlsmPackState.PER_FRAME_BLOCK_BYTES);
+            SHARED_PER_FRAME_BUFFERS.put(context, buffer);
+        }
+        return buffer;
     }
 
     private long createDescriptorPool(MemoryStack stack) {
@@ -821,14 +923,20 @@ public final class VulkanModProgramPipeline {
             return VK_NULL_HANDLE;
         }
         VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc((this.samplerCount > 0 ? 1 : 0)
-                + (this.imageCount > 0 ? 1 : 0) + (this.uniformsViaBuffer ? 1 : 0), stack);
+                + (this.imageCount > 0 ? 1 : 0) + (this.uniformsViaBuffer ? 1 : 0)
+                + (this.glsmActive && this.glsmRegionMember != null ? 1 : 0)
+                + (this.glsmActive && !this.glsmSharedPerFrame.isEmpty() ? 1 : 0), stack);
         int sizeIndex = 0;
         if (this.samplerCount > 0) sizes.get(sizeIndex++).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                 .descriptorCount(MAX_SETS * this.samplerCount);
         if (this.imageCount > 0) sizes.get(sizeIndex++).type(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
                 .descriptorCount(MAX_SETS * this.imageCount);
-        if (this.uniformsViaBuffer) sizes.get(sizeIndex).type(celtium$uniformBindingType(this.dynamicUniform))
+        if (this.uniformsViaBuffer) sizes.get(sizeIndex++).type(celtium$uniformBindingType(this.dynamicUniform))
                 .descriptorCount(MAX_SETS);
+        if (this.glsmActive && this.glsmRegionMember != null) sizes.get(sizeIndex++)
+                .type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(MAX_SETS);
+        if (this.glsmActive && !this.glsmSharedPerFrame.isEmpty()) sizes.get(sizeIndex)
+                .type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(MAX_SETS);
         VkDescriptorPoolCreateInfo poolInfo = VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
                 .maxSets(MAX_SETS).pPoolSizes(sizes);
         LongBuffer handle = stack.mallocLong(1);
@@ -1068,6 +1176,9 @@ public final class VulkanModProgramPipeline {
      */
     public long samplersAndImages(VulkanGlTexture[] textures, VulkanGlTexture[] imageTextures,
                                   ModProgramRegistry.Program program, long epoch) {
+        // An array-form claim supersedes any live sampler token: the token promised the inputs
+        // would only be presented through it for its pass' duration.
+        this.liveSamplerToken = 0L;
         if (this.samplerCount + this.imageCount == 0 && !this.uniformsViaBuffer) {
             return 0L;
         }
@@ -1101,6 +1212,9 @@ public final class VulkanModProgramPipeline {
         if (program == null) {
             return 0L;
         }
+        if (this.glsmActive && !this.glsmSharedPerFrame.isEmpty()) {
+            harvestPerFrame(program, epoch);
+        }
         int slot = uniformSlot(program, epoch);
         if (slot < 0) {
             return 0L;
@@ -1117,6 +1231,119 @@ public final class VulkanModProgramPipeline {
         hash = celtium$uniformRouteSetKey(hash, this.uniformBuffer.buffer(), slot, false);
         return allocateOrReuseDescriptorSet(hash, views, samplers, layouts, imageViews,
                 celtium$routeSnapshotSlot(slot, false));
+    }
+
+    /**
+     * Begins a sampler token for one pass execution over {@code textures} / {@code imageTextures}
+     * (E11): hashes the sampler/image inputs once and snapshots them into the token's own arrays,
+     * and returns the token the pass' region claims present to
+     * {@link #samplersAndImages(long, ModProgramRegistry.Program, long)} instead of the arrays.
+     * Beginning a token supersedes any live one, and an array-form claim on this pipeline
+     * invalidates it - the token is a pass-scoped promise, made by the one caller that owns the
+     * arrays for the pass' duration, that the inputs are presented only through it.
+     */
+    public long beginSamplerToken(VulkanGlTexture[] textures, VulkanGlTexture[] imageTextures) {
+        if (this.samplerTokenViews == null) {
+            this.samplerTokenViews = this.samplerCount > 0 ? new long[this.samplerCount] : EMPTY_LONG;
+            this.samplerTokenSamplers = this.samplerCount > 0 ? new long[this.samplerCount] : EMPTY_LONG;
+            this.samplerTokenLayouts = this.samplerCount > 0 ? new int[this.samplerCount] : EMPTY_INT;
+            this.samplerTokenImageViews = this.imageCount > 0 ? new long[this.imageCount] : EMPTY_LONG;
+        }
+        long hash = 0x9E3779B97F4A7C15L;
+        for (int i = 0; i < this.samplerCount; i++) {
+            VulkanGlTexture tex = textures[i];
+            long view = tex.view();
+            long sampler = tex.sampler();
+            int layout = tex.samplingLayout();
+            this.samplerTokenViews[i] = view;
+            this.samplerTokenSamplers[i] = sampler;
+            this.samplerTokenLayouts[i] = layout;
+            hash = mix64(hash ^ tex.key()) ^ mix64(view ^ (sampler * 31L) ^ layout);
+        }
+        for (int i = 0; i < this.imageCount; i++) {
+            VulkanGlTexture img = imageTextures[i];
+            long view = img.view();
+            this.samplerTokenImageViews[i] = view;
+            hash = mix64(hash ^ img.key() ^ 0x517CC1B727220A95L) ^ mix64(view);
+        }
+        if (hash == 0L) {
+            hash = 1L;
+        }
+        this.samplerTokenHash = hash;
+        this.samplerTokenSet = 0L;
+        this.samplerTokenSetResolved = false;
+        this.liveSamplerToken = ++this.samplerTokenSerial;
+        return this.liveSamplerToken;
+    }
+
+    /**
+     * The token form of {@link #samplersAndImages(VulkanGlTexture[], VulkanGlTexture[], ModProgramRegistry.Program, long)}:
+     * the sampler/image half comes from the token, so per region only the uniform slot claim
+     * remains. On the routes whose set names the textures alone - the push route and B3's dynamic
+     * route, whose set is shared by every slot of the sampler group - the resolved set is the
+     * token's own, remembered after the first region. A token that is no longer live (superseded,
+     * or invalidated by an array-form claim) resolves to 0, which the caller refuses as a missing
+     * draw, exactly like an exhausted claim.
+     */
+    public long samplersAndImages(long token, ModProgramRegistry.Program program, long epoch) {
+        if (token == 0L || token != this.liveSamplerToken) {
+            return 0L;
+        }
+        if (this.samplerCount + this.imageCount == 0 && !this.uniformsViaBuffer) {
+            return 0L;
+        }
+        if (!this.uniformsViaBuffer) {
+            if (!this.samplerTokenSetResolved) {
+                this.samplerTokenSet = allocateOrReuseDescriptorSet(this.samplerTokenHash,
+                        this.samplerTokenViews, this.samplerTokenSamplers, this.samplerTokenLayouts,
+                        this.samplerTokenImageViews, -1);
+                this.samplerTokenSetResolved = this.samplerTokenSet != 0L;
+            } else {
+                noteTokenSetHit();
+            }
+            return this.samplerTokenSet;
+        }
+        if (program == null) {
+            return 0L;
+        }
+        if (this.glsmActive && !this.glsmSharedPerFrame.isEmpty()) {
+            harvestPerFrame(program, epoch);
+        }
+        int slot = uniformSlot(program, epoch);
+        if (slot < 0) {
+            return 0L;
+        }
+        if (this.dynamicUniform) {
+            // B3, as in the array form: the staged slot reaches the draw as the bind's dynamic
+            // offset, remembered here for the bindTerrainUniformsAndSet call that follows.
+            this.pendingDynamicOffset = celtium$uniformDynamicOffset(slot, this.uniformStride);
+            if (!this.samplerTokenSetResolved) {
+                long hash = celtium$uniformRouteSetKey(this.samplerTokenHash, this.uniformBuffer.buffer(),
+                        slot, true);
+                this.samplerTokenSet = allocateOrReuseDescriptorSet(hash,
+                        this.samplerTokenViews, this.samplerTokenSamplers, this.samplerTokenLayouts,
+                        this.samplerTokenImageViews, celtium$routeSnapshotSlot(slot, true));
+                this.samplerTokenSetResolved = this.samplerTokenSet != 0L;
+            } else {
+                noteTokenSetHit();
+            }
+            return this.samplerTokenSet;
+        }
+        long hash = celtium$uniformRouteSetKey(this.samplerTokenHash, this.uniformBuffer.buffer(),
+                slot, false);
+        return allocateOrReuseDescriptorSet(hash, this.samplerTokenViews, this.samplerTokenSamplers,
+                this.samplerTokenLayouts, this.samplerTokenImageViews,
+                celtium$routeSnapshotSlot(slot, false));
+    }
+
+    /** Files a token-resolved set with the censuses exactly as an allocateOrReuse fast-path hit. */
+    private void noteTokenSetHit() {
+        if (this.uniformRingSlots == TERRAIN_UNIFORM_RING_SLOTS) {
+            PackUniformCensus.noteSetHit();
+        }
+        if (PackUniformCensus.counting()) {
+            PackUniformCensus.notePipelineSetHit(this, this.celtium$censusRoute);
+        }
     }
 
     /**
@@ -1175,6 +1402,130 @@ public final class VulkanModProgramPipeline {
     }
 
     /**
+     * GLSM stage 1 harvest: packs the shared per-frame block for {@code epoch} from
+     * {@code program}'s offered values (see {@link GlsmPackState#harvest}) into the shared buffer,
+     * once per epoch - later claims in the epoch only register their divergence. Called from both
+     * {@code samplersAndImages} forms before the claim resolves, so the block a set binds is never
+     * a frame stale. Members nobody wrote keep their harvested value or zero; a member with a
+     * declaration default and no write or harvest takes the claiming program's default, matching
+     * the program block's own rule.
+     */
+    private void harvestPerFrame(ModProgramRegistry.Program program, long epoch) {
+        // The claim path calls this once per region, but the harvest walk's outcome depends only
+        // on the offering program's PER_FRAME values: while the program, its lowering and its
+        // PER_FRAME bucket version are unchanged since this pipeline's last offer - and the
+        // shared block is already packed for the epoch - a repeat offer can neither add a member
+        // to the harvest nor count a new divergence, because every write to a PER_FRAME member
+        // advances that bucket's version, and only when a component's bits actually change. The
+        // walk is therefore skipped outright on a repeat offer. One honest accounting change: a
+        // divergence is now counted once per distinct offer instead of once per region claim -
+        // the census reads the count as "the guest broke cross-program equality", which the
+        // per-claim repetition only inflated.
+        if (epoch == sharedPerFrameEpoch
+                && program == this.lastHarvestProgram
+                && epoch == this.lastHarvestEpoch
+                && program.lowered() == this.lastHarvestLowering
+                && program.bucketVersion(GlsmPackState.Bucket.PER_FRAME)
+                        == this.lastHarvestPerFrameVersion) {
+            return;
+        }
+        java.util.Map<String, float[]> harvested = GlsmPackState.harvest(program, epoch);
+        this.lastHarvestProgram = program;
+        this.lastHarvestEpoch = epoch;
+        this.lastHarvestLowering = program.lowered();
+        this.lastHarvestPerFrameVersion = program.bucketVersion(GlsmPackState.Bucket.PER_FRAME);
+        if (epoch == sharedPerFrameEpoch) {
+            return;
+        }
+        sharedPerFrameEpoch = epoch;
+        long harvestCount = GlsmPackState.harvests();
+        if (harvestCount <= 5 || harvestCount % 300 == 0) {
+            float[] mv = harvested.get("modelViewMatrix");
+            float[] pj = harvested.get("projectionMatrix");
+            float[] cp = harvested.get("cameraPosition");
+            System.out.println("[Celtium] CELTIUM_GLSM_HARVEST epoch=" + epoch
+                    + " present=" + harvested.keySet()
+                    + " mv0=" + (mv == null ? "null" : mv[0] + "," + mv[5] + "," + mv[10])
+                    + " proj0=" + (pj == null ? "null" : pj[0] + "," + pj[5])
+                    + " camPos=" + (cp == null ? "null" : cp[0] + "," + cp[1] + "," + cp[2])
+                    + " divergences=" + GlsmPackState.divergences()
+                    + " regionUnextractable=" + GlsmPackState.regionUnextractable());
+        }
+        VulkanUniformBuffer shared = sharedPerFrameBuffer(this.context);
+        long base = shared.mappedAddress();
+        MemoryUtil.memSet(base, 0, GlsmPackState.PER_FRAME_BLOCK_BYTES);
+        for (java.util.Map.Entry<String, String> member : GlsmPackState.PER_FRAME_MEMBERS.entrySet()) {
+            int[] layout = GlsmPackState.perFrameLayout(member.getKey());
+            float[] value = harvested.get(member.getKey());
+            if (value == null) {
+                value = program.lowered().uniformDefaults().get(member.getKey());
+            }
+            if (value == null || layout == null) {
+                continue;
+            }
+            boolean integerType = "int".equals(member.getValue()) || "uint".equals(member.getValue())
+                    || "bool".equals(member.getValue());
+            int components = switch (member.getValue()) {
+                case "mat4" -> 16;
+                case "mat3" -> 9;
+                case "vec3" -> 3;
+                case "vec4" -> 4;
+                case "vec2" -> 2;
+                default -> 1;
+            };
+            int columns = switch (member.getValue()) {
+                case "mat4" -> 4;
+                case "mat3" -> 3;
+                default -> 1;
+            };
+            int perColumn = components / columns;
+            // std140 matrix columns start on 16-byte boundaries, like the program block's packer.
+            for (int c = 0; c < columns; c++) {
+                for (int k = 0; k < perColumn; k++) {
+                    int src = c * perColumn + k;
+                    if (src >= value.length) {
+                        break;
+                    }
+                    long at = base + layout[0] + (long) c * 16L + (long) k * 4L;
+                    if (integerType) {
+                        MemoryUtil.memPutInt(at, (int) value[src]);
+                    } else {
+                        MemoryUtil.memPutFloat(at, value[src]);
+                    }
+                }
+            }
+        }
+    }
+
+    /** {@return the GLSM region table's slot capacity, for a caller's upfront fit check}. */
+    public int celtium$glsmRegionTableSlots() {
+        return REGION_TABLE_SLOTS;
+    }
+
+    /** {@return whether this pipeline delivers region offsets through the GLSM SSBO table}. */
+    public boolean celtium$glsmRegionTable() {
+        return this.glsmActive && this.glsmRegionMember != null && this.regionOffsetTable != null;
+    }
+
+    /**
+     * Writes one region's offset into the GLSM table at {@code slot} (16 bytes: xyz and an unused
+     * w, the built-in table's vec4 shape) and returns the slot, or -1 when the pass outgrew the
+     * table - the caller then falls back to the uniform route for that region rather than drawing
+     * it against another region's offset.
+     */
+    public int celtium$writeRegionOffset(int slot, float x, float y, float z) {
+        if (!celtium$glsmRegionTable() || slot < 0 || slot >= REGION_TABLE_SLOTS) {
+            return -1;
+        }
+        long at = this.regionOffsetTable.mappedAddress() + (long) slot * 16L;
+        MemoryUtil.memPutFloat(at, x);
+        MemoryUtil.memPutFloat(at + 4L, y);
+        MemoryUtil.memPutFloat(at + 8L, z);
+        MemoryUtil.memPutFloat(at + 12L, 0.0f);
+        return slot;
+    }
+
+    /**
      * Files the backend's push-route pack (item 678 pack site (b)) with the census, with this
      * pipeline's sampler / image counts - the fields the backend cannot read. The pack itself stays
      * the caller's: it brackets the call, this only counts it.
@@ -1189,6 +1540,7 @@ public final class VulkanModProgramPipeline {
     }
 
     public long samplerSetForHandles(long[] views, long[] samplers, int[] layouts, long[] generations, int count) {
+        this.liveSamplerToken = 0L;
         if (this.samplerCount == 0 || count <= 0) {
             return 0L;
         }
@@ -1325,9 +1677,12 @@ public final class VulkanModProgramPipeline {
             // the dynamic route, also for its -1 snapshot slot: the set names the ring's base there.
             // Non-dynamic callers passing -1 (the explicit-handle sets) never write one, as before.
             boolean writeUniform = uniformSlot >= 0 || this.dynamicUniform;
+            boolean writeRegion = this.glsmActive && this.glsmRegionMember != null;
+            boolean writeShared = this.glsmActive && !this.glsmSharedPerFrame.isEmpty();
             VkDescriptorImageInfo.Buffer imageInfos = VkDescriptorImageInfo.calloc(this.samplerCount + this.imageCount, stack);
             VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(
-                    this.samplerCount + this.imageCount + (writeUniform ? 1 : 0), stack);
+                    this.samplerCount + this.imageCount + (writeUniform ? 1 : 0)
+                            + (writeRegion ? 1 : 0) + (writeShared ? 1 : 0), stack);
             for (int i = 0; i < this.samplerCount; i++) {
                 imageInfos.get(i).imageLayout(layouts[i]).imageView(views[i]).sampler(samplers[i]);
                 writes.get(i).sType$Default().dstSet(set).dstBinding(i)
@@ -1350,6 +1705,30 @@ public final class VulkanModProgramPipeline {
                         .dstBinding(this.samplerCount + this.imageCount)
                         .descriptorType(celtium$uniformBindingType(this.dynamicUniform)).descriptorCount(1)
                         .pBufferInfo(bufferInfo);
+            }
+            // GLSM stage 1: the region table and the shared per-frame block name pipeline-stable
+            // buffers, so they are written with every set this layout allocates, exactly like the
+            // uniform binding - a set missing them would leave the shader's table/shared reads
+            // unbound. Their contents change without the sets changing (the table per region, the
+            // shared block per epoch), which is the point of delivering them by buffer, not by set.
+            int glsmWrite = this.samplerCount + this.imageCount + (writeUniform ? 1 : 0);
+            if (writeRegion) {
+                VkDescriptorBufferInfo.Buffer regionInfo = VkDescriptorBufferInfo.calloc(1, stack)
+                        .buffer(this.regionOffsetTable.buffer()).offset(0L)
+                        .range((long) REGION_TABLE_SLOTS * 16L);
+                writes.get(glsmWrite++).sType$Default().dstSet(set)
+                        .dstBinding(this.samplerCount + this.imageCount + 1)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(1)
+                        .pBufferInfo(regionInfo);
+            }
+            if (writeShared) {
+                VkDescriptorBufferInfo.Buffer sharedInfo = VkDescriptorBufferInfo.calloc(1, stack)
+                        .buffer(sharedPerFrameBuffer(this.context).buffer()).offset(0L)
+                        .range(GlsmPackState.PER_FRAME_BLOCK_BYTES);
+                writes.get(glsmWrite).sType$Default().dstSet(set)
+                        .dstBinding(this.samplerCount + this.imageCount + 2)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(1)
+                        .pBufferInfo(sharedInfo);
             }
             vkUpdateDescriptorSets(this.context.device(), writes, null);
             long[] snapshot = celtium$packSetInputs(views, samplers, layouts, imageViews,
@@ -1381,6 +1760,14 @@ public final class VulkanModProgramPipeline {
         ByteBuffer cached = program.cachedPackedUniforms();
         if (cached != null) {
             return cached;
+        }
+        // GLSM stage 1 absorbed the B1 flag (removed at the on-default landing): the incremental
+        // packer is the DYNAMIC bucket's packer, selected by the GLSM flag alone.
+        if (GlsmPackState.ENABLED) {
+            ByteBuffer retained = packUniformsIncremental(program);
+            if (retained != null) {
+                return retained;
+            }
         }
         long version = program.uniformVersion();
         ModGlslTranslator.Result lowered = program.lowered();
@@ -1430,6 +1817,170 @@ public final class VulkanModProgramPipeline {
                 }
             }
         }
+        program.cachePackedUniforms(version, block);
+        return block;
+    }
+
+    /**
+     * One lowered block's packing arithmetic, computed once per lowering: the full walk resolves each
+     * member's component count, column count and stride from its type string and looks its initializer up
+     * on every pack; a plan does that a single time and keeps the results in flat arrays indexed by the
+     * member's position in the lowered member order (the same order the registry's dirty bitset uses).
+     */
+    private static final class PackPlan {
+        final String[] names;
+        final int[] offsets;
+        final int[] sizes;
+        final int[] components;
+        final int[] columns;
+        final int[] elements;
+        final int[] columnStrides;
+        final boolean[] integerTypes;
+        final float[][] defaults;
+
+        PackPlan(ModGlslTranslator.Result lowered) {
+            List<ModGlslTranslator.UniformMember> members = lowered.uniforms();
+            int n = members.size();
+            this.names = new String[n];
+            this.offsets = new int[n];
+            this.sizes = new int[n];
+            this.components = new int[n];
+            this.columns = new int[n];
+            this.elements = new int[n];
+            this.columnStrides = new int[n];
+            this.integerTypes = new boolean[n];
+            this.defaults = new float[n][];
+            Map<String, float[]> defaultsByName = lowered.uniformDefaults();
+            for (int i = 0; i < n; i++) {
+                ModGlslTranslator.UniformMember member = members.get(i);
+                this.names[i] = member.name();
+                this.offsets[i] = member.offset();
+                this.sizes[i] = member.size();
+                String type = member.type();
+                this.components[i] = componentsOf(type);
+                this.columns[i] = columnsOf(type);
+                this.elements[i] = Math.max(1, member.arrayLength());
+                this.columnStrides[i] = (member.arrayLength() > 0 || this.columns[i] > 1)
+                        ? 16 : this.components[i] * 4;
+                this.integerTypes[i] = isIntegerType(type);
+                this.defaults[i] = defaultsByName.get(member.name());
+            }
+        }
+    }
+
+    /** Plans by lowering; a lowering is immutable, and a re-link's new lowering simply misses once. */
+    private static final java.util.WeakHashMap<ModGlslTranslator.Result, PackPlan> PACK_PLANS =
+            new java.util.WeakHashMap<>();
+
+    private static PackPlan packPlan(ModGlslTranslator.Result lowered) {
+        PackPlan plan = PACK_PLANS.get(lowered);
+        if (plan == null) {
+            plan = new PackPlan(lowered);
+            PACK_PLANS.put(lowered, plan);
+        }
+        return plan;
+    }
+
+    /**
+     * Writes one member of the plan into {@code block} from the program's current values, with the full
+     * walk's source precedence (recorded floats, recorded ints, declaration defaults) and bounds guard.
+     * A member with no source is zero, as in GL: a full pack gets that from the cleared buffer, so a
+     * partial pack clears the member's own range instead.
+     */
+    private static void packPlanMember(PackPlan plan, int i, ModProgramRegistry.Program program, ByteBuffer block) {
+        float[] floats = program.floats(plan.names[i]);
+        int[] ints = floats == null ? program.ints(plan.names[i]) : null;
+        float[] defaults = floats == null && ints == null ? plan.defaults[i] : null;
+        // The member's whole range is cleared first, source or not: the full walk packs into a
+        // zeroed buffer, so a rewrite that records fewer components than the value it replaces
+        // (a shorter glUniform*fv for the same member) must read its tail as zero - without this
+        // the retained block kept the replaced value's tail and the two routes' bytes diverged
+        // (merge-phase byte-equivalence test [b], shortened-rewrite case).
+        int from = plan.offsets[i];
+        int to = Math.min(block.capacity(), from + plan.sizes[i]);
+        if (to > from) {
+            MemoryUtil.memSet(MemoryUtil.memAddress(block) + from, 0, to - from);
+        }
+        if (floats == null && ints == null && defaults == null) {
+            return;
+        }
+        int components = plan.components[i];
+        int columns = plan.columns[i];
+        int elements = plan.elements[i];
+        int columnStride = plan.columnStrides[i];
+        boolean integerType = plan.integerTypes[i];
+        int value = 0;
+        for (int e = 0; e < elements; e++) {
+            for (int c = 0; c < columns; c++) {
+                int base = plan.offsets[i] + (e * columns + c) * columnStride;
+                for (int k = 0; k < components; k++, value++) {
+                    int at = base + k * 4;
+                    if (at + 4 > block.capacity()) {
+                        continue;
+                    }
+                    if (floats != null && value < floats.length) {
+                        block.putFloat(at, floats[value]);
+                    } else if (ints != null && value < ints.length) {
+                        if (integerType) {
+                            block.putInt(at, ints[value]);
+                        } else {
+                            block.putFloat(at, ints[value]);
+                        }
+                    } else if (defaults != null && value < defaults.length) {
+                        if (integerType) {
+                            block.putInt(at, (int) defaults[value]);
+                        } else {
+                            block.putFloat(at, defaults[value]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * {@return the program's uniform block packed incrementally} (item 678 Layer B, B1): the block the
+     * program retains across versions is rewritten only where values changed - in full after a link or an
+     * unclassified change, member by member otherwise, per the registry's dirty bitset - and produces the
+     * same bytes the full walk in {@link #packUniforms} would. Returns null when the program has no
+     * lowering, leaving the caller on the original route (and its original behavior there).
+     */
+    private static ByteBuffer packUniformsIncremental(ModProgramRegistry.Program program) {
+        ModGlslTranslator.Result lowered = program.lowered();
+        if (lowered == null) {
+            return null;
+        }
+        long version = program.uniformVersion();
+        int bytes = Math.max(16, lowered.uniformBlockSize());
+        ByteBuffer block = program.retainedPackedUniforms();
+        PackPlan plan = packPlan(lowered);
+        boolean full = block == null || block.capacity() < bytes
+                || program.retainedPackResult() != lowered || program.uniformPackAllDirty();
+        if (full) {
+            if (block == null || block.capacity() < bytes) {
+                block = ByteBuffer.allocateDirect(bytes).order(java.nio.ByteOrder.nativeOrder());
+            }
+            MemoryUtil.memSet(MemoryUtil.memAddress(block), 0, block.capacity());
+            for (int i = 0; i < plan.names.length; i++) {
+                packPlanMember(plan, i, program, block);
+            }
+            program.retainPackedUniforms(block, lowered);
+        } else {
+            long[] dirty = program.uniformPackDirtyWords();
+            if (dirty != null) {
+                for (int w = 0; w < dirty.length; w++) {
+                    long word = dirty[w];
+                    while (word != 0L) {
+                        int member = (w << 6) + Long.numberOfTrailingZeros(word);
+                        if (member < plan.names.length) {
+                            packPlanMember(plan, member, program, block);
+                        }
+                        word &= word - 1;
+                    }
+                }
+            }
+        }
+        program.consumeUniformPackDirty();
         program.cachePackedUniforms(version, block);
         return block;
     }
@@ -1597,6 +2148,11 @@ public final class VulkanModProgramPipeline {
 
     /** Destroys the Vulkan objects; defers cleanup if a command buffer is currently recording. */
     public void delete() {
+        if (this.regionOffsetTable != null) {
+            // The table's own delete defers its free while a recording is open, like the rings'.
+            this.regionOffsetTable.delete();
+            this.regionOffsetTable = null;
+        }
         if (this.constantRing != null) {
             // The ring's own delete defers its free while a recording is open (VulkanUniformBuffer.delete).
             this.constantRing.delete();

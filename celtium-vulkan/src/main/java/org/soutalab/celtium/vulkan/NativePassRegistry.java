@@ -19,7 +19,7 @@ import static org.lwjgl.vulkan.VK10.VK_COMPARE_OP_ALWAYS;
  * Core-owned registry of native fullscreen shader passes (Phase 0).
  * <p>
  * Passes registered here compile directly via {@link ModShaderCompiler} and execute through {@link PassExecutor} using
- * {@link VulkanModProgramPipeline}. Nothing here routes through {@code CeltiumGlStub} or {@code ModProgramRegistry},
+ * {@link VulkanModProgramPipeline}. Nothing here routes through {@code GlsmFrontend} or {@code ModProgramRegistry},
  * and its counters stay separate from the stub's program/refusal census.
  */
 public final class NativePassRegistry {

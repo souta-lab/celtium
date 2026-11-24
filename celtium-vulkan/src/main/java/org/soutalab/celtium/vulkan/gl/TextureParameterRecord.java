@@ -1,7 +1,7 @@
 package org.soutalab.celtium.vulkan.gl;
 
 /**
- * The per-texture-object record of GL texture parameters, extracted from {@code CeltiumGlStub} unchanged in
+ * The per-texture-object record of GL texture parameters, extracted from {@code GlsmFrontend} unchanged in
  * behaviour (refactor/giant-split-1): the recorded values, their per-name versions, the bounded census and the
  * query instrument live here, while the stub keeps the binding resolution that names the texture a call applies
  * to and the static doors the mirror reads through.

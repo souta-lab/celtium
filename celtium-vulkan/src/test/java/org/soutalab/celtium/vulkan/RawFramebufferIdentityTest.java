@@ -1,29 +1,29 @@
 package org.soutalab.celtium.vulkan;
 
 import org.junit.jupiter.api.Test;
-import org.soutalab.celtium.vulkan.gl.CeltiumGlStub;
+import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class RawFramebufferIdentityTest {
     @Test
     void reverseAttachmentLookupAddressesTheDrawTarget() throws Exception {
-        var constructor = CeltiumGlStub.class.getDeclaredConstructor();
+        var constructor = GlsmFrontend.class.getDeclaredConstructor();
         constructor.setAccessible(true);
-        var installed = CeltiumGlStub.class.getDeclaredField("installed");
+        var installed = GlsmFrontend.class.getDeclaredField("installed");
         installed.setAccessible(true);
         Object previous = installed.get(null);
         installed.set(null, constructor.newInstance());
         try {
             int framebuffer = 71;
             int colorTexture = 301;
-            CeltiumGlStub.celtium$bindFramebuffer(0x8D40, framebuffer);
-            CeltiumGlStub.celtium$framebufferTexture2D(0x8D40, 0x8CE0, 0x0DE1, colorTexture, 0);
+            GlsmFrontend.celtium$bindFramebuffer(0x8D40, framebuffer);
+            GlsmFrontend.celtium$framebufferTexture2D(0x8D40, 0x8CE0, 0x0DE1, colorTexture, 0);
 
             RenderTargetRegistry targets = new RenderTargetRegistry();
             long drawn = RenderTargetRegistry.rawFramebufferIdentity(framebuffer);
             targets.noteBind(drawn, false, "raw");
-            int resolvedName = CeltiumGlStub.celtium$framebufferForColorTexture(colorTexture);
+            int resolvedName = GlsmFrontend.celtium$framebufferForColorTexture(colorTexture);
             long sampled = RenderTargetRegistry.rawFramebufferIdentity(resolvedName);
             PublishedFrameTextures published = new PublishedFrameTextures();
             published.bindColorTexture(sampled, colorTexture, 320, 177);

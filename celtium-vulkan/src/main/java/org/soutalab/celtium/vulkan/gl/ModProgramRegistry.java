@@ -41,8 +41,26 @@ public final class ModProgramRegistry {
         long uniformVersion = 1L;
         ByteBuffer cachedPackedUniforms;
         long cachedPackedVersion = -1L;
+        /** Block member index per uniform name, in the lowered block's member order; -1 for a name that takes a
+         *  location but is not a block member (a sampler or image unit). Built at link; null before the first. */
+        Map<String, Integer> uniformMemberIndex;
+        /** Block members whose values changed since the retained pack was written, a bitset over member indices. */
+        long[] uniformPackDirtyWords;
+        /** Whether the retained pack cannot be trusted member-by-member and must be rewritten in full. */
+        boolean uniformPackAllDirty = true;
+        /** The block the incremental packer last wrote, kept across versions so unchanged members survive. */
+        ByteBuffer retainedPackedUniforms;
+        /** The lowering {@link #retainedPackedUniforms} was packed for; a re-link replaces it and forces a full pack. */
+        ModGlslTranslator.Result retainedPackResult;
         /** The compiled stages, when shaderc was available at link; null otherwise. */
         byte[] vertexSpirv;
+        /** GLSM stage 1: the frequency bucket of each uniform name (block members and the members the
+         *  translator extracted alike), built at link; null before the first successful link. */
+        Map<String, GlsmPackState.Bucket> uniformBuckets;
+        /** GLSM stage 1: a version per bucket, so a write advances only its own bucket's consumers.
+         *  The scalar {@link #uniformVersion} still exists for the DYNAMIC block's pack cache; what
+         *  changes under the flag is that REGION and PER_FRAME writes no longer advance it. */
+        final long[] bucketVersions = new long[GlsmPackState.Bucket.values().length];
         byte[] fragmentSpirv;
         String compileFailure;
 
@@ -77,6 +95,16 @@ public final class ModProgramRegistry {
             return this.uniformVersion;
         }
 
+        /** {@return the GLSM bucket version for {@code bucket}: how many writes that bucket has taken}. */
+        public long bucketVersion(GlsmPackState.Bucket bucket) {
+            return this.bucketVersions[bucket.ordinal()];
+        }
+
+        /** {@return the GLSM bucket {@code name} was classified into at link}, or null when unclassified. */
+        public GlsmPackState.Bucket uniformBucket(String name) {
+            return this.uniformBuckets == null ? null : this.uniformBuckets.get(name);
+        }
+
         public ByteBuffer cachedPackedUniforms() {
             return this.cachedPackedVersion == this.uniformVersion ? this.cachedPackedUniforms : null;
         }
@@ -99,6 +127,77 @@ public final class ModProgramRegistry {
         public void cachePackedUniforms(long version, ByteBuffer packed) {
             this.cachedPackedUniforms = packed;
             this.cachedPackedVersion = version;
+        }
+
+        /**
+         * Advances the uniform version for a value change to {@code name}, remembering which block member
+         * changed so the incremental packer can rewrite just that member into the retained block. A name that
+         * is not a block member (a sampler or image unit) leaves the block's bytes alone; a name the link never
+         * classified distrusts the whole retained block, as does a write before the first link.
+         */
+        void bumpUniformVersion(String name) {
+            // GLSM stage 1: under the flag, a write advances its bucket's version; a REGION or
+            // PER_FRAME write owns no program-block bytes (the SSBO table / the shared block carry
+            // it), so it must not advance the scalar version the block pack cache keys on - that
+            // advance was the whole per-region re-derivation this stage removes. The value itself
+            // is already recorded by the caller, which is what the table write and the harvest read.
+            if (GlsmPackState.ENABLED && this.uniformBuckets != null) {
+                GlsmPackState.Bucket bucket = this.uniformBuckets.get(name);
+                if (bucket != null) {
+                    this.bucketVersions[bucket.ordinal()]++;
+                    if (bucket == GlsmPackState.Bucket.REGION || bucket == GlsmPackState.Bucket.PER_FRAME) {
+                        return;
+                    }
+                }
+            }
+            this.uniformVersion++;
+            Map<String, Integer> index = this.uniformMemberIndex;
+            Integer member = index == null ? null : index.get(name);
+            if (member == null) {
+                this.uniformPackAllDirty = true;
+            } else if (member >= 0) {
+                int word = member >>> 6;
+                if (this.uniformPackDirtyWords == null) {
+                    this.uniformPackDirtyWords = new long[word + 1];
+                } else if (word >= this.uniformPackDirtyWords.length) {
+                    this.uniformPackDirtyWords = java.util.Arrays.copyOf(this.uniformPackDirtyWords, word + 1);
+                }
+                this.uniformPackDirtyWords[word] |= 1L << (member & 63);
+            }
+        }
+
+        /** {@return whether the retained incremental pack must be rewritten in full}. */
+        public boolean uniformPackAllDirty() {
+            return this.uniformPackAllDirty;
+        }
+
+        /** {@return the live dirty bitset over block members for the incremental packer}, or null when none. */
+        public long[] uniformPackDirtyWords() {
+            return this.uniformPackDirtyWords;
+        }
+
+        /** Marks every member packed: the retained block now matches the current values. */
+        public void consumeUniformPackDirty() {
+            if (this.uniformPackDirtyWords != null) {
+                java.util.Arrays.fill(this.uniformPackDirtyWords, 0L);
+            }
+            this.uniformPackAllDirty = false;
+        }
+
+        /** {@return the block the incremental packer last wrote}, or null before its first pack. */
+        public ByteBuffer retainedPackedUniforms() {
+            return this.retainedPackedUniforms;
+        }
+
+        /** {@return the lowering the retained block was packed for}. */
+        public ModGlslTranslator.Result retainedPackResult() {
+            return this.retainedPackResult;
+        }
+
+        /** Keeps the block the incremental packer wrote, and the lowering it was written for. */
+        public void retainPackedUniforms(ByteBuffer packed, ModGlslTranslator.Result result) {
+            this.retainedPackedUniforms = packed;
+            this.retainedPackResult = result;
         }
 
         /** {@return whether both stages are compiled to SPIR-V} and the program could therefore run natively. */
@@ -124,18 +223,11 @@ public final class ModProgramRegistry {
     private static final int GL_VERTEX_SHADER = 0x8B31;
     private static final int GL_FRAGMENT_SHADER = 0x8B30;
 
-    private static final Int2ObjectOpenHashMap<String> SHADER_SOURCES = new Int2ObjectOpenHashMap<>();
-    /** The stage each shader name was created for, by GL enum; absent when the creating call was never routed here. */
-    private static final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap SHADER_STAGES =
-            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+    // GAP-PROG-1 rewired: shader sources and stages live in GlsmShaderLedger.
     private static final Int2ObjectOpenHashMap<Program> PROGRAMS = new Int2ObjectOpenHashMap<>();
-    /**
-     * Shader names deleted while a live program still referenced them (item 328, V-04). GL defers such a
-     * deletion until detach, so the source is retained for the referencing program - but the name itself is
-     * spent: if it is attached afresh (recycled by the driver for a new shader object), the retained source
-     * must not be what a link compiles. A fresh {@code glShaderSource} for the name spends the marker.
-     */
-    private static final IntOpenHashSet DELETED_SHADERS = new IntOpenHashSet();
+    // GAP-PROG-1: the deferred-deletion marker set (item 328, V-04 - GL defers a referenced
+    // shader's deletion until detach, and a recycled name must not compile its predecessor's
+    // retained source) is GlsmShaderLedger's deleted set, consulted via isDeleted/spendDeletion.
     /** Uniform writes to a location no linked program names: counted, so a lost value is visible. */
     private static int unmatchedUniformWrites;
     /**
@@ -165,18 +257,14 @@ public final class ModProgramRegistry {
      * at the call that actually starts the new incarnation.
      */
     public static void shaderStage(int shader, int glStage) {
-        SHADER_STAGES.put(shader, glStage);
-        if (DELETED_SHADERS.remove(shader)) {
-            SHADER_SOURCES.remove(shader);
-        }
+        GlsmShaderLedger.current().createShader(shader, glStage);
     }
 
     /** {@code glShaderSource}: the stage's text, concatenated as GL concatenates the strings. */
     public static void shaderSource(int shader, String source) {
-        SHADER_SOURCES.put(shader, source);
         // A fresh source is the current incarnation speaking for itself; any deletion marker the name
-        // carried is spent.
-        DELETED_SHADERS.remove(shader);
+        // carried is spent (the ledger's shaderSource does both).
+        GlsmShaderLedger.current().shaderSource(shader, source);
     }
 
     /** {@code glAttachShader}. */
@@ -186,9 +274,7 @@ public final class ModProgramRegistry {
             // A name deleted while attached elsewhere and now attached afresh is a new shader object: in GL
             // it starts with no source, so its predecessor's retained source is dropped here rather than
             // compiled by this program's link. A later glShaderSource re-arms the name.
-            if (DELETED_SHADERS.remove(shader)) {
-                SHADER_SOURCES.remove(shader);
-            }
+            GlsmShaderLedger.current().spendDeletion(shader);
             p.shaders.add(shader);
         }
     }
@@ -201,7 +287,7 @@ public final class ModProgramRegistry {
         String stageFailure = null;
         for (int i = 0, n = p.shaders.size(); i < n; i++) {
             int shader = p.shaders.getInt(i);
-            String source = SHADER_SOURCES.get(shader);
+            String source = GlsmShaderLedger.current().source(shader);
             if (source == null) {
                 continue;
             }
@@ -210,7 +296,7 @@ public final class ModProgramRegistry {
             // fragment stage that mentioned gl_Position in a comment was classified as the vertex stage and
             // the whole program was refused for having no fragment stage. Two shaders claiming one stage is
             // a link error in GL; it is one here too, rather than the second silently overwriting the first.
-            int stage = SHADER_STAGES.get(shader);
+            int stage = GlsmShaderLedger.current().stage(shader);
             boolean isVertex;
             if (stage == GL_VERTEX_SHADER) {
                 isVertex = true;
@@ -243,7 +329,7 @@ public final class ModProgramRegistry {
         }
         p.lowered = stageFailure != null
                 ? new ModGlslTranslator.Result(null, null, List.of(), List.of(), 0, List.of(), List.of(), List.of(), 0,
-                        false, java.util.Map.of(), stageFailure)
+                        false, java.util.Map.of(), stageFailure, null, List.of(), List.of())
                 : ModGlslTranslator.translate(vertex, fragment);
         p.nameByLocation.clear();
         // A link starts the program's uniforms over, as in GL: the values a previous link's interface
@@ -253,6 +339,14 @@ public final class ModProgramRegistry {
         p.cachedPackedUniforms = null;
         p.cachedPackedVersion = -1L;
         p.uniformVersion++;
+        // The incremental packer's state belongs to the previous link's block too: the member order it
+        // indexed and the block it retained both start over, and its first pack under this link is a full one.
+        p.uniformMemberIndex = null;
+        p.uniformBuckets = null;
+        p.uniformPackDirtyWords = null;
+        p.uniformPackAllDirty = true;
+        p.retainedPackedUniforms = null;
+        p.retainedPackResult = null;
         if (p.lowered.ok()) {
             for (ModGlslTranslator.UniformMember member : p.lowered.uniforms()) {
                 mapName(p, member.name());
@@ -266,6 +360,40 @@ public final class ModProgramRegistry {
             for (ModGlslTranslator.ImageBinding image : p.lowered.images()) {
                 mapName(p, image.name());
             }
+            // The incremental packer's name classification, in the same pass that maps the locations:
+            // block members by their index in the lowered member order, samplers and images as -1 (they
+            // take locations and values but no block bytes). A name collision keeps the member reading -
+            // the block is the side a missed dirty bit would silently corrupt.
+            Map<String, Integer> memberIndex = new HashMap<>();
+            for (int i = 0; i < p.lowered.uniforms().size(); i++) {
+                memberIndex.put(p.lowered.uniforms().get(i).name(), i);
+            }
+            for (ModGlslTranslator.SamplerBinding sampler : p.lowered.samplers()) {
+                memberIndex.putIfAbsent(sampler.name(), -1);
+            }
+            for (ModGlslTranslator.ImageBinding image : p.lowered.images()) {
+                memberIndex.putIfAbsent(image.name(), -1);
+            }
+            p.uniformMemberIndex = memberIndex;
+            // GLSM stage 1: the translator's extracted members (REGION / PER_FRAME) own no block
+            // bytes, but their locations and values are still the program's interface - the guest
+            // writes them by location and the harvester / table read the recorded values - so they
+            // are mapped exactly like block members, and every uniform name gets its link-time
+            // bucket for bumpUniformVersion's per-bucket versions.
+            for (ModGlslTranslator.UniformMember extracted : p.lowered.extractedUniforms()) {
+                mapName(p, extracted.name());
+            }
+            Map<String, GlsmPackState.Bucket> buckets = new HashMap<>();
+            for (ModGlslTranslator.UniformMember member : p.lowered.uniforms()) {
+                buckets.put(member.name(),
+                        GlsmPackState.classify(member.name(), member.type(), member.arrayLength()));
+            }
+            for (ModGlslTranslator.UniformMember extracted : p.lowered.extractedUniforms()) {
+                buckets.put(extracted.name(),
+                        GlsmPackState.classify(extracted.name(), extracted.type(), extracted.arrayLength()));
+            }
+            p.uniformBuckets = buckets;
+            java.util.Arrays.fill(p.bucketVersions, 1L);
         }
         p.vertexSpirv = null;
         p.fragmentSpirv = null;
@@ -326,6 +454,15 @@ public final class ModProgramRegistry {
                                 + " vertex=" + (vertex == null ? "fixed-function" : "own")
                                 + " names=[" + names + "]"
                         : " lowered=false reason=" + p.lowered.failure()));
+        if (GlsmPackState.ENABLED && p.lowered.ok()) {
+            System.out.println("[Celtium] CELTIUM_GLSM_LINK program=" + program
+                    + " region=" + p.lowered.regionOffsetMember()
+                    + " shared=" + p.lowered.sharedPerFrameMembers()
+                    + " extracted=" + p.lowered.extractedUniforms().size()
+                    + " divergences=" + GlsmPackState.divergences()
+                    + " regionExtracted=" + GlsmPackState.regionExtracted()
+                    + " regionUnextractable=" + GlsmPackState.regionUnextractable());
+        }
         return p;
     }
 
@@ -407,11 +544,11 @@ public final class ModProgramRegistry {
                 }
             }
             if (changed) {
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.floatValues.put(name, values);
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -428,11 +565,11 @@ public final class ModProgramRegistry {
         if (existing != null && existing.length == 1) {
             if (Float.floatToRawIntBits(existing[0]) != Float.floatToRawIntBits(x)) {
                 existing[0] = x;
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.floatValues.put(name, new float[] {x});
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -451,11 +588,11 @@ public final class ModProgramRegistry {
                     || Float.floatToRawIntBits(existing[1]) != Float.floatToRawIntBits(y)) {
                 existing[0] = x;
                 existing[1] = y;
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.floatValues.put(name, new float[] {x, y});
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -476,11 +613,11 @@ public final class ModProgramRegistry {
                 existing[0] = x;
                 existing[1] = y;
                 existing[2] = z;
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.floatValues.put(name, new float[] {x, y, z});
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -503,11 +640,11 @@ public final class ModProgramRegistry {
                 existing[1] = y;
                 existing[2] = z;
                 existing[3] = w;
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.floatValues.put(name, new float[] {x, y, z, w});
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -555,7 +692,7 @@ public final class ModProgramRegistry {
             p.floatValues.put(name, dst);
         }
         if (changed) {
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -578,11 +715,11 @@ public final class ModProgramRegistry {
                 }
             }
             if (changed) {
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.intValues.put(name, values);
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -599,11 +736,11 @@ public final class ModProgramRegistry {
         if (existing != null && existing.length == 1) {
             if (existing[0] != x) {
                 existing[0] = x;
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.intValues.put(name, new int[] {x});
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -621,11 +758,11 @@ public final class ModProgramRegistry {
             if (existing[0] != x || existing[1] != y) {
                 existing[0] = x;
                 existing[1] = y;
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.intValues.put(name, new int[] {x, y});
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -644,11 +781,11 @@ public final class ModProgramRegistry {
                 existing[0] = x;
                 existing[1] = y;
                 existing[2] = z;
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.intValues.put(name, new int[] {x, y, z});
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -668,11 +805,11 @@ public final class ModProgramRegistry {
                 existing[1] = y;
                 existing[2] = z;
                 existing[3] = w;
-                p.uniformVersion++;
+                p.bumpUniformVersion(name);
             }
         } else {
             p.intValues.put(name, new int[] {x, y, z, w});
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -703,7 +840,7 @@ public final class ModProgramRegistry {
             p.intValues.put(name, dst);
         }
         if (changed) {
-            p.uniformVersion++;
+            p.bumpUniformVersion(name);
         }
         p.uniformWrites++;
     }
@@ -751,10 +888,8 @@ public final class ModProgramRegistry {
             // live program references them any more (item 328, V-04).
             for (int i = 0, n = removed.shaders.size(); i < n; i++) {
                 int shader = removed.shaders.getInt(i);
-                if (DELETED_SHADERS.contains(shader) && !referencedByLiveProgram(shader)) {
-                    DELETED_SHADERS.remove(shader);
-                    SHADER_SOURCES.remove(shader);
-                    SHADER_STAGES.remove(shader);
+                if (GlsmShaderLedger.current().isDeleted(shader) && !referencedByLiveProgram(shader)) {
+                    GlsmShaderLedger.current().dropShader(shader);
                 }
             }
         }
@@ -768,11 +903,9 @@ public final class ModProgramRegistry {
      */
     public static void deleteShader(int id) {
         if (referencedByLiveProgram(id)) {
-            DELETED_SHADERS.add(id);
+            GlsmShaderLedger.current().markDeleted(id);
         } else {
-            DELETED_SHADERS.remove(id);
-            SHADER_SOURCES.remove(id);
-            SHADER_STAGES.remove(id);
+            GlsmShaderLedger.current().dropShader(id);
         }
     }
 
@@ -795,11 +928,10 @@ public final class ModProgramRegistry {
 
     /** Test support: forget everything. */
     static void clear() {
-        SHADER_SOURCES.clear();
-        SHADER_STAGES.clear();
+        GlsmShaderLedger.current().clear();
         PROGRAMS.clear();
-        DELETED_SHADERS.clear();
         unmatchedUniformWrites = 0;
         locationNameCollisions = 0;
+        GlsmPackState.clear();
     }
 }

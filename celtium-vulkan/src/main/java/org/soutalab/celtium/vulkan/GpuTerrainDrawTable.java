@@ -16,19 +16,23 @@ import java.util.Map;
  * <ul>
  *   <li><b>DrawSourceTable</b> — one 32-byte entry per draw command source, sorted
  *   section-major (the sort is a design constraint: the mesh stage-2 reload reads the table
- *   section by section, section 8.3 of the design). In E10-a an entry is region-granular:
+ *   section by section, section 8.3 of the design). In E10-a an entry was region-granular:
  *   a {@code VulkanMultiDrawBatch} command is a merged run over a region's sections and
- *   carries no per-section identity, so the entry's box is the whole region. Splitting
- *   entries per section requires the batch assembler to retain section tags; that is
- *   E10-b preparation work and is recorded as a deviation in the E10-a record.</li>
+ *   carried no per-section identity, so the entry's box was the whole region. The E10-b
+ *   preparation retains the assembler's section tags in the batch, so an entry now names
+ *   its own section and is culled by that section's box ({@link #FLAG_SECTION_BOX}); an
+ *   entry without a tag keeps the region-granular form as a fallback.</li>
  *   <li><b>RegionRemap</b> — dictionary index → the frame's binding-5 region index
  *   ({@code firstInstance}), or -1 when the region is not drawn this frame. The table never
  *   bakes a frame index in (design section 8.3, rule 3).</li>
- *   <li><b>OcclusionMask</b> — one bit per dictionary index. In E10-a the dictionary is
- *   collection-local (the regions the CPU visited for the frame, all with their bit set,
- *   because a visited region's batch is by construction in the CPU's visible set); the
- *   lattice-indexed mask fed by the {@code OcclusionCuller} visitor is the E10-b form.
- *   The mask's word layout and the shader's bit test are already the design's.</li>
+ *   <li><b>OcclusionMask</b> — the design's form (section 3.4) is a bitset over section
+ *   lattice indices, transcribed from the occlusion search's visible set and stamped with
+ *   the lattice window it belongs to; a {@link Builder} given such a mask through
+ *   {@link Builder#latticeMask} builds a table whose mask resolves each entry's bit from
+ *   its section coordinates. A builder given no lattice mask keeps the E10-a form: one bit
+ *   per dictionary index, every collected region's bit set (a visited region's batch is by
+ *   construction in the CPU's visible set). The word layout and the shader's bit test are
+ *   the same in both forms.</li>
  * </ul>
  * The visibility test here is the Java reference implementation of the common GLSL fragment
  * ({@code terrain_cull.glsl}); design section 5.3 (b) asks for the two to be held to the
@@ -56,6 +60,27 @@ public final class GpuTerrainDrawTable {
     // Flag value 0 for the index source means the shared quad index buffer (firstIndex 0),
     // which is the unsorted passes' uniform source on the current main.
 
+    /**
+     * Entry flag: the entry's section coordinates name the command's own section and the
+     * visibility test culls by that section's 16-block box, not by the whole region's.
+     * Set when the batch retained the assembler's section tag for the command; an entry
+     * without it is region-granular (its section coordinates are the region's origin).
+     * The compute shader reads the same bit of the same word to pick its box size, so the
+     * two implementations stay in step (design section 5.3 (b)).
+     */
+    public static final int FLAG_SECTION_BOX = 2;
+
+    /** Edge of one section's box, in blocks, for {@link #FLAG_SECTION_BOX} entries. */
+    public static final int SECTION_SIZE_BLOCKS = 16;
+
+    /**
+     * Words of header at the head of a lattice-mask segment, in the mask buffer and in
+     * {@link Table#maskWords} alike: the lattice window's base section coordinates
+     * (x, y, z) followed by its dimensions (x, y, z), as int bit patterns. A segment whose
+     * dimension words are all zero is a dictionary mask (the E10-a form) instead.
+     */
+    public static final int MASK_HEADER_WORDS = 6;
+
     private GpuTerrainDrawTable() {
     }
 
@@ -64,9 +89,13 @@ public final class GpuTerrainDrawTable {
         public int indexCount;
         public int firstIndex;
         public int vertexOffset;
-        /** Index into this frame's remap and mask (the collection dictionary). */
+        /** Index into this frame's remap (the collection dictionary). */
         public int dictIndex;
-        /** World section coordinates of the region's origin section. */
+        /**
+         * World section coordinates of the box this entry is culled by: the command's own
+         * section when {@link #FLAG_SECTION_BOX} is set in {@link #flags}, otherwise the
+         * origin section of the command's region.
+         */
         public int sectionX;
         public int sectionY;
         public int sectionZ;
@@ -113,19 +142,50 @@ public final class GpuTerrainDrawTable {
         public final Entry[] entries;
         /** dictIndex → frame region index (firstInstance), -1 = not drawn. */
         public final int[] remap;
-        /** Occlusion mask as uint32 words, one bit per dictIndex. */
+        /**
+         * Occlusion mask as uint32 words: {@link #MASK_HEADER_WORDS} header words (the lattice
+         * window, all zero in the dictionary form) followed by the bitset itself — one bit per
+         * lattice cell in the lattice form (see {@link #maskDimX}), one bit per dictIndex in
+         * the dictionary form.
+         */
         public final int[] maskWords;
         /** Generation stamps from the builder (design section 3.4). */
         public final long maskGeneration;
         public final long tableGeneration;
+        /**
+         * The lattice window the mask belongs to: base section coordinates and dimensions,
+         * in the indexing of {@code SectionLattice} (a section's lattice index is
+         * {@code ((x - baseX) * dimZ + (z - baseZ)) * dimY + (y - baseY)}, interior cells
+         * only). All zero in the dictionary form, which is how the two forms are told apart
+         * here and in the shader alike.
+         */
+        public final int maskBaseX;
+        public final int maskBaseY;
+        public final int maskBaseZ;
+        public final int maskDimX;
+        public final int maskDimY;
+        public final int maskDimZ;
 
         private Table(Entry[] entries, int[] remap, int[] maskWords,
-                      long maskGeneration, long tableGeneration) {
+                      long maskGeneration, long tableGeneration,
+                      int maskBaseX, int maskBaseY, int maskBaseZ,
+                      int maskDimX, int maskDimY, int maskDimZ) {
             this.entries = entries;
             this.remap = remap;
             this.maskWords = maskWords;
             this.maskGeneration = maskGeneration;
             this.tableGeneration = tableGeneration;
+            this.maskBaseX = maskBaseX;
+            this.maskBaseY = maskBaseY;
+            this.maskBaseZ = maskBaseZ;
+            this.maskDimX = maskDimX;
+            this.maskDimY = maskDimY;
+            this.maskDimZ = maskDimZ;
+        }
+
+        /** Whether this table's mask is the lattice form (design section 3.4). */
+        public boolean hasLatticeMask() {
+            return this.maskDimX > 0;
         }
 
         /** Whether a mask offered under {@code generation} belongs to another lattice build. */
@@ -152,6 +212,14 @@ public final class GpuTerrainDrawTable {
         private final List<Integer> remap = new ArrayList<Integer>();
         private long maskGeneration;
         private long tableGeneration;
+        private boolean allSectionGranular = true;
+        private int[] latticeMaskWords;
+        private int maskBaseX;
+        private int maskBaseY;
+        private int maskBaseZ;
+        private int maskDimX;
+        private int maskDimY;
+        private int maskDimZ;
 
         /**
          * Registers a region in the dictionary, or returns its existing index.
@@ -171,6 +239,44 @@ public final class GpuTerrainDrawTable {
 
         public void add(Entry entry) {
             this.entries.add(entry);
+            if ((entry.flags & FLAG_SECTION_BOX) == 0) {
+                this.allSectionGranular = false;
+            }
+        }
+
+        /**
+         * Whether every entry added so far names its own section. A lattice mask can only
+         * judge a collection uniformly in this state: a region-granular entry's bit would be
+         * read at its origin section alone, which is not the judgement the mask makes, so the
+         * supplier withholds the lattice form from a mixed collection and it builds with the
+         * dictionary mask instead.
+         */
+        public boolean allSectionGranular() {
+            return this.allSectionGranular;
+        }
+
+        /**
+         * Supplies the occlusion mask in its design form (section 3.4): a bitset over section
+         * lattice indices, transcribed from the occlusion search's visible set, together with
+         * the lattice window it belongs to and that window's generation stamp. The words are
+         * {@link #MASK_HEADER_WORDS} header words (base xyz, dims xyz, matching the window
+         * arguments) followed by one bit per lattice cell, in the indexing {@link Table}
+         * documents. When supplied, {@link #build()} uses these words verbatim instead of
+         * fabricating the dictionary mask.
+         *
+         * @param generation the mask's generation stamp, from {@link #latticeGeneration}
+         */
+        public Builder latticeMask(int[] words, int baseX, int baseY, int baseZ,
+                                   int dimX, int dimY, int dimZ, long generation) {
+            this.latticeMaskWords = words;
+            this.maskBaseX = baseX;
+            this.maskBaseY = baseY;
+            this.maskBaseZ = baseZ;
+            this.maskDimX = dimX;
+            this.maskDimY = dimY;
+            this.maskDimZ = dimZ;
+            this.maskGeneration = generation;
+            return this;
         }
 
         public int entryCount() {
@@ -194,10 +300,10 @@ public final class GpuTerrainDrawTable {
 
         /**
          * Builds the table. Entries are sorted section-major — by section coordinates, then
-         * dictionary index, then firstIndex — so the order is total and stable, and every
-         * dictionary entry's mask bit is set (a collected region is in the CPU's visible set
-         * by construction; the mask's discriminating form arrives with the culler-fed mask
-         * in E10-b).
+         * dictionary index, then firstIndex — so the order is total and stable. The mask is
+         * the supplied lattice mask when one was given (see {@link #latticeMask}); otherwise
+         * every dictionary entry's mask bit is set (a collected region is in the CPU's
+         * visible set by construction).
          */
         public Table build() {
             Entry[] sorted = this.entries.toArray(new Entry[0]);
@@ -212,11 +318,17 @@ public final class GpuTerrainDrawTable {
             for (int i = 0; i < remap.length; i++) {
                 remap[i] = this.remap.get(i).intValue();
             }
-            int[] mask = new int[(remap.length + 31) / 32];
-            for (int i = 0; i < remap.length; i++) {
-                mask[i >>> 5] |= 1 << (i & 31);
+            if (this.latticeMaskWords != null) {
+                return new Table(sorted, remap, this.latticeMaskWords, this.maskGeneration,
+                        this.tableGeneration, this.maskBaseX, this.maskBaseY, this.maskBaseZ,
+                        this.maskDimX, this.maskDimY, this.maskDimZ);
             }
-            return new Table(sorted, remap, mask, this.maskGeneration, this.tableGeneration);
+            int[] mask = new int[MASK_HEADER_WORDS + (remap.length + 31) / 32];
+            for (int i = 0; i < remap.length; i++) {
+                mask[MASK_HEADER_WORDS + (i >>> 5)] |= 1 << (i & 31);
+            }
+            return new Table(sorted, remap, mask, this.maskGeneration, this.tableGeneration,
+                    0, 0, 0, 0, 0, 0);
         }
     }
 
@@ -272,18 +384,21 @@ public final class GpuTerrainDrawTable {
 
     /**
      * The reference visibility test: the same formulas as {@code terrain_cull.glsl}'s
-     * {@code celtiumBoxVisible}. The box is the region box at the entry's section origin.
+     * {@code celtiumBoxVisible}. The box sits at the entry's section coordinates; its size
+     * is the section's own when {@link #FLAG_SECTION_BOX} is set, the whole region's
+     * otherwise — the shader picks its box size from the same flag bit.
      *
      * @param planes 24 floats from {@link #extractPlanes}
      */
     public static boolean isVisible(float[] planes, float cameraX, float cameraY, float cameraZ,
                                     float maxDistance, Entry entry) {
+        boolean sectionBox = (entry.flags & FLAG_SECTION_BOX) != 0;
         float minX = entry.sectionX * 16.0f;
         float minY = entry.sectionY * 16.0f;
         float minZ = entry.sectionZ * 16.0f;
-        float maxX = minX + REGION_SIZE_X_BLOCKS;
-        float maxY = minY + REGION_SIZE_Y_BLOCKS;
-        float maxZ = minZ + REGION_SIZE_Z_BLOCKS;
+        float maxX = minX + (sectionBox ? SECTION_SIZE_BLOCKS : REGION_SIZE_X_BLOCKS);
+        float maxY = minY + (sectionBox ? SECTION_SIZE_BLOCKS : REGION_SIZE_Y_BLOCKS);
+        float maxZ = minZ + (sectionBox ? SECTION_SIZE_BLOCKS : REGION_SIZE_Z_BLOCKS);
         for (int p = 0; p < 6; p++) {
             float a = planes[p * 4];
             float b = planes[p * 4 + 1];
@@ -328,8 +443,7 @@ public final class GpuTerrainDrawTable {
             if (frameIndex < 0) {
                 continue;
             }
-            int word = table.maskWords[e.dictIndex >>> 5];
-            if ((word & (1 << (e.dictIndex & 31))) == 0) {
+            if (!maskAllows(table, e)) {
                 continue;
             }
             if (!isVisible(planes, cameraX, cameraY, cameraZ, maxDistance, e)) {
@@ -342,6 +456,114 @@ public final class GpuTerrainDrawTable {
             out[written++] = frameIndex;
         }
         return Arrays.copyOf(out, written);
+    }
+
+    /**
+     * The mask test of {@link #generate}, mirrored by {@code terrain_cull.comp}: in the
+     * lattice form the entry's bit is resolved from its section coordinates against the
+     * table's window (interior cells only, in {@code SectionLattice}'s indexing — a section
+     * outside the window has no bit, and the culler's word on it is "not visible"); in the
+     * dictionary form the bit is the entry's dictionary index.
+     */
+    private static boolean maskAllows(Table table, Entry e) {
+        if (table.hasLatticeMask()) {
+            int lx = e.sectionX - table.maskBaseX;
+            int ly = e.sectionY - table.maskBaseY;
+            int lz = e.sectionZ - table.maskBaseZ;
+            if (lx < 1 || lx > table.maskDimX - 2
+                    || ly < 1 || ly > table.maskDimY - 2
+                    || lz < 1 || lz > table.maskDimZ - 2) {
+                return false;
+            }
+            int idx = (lx * table.maskDimZ + lz) * table.maskDimY + ly;
+            int word = table.maskWords[MASK_HEADER_WORDS + (idx >>> 5)];
+            return (word & (1 << (idx & 31))) != 0;
+        }
+        int word = table.maskWords[MASK_HEADER_WORDS + (e.dictIndex >>> 5)];
+        return (word & (1 << (e.dictIndex & 31))) != 0;
+    }
+
+    /**
+     * The generation stamp of a lattice mask: a mix of the window it belongs to (base and
+     * dimensions) and the frame its visible set was searched for. Two masks with the same
+     * stamp describe the same window and search; any other pairing is the mismatch
+     * {@link #frameGate} rejects (design section 3.4). The transcription's producer and
+     * the gate's consumer both take the stamp from here so the definition lives once.
+     */
+    public static long latticeGeneration(int baseX, int baseY, int baseZ,
+                                         int dimX, int dimY, int dimZ, int frame) {
+        long g = 0x9E3779B97F4A7C15L;
+        g = (g ^ baseX) * 0x100000001B3L;
+        g = (g ^ baseY) * 0x100000001B3L;
+        g = (g ^ baseZ) * 0x100000001B3L;
+        g = (g ^ dimX) * 0x100000001B3L;
+        g = (g ^ dimY) * 0x100000001B3L;
+        g = (g ^ dimZ) * 0x100000001B3L;
+        g = (g ^ frame) * 0x100000001B3L;
+        return g ^ (g >>> 29);
+    }
+
+    /**
+     * The CPU mirror of deterministic-slot generation (the shader's issuance mode 1,
+     * Angelica T1 form): like {@link #generate}, except the output is exactly
+     * {@code entryCount} commands long — entry {@code i}'s command sits at slot
+     * {@code i - entryStart}, and a culled entry's slot is a zero command
+     * ({@code indexCount = 0, instanceCount = 0}, all other fields 0). The list length
+     * is therefore known without any count buffer, which is the property a drawing
+     * consumer needs to issue it with a plain indirect draw. Use
+     * {@link #stripZeroCommands} to recover the surviving list for comparison against
+     * a canonical list.
+     */
+    public static int[] generateDeterministicSlot(Table table, int entryStart, int entryCount,
+                                                  float[] planes, float cameraX, float cameraY,
+                                                  float cameraZ, float maxDistance) {
+        int[] out = new int[entryCount * COMMAND_INTS];
+        for (int i = entryStart; i < entryStart + entryCount; i++) {
+            Entry e = table.entries[i];
+            if (e.dictIndex < 0 || e.dictIndex >= table.remap.length) {
+                continue;
+            }
+            int frameIndex = table.remap[e.dictIndex];
+            if (frameIndex < 0) {
+                continue;
+            }
+            if (!maskAllows(table, e)) {
+                continue;
+            }
+            if (!isVisible(planes, cameraX, cameraY, cameraZ, maxDistance, e)) {
+                continue;
+            }
+            int slot = (i - entryStart) * COMMAND_INTS;
+            out[slot] = e.indexCount;
+            out[slot + 1] = 1;
+            out[slot + 2] = e.firstIndex;
+            out[slot + 3] = e.vertexOffset;
+            out[slot + 4] = frameIndex;
+        }
+        return out;
+    }
+
+    /**
+     * Drops the zero commands of a deterministic-slot list ({@code indexCount = 0} and
+     * {@code instanceCount = 0}), preserving slot order. A genuine command can never be
+     * a zero command: generation writes {@code instanceCount = 1} for every survivor.
+     */
+    public static int[] stripZeroCommands(int[] commands) {
+        int survivors = 0;
+        for (int i = 0; i + COMMAND_INTS <= commands.length; i += COMMAND_INTS) {
+            if (commands[i] != 0 || commands[i + 1] != 0) {
+                survivors++;
+            }
+        }
+        int[] out = new int[survivors * COMMAND_INTS];
+        int written = 0;
+        for (int i = 0; i + COMMAND_INTS <= commands.length; i += COMMAND_INTS) {
+            if (commands[i] != 0 || commands[i + 1] != 0) {
+                System.arraycopy(commands, i, out, written, COMMAND_INTS);
+                written += COMMAND_INTS;
+            }
+        }
+        return out;
     }
 
     /** The outcome of comparing a CPU canonical command list with a generated one. */

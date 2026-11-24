@@ -61,6 +61,13 @@ public class RenderListManager {
     private Viewport pendingViewport;
     private Viewport publishedViewport;
 
+    // The search distance the in-flight search was submitted with, and the one the published lists were
+    // searched with. Published at the same point as the visibility snapshot, so a consumer reading the
+    // two together (the GPU-culling census is the first) sees the distance of the very search that
+    // produced the lists being drawn, never of a later search still in flight.
+    private float pendingSearchDistance;
+    private float publishedSearchDistance;
+
     @Nullable
     private final SectionTicker sectionTicker;
 
@@ -110,6 +117,7 @@ public class RenderListManager {
         }
 
         this.lattice.ensureWindowCovers(viewport.getChunkCoord(), searchDistance);
+        this.pendingSearchDistance = searchDistance;
 
         this.submitSearch(frame, regionIdsLength, targetQueueSize, viewport, visitor ->
                 this.lattice.findVisible(visitor, viewport, searchDistance, regionIdsLength, useOcclusionCulling, true, frame));
@@ -125,6 +133,8 @@ public class RenderListManager {
         if (!this.shadow) {
             throw new IllegalStateException("startShadowGraphUpdate is for the shadow pass; use startGraphUpdate");
         }
+
+        this.pendingSearchDistance = searchDistance;
 
         this.submitSearch(frame, regionIdsLength, targetQueueSize, shadowViewport, visitor -> {
             this.lattice.ensureWindowCovers(shadowViewport.getChunkCoord(), searchDistance);
@@ -213,6 +223,7 @@ public class RenderListManager {
                 // reader that observes the new frame also observes the snapshot produced for it.
                 this.visibilitySnapshot = this.pendingVisibilitySnapshot;
                 this.pendingVisibilitySnapshot = null;
+                this.publishedSearchDistance = this.pendingSearchDistance;
 
                 this.lastUpdatedFrame = this.pendingLastUpdatedFrame;
                 this.publishedViewport = this.pendingViewport;
@@ -259,6 +270,25 @@ public class RenderListManager {
 
     public boolean isSectionVisible(int x, int y, int z) {
         return this.visibilitySnapshot.isSectionVisible(x, y, z, this.lastUpdatedFrame);
+    }
+
+    /**
+     * The visibility snapshot of the search that produced the currently published lists, for consumers
+     * that transcribe the culler's visible set themselves (the GPU-culling mask supply is the first).
+     * Read it together with {@link #getLastUpdatedFrame()}: the snapshot's stamps are only meaningful
+     * against the frame of the search that produced it.
+     */
+    public SectionLattice.VisibilitySnapshot getVisibilitySnapshot() {
+        return this.visibilitySnapshot;
+    }
+
+    /**
+     * The search distance, in blocks, of the search that produced the currently published lists
+     * (0 when no search has published yet). Published together with the visibility snapshot;
+     * see {@link #getVisibilitySnapshot()}.
+     */
+    public float getPublishedSearchDistance() {
+        return this.publishedSearchDistance;
     }
 
     public void tickVisibleRenders() {

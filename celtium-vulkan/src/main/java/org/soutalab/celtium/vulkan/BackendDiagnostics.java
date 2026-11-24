@@ -19,10 +19,10 @@ final class BackendDiagnostics {
     String verificationSummary() {
         return "celtium/device[dynamicRendering="
                 + (b.context != null && b.context.dynamicRenderingSupported()) + "] "
-                + "celtium/clears[" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearCensus() + "] "
-                + "celtium/lists[" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.listCensus() + "] "
-                + "celtium/attrib[" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.attribCensus() + "] "
-                + "celtium/legacyListRuns[" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.legacyListCensus() + "] "
+                + "celtium/clears[" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearCensus() + "] "
+                + "celtium/lists[" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.listCensus() + "] "
+                + "celtium/attrib[" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.attribCensus() + "] "
+                + "celtium/legacyListRuns[" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.legacyListCensus() + "] "
                 + "celtium/vulkan-check passes=" + b.terrainStatistics.passSubmissions() + " skipped=" + b.terrainStatistics.passSkips() + " errors="
                 + b.terrainStatistics.passErrors() + " lastDraw=" + b.terrainStatistics.lastDrawCommands() + " lastSections=" + b.terrainStatistics.lastSectionsDrawn()
                 + " skipReason=" + (b.terrainStatistics.lastSkipReason() == null ? "none" : b.terrainStatistics.lastSkipReason().replace(' ', '_'))
@@ -140,7 +140,7 @@ final class BackendDiagnostics {
                 // The two halves that decide whether the bias can fire at all: the call reaching the stub, and the
                 // enable bit. acceptance measured 0 groups with the break overlay present, so one of these is false
                 // and the pair says which without another round of guessing.
-                + " polygonOffsetCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.polygonOffsetCallCount()
+                + " polygonOffsetCalls=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.polygonOffsetCallCount()
                 // Every bracket's open count, enabled or not: an empty framePassSplit cannot say whether a bracket
                 // ran, and the missing HUD turns on exactly that (GuiIngameMixin's `gui` bracket against a HUD that may
                 // never be drawn).
@@ -181,8 +181,8 @@ final class BackendDiagnostics {
                 + " nonAddBlendEquationGroups=" + b.immediateStatistics.nonAddBlendEquationGroups()
                 + " scissorBoundarySplits=" + b.immediateStatistics.scissorBoundarySplits()
                 + " lightParamBoundarySplits=" + b.immediateStatistics.lightParamBoundarySplits()
-                + " scissorCalls=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorCallCount()
-                + " scissorToggles=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.scissorToggleCount()
+                + " scissorCalls=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.scissorCallCount()
+                + " scissorToggles=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.scissorToggleCount()
                 + " scissorCapturedGroups=" + b.immediateStatistics.scissorCapturedGroups()
                 + " scissorLateCapturedGroups=" + b.immediateStatistics.scissorLateCapturedGroups()
                 + " alphaFuncGroups=" + b.immediateStatistics.alphaFuncGroups()
@@ -307,6 +307,7 @@ final class BackendDiagnostics {
                 + " clearOrderZeroMask=" + b.clearOrderFlushesZeroMask
                 + " clearOrderSkipped=" + b.clearOrderSkipped + " clearOrderNoTargetMask=" + b.clearOrderNoTargetMask
                 + " mainClearsQueued=" + b.mainClearsQueuedCount()
+                + " mainClearsRescued=" + b.mainClearsRescuedCount()
                 + " mainClearRefusals=[" + b.mainClearRefusalSummary() + "]"
                 + " flushReasons=[" + b.flushReasonSummary() + " flushSiteCounts=" + b.flushSiteSummary() + "]"
                 + " offTargetByTarget=[" + b.offTargetSummary() + "] offTargetTargets=" + b.targetStatistics.offTargetTargetsCreated()
@@ -366,17 +367,17 @@ final class BackendDiagnostics {
                 // which without a log. Surfaced here and not in b.diagnostics(): that list is not part of the report.
                 + " gameClearLatch=" + (b.celtium$gameClearLatchEnabled() ? "on" : "off")
                 + " presentedMean=" + (b.swapchain != null ? b.swapchain.lastPresentedMean() : -1.0f)
-                + " swapPointCalls=" + b.swapPointCalls
-                + " swapPointMillis=" + (b.swapPointNanos / 1000000L)
-                + " swapPointFlushMillis=" + (b.swapPointFlushNanos / 1000000L)
-                + " swapPointWorstMs=" + (b.swapPointWorstNanos / 1000000L)
+                + " swapPointCalls=" + b.presentSwapchain.swapPointCalls
+                + " swapPointMillis=" + (b.presentSwapchain.swapPointNanos / 1000000L)
+                + " swapPointFlushMillis=" + (b.presentSwapchain.swapPointFlushNanos / 1000000L)
+                + " swapPointWorstMs=" + (b.presentSwapchain.swapPointWorstNanos / 1000000L)
                 + " presentStages[" + (b.swapchain != null
                         ? org.soutalab.celtium.vulkan.VulkanSwapchain.presentStageSummary() : "none") + "]"
-                + " swapPointImageMillis=" + (b.swapPointImageNanos / 1000000L)
-                + " swapPointImageMs[p50/p95/worst=" + b.celtium$distribution(b.swapPointImageRing, b.swapPointImageRingCount) + "]"
+                + " swapPointImageMillis=" + (b.presentSwapchain.swapPointImageNanos / 1000000L)
+                + " swapPointImageMs[p50/p95/worst=" + b.celtium$distribution(b.presentSwapchain.swapPointImageRing, b.presentSwapchain.swapPointImageRingCount) + "]"
                 + " submitToFenceMs[p50/p95/worst=" + b.celtium$distribution(b.submitToFenceRing, b.submitToFenceRingCount) + "]"
-                + " swapPointDumpMillis=" + (b.swapPointDumpNanos / 1000000L)
-                + " swapPointPollMillis=" + (b.swapPointPollNanos / 1000000L)
+                + " swapPointDumpMillis=" + (b.presentSwapchain.swapPointDumpNanos / 1000000L)
+                + " swapPointPollMillis=" + (b.presentSwapchain.swapPointPollNanos / 1000000L)
                 + " presentMarkerExpected=170.0_magenta_1_0_1"
                 + " fogModeSource=native-owner"
                 // The lit ITEM family's fog: 0 lit-fog groups with a 256-byte block means the fix is compiled but never
@@ -439,7 +440,7 @@ final class BackendDiagnostics {
                 // The animation announcement's one-shot skip: a patch whose capture the announcement made
                 // unnecessary. It is a saving, not a loss, so it is counted beside the fills it replaces.
                 + " announcedCaptureSkips="
-                + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$announcedCaptureSkips()
+                + org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$announcedCaptureSkips()
                 + " textureCopiesServed=" + b.textureCopyService.textureCopiesServed()
                 + " textureCopiesRefused=" + b.textureCopyService.textureCopiesRefused()
                 + " textureCopiesReusedInFrame=" + b.textureCopyService.textureCopiesReusedInFrame()

@@ -124,6 +124,20 @@ public abstract class RenderSectionManager {
     /** Bounded report counter for the terrain pass reaching the backend. */
     private int celtium$layerReports;
 
+    /**
+     * Opt-in ({@code -Dceltium.debug.deferEmptyCommitCensus=true}, default off) counter for empty
+     * commit vs deferral decisions in {@link #onSectionAdded} and {@link #submitRebuildTasks}.
+     * The item-683 deferral itself is unconditional since the main landing (the former
+     * {@code celtium.terrain.deferUnarrivedEmptyCommit} switch is retired); this census only
+     * observes the decisions.
+     */
+    private final boolean deferEmptyCommitCensus = Boolean.getBoolean("celtium.debug.deferEmptyCommitCensus");
+    private long deferCensusAddEmptyFinal;
+    private long deferCensusAddDeferred;
+    private long deferCensusSubmitEmptyFinal;
+    private long deferCensusSubmitDeferred;
+    private long deferCensusEvents;
+
     private final Set<TerrainRenderPass> disabledRenderPasses;
 
     private final int minSection, maxSection;
@@ -599,6 +613,32 @@ public abstract class RenderSectionManager {
         return true;
     }
 
+    private void recordDeferEmptyCensus(boolean addPath, boolean deferred) {
+        if (addPath) {
+            if (deferred) {
+                this.deferCensusAddDeferred++;
+            } else {
+                this.deferCensusAddEmptyFinal++;
+            }
+        } else if (deferred) {
+            this.deferCensusSubmitDeferred++;
+        } else {
+            this.deferCensusSubmitEmptyFinal++;
+        }
+        if (++this.deferCensusEvents % 1000L == 0L) {
+            this.logDeferEmptyCensus("window");
+        }
+    }
+
+    private void logDeferEmptyCensus(String phase) {
+        System.out.println("[Celtium] CELTIUM_DEFER_EMPTY_CENSUS phase=" + phase
+                + " enabled=true"
+                + " addEmptyFinal=" + this.deferCensusAddEmptyFinal
+                + " addDeferred=" + this.deferCensusAddDeferred
+                + " submitEmptyFinal=" + this.deferCensusSubmitEmptyFinal
+                + " submitDeferred=" + this.deferCensusSubmitDeferred);
+    }
+
     public void onSectionAdded(int x, int y, int z) {
         long key = PositionUtil.packSection(x, y, z);
 
@@ -619,10 +659,17 @@ public abstract class RenderSectionManager {
 
         this.invalidateCachedSectionData(renderSection);
 
-        if (this.isSectionVisuallyEmpty(x, y, z) && this.isSectionAddedEmptyFinal(renderSection)) {
+        boolean visuallyEmpty = this.isSectionVisuallyEmpty(x, y, z);
+        if (visuallyEmpty && this.isSectionAddedEmptyFinal(renderSection)) {
+            if (this.deferEmptyCommitCensus) {
+                this.recordDeferEmptyCensus(true, false);
+            }
             this.onSectionAddedAsEmpty(renderSection);
             this.updateSectionInfo(renderSection, RenderSection.EMPTY_DATA);
         } else {
+            if (visuallyEmpty && this.deferEmptyCommitCensus) {
+                this.recordDeferEmptyCensus(true, true);
+            }
             // Either the section has content, or its empty verdict is not final: the data behind
             // it has not arrived yet, so committing EMPTY_DATA here would mark it built with no
             // geometry and no path back (section-add is a no-op for sections that already exist,
@@ -699,7 +746,14 @@ public abstract class RenderSectionManager {
         Object view = this.isInShadowPass()
                 ? SectionRenderDataStorage.BatchCacheParams.SHADOW_VIEW
                 : SectionRenderDataStorage.BatchCacheParams.DEFAULT_VIEW;
-        this.terrainBackend.render(matrices, this.getCurrentRenderListManager().getRenderLists(), pass,
+        var listManager = this.getCurrentRenderListManager();
+        // The search context of the lists about to be drawn, for backends that consume the culler's
+        // visible set directly (the GPU-culling census is the first). Noted here, after the graph
+        // updates above have published, so the snapshot and distance are the ones that produced
+        // these very lists.
+        this.terrainBackend.noteSearchContext(listManager.getVisibilitySnapshot(),
+                listManager.getLastUpdatedFrame(), listManager.getPublishedSearchDistance());
+        this.terrainBackend.render(matrices, listManager.getRenderLists(), pass,
                 occlusionCamera, camera, view, isDebugInfoShown());
     }
 
@@ -1149,6 +1203,9 @@ public abstract class RenderSectionManager {
                     section.lastCameraZ = this.cameraPosition.z;
                 }
             } else if (!this.isRebuildDataFinal(section)) {
+                if (this.deferEmptyCommitCensus) {
+                    this.recordDeferEmptyCensus(false, true);
+                }
                 // The task factory found nothing to build because the section's data has not arrived
                 // yet, not because the section is empty. Committing a fabricated EMPTY result here
                 // would mark the section built with no geometry and no path back: the pending update
@@ -1162,6 +1219,9 @@ public abstract class RenderSectionManager {
                 section.setLastSubmittedFrame(frame);
                 continue;
             } else {
+                if (this.deferEmptyCommitCensus) {
+                    this.recordDeferEmptyCensus(false, false);
+                }
                 var result = new ChunkJobResult.Success<>(new ChunkBuildOutput(section, RenderSection.EMPTY_DATA, Reference2ReferenceMaps.emptyMap(), frame), -1);
                 this.buildResults.add(result);
 
@@ -1250,6 +1310,10 @@ public abstract class RenderSectionManager {
         failure = destroyStage(failure, this.terrainBackend::delete);
 
         this.sectionsWithGlobalEntities.clear();
+
+        if (this.deferEmptyCommitCensus && this.deferCensusEvents > 0L) {
+            this.logDeferEmptyCensus("destroy");
+        }
 
         if (failure != null) {
             throw failure;

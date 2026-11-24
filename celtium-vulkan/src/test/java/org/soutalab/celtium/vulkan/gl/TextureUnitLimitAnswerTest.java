@@ -21,22 +21,22 @@ class TextureUnitLimitAnswerTest {
 
     @Test
     void textureUnitLimitsAreOneStoryOnEveryPname() throws Exception {
-        var ctor = CeltiumGlStub.class.getDeclaredConstructor();
+        var ctor = GlsmFrontend.class.getDeclaredConstructor();
         ctor.setAccessible(true);
-        var installed = CeltiumGlStub.class.getDeclaredField("installed");
+        var installed = GlsmFrontend.class.getDeclaredField("installed");
         installed.setAccessible(true);
         Object previous = installed.get(null);
         installed.set(null, ctor.newInstance());
         try {
-            assertEquals(32, CeltiumGlStub.celtium$getInteger(0x8872),
+            assertEquals(32, GlsmFrontend.celtium$getInteger(0x8872),
                     "GL_MAX_TEXTURE_IMAGE_UNITS - the binding ledger's size");
-            assertEquals(32, CeltiumGlStub.celtium$getInteger(0x8B4C),
+            assertEquals(32, GlsmFrontend.celtium$getInteger(0x8B4C),
                     "GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS - the pipeline binds vertex-stage samplers too");
-            assertEquals(64, CeltiumGlStub.celtium$getInteger(0x8F39),
+            assertEquals(64, GlsmFrontend.celtium$getInteger(0x8F39),
                     "GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS - per-stage x the two stages served");
-            assertEquals(64, CeltiumGlStub.celtium$getInteger(0x8B4D),
+            assertEquals(64, GlsmFrontend.celtium$getInteger(0x8B4D),
                     "the LWJGL2 GL20 combined constant (35661) - the pname GLSM's cache sizing sends");
-            assertEquals(Integer.MIN_VALUE, CeltiumGlStub.celtium$getInteger(0x8C29),
+            assertEquals(Integer.MIN_VALUE, GlsmFrontend.celtium$getInteger(0x8C29),
                     "GL_MAX_GEOMETRY_TEXTURE_IMAGE_UNITS stays unanswered - geometry is not lowered");
         } finally {
             installed.set(null, previous);

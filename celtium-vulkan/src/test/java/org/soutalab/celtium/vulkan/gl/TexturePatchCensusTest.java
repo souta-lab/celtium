@@ -11,7 +11,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@link CeltiumGlStub#textureCaptureSummary()} must accurately report patch keys and branch counts without boxed
+ * {@link GlsmFrontend#textureCaptureSummary()} must accurately report patch keys and branch counts without boxed
  * per-patch map entries.
  */
 class TexturePatchCensusTest {
@@ -21,15 +21,15 @@ class TexturePatchCensusTest {
 
     @Test
     void reportsPatchKeysAndBranchesAcrossPasteAndLoneUploads() throws Exception {
-        var ctor = CeltiumGlStub.class.getDeclaredConstructor();
+        var ctor = GlsmFrontend.class.getDeclaredConstructor();
         ctor.setAccessible(true);
-        CeltiumGlStub stub = ctor.newInstance();
-        Method dispatch = CeltiumGlStub.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+        GlsmFrontend stub = ctor.newInstance();
+        Method dispatch = GlsmFrontend.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
         dispatch.setAccessible(true);
-        Field idsField = CeltiumGlStub.class.getDeclaredField("IDS");
+        Field idsField = GlsmFrontend.class.getDeclaredField("IDS");
         idsField.setAccessible(true);
         Map<?, ?> ids = (Map<?, ?>) idsField.get(null);
-        Field installedField = CeltiumGlStub.class.getDeclaredField("installed");
+        Field installedField = GlsmFrontend.class.getDeclaredField("installed");
         installedField.setAccessible(true);
         Object previous = installedField.get(null);
         installedField.set(null, stub);
@@ -52,7 +52,7 @@ class TexturePatchCensusTest {
             invoke(dispatch, stub, ids, "glTexSubImage2D", GL_TEXTURE_2D, 0, 2, 3, 1, 1, GL_RGBA,
                     GL_UNSIGNED_BYTE, MemoryUtil.memAddress(patch));
 
-            String summary = CeltiumGlStub.textureCaptureSummary();
+            String summary = GlsmFrontend.textureCaptureSummary();
             assertTrue(summary.contains("10.0=2[4x4@0,0]"), "expected paste key census in: " + summary);
             assertTrue(summary.contains("11.0=1[1x1@2,3]"), "expected lone key census in: " + summary);
             assertTrue(summary.contains("branches={lone=1, paste=2}"), "expected branch counts in: " + summary);
@@ -63,7 +63,7 @@ class TexturePatchCensusTest {
         }
     }
 
-    private static void invoke(Method dispatch, CeltiumGlStub stub, Map<?, ?> ids, String name, long... args)
+    private static void invoke(Method dispatch, GlsmFrontend stub, Map<?, ?> ids, String name, long... args)
             throws Exception {
         long[] c = new long[16];
         System.arraycopy(args, 0, c, 0, args.length);

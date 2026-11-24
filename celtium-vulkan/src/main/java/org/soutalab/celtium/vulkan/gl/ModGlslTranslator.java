@@ -86,7 +86,8 @@ public final class ModGlslTranslator {
     public record Result(String vertex, String fragment, List<Attribute> attributes, List<UniformMember> uniforms,
                          int uniformBlockSize, List<SamplerBinding> samplers, List<ImageBinding> images, List<String> varyings,
                          int fragOutputCount, boolean uniformsViaBuffer, Map<String, float[]> uniformDefaults,
-                         String failure) {
+                         String failure, String regionOffsetMember, List<String> sharedPerFrameMembers,
+                         List<UniformMember> extractedUniforms) {
         public boolean ok() {
             return this.failure == null;
         }
@@ -225,7 +226,7 @@ public final class ModGlslTranslator {
             return translateOrThrow(vertexSource, fragmentSource);
         } catch (IllegalArgumentException outside) {
             return new Result(null, null, List.of(), List.of(), 0, List.of(), List.of(), List.of(), 0, false,
-                    Map.of(), outside.getMessage());
+                    Map.of(), outside.getMessage(), null, List.of(), List.of());
         }
     }
 
@@ -399,6 +400,67 @@ public final class ModGlslTranslator {
             }
         }
 
+        // GLSM stage 1 (glsm-stage1-design.md §2.2/§2.3), behind -Dceltium.vulkan.glsmPackState and
+        // only on the buffer route, whose programs are the pack terrain programs this stage targets:
+        // the REGION member leaves the block for the indexed SSBO table the built-in route already
+        // proves (CeltiumRegionOffsets, binding after the block's own), and PER_FRAME standard
+        // members leave for the one shared block every program declares identically (binding after
+        // the table). The pipeline declares the same binding arithmetic. Extracted members stay in
+        // the reported interface as Result.extractedUniforms, so the registry still maps their
+        // locations and records their values - the values are what the harvester packs and what a
+        // region write records - they simply own no block bytes any more. A member the block-rename
+        // pass above claimed (its name collides with an input/output) is not extracted: its body
+        // references no longer spell the plain name this pass would rewrite.
+        String glsmRegionMember = null;
+        List<String> glsmSharedPerFrame = new ArrayList<>();
+        List<UniformMember> glsmExtracted = new ArrayList<>();
+        boolean glsmFragmentRegion = false;
+        if (GlsmPackState.ENABLED && uniformsViaBuffer) {
+            for (UniformMember m : members) {
+                GlsmPackState.Bucket bucket = GlsmPackState.classify(m.name(), m.type(), m.arrayLength());
+                if (bucket == GlsmPackState.Bucket.REGION && glsmRegionMember == null
+                        && !uniformBlockRenames.containsKey(m.name())) {
+                    glsmRegionMember = m.name();
+                } else if (bucket == GlsmPackState.Bucket.PER_FRAME
+                        && !uniformBlockRenames.containsKey(m.name())) {
+                    glsmSharedPerFrame.add(m.name());
+                } else if (GlsmPackState.isRegionName(m.name())) {
+                    // A region-named member whose shape or rename state refused extraction: counted,
+                    // never silently left as a permanent fallback - the stage's exit condition reads this.
+                    GlsmPackState.noteRegionUnextractable();
+                }
+            }
+            if (glsmRegionMember != null || !glsmSharedPerFrame.isEmpty()) {
+                if (glsmRegionMember != null) {
+                    vertex = renameUniformReferences(vertex, vertexDecls,
+                            Map.of(glsmRegionMember, "celtium_regionOffset()"));
+                    final String regionMemberForLambda = glsmRegionMember;
+                    boolean fragmentDeclares = fragmentDecls.stream().anyMatch(
+                            d -> "uniform".equals(d.qualifier) && glName(d.name).equals(regionMemberForLambda));
+                    if (fragmentDeclares) {
+                        fragment = renameUniformReferences(fragment, fragmentDecls,
+                                Map.of(glsmRegionMember, "celtium_v_regionOffset"));
+                        glsmFragmentRegion = true;
+                    }
+                    GlsmPackState.noteRegionExtracted();
+                }
+                List<UniformMember> kept = new ArrayList<>();
+                int keptOffset = 0;
+                for (UniformMember m : members) {
+                    if (m.name().equals(glsmRegionMember) || glsmSharedPerFrame.contains(m.name())) {
+                        glsmExtracted.add(m);
+                        continue;
+                    }
+                    int[] layout = std140(m.type(), m.arrayLength());
+                    keptOffset = align(keptOffset, layout[0]);
+                    kept.add(new UniformMember(m.name(), m.type(), m.arrayLength(), keptOffset, layout[1]));
+                    keptOffset += layout[1];
+                }
+                members = kept;
+                blockSize = align(keptOffset, 16);
+            }
+        }
+
         List<Attribute> attributes = new ArrayList<>();
         Map<String, Declaration> vertexAttributes = new LinkedHashMap<>();
         java.util.BitSet attributeLocations = new java.util.BitSet();
@@ -461,7 +523,28 @@ public final class ModGlslTranslator {
                     .append(image.type).append(' ').append(glslName(image.name)).append(";\n");
         }
 
-        StringBuilder vs = new StringBuilder("#version 450\n").append(common);
+        // GLSM stage 1 headers: the shared per-frame block rides in the common header (both stages
+        // declare it identically, at the binding after the region table's), and the region table
+        // itself is vertex-only, exactly as the built-in route declares its binding-5 array. The
+        // shared block declares the full standard member set in the classification's fixed order -
+        // the layout GlsmPackState packs - whether or not this program reads every member.
+        if (!glsmSharedPerFrame.isEmpty()) {
+            common.append("layout(set = 0, binding = ").append(samplers.size() + images.size() + 2)
+                    .append(", std140) uniform CeltiumPerFrame {\n");
+            for (Map.Entry<String, String> member : GlsmPackState.PER_FRAME_MEMBERS.entrySet()) {
+                common.append("    ").append(member.getValue()).append(' ').append(member.getKey()).append(";\n");
+            }
+            common.append("};\n");
+        }
+        StringBuilder glsmVertexHeader = new StringBuilder();
+        if (glsmRegionMember != null) {
+            glsmVertexHeader.append("layout(std430, set = 0, binding = ")
+                    .append(samplers.size() + images.size() + 1)
+                    .append(") readonly buffer CeltiumRegionOffsets {\n    vec4 celtium_regionOffsets[];\n};\n")
+                    .append("vec3 celtium_regionOffset() { return celtium_regionOffsets[gl_InstanceIndex].xyz; }\n");
+        }
+
+        StringBuilder vs = new StringBuilder("#version 450\n").append(common).append(glsmVertexHeader);
         for (Attribute a : attributes) {
             vs.append("layout(location = ").append(a.location).append(") in ").append(a.type).append(' ')
                     .append(a.name).append(";\n");
@@ -563,6 +646,17 @@ public final class ModGlslTranslator {
             }
         }
 
+        // GLSM stage 1: a fragment stage that reads the region offset gets it through a flat varying
+        // the vertex stage fills from the table - the interface contract's own shape (the offset is
+        // vertex-supplied; fragment consumption travels by varying). Its location is claimed after
+        // every program varying, so it can never renumber one.
+        if (glsmFragmentRegion) {
+            int regionVaryingLocation = claimLocation(varyingLocations, -1, 1, "celtium region varying");
+            vs.append("layout(location = ").append(regionVaryingLocation)
+                    .append(") flat out vec3 celtium_v_regionOffset;\n");
+            fs.append("layout(location = ").append(regionVaryingLocation)
+                    .append(") flat in vec3 celtium_v_regionOffset;\n");
+        }
         vertex = renameMain(vertex, "vertex");
         fragment = renameMain(fragment, "fragment");
         fragment = FRAG_DATA0_PATTERN.matcher(
@@ -582,7 +676,9 @@ public final class ModGlslTranslator {
         vertex = lowerTextureCalls(lowerShadowCalls(guardFractionalPow(vertex)));
         fragment = lowerTextureCalls(lowerShadowCalls(guardFractionalPow(fragment)));
 
-        vs.append(vertex).append("\nvoid main() {\n    celtium_user_main();\n")
+        vs.append(vertex).append("\nvoid main() {\n")
+                .append(glsmFragmentRegion ? "    celtium_v_regionOffset = celtium_regionOffset();\n" : "")
+                .append("    celtium_user_main();\n")
                 // GL's clip depth is [-1, 1], Vulkan's [0, 1]. y is not flipped: like every other pass here the image
                 // keeps GL's row order (VulkanTerrainGpuBackend.remapClipDepth remaps depth only).
                 .append("    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;\n}\n");
@@ -591,7 +687,9 @@ public final class ModGlslTranslator {
                 Collections.unmodifiableList(members), blockSize, Collections.unmodifiableList(samplers),
                 Collections.unmodifiableList(images),
                 Collections.unmodifiableList(varyings), fragOutputCount, uniformsViaBuffer,
-                Collections.unmodifiableMap(uniformDefaults), null);
+                Collections.unmodifiableMap(uniformDefaults), null, glsmRegionMember,
+                Collections.unmodifiableList(glsmSharedPerFrame),
+                Collections.unmodifiableList(glsmExtracted));
     }
 
     /**
@@ -1728,6 +1826,76 @@ public final class ModGlslTranslator {
             """;
 
     /**
+     * Opt-in ({@code -Dceltium.vulkan.fractionalPowGuard.fastSqrt=true}, default off) fast-path
+     * overloads for uniform {@code 0.5} and {@code 0.25} constant exponents. They preserve the
+     * exact non-positive and NaN semantics of {@link #POW_GUARD_HELPERS} (zero, negative, or NaN
+     * base yields {@code 0.0} before {@code sqrt} runs), while replacing the general
+     * {@code exp2(e * log2(x))} lowering with one or two hardware {@code sqrt} instructions.
+     */
+    private static final String POW_GUARD_FAST_SQRT_HELPERS = """
+            float celtium_pow_guard_half(float celtium_base, float celtium_exp) {
+                return celtium_base > 0.0 ? sqrt(celtium_base) : 0.0;
+            }
+            vec2 celtium_pow_guard_half(vec2 celtium_base, vec2 celtium_exp) {
+                return sqrt(mix(vec2(0.0), celtium_base, greaterThan(celtium_base, vec2(0.0))));
+            }
+            vec3 celtium_pow_guard_half(vec3 celtium_base, vec3 celtium_exp) {
+                return sqrt(mix(vec3(0.0), celtium_base, greaterThan(celtium_base, vec3(0.0))));
+            }
+            vec4 celtium_pow_guard_half(vec4 celtium_base, vec4 celtium_exp) {
+                return sqrt(mix(vec4(0.0), celtium_base, greaterThan(celtium_base, vec4(0.0))));
+            }
+            vec2 celtium_pow_guard_half(vec2 celtium_base, float celtium_exp) {
+                return celtium_pow_guard_half(celtium_base, vec2(celtium_exp));
+            }
+            vec3 celtium_pow_guard_half(vec3 celtium_base, float celtium_exp) {
+                return celtium_pow_guard_half(celtium_base, vec3(celtium_exp));
+            }
+            vec4 celtium_pow_guard_half(vec4 celtium_base, float celtium_exp) {
+                return celtium_pow_guard_half(celtium_base, vec4(celtium_exp));
+            }
+            vec2 celtium_pow_guard_half(float celtium_base, vec2 celtium_exp) {
+                return celtium_pow_guard_half(vec2(celtium_base), celtium_exp);
+            }
+            vec3 celtium_pow_guard_half(float celtium_base, vec3 celtium_exp) {
+                return celtium_pow_guard_half(vec3(celtium_base), celtium_exp);
+            }
+            vec4 celtium_pow_guard_half(float celtium_base, vec4 celtium_exp) {
+                return celtium_pow_guard_half(vec4(celtium_base), celtium_exp);
+            }
+            float celtium_pow_guard_quarter(float celtium_base, float celtium_exp) {
+                return celtium_base > 0.0 ? sqrt(sqrt(celtium_base)) : 0.0;
+            }
+            vec2 celtium_pow_guard_quarter(vec2 celtium_base, vec2 celtium_exp) {
+                return sqrt(sqrt(mix(vec2(0.0), celtium_base, greaterThan(celtium_base, vec2(0.0)))));
+            }
+            vec3 celtium_pow_guard_quarter(vec3 celtium_base, vec3 celtium_exp) {
+                return sqrt(sqrt(mix(vec3(0.0), celtium_base, greaterThan(celtium_base, vec3(0.0)))));
+            }
+            vec4 celtium_pow_guard_quarter(vec4 celtium_base, vec4 celtium_exp) {
+                return sqrt(sqrt(mix(vec4(0.0), celtium_base, greaterThan(celtium_base, vec4(0.0)))));
+            }
+            vec2 celtium_pow_guard_quarter(vec2 celtium_base, float celtium_exp) {
+                return celtium_pow_guard_quarter(celtium_base, vec2(celtium_exp));
+            }
+            vec3 celtium_pow_guard_quarter(vec3 celtium_base, float celtium_exp) {
+                return celtium_pow_guard_quarter(celtium_base, vec3(celtium_exp));
+            }
+            vec4 celtium_pow_guard_quarter(vec4 celtium_base, float celtium_exp) {
+                return celtium_pow_guard_quarter(celtium_base, vec4(celtium_exp));
+            }
+            vec2 celtium_pow_guard_quarter(float celtium_base, vec2 celtium_exp) {
+                return celtium_pow_guard_quarter(vec2(celtium_base), celtium_exp);
+            }
+            vec3 celtium_pow_guard_quarter(float celtium_base, vec3 celtium_exp) {
+                return celtium_pow_guard_quarter(vec3(celtium_base), celtium_exp);
+            }
+            vec4 celtium_pow_guard_quarter(float celtium_base, vec4 celtium_exp) {
+                return celtium_pow_guard_quarter(vec4(celtium_base), celtium_exp);
+            }
+            """;
+
+    /**
      * {@return whether the fractional-pow guard is switched on for this translation}. Read at every
      * translation rather than latched into a static: a program is translated when a mod links it, long
      * after the launch properties are set, and a per-call read leaves no initialization-order trap of
@@ -1736,6 +1904,24 @@ public final class ModGlslTranslator {
     private static boolean fractionalPowGuardEnabled() {
         return !"false".equalsIgnoreCase(
                 System.getProperty("celtium.vulkan.fractionalPowGuard", "true"));
+    }
+
+    /** {@return whether uniform {@code 0.5}/{@code 0.25} guarded pow calls use the {@code sqrt} fast path (default off)}. */
+    private static boolean fractionalPowGuardFastSqrtEnabled() {
+        return Boolean.getBoolean("celtium.vulkan.fractionalPowGuard.fastSqrt");
+    }
+
+    /** {@return whether each stage with guarded pow rewrites logs its rewrite counts (default off)}. */
+    private static boolean fractionalPowGuardCensusEnabled() {
+        return Boolean.getBoolean("celtium.vulkan.fractionalPowGuard.census");
+    }
+
+    private static final class PowRewriteStats {
+        int total;
+        int generalEmitted;
+        int fastSqrtEmitted;
+        int halfEligible;
+        int quarterEligible;
     }
 
     /**
@@ -1767,8 +1953,30 @@ public final class ModGlslTranslator {
         if (!fractionalPowGuardEnabled()) {
             return s;
         }
-        String rewritten = rewritePowCalls(s);
-        return rewritten.equals(s) ? s : POW_GUARD_HELPERS + rewritten;
+        boolean fastSqrt = fractionalPowGuardFastSqrtEnabled();
+        boolean census = fractionalPowGuardCensusEnabled();
+        PowRewriteStats stats = new PowRewriteStats();
+        String rewritten = rewritePowCalls(s, fastSqrt, census, stats);
+        if (stats.total == 0) {
+            return s;
+        }
+        if (census) {
+            System.out.println("[Celtium] CELTIUM_POW_GUARD_CENSUS total=" + stats.total
+                    + " halfEligible=" + stats.halfEligible
+                    + " quarterEligible=" + stats.quarterEligible
+                    + " generalEmitted=" + stats.generalEmitted
+                    + " fastSqrtEmitted=" + stats.fastSqrtEmitted
+                    + " fastSqrt=" + fastSqrt);
+        }
+        if (stats.fastSqrtEmitted == 0) {
+            return POW_GUARD_HELPERS + rewritten;
+        }
+        StringBuilder prefix = new StringBuilder();
+        if (stats.generalEmitted > 0) {
+            prefix.append(POW_GUARD_HELPERS);
+        }
+        prefix.append(POW_GUARD_FAST_SQRT_HELPERS);
+        return prefix.append(rewritten).toString();
     }
 
     /**
@@ -1777,7 +1985,7 @@ public final class ModGlslTranslator {
      * not the outer one qualifies. A call that does not qualify - and whose arguments no rewrite
      * touched - is copied out verbatim, comments and spacing included.
      */
-    private static String rewritePowCalls(String s) {
+    private static String rewritePowCalls(String s, boolean fastSqrt, boolean census, PowRewriteStats stats) {
         String scan = stripComments(s);
         Matcher m = POW_CALL_PATTERN.matcher(scan);
         StringBuilder out = null;
@@ -1795,7 +2003,7 @@ public final class ModGlslTranslator {
             List<String> args = new ArrayList<>(rawArgs.size());
             boolean argsChanged = false;
             for (String arg : rawArgs) {
-                String rewrittenArg = rewritePowCalls(arg);
+                String rewrittenArg = rewritePowCalls(arg, fastSqrt, census, stats);
                 argsChanged |= !rewrittenArg.equals(arg);
                 args.add(rewrittenArg);
             }
@@ -1807,7 +2015,36 @@ public final class ModGlslTranslator {
                 out = new StringBuilder(s.length() + 64);
             }
             out.append(s, copied, m.start());
-            out.append(guard ? "celtium_pow_guard(" : "pow(");
+            if (guard) {
+                stats.total++;
+                String callPrefix = "celtium_pow_guard(";
+                if (fastSqrt || census) {
+                    if (isUniformConstantValue(rawArgs.get(1), 0.5)) {
+                        stats.halfEligible++;
+                        if (fastSqrt) {
+                            callPrefix = "celtium_pow_guard_half(";
+                            stats.fastSqrtEmitted++;
+                        } else {
+                            stats.generalEmitted++;
+                        }
+                    } else if (isUniformConstantValue(rawArgs.get(1), 0.25)) {
+                        stats.quarterEligible++;
+                        if (fastSqrt) {
+                            callPrefix = "celtium_pow_guard_quarter(";
+                            stats.fastSqrtEmitted++;
+                        } else {
+                            stats.generalEmitted++;
+                        }
+                    } else {
+                        stats.generalEmitted++;
+                    }
+                } else {
+                    stats.generalEmitted++;
+                }
+                out.append(callPrefix);
+            } else {
+                out.append("pow(");
+            }
             out.append(String.join(", ", args));
             out.append(')');
             copied = close + 1;
@@ -1818,6 +2055,36 @@ public final class ModGlslTranslator {
         }
         out.append(s, copied, s.length());
         return out.toString();
+    }
+
+    /**
+     * {@return whether {@code exponent} is a bare literal or {@code vecN} constructor whose
+     * component literals all equal {@code target}} (used for exact binary powers of two such as
+     * {@code 0.5} and {@code 0.25}).
+     */
+    private static boolean isUniformConstantValue(String exponent, double target) {
+        String t = exponent.strip();
+        Matcher ctor = EXPONENT_CONSTRUCTOR.matcher(t);
+        if (ctor.matches()) {
+            for (String part : splitDeclarators(ctor.group(2))) {
+                if (!isExactLiteralValue(part.strip(), target)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return isExactLiteralValue(t, target);
+    }
+
+    private static boolean isExactLiteralValue(String text, double target) {
+        if (!NUMBER_LITERAL.matcher(text).matches()) {
+            return false;
+        }
+        try {
+            return Double.parseDouble(text.replaceAll("[fF]$", "")) == target;
+        } catch (NumberFormatException notDecimal) {
+            return false;
+        }
     }
 
     /**

@@ -360,6 +360,8 @@ public final class BatchAssembler {
             int sectionIndex = sections[cursor] & 0xFF;
             long pMeshData = pBase + (sectionIndex * stride);
 
+            batch.beginSection(sectionIndex);
+
             int start = SectionRenderDataUnsafe.Strategy.COMPACT.getVertexOffset(pMeshData, firstFacing);
             int end = SectionRenderDataUnsafe.Strategy.COMPACT.getRunVertexEnd(pMeshData, lastFacing, primitiveType);
 
@@ -386,6 +388,8 @@ public final class BatchAssembler {
             long pMeshData = pBase + (sectionIndex * stride);
             int sectionStart = batch.size();
             int previousEnd = 0;
+
+            batch.beginSection(sectionIndex);
 
             for (int run = 0; run < runCount; run++) {
                 int firstFacing = runFirst(runs, run);
@@ -423,6 +427,8 @@ public final class BatchAssembler {
 
         for (int i = 0; i < sectionCount; i++, cursor += step) {
             int sectionIndex = sections[cursor] & 0xFF;
+
+            batch.beginSection(sectionIndex);
 
             int mask = getVisibleFaces(cameraX, cameraY, cameraZ,
                     originX + LocalSectionIndex.unpackX(sectionIndex),
@@ -465,6 +471,8 @@ public final class BatchAssembler {
 
         for (int i = 0; i < sectionCount; i++, cursor += step) {
             long pMeshData = pBase + ((sections[cursor] & 0xFF) * stride);
+
+            batch.beginSection(sections[cursor] & 0xFF);
 
             for (int facing = 0; facing < ModelQuadFacing.COUNT; facing++) {
                 // Unconditionally append; it skips empty commands automatically.

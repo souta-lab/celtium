@@ -7,6 +7,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.embeddedt.embeddium.impl.render.chunk.LocalSectionIndex;
+import org.embeddedt.embeddium.impl.render.chunk.occlusion.SectionLattice;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.*;
@@ -54,11 +56,23 @@ final class VulkanGpuTerrainCensus {
     private long queryPool;
     private boolean disabled;
     private boolean gatePrinted;
+    /** The pass stream this instance serves, printed on its lines; null = the camera stream. */
+    private final String streamLabel;
 
     private final Slot[] slots = new Slot[FrameSubmissionScheduler.FRAME_SLOTS];
 
     /** The frame currently being collected, and the one waiting for its dispatch. */
     private FrameCollection collecting;
+
+    /**
+     * The search context most recently noted through {@link #noteContext}: the snapshot, stamp
+     * frame and search distance of the search that produced the lists being drawn. Captured into
+     * each {@link FrameCollection} when its collection opens, so a frame is always judged against
+     * its own search even though its dispatch happens a frame later.
+     */
+    private SectionLattice.VisibilitySnapshot notedSnapshot;
+    private int notedVisibleFrame;
+    private float notedSearchDistance;
 
     // Cumulative census totals, printed every PRINT_EVERY_FRAMES harvested frames.
     private long framesHarvested;
@@ -117,18 +131,36 @@ final class VulkanGpuTerrainCensus {
         final float cameraX;
         final float cameraY;
         final float cameraZ;
+        /** The search context in force when this frame's collection opened; null snapshot when none was noted. */
+        final SectionLattice.VisibilitySnapshot snapshot;
+        final int visibleFrame;
+        final float searchDistance;
         final Map<String, PassCollection> passes = new LinkedHashMap<String, PassCollection>();
 
-        FrameCollection(long frameId, float[] planes, float cameraX, float cameraY, float cameraZ) {
+        FrameCollection(long frameId, float[] planes, float cameraX, float cameraY, float cameraZ,
+                        SectionLattice.VisibilitySnapshot snapshot, int visibleFrame, float searchDistance) {
             this.frameId = frameId;
             this.planes = planes;
             this.cameraX = cameraX;
             this.cameraY = cameraY;
             this.cameraZ = cameraZ;
+            this.snapshot = snapshot;
+            this.visibleFrame = visibleFrame;
+            this.searchDistance = searchDistance;
         }
     }
 
     VulkanGpuTerrainCensus(VulkanContext context) {
+        this(context, null);
+    }
+
+    /**
+     * @param streamLabel the pass stream this instance serves, printed on the census lines
+     *                    so two streams' output stays attributable; null for the original
+     *                    camera stream, whose lines keep their E10-a form
+     */
+    VulkanGpuTerrainCensus(VulkanContext context, String streamLabel) {
+        this.streamLabel = streamLabel;
         this.context = context;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkPhysicalDeviceProperties properties = VkPhysicalDeviceProperties.calloc(stack);
@@ -153,7 +185,10 @@ final class VulkanGpuTerrainCensus {
                     + " maxDrawIndirectCount=" + context.maxDrawIndirectCount()
                     + " capabilityGate=" + GpuTerrainCulling.capabilityGate(
                             context.drawIndirectCountEnabled(), false)
-                    + " mode=shadow-generation (E10-a: drawing unchanged)");
+                    + (this.streamLabel == null
+                            ? " mode=shadow-generation (E10-a: drawing unchanged)"
+                            : " mode=shadow-generation stream=" + this.streamLabel
+                                    + " (E10 shadow preparation: drawing unchanged)"));
         }
     }
 
@@ -185,7 +220,7 @@ final class VulkanGpuTerrainCensus {
             create.get(0).sType$Default().layout(this.pipelineLayout);
             create.get(0).stage().sType$Default().stage(VK_SHADER_STAGE_COMPUTE_BIT).module(module)
                     .pName(stack.UTF8("main"));
-            check(vkCreateComputePipelines(device, VK_NULL_HANDLE, create, null, handle),
+            check(PipelineCreateCensus.createComputeUncached(device, create, handle, "gpu-terrain-census"),
                     "create census compute pipeline");
             this.pipeline = handle.get(0);
         } finally {
@@ -200,12 +235,31 @@ final class VulkanGpuTerrainCensus {
         return this.disabled;
     }
 
+    /** The stream tag appended to this instance's lines, or empty for the camera stream. */
+    private String streamSuffix() {
+        return this.streamLabel == null ? "" : " stream=" + this.streamLabel;
+    }
+
     private void disable(String what, RuntimeException error) {
         if (!this.disabled) {
             this.disabled = true;
             System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_CENSUS_DISABLED at=" + what
-                    + " reason=" + error);
+                    + " reason=" + error + streamSuffix());
         }
+    }
+
+    /**
+     * Notes the search context of the lists now being drawn, forwarded by the backend from
+     * {@code TerrainGpuBackend.noteSearchContext}. The values belong to the search that
+     * produced those lists: its visibility snapshot is the occlusion mask's supply (design
+     * section 3.4) and its distance is the visibility test's limit, replacing the E10-a
+     * stand-ins (a collection-local all-ones mask and the property distance). A frame whose
+     * collection opens before any context was noted keeps the stand-ins.
+     */
+    void noteContext(SectionLattice.VisibilitySnapshot snapshot, int visibleFrame, float searchDistance) {
+        this.notedSnapshot = snapshot;
+        this.notedVisibleFrame = visibleFrame;
+        this.notedSearchDistance = searchDistance;
     }
 
     /**
@@ -215,6 +269,9 @@ final class VulkanGpuTerrainCensus {
      * The collection's population is the chain-eligible population — batches whose index
      * source is not the uniform shared one are counted as gate fallbacks and excluded from
      * both sides of the comparison, matching the population E10-b could ever generate for.
+     * Entries are section-granular where the batch retained the assembler's section tag for
+     * the command (the tag is what the E10-a record's deviation 1 was waiting on); a command
+     * without one keeps the region-granular entry.
      */
     void collect(String passName, long frameId, float[] viewProjection, double cameraX, double cameraY,
                  double cameraZ, org.embeddedt.embeddium.impl.render.chunk.region.RenderRegion region,
@@ -226,7 +283,8 @@ final class VulkanGpuTerrainCensus {
             if (this.collecting == null || this.collecting.frameId != frameId) {
                 this.collecting = new FrameCollection(frameId,
                         GpuTerrainDrawTable.extractPlanes(viewProjection),
-                        (float) cameraX, (float) cameraY, (float) cameraZ);
+                        (float) cameraX, (float) cameraY, (float) cameraZ,
+                        this.notedSnapshot, this.notedVisibleFrame, this.notedSearchDistance);
             }
             FrameCollection frame = this.collecting;
             PassCollection pass = frame.passes.get(passName);
@@ -246,8 +304,17 @@ final class VulkanGpuTerrainCensus {
             for (int i = 0, size = batch.size(); i < size; i++) {
                 int elementCount = batch.elementCount(i);
                 int baseVertex = batch.baseVertex(i);
-                pass.builder.add(new GpuTerrainDrawTable.Entry(elementCount, 0, baseVertex, dictIndex,
-                        region.getChunkX(), region.getChunkY(), region.getChunkZ(), flags));
+                int sectionTag = batch.sectionTag(i);
+                if (sectionTag >= 0) {
+                    pass.builder.add(new GpuTerrainDrawTable.Entry(elementCount, 0, baseVertex, dictIndex,
+                            region.getChunkX() + LocalSectionIndex.unpackX(sectionTag),
+                            region.getChunkY() + LocalSectionIndex.unpackY(sectionTag),
+                            region.getChunkZ() + LocalSectionIndex.unpackZ(sectionTag),
+                            flags | GpuTerrainDrawTable.FLAG_SECTION_BOX));
+                } else {
+                    pass.builder.add(new GpuTerrainDrawTable.Entry(elementCount, 0, baseVertex, dictIndex,
+                            region.getChunkX(), region.getChunkY(), region.getChunkZ(), flags));
+                }
                 pass.canonical.add(elementCount);
                 pass.canonical.add(1);
                 pass.canonical.add(0);
@@ -331,7 +398,8 @@ final class VulkanGpuTerrainCensus {
             this.computeNanosMax = Math.max(this.computeNanosMax, gpuNanos);
         }
         if (this.framesHarvested % PRINT_EVERY_FRAMES == 0) {
-            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_CENSUS frames=" + this.framesHarvested
+            System.out.println("[Celtium] CELTIUM_GPU_TERRAIN_CENSUS" + streamSuffix()
+                    + " frames=" + this.framesHarvested
                     + " entries=" + this.totalEntries
                     + " cpuCommands=" + this.totalCpuCommands
                     + " gpuCommands=" + this.totalGpuCommands
@@ -356,6 +424,7 @@ final class VulkanGpuTerrainCensus {
         int totalRemap = 0;
         int totalMaskWords = 0;
         for (PassCollection pass : passes) {
+            supplyLatticeMask(pass.builder, finished);
             GpuTerrainDrawTable.Table table = pass.builder.build();
             tables.add(table);
             totalEntries += table.entries.length;
@@ -412,6 +481,10 @@ final class VulkanGpuTerrainCensus {
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, this.pipeline);
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, this.pipelineLayout, 0,
                 stack.longs(slot.descriptorSet), null);
+        // The frame's own search distance is the visibility test's limit; the property value
+        // remains for a frame collected before any context was noted.
+        float maxDistance = finished.searchDistance > 0.0f
+                ? finished.searchDistance : GpuTerrainCulling.MAX_DISTANCE_BLOCKS;
         Pending pending = new Pending();
         pending.frameId = finished.frameId;
         pending.passCount = passes.size();
@@ -433,7 +506,7 @@ final class VulkanGpuTerrainCensus {
             push.putFloat(96, finished.cameraX);
             push.putFloat(100, finished.cameraY);
             push.putFloat(104, finished.cameraZ);
-            push.putFloat(108, GpuTerrainCulling.MAX_DISTANCE_BLOCKS);
+            push.putFloat(108, maxDistance);
             push.putInt(112, entryStart[p]);
             push.putInt(116, count);
             push.putInt(120, p);
@@ -453,6 +526,41 @@ final class VulkanGpuTerrainCensus {
                 VK_PIPELINE_STAGE_HOST_BIT, 0, barrier, null, null);
         slot.pending = pending;
         this.totalEntries += totalEntries;
+    }
+
+    /**
+     * Transcribes the frame's search snapshot into the builder's lattice mask (design
+     * section 3.4): one bit per lattice cell, set where the search that produced the frame's
+     * lists reached an installed section. Withheld when the frame has no usable snapshot
+     * (none noted, or an empty window) or when the pass's collection is not uniformly
+     * section-granular — the builder then keeps the E10-a dictionary mask, so a frame the
+     * culler cannot speak for is judged exactly as before this supply existed.
+     */
+    private void supplyLatticeMask(GpuTerrainDrawTable.Builder builder, FrameCollection frame) {
+        SectionLattice.VisibilitySnapshot snapshot = frame.snapshot;
+        if (snapshot == null || snapshot.dimX() <= 0 || !builder.allSectionGranular()) {
+            return;
+        }
+        int[] frames = snapshot.visibleFrames();
+        boolean[] installed = snapshot.installed();
+        int cells = frames.length;
+        int[] words = new int[GpuTerrainDrawTable.MASK_HEADER_WORDS + (cells + 31) / 32];
+        words[0] = snapshot.baseX();
+        words[1] = snapshot.baseY();
+        words[2] = snapshot.baseZ();
+        words[3] = snapshot.dimX();
+        words[4] = snapshot.dimY();
+        words[5] = snapshot.dimZ();
+        for (int i = 0; i < cells; i++) {
+            if (installed[i] && frames[i] >= frame.visibleFrame) {
+                words[GpuTerrainDrawTable.MASK_HEADER_WORDS + (i >>> 5)] |= 1 << (i & 31);
+            }
+        }
+        builder.latticeMask(words, snapshot.baseX(), snapshot.baseY(), snapshot.baseZ(),
+                snapshot.dimX(), snapshot.dimY(), snapshot.dimZ(),
+                GpuTerrainDrawTable.latticeGeneration(snapshot.baseX(), snapshot.baseY(),
+                        snapshot.baseZ(), snapshot.dimX(), snapshot.dimY(), snapshot.dimZ(),
+                        frame.visibleFrame));
     }
 
     private static int[] toIntArray(List<Integer> list) {

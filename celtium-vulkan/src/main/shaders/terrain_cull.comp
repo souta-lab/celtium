@@ -47,6 +47,7 @@ void main() {
     int vertexOffset = int(tableData[base + 2u]);
     int dictIndex = int(tableData[base + 3u]);
     ivec3 section = ivec3(int(tableData[base + 4u]), int(tableData[base + 5u]), int(tableData[base + 6u]));
+    uint flags = tableData[base + 7u];
 
     if (dictIndex < 0) {
         return;
@@ -55,12 +56,35 @@ void main() {
     if (frameIndex < 0) {
         return;
     }
-    uint maskWord = maskData[push.params2.y + (dictIndex >> 5)];
-    if ((maskWord & (1u << (dictIndex & 31))) == 0u) {
-        return;
+    // The mask segment opens with a six-word header: the lattice window's base section
+    // coordinates and dimensions, as int bit patterns. Zero dimensions mark the E10-a
+    // dictionary form (the bit is the dictionary index, past the header); otherwise the
+    // bit is the entry section's lattice index, interior cells only. Both readings are
+    // GpuTerrainDrawTable's reference mask test, word for word.
+    int maskBase = push.params2.y;
+    ivec3 maskDims = ivec3(int(maskData[maskBase + 3]), int(maskData[maskBase + 4]), int(maskData[maskBase + 5]));
+    if (maskDims.x == 0) {
+        uint maskWord = maskData[maskBase + 6 + (dictIndex >> 5)];
+        if ((maskWord & (1u << (dictIndex & 31))) == 0u) {
+            return;
+        }
+    } else {
+        ivec3 maskOrigin = ivec3(int(maskData[maskBase + 0]), int(maskData[maskBase + 1]), int(maskData[maskBase + 2]));
+        ivec3 cell = section - maskOrigin;
+        if (any(lessThan(cell, ivec3(1))) || any(greaterThan(cell, maskDims - 2))) {
+            return;
+        }
+        uint lattice = uint((cell.x * maskDims.z + cell.z) * maskDims.y + cell.y);
+        uint maskWord = maskData[maskBase + 6 + int(lattice >> 5)];
+        if ((maskWord & (1u << (lattice & 31u))) == 0u) {
+            return;
+        }
     }
+    // Flag bit 1 (GpuTerrainDrawTable.FLAG_SECTION_BOX): the entry names its own section
+    // and is culled by that section's box; without it the box is the whole region's.
     vec3 boxMin = vec3(section * 16);
-    if (!celtiumBoxVisible(boxMin, vec3(CELTIUM_REGION_SIZE_BLOCKS), push.planes, push.camera.xyz, push.camera.w)) {
+    vec3 boxSize = (flags & 2u) != 0u ? vec3(16.0) : vec3(CELTIUM_REGION_SIZE_BLOCKS);
+    if (!celtiumBoxVisible(boxMin, boxSize, push.planes, push.camera.xyz, push.camera.w)) {
         return;
     }
     uint slot = atomicAdd(countData[push.params.z], 1u);

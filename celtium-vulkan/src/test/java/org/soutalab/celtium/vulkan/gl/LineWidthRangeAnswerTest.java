@@ -25,28 +25,28 @@ class LineWidthRangeAnswerTest {
 
     @Test
     void theRangeMaxIsNotTheWidthCurrentlySet() throws Exception {
-        var ctor = CeltiumGlStub.class.getDeclaredConstructor();
+        var ctor = GlsmFrontend.class.getDeclaredConstructor();
         ctor.setAccessible(true);
-        CeltiumGlStub stub = ctor.newInstance();
-        Field installed = CeltiumGlStub.class.getDeclaredField("installed");
+        GlsmFrontend stub = ctor.newInstance();
+        Field installed = GlsmFrontend.class.getDeclaredField("installed");
         installed.setAccessible(true);
         Object previous = installed.get(null);
         installed.set(null, stub);
         FloatBuffer out = MemoryUtil.memAllocFloat(2);
         try {
-            CeltiumGlStub.celtium$lineWidth(4.0f);
+            GlsmFrontend.celtium$lineWidth(4.0f);
 
             // The state query still answers the width that was set - it is a state, not a range.
-            CeltiumGlStub.celtium$getFloats(GL_LINE_WIDTH, MemoryUtil.memAddress(out), false);
+            GlsmFrontend.celtium$getFloats(GL_LINE_WIDTH, MemoryUtil.memAddress(out), false);
             assertEquals(4.0f, out.get(0), "GL_LINE_WIDTH answers the set width");
 
-            CeltiumGlStub.celtium$getFloats(GL_ALIASED_LINE_WIDTH_RANGE, MemoryUtil.memAddress(out), false);
+            GlsmFrontend.celtium$getFloats(GL_ALIASED_LINE_WIDTH_RANGE, MemoryUtil.memAddress(out), false);
             assertEquals(1.0f, out.get(0), "the range starts at 1.0");
             assertEquals(1.0f, out.get(1),
                     "with no backend the range max is the 1.0 fallback - and never the set width (4.0),"
                             + " which is what the pre-fix answer reported");
 
-            CeltiumGlStub.celtium$getFloats(GL_LINE_WIDTH_RANGE, MemoryUtil.memAddress(out), false);
+            GlsmFrontend.celtium$getFloats(GL_LINE_WIDTH_RANGE, MemoryUtil.memAddress(out), false);
             assertEquals(1.0f, out.get(0), "the range starts at 1.0");
             assertEquals(1.0f, out.get(1), "GL_LINE_WIDTH_RANGE answers the same range as the aliased query");
         } finally {

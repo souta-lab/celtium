@@ -29,7 +29,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-STUB = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java'
+STUB = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/GlsmFrontend.java'
 JAR = ROOT / 'forge122/build/libs/celtium-forge-mc1.12.2-2.5.0-dev.jar'
 INTEROP_LIB = ROOT / 'celtium-interop/build/install/celtium-interop/lib'
 PRISM = Path('/home/s0u7a/.local/share/PrismLauncher/libraries')
@@ -46,7 +46,7 @@ import org.lwjgl.opengl.ARBShaderObjects;
  */
 public class Lwjgl3SurfaceCheck {
     public static void main(String[] args) throws Exception {
-        Class<?> stub = Class.forName("org.soutalab.celtium.vulkan.gl.CeltiumGlStub");
+        Class<?> stub = Class.forName("org.soutalab.celtium.vulkan.gl.GlsmFrontend");
         System.out.println("install " + (stub.getMethod("install").invoke(null) != null));
         GLCapabilities caps = GL.getCapabilities();
         System.out.println("capabilities " + (caps == null ? "null" : "present"));
@@ -104,7 +104,7 @@ def main():
     require('it returns this project\'s identity for glGetString rather than null',
             'IDENTITY' in native_transformer and 'glGetString' in native_transformer)
     require('the capabilities path that regressed the cohort is gone',
-            'ensureThreadCapabilities' not in (ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java').read_text(encoding='utf-8')
+            'ensureThreadCapabilities' not in (ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/GlsmFrontend.java').read_text(encoding='utf-8')
             and 'CeltiumGllessModLoadTransformer' not in coremod)
     # The probe is allowed now, but only guarded: GL.getCapabilities() throws when the thread has none, which is
     # the case it is asking about. The runtime half of this contract proves the behaviour on a second thread.

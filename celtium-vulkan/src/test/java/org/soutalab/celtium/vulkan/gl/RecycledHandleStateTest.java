@@ -144,10 +144,10 @@ class RecycledHandleStateTest {
             handle.invoke("glBindTexture", GL_TEXTURE_2D, 25);
             // A NULL data pointer: storage reserved, no pixels - the render-target idiom.
             handle.invoke("glTexImage2D", GL_TEXTURE_2D, 0, GL_RGBA, 4, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
-            assertTrue(CeltiumGlStub.textureAllocatedWithoutData(25),
+            assertTrue(GlsmFrontend.textureAllocatedWithoutData(25),
                     "the null allocation is classified while the texture lives");
-            CeltiumGlStub.forgetTextureAllocation(25);
-            assertFalse(CeltiumGlStub.textureAllocatedWithoutData(25),
+            GlsmFrontend.forgetTextureAllocation(25);
+            assertFalse(GlsmFrontend.textureAllocatedWithoutData(25),
                     "the classification belongs to the deleted object, not to its name's next owner");
         } finally {
             handle.restore();
@@ -156,13 +156,13 @@ class RecycledHandleStateTest {
 
     /** The stub, installed reflectively the way {@code ForgetTextureCleanupTest} drives it. */
     private static final class StubHandle {
-        private final CeltiumGlStub stub;
+        private final GlsmFrontend stub;
         private final Method dispatch;
         private final Map<?, ?> ids;
         private final Field installedField;
         private final Object previous;
 
-        private StubHandle(CeltiumGlStub stub, Method dispatch, Map<?, ?> ids, Field installedField,
+        private StubHandle(GlsmFrontend stub, Method dispatch, Map<?, ?> ids, Field installedField,
                 Object previous) {
             this.stub = stub;
             this.dispatch = dispatch;
@@ -172,15 +172,15 @@ class RecycledHandleStateTest {
         }
 
         static StubHandle install() throws Exception {
-            var ctor = CeltiumGlStub.class.getDeclaredConstructor();
+            var ctor = GlsmFrontend.class.getDeclaredConstructor();
             ctor.setAccessible(true);
-            CeltiumGlStub stub = ctor.newInstance();
-            Method dispatch = CeltiumGlStub.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+            GlsmFrontend stub = ctor.newInstance();
+            Method dispatch = GlsmFrontend.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
             dispatch.setAccessible(true);
-            Field idsField = CeltiumGlStub.class.getDeclaredField("IDS");
+            Field idsField = GlsmFrontend.class.getDeclaredField("IDS");
             idsField.setAccessible(true);
             Map<?, ?> ids = (Map<?, ?>) idsField.get(null);
-            Field installedField = CeltiumGlStub.class.getDeclaredField("installed");
+            Field installedField = GlsmFrontend.class.getDeclaredField("installed");
             installedField.setAccessible(true);
             Object previous = installedField.get(null);
             installedField.set(null, stub);

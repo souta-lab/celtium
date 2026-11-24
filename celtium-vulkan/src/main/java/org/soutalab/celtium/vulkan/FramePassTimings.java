@@ -255,6 +255,11 @@ public final class FramePassTimings {
             // TOP_LEVEL, FrameBudgetTimings' OTHER_BUCKETS or its WORLD_PASS_MEMBERS, so nothing here is
             // subtracted anywhere.
             "packUniformOffset", "packUniformPack", "packUniformSetAlloc",
+            // GLSM stage 1: the table route's offset seam - the same span packUniformOffset prices
+            // on the uniform route, renamed because what it prices changed (the interface write now
+            // only records the value; the delivery is the pipeline's table write). Inclusive and
+            // report-only like its sibling.
+            "packRegionOffsetTable",
             // flight-c4 (flight-c3-desk section 4): the window flush a retained acceptance trips
             // inside itself, timed under the acceptance's own name. cloudAccept sums the two cell-VBO
             // acceptances whole - the acceptance body and any flush the acceptance forces - and the

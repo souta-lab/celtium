@@ -96,21 +96,21 @@ class SplitArraysBoundsTest {
         }
     }
 
-    private final CeltiumGlStub stub;
+    private final GlsmFrontend stub;
     private final Method dispatch;
     private final Map<?, ?> ids;
     private final Field installedField;
 
     SplitArraysBoundsTest() throws Exception {
-        var constructor = CeltiumGlStub.class.getDeclaredConstructor();
+        var constructor = GlsmFrontend.class.getDeclaredConstructor();
         constructor.setAccessible(true);
         this.stub = constructor.newInstance();
-        this.dispatch = CeltiumGlStub.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+        this.dispatch = GlsmFrontend.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
         this.dispatch.setAccessible(true);
-        Field idsField = CeltiumGlStub.class.getDeclaredField("IDS");
+        Field idsField = GlsmFrontend.class.getDeclaredField("IDS");
         idsField.setAccessible(true);
         this.ids = (Map<?, ?>) idsField.get(null);
-        this.installedField = CeltiumGlStub.class.getDeclaredField("installed");
+        this.installedField = GlsmFrontend.class.getDeclaredField("installed");
         this.installedField.setAccessible(true);
     }
 
@@ -157,18 +157,18 @@ class SplitArraysBoundsTest {
             // Positions fit: first=4, count=4, stride=48 -> end = 8 * 48 = 384 <= 512.
             call("glVertexPointer", 3, GL_FLOAT, 48, 0L);
             // Colors fit: offset=16, first=4, count=4, stride=16 -> end = 16 + 7 * 16 + 4 = 132 <= 512.
-            CeltiumGlStub.celtium$colorPointer(4, GL_UNSIGNED_BYTE, 16, 16L);
+            GlsmFrontend.celtium$colorPointer(4, GL_UNSIGNED_BYTE, 16, 16L);
             // TexCoords alone appear to fit (300 + 3*32 + 8 = 404 <= 512), but with first=4 it reads to byte 532 > 512.
-            CeltiumGlStub.celtium$texCoordPointer(2, GL_FLOAT, 32, 300L);
+            GlsmFrontend.celtium$texCoordPointer(2, GL_FLOAT, 32, 300L);
 
-            CeltiumGlStub.celtium$drawArrays(GL_QUADS, 4, 4);
+            GlsmFrontend.celtium$drawArrays(GL_QUADS, 4, 4);
 
             assertEquals(0, backend.submissions.size(),
                     "split-array draw must reject texCoord range that crosses VBO end once first*texStride is included");
 
             // Overflowing offset must also be rejected cleanly without wrapping negative.
-            CeltiumGlStub.celtium$texCoordPointer(2, GL_FLOAT, 32, Long.MAX_VALUE - 16L);
-            CeltiumGlStub.celtium$drawArrays(GL_QUADS, 0, 4);
+            GlsmFrontend.celtium$texCoordPointer(2, GL_FLOAT, 32, Long.MAX_VALUE - 16L);
+            GlsmFrontend.celtium$drawArrays(GL_QUADS, 0, 4);
             assertEquals(0, backend.submissions.size(),
                     "split-array draw must reject overflowing texCoord offset");
         } finally {
@@ -203,10 +203,10 @@ class SplitArraysBoundsTest {
             call("glEnableClientState", GL_TEXTURE_COORD_ARRAY);
 
             call("glVertexPointer", 3, GL_FLOAT, 48, 0L);
-            CeltiumGlStub.celtium$colorPointer(4, GL_UNSIGNED_BYTE, 16, 16L);
-            CeltiumGlStub.celtium$texCoordPointer(2, GL_FLOAT, 32, 200L);
+            GlsmFrontend.celtium$colorPointer(4, GL_UNSIGNED_BYTE, 16, 16L);
+            GlsmFrontend.celtium$texCoordPointer(2, GL_FLOAT, 32, 200L);
 
-            CeltiumGlStub.celtium$drawArrays(GL_QUADS, 2, 2);
+            GlsmFrontend.celtium$drawArrays(GL_QUADS, 2, 2);
 
             assertEquals(1, backend.submissions.size());
             RecordingBackend.Submission sub = backend.submissions.get(0);

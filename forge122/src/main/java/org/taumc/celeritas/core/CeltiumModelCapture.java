@@ -1,7 +1,7 @@
 package org.taumc.celeritas.core;
 
 import org.soutalab.celtium.vulkan.VulkanModelQuadCapture;
-import org.soutalab.celtium.vulkan.gl.CeltiumGlStub;
+import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 
 /**
  * The single owner of what happens when Minecraft compiles or closes a display list.
@@ -39,7 +39,7 @@ public final class CeltiumModelCapture {
         // nothing. Measured on ATM3 (leg r124-atm3-amd): Astral Sorcery's skybox lists replayed 937 times with
         // {@code unresolved=937} and the upper sky stayed the fog colour. The GL body is cancelled below, so this is
         // the only place the recording can start.
-        CeltiumGlStub.compatibilityNewList(list, mode);
+        GlsmFrontend.compatibilityNewList(list, mode);
         return true;
     }
 
@@ -52,7 +52,7 @@ public final class CeltiumModelCapture {
         // Close the stub's recording before the hint clears the open list: the stub keys the compiled list by its own
         // {@code compilingList}, and {@code nativeEndList} resets it to zero. The raw-GL path
         // ({@code CeltiumGllessHint.glEndList}) has the same order for the same reason.
-        CeltiumGlStub.compatibilityEndList();
+        GlsmFrontend.compatibilityEndList();
         CeltiumGllessHint.nativeEndList();
         return true;
     }

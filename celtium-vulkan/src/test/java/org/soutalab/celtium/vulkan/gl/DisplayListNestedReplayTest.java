@@ -21,24 +21,24 @@ class DisplayListNestedReplayTest {
 
     @Test
     void anOuterListsReplayIsFiledUnderItsOwnName() throws Exception {
-        var ctor = CeltiumGlStub.class.getDeclaredConstructor();
+        var ctor = GlsmFrontend.class.getDeclaredConstructor();
         ctor.setAccessible(true);
-        var installed = CeltiumGlStub.class.getDeclaredField("installed");
+        var installed = GlsmFrontend.class.getDeclaredField("installed");
         installed.setAccessible(true);
         Object previous = installed.get(null);
         installed.set(null, ctor.newInstance());
         try {
-            CeltiumGlStub.compatibilityNewList(INNER, GL_COMPILE);
+            GlsmFrontend.compatibilityNewList(INNER, GL_COMPILE);
             // A recorded call to an undefined list: defined behaviour (a no-op) at replay, and it gives the
             // inner list a body.
-            CeltiumGlStub.compatibilityCallList(777999);
-            CeltiumGlStub.compatibilityEndList();
-            CeltiumGlStub.compatibilityNewList(OUTER, GL_COMPILE);
-            CeltiumGlStub.compatibilityCallList(INNER);
-            CeltiumGlStub.compatibilityEndList();
+            GlsmFrontend.compatibilityCallList(777999);
+            GlsmFrontend.compatibilityEndList();
+            GlsmFrontend.compatibilityNewList(OUTER, GL_COMPILE);
+            GlsmFrontend.compatibilityCallList(INNER);
+            GlsmFrontend.compatibilityEndList();
 
-            CeltiumGlStub.compatibilityCallList(OUTER);
-            String census = CeltiumGlStub.listCensus();
+            GlsmFrontend.compatibilityCallList(OUTER);
+            String census = GlsmFrontend.listCensus();
             assertTrue(census.contains(OUTER + ":x1"),
                     "the outer list's replay is filed under the outer list; got: " + census);
             assertTrue(census.contains(INNER + ":x1"),

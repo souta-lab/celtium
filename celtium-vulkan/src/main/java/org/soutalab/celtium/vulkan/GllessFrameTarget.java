@@ -15,6 +15,7 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_TILING_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_TYPE_2D;
@@ -63,6 +64,7 @@ import org.lwjgl.vulkan.VkImageMemoryBarrier;
 import org.lwjgl.vulkan.VkImageSubresourceRange;
 import org.lwjgl.vulkan.VkImageViewCreateInfo;
 import org.lwjgl.vulkan.VkMemoryAllocateInfo;
+import org.lwjgl.vulkan.VkMemoryBarrier;
 import org.lwjgl.vulkan.VkMemoryRequirements;
 import org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties;
 import org.lwjgl.vulkan.VkQueue;
@@ -219,6 +221,27 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private float gameClearLatchedBlue;
     private float gameClearLatchedAlpha;
     private double gameClearLatchedDepth = 1.0D;
+    /**
+     * GLSM stage 2 (S2-2): the shared frame state this target's frame latch moves into on the
+     * stage-2 route, attached by the backend at creation. The frame identity is resolved
+     * through the supplier at call time - the registry's main identity is only established
+     * after targets exist, so capturing its value here would freeze a stale key. Both stay
+     * null on the off route, where the fields above remain the latch's only owner.
+     */
+    private GlsmFrameState glsmFrameState;
+    private java.util.function.LongSupplier glsmFrameIdentity;
+
+    /**
+     * Attaches the shared GLSM frame state (stage 2). The backend calls this when it creates
+     * the target, so the frame latch has exactly one home per route: the ClearState on the on
+     * route, this class's fields on the off route.
+     */
+    public void celtium$attachGlsmFrameState(GlsmFrameState state,
+                                             java.util.function.LongSupplier frameIdentity) {
+        this.glsmFrameState = state;
+        this.glsmFrameIdentity = frameIdentity;
+    }
+
     /** How many clears came from the latch and how many still had to be read live, for this target's summary. */
     private int latchedGameClears;
     private int liveGameClears;
@@ -752,7 +775,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * release has to make the same decision.
      */
     public boolean frameImageAcquireNeeded() {
-        return this.neverCleared || org.soutalab.celtium.vulkan.gl.CeltiumGlStub.hasPendingClears();
+        return this.neverCleared || org.soutalab.celtium.vulkan.gl.GlsmFrontend.hasPendingClears();
     }
 
     /**
@@ -776,6 +799,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
         private float latchedBlue;
         private float latchedAlpha;
         private double latchedDepth;
+        // GLSM stage 2 (S2-2): the frame latch's ClearState record, and the applied count its
+        // consumption moved, captured and restored as a pair on the frame-state route - the
+        // ClearState equivalent of the gameClearLatched* fields above.
+        private GlsmFrameState.PendingClear glsmLatched;
+        private long glsmAppliedTotal;
+        private boolean glsmSnapshot;
         private boolean defaultAcquired;
         // Parallel arrays, not two boxed maps: a snapshot is taken for every window flush (~10 a frame) and covers
         // every chain pair, while a rollback that reads it back is rare.
@@ -804,6 +833,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
         snapshot.latchedBlue = this.gameClearLatchedBlue;
         snapshot.latchedAlpha = this.gameClearLatchedAlpha;
         snapshot.latchedDepth = this.gameClearLatchedDepth;
+        if (GlsmFrameState.ENABLED && this.glsmFrameState != null) {
+            snapshot.glsmLatched = this.glsmFrameState.clearState()
+                    .peek(this.glsmFrameIdentity.getAsLong());
+            snapshot.glsmAppliedTotal = this.glsmFrameState.clearState().appliedTotal();
+            snapshot.glsmSnapshot = true;
+        } else {
+            snapshot.glsmSnapshot = false;
+            snapshot.glsmLatched = null;
+        }
         snapshot.defaultAcquired = this.defaultPair.acquired;
         int size = this.chainPairs.size();
         if (snapshot.chainKeys == null || snapshot.chainKeys.length < size) {
@@ -845,6 +883,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
         this.gameClearLatchedBlue = snapshot.latchedBlue;
         this.gameClearLatchedAlpha = snapshot.latchedAlpha;
         this.gameClearLatchedDepth = snapshot.latchedDepth;
+        if (snapshot.glsmSnapshot && this.glsmFrameState != null) {
+            this.glsmFrameState.clearState().restore(this.glsmFrameIdentity.getAsLong(),
+                    snapshot.glsmLatched);
+            this.glsmFrameState.clearState().restoreAppliedTotal(snapshot.glsmAppliedTotal);
+        }
         this.defaultPair.acquired = snapshot.defaultAcquired;
         for (int i = 0; i < snapshot.chainCount; i++) {
             Pair pair = this.chainPairs.get(snapshot.chainKeys[i]);
@@ -929,7 +972,15 @@ public final class GllessFrameTarget implements FrameImageTarget {
      */
     private void applyGameClears(VkCommandBuffer command) {
         boolean first = this.neverCleared;
-        boolean latched = this.gameClearLatched;
+        // GLSM stage 2 (S2-2): on the frame-state route the latch is the ClearState's pending
+        // record for the frame identity, consumed here at the point the fields were read. The
+        // fields are never written on this route, so the two owners can never both hold one.
+        GlsmFrameState.PendingClear stateLatched = null;
+        if (GlsmFrameState.ENABLED && this.glsmFrameState != null) {
+            stateLatched = this.glsmFrameState.clearState()
+                    .consume(this.glsmFrameIdentity.getAsLong());
+        }
+        boolean latched = stateLatched != null || this.gameClearLatched;
         boolean initializeOnly = false;
         int clears;
         float latchedRed = 0.0F;
@@ -938,22 +989,31 @@ public final class GllessFrameTarget implements FrameImageTarget {
         float latchedAlpha = 0.0F;
         double latchedDepth = 1.0D;
         if (latched) {
-            clears = this.gameClearLatchedMask;
-            latchedRed = this.gameClearLatchedRed;
-            latchedGreen = this.gameClearLatchedGreen;
-            latchedBlue = this.gameClearLatchedBlue;
-            latchedAlpha = this.gameClearLatchedAlpha;
-            latchedDepth = this.gameClearLatchedDepth;
-            this.gameClearLatched = false;
+            if (stateLatched != null) {
+                clears = stateLatched.mask;
+                latchedRed = stateLatched.red;
+                latchedGreen = stateLatched.green;
+                latchedBlue = stateLatched.blue;
+                latchedAlpha = stateLatched.alpha;
+                latchedDepth = stateLatched.depth;
+            } else {
+                clears = this.gameClearLatchedMask;
+                latchedRed = this.gameClearLatchedRed;
+                latchedGreen = this.gameClearLatchedGreen;
+                latchedBlue = this.gameClearLatchedBlue;
+                latchedAlpha = this.gameClearLatchedAlpha;
+                latchedDepth = this.gameClearLatchedDepth;
+                this.gameClearLatched = false;
+            }
         } else {
-            int owner = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.pendingClearDrawFbo();
-            boolean ownerIsMain = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.pendingClearIsMain();
+            int owner = org.soutalab.celtium.vulkan.gl.GlsmFrontend.pendingClearDrawFbo();
+            boolean ownerIsMain = org.soutalab.celtium.vulkan.gl.GlsmFrontend.pendingClearIsMain();
             if (owner >= 0 && !ownerIsMain) {
                 // The clear names one of the game's own framebuffers. Every non-main identity shares the chain pair,
                 // so applying it here wipes whatever another identity drew into that image - measured as the
                 // panorama's faces being cleared to white between their draw and the copy that reads them. The clear
                 // belongs to an image this path does not own, so it is dropped and counted rather than applied.
-                clears = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.consumePendingClears();
+                clears = org.soutalab.celtium.vulkan.gl.GlsmFrontend.consumePendingClears();
                 this.gameClearsDroppedForeignTarget++;
                 this.lastDroppedClearOwner = owner;
                 if (!first) {
@@ -964,7 +1024,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 initializeOnly = true;
                 clears = 0;
             } else {
-                clears = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.consumePendingClears();
+                clears = org.soutalab.celtium.vulkan.gl.GlsmFrontend.consumePendingClears();
             }
         }
         if (clears == 0 && !first) {
@@ -987,6 +1047,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
         try (MemoryStack stack = stackPush()) {
             org.lwjgl.vulkan.VkImageSubresourceRange range =
                     org.lwjgl.vulkan.VkImageSubresourceRange.calloc(stack).levelCount(1).layerCount(1);
+            // Both transitions are recorded before either clear: they share the one dependency below, and the
+            // colour clear sitting between them used to split them into two barrier calls for no ordering gain.
+            recordGameClearsToTransfer(command, color, depth);
             if (color) {
                 float[] rgba = this.clearColourScratch;
                 if (latched || initializeOnly) {
@@ -996,7 +1059,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     rgba[3] = latchedAlpha;
                 } else {
                     // The frame image is the main framebuffer: its clear uses the values that clear was issued with.
-                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mainClearValues(rgba);
+                    org.soutalab.celtium.vulkan.gl.GlsmFrontend.mainClearValues(rgba);
                 }
                 org.lwjgl.vulkan.VkClearColorValue value =
                         org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
@@ -1013,19 +1076,17 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 // cube visible only where it was drawn directly, against the accepted (98,102,96)).
                 value.float32(3, 1.0f);
                 range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
-                recordColorToTransfer(command, this.colorImage);
                 org.lwjgl.vulkan.VK10.vkCmdClearColorImage(command, this.colorImage,
                         DEPTH_TRANSFER_LAYOUT, value, range);
             }
             if (depth) {
-                double mainDepth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mainClearValues(this.clearColourScratch);
+                double mainDepth = org.soutalab.celtium.vulkan.gl.GlsmFrontend.mainClearValues(this.clearColourScratch);
                 double depthValue = latched || initializeOnly ? latchedDepth
-                        : Double.isNaN(mainDepth) ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth() : mainDepth;
+                        : Double.isNaN(mainDepth) ? org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth() : mainDepth;
                 org.lwjgl.vulkan.VkClearDepthStencilValue value =
                         org.lwjgl.vulkan.VkClearDepthStencilValue.calloc(stack);
                 value.depth((float) depthValue).stencil(0);
                 range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
-                recordDepthToTransfer(command, this.depthImage, DEPTH_RENDER_LAYOUT);
                 org.lwjgl.vulkan.VK10.vkCmdClearDepthStencilImage(command, this.depthImage, DEPTH_TRANSFER_LAYOUT,
                         value, range);
             }
@@ -1049,22 +1110,57 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
-     * Moves a depth image from its attachment layout to the transfer layout a clear needs. Everything that can have
-     * touched it before - earlier windows' depth tests and writes, an earlier clear - is covered by ALL_COMMANDS.
+     * Moves the images {@link #applyGameClears} is about to clear into the transfer layout those clears need, in
+     * one {@code vkCmdPipelineBarrier} when both are cleared.
+     * <p>
+     * The colour and depth transitions are the same dependency - {@code ALL_COMMANDS} to {@code TRANSFER} - on two
+     * images of one frame, the same shape {@code Pair.toTransfer} already fuses for the pair clear. They used to be
+     * two calls, one per image, with the colour clear recorded between them; both clears that follow are
+     * {@code TRANSFER}-stage writes, so recording the depth transition before the colour clear changes no ordering
+     * the GPU has to honour, and it waits for less, because the barrier's source stage is {@code ALL_COMMANDS} and
+     * the colour clear has not been recorded yet. Everything that can have touched either image before - earlier
+     * windows' attachment and depth tests and writes, an earlier clear - is covered by {@code ALL_COMMANDS}.
+     * <p>
+     * The colour half moves a GENERAL image to the transfer layout a clear uses, after whatever touched it before.
+     * Colour clears run in TRANSFER_DST_OPTIMAL instead of GENERAL, which lets Intel's driver use a CCS fast clear
+     * where it otherwise writes the whole surface: under INTEL_MEASURE on the UHD 630 the three "slow color clear"s
+     * a frame (263 us) became fast clears (17 us) plus partial resolves (62 us), and the draws that follow on the
+     * compressed surface cost less as well. The depth half starts from {@link #DEPTH_RENDER_LAYOUT}, the layout
+     * {@link #applyGameClears} always clears from, so its source mask is the non-UNDEFINED one the old per-image
+     * helper computed for that caller.
      */
-    private void recordDepthToTransfer(VkCommandBuffer command, long image, int from) {
+    private void recordGameClearsToTransfer(VkCommandBuffer command, boolean color, boolean depth) {
+        if (!color && !depth) {
+            // A stencil-only clear names neither image (the frame has no stencil), so nothing moves.
+            return;
+        }
         try (MemoryStack stack = stackPush()) {
-            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
-            barrier.get(0).sType$Default().image(image)
-                    .oldLayout(from).newLayout(DEPTH_TRANSFER_LAYOUT)
-                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .srcAccessMask(from == VK_IMAGE_LAYOUT_UNDEFINED ? 0
-                            : VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
-                    .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
-            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            VkImageMemoryBarrier.Buffer barriers =
+                    VkImageMemoryBarrier.calloc((color ? 1 : 0) + (depth ? 1 : 0), stack);
+            int index = 0;
+            if (color) {
+                VkImageMemoryBarrier barrier = barriers.get(index++);
+                barrier.sType$Default().image(this.colorImage)
+                        .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(DEPTH_TRANSFER_LAYOUT)
+                        .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                        .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                        .srcAccessMask(colorToTransferSrcAccessMask())
+                        .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+                barrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            }
+            if (depth) {
+                VkImageMemoryBarrier barrier = barriers.get(index);
+                barrier.sType$Default().image(this.depthImage)
+                        .oldLayout(DEPTH_RENDER_LAYOUT).newLayout(DEPTH_TRANSFER_LAYOUT)
+                        .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                        .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                        .srcAccessMask(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                                | VK_ACCESS_TRANSFER_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+                barrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            }
             vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    0, null, null, barrier);
+                    0, null, null, barriers);
         }
     }
 
@@ -1095,15 +1191,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
 
     /**
-     * Moves a GENERAL colour image to the transfer layout a clear uses, after whatever touched it before.
-     * <p>
-     * Colour clears run in TRANSFER_DST_OPTIMAL instead of GENERAL, which lets Intel's driver use a CCS fast clear
-     * where it otherwise writes the whole surface: under INTEL_MEASURE on the UHD 630 the three "slow color clear"s
-     * a frame (263 us) became fast clears (17 us) plus partial resolves (62 us), and the draws that follow on the
-     * compressed surface cost less as well.
-     */
-    /**
-     * {@return the source access mask for {@link #recordColorToTransfer}}, covering prior colour attachment,
+     * {@return the source access mask for {@link #recordGameClearsToTransfer}}, covering prior colour attachment,
      * transfer, and shader accesses so RDNA3/PAL flushes and resolves DCC/CB caches cleanly (issue #422 (a)).
      */
     static int colorToTransferSrcAccessMask() {
@@ -1131,21 +1219,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
         int src = firstAcquire ? 0 : generalAccess;
         int dst = attachmentAccess | VK_ACCESS_TRANSFER_WRITE_BIT;
         return new int[] { src, dst };
-    }
-
-    private void recordColorToTransfer(VkCommandBuffer command, long image) {
-        try (MemoryStack stack = stackPush()) {
-            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
-            barrier.get(0).sType$Default().image(image)
-                    .oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(DEPTH_TRANSFER_LAYOUT)
-                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
-                    .srcAccessMask(colorToTransferSrcAccessMask())
-                    .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
-            barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
-            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    0, null, null, barrier);
-        }
     }
 
     /** {@return the layout the main depth image rests in}, for a readback that must name it. */
@@ -1220,6 +1293,30 @@ public final class GllessFrameTarget implements FrameImageTarget {
      */
     private void recordLayoutBarriers(VkCommandBuffer command, boolean release) {
         boolean first = this.firstAcquire && !release;
+        int colorOldLayout = release ? COLOR_RENDER_LAYOUT : this.colorImageLayout;
+        int colorNewLayout = release ? VK_IMAGE_LAYOUT_GENERAL : COLOR_RENDER_LAYOUT;
+        int depthOldLayout = release ? DEPTH_RENDER_LAYOUT : this.depthImageLayout;
+        int srcStage = first ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        if (layoutsAreSelfTransitions(colorOldLayout, colorNewLayout, depthOldLayout, DEPTH_RENDER_LAYOUT)) {
+            // Steady state (every terrain pass after the first, and every release): both images already sit
+            // in the layout this barrier would move them to, so the two image barriers perform no layout
+            // transition at all - they are purely the execution and memory dependency the frame render pass
+            // relies on (it declares no subpass dependencies; see VulkanTerrainPipeline.buildFrameRenderPass).
+            // One memory barrier with the union of the two images' access masks carries a dependency that is
+            // at least as strong, at the same stages, and skips the per-image transition bookkeeping the
+            // driver records for each image barrier. The queue families are this queue on both sides of the
+            // image form, which a memory barrier leaves untouched either way.
+            int[] masks = selfTransitionBarrierMasks(release, first);
+            try (MemoryStack stack = stackPush()) {
+                VkMemoryBarrier.Buffer memoryBarrier = VkMemoryBarrier.calloc(1, stack);
+                memoryBarrier.get(0).sType$Default()
+                        .srcAccessMask(masks[0])
+                        .dstAccessMask(masks[1]);
+                vkCmdPipelineBarrier(command, srcStage, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        0, memoryBarrier, null, null);
+            }
+            return;
+        }
         int[] colorMasks = layoutBarrierAccessMasks(release, first, false);
         int[] depthMasks = layoutBarrierAccessMasks(release, first, true);
         int queueFamily = this.context.queueFamilyIndex();
@@ -1232,8 +1329,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     // The colour image's true layout is whatever the last phase left it in - acquire, release or the
                     // present's own transition - so it is tracked rather than assumed, the way the present path
                     // reports the layout it restored through noteColorImageLayout.
-                    .oldLayout(release ? COLOR_RENDER_LAYOUT : this.colorImageLayout)
-                    .newLayout(release ? VK_IMAGE_LAYOUT_GENERAL : COLOR_RENDER_LAYOUT)
+                    .oldLayout(colorOldLayout)
+                    .newLayout(colorNewLayout)
                     .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
                     .srcAccessMask(colorMasks[0])
                     // Acquire can be followed by a game transfer clear before the attachment pass.
@@ -1243,17 +1340,46 @@ public final class GllessFrameTarget implements FrameImageTarget {
             VkImageMemoryBarrier depthBarrier = barriers.get(1);
             depthBarrier.sType$Default()
                     .image(this.depthImage)
-                    .oldLayout(release ? DEPTH_RENDER_LAYOUT : this.depthImageLayout)
+                    .oldLayout(depthOldLayout)
                     .newLayout(DEPTH_RENDER_LAYOUT)
                     .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
                     .srcAccessMask(depthMasks[0])
                     .dstAccessMask(depthMasks[1]);
             depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
 
-            vkCmdPipelineBarrier(command,
-                    first ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            vkCmdPipelineBarrier(command, srcStage,
                     VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barriers);
         }
+    }
+
+    /**
+     * {@return whether both layout moves {@link #recordLayoutBarriers} is about to record leave their image in
+     * the layout it already occupies}.
+     * <p>
+     * Only then may the pair of image barriers be recorded as one memory barrier: a memory barrier performs
+     * no layout transition, so substituting it where a real transition is owed (the first acquire out of
+     * {@code UNDEFINED}, or an acquire after the present path left the colour image elsewhere) would lose the
+     * transition itself, not just its cost.
+     */
+    static boolean layoutsAreSelfTransitions(int colorOldLayout, int colorNewLayout,
+            int depthOldLayout, int depthNewLayout) {
+        return colorOldLayout == colorNewLayout && depthOldLayout == depthNewLayout;
+    }
+
+    /**
+     * {@return the {@code [srcAccessMask, dstAccessMask]} pair for the memory-barrier form of
+     * {@link #recordLayoutBarriers}}: the union of the colour and depth pairs from
+     * {@link #layoutBarrierAccessMasks(boolean, boolean, boolean)}.
+     * <p>
+     * The union is deliberate: a memory barrier scopes its dependency to all memory rather than to one image,
+     * so its masks must cover every access either image barrier covered. The result is a dependency at least
+     * as strong as the pair it replaces - never a narrowing - which is what keeps the substitution inside the
+     * issue #422 (a) full-mask rule.
+     */
+    static int[] selfTransitionBarrierMasks(boolean release, boolean firstAcquire) {
+        int[] color = layoutBarrierAccessMasks(release, firstAcquire, false);
+        int[] depth = layoutBarrierAccessMasks(release, firstAcquire, true);
+        return new int[] { color[0] | depth[0], color[1] | depth[1] };
     }
 
     @Override
@@ -1603,6 +1729,20 @@ public final class GllessFrameTarget implements FrameImageTarget {
         if (entry != null) {
             entry.layout = layout;
         }
+    }
+
+    /**
+     * The same record as {@link #noteSharedDepthLayout}, skipped when the store already names {@code layout}.
+     *
+     * @return whether the store's record changed
+     */
+    public boolean noteSharedDepthLayoutIfChanged(long depthKey, int layout) {
+        SharedDepth entry = this.sharedDepths.get(depthKey);
+        if (entry == null || entry.layout == layout) {
+            return false;
+        }
+        entry.layout = layout;
+        return true;
     }
 
     /** {@return the frame serial the shared depth image for {@code depthKey} was last cleared in}, -1 when never. */
@@ -2100,6 +2240,100 @@ public final class GllessFrameTarget implements FrameImageTarget {
         return true;
     }
 
+    /**
+     * Copies the depth image of {@code srcIdentity}'s chain pair into {@code dstIdentity}'s chain pair
+     * outside a render pass (alpha-shadow-cache-form): the source returns to the layout it was found in and
+     * the destination is left in {@link #DEPTH_RENDER_LAYOUT}, the layout a pass attaching it expects. The
+     * colour twin is {@link #copyChainPairColorSlot}; depth has no slot axis and pair depths share one
+     * format ({@code VK_FORMAT_D32_SFLOAT}), so a plain {@code vkCmdCopyImage} always applies.
+     * <p>
+     * Used by the pack shadow result cache: capture copies the just-recorded shadow pair's depth into the
+     * snapshot pair, restore copies it back. A borrowed (shared) source depth is only read, and its layout
+     * record - held by the shared store, see {@code Pair.depthLayout()} - is restored by the post barrier,
+     * so the copy leaves the sharing pairs' beliefs untouched.
+     *
+     * @return whether the copy was recorded
+     */
+    public boolean copyChainPairDepth(long srcIdentity, long dstIdentity, VkCommandBuffer command) {
+        checkAlive();
+        if (command == null || command.address() == 0L || srcIdentity == dstIdentity) {
+            return false;
+        }
+        Pair src = existingChainPair(srcIdentity);
+        Pair dst = existingChainPair(dstIdentity);
+        if (src == null || dst == null || !src.exists() || !dst.exists()) {
+            return false;
+        }
+        if (src.width <= 0 || src.height <= 0 || src.width != dst.width || src.height != dst.height) {
+            return false;
+        }
+        long srcImage = src.depthImage;
+        long dstImage = dst.depthImage;
+        if (srcImage == 0L || dstImage == 0L || srcImage == dstImage) {
+            return false;
+        }
+        int srcLayout = src.depthLayout();
+        int dstLayout = dst.depthLayout();
+        // A UNDEFINED source holds nothing worth copying; a UNDEFINED destination (a snapshot pair
+        // created for this capture and never written) is fine - its barrier discards, as any
+        // UNDEFINED-oldLayout transition does.
+        if (srcLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
+            return false;
+        }
+        int queueFamily = this.context.queueFamilyIndex();
+        try (MemoryStack stack = stackPush()) {
+            VkImageMemoryBarrier.Buffer pre = VkImageMemoryBarrier.calloc(2, stack);
+            pre.get(0).sType$Default()
+                    .image(srcImage)
+                    .oldLayout(srcLayout).newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                    .srcAccessMask(celtium$layoutSourceAccess(srcLayout))
+                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT);
+            pre.get(0).subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            pre.get(1).sType$Default()
+                    .image(dstImage)
+                    .oldLayout(dstLayout).newLayout(DEPTH_TRANSFER_LAYOUT)
+                    .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                    .srcAccessMask(celtium$layoutSourceAccess(dstLayout))
+                    .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+            pre.get(1).subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0, null, null, pre);
+
+            org.lwjgl.vulkan.VkImageCopy.Buffer region = org.lwjgl.vulkan.VkImageCopy.calloc(1, stack);
+            region.get(0).srcSubresource().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1);
+            region.get(0).srcOffset().set(0, 0, 0);
+            region.get(0).dstSubresource().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1);
+            region.get(0).dstOffset().set(0, 0, 0);
+            region.get(0).extent().set(dst.width, dst.height, 1);
+            vkCmdCopyImage(command, srcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    dstImage, DEPTH_TRANSFER_LAYOUT, region);
+
+            VkImageMemoryBarrier.Buffer post = VkImageMemoryBarrier.calloc(2, stack);
+            post.get(0).sType$Default()
+                    .image(srcImage)
+                    .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL).newLayout(srcLayout)
+                    .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                    .srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
+                    .dstAccessMask(celtium$layoutSourceAccess(srcLayout));
+            post.get(0).subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            post.get(1).sType$Default()
+                    .image(dstImage)
+                    .oldLayout(DEPTH_TRANSFER_LAYOUT).newLayout(DEPTH_RENDER_LAYOUT)
+                    .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                    .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                            | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                            | VK_ACCESS_SHADER_READ_BIT);
+            post.get(1).subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    0, null, null, post);
+        }
+        src.depthLayout(command, srcLayout);
+        dst.depthLayout(command, DEPTH_RENDER_LAYOUT);
+        return true;
+    }
+
     /** Records a layout an extra colour image of the identity's pair has been moved to by the sampling side. */
     public void noteChainPairColorLayoutAt(long identity, int slot, int layout) {
         checkAlive();
@@ -2113,6 +2347,39 @@ public final class GllessFrameTarget implements FrameImageTarget {
     public int chainPairColorSlotForImage(long identity, long image) {
         Pair pair = existingChainPair(identity);
         return pair == null ? -1 : pair.colorSlotForImage(image);
+    }
+
+    /**
+     * Records a layout at a slot the caller already resolved (the published walk resolves it once per
+     * cache rebuild, when the pair generation changes), skipping the write when the pair's record
+     * already names {@code layout}.
+     * <p>
+     * The walk used to pay two pair lookups and a slot scan per name per pass for this record
+     * ({@code chainPairColorSlotForImage} plus the note's own lookup), and wrote the same value back
+     * on every settled pass. One lookup remains - the record is read before it is trusted, because
+     * the pair's own acquire and clear paths also write it between walks, so a caller's memo of the
+     * last value it wrote would not be a sound reason to skip.
+     *
+     * @return whether the pair's record changed
+     */
+    public boolean noteChainPairColorLayoutAtSlotIfChanged(long identity, int slot, int layout) {
+        checkAlive();
+        Pair pair = existingChainPair(identity);
+        if (pair == null || slot < 0) {
+            return false;
+        }
+        if (slot == 0) {
+            if (pair.colorLayout() == layout) {
+                return false;
+            }
+            pair.noteColorLayout(layout);
+            return true;
+        }
+        if (pair.extraColorLayoutAt(slot) == layout) {
+            return false;
+        }
+        pair.noteExtraColorLayout(slot, layout);
+        return true;
     }
 
     /**
@@ -2681,6 +2948,12 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.extraColorCount = 0;
         }
 
+        /** The recorded layout of an extra colour slot, UNDEFINED when the slot holds none. */
+        private int extraColorLayoutAt(int slot) {
+            return slot > 0 && slot - 1 < this.extraColorCount && this.extraColorLayouts != null
+                    ? this.extraColorLayouts[slot - 1] : VK_IMAGE_LAYOUT_UNDEFINED;
+        }
+
         /** Records a layout an extra colour image has been moved to, by whoever moved it (the sampling side). */
         private void noteExtraColorLayout(int slot, int layout) {
             if (slot > 0 && slot - 1 < this.extraColorCount) {
@@ -2916,7 +3189,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 // keeps its own background (measured: the fixture's 0x081020 read back as 0 under the fixed pair
                 // clear, every untouched pixel a mismatch).
                 float[] clearColor = this.clearColourFloats;
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(clearColor);
+                org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearColor(clearColor);
                 VkClearColorValue color = this.clearColour;
                 color.float32(0, clearColor[0]);
                 color.float32(1, clearColor[1]);
@@ -2933,7 +3206,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 vkCmdClearColorImage(command, this.colorImage, colorClearLayout(), color, range);
 
                 VkClearDepthStencilValue depth = this.clearDepthValue;
-                depth.depth((float) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth()).stencil(0);
+                depth.depth((float) org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth()).stencil(0);
                 range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
                 vkCmdClearDepthStencilImage(command, this.depthImage, DEPTH_TRANSFER_LAYOUT, depth, range);
 
@@ -3001,8 +3274,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
             if (celtium$deferredClearNeedsDepthBarrier(depthLayout())) {
                 recordDepthToRender(command);
             }
-            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(this.deferredClearColour);
-            this.deferredClearDepth = (float) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth();
+            org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearColor(this.deferredClearColour);
+            this.deferredClearDepth = (float) org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth();
             this.deferredClearPending = true;
             this.clears++;
         }
@@ -3200,7 +3473,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     // because this image is a framebuffer's content and GL's framebuffer starts from the game's
                     // state, not a renderer-chosen one.
                     float[] clearColor = new float[4];
-                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(clearColor);
+                    org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearColor(clearColor);
                     VkClearColorValue color = VkClearColorValue.calloc(stack);
                     color.float32(0, clearColor[0]);
                     color.float32(1, clearColor[1]);
@@ -3215,7 +3488,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 // The game's glClearDepth, because this clear is the game's own "clear just the depth" - the real
                 // default framebuffer answers it with the recorded value, not with 1.0.
                 VkClearDepthStencilValue depth = VkClearDepthStencilValue.calloc(stack);
-                depth.depth((float) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth()).stencil(0);
+                depth.depth((float) org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth()).stencil(0);
                 range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
                 vkCmdClearDepthStencilImage(command, this.depthImage, DEPTH_TRANSFER_LAYOUT, depth, range);
 
@@ -3401,43 +3674,67 @@ public final class GllessFrameTarget implements FrameImageTarget {
          */
         private void recordAcquire(VkCommandBuffer command) {
             int queueFamily = context.queueFamilyIndex();
+            // A private depth is UNDEFINED here, as the colour is. A borrowed (shared) depth may already
+            // hold another pair's pass: the barrier then starts from the store's recorded layout and waits
+            // for those writes instead of discarding them - a layout transition preserves content unless
+            // the old layout is UNDEFINED, which for a shared image it is only on its first pair's acquire.
+            int depthFrom = depthLayout();
             try (MemoryStack stack = stackPush()) {
-                VkImageMemoryBarrier.Buffer colorBarriers = VkImageMemoryBarrier.calloc(1, stack);
-                VkImageMemoryBarrier colorBarrier = colorBarriers.get(0);
-                colorBarrier.sType$Default()
-                        .image(this.colorImage)
-                        .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED).newLayout(VK_IMAGE_LAYOUT_GENERAL)
-                        .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
-                        .srcAccessMask(0).dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
-                colorBarrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+                if (depthFrom == VK_IMAGE_LAYOUT_UNDEFINED) {
+                    // Both images arrive from UNDEFINED with a zero source access mask under the same
+                    // TOP_OF_PIPE to TRANSFER dependency, so the two moves belong in one barrier call -
+                    // the same fusion Pair.toTransfer already makes for the pair clear.
+                    VkImageMemoryBarrier.Buffer barriers = VkImageMemoryBarrier.calloc(2, stack);
+                    VkImageMemoryBarrier colorBarrier = barriers.get(0);
+                    colorBarrier.sType$Default()
+                            .image(this.colorImage)
+                            .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                            .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                            .srcAccessMask(0).dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+                    colorBarrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
 
-                VkImageMemoryBarrier.Buffer depthBarriers = VkImageMemoryBarrier.calloc(1, stack);
-                VkImageMemoryBarrier depthBarrier = depthBarriers.get(0);
-                // A private depth is UNDEFINED here, as the colour is. A borrowed (shared) depth may already
-                // hold another pair's pass: the barrier then starts from the store's recorded layout and waits
-                // for those writes instead of discarding them - a layout transition preserves content unless
-                // the old layout is UNDEFINED, which for a shared image it is only on its first pair's acquire.
-                int depthFrom = depthLayout();
-                depthBarrier.sType$Default()
-                        .image(this.depthImage)
-                        .oldLayout(depthFrom).newLayout(DEPTH_TRANSFER_LAYOUT)
-                        .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
-                        .srcAccessMask(depthFrom == VK_IMAGE_LAYOUT_UNDEFINED ? 0
-                                : VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT
-                                        | VK_ACCESS_SHADER_READ_BIT)
-                        .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
-                depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+                    VkImageMemoryBarrier depthBarrier = barriers.get(1);
+                    depthBarrier.sType$Default()
+                            .image(this.depthImage)
+                            .oldLayout(depthFrom).newLayout(DEPTH_TRANSFER_LAYOUT)
+                            .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                            .srcAccessMask(0)
+                            .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+                    depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
 
-                vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                        0, null, null, colorBarriers);
-                // The depth barrier rides in its own call when the depth already holds content: TOP_OF_PIPE
-                // supports no access flags at all, so a barrier that names the previous writes (the shared
-                // case above) under it is exactly VUID-vkCmdPipelineBarrier-pImageMemoryBarriers-02819 -
-                // measured on the first leg whose pairs borrowed a written shared depth (leg 16, item 333).
-                // ALL_COMMANDS as the source stage covers every stage those writes could have come from.
-                vkCmdPipelineBarrier(command, depthFrom == VK_IMAGE_LAYOUT_UNDEFINED
-                                ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, depthBarriers);
+                    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barriers);
+                } else {
+                    VkImageMemoryBarrier.Buffer colorBarriers = VkImageMemoryBarrier.calloc(1, stack);
+                    VkImageMemoryBarrier colorBarrier = colorBarriers.get(0);
+                    colorBarrier.sType$Default()
+                            .image(this.colorImage)
+                            .oldLayout(VK_IMAGE_LAYOUT_UNDEFINED).newLayout(VK_IMAGE_LAYOUT_GENERAL)
+                            .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                            .srcAccessMask(0).dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+                    colorBarrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+
+                    VkImageMemoryBarrier.Buffer depthBarriers = VkImageMemoryBarrier.calloc(1, stack);
+                    VkImageMemoryBarrier depthBarrier = depthBarriers.get(0);
+                    depthBarrier.sType$Default()
+                            .image(this.depthImage)
+                            .oldLayout(depthFrom).newLayout(DEPTH_TRANSFER_LAYOUT)
+                            .srcQueueFamilyIndex(queueFamily).dstQueueFamilyIndex(queueFamily)
+                            .srcAccessMask(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                                    | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT)
+                            .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+                    depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+
+                    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, colorBarriers);
+                    // The depth barrier rides in its own call when the depth already holds content: TOP_OF_PIPE
+                    // supports no access flags at all, so a barrier that names the previous writes (the shared
+                    // case above) under it is exactly VUID-vkCmdPipelineBarrier-pImageMemoryBarriers-02819 -
+                    // measured on the first leg whose pairs borrowed a written shared depth (leg 16, item 333).
+                    // ALL_COMMANDS as the source stage covers every stage those writes could have come from.
+                    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, depthBarriers);
+                }
                 // The barrier above is the move, so this is where the pair's own record of it belongs.
                 this.colorImageLayout = VK_IMAGE_LAYOUT_GENERAL;
                 depthLayout(command, DEPTH_TRANSFER_LAYOUT);

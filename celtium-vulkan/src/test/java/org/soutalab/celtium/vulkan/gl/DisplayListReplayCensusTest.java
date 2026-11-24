@@ -29,8 +29,8 @@ class DisplayListReplayCensusTest {
     @Test
     @DisplayName("a list id above the old array bound is counted and ranked")
     void aHighListIdIsCounted() {
-        CeltiumGlStub.celtium$noteListReplayForCheck(MODEL_LIST, true);
-        String summary = CeltiumGlStub.listCensus();
+        GlsmFrontend.celtium$noteListReplayForCheck(MODEL_LIST, true);
+        String summary = GlsmFrontend.listCensus();
         assertTrue(summary.contains(MODEL_LIST + ":x"),
                 "a replay of list " + MODEL_LIST + " has to appear in the census; got: " + summary);
         assertTrue(summary.contains("top=["),
@@ -40,7 +40,7 @@ class DisplayListReplayCensusTest {
     @Test
     @DisplayName("the summary always names its totals, never a bare 'none'")
     void theSummaryNamesItsTotals() {
-        String summary = CeltiumGlStub.listCensus();
+        String summary = GlsmFrontend.listCensus();
         assertFalse(summary.equals("none"),
                 "'none' is what a dead census prints as well as a quiet run; the totals have to be readable");
         for (String field : new String[] {"compiled=", "replayed=", "unresolved=", "nestingOverflow=", "held=",
@@ -53,8 +53,8 @@ class DisplayListReplayCensusTest {
     @DisplayName("a call to a list that was never compiled is named by id, not only counted")
     void anUnresolvedCallIsNamed() {
         int missing = 123457;
-        CeltiumGlStub.celtium$noteListReplayForCheck(missing, false);
-        String summary = CeltiumGlStub.listCensus();
+        GlsmFrontend.celtium$noteListReplayForCheck(missing, false);
+        String summary = GlsmFrontend.listCensus();
         assertTrue(summary.contains("unresolvedTop=["),
                 "an unresolved glCallList loses geometry silently in GL, so the census has to name it; got: " + summary);
         assertTrue(summary.contains(missing + ":x"),
@@ -67,9 +67,9 @@ class DisplayListReplayCensusTest {
         // Measured on the entity leg: ModelRenderer passes -1 for a part whose list was never compiled, GL defines the
         // call as a no-op, and the single counter reported all 1250 of them as "unresolved" - which reads as 1250 draws
         // that found nothing. They have to be two fields, and the sentinel must never appear in the unresolved ranking.
-        CeltiumGlStub.celtium$noteListReplayForCheck(-1, false);
-        CeltiumGlStub.celtium$noteListReplayForCheck(0, false);
-        String summary = CeltiumGlStub.listCensus();
+        GlsmFrontend.celtium$noteListReplayForCheck(-1, false);
+        GlsmFrontend.celtium$noteListReplayForCheck(0, false);
+        String summary = GlsmFrontend.listCensus();
         assertTrue(summary.contains("noList="), "the sentinel has to have its own field; got: " + summary);
         assertFalse(summary.contains("unresolvedTop=[-1"),
                 "a non-positive name is the caller saying 'no list', not a draw that was lost; got: " + summary);
@@ -82,8 +82,8 @@ class DisplayListReplayCensusTest {
     void nestingOverflowIsReported() {
         // Not driven here: reaching the limit needs a stub and a recursive list. What is pinned is that the field is on
         // the line, because a counter that exists but is never printed cannot be read from a leg.
-        assertTrue(CeltiumGlStub.listCensus().contains("nestingOverflow="),
-                "a replay refused for nesting has to be visible: " + CeltiumGlStub.listCensus());
-        assertTrue(CeltiumGlStub.listReplayNestingOverflows() >= 0L);
+        assertTrue(GlsmFrontend.listCensus().contains("nestingOverflow="),
+                "a replay refused for nesting has to be visible: " + GlsmFrontend.listCensus());
+        assertTrue(GlsmFrontend.listReplayNestingOverflows() >= 0L);
     }
 }

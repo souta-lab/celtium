@@ -26,6 +26,19 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
     private final long[] elementPointers;
 
     /**
+     * The local section index each command was assembled for, retained for the GPU-culling census
+     * (E10-b preparation): the assembler announces the section through
+     * {@link org.embeddedt.embeddium.impl.gl.device.MultiDrawBatch#beginSection} before appending its
+     * commands, and {@link #appendDrawCommand} stamps the slot it writes. A slot an empty append wrote
+     * (the append does not advance the size) is simply overwritten by the next append and its stamp, so
+     * every slot below {@link #size()} carries the section of the command that stuck there. -1 where no
+     * section was announced. A merged command keeps its creating append's section, which is the section
+     * it draws: the assembler only merges runs within one section.
+     */
+    private final int[] sectionTags;
+    private int currentSectionTag = -1;
+
+    /**
      * The retained indirect packets (item 350, VulkanMod-Next D25's draw-list retention in celtium's
      * shape): a batch is immutable once the assembler has filled it - a rebuild is a new object - so its
      * packet block is a pure function of its commands and is encoded once, then copied into each frame's
@@ -68,6 +81,20 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
         this.baseVertices = new int[slots];
         this.elementCounts = new int[slots];
         this.elementPointers = new long[slots];
+        this.sectionTags = new int[slots];
+        java.util.Arrays.fill(this.sectionTags, -1);
+    }
+
+    @Override
+    public void beginSection(int localSectionIndex) {
+        this.currentSectionTag = localSectionIndex;
+    }
+
+    @Override
+    public void clear() {
+        super.clear();
+        java.util.Arrays.fill(this.sectionTags, -1);
+        this.currentSectionTag = -1;
     }
 
     /**
@@ -114,6 +141,7 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
         this.baseVertices[index] = baseVertex;
         this.elementCounts[index] = elementCount;
         this.elementPointers[index] = elementPointer;
+        this.sectionTags[index] = this.currentSectionTag;
 
         // Element counts are never negative, so the sign bit of the negation is set iff the command is non-empty.
         this.size = index + ((-elementCount) >>> 31);
@@ -250,6 +278,14 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
             this.unsortedOffsetsChecked = true;
         }
         return this.unsortedOffsetsClean;
+    }
+
+    /**
+     * {@return the local section index the given command was assembled for, or -1 when the assembler
+     * did not announce one}. Only meaningful for commands below {@link #size()}.
+     */
+    public int sectionTag(int command) {
+        return this.sectionTags[command];
     }
 
     public int baseVertex(int command) {

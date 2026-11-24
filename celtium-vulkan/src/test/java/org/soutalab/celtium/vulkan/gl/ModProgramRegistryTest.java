@@ -240,8 +240,8 @@ class ModProgramRegistryTest {
         ModProgramRegistry.attach(7, 20);
         assertNull(ModProgramRegistry.linkStatus(7));
         assertNull(ModProgramRegistry.linkInfoLog(7));
-        assertEquals(1, CeltiumGlStub.shaderProgramQueryAnswer(7, 0x8B82));
-        assertEquals(0, CeltiumGlStub.shaderProgramQueryAnswer(7, 0x8B84));
+        assertEquals(1, GlsmFrontend.shaderProgramQueryAnswer(7, 0x8B82));
+        assertEquals(0, GlsmFrontend.shaderProgramQueryAnswer(7, 0x8B84));
     }
 
     @Test
@@ -254,11 +254,11 @@ class ModProgramRegistryTest {
         assertTrue(log != null && log.contains("no fragment stage"), String.valueOf(log));
         // The query answers follow the record: link and validate false, the log length is the reason's,
         // and compile status keeps its default - no per-shader result exists in a link-time model.
-        assertEquals(0, CeltiumGlStub.shaderProgramQueryAnswer(7, 0x8B82));
-        assertEquals(0, CeltiumGlStub.shaderProgramQueryAnswer(7, 0x8B83));
-        assertEquals(log.length() + 1, CeltiumGlStub.shaderProgramQueryAnswer(7, 0x8B84));
-        assertEquals(1, CeltiumGlStub.shaderProgramQueryAnswer(7, 0x8B81));
-        assertEquals(0, CeltiumGlStub.shaderProgramQueryAnswer(7, 0x8B80));
+        assertEquals(0, GlsmFrontend.shaderProgramQueryAnswer(7, 0x8B82));
+        assertEquals(0, GlsmFrontend.shaderProgramQueryAnswer(7, 0x8B83));
+        assertEquals(log.length() + 1, GlsmFrontend.shaderProgramQueryAnswer(7, 0x8B84));
+        assertEquals(1, GlsmFrontend.shaderProgramQueryAnswer(7, 0x8B81));
+        assertEquals(0, GlsmFrontend.shaderProgramQueryAnswer(7, 0x8B80));
     }
 
     @Test
@@ -266,17 +266,17 @@ class ModProgramRegistryTest {
         // The LWJGL3 native route reaches the shared answer only through the public facade the hint
         // calls; it must state the same truth as the package answer for an unrecorded id and for a
         // recorded failure alike, or the route a caller actually takes would drift from the dispatch.
-        assertEquals(1, CeltiumGlStub.celtium$shaderProgramQueryAnswer(4242, 0x8B82));
-        assertEquals(0, CeltiumGlStub.celtium$shaderProgramQueryAnswer(4242, 0x8B84));
+        assertEquals(1, GlsmFrontend.celtium$shaderProgramQueryAnswer(4242, 0x8B82));
+        assertEquals(0, GlsmFrontend.celtium$shaderProgramQueryAnswer(4242, 0x8B84));
         ModProgramRegistry.shaderSource(20, "void main() { gl_Position = vec4(0.0); }");
         ModProgramRegistry.attach(7, 20);
         ModProgramRegistry.link(7);
         String log = ModProgramRegistry.linkInfoLog(7);
         assertTrue(log != null && log.contains("no fragment stage"), String.valueOf(log));
-        assertEquals(0, CeltiumGlStub.celtium$shaderProgramQueryAnswer(7, 0x8B82));
-        assertEquals(0, CeltiumGlStub.celtium$shaderProgramQueryAnswer(7, 0x8B83));
-        assertEquals(log.length() + 1, CeltiumGlStub.celtium$shaderProgramQueryAnswer(7, 0x8B84));
-        assertEquals(1, CeltiumGlStub.celtium$shaderProgramQueryAnswer(7, 0x8B81));
+        assertEquals(0, GlsmFrontend.celtium$shaderProgramQueryAnswer(7, 0x8B82));
+        assertEquals(0, GlsmFrontend.celtium$shaderProgramQueryAnswer(7, 0x8B83));
+        assertEquals(log.length() + 1, GlsmFrontend.celtium$shaderProgramQueryAnswer(7, 0x8B84));
+        assertEquals(1, GlsmFrontend.celtium$shaderProgramQueryAnswer(7, 0x8B81));
     }
 
     @Test
@@ -294,10 +294,10 @@ class ModProgramRegistryTest {
         assertEquals(Boolean.valueOf(program.compiled()), ModProgramRegistry.linkStatus(5));
         if (program.compiled()) {
             assertNull(ModProgramRegistry.linkInfoLog(5));
-            assertEquals(1, CeltiumGlStub.shaderProgramQueryAnswer(5, 0x8B82));
-            assertEquals(0, CeltiumGlStub.shaderProgramQueryAnswer(5, 0x8B84));
+            assertEquals(1, GlsmFrontend.shaderProgramQueryAnswer(5, 0x8B82));
+            assertEquals(0, GlsmFrontend.shaderProgramQueryAnswer(5, 0x8B84));
         } else {
-            assertEquals(0, CeltiumGlStub.shaderProgramQueryAnswer(5, 0x8B82));
+            assertEquals(0, GlsmFrontend.shaderProgramQueryAnswer(5, 0x8B82));
             assertTrue(ModProgramRegistry.linkInfoLog(5) != null);
         }
     }

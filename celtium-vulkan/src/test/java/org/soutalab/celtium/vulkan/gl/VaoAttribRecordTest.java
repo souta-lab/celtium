@@ -27,33 +27,68 @@ class VaoAttribRecordTest {
     private static final int BUFFER_BINDING = 0x889F;
     private static final int POINTER = 0x8645;
 
-    private static CeltiumGlStub install() throws Exception {
-        var ctor = CeltiumGlStub.class.getDeclaredConstructor();
+    private static GlsmFrontend install() throws Exception {
+        var ctor = GlsmFrontend.class.getDeclaredConstructor();
         ctor.setAccessible(true);
-        CeltiumGlStub stub = ctor.newInstance();
-        Field installed = CeltiumGlStub.class.getDeclaredField("installed");
+        GlsmFrontend stub = ctor.newInstance();
+        Field installed = GlsmFrontend.class.getDeclaredField("installed");
         installed.setAccessible(true);
         installed.set(null, stub);
+        // The routes rewiring moved the legacy vertex-pointer tuple and the capability record
+        // into singleton owners (GlsmClientArrayState / GlsmEnableState), where they outlive a
+        // stub instance. A fresh stub used to start from GL's initial values; restore that here
+        // so one test's setup cannot describe the next test's draw.
+        GlsmClientArrayState.Pointer vertexPointer = GlsmClientArrayState.current().clientPointer(0x8074, true);
+        vertexPointer.size = 4;
+        vertexPointer.type = GL_FLOAT;
+        vertexPointer.stride = 0;
+        vertexPointer.offset = 0L;
+        vertexPointer.buffer = 0;
+        vertexPointer.enabled = false;
+        vertexPointer.normalized = false;
+        vertexPointer.integer = false;
+        GlsmEnableState.current().set(0x8074, false); // GL_VERTEX_ARRAY
+        GlsmEnableState.current().set(0x8075, false); // GL_NORMAL_ARRAY
+        GlsmEnableState.current().set(0x8076, false); // GL_COLOR_ARRAY
+        GlsmEnableState.current().set(0x8078, false); // GL_TEXTURE_COORD_ARRAY
+        GlsmEnableState.current().set(ENABLED, false); // the attribute-0 enable mirror
+        // The per-attribute records are VAO state in the same singleton owner (M-5), so they outlive a stub
+        // instance too - and the resets above do not touch them. The quad setup leaves VAO 77 bound with
+        // attribute 0 enabled; a draw that is supposed to be unrecorded then decodes under the quad's enable
+        // and refuses on the legacy pointer's size instead of by name (the main-promotion full gate's one
+        // failure, 2026-11-25). Bind the default VAO and restore its records to GL's initial values, so the
+        // unrecorded-draw premise is actually established.
+        GlsmFrontend.celtium$bindVertexArray(0);
+        for (GlsmClientArrayState.VaoAttrib attrib : GlsmClientArrayState.current().attribsFor(0)) {
+            attrib.enabled = false;
+            attrib.pointerSet = false;
+            attrib.normalized = false;
+            attrib.integer = false;
+            attrib.size = 4;
+            attrib.type = GL_FLOAT;
+            attrib.stride = 0;
+            attrib.offset = 0L;
+            attrib.buffer = 0;
+        }
         return stub;
     }
 
     private static void uninstall() throws Exception {
-        Field installed = CeltiumGlStub.class.getDeclaredField("installed");
+        Field installed = GlsmFrontend.class.getDeclaredField("installed");
         installed.setAccessible(true);
         installed.set(null, null);
-        CeltiumGlStub.celtium$bindBuffer(GL_ARRAY_BUFFER, 0);
+        GlsmFrontend.celtium$bindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
-    private static void setCurrentProgram(CeltiumGlStub stub, int program) throws Exception {
-        Field field = CeltiumGlStub.class.getDeclaredField("currentProgram");
-        field.setAccessible(true);
-        field.setInt(stub, program);
+    private static void setCurrentProgram(GlsmFrontend stub, int program) {
+        // The current program is owned by GlsmShaderLedger (GAP-PROG-1); SEM_USE_PROGRAM writes it there.
+        GlsmShaderLedger.current().useProgram(program);
     }
 
     private static int attribIv(int index, int pname) {
         ByteBuffer out = MemoryUtil.memAlloc(4);
         try {
-            CeltiumGlStub.celtium$getVertexAttribiv(index, pname, MemoryUtil.memAddress(out));
+            GlsmFrontend.celtium$getVertexAttribiv(index, pname, MemoryUtil.memAddress(out));
             return out.getInt(0);
         } finally {
             MemoryUtil.memFree(out);
@@ -63,7 +98,7 @@ class VaoAttribRecordTest {
     private static long attribPointer(int index) {
         ByteBuffer out = MemoryUtil.memAlloc(8);
         try {
-            CeltiumGlStub.celtium$getVertexAttribPointer(index, POINTER, MemoryUtil.memAddress(out));
+            GlsmFrontend.celtium$getVertexAttribPointer(index, POINTER, MemoryUtil.memAddress(out));
             return out.getLong(0);
         } finally {
             MemoryUtil.memFree(out);
@@ -72,17 +107,17 @@ class VaoAttribRecordTest {
 
     /** The quad's own setup sequence, through the same statics the transformer's hint calls. */
     private static void setUpQuad(ByteBuffer vertices) {
-        CeltiumGlStub.celtium$bindVertexArray(77);
-        CeltiumGlStub.celtium$bindBuffer(GL_ARRAY_BUFFER, 78);
-        CeltiumGlStub.celtium$bufferData(GL_ARRAY_BUFFER, 80L, MemoryUtil.memAddress(vertices), GL_STATIC_DRAW);
-        CeltiumGlStub.celtium$vertexAttribPointer(0, 3, GL_FLOAT, false, 20, 0L);
-        CeltiumGlStub.celtium$vertexAttribEnabled(0, true);
-        CeltiumGlStub.celtium$vertexAttribPointer(1, 2, GL_FLOAT, false, 20, 12L);
-        CeltiumGlStub.celtium$vertexAttribEnabled(1, true);
-        CeltiumGlStub.celtium$vertexAttribPointer(2, 2, GL_FLOAT, false, 20, 12L);
-        CeltiumGlStub.celtium$vertexAttribEnabled(2, true);
-        CeltiumGlStub.celtium$bindBuffer(GL_ARRAY_BUFFER, 0);
-        CeltiumGlStub.celtium$bindVertexArray(0);
+        GlsmFrontend.celtium$bindVertexArray(77);
+        GlsmFrontend.celtium$bindBuffer(GL_ARRAY_BUFFER, 78);
+        GlsmFrontend.celtium$bufferData(GL_ARRAY_BUFFER, 80L, MemoryUtil.memAddress(vertices), GL_STATIC_DRAW);
+        GlsmFrontend.celtium$vertexAttribPointer(0, 3, GL_FLOAT, false, 20, 0L);
+        GlsmFrontend.celtium$vertexAttribEnabled(0, true);
+        GlsmFrontend.celtium$vertexAttribPointer(1, 2, GL_FLOAT, false, 20, 12L);
+        GlsmFrontend.celtium$vertexAttribEnabled(1, true);
+        GlsmFrontend.celtium$vertexAttribPointer(2, 2, GL_FLOAT, false, 20, 12L);
+        GlsmFrontend.celtium$vertexAttribEnabled(2, true);
+        GlsmFrontend.celtium$bindBuffer(GL_ARRAY_BUFFER, 0);
+        GlsmFrontend.celtium$bindVertexArray(0);
     }
 
     private static ByteBuffer quadVertices() {
@@ -114,13 +149,13 @@ class VaoAttribRecordTest {
 
     @Test
     void quadSetupIsRecordedPerAttributeAndSurvivesRebind() throws Exception {
-        CeltiumGlStub stub = install();
+        GlsmFrontend stub = install();
         ByteBuffer vertices = quadVertices();
         try {
             setUpQuad(vertices);
             // The default VAO was never given these attributes: its records stay at the defaults.
             assertEquals(0, attribIv(1, ENABLED), "attribute 1 of VAO 0 must not inherit the quad's enable");
-            CeltiumGlStub.celtium$bindVertexArray(77);
+            GlsmFrontend.celtium$bindVertexArray(77);
             assertEquals(1, attribIv(0, ENABLED));
             assertEquals(1, attribIv(1, ENABLED));
             assertEquals(1, attribIv(2, ENABLED));
@@ -131,11 +166,11 @@ class VaoAttribRecordTest {
             assertEquals(12L, attribPointer(1));
             assertEquals(12L, attribPointer(2));
             // A legacy pointer set on VAO 0 must not leak into the quad's VAO, nor the quad's into VAO 0.
-            CeltiumGlStub.celtium$bindVertexArray(0);
-            CeltiumGlStub.celtium$vertexPointer(3, GL_FLOAT, 12, 0L);
-            CeltiumGlStub.celtium$bindVertexArray(77);
+            GlsmFrontend.celtium$bindVertexArray(0);
+            GlsmFrontend.celtium$vertexPointer(3, GL_FLOAT, 12, 0L);
+            GlsmFrontend.celtium$bindVertexArray(77);
             assertEquals(20, attribIv(0, STRIDE), "VAO 77 keeps its own stride across the swap");
-            CeltiumGlStub.celtium$bindVertexArray(0);
+            GlsmFrontend.celtium$bindVertexArray(0);
             assertEquals(12, attribIv(0, STRIDE), "VAO 0 keeps the legacy pointer set on it");
         } finally {
             MemoryUtil.memFree(vertices);
@@ -145,13 +180,13 @@ class VaoAttribRecordTest {
 
     @Test
     void quadDrawDecodesToPositionTexFromTheRecordedBuffer() throws Exception {
-        CeltiumGlStub stub = install();
+        GlsmFrontend stub = install();
         ByteBuffer vertices = quadVertices();
         try {
             setUpQuad(vertices);
-            CeltiumGlStub.celtium$bindVertexArray(77);
+            GlsmFrontend.celtium$bindVertexArray(77);
             setCurrentProgram(stub, 999);
-            String line = drawLine(999, () -> CeltiumGlStub.celtium$drawArrays(GL_TRIANGLE_STRIP, 0, 4));
+            String line = drawLine(999, () -> GlsmFrontend.celtium$drawArrays(GL_TRIANGLE_STRIP, 0, 4));
             assertTrue(line.contains("format=6"), "the stride-20 quad must decode as POSITION_TEX: " + line);
             assertTrue(line.contains("reason=null"),
                     "the decode must accept the draw (a backend refusal later is a different line): " + line);
@@ -163,10 +198,10 @@ class VaoAttribRecordTest {
 
     @Test
     void drawWithoutAnyEnabledAttributeKeepsTheNamedRefusal() throws Exception {
-        CeltiumGlStub stub = install();
+        GlsmFrontend stub = install();
         try {
             setCurrentProgram(stub, 998);
-            String line = drawLine(998, () -> CeltiumGlStub.celtium$drawArrays(GL_TRIANGLE_STRIP, 0, 4));
+            String line = drawLine(998, () -> GlsmFrontend.celtium$drawArrays(GL_TRIANGLE_STRIP, 0, 4));
             assertTrue(line.contains("attribute 0 is not enabled"),
                     "an unrecorded draw must still refuse by name: " + line);
         } finally {

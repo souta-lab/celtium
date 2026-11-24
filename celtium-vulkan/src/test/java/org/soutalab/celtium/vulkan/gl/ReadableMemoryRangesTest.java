@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Verifies OS-independent readable-range math, Win32 {@code VirtualQuery} region walking/protection filtering,
- * Linux {@code /proc/self/maps} parsing, and {@link CeltiumGlStub} client-pointer acceptance/refusal through the
+ * Linux {@code /proc/self/maps} parsing, and {@link GlsmFrontend} client-pointer acceptance/refusal through the
  * mapping-provider seam.
  */
 class ReadableMemoryRangesTest {
@@ -115,20 +115,49 @@ class ReadableMemoryRangesTest {
     }
 
     private static final class StubHarness {
-        final CeltiumGlStub stub;
+        final GlsmFrontend stub;
         final Method dispatch;
         final Map<?, ?> ids;
         final Field installedField;
 
         StubHarness(ReadableMemoryRanges.Provider provider) throws Exception {
-            this.stub = new CeltiumGlStub(provider);
-            this.dispatch = CeltiumGlStub.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+            this.stub = new GlsmFrontend(provider);
+            this.dispatch = GlsmFrontend.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
             this.dispatch.setAccessible(true);
-            Field idsField = CeltiumGlStub.class.getDeclaredField("IDS");
+            Field idsField = GlsmFrontend.class.getDeclaredField("IDS");
             idsField.setAccessible(true);
             this.ids = (Map<?, ?>) idsField.get(null);
-            this.installedField = CeltiumGlStub.class.getDeclaredField("installed");
+            this.installedField = GlsmFrontend.class.getDeclaredField("installed");
             this.installedField.setAccessible(true);
+            resetSharedGlState();
+        }
+
+        /**
+         * The routes rewiring moved the capability record, the legacy vertex-pointer tuple and
+         * the buffer bindings into singleton owners (GlsmEnableState / GlsmClientArrayState /
+         * GlsmBufferState), where they outlive a stub instance. A fresh stub used to start from
+         * GL's initial values; restore that here so another test's client state cannot describe
+         * this harness's draws.
+         */
+        private static void resetSharedGlState() {
+            GlsmEnableState.current().set(GL_VERTEX_ARRAY, false);
+            GlsmEnableState.current().set(GL_NORMAL_ARRAY, false);
+            GlsmEnableState.current().set(GL_COLOR_ARRAY, false);
+            GlsmEnableState.current().set(GL_TEXTURE_COORD_ARRAY, false);
+            GlsmEnableState.current().set(0x8622, false); // the attribute-0 enable mirror
+            GlsmClientArrayState.Pointer vertexPointer =
+                    GlsmClientArrayState.current().clientPointer(GL_VERTEX_ARRAY, true);
+            vertexPointer.size = 4;
+            vertexPointer.type = GL_FLOAT;
+            vertexPointer.stride = 0;
+            vertexPointer.offset = 0L;
+            vertexPointer.buffer = 0;
+            vertexPointer.enabled = false;
+            vertexPointer.normalized = false;
+            vertexPointer.integer = false;
+            GlsmBufferState.current().bind(0x8892, 0); // GL_ARRAY_BUFFER
+            GlsmBufferState.current().bind(0x8893, 0); // GL_ELEMENT_ARRAY_BUFFER
+            NativeGeometryBuffer.unbind();
         }
 
         void call(String name, long... args) throws Exception {
@@ -386,9 +415,9 @@ class ReadableMemoryRangesTest {
             harness.call("glVertexPointer", 3, GL_FLOAT, 24, base);
 
             // First draw spans two contiguous readable regions -> accepted and cached.
-            CeltiumGlStub.celtium$drawArrays(GL_TRIANGLES, 0, 24);
+            GlsmFrontend.celtium$drawArrays(GL_TRIANGLES, 0, 24);
             // Second draw hits cache with zero extra provider calls.
-            CeltiumGlStub.celtium$drawArrays(GL_TRIANGLES, 0, 24);
+            GlsmFrontend.celtium$drawArrays(GL_TRIANGLES, 0, 24);
 
             assertEquals(2, backend.submissions.size());
             assertEquals(9, backend.submissions.get(0).formatId());
@@ -418,8 +447,8 @@ class ReadableMemoryRangesTest {
             gappedHarness.call("glEnableClientState", GL_TEXTURE_COORD_ARRAY);
             gappedHarness.call("glVertexPointer", 3, GL_FLOAT, 24, base);
 
-            CeltiumGlStub.celtium$drawArrays(GL_TRIANGLES, 0, 24);
-            CeltiumGlStub.celtium$drawArrays(GL_TRIANGLES, 0, 24);
+            GlsmFrontend.celtium$drawArrays(GL_TRIANGLES, 0, 24);
+            GlsmFrontend.celtium$drawArrays(GL_TRIANGLES, 0, 24);
             assertEquals(2, backend.submissions.size(), "gapped range must be refused");
             assertEquals(2, providerCalls.get(), "cooldown must throttle repeated misses within 100ms");
 
@@ -439,7 +468,7 @@ class ReadableMemoryRangesTest {
             unavailableHarness.call("glEnableClientState", GL_NORMAL_ARRAY);
             unavailableHarness.call("glEnableClientState", GL_TEXTURE_COORD_ARRAY);
             unavailableHarness.call("glVertexPointer", 3, GL_FLOAT, 24, base);
-            CeltiumGlStub.celtium$drawArrays(GL_TRIANGLES, 0, 24);
+            GlsmFrontend.celtium$drawArrays(GL_TRIANGLES, 0, 24);
             assertEquals(2, backend.submissions.size(), "unavailable provider must refuse client draw");
         } finally {
             NativeGeometryBuffer.unbind();
@@ -502,7 +531,7 @@ class ReadableMemoryRangesTest {
             harness.call("glVertexPointer", 3, GL_FLOAT, 12, vAddr);
 
             // Client indices + client vertices both covered -> glDrawElements succeeds.
-            CeltiumGlStub.celtium$drawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, iAddr);
+            GlsmFrontend.celtium$drawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, iAddr);
             assertEquals(1, backend.submissions.size());
             assertEquals(3.0f, backend.submissions.get(0).firstX());
 
@@ -511,9 +540,9 @@ class ReadableMemoryRangesTest {
             harness.call("glEnableClientState", GL_COLOR_ARRAY);
             harness.call("glEnableClientState", GL_TEXTURE_COORD_ARRAY);
             harness.call("glVertexPointer", 3, GL_FLOAT, 48, sAddr);
-            CeltiumGlStub.celtium$texCoordPointer(2, GL_FLOAT, 8, tAddr);
-            CeltiumGlStub.celtium$colorPointer(4, GL_UNSIGNED_BYTE, 4, cAddr);
-            CeltiumGlStub.celtium$drawArrays(GL_QUADS, 0, 4);
+            GlsmFrontend.celtium$texCoordPointer(2, GL_FLOAT, 8, tAddr);
+            GlsmFrontend.celtium$colorPointer(4, GL_UNSIGNED_BYTE, 4, cAddr);
+            GlsmFrontend.celtium$drawArrays(GL_QUADS, 0, 4);
             assertEquals(1, backend.submissions.size(), "split-array draw with uncovered color pointer must be refused");
 
             // Fresh stub with all split arrays covered -> accepted!
@@ -538,9 +567,9 @@ class ReadableMemoryRangesTest {
             fullHarness.call("glEnableClientState", GL_COLOR_ARRAY);
             fullHarness.call("glEnableClientState", GL_TEXTURE_COORD_ARRAY);
             fullHarness.call("glVertexPointer", 3, GL_FLOAT, 48, sAddr);
-            CeltiumGlStub.celtium$texCoordPointer(2, GL_FLOAT, 8, tAddr);
-            CeltiumGlStub.celtium$colorPointer(4, GL_UNSIGNED_BYTE, 4, cAddr);
-            CeltiumGlStub.celtium$drawArrays(GL_QUADS, 0, 4);
+            GlsmFrontend.celtium$texCoordPointer(2, GL_FLOAT, 8, tAddr);
+            GlsmFrontend.celtium$colorPointer(4, GL_UNSIGNED_BYTE, 4, cAddr);
+            GlsmFrontend.celtium$drawArrays(GL_QUADS, 0, 4);
             assertEquals(2, backend.submissions.size());
             assertEquals(9.0f, backend.submissions.get(1).firstX());
 
@@ -559,7 +588,7 @@ class ReadableMemoryRangesTest {
             missingIndicesHarness.installedField.set(null, missingIndicesHarness.stub);
             missingIndicesHarness.call("glEnableClientState", GL_VERTEX_ARRAY);
             missingIndicesHarness.call("glVertexPointer", 3, GL_FLOAT, 12, vAddr);
-            CeltiumGlStub.celtium$drawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, iAddr);
+            GlsmFrontend.celtium$drawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, iAddr);
             assertEquals(2, backend.submissions.size(), "glDrawElements with uncovered client indices must be refused");
         } finally {
             NativeGeometryBuffer.unbind();

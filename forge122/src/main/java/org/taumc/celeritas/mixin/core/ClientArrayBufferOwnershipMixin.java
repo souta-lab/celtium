@@ -16,7 +16,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * {@code /proc/self/maps} guard, with a 32 MiB cap and a refusal by name on any OS where that file does not exist;
  * and even a mapping hit says nothing about the buffer's lifetime. Here the {@code BufferBuilder} is in hand one
  * instruction before the draw, so its {@code ByteBuffer} address <em>and capacity</em> are published to
- * {@code CeltiumGlStub.publishClientArrayBuffer}, and the stub decodes that range without the guard. The pointer-only
+ * {@code GlsmFrontend.publishClientArrayBuffer}, and the stub decodes that range without the guard. The pointer-only
  * path stays for calls that do not come through this uploader, with its tuples and refusals stated in the census.
  * <p>
  * The injection point is the {@code glDrawArrays} call itself, not the method head, and that placement is the whole
@@ -59,7 +59,7 @@ public abstract class ClientArrayBufferOwnershipMixin {
             if (address == 0L || bytes <= 0L) {
                 return;
             }
-            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.publishClientArrayBuffer(address, bytes);
+            org.soutalab.celtium.vulkan.gl.GlsmFrontend.publishClientArrayBuffer(address, bytes);
             celtium$ownedBufferPublished++;
             if (celtium$ownedBufferDumps < 4) {
                 celtium$ownedBufferDumps++;
@@ -73,7 +73,7 @@ public abstract class ClientArrayBufferOwnershipMixin {
             } else if (celtium$ownedBufferPublished % 20000L == 0L) {
                 // The pairing that matters: publications offered against draws the stub decoded from them. A gap means
                 // the stub never saw the draw (the publication is dropped, by design, when the draw does not arrive).
-                long used = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.ownedClientBufferDraws();
+                long used = org.soutalab.celtium.vulkan.gl.GlsmFrontend.ownedClientBufferDraws();
                 if (used != celtium$ownedBufferUsed) {
                     celtium$ownedBufferUsed = used;
                     celtium$ownedBufferReports++;

@@ -106,7 +106,7 @@ final class ModelReplay {
             mesh = b.modelGeometry.meshFor(listId);
         }
         if (mesh == null || mesh.isEmpty()) {
-            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.hasRecordedList(listId)) {
+            if (org.soutalab.celtium.vulkan.gl.GlsmFrontend.hasRecordedList(listId)) {
                 // No model quads were captured for this list, but the stub recorded its commands - a Tessellator draw
                 // compiled into the list, which is how a mod's skybox or sky dome is built. The GL replay that follows
                 // this false return draws the recorded geometry, so this is not a missing mesh and must not be counted

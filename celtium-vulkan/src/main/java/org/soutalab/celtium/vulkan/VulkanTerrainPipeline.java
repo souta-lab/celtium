@@ -654,6 +654,45 @@ public final class VulkanTerrainPipeline {
         return layout;
     }
 
+    /**
+     * Exposed for the mesh-shader sibling pipelines (item 652 stage 1, item 677 stage 2/3):
+     * their layouts carry this same set layout (stage 1 as its own set 0, stage 2/3 as set 1),
+     * which is what makes the pass' descriptor bind survive the pipeline switch - the layouts
+     * are compatible for that set because they name the same layout object, not merely an
+     * equal one. (Text identical to the alpha-mesh-impl2 branch's accessor, so the two lines
+     * merge without a conflict decision.)
+     *
+     * @return the native descriptor set layout handle, valid until {@link #delete()}
+     */
+    public long descriptorSetLayout() {
+        return descriptorSetLayout;
+    }
+
+    /** The front face this pipeline's rasterisation state was created with (mesh sibling mirror, item 652). */
+    int celtium$meshFrontFace() {
+        return this.frontFace;
+    }
+
+    /** Whether this pipeline culls back faces (mesh sibling mirror, item 652). */
+    boolean celtium$meshBlockFaceCulling() {
+        return this.blockFaceCulling;
+    }
+
+    /** Whether this pipeline blends (mesh sibling mirror, item 652). */
+    boolean celtium$meshBlended() {
+        return this.blended;
+    }
+
+    /** The fragment-discard specialization value this pipeline's fragment stage carries (mesh sibling mirror, item 652). */
+    boolean celtium$meshFragmentDiscard() {
+        return this.fragmentDiscard;
+    }
+
+    /** Whether this pipeline tests depth - the {@code noTerrainDepth} lab switch, read as the creation code reads it (item 652). */
+    boolean celtium$meshDepthTestEnabled() {
+        return !NO_TERRAIN_DEPTH;
+    }
+
     /** {@return the vertex input state this pipeline was created with} */
     public String vertexInputSummary() {
         return this.vertexInputSummary;
@@ -1159,12 +1198,12 @@ public final class VulkanTerrainPipeline {
         if (name <= 0) {
             return -1;
         }
-        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameterRecorded(name, 0x813D)) {
-            return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureParameter(name, 0x813D);
+        if (org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureParameterRecorded(name, 0x813D)) {
+            return org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureParameter(name, 0x813D);
         }
         int highest = -1;
         for (int level = 0; level < 16; level++) {
-            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.textureLevelParameter(name, level, 0x1000) <= 0) {
+            if (org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureLevelParameter(name, level, 0x1000) <= 0) {
                 break;
             }
             highest = level;

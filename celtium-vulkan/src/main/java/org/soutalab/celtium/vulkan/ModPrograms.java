@@ -466,7 +466,7 @@ final class ModPrograms {
             // depth record was not yet registered (branch i), or be a standalone depth copy target (e.g. altDepth /
             // depthtex1) already residing in the shared depth store (branch ii). Adopt and publish before falling
             // through to the colour/mirror routes.
-            int depthFbo = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferForDepthTexture(name);
+            int depthFbo = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferForDepthTexture(name);
             if (depthFbo != 0) {
                 b.celtium$registerRawFramebuffer(depthFbo, false);
                 if (b.celtium$publishFramebufferDepthTexture(name)) {
@@ -848,14 +848,14 @@ final class ModPrograms {
         if (!celtium$claimSamplerDepthProbe(this.modSamplerDepthProbed, name)) {
             return;
         }
-        int depthFramebuffer = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+        int depthFramebuffer = org.soutalab.celtium.vulkan.gl.GlsmFrontend
                 .celtium$framebufferForDepthTexture(name);
         // The colour half of the same question rides the same line, so one refusal line separates the
         // colour cases too: which framebuffer the stub's record attaches the name to as a colour texture,
         // which attachment slot the census carries it at (-1 fills none, 0 is the slot-0 record), and the
         // identity that slot resolves to. A colour name refused with framebuffer=0x0 is not thereby
         // unattached - the depth lookup is 0 for every colour texture by construction (shadowcolor1's case).
-        int colorFramebuffer = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+        int colorFramebuffer = org.soutalab.celtium.vulkan.gl.GlsmFrontend
                 .celtium$framebufferForColorTexture(name);
         int attachmentSlot = b.publishedTextures.attachmentSlotForTexture(name);
         long colorIdentity = b.celtium$framebufferIdentityForColorTexture(name);

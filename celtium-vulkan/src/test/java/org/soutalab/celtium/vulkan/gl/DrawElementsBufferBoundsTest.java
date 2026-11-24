@@ -95,22 +95,51 @@ class DrawElementsBufferBoundsTest {
         }
     }
 
-    private final CeltiumGlStub stub;
+    private final GlsmFrontend stub;
     private final Method dispatch;
     private final Map<?, ?> ids;
     private final Field installedField;
 
     DrawElementsBufferBoundsTest() throws Exception {
-        var constructor = CeltiumGlStub.class.getDeclaredConstructor();
+        var constructor = GlsmFrontend.class.getDeclaredConstructor();
         constructor.setAccessible(true);
         this.stub = constructor.newInstance();
-        this.dispatch = CeltiumGlStub.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+        this.dispatch = GlsmFrontend.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
         this.dispatch.setAccessible(true);
-        Field idsField = CeltiumGlStub.class.getDeclaredField("IDS");
+        Field idsField = GlsmFrontend.class.getDeclaredField("IDS");
         idsField.setAccessible(true);
         this.ids = (Map<?, ?>) idsField.get(null);
-        this.installedField = CeltiumGlStub.class.getDeclaredField("installed");
+        this.installedField = GlsmFrontend.class.getDeclaredField("installed");
         this.installedField.setAccessible(true);
+        resetSharedGlState();
+    }
+
+    /**
+     * The routes rewiring moved the capability record, the legacy vertex-pointer tuple and the
+     * buffer bindings into singleton owners (GlsmEnableState / GlsmClientArrayState /
+     * GlsmBufferState), where they outlive a stub instance. A fresh stub used to start from GL's
+     * initial values; restore that here so another test's client state cannot describe this
+     * test's draws.
+     */
+    private static void resetSharedGlState() {
+        GlsmEnableState.current().set(GL_VERTEX_ARRAY, false);
+        GlsmEnableState.current().set(0x8075, false); // GL_NORMAL_ARRAY
+        GlsmEnableState.current().set(0x8076, false); // GL_COLOR_ARRAY
+        GlsmEnableState.current().set(0x8078, false); // GL_TEXTURE_COORD_ARRAY
+        GlsmEnableState.current().set(0x8622, false); // the attribute-0 enable mirror
+        GlsmClientArrayState.Pointer vertexPointer =
+                GlsmClientArrayState.current().clientPointer(GL_VERTEX_ARRAY, true);
+        vertexPointer.size = 4;
+        vertexPointer.type = GL_FLOAT;
+        vertexPointer.stride = 0;
+        vertexPointer.offset = 0L;
+        vertexPointer.buffer = 0;
+        vertexPointer.enabled = false;
+        vertexPointer.normalized = false;
+        vertexPointer.integer = false;
+        GlsmBufferState.current().bind(GL_ARRAY_BUFFER, 0);
+        GlsmBufferState.current().bind(GL_ELEMENT_ARRAY_BUFFER, 0);
+        NativeGeometryBuffer.unbind();
     }
 
     private long call(String name, long... args) throws Exception {
@@ -158,7 +187,7 @@ class DrawElementsBufferBoundsTest {
             call("glEnableClientState", GL_VERTEX_ARRAY);
             call("glVertexPointer", 3, GL_FLOAT, 12, 0L);
 
-            CeltiumGlStub.celtium$drawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, 0L);
+            GlsmFrontend.celtium$drawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, 0L);
 
             assertEquals(1, backend.submissions.size(),
                     "glDrawElements with a stub-owned VBO must submit the expanded batch instead of treating it as null client memory");
@@ -206,17 +235,17 @@ class DrawElementsBufferBoundsTest {
             call("glVertexPointer", 3, GL_FLOAT, 12, 0L);
 
             // 1. Reading 3 indices (12 bytes) from an EBO shrunk to 8 bytes must be refused.
-            CeltiumGlStub.celtium$drawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, 0L);
+            GlsmFrontend.celtium$drawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, 0L);
             assertEquals(0, backend.submissions.size(),
                     "glDrawElements must reject element range past shrunk EBO logical size");
 
             // 2. Reading an index that points past the shrunk VBO (index 2 in 2-vertex logical VBO) must be refused.
-            CeltiumGlStub.celtium$drawElements(GL_TRIANGLES, 2, GL_UNSIGNED_INT, 0L);
+            GlsmFrontend.celtium$drawElements(GL_TRIANGLES, 2, GL_UNSIGNED_INT, 0L);
             assertEquals(0, backend.submissions.size(),
                     "glDrawElements must reject vertex index past shrunk VBO logical size");
 
             // 3. Overflowing EBO offset + byteSize must be refused.
-            CeltiumGlStub.celtium$drawElements(GL_TRIANGLES, 2, GL_UNSIGNED_INT, Long.MAX_VALUE - 4L);
+            GlsmFrontend.celtium$drawElements(GL_TRIANGLES, 2, GL_UNSIGNED_INT, Long.MAX_VALUE - 4L);
             assertEquals(0, backend.submissions.size(),
                     "glDrawElements must reject overflowing EBO offset");
 
@@ -226,7 +255,7 @@ class DrawElementsBufferBoundsTest {
             call("glVertexPointer", 3, GL_FLOAT, 12, MemoryUtil.memAddress(emptyClientSentinel));
             shrunkEbo.putInt(0, 0).putInt(4, 1);
             uploadBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo, shrunkEbo);
-            CeltiumGlStub.celtium$drawElements(GL_TRIANGLES, 2, GL_UNSIGNED_INT, 0L);
+            GlsmFrontend.celtium$drawElements(GL_TRIANGLES, 2, GL_UNSIGNED_INT, 0L);
             assertEquals(0, backend.submissions.size(),
                     "glDrawElements with a bound non-zero VBO lacking storage must not read vertexPointerOffset as client memory");
         } finally {
@@ -268,17 +297,17 @@ class DrawElementsBufferBoundsTest {
             call("glVertexPointer", 3, GL_FLOAT, 12, MemoryUtil.memAddress(clientVertices));
 
             // 1. Reading 3 indices (12 bytes) from an EBO shrunk to 8 bytes must be refused.
-            CeltiumGlStub.celtium$drawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, 0L);
+            GlsmFrontend.celtium$drawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, 0L);
             assertEquals(0, backend.submissions.size(),
                     "glDrawElements with client vertices must still reject EBO ranges past shrunk logical size");
 
             // 2. Overflowing EBO offset + byteSize must be refused.
-            CeltiumGlStub.celtium$drawElements(GL_TRIANGLES, 2, GL_UNSIGNED_INT, Long.MAX_VALUE - 4L);
+            GlsmFrontend.celtium$drawElements(GL_TRIANGLES, 2, GL_UNSIGNED_INT, Long.MAX_VALUE - 4L);
             assertEquals(0, backend.submissions.size(),
                     "glDrawElements with client vertices must reject overflowing EBO offset");
 
             // 3. Valid range within the shrunk 8-byte EBO still draws.
-            CeltiumGlStub.celtium$drawElements(GL_TRIANGLES, 2, GL_UNSIGNED_INT, 0L);
+            GlsmFrontend.celtium$drawElements(GL_TRIANGLES, 2, GL_UNSIGNED_INT, 0L);
             assertEquals(1, backend.submissions.size());
             assertEquals(22.0f, backend.submissions.get(0).xCoords()[0]);
             assertEquals(20.0f, backend.submissions.get(0).xCoords()[1]);

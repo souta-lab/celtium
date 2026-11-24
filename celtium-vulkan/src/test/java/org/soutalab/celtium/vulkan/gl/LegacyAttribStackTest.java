@@ -46,29 +46,29 @@ class LegacyAttribStackTest {
 
     private final NativeRasterState raster = new NativeRasterState();
     private final NativeTextureBindings textures = new NativeTextureBindings(this.raster);
-    private final CeltiumGlStub adapter;
+    private final GlsmFrontend adapter;
     private final Method dispatch;
     private final Map<?, ?> ids;
     private final Field installedField;
-    private CeltiumGlStub previousInstalled;
+    private GlsmFrontend previousInstalled;
 
     LegacyAttribStackTest() throws Exception {
-        var constructor = CeltiumGlStub.class.getDeclaredConstructor(
+        var constructor = GlsmFrontend.class.getDeclaredConstructor(
                 NativeRasterState.class, NativeTextureBindings.class);
         constructor.setAccessible(true);
         this.adapter = constructor.newInstance(this.raster, this.textures);
-        this.dispatch = CeltiumGlStub.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+        this.dispatch = GlsmFrontend.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
         this.dispatch.setAccessible(true);
-        var table = CeltiumGlStub.class.getDeclaredField("IDS");
+        var table = GlsmFrontend.class.getDeclaredField("IDS");
         table.setAccessible(true);
         this.ids = (Map<?, ?>) table.get(null);
-        this.installedField = CeltiumGlStub.class.getDeclaredField("installed");
+        this.installedField = GlsmFrontend.class.getDeclaredField("installed");
         this.installedField.setAccessible(true);
     }
 
     @BeforeEach
     void installStub() throws Exception {
-        this.previousInstalled = (CeltiumGlStub) this.installedField.get(null);
+        this.previousInstalled = (GlsmFrontend) this.installedField.get(null);
         this.installedField.set(null, this.adapter);
     }
 
@@ -132,10 +132,10 @@ class LegacyAttribStackTest {
     @Test
     void aPushThatDoesNotSelectTheColourBufferLeavesTheColourMaskItFoundInForce() throws Exception {
         call("glColorMask", 1, 1, 1, 1);
-        CeltiumGlStub.celtium$pushAttrib(LegacyAttribSnapshot.ENABLE_BIT);
+        GlsmFrontend.celtium$pushAttrib(LegacyAttribSnapshot.ENABLE_BIT);
         call("glColorMask", 1, 0, 0, 0);
         assertEquals(0x1, this.raster.colorMask(), "the write inside the push has to reach the renderer");
-        CeltiumGlStub.celtium$popAttrib();
+        GlsmFrontend.celtium$popAttrib();
         assertEquals(0x1, this.raster.colorMask(),
                 "GL_ENABLE_BIT does not save GL_COLOR_WRITEMASK (that is GL_COLOR_BUFFER_BIT), so the pop must not "
                         + "put it back");
@@ -146,11 +146,11 @@ class LegacyAttribStackTest {
     void aPushThatSelectsTheColourBufferPutsTheBlendStateBack() throws Exception {
         call("glBlendFunc", GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         call("glColorMask", 1, 1, 1, 1);
-        CeltiumGlStub.celtium$pushAttrib(LegacyAttribSnapshot.COLOR_BUFFER_BIT);
+        GlsmFrontend.celtium$pushAttrib(LegacyAttribSnapshot.COLOR_BUFFER_BIT);
         call("glBlendFunc", 1, 0);
         call("glColorMask", 1, 0, 0, 0);
         assertEquals(1, this.raster.blendSrcRgb());
-        CeltiumGlStub.celtium$popAttrib();
+        GlsmFrontend.celtium$popAttrib();
         assertEquals(GL_SRC_ALPHA, this.raster.blendSrcRgb(), "the source factor is GL_COLOR_BUFFER_BIT state");
         assertEquals(GL_ONE_MINUS_SRC_ALPHA, this.raster.blendDstRgb());
         assertEquals(0xF, this.raster.colorMask());
@@ -161,12 +161,12 @@ class LegacyAttribStackTest {
     void theEnableBitPutsCapabilitiesBackInBothDirections() throws Exception {
         call("glDisable", GL_BLEND);
         call("glEnable", GL_DEPTH_TEST);
-        CeltiumGlStub.celtium$pushAttrib(LegacyAttribSnapshot.ENABLE_BIT);
+        GlsmFrontend.celtium$pushAttrib(LegacyAttribSnapshot.ENABLE_BIT);
         call("glEnable", GL_BLEND);
         call("glDisable", GL_DEPTH_TEST);
         assertEquals(1, call("glIsEnabled", GL_BLEND));
         assertEquals(0, call("glIsEnabled", GL_DEPTH_TEST));
-        CeltiumGlStub.celtium$popAttrib();
+        GlsmFrontend.celtium$popAttrib();
         assertEquals(0, call("glIsEnabled", GL_BLEND), "a capability that was disabled at the push comes back off");
         assertEquals(1, call("glIsEnabled", GL_DEPTH_TEST), "and one that was enabled comes back on");
     }
@@ -181,14 +181,14 @@ class LegacyAttribStackTest {
      */
     @Test
     void theDepthBufferBitPutsTheWriteMaskAndTheComparisonBack() throws Exception {
-        CeltiumGlStub.celtium$noteDepthMask(true);
-        CeltiumGlStub.celtium$noteDepthFunc(GL_LESS);
-        CeltiumGlStub.celtium$pushAttrib(LegacyAttribSnapshot.DEPTH_BUFFER_BIT);
-        CeltiumGlStub.celtium$noteDepthMask(false);
-        CeltiumGlStub.celtium$noteDepthFunc(GL_GREATER);
+        GlsmFrontend.celtium$noteDepthMask(true);
+        GlsmFrontend.celtium$noteDepthFunc(GL_LESS);
+        GlsmFrontend.celtium$pushAttrib(LegacyAttribSnapshot.DEPTH_BUFFER_BIT);
+        GlsmFrontend.celtium$noteDepthMask(false);
+        GlsmFrontend.celtium$noteDepthFunc(GL_GREATER);
         assertEquals(0, queryBoolean(GL_DEPTH_WRITEMASK));
         assertEquals(GL_GREATER, queryInt(GL_DEPTH_FUNC));
-        CeltiumGlStub.celtium$popAttrib();
+        GlsmFrontend.celtium$popAttrib();
         assertEquals(1, queryBoolean(GL_DEPTH_WRITEMASK), "GL_DEPTH_WRITEMASK is GL_DEPTH_BUFFER_BIT state");
         assertEquals(GL_LESS, queryInt(GL_DEPTH_FUNC));
     }
@@ -199,12 +199,12 @@ class LegacyAttribStackTest {
         call("glCullFace", GL_BACK);
         this.raster.scissor(0, 0, 1280, 720);
         this.raster.polygonOffset(0.0f, 0.0f);
-        CeltiumGlStub.celtium$pushAttrib(LegacyAttribSnapshot.POLYGON_BIT | LegacyAttribSnapshot.SCISSOR_BIT);
+        GlsmFrontend.celtium$pushAttrib(LegacyAttribSnapshot.POLYGON_BIT | LegacyAttribSnapshot.SCISSOR_BIT);
         call("glCullFace", GL_FRONT);
         call("glScissor", 1, 2, 3, 4);
         callFloats("glPolygonOffset", 7.0f, 8.0f);
         assertEquals(GL_FRONT, this.raster.cullFace());
-        CeltiumGlStub.celtium$popAttrib();
+        GlsmFrontend.celtium$popAttrib();
         assertEquals(GL_BACK, this.raster.cullFace(), "GL_CULL_FACE_MODE is GL_POLYGON_BIT state");
         assertEquals(0, this.raster.scissorX());
         assertEquals(0, this.raster.scissorY());
@@ -217,11 +217,11 @@ class LegacyAttribStackTest {
     /** An alpha comparison changed inside a colour-buffer push comes back, not just its enable bit. */
     @Test
     void theColourBufferBitPutsTheAlphaComparisonBack() throws Exception {
-        CeltiumGlStub.celtium$noteAlphaFunc(GL_ALWAYS, 0.0f);
-        CeltiumGlStub.celtium$pushAttrib(LegacyAttribSnapshot.COLOR_BUFFER_BIT);
-        CeltiumGlStub.celtium$noteAlphaFunc(GL_GREATER, 0.9f);
+        GlsmFrontend.celtium$noteAlphaFunc(GL_ALWAYS, 0.0f);
+        GlsmFrontend.celtium$pushAttrib(LegacyAttribSnapshot.COLOR_BUFFER_BIT);
+        GlsmFrontend.celtium$noteAlphaFunc(GL_GREATER, 0.9f);
         assertEquals(GL_GREATER, queryInt(GL_ALPHA_TEST_FUNC));
-        CeltiumGlStub.celtium$popAttrib();
+        GlsmFrontend.celtium$popAttrib();
         assertEquals(GL_ALWAYS, queryInt(GL_ALPHA_TEST_FUNC), "GL_ALPHA_TEST_FUNC is GL_COLOR_BUFFER_BIT state");
     }
 
@@ -229,14 +229,14 @@ class LegacyAttribStackTest {
     @Test
     void nestedPushesRestoreInTheOrderTheyWerePushed() throws Exception {
         call("glColorMask", 1, 1, 1, 1);
-        CeltiumGlStub.celtium$pushAttrib(LegacyAttribSnapshot.COLOR_BUFFER_BIT);
+        GlsmFrontend.celtium$pushAttrib(LegacyAttribSnapshot.COLOR_BUFFER_BIT);
         call("glColorMask", 1, 1, 1, 0);
-        CeltiumGlStub.celtium$pushAttrib(LegacyAttribSnapshot.COLOR_BUFFER_BIT);
+        GlsmFrontend.celtium$pushAttrib(LegacyAttribSnapshot.COLOR_BUFFER_BIT);
         call("glColorMask", 0, 0, 0, 0);
-        CeltiumGlStub.celtium$popAttrib();
+        GlsmFrontend.celtium$popAttrib();
         // glColorMask(true,true,true,false) is red|green|blue = 0x7, not 0xE: the bits are channel order, low to high.
         assertEquals(0x7, this.raster.colorMask(), "the inner pop restores what the inner push saved");
-        CeltiumGlStub.celtium$popAttrib();
+        GlsmFrontend.celtium$popAttrib();
         assertEquals(0xF, this.raster.colorMask(), "and the outer pop restores the value from before the inner push");
     }
 
@@ -244,9 +244,9 @@ class LegacyAttribStackTest {
     @Test
     void aPopWithoutAPushChangesNothingAndIsCounted() throws Exception {
         call("glColorMask", 1, 1, 1, 1);
-        CeltiumGlStub.celtium$popAttrib();
+        GlsmFrontend.celtium$popAttrib();
         assertEquals(0xF, this.raster.colorMask());
-        String census = CeltiumGlStub.attribCensus();
+        String census = GlsmFrontend.attribCensus();
         assertTrue(census.contains("unmatchedPops=1"), census);
         assertTrue(census.contains("masks=true"), census);
     }
@@ -256,12 +256,12 @@ class LegacyAttribStackTest {
     void anUnbalancedPushIsBoundedAndCounted() throws Exception {
         int pushes = 70;
         for (int i = 0; i < pushes; i++) {
-            CeltiumGlStub.celtium$pushAttrib(LegacyAttribSnapshot.COLOR_BUFFER_BIT);
+            GlsmFrontend.celtium$pushAttrib(LegacyAttribSnapshot.COLOR_BUFFER_BIT);
         }
         for (int i = 0; i < pushes; i++) {
-            CeltiumGlStub.celtium$popAttrib();
+            GlsmFrontend.celtium$popAttrib();
         }
-        String census = CeltiumGlStub.attribCensus();
+        String census = GlsmFrontend.attribCensus();
         assertTrue(census.contains("pushes=" + pushes), census);
         assertTrue(census.contains("overflow=" + (pushes - 64)), census);
         assertTrue(census.contains("unmatchedPops=" + (pushes - 64)), census);
@@ -278,7 +278,7 @@ class LegacyAttribStackTest {
         call("glColorMask", 1, 0, 1, 0);
         assertEquals("1010", queryBooleanVector(0x0C23, 4));
         assertEquals(1, queryBoolean(GL_DEPTH_WRITEMASK), "and the scalar boolean query answers from the same record");
-        CeltiumGlStub.celtium$noteDepthMask(false);
+        GlsmFrontend.celtium$noteDepthMask(false);
         assertEquals(0, queryBoolean(GL_DEPTH_WRITEMASK));
     }
 
@@ -349,17 +349,17 @@ class LegacyAttribStackTest {
         call("glViewport", 0, 0, 800, 600);
         assertArrayEquals(new int[] {0, 0, 800, 600}, queryInts(0x0BA2, 4), "the caller's rectangle, through GL_VIEWPORT");
         assertEquals(((long) 0 << 48) | ((long) 0 << 32) | ((long) 800 << 16) | 600L,
-                CeltiumGlStub.celtium$viewportPacked(), "and the packed rectangle the capture reads");
-        CeltiumGlStub.celtium$pushAttrib(LegacyAttribSnapshot.VIEWPORT_BIT);
+                GlsmFrontend.celtium$viewportPacked(), "and the packed rectangle the capture reads");
+        GlsmFrontend.celtium$pushAttrib(LegacyAttribSnapshot.VIEWPORT_BIT);
         call("glViewport", 11, 13, 17, 19);
         assertArrayEquals(new int[] {11, 13, 17, 19}, queryInts(0x0BA2, 4),
                 "the block's own rectangle is in force inside the push");
         assertEquals(((long) 11 << 48) | ((long) 13 << 32) | ((long) 17 << 16) | 19L,
-                CeltiumGlStub.celtium$viewportPacked());
-        CeltiumGlStub.celtium$popAttrib();
+                GlsmFrontend.celtium$viewportPacked());
+        GlsmFrontend.celtium$popAttrib();
         assertArrayEquals(new int[] {0, 0, 800, 600}, queryInts(0x0BA2, 4), "the pop put the caller's rectangle back");
         assertEquals(((long) 0 << 48) | ((long) 0 << 32) | ((long) 800 << 16) | 600L,
-                CeltiumGlStub.celtium$viewportPacked(),
+                GlsmFrontend.celtium$viewportPacked(),
                 "and the packed rectangle the group key and the capture read - not only the query's fields");
     }
 
@@ -367,13 +367,13 @@ class LegacyAttribStackTest {
     @Test
     void aPushWithoutTheViewportGroupLeavesTheBlockRectangleInForce() throws Exception {
         call("glViewport", 0, 0, 800, 600);
-        CeltiumGlStub.celtium$pushAttrib(LegacyAttribSnapshot.ENABLE_BIT);
+        GlsmFrontend.celtium$pushAttrib(LegacyAttribSnapshot.ENABLE_BIT);
         call("glViewport", 23, 29, 31, 37);
-        CeltiumGlStub.celtium$popAttrib();
+        GlsmFrontend.celtium$popAttrib();
         assertArrayEquals(new int[] {23, 29, 31, 37}, queryInts(0x0BA2, 4),
                 "GL_ENABLE_BIT saves capabilities, not GL_VIEWPORT");
         assertEquals(((long) 23 << 48) | ((long) 29 << 32) | ((long) 31 << 16) | 37L,
-                CeltiumGlStub.celtium$viewportPacked());
+                GlsmFrontend.celtium$viewportPacked());
     }
 
     /**
@@ -426,9 +426,9 @@ class LegacyAttribStackTest {
      */
     @Test
     void withoutALightingMirrorTheGroupIsNotCountedAsRestored() {
-        CeltiumGlStub.celtium$pushAttrib(LegacyAttribSnapshot.LIGHTING_BIT);
-        CeltiumGlStub.celtium$popAttrib();
-        String census = CeltiumGlStub.attribCensus();
+        GlsmFrontend.celtium$pushAttrib(LegacyAttribSnapshot.LIGHTING_BIT);
+        GlsmFrontend.celtium$popAttrib();
+        String census = GlsmFrontend.attribCensus();
         assertTrue(census.contains("selectedPartialGroups=1"), census);
         assertTrue(census.contains("lightingRestores=0"), census);
         assertTrue(census.contains("lightingRestoresChanged=0"), census);
@@ -529,7 +529,7 @@ class LegacyAttribStackTest {
                 | LegacyAttribSnapshot.FOG_BIT | LegacyAttribSnapshot.DEPTH_BUFFER_BIT
                 | LegacyAttribSnapshot.ACCUM_BUFFER_BIT | LegacyAttribSnapshot.VIEWPORT_BIT;
         assertEquals(0xBC1, mask, "the provider's mask, named group by group");
-        CeltiumGlStub.celtium$pushAttrib(mask);
+        GlsmFrontend.celtium$pushAttrib(mask);
         call("glEnable", GL_FOG);
         call("glFogi", GL_FOG_MODE, GL_EXP);
         call("glFogf", GL_FOG_DENSITY, Float.floatToRawIntBits(0.5f));
@@ -537,7 +537,7 @@ class LegacyAttribStackTest {
         call("glFogf", GL_FOG_END, Float.floatToRawIntBits(2.0f));
         setFogColour(1.0f, 0.0f, 0.0f, 1.0f);
         assertEquals(1, call("glIsEnabled", GL_FOG), "the block's own fog state is in force inside the push");
-        CeltiumGlStub.celtium$popAttrib();
+        GlsmFrontend.celtium$popAttrib();
         assertEquals(0, call("glIsEnabled", GL_FOG),
                 "GL_FOG is GL_FOG_BIT state, so the pop puts the enable back without GL_ENABLE_BIT");
         assertEquals(GL_LINEAR, queryInt(GL_FOG_MODE), "GL_FOG_MODE is GL_FOG_BIT state");
@@ -558,10 +558,10 @@ class LegacyAttribStackTest {
     @Test
     void aPushThatDoesNotSelectTheFogGroupLeavesTheParametersItFoundInForce() throws Exception {
         resetFog();
-        CeltiumGlStub.celtium$pushAttrib(LegacyAttribSnapshot.ENABLE_BIT);
+        GlsmFrontend.celtium$pushAttrib(LegacyAttribSnapshot.ENABLE_BIT);
         call("glEnable", GL_FOG);
         call("glFogf", GL_FOG_DENSITY, Float.floatToRawIntBits(0.5f));
-        CeltiumGlStub.celtium$popAttrib();
+        GlsmFrontend.celtium$popAttrib();
         assertEquals(0, call("glIsEnabled", GL_FOG),
                 "the enable is restored here too, through the capability the enable group saved");
         assertEquals(0.5f, queryFloat(GL_FOG_DENSITY), 0.0f,

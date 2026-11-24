@@ -24,41 +24,41 @@ class LegacyColourComponentTest {
 
     @Test
     void byteEndpointsAndMiddle() {
-        assertEquals(0.0F, CeltiumGlStub.celtium$colourComponent((byte) 0));
+        assertEquals(0.0F, GlsmFrontend.celtium$colourComponent((byte) 0));
         // (byte) 255 is the bit pattern a caller writes for the maximum; it must be white, not GL's -1.
-        assertEquals(1.0F, CeltiumGlStub.celtium$colourComponent((byte) 255));
-        assertEquals(128.0F / 255.0F, CeltiumGlStub.celtium$colourComponent((byte) 128), EPSILON);
-        assertEquals(1.0F / 255.0F, CeltiumGlStub.celtium$colourComponent((byte) 1), EPSILON);
+        assertEquals(1.0F, GlsmFrontend.celtium$colourComponent((byte) 255));
+        assertEquals(128.0F / 255.0F, GlsmFrontend.celtium$colourComponent((byte) 128), EPSILON);
+        assertEquals(1.0F / 255.0F, GlsmFrontend.celtium$colourComponent((byte) 1), EPSILON);
     }
 
     @Test
     void shortEndpointsAndMiddle() {
-        assertEquals(0.0F, CeltiumGlStub.celtium$colourComponent((short) 0));
-        assertEquals(1.0F, CeltiumGlStub.celtium$colourComponent((short) 65535));
-        assertEquals(1.0F, CeltiumGlStub.celtium$colourComponent((short) -1));
-        assertEquals(32768.0F / 65535.0F, CeltiumGlStub.celtium$colourComponent((short) 32768), EPSILON);
-        assertEquals(255.0F / 65535.0F, CeltiumGlStub.celtium$colourComponent((short) 255), EPSILON);
+        assertEquals(0.0F, GlsmFrontend.celtium$colourComponent((short) 0));
+        assertEquals(1.0F, GlsmFrontend.celtium$colourComponent((short) 65535));
+        assertEquals(1.0F, GlsmFrontend.celtium$colourComponent((short) -1));
+        assertEquals(32768.0F / 65535.0F, GlsmFrontend.celtium$colourComponent((short) 32768), EPSILON);
+        assertEquals(255.0F / 65535.0F, GlsmFrontend.celtium$colourComponent((short) 255), EPSILON);
     }
 
     @Test
     void intEndpointsAndMiddle() {
-        assertEquals(0.0F, CeltiumGlStub.celtium$colourComponent(0));
+        assertEquals(0.0F, GlsmFrontend.celtium$colourComponent(0));
         // -1 is 0xFFFFFFFF, which is how a caller writes the maximum of an unsigned int.
-        assertEquals(1.0F, CeltiumGlStub.celtium$colourComponent(-1));
-        assertEquals(1.0F, CeltiumGlStub.celtium$colourComponent(0xFFFFFFFF), EPSILON);
+        assertEquals(1.0F, GlsmFrontend.celtium$colourComponent(-1));
+        assertEquals(1.0F, GlsmFrontend.celtium$colourComponent(0xFFFFFFFF), EPSILON);
         // 0x7FFFFFFF is half the range, not the maximum: only the full 32 bits reach 1.0, exactly as only 65535 (not
         // 32767) reaches it at the short width.
-        assertEquals(0.5F, CeltiumGlStub.celtium$colourComponent(0x7FFFFFFF), EPSILON);
-        assertEquals(0.5F, CeltiumGlStub.celtium$colourComponent(0x80000000), EPSILON);
-        assertEquals(0.5F, CeltiumGlStub.celtium$colourComponent(Integer.MIN_VALUE), EPSILON);
+        assertEquals(0.5F, GlsmFrontend.celtium$colourComponent(0x7FFFFFFF), EPSILON);
+        assertEquals(0.5F, GlsmFrontend.celtium$colourComponent(0x80000000), EPSILON);
+        assertEquals(0.5F, GlsmFrontend.celtium$colourComponent(Integer.MIN_VALUE), EPSILON);
     }
 
     @Test
     void everyWidthAgreesOnTheMaximumAndOnZero() {
         // The three routes have to agree, because a layout's colour bytes are written by whichever spelling the mod
         // used: a width whose maximum was not 1.0 would darken or brighten one mod against another.
-        assertEquals(CeltiumGlStub.celtium$colourComponent((byte) 255), CeltiumGlStub.celtium$colourComponent((short) 65535));
-        assertEquals(CeltiumGlStub.celtium$colourComponent((byte) 0), CeltiumGlStub.celtium$colourComponent((short) 0));
-        assertEquals(CeltiumGlStub.celtium$colourComponent((byte) 0), CeltiumGlStub.celtium$colourComponent(0));
+        assertEquals(GlsmFrontend.celtium$colourComponent((byte) 255), GlsmFrontend.celtium$colourComponent((short) 65535));
+        assertEquals(GlsmFrontend.celtium$colourComponent((byte) 0), GlsmFrontend.celtium$colourComponent((short) 0));
+        assertEquals(GlsmFrontend.celtium$colourComponent((byte) 0), GlsmFrontend.celtium$colourComponent(0));
     }
 }

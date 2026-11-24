@@ -53,7 +53,7 @@ import static org.lwjgl.system.libffi.LibFFI.ffi_type_void;
  *   work and must not be described as a successful fallback.</li>
  * </ul>
  */
-public final class CeltiumGlStub implements FunctionProvider {
+public final class GlsmFrontend implements FunctionProvider {
 
     /** C return types. Java-side only - the trampoline marshals them into the libffi result slot. */
     static final byte R_VOID = 0;
@@ -89,7 +89,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     static final int SEM_DELETE = 11;         // id list -> retire names (reissue is the same counter-free)
     static final int SEM_GET_STRINGI = 12;    // pname, index -> extension string
     static final int SEM_GET_INTEGER64V = 13; // pname, out64[] -> plausible longs
-    private static final int SEM_ROUTE = 14;          // pixel/semantic routing - handled in route()
+    // GAP-SEM-1 (b): SEM_ROUTE (id 14) removed - zero function-table rows ever targeted it.
     static final int SEM_ZERO = 15;           // int return: 0 - valid-but-empty answers (uniform loc etc)
     static final int SEM_FBO_COMPLETE = 16;   // int return: GL_FRAMEBUFFER_COMPLETE
     static final int SEM_SIGNALED = 17;       // int return: GL_ALREADY_SIGNALED
@@ -219,11 +219,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * fed with this stub's own dispatch entries as method references.
      */
     private final GlTrampolines glTrampolines = new GlTrampolines(this::dispatch, this::legacyDispatch);
-    private final java.util.concurrent.atomic.AtomicLong nextSync = new java.util.concurrent.atomic.AtomicLong(1);
-    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet liveSync =
-            new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
-    private final it.unimi.dsi.fastutil.ints.IntOpenHashSet liveNames =
-            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
+    // GAP-ST-10 rewired: the live-name/sync ledger (and the sync id source) is GlsmNameLedger.
     /**
      * The GL state tables are open-addressed primitive maps, not ConcurrentHashMaps: every read and write happens on
      * the render thread by GL contract (the stub's callbacks are invoked by the backend there, never by a worker),
@@ -250,11 +246,10 @@ public final class CeltiumGlStub implements FunctionProvider {
     // set", which is the same answer the maps gave for absent keys: GL treats an unqueried capability as disabled
     // and an unbound target as name 0.
     private static final int FLAT_MAP_SIZE = 0x10000;
-    final byte[] enables = new byte[FLAT_MAP_SIZE];
-    // A false value may be an observed disable or simply an untouched provider default. Native replacements
-    // can bypass callbacks, so the latter must never erase state captured through Minecraft's API.
-    private final boolean[] capabilityObserved = new boolean[FLAT_MAP_SIZE];
-    private final int[] bufferBindings = new int[FLAT_MAP_SIZE];
+    // GAP-ST-1 rewired: the enable/observed record is owned by GlsmEnableState (singleton). A false value there
+    // may be an observed disable or simply an untouched provider default; native replacements can bypass
+    // callbacks, so the latter must never erase state captured through Minecraft's API.
+    // GAP-ST-2 rewired: buffer bindings and storage are owned by GlsmBufferState.
     /** Bound texture name per (active unit, target). The game uses one unit; the key keeps the option open. A read
      * of an unbound (unit,target) returns -1 - never a valid GL name. */
     final it.unimi.dsi.fastutil.longs.Long2IntMap textureBindings =
@@ -338,54 +333,33 @@ public final class CeltiumGlStub implements FunctionProvider {
      * The unpack state {@code glPixelStorei} set. Conversion reads rows where GL would read them: assuming tight rows
      * while the game asked for a row length or a row skip would store a sheared image instead of a missing one.
      */
-    volatile int unpackAlignment = 4;
-    volatile int unpackRowLength;
-    volatile int unpackSkipPixels, unpackSkipRows;
+    // GAP-ST-2 (S-5): pixel-store state is also GlsmBufferState's.
     /* The per-name logical sizes that used to sit here live in BufferStorageRecord, which operates on the store below. */
-    final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ByteBuffer> bufferStore =
-            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
-    long getStringAddress;
-    ByteBuffer getStringBuffer;
-    volatile int viewportX, viewportY;
-    volatile int viewportW = 1280, viewportH = 720;
+    /* The glGetString intern buffer that used to sit here is owned by GlsmStringState (census S-23). */
+    // GAP-ST-5 rewired: the viewport's raw rectangle and packed form are owned by GlsmViewportState.
     /** GL_DRAW_FRAMEBUFFER / GL_READ_FRAMEBUFFER bindings; GL_FRAMEBUFFER sets both. */
     volatile int drawFbo, readFbo;
     /** The colour and depth glClear will use, and the buffers it was asked to clear and nobody consumed yet. */
-    private volatile float clearRed, clearGreen, clearBlue = 0.0f, clearAlpha = 1.0f;
-    private volatile double clearDepth = 1.0;
-    /** The GL framebuffer name bound when the pending clear was issued; 0 is the default framebuffer. */
-    private volatile int pendingClearDrawFbo;
-    /** Whether the backend's routing considered the bound framebuffer the main one when the clear was issued. */
-    private volatile boolean pendingClearIsMain = true;
+    // GAP-ST-4 rewired: current clear values, the pending latch and the issue-time snapshots
+    // are owned by GlsmClearState.
 
     /** Clears seen for the framebuffer the game calls its main one, and for every other target. */
-    private int mainClears;
-    private int foreignClears;
     /** Bounded caller log for main-framebuffer clears: which caller clears it, and how often. */
     private static final boolean CLEAR_CALLERS =
             Boolean.parseBoolean(System.getProperty("celtium.vulkan.clearCallers", "false"));
     private static final int CLEAR_CALLER_LINES = 16;
     private int mainClearCallerLogs;
-    private float lastForeignClearRed;
-    private float lastForeignClearGreen;
-    private float lastForeignClearBlue;
-    private float lastMainClearRed;
-    /** The alpha and depth of the last main-framebuffer clear, as the game set them when it issued that clear. */
-    private float lastMainClearAlpha;
-    private double lastMainClearDepth = 1.0D;
-    private boolean mainClearValuesKnown;
-    private float lastMainClearGreen;
-    private float lastMainClearBlue;
 
     /** {@return the main/foreign clear census and the last main clear colour}, for the verification line. */
     public static String clearCensus() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return "main=none foreign=none colour=none";
         }
-        return "main=" + stub.mainClears + "/" + stub.lastMainClearRed + "," + stub.lastMainClearGreen + ","
-                + stub.lastMainClearBlue + " foreign=" + stub.foreignClears + "/" + stub.lastForeignClearRed + ","
-                + stub.lastForeignClearGreen + "," + stub.lastForeignClearBlue;
+        GlsmClearState clear = GlsmClearState.current();
+        return "main=" + clear.mainClears() + "/" + clear.lastMainRed() + "," + clear.lastMainGreen() + ","
+                + clear.lastMainBlue() + " foreign=" + clear.foreignClears() + "/" + clear.lastForeignRed() + ","
+                + clear.lastForeignGreen() + "," + clear.lastForeignBlue();
     }
 
     /**
@@ -398,7 +372,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (!TARGET_FORMAT_CENSUS) {
             return "off";
         }
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return "none";
         }
@@ -422,20 +396,19 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** Set by the backend after each bind, so a clear is classified by routing rather than by a raw GL name. */
     private volatile boolean drawFramebufferIsMain = true;
 
-    private final java.util.concurrent.atomic.AtomicInteger pendingClears =
-            new java.util.concurrent.atomic.AtomicInteger();
     /** Fixed-pipeline state the getters answer from, at the values a fresh GL context starts them at. */
-    volatile float currentRed = 1.0f, currentGreen = 1.0f, currentBlue = 1.0f, currentAlpha = 1.0f;
+    // GAP-ST-9 rewired: the immediate mode's current colour is GlsmImmediateState's.
     /** Scratch the clear-value query fills through {@link #mainClearValues(float[])}. */
     final float[] clearValueScratch = new float[4];
 
-    /** GL's initial light-model ambient, answered when no backend mirror exists. */
-    final float[] lightAmbientDefault = {0.2f, 0.2f, 0.2f, 1.0f};
-    volatile float lineWidth = 1.0f;
+    // M-9 rewired: GL's initial light-model ambient is GlsmImmediateState's
+    // (the GL_LIGHT_MODEL_AMBIENT fallback in GlStateQueries reads it there).
     /** The last {@code glPointSize} request. Points are not rasterized, so this exists for the query only. */
-    volatile float pointSize = 1.0f;
-    /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
-    volatile int currentProgram, compilingList, boundVertexArray, lastCalledList, listBase;
+    // GAP-ST-9: line width and point size are GlsmImmediateState's too.
+    // GAP-ST-8 (S3-2) rewired: the bound vertex array name is GlsmClientArrayState's.
+    // GAP-PROG-1 rewired: the current program is GlsmShaderLedger's (SEM_USE_PROGRAM writes it there).
+    // GAP-ST-7 rewired: compilingList/compilingMode, lastCalledList, executingList and listBase
+    // are GlsmDisplayListLedger's, as are the compiled-list/geometry/payload maps and counters below.
 
     /**
      * The programs a draw has been decoded under, so the first draw of each is reported once.
@@ -616,11 +589,11 @@ public final class CeltiumGlStub implements FunctionProvider {
      * conversion.
      */
     long texUploadSpanBytes(int rowBytes, int width, int height) {
-        if ((this.unpackRowLength != 0 && this.unpackRowLength != width)
-                || this.unpackSkipPixels != 0 || this.unpackSkipRows != 0) {
+        if ((GlsmBufferState.current().unpackRowLength() != 0 && GlsmBufferState.current().unpackRowLength() != width)
+                || GlsmBufferState.current().unpackSkipPixels() != 0 || GlsmBufferState.current().unpackSkipRows() != 0) {
             return -1L;
         }
-        return (long) aligned(rowBytes, this.unpackAlignment) * (height - 1) + rowBytes;
+        return (long) aligned(rowBytes, GlsmBufferState.current().unpackAlignment()) * (height - 1) + rowBytes;
     }
 
     /**
@@ -677,8 +650,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Releases a list's owned payloads; called when the list is replaced or deleted (#394). */
-    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<List<NativeGeometryBuffer>> displayListGeometry =
-            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
     private List<NativeGeometryBuffer> openListGeometry;
 
     /**
@@ -690,7 +661,9 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     long heldListGeometryBytes() {
         long bytes = 0L;
-        for (List<NativeGeometryBuffer> buffers : this.displayListGeometry.values()) {
+        for (List<?> rawBuffers : GlsmDisplayListLedger.current().geometryLists()) {
+            @SuppressWarnings("unchecked")
+            List<NativeGeometryBuffer> buffers = (List<NativeGeometryBuffer>) rawBuffers;
             for (int i = 0; i < buffers.size(); i++) {
                 NativeGeometryBuffer buffer = buffers.get(i);
                 bytes += (long) buffer.vertexCount() * buffer.stride();
@@ -700,7 +673,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private void releaseListPayloads(Integer list) {
-        List<NativeGeometryBuffer> geometry = this.displayListGeometry.remove(list.intValue());
+        List<NativeGeometryBuffer> geometry = GlsmDisplayListLedger.current().removeGeometry(list.intValue());
         if (geometry != null) {
             for (NativeGeometryBuffer buffer : geometry) buffer.close();
             this.listPayloadsReleased += geometry.size();
@@ -711,7 +684,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (legacyBytes > 0L) {
             this.legacyListRunBytes -= legacyBytes;
         }
-        List<java.nio.ByteBuffer> payloads = this.displayListPayloads.remove(list.intValue());
+        List<java.nio.ByteBuffer> payloads = GlsmDisplayListLedger.current().removePayloads(list.intValue());
         if (payloads == null) {
             return;
         }
@@ -721,8 +694,6 @@ public final class CeltiumGlStub implements FunctionProvider {
         this.listPayloadsReleased += payloads.size();
     }
 
-    /** The mode glNewList was given for {@link #compilingList}: GL_COMPILE or GL_COMPILE_AND_EXECUTE. */
-    volatile int compilingListMode;
     /**
      * The list {@code glCallList} is replaying right now, 0 outside a replay.
      *
@@ -730,7 +701,6 @@ public final class CeltiumGlStub implements FunctionProvider {
      * answer to "what is being drawn", which {@code GL_LIST_INDEX} cannot give: the query names the list being
      * compiled and stays 0 while a list is executed.
      */
-    private volatile int executingList;
     /**
      * The display lists this stub has compiled, keyed by list name.
      *
@@ -757,10 +727,6 @@ public final class CeltiumGlStub implements FunctionProvider {
      * are released when the list is replaced or deleted.
      */
     private List<java.nio.ByteBuffer> openListPayloads;
-
-    /** Owned payloads per compiled list name, released on replacement or deletion. */
-    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<List<java.nio.ByteBuffer>> displayListPayloads =
-            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
 
     /** Compiled commands whose pointer payload was copied into list-owned memory. */
     private long listPayloadsOwned;
@@ -793,8 +759,6 @@ public final class CeltiumGlStub implements FunctionProvider {
      * never had a second caller, and the replay path (one glCallList per compiled model draw) paid a boxing key per
      * lookup for it.
      */
-    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<List<Object[]>> displayLists =
-            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
     /**
      * Replays, recorded calls and unresolved calls per display-list id, for the verification line.
      *
@@ -813,7 +777,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /**
      * The census maps, in a holder of their own.
      *
-     * <p>Not a style choice: {@code CeltiumGlStub.<clinit>} is at 7936 of HotSpot's 8000-byte {@code HugeMethodLimit}
+     * <p>Not a style choice: {@code GlsmFrontend.<clinit>} is at 7936 of HotSpot's 8000-byte {@code HugeMethodLimit}
      * with these three allocations inline, and a method over the limit is never JIT-compiled - it runs interpreted for
      * the whole session. Round 20 hit the same wall with the drawing-name set and moved it here; any new static field
      * initializer in the outer class has to go into a holder like this one.
@@ -849,14 +813,14 @@ public final class CeltiumGlStub implements FunctionProvider {
      * or a sky quad (two).
      */
     public static String listCensus() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         StringBuilder text = new StringBuilder();
-        text.append("compiled=").append(stub == null ? 0L : stub.displayListsCompiled)
-                .append(" replayed=").append(stub == null ? 0L : stub.displayListsReplayed)
-                .append(" unresolved=").append(stub == null ? 0L : stub.displayListsUnresolved)
+        text.append("compiled=").append(stub == null ? 0L : GlsmDisplayListLedger.current().compiled())
+                .append(" replayed=").append(stub == null ? 0L : GlsmDisplayListLedger.current().replayed())
+                .append(" unresolved=").append(stub == null ? 0L : GlsmDisplayListLedger.current().unresolved())
                 .append(" noList=").append(listCallsWithoutAList)
                 .append(" nestingOverflow=").append(listReplayNestingOverflow)
-                .append(" held=").append(stub == null ? 0 : stub.displayLists.size())
+                .append(" held=").append(stub == null ? 0 : GlsmDisplayListLedger.current().heldLists())
                 .append(" heldBytes=").append(stub == null ? 0L : stub.heldListGeometryBytes())
                 .append(" distinct=").append(ListCensus.REPLAYS.size());
         if (ListCensus.REPLAYS.isEmpty() && ListCensus.UNRESOLVED.isEmpty()) {
@@ -907,8 +871,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * reporting it as a missing mesh counted geometry that the GL replay draws.
      */
     public static boolean hasRecordedList(int list) {
-        CeltiumGlStub stub = installed;
-        return stub != null && list > 0 && stub.displayLists.containsKey(list);
+        GlsmFrontend stub = installed;
+        return stub != null && list > 0 && GlsmDisplayListLedger.current().hasList(list);
     }
 
     /**
@@ -940,7 +904,6 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** How deep a replay currently is. glCallList may appear inside a list; the spec puts the limit at 64 or more. */
     private int replayDepth;
     private static final int MAX_LIST_NESTING = 64;
-    private volatile long displayListsCompiled, displayListsReplayed, displayListsUnresolved;
     /** How many compiled lists print their contents, so a session with thousands of compiles cannot flood the log. */
     private static int listCompileLogs;
     private static final int LIST_COMPILE_LOGS = 16;
@@ -952,8 +915,10 @@ public final class CeltiumGlStub implements FunctionProvider {
      * are anonymous. Recorded rather than no-opped for the same reason the buffer storage is mirrored: a draw that
      * arrives without it cannot be decoded, and guessing a layout would submit the wrong bytes rather than none.
      */
-    private volatile int vertexPointerSize, vertexPointerType, vertexPointerStride;
-    private volatile long vertexPointerOffset;
+    // GAP-ST-8 rewired: the legacy vertex-pointer tuple lives in GlsmClientArrayState
+    // (clientPointer(GL_VERTEX_ARRAY)); VERTEX_POINTER below is that live record.
+    private static final GlsmClientArrayState.Pointer VERTEX_POINTER =
+            GlsmClientArrayState.current().clientPointer(0x8074, true);
     /** The split client arrays, for the stride-48 repack; a normal is recorded but never drawn. */
     private volatile int texCoordPointerSize, texCoordPointerType, texCoordPointerStride;
     private volatile long texCoordPointerOffset;
@@ -968,7 +933,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private int texColorRepacks, texColorRepackDumps;
 
     /** The installed stub - one per process; GL capabilities are process-global so this is a singleton. */
-    static CeltiumGlStub installed;
+    static GlsmFrontend installed;
 
     /**
      * Gives LWJGL3's own GL bindings addresses from this stub, so a mod that calls them does not abort the JVM.
@@ -1043,6 +1008,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     (java.util.function.IntFunction<org.lwjgl.PointerBuffer>) org.lwjgl.BufferUtils::createPointerBuffer);
             org.lwjgl.opengl.GL.setCapabilities((org.lwjgl.opengl.GLCapabilities) capabilities);
             capabilitiesInstalled = true;
+            GlsmHintLedger.current().noteCapabilitiesInstalled(extensions.size());
             celtium$printAtExit("CELTIUM_GLSTUB LWJGL3 capabilities installed first from the stub provider: extensions="
                     + extensions.size() + " thread=" + Thread.currentThread().getName());
         } catch (Throwable error) {
@@ -1059,9 +1025,11 @@ public final class CeltiumGlStub implements FunctionProvider {
      * so this also asserts {@link Configuration#OPENGL_EXPLICIT_INIT} - the window-creation path must set it before
      * anything touches the GL class.
      */
-    public static synchronized CeltiumGlStub install() {
+    public static synchronized GlsmFrontend install() {
         if (installed == null) {
-            installed = new CeltiumGlStub();
+            installed = new GlsmFrontend();
+            GlsmHintLedger.current().noteStubInstalled();
+            GlsmHintLedger.current().noteFunctionProviderInstalled();
             org.lwjgl.system.Configuration.OPENGL_EXPLICIT_INIT.set(true);
             org.lwjgl.opengl.GL.create(installed);
             // No GLCapabilities is built here on purpose. Measured 2026-10-15: installing one converts LWJGL3's
@@ -1113,8 +1081,8 @@ public final class CeltiumGlStub implements FunctionProvider {
                 // it, and `unresolved` is the count that found nothing, which the spec says is ignored. The format is
                 // listCensus()'s, so this hook and the verification line cannot report two different shapes of the
                 // same measurement (the hook's output is not in the log, which round 20 measured; the line is).
-                if (installed != null && (installed.displayListsCompiled > 0 || installed.displayListsReplayed > 0
-                        || installed.displayListsUnresolved > 0)) {
+                if (installed != null && (GlsmDisplayListLedger.current().compiled() > 0 || GlsmDisplayListLedger.current().replayed() > 0
+                        || GlsmDisplayListLedger.current().unresolved() > 0)) {
                     celtium$printAtExit("CELTIUM_DISPLAY_LISTS " + listCensus());
                 }
             }, "celtium-noop-census"));
@@ -1150,13 +1118,13 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (range <= 0) {
             return 0;
         }
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return -1;
         }
         int scalar = RenderObjectIds.reserve(range);
         for (int i = 0; i < range; i++) {
-            stub.liveNames.add(scalar + i);
+            GlsmNameLedger.current().addName(scalar + i);
         }
         return scalar;
     }
@@ -1180,8 +1148,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * Answering {@code GL_LIST_INDEX} from the recording state fixed the compile side; this is the replay side.
      */
     public static int executingList() {
-        CeltiumGlStub stub = installed;
-        return stub == null ? 0 : stub.executingList;
+        GlsmFrontend stub = installed;
+        return stub == null ? 0 : GlsmDisplayListLedger.current().executingListId();
     }
 
     /**
@@ -1195,8 +1163,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * does not depend on which path LWJGL happens to take.
      */
     public static int compilingList() {
-        CeltiumGlStub stub = installed;
-        return stub == null ? 0 : stub.compilingList;
+        GlsmFrontend stub = installed;
+        return stub == null ? 0 : GlsmDisplayListLedger.current().compiling();
     }
 
     /**
@@ -1210,12 +1178,12 @@ public final class CeltiumGlStub implements FunctionProvider {
      * capture reads this field. Pushed rather than pulled so the reader stays one field read.
      */
     public static void celtium$noteListOpened(int list, int mode) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
-        stub.compilingList = list;
-        stub.compilingListMode = mode;
+        GlsmDisplayListLedger.current().compiling(list);
+        GlsmDisplayListLedger.current().compilingMode(mode);
         // Where the current colour and texture coordinate came from decides whether a compiled run keeps its baked
         // bytes or takes the values current at glCallList; see CompiledLegacyRun. A name of zero is not a list.
         if (list > 0) {
@@ -1231,19 +1199,19 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Direct Mod GL entry points share the compatibility compiler, including transformed LWJGL calls. */
     public static void compatibilityNewList(int list, int mode) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) return;
         long[] c = stub.dispatchArgsScratch(); c[0] = list; c[1] = mode;
         stub.dispatchArgs(IDS.get("glNewList"), c);
     }
 
     public static void compatibilityEndList() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) stub.dispatchArgs(IDS.get("glEndList"), stub.dispatchArgsScratch());
     }
 
     public static void compatibilityCallList(int list) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) return;
         if (stub.openList == null) stub.replayDisplayList(list);
         else {
@@ -1254,12 +1222,12 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Closes the list {@link #celtium$noteListOpened} opened, as {@code glEndList} does. */
     public static void celtium$noteListClosed() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
-        stub.compilingList = 0;
-        stub.compilingListMode = 0;
+        GlsmDisplayListLedger.current().compiling(0);
+        GlsmDisplayListLedger.current().compilingMode(0);
         stub.closeCompileState();
     }
 
@@ -1280,23 +1248,21 @@ public final class CeltiumGlStub implements FunctionProvider {
         // The capture owns both snapshots - its own mirror and GL_CURRENT_COLOR, which every colour route writes and
         // the backend's group tint reads - so the mode that decides the rollback and the values it rolls back cannot
         // disagree, and a second arrival (the other layer's report of the same glNewList) is dropped inside.
-        this.legacyCapture.openCompile(mode, this.currentRed, this.currentGreen, this.currentBlue, this.currentAlpha);
+        this.legacyCapture.openCompile(mode, GlsmImmediateState.current().red(), GlsmImmediateState.current().green(), GlsmImmediateState.current().blue(), GlsmImmediateState.current().alpha());
     }
 
     private void closeCompileState() {
         if (this.legacyCapture == null || !this.legacyCapture.closeCompile()) {
             return;
         }
-        this.currentRed = this.legacyCapture.callerRed();
-        this.currentGreen = this.legacyCapture.callerGreen();
-        this.currentBlue = this.legacyCapture.callerBlue();
-        this.currentAlpha = this.legacyCapture.callerAlpha();
+        GlsmImmediateState.current().color(this.legacyCapture.callerRed(), this.legacyCapture.callerGreen(),
+                this.legacyCapture.callerBlue(), this.legacyCapture.callerAlpha());
         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                 org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend != null) {
             // One state call per compile, and models compile once: the colour the list's compile must not tint the
             // next group with.
-            backend.setColor(this.currentRed, this.currentGreen, this.currentBlue, this.currentAlpha);
+            backend.setColor(GlsmImmediateState.current().red(), GlsmImmediateState.current().green(), GlsmImmediateState.current().blue(), GlsmImmediateState.current().alpha());
         }
     }
 
@@ -1307,7 +1273,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * (measured on legs plain-hurt3/4: zero CELTIUM_ENV_WRITE despite the hurt zombie rendering).
      */
     public static void celtium$glTexEnvi(int target, int pname, int param) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -1316,7 +1282,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The float form of the same write, for {@code nglTexEnvf}; enum-valued pnames round, as GL does. */
     public static void celtium$glTexEnvf(int target, int pname, float param) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -1325,7 +1291,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The pointer forms, {@code nglTexEnvfv}/{@code nglTexEnviv}: a float colour or a first-element enum. */
     public static void celtium$glTexEnvPtr(int target, int pname, long values) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -1334,7 +1300,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The int read-back forms, {@code nglGetTexEnvi}/{@code nglGetTexEnviv}: one int through the out pointer. */
     public static void celtium$glGetTexEnvInt(int target, int pname, long out) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -1343,7 +1309,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The float read-back form, {@code nglGetTexEnvfv}: four floats through the out pointer. */
     public static void celtium$glGetTexEnvFloats(int target, int pname, long out) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -1352,7 +1318,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code nglGetTexEnvi}'s int-returning form: the recorded int on the active unit, 0 when no stub is installed. */
     public static int celtium$glGetTexEnvI(int target, int pname) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return 0;
         }
@@ -1361,7 +1327,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Compatibility entry for callers publishing a 2D bind; normal Minecraft binding writes the native owner. */
     public static void celtium$noteBoundTexture(int texture) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -1380,7 +1346,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * pixels, and every texturing-off batch was refused "no mirror for this GL id" forever.
      */
     public static void celtium$glBindTexture(int target, int texture) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -1392,7 +1358,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Records a {@code glActiveTexture} the transformer's route carries, the same record the dispatch case makes. */
     public static void celtium$glActiveTexture(int unit) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -1405,24 +1371,24 @@ public final class CeltiumGlStub implements FunctionProvider {
      * its own.
      */
     public static void celtium$glDeleteTextures(int count, long names) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || names == 0L) {
             return;
         }
         for (int i = 0; i < count; i++) {
             int name = memGetInt(names + (long) i * 4L);
-            stub.liveNames.remove(name);
+            GlsmNameLedger.current().removeName(name);
             stub.deleteTexture(name);
         }
     }
 
     /** Records the transformer's glDeleteFramebuffers(count, pointer) route. */
     public static void celtium$glDeleteFramebuffers(int count, long names) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || names == 0L) return;
         for (int i = 0; i < count; i++) {
             int name = memGetInt(names + (long) i * 4L);
-            stub.liveNames.remove(name);
+            GlsmNameLedger.current().removeName(name);
             stub.forgetFramebuffer(name);
         }
     }
@@ -1448,7 +1414,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * answer for the "no mirror" refusal's texture is the producer nobody could otherwise name.
      */
     public static String firstBindSite(int textureName) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         String site = stub == null ? null : stub.firstBindSites.get(textureName);
         return site == null ? "none" : site;
     }
@@ -1461,7 +1427,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * stub's own dispatch would record, through the shared producer.
      */
     public static void celtium$texParameteri(int target, int pname, int value) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -1470,21 +1436,21 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The direct-state-access spellings, where the first argument is the texture name. */
     public static void celtium$textureParameteri(int texture, int pname, int value) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.celtium$setTextureParameter(texture, pname, value, "transformer");
         }
     }
 
     public static void celtium$textureParameterf(int texture, int pname, float value) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.celtium$setTextureParameter(texture, pname, Math.round(value), "transformer");
         }
     }
 
     public static void celtium$textureParameterPointer(int texture, int pname, long values, boolean floats) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || values == 0L) {
             return;
         }
@@ -1495,7 +1461,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glTexParameterf} from the transformer's route. */
     public static void celtium$texParameterf(int target, int pname, float value) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.celtium$setTextureParameterBound(target, pname, Math.round(value), "transformer");
         }
@@ -1503,7 +1469,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The pointer forms of the texture-parameter setter; {@code floats} selects how the first value is read. */
     public static void celtium$texParameterPointer(int target, int pname, long values, boolean floats) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || values == 0L) {
             return;
         }
@@ -1520,7 +1486,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static void celtium$copyTexSubImage2D(int target, int level, int xoffset, int yoffset, int x, int y,
             int width, int height) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -1536,7 +1502,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     public static void celtium$copyImageSubData(int srcName, int srcTarget, int srcLevel, int srcX, int srcY,
             int srcZ, int dstName, int dstTarget, int dstLevel, int dstX, int dstY, int dstZ,
             int width, int height, int depth) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.copyImageSubData(srcName, srcTarget, srcLevel, srcX, srcY, srcZ, dstName, dstTarget, dstLevel,
                     dstX, dstY, dstZ, width, height, depth);
@@ -1554,7 +1520,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static void celtium$copyTexImage2D(int target, int level, int internalFormat, int x, int y, int width,
             int height) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -1572,9 +1538,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     private long depthCopiesSkipped;
 
-    /** Names allocated with a NULL data pointer (the render-target idiom), for the deferred-mirror classification. */
-    final it.unimi.dsi.fastutil.ints.IntOpenHashSet nullAllocatedNames =
-            new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
+    // GAP-ST-10: the null-allocated classification also lives in GlsmNameLedger.
 
     /** GL_DEPTH_COMPONENT, DEPTH_COMPONENT16/24/32, DEPTH_COMPONENT32F, DEPTH24_STENCIL8, DEPTH32F_STENCIL8, DEPTH_STENCIL. */
     private static boolean isDepthInternalFormat(int internalFormat) {
@@ -1595,7 +1559,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * {@code glDrawArrays=6220 nglVertexPointer=5332 glEnableClientState=7117 glBindBuffer=12474}).
      */
     public static void celtium$drawArrays(int mode, int first, int count) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             long[] c = stub.dispatchArgsScratch(); c[0] = mode; c[1] = first; c[2] = count;
             stub.dispatchArgs(IDS.get("glDrawArrays"), c);
@@ -1604,7 +1568,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Records the array-buffer binding, as the stub's own {@code glBindBuffer} case does. */
     public static void celtium$bindBuffer(int target, int name) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             if (target == GL_ARRAY_BUFFER) {
                 NativeGeometryBuffer.bindId(name);
@@ -1624,9 +1588,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             this.pixelUnpackBuffer = name;
             return;
         }
-        if (target >= 0 && target < this.bufferBindings.length) {
-            this.bufferBindings[target] = name;
-        }
+        GlsmBufferState.current().bind(target, name);
     }
 
     /** Refusals caused by a bound pixel buffer, counted once so the diagnostic is bounded. */
@@ -1675,7 +1637,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * UVs decoded correctly.
      */
     public static void celtium$clientState(int capability, boolean enabled) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.setCapability(capability, enabled);
         }
@@ -1684,7 +1646,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** {@code glCopyBufferSubData} from the transformer's route, resolving both targets' bindings. */
     public static void celtium$copyBufferSubData(int readTarget, int writeTarget, long readOffset, long writeOffset,
             long size) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.copyBuffer(stub.boundBuffer(readTarget), stub.boundBuffer(writeTarget), readOffset, writeOffset, size);
         }
@@ -1693,7 +1655,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** The DSA spelling, where both arguments are buffer names. */
     public static void celtium$copyNamedBufferSubData(int readBuffer, int writeBuffer, long readOffset,
             long writeOffset, long size) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.copyBuffer(readBuffer, writeBuffer, readOffset, writeOffset, size);
         }
@@ -1701,7 +1663,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glGetBufferSubData} from the transformer's route, against the bound buffer. */
     public static void celtium$getBufferSubData(int target, long offset, long size, long out) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.readBuffer(stub.boundBuffer(target), offset, size, out);
         }
@@ -1709,7 +1671,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The DSA spelling, where the first argument is the buffer name. */
     public static void celtium$getNamedBufferSubData(int name, long offset, long size, long out) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.readBuffer(name, offset, size, out);
         }
@@ -1724,7 +1686,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         long capacity;
         try {
             NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
-            view = nativeBuffer != null ? nativeBuffer.compatibilityView() : this.bufferStore.get(name);
+            view = nativeBuffer != null ? nativeBuffer.compatibilityView() : GlsmBufferState.current().storage(name);
             if (view == null) {
                 return;
             }
@@ -1747,7 +1709,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         long readCapacity;
         try {
             NativeGeometryBuffer nativeRead = NativeGeometryBuffer.find(readName);
-            source = nativeRead != null ? nativeRead.compatibilityView() : this.bufferStore.get(readName);
+            source = nativeRead != null ? nativeRead.compatibilityView() : GlsmBufferState.current().storage(readName);
             if (source == null) {
                 return;
             }
@@ -1770,7 +1732,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 }
                 return;
             }
-            ByteBuffer destination = this.bufferStore.get(writeName);
+            ByteBuffer destination = GlsmBufferState.current().storage(writeName);
             if (destination != null
                     && mapRangeOffset(writeOffset, size, this.logicalSizeOf(writeName, destination.capacity())) >= 0L) {
                 ByteBuffer out = destination.duplicate();
@@ -1788,7 +1750,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * transformed native never reaches the table. The name is normalised to the core spelling the dispatcher matches.
      */
     public static void celtium$deleteObjects(String name, int count, long names) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || count <= 0 || names == 0L) {
             return;
         }
@@ -1801,7 +1763,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glDeleteProgram/glDeleteShader} from the transformer's route. */
     public static void celtium$deleteObject(String name, int object) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -1819,13 +1781,12 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glNamedFramebufferTexture} from the transformer's route: the attachment record for a named framebuffer. */
     public static void celtium$namedFramebufferTexture(int framebuffer, int attachment, int texture, int level) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || framebuffer == 0 || level != 0) {
             return;
         }
         if (isDepthAttachment(attachment)) {
-            updateDepthAttachment(stub.framebufferDepthTextures, stub.depthTextureFramebuffers,
-                    framebuffer, attachment, texture);
+            GlsmFramebufferAttachments.current().attachDepth(framebuffer, texture);
             // Registration point, as in the bound-form attach: the record is complete enough to register from.
             Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
@@ -1837,10 +1798,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (slot < 0) {
             return;
         }
-        updateColorAttachmentSlot(stub.framebufferColorAttachments, framebuffer, slot, texture);
-        if (slot == 0) {
-            updateColorAttachment(stub.framebufferColorTextures, stub.colorTextureFramebuffers, framebuffer, texture);
-        }
+        GlsmFramebufferAttachments.current().attachColor(framebuffer, slot, texture);
         Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
             vulkan.celtium$rawAttachmentChanged(framebuffer);
@@ -1849,7 +1807,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The int-returning texture-parameter query, bound or named. */
     public static int celtium$getTextureParameterInt(int targetOrName, int pname, boolean named) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return 0;
         }
@@ -1880,7 +1838,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glGetTextureLevelParameteriv/i64v}: the DSA spelling of the recorded level extent. */
     public static void celtium$getTexLevelParameterNamed(int texture, int level, int pname, long out, boolean wide) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || out == 0L) {
             return;
         }
@@ -1905,7 +1863,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** {@code glTextureSubImage2D} from the transformer's route: a named patch into the mirror. */
     public static void celtium$texSubImageNamed(int texture, int level, int x, int y, int width, int height, int format,
             int type, long pixels) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null && texture > 0) {
             stub.texSubImageForName(texture, level, x, y, width, height, format, type, pixels);
         }
@@ -1913,7 +1871,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glTextureStorage2D/3D} from the transformer's route: the named form of the extent record. */
     public static void celtium$texStorageNamed(int texture, int levels, int internalFormat, int width, int height) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null && texture > 0 && levels > 0 && width > 0 && height > 0) {
             stub.recordExtentForName(texture, 0, internalFormat, width, height);
         }
@@ -1921,7 +1879,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glTexStorage2D/3D} from the transformer's route: immutable storage still defines the level-0 extent. */
     public static void celtium$texStorage(int target, int levels, int internalFormat, int width, int height) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null && levels > 0 && width > 0 && height > 0) {
             stub.recordExtent(target, 0, internalFormat, width, height);
         }
@@ -1929,7 +1887,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glBufferData/glBufferStorage} from the transformer's route, against the bound buffer. */
     public static void celtium$bufferDataTarget(int target, long size, long data) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.bufferDataFor(stub.boundBuffer(target), size, data);
         }
@@ -1937,7 +1895,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The DSA form, where the first argument is the buffer name. */
     public static void celtium$bufferDataNamed(int name, long size, long data) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.bufferDataFor(name, size, data);
         }
@@ -1945,14 +1903,14 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glBufferSubData} from the transformer's route, against the bound buffer. */
     public static void celtium$bufferSubDataTarget(int target, long offset, long size, long data) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.bufferSubDataFor(stub.boundBuffer(target), offset, size, data);
         }
     }
 
     public static void celtium$bufferSubDataNamed(int name, long offset, long size, long data) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.bufferSubDataFor(name, offset, size, data);
         }
@@ -1960,7 +1918,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glBindVertexArray}: the VAO name the query answers. */
     public static void celtium$bindVertexArray(int array) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -1969,16 +1927,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         // once and rebinds its VAO draws from its own state and not from whatever the last draw left behind.
         // Name 0 is the default VAO and keeps its own records too: skipping it lost the pointer a caller had set
         // on VAO 0 when it bound another VAO and came back.
-        stub.boundVertexArray = array;
-        stub.currentAttribs = stub.attribsFor(array);
+        GlsmClientArrayState.current().bindVertexArray(array);
+        GlsmClientArrayState.current().bindAttribs(array);
         stub.celtium$noteAttribZero();
     }
 
     /** {@code glPointSize} from the transformer's route: recorded for the query, since points are not rasterized. */
     public static void celtium$pointSize(float size) {
-        CeltiumGlStub stub = installed;
+        GlsmHintLedger.current().noteArrival("glPointSize");
+        GlsmFrontend stub = installed;
         if (stub != null && size > 0.0f) {
-            stub.pointSize = size;
+            GlsmImmediateState.current().pointSize(size);
         }
     }
 
@@ -1994,26 +1953,29 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Renderbuffer storage, recorded so its size queries answer the extent the caller asked for. */
     public static void celtium$bindRenderbuffer(int target, int renderbuffer) {
-        CeltiumGlStub stub = installed;
+        GlsmHintLedger.current().noteArrival("glBindRenderbuffer");
+        GlsmFrontend stub = installed;
         if (stub != null) {
-            stub.boundRenderbuffer = renderbuffer;
+            GlsmClientArrayState.current().bindRenderbuffer(renderbuffer);
         }
     }
 
     public static void celtium$renderbufferStorage(int width, int height) {
-        CeltiumGlStub stub = installed;
-        if (stub != null && stub.boundRenderbuffer > 0 && width > 0 && height > 0) {
-            stub.renderbufferDims.put(stub.boundRenderbuffer, new int[] {width, height});
+        GlsmHintLedger.current().noteArrival("glRenderbufferStorage");
+        GlsmFrontend stub = installed;
+        if (stub != null && GlsmClientArrayState.current().boundRenderbuffer() > 0 && width > 0 && height > 0) {
+            GlsmClientArrayState.current().renderbufferStorage(
+                    GlsmClientArrayState.current().boundRenderbuffer(), width, height);
         }
     }
 
     /** {@code glGetRenderbufferParameteriv}: width/height of the bound renderbuffer, zero otherwise. */
     public static void celtium$getRenderbufferParameter(int pname, long out) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || out == 0L) {
             return;
         }
-        int[] dims = stub.renderbufferDims.get(stub.boundRenderbuffer);
+        int[] dims = GlsmClientArrayState.current().renderbufferSize(GlsmClientArrayState.current().boundRenderbuffer());
         int value = 0;
         if (dims != null) {
             if (pname == 0x8D42) {
@@ -2027,7 +1989,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glGetNamedBufferParameteriv/i64v}: the DSA spelling of the size query. */
     public static void celtium$getNamedBufferParameter(int name, int pname, long out, boolean wide) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || out == 0L) {
             return;
         }
@@ -2037,7 +1999,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             if (nativeBuffer != null) {
                 size = nativeBuffer.byteSize();
             } else {
-                java.nio.ByteBuffer storage = stub.bufferStore.get(name);
+                java.nio.ByteBuffer storage = GlsmBufferState.current().storage(name);
                 size = storage == null ? 0L : stub.logicalSizeOf(name, storage.capacity());
             }
         } catch (RuntimeException error) {
@@ -2057,7 +2019,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * every format into a fill pattern. A non-zero value stays untouched.
      */
     public static void celtium$clearBuffer(int targetOrName, boolean named, long offset, long size, long data) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || data != 0L) {
             return;
         }
@@ -2091,7 +2053,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         } catch (RuntimeException error) {
             return;
         }
-        java.nio.ByteBuffer storage = stub.bufferStore.get(name);
+        java.nio.ByteBuffer storage = GlsmBufferState.current().storage(name);
         if (storage == null) {
             return;
         }
@@ -2110,15 +2072,16 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glLineWidth} from the transformer's route: the requested width the narrowing report compares against. */
     public static void celtium$lineWidth(float width) {
-        CeltiumGlStub stub = installed;
+        GlsmHintLedger.current().noteArrival("glLineWidth");
+        GlsmFrontend stub = installed;
         if (stub != null && width > 0.0f) {
-            stub.lineWidth = width;
+            GlsmImmediateState.current().lineWidth(width);
         }
     }
 
     /** {@code glPixelStorei} from the transformer's route: the unpack state a captured upload is read with. */
     public static void celtium$pixelStorei(int pname, int value) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.pixelStore(pname, value);
         }
@@ -2158,7 +2121,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * older snapshot rather than nothing.
      */
     public static void celtium$pushAttrib(int mask) {
-        CeltiumGlStub stub = installed;
+        GlsmHintLedger.current().noteArrival("glPushAttrib");
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -2168,12 +2132,12 @@ public final class CeltiumGlStub implements FunctionProvider {
         for (int i = 0; i < caps; i++) {
             snapshot.capabilities[i] = stub.enabledCap(ATTRIB_CAPABILITIES[i]);
         }
-        snapshot.red = stub.currentRed;
-        snapshot.green = stub.currentGreen;
-        snapshot.blue = stub.currentBlue;
-        snapshot.alpha = stub.currentAlpha;
-        snapshot.lineWidth = stub.lineWidth;
-        snapshot.pointSize = stub.pointSize;
+        snapshot.red = GlsmImmediateState.current().red();
+        snapshot.green = GlsmImmediateState.current().green();
+        snapshot.blue = GlsmImmediateState.current().blue();
+        snapshot.alpha = GlsmImmediateState.current().alpha();
+        snapshot.lineWidth = GlsmImmediateState.current().lineWidth();
+        snapshot.pointSize = GlsmImmediateState.current().pointSize();
         snapshot.depthWrites = stub.attribDepthWrites();
         snapshot.depthFunc = stub.attribDepthFunc();
         snapshot.alphaFunc = stub.attribAlphaFunc();
@@ -2193,11 +2157,11 @@ public final class CeltiumGlStub implements FunctionProvider {
         snapshot.scissorHeight = stub.raster.scissorHeight();
         snapshot.polygonOffsetFactor = stub.raster.polygonOffsetFactor();
         snapshot.polygonOffsetUnits = stub.raster.polygonOffsetUnits();
-        snapshot.viewportX = stub.viewportX;
-        snapshot.viewportY = stub.viewportY;
-        snapshot.viewportWidth = stub.viewportW;
-        snapshot.viewportHeight = stub.viewportH;
-        snapshot.listBase = stub.listBase;
+        snapshot.viewportX = GlsmViewportState.current().x();
+        snapshot.viewportY = GlsmViewportState.current().y();
+        snapshot.viewportWidth = GlsmViewportState.current().width();
+        snapshot.viewportHeight = GlsmViewportState.current().height();
+        snapshot.listBase = GlsmDisplayListLedger.current().listBase();
         snapshot.activeTextureUnit = stub.textures.activeUnit();
         snapshot.texture2d = stub.textures.texture2d();
         // GL_LIGHTING_BIT's restorable part. The authority is the backend's immediate-state mirror, which is where the
@@ -2229,11 +2193,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         snapshot.fogColor[3] = fog.colorAlpha();
         stub.attribPushes++;
         stub.noteAttribMask(mask);
-        if (stub.attribStack.size() >= MAX_ATTRIB_DEPTH) {
+        if (!GlsmAttribStacks.current().pushServer(snapshot)) {
             stub.attribOverflow++;
             return;
         }
-        stub.attribStack.addLast(snapshot);
     }
 
     /**
@@ -2246,11 +2209,12 @@ public final class CeltiumGlStub implements FunctionProvider {
      * mask was removed once the mask-selective behaviour was adopted (item 396).
      */
     public static void celtium$popAttrib() {
-        CeltiumGlStub stub = installed;
+        GlsmHintLedger.current().noteArrival("glPopAttrib");
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
-        LegacyAttribSnapshot snapshot = stub.attribStack.pollLast();
+        LegacyAttribSnapshot snapshot = GlsmAttribStacks.current().popServer();
         if (snapshot == null) {
             stub.attribUnmatchedPops++;
             return;
@@ -2271,23 +2235,20 @@ public final class CeltiumGlStub implements FunctionProvider {
             restored |= LegacyAttribSnapshot.ENABLE_BIT;
         }
         if (restoresAttrib(snapshot, LegacyAttribSnapshot.CURRENT_BIT)) {
-            this.currentRed = snapshot.red;
-            this.currentGreen = snapshot.green;
-            this.currentBlue = snapshot.blue;
-            this.currentAlpha = snapshot.alpha;
+            GlsmImmediateState.current().color(snapshot.red, snapshot.green, snapshot.blue, snapshot.alpha);
             // The group payload reads its colour from the backend mirror, not from these fields: restoring only the
             // stub would leave the popped draw's tint as the next vanilla group's colour.
             if (backend != null) {
-                backend.setColor(this.currentRed, this.currentGreen, this.currentBlue, this.currentAlpha);
+                backend.setColor(GlsmImmediateState.current().red(), GlsmImmediateState.current().green(), GlsmImmediateState.current().blue(), GlsmImmediateState.current().alpha());
             }
             restored |= LegacyAttribSnapshot.CURRENT_BIT;
         }
         if (restoresAttrib(snapshot, LegacyAttribSnapshot.LINE_BIT)) {
-            this.lineWidth = snapshot.lineWidth;
+            GlsmImmediateState.current().lineWidth(snapshot.lineWidth);
             restored |= LegacyAttribSnapshot.LINE_BIT;
         }
         if (restoresAttrib(snapshot, LegacyAttribSnapshot.POINT_BIT)) {
-            this.pointSize = snapshot.pointSize;
+            GlsmImmediateState.current().pointSize(snapshot.pointSize);
             restored |= LegacyAttribSnapshot.POINT_BIT;
         }
         if (restoresAttrib(snapshot, LegacyAttribSnapshot.DEPTH_BUFFER_BIT)) {
@@ -2295,7 +2256,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             this.attribDepthFunc = snapshot.depthFunc;
             // GL_DEPTH_WRITEMASK is answered from the enable record when no backend mirror exists, and the restore has
             // to land there too or the query keeps reporting the pushed block's value.
-            this.enables[GlStateQueries.GL_DEPTH_WRITEMASK_CAP] = (byte) (snapshot.depthWrites ? 1 : 0);
+            GlsmEnableState.current().set(GlStateQueries.GL_DEPTH_WRITEMASK_CAP, snapshot.depthWrites);
             if (backend != null) {
                 backend.setDepthMask(snapshot.depthWrites);
                 backend.depthFunc(snapshot.depthFunc);
@@ -2342,7 +2303,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             restored |= LegacyAttribSnapshot.VIEWPORT_BIT;
         }
         if (restoresAttrib(snapshot, LegacyAttribSnapshot.LIST_BIT)) {
-            this.listBase = snapshot.listBase;
+            GlsmDisplayListLedger.current().listBase(snapshot.listBase);
             restored |= LegacyAttribSnapshot.LIST_BIT;
         }
         if (restoresAttrib(snapshot, LegacyAttribSnapshot.TEXTURE_BIT)) {
@@ -2422,16 +2383,18 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The stub's record of a raw or managed {@code glDepthMask}, for the push snapshot and the query fallback. */
     public static void celtium$noteDepthMask(boolean mask) {
-        CeltiumGlStub stub = installed;
+        GlsmHintLedger.current().noteArrival("glDepthMask");
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.attribDepthWrites = mask;
-            stub.enables[GlStateQueries.GL_DEPTH_WRITEMASK_CAP] = (byte) (mask ? 1 : 0);
+            GlsmEnableState.current().set(GlStateQueries.GL_DEPTH_WRITEMASK_CAP, mask);
         }
     }
 
     /** The stub's record of a raw or managed {@code glDepthFunc}. */
     public static void celtium$noteDepthFunc(int func) {
-        CeltiumGlStub stub = installed;
+        GlsmHintLedger.current().noteArrival("glDepthFunc");
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.attribDepthFunc = func;
         }
@@ -2439,7 +2402,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The stub's record of a raw or managed {@code glAlphaFunc}. */
     public static void celtium$noteAlphaFunc(int func, float reference) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.attribAlphaFunc = func;
             stub.attribAlphaReference = reference;
@@ -2477,7 +2440,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@return one line: how the pack pushes and pops attributes, and which selected groups went unrestored}. */
     public static String attribCensus() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return "absent";
         }
@@ -2506,9 +2469,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         return line.append(']').toString();
     }
 
-    /** Bounded legacy server-attribute stack. */
-    private final java.util.ArrayDeque<LegacyAttribSnapshot> attribStack =
-            new java.util.ArrayDeque<LegacyAttribSnapshot>();
+    // GAP-ST-6 rewired: both attribute stacks are owned by GlsmAttribStacks (same bound).
     /** GL's own stack has no documented limit; this one is bounded so an unbalanced mod cannot grow it forever. */
     private static final int MAX_ATTRIB_DEPTH = 64;
 
@@ -2518,44 +2479,44 @@ public final class CeltiumGlStub implements FunctionProvider {
      * next vanilla draw decoded with the mod's pointer.
      */
     public static void celtium$pushClientAttrib() {
-        CeltiumGlStub stub = installed;
+        GlsmHintLedger.current().noteArrival("glPushClientAttrib");
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
-        stub.clientAttribStack.addLast(new long[] {stub.vertexPointerSize, stub.vertexPointerType,
-                stub.vertexPointerStride, stub.vertexPointerOffset, stub.enables[0x8074],
-                stub.vertexPointerNormalized ? 1L : 0L, stub.vertexPointerInteger ? 1L : 0L});
+        GlsmAttribStacks.current().pushClient(new long[] {VERTEX_POINTER.size, VERTEX_POINTER.type,
+                VERTEX_POINTER.stride, VERTEX_POINTER.offset, GlsmEnableState.current().enabled(0x8074) ? 1 : 0,
+                VERTEX_POINTER.normalized ? 1L : 0L, VERTEX_POINTER.integer ? 1L : 0L});
     }
 
     public static void celtium$popClientAttrib() {
-        CeltiumGlStub stub = installed;
+        GlsmHintLedger.current().noteArrival("glPopClientAttrib");
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
-        long[] saved = stub.clientAttribStack.pollLast();
+        long[] saved = GlsmAttribStacks.current().popClient();
         if (saved == null) {
             return;
         }
-        stub.vertexPointerSize = (int) saved[0];
-        stub.vertexPointerType = (int) saved[1];
-        stub.vertexPointerStride = (int) saved[2];
-        stub.vertexPointerOffset = saved[3];
-        stub.enables[0x8074] = (byte) saved[4];
-        stub.vertexPointerNormalized = saved.length > 5 && saved[5] != 0L;
-        stub.vertexPointerInteger = saved.length > 6 && saved[6] != 0L;
+        VERTEX_POINTER.size = (int) saved[0];
+        VERTEX_POINTER.type = (int) saved[1];
+        VERTEX_POINTER.stride = (int) saved[2];
+        VERTEX_POINTER.offset = saved[3];
+        GlsmEnableState.current().set(0x8074, saved[4] != 0);
+        VERTEX_POINTER.normalized = saved.length > 5 && saved[5] != 0L;
+        VERTEX_POINTER.integer = saved.length > 6 && saved[6] != 0L;
         // The restored pointer is attribute 0's record too; the two views of it must not drift apart.
-        VaoAttrib attrib = stub.boundAttribs()[0];
-        attrib.size = stub.vertexPointerSize;
-        attrib.type = stub.vertexPointerType;
-        attrib.stride = stub.vertexPointerStride;
-        attrib.offset = stub.vertexPointerOffset;
-        attrib.normalized = stub.vertexPointerNormalized;
-        attrib.integer = stub.vertexPointerInteger;
+        GlsmClientArrayState.VaoAttrib attrib = stub.boundAttribs()[0];
+        attrib.size = VERTEX_POINTER.size;
+        attrib.type = VERTEX_POINTER.type;
+        attrib.stride = VERTEX_POINTER.stride;
+        attrib.offset = VERTEX_POINTER.offset;
+        attrib.normalized = VERTEX_POINTER.normalized;
+        attrib.integer = VERTEX_POINTER.integer;
         attrib.pointerSet = true;
     }
 
-    /** Bounded legacy client-attribute stack. */
-    private final java.util.ArrayDeque<long[]> clientAttribStack = new java.util.ArrayDeque<long[]>();
 
     /** {@return the name bound to a texture target on the active unit, or zero when unbound}. */
     int textureBindingOrZero(int target) {
@@ -2563,78 +2524,34 @@ public final class CeltiumGlStub implements FunctionProvider {
         return bound < 0 ? 0 : bound;
     }
 
-    /** Bound renderbuffer name and its recorded extent. */
-    int boundRenderbuffer;
-    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]> renderbufferDims =
-            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]>();
+    // GAP-ST-8: the bound renderbuffer and its recorded extent are GlsmClientArrayState's too.
 
     /** The generic vertex attributes one VAO record carries; GL guarantees at least sixteen. */
     private static final int MAX_VERTEX_ATTRIBS = 16;
 
-    /**
-     * One generic vertex attribute's recorded state: its enable, its pointer, and the array buffer the pointer was
-     * set against. GL keeps all three per attribute inside the VAO. The stub used to keep a single pointer record
-     * for attribute 0 alone - no enables, no buffer, and no record at all for the other attributes - which is why a
-     * VAO-carried draw decoded from whichever attribute had been set last and from enables some other draw had left
-     * behind: Demonica's full-screen quad (three attributes set once at setup, its VBO unbound again before the
-     * draw) was refused on every frame for exactly that (offer-path diagnosis, 2026-11-20).
-     */
-    static final class VaoAttrib {
-        boolean enabled;
-        boolean pointerSet;
-        boolean normalized;
-        boolean integer;
-        /** GL's default attribute: size 4, float, tightly packed, null pointer, no buffer. */
-        int size = 4;
-        int type = 0x1406; // GL_FLOAT
-        int stride;
-        long offset;
-        int buffer;
-    }
-
-    /** Per-VAO generic attribute records, keyed by the VAO name; {@link #currentAttribs} is the bound VAO's array. */
-    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<VaoAttrib[]> vaoAttribRecords =
-            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<VaoAttrib[]>();
-
-    /** The bound VAO's attribute records; null until first use, when {@link #boundAttribs()} binds it. */
-    private VaoAttrib[] currentAttribs;
-
-    private VaoAttrib[] attribsFor(int vao) {
-        VaoAttrib[] attribs = this.vaoAttribRecords.get(vao);
-        if (attribs == null) {
-            attribs = new VaoAttrib[MAX_VERTEX_ATTRIBS];
-            for (int i = 0; i < attribs.length; i++) {
-                attribs[i] = new VaoAttrib();
-            }
-            this.vaoAttribRecords.put(vao, attribs);
-        }
-        return attribs;
-    }
+    // M-5 / S3-2 rewired: the VAO attribute records and bound VAO name are GlsmClientArrayState's (GAP-ST-8).
 
     /** {@return the bound VAO's attribute records}, creating the VAO's array on first use. */
-    private VaoAttrib[] boundAttribs() {
-        if (this.currentAttribs == null) {
-            this.currentAttribs = attribsFor(this.boundVertexArray);
-        }
-        return this.currentAttribs;
+    private GlsmClientArrayState.VaoAttrib[] boundAttribs() {
+        return GlsmClientArrayState.current().boundAttribs();
     }
 
     /** Copies attribute 0's record into the legacy single-pointer fields the client-array paths read. */
     private void celtium$noteAttribZero() {
-        VaoAttrib position = boundAttribs()[0];
-        this.vertexPointerSize = position.size;
-        this.vertexPointerType = position.type;
-        this.vertexPointerStride = position.stride;
-        this.vertexPointerOffset = position.offset;
-        this.vertexPointerNormalized = position.normalized;
-        this.vertexPointerInteger = position.integer;
+        GlsmClientArrayState.VaoAttrib position = boundAttribs()[0];
+        VERTEX_POINTER.size = position.size;
+        VERTEX_POINTER.type = position.type;
+        VERTEX_POINTER.stride = position.stride;
+        VERTEX_POINTER.offset = position.offset;
+        VERTEX_POINTER.normalized = position.normalized;
+        VERTEX_POINTER.integer = position.integer;
     }
 
     /** {@code glVertexAttribIPointer}: recorded per attribute like the float form; the decode refuses integer types. */
     public static void celtium$vertexAttribIPointer(int index, int size, int type, int stride, long pointer) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null && index >= 0 && index < MAX_VERTEX_ATTRIBS) {
-            VaoAttrib attrib = stub.boundAttribs()[index];
+            GlsmClientArrayState.VaoAttrib attrib = stub.boundAttribs()[index];
             attrib.size = size;
             attrib.type = type;
             attrib.stride = stride;
@@ -2654,9 +2571,9 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** @code glVertexAttribPointer}: recorded per attribute in the bound VAO; index 0 is the position pointer. */
     public static void celtium$vertexAttribPointer(int index, int size, int type, boolean normalized, int stride,
             long pointer) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null && index >= 0 && index < MAX_VERTEX_ATTRIBS) {
-            VaoAttrib attrib = stub.boundAttribs()[index];
+            GlsmClientArrayState.VaoAttrib attrib = stub.boundAttribs()[index];
             attrib.size = size;
             attrib.type = type;
             attrib.stride = stride;
@@ -2677,7 +2594,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * read for the position attribute, so the two spellings of that one fact cannot drift apart.
      */
     public static void celtium$vertexAttribEnabled(int index, boolean enabled) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -2690,22 +2607,20 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Whether the generic attribute pointer asked for normalization, and whether it is an integer attribute. */
-    private boolean vertexPointerNormalized;
-    private boolean vertexPointerInteger;
 
     /** Records the client vertex-array pointer, as the stub's own {@code glVertexPointer} case does. */
     public static void celtium$vertexPointer(int size, int type, int stride, long pointer) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
-            stub.vertexPointerSize = size;
-            stub.vertexPointerType = type;
-            stub.vertexPointerStride = stride;
-            stub.vertexPointerOffset = pointer;
+            VERTEX_POINTER.size = size;
+            VERTEX_POINTER.type = type;
+            VERTEX_POINTER.stride = stride;
+            VERTEX_POINTER.offset = pointer;
             // The legacy pointer is a float, unnormalized attribute: both generic flags reset with it.
-            stub.vertexPointerNormalized = false;
-            stub.vertexPointerInteger = false;
+            VERTEX_POINTER.normalized = false;
+            VERTEX_POINTER.integer = false;
             // The same fact in the VAO's per-attribute record, so a VAO swap cannot resurrect an older pointer.
-            VaoAttrib attrib = stub.boundAttribs()[0];
+            GlsmClientArrayState.VaoAttrib attrib = stub.boundAttribs()[0];
             attrib.size = size;
             attrib.type = type;
             attrib.stride = stride;
@@ -2725,9 +2640,9 @@ public final class CeltiumGlStub implements FunctionProvider {
      * the stub's own (no native object exists), so releasing the bookkeeping is the whole operation.
      */
     public static void celtium$deleteSync(long sync) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
-            stub.liveSync.remove(sync);
+            GlsmNameLedger.current().removeSync(sync);
         }
     }
 
@@ -2830,7 +2745,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glBegin(mode)}: starts collecting; a previous run that was never ended is refused by name. */
     public static void celtium$legacyBegin(int mode) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -2841,7 +2756,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         long nested = stub.legacyCapture.nestedRefusals();
         long lists = stub.legacyCapture.listRefusals();
         long modes = stub.legacyCapture.modeRefusals();
-        stub.legacyCapture.begin(mode, textured, stub.compilingList != 0, LEGACY_MODE_GATE);
+        stub.legacyCapture.begin(mode, textured, GlsmDisplayListLedger.current().compiling() != 0, LEGACY_MODE_GATE);
         if (stub.legacyCapture.nestedRefusals() != nested && stub.legacyRefusalLogs < LEGACY_REFUSAL_LOG_LIMIT) {
             stub.legacyRefusalLogs++;
             System.out.println("[Celtium] CELTIUM_LEGACY_REFUSED mode=" + mode + " reason=a second glBegin before glEnd");
@@ -2849,7 +2764,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub.legacyCapture.listRefusals() != lists && stub.legacyRefusalLogs < LEGACY_REFUSAL_LOG_LIMIT) {
             stub.legacyRefusalLogs++;
             System.out.println("[Celtium] CELTIUM_LEGACY_REFUSED mode=" + mode
-                    + " reason=a display-list run could not be recorded (list " + stub.compilingList + ")");
+                    + " reason=a display-list run could not be recorded (list " + GlsmDisplayListLedger.current().compiling() + ")");
         }
         if (stub.legacyCapture.modeRefusals() != modes && stub.legacyModeRefusalsLogged < LEGACY_REFUSAL_LOG_LIMIT) {
             stub.legacyModeRefusalsLogged++;
@@ -2860,7 +2775,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glVertex2f}: the two-component spelling a mod's flat geometry uses. */
     public static void celtium$legacyVertex2f(float x, float y) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.legacyCapture.vertex2f(x, y);
         }
@@ -2868,7 +2783,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glVertex2d}, narrowed to the float layout. */
     public static void celtium$legacyVertex2d(double x, double y) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.legacyCapture.vertex2d(x, y);
         }
@@ -2876,7 +2791,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glVertex3f}: appends one vertex with the current texture coordinate and colour. */
     public static void celtium$legacyVertex3f(float x, float y, float z) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.legacyCapture.vertex3f(x, y, z);
         }
@@ -2884,7 +2799,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glVertex3d}, narrowed to the float layout. */
     public static void celtium$legacyVertex3d(double x, double y, double z) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.legacyCapture.vertex3d(x, y, z);
         }
@@ -2892,7 +2807,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glVertex4f}: the position is projected by {@code w}, as GL does. */
     public static void celtium$legacyVertex4f(float x, float y, float z, float w) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.legacyCapture.vertex4f(x, y, z, w);
         }
@@ -2900,7 +2815,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glVertex4d}, narrowed before the projection. */
     public static void celtium$legacyVertex4d(double x, double y, double z, double w) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.legacyCapture.vertex4d(x, y, z, w);
         }
@@ -2908,7 +2823,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glVertex2i}: the integer spelling, narrowed to the float layout as GL does. */
     public static void celtium$legacyVertex2i(int x, int y) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.legacyCapture.vertex2i(x, y);
         }
@@ -2916,7 +2831,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glVertex3i}. */
     public static void celtium$legacyVertex3i(int x, int y, int z) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.legacyCapture.vertex3i(x, y, z);
         }
@@ -2924,7 +2839,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glVertex4i}: the integer position is projected by {@code w}, as the float spelling is. */
     public static void celtium$legacyVertex4i(int x, int y, int z, int w) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.legacyCapture.vertex4i(x, y, z, w);
         }
@@ -2938,7 +2853,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * call by name, and a leg reads which spelling a mod actually used.
      */
     public static void celtium$legacyVertex2s(int x, int y) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.legacyCapture.vertex2i(x, y);
         }
@@ -2946,7 +2861,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glVertex3s}. */
     public static void celtium$legacyVertex3s(int x, int y, int z) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.legacyCapture.vertex3i(x, y, z);
         }
@@ -2954,7 +2869,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glTexCoord2f}: the coordinate the following vertices carry. */
     public static void celtium$legacyTexCoord2f(float u, float v) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.legacyCapture.texCoord(u, v);
         }
@@ -2982,7 +2897,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glRectf}: a complete quad asked for in one call, not a vertex spelling. */
     public static void celtium$legacyRectf(float x1, float y1, float x2, float y2) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             legacyRect(stub, x1, y1, x2, y2);
         }
@@ -2990,7 +2905,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glRectd}, narrowed to the float layout the capture stores. */
     public static void celtium$legacyRectd(double x1, double y1, double x2, double y2) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             legacyRect(stub, (float) x1, (float) y1, (float) x2, (float) y2);
         }
@@ -2998,7 +2913,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glRecti}: GL rounds the integer corners to float, which is what the layout carries. */
     public static void celtium$legacyRecti(int x1, int y1, int x2, int y2) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             legacyRect(stub, (float) x1, (float) y1, (float) x2, (float) y2);
         }
@@ -3017,7 +2932,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * The caller's own run is never disturbed: a {@code glRect} between {@code glBegin} and {@code glEnd} is an error in
      * GL, and it is counted by name rather than silently appended to a run it does not belong to.
      */
-    private static void legacyRect(CeltiumGlStub stub, float x1, float y1, float x2, float y2) {
+    private static void legacyRect(GlsmFrontend stub, float x1, float y1, float x2, float y2) {
         if (stub.legacyCapture.active()) {
             stub.legacyCapture.noteRefusal("glRect inside a glBegin the capture already opened");
             if (stub.legacyRefusalLogs < LEGACY_REFUSAL_LOG_LIMIT) {
@@ -3033,7 +2948,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         // Only a run this call opened is filled: a begin that refused (a display-list compile, a mode the renderer has
         // no draw for) has already named its reason, and appending into nothing would replace that name with a second
         // one that says the wrong thing.
-        if (stub.legacyCapture.begin(LEGACY_RECT_MODE, textured, stub.compilingList != 0, LEGACY_MODE_GATE)
+        if (stub.legacyCapture.begin(LEGACY_RECT_MODE, textured, GlsmDisplayListLedger.current().compiling() != 0, LEGACY_MODE_GATE)
                 && stub.legacyCapture.rect(x1, y1, x2, y2)) {
             celtium$legacyEnd();
         }
@@ -3049,7 +2964,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * bare return.
      */
     public static void celtium$legacyMultiTexCoord2f(int unit, float u, float v) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -3087,18 +3002,15 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Records the colour for {@code glGetFloatv(GL_CURRENT_COLOR)}; fed by every path that sets the mirror. */
     public static void celtium$setCurrentColor(float red, float green, float blue, float alpha) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
-            stub.currentRed = red;
-            stub.currentGreen = green;
-            stub.currentBlue = blue;
-            stub.currentAlpha = alpha;
+            GlsmImmediateState.current().color(red, green, blue, alpha);
         }
     }
 
     /** The raw colour routes' current colour, captured for legacy vertices (GL keeps one current colour). */
     public static void celtium$legacyColor(float red, float green, float blue, float alpha) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.legacyCapture.color(red, green, blue, alpha);
         }
@@ -3106,7 +3018,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glEnd}: offers the collected run through the immediate path, or refuses it with a named reason. */
     public static void celtium$legacyEnd() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -3175,7 +3087,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     private boolean recordLegacyRunForList(int format, int stride, int count, int drawMode, long address,
                                            int attributes) {
         List<Object[]> open = this.openList;
-        if (open == null || this.compilingList <= 0 || count <= 0) {
+        if (open == null || GlsmDisplayListLedger.current().compiling() <= 0 || count <= 0) {
             return false;
         }
         long bytes = (long) count * (long) stride;
@@ -3201,7 +3113,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             String key = drawMode + "/" + count + "/" + format + "/" + attributes;
             if (this.legacyListRunSignatures.add(key)) {
                 this.legacyListRunLogs++;
-                System.out.println("[Celtium] CELTIUM_LEGACY_LIST_RUN list=" + this.compilingList + " mode=" + drawMode
+                System.out.println("[Celtium] CELTIUM_LEGACY_LIST_RUN list=" + GlsmDisplayListLedger.current().compiling() + " mode=" + drawMode
                         + " vertices=" + count + " format=" + format + " bytes=" + bytes + " attributes=" + attributes
                         + " (compiled into the list; glCallList replays it with the state current then)");
             }
@@ -3250,7 +3162,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         this.legacyListRunReplayRefusals++;
         if (this.legacyRefusalLogs < LEGACY_REFUSAL_LOG_LIMIT) {
             this.legacyRefusalLogs++;
-            System.out.println("[Celtium] CELTIUM_LEGACY_LIST_REPLAY_REFUSED list=" + this.lastCalledList
+            System.out.println("[Celtium] CELTIUM_LEGACY_LIST_REPLAY_REFUSED list=" + GlsmDisplayListLedger.current().lastCalled()
                     + " " + run.describe() + " reason="
                     + (backend == null ? "no backend" : backend.lastRefusal()));
         }
@@ -3264,7 +3176,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * compiled once and called every frame while a wrench is held, so the two numbers differ by design.
      */
     public static String legacyListCensus() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return "none";
         }
@@ -3348,7 +3260,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * (never uploaded, a proxy target, a level above 0) keeps the hint's fallback.
      */
     public static int celtium$texLevelSize(int target, int level, int pname) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || target != GL_TEXTURE_2D || level != 0) {
             return 0;
         }
@@ -3375,7 +3287,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * changed nothing for the measured draw - the transformer is the route, and a table row alone does not install it.
      */
     public static void celtium$texCoordPointer(int size, int type, int stride, long pointer) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.texCoordPointerSize = size;
             stub.texCoordPointerType = type;
@@ -3386,7 +3298,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Records the split colour pointer, from the transformer's route. */
     public static void celtium$colorPointer(int size, int type, int stride, long pointer) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.colorPointerSize = size;
             stub.colorPointerType = type;
@@ -3397,7 +3309,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Records the split normal pointer, from the transformer's route; the normal is recorded but never drawn. */
     public static void celtium$normalPointer(int type, int stride, long pointer) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.normalPointerType = type;
             stub.normalPointerStride = stride;
@@ -3416,7 +3328,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static void celtium$texImage2D(int target, int level, int internal, int width, int height, int border,
             int format, int type, long pixels) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.texImagePixels("glTexImage2D", target, level, internal, width, height, border, format, type, pixels);
         }
@@ -3425,7 +3337,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** Sub-image writes, the same producer the dispatch case uses. */
     public static void celtium$texSubImage2D(int target, int level, int xOffset, int yOffset, int width, int height,
             int format, int type, long pixels) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.texSubImage(target, level, xOffset, yOffset, width, height, format, type, pixels);
         }
@@ -3433,7 +3345,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Records a raw framebuffer's colour attachment, so the renderer can resolve it as it resolves a vanilla one. */
     public static void celtium$framebufferTexture2D(int target, int attachment, int textarget, int texture, int level) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.framebufferTexture2D(target, attachment, textarget, texture, level);
         }
@@ -3441,7 +3353,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Records which framebuffer is bound, which is the pair {@code glFramebufferTexture2D} files its record under. */
     public static void celtium$bindFramebuffer(int target, int name) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.bindFramebuffer(target, name);
         }
@@ -3449,7 +3361,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Mirrors an array buffer's bytes, as the stub's own {@code glBufferData} case does. */
     public static void celtium$bufferData(int target, long size, long address, int usage) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return;
         }
@@ -3458,7 +3370,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@return the last name {@code GlStateManager.bindTexture} named, or -1 when none was seen}. */
     public static int celtium$boundTexture() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? -1 : stub.textures.texture2d();
     }
 
@@ -3496,25 +3408,25 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@return GL's polygon offset factor}, 0 when glPolygonOffset has not been called. */
     public static float polygonOffsetFactor() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? 0.0F : stub.raster.polygonOffsetFactor();
     }
 
     /** {@return GL's polygon offset units}, 0 when glPolygonOffset has not been called. */
     public static float polygonOffsetUnits() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? 0.0F : stub.raster.polygonOffsetUnits();
     }
 
     /** {@return how many glPolygonOffset calls reached this stub}. */
     public static long polygonOffsetCallCount() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? 0L : stub.polygonOffsetCalls;
     }
 
     /** {@return whether glPolygonOffset has been called at all}: (0,0) is a legal offset, so the call is the fact. */
     public static boolean polygonOffsetCalled() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub != null && stub.raster.polygonOffsetCalled();
     }
 
@@ -3523,7 +3435,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * write so there is one state rather than a mirror that can drift from it.
      */
     public static boolean polygonOffsetFillEnabled() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub != null
                 && stub.raster.polygonOffsetFillEnabled();
     }
@@ -3540,52 +3452,25 @@ public final class CeltiumGlStub implements FunctionProvider {
      * Later viewport changes must not alter the independent scissor box.
      */
     public static void initializeWindowRectangles(int width, int height) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || width <= 0 || height <= 0) return;
-        stub.viewportX = 0;
-        stub.viewportY = 0;
-        stub.viewportW = width;
-        stub.viewportH = height;
+        GlsmViewportState.current().initialize(0, 0, width, height);
         stub.raster.initializeScissor(width, height);
     }
 
-    /** The last viewport the game set, packed as x|y|w|h in four 16-bit fields; 0 means "never set". */
-    private static long viewportPacked;
-    private static boolean viewportSeen;
-
     /** {@return the last viewport rectangle packed into one long, or {@code -1} when the game never set one}. */
     public static long celtium$viewportPacked() {
-        return viewportSeen ? viewportPacked : -1L;
+        return GlsmViewportState.current().packed();
     }
 
     /**
-     * Records the rectangle the capture reads per offer, from whichever route set the viewport.
-     * <p>
-     * Both entries that can set it go through here: the transformed native's route ({@code celtium$viewport}, which the
-     * hint calls) and the stub's own dispatch table ({@code SEM_VIEWPORT}, the entry the legacy trampoline and the
-     * in-process callers use). A route that updated only one of the two records would answer {@code GL_VIEWPORT}
-     * correctly while every group key and every offer still described the previous rectangle.
+     * Records the viewport selected through Minecraft's API or LWJGL3's native entry point.
+     * Both entries that can set it go through GlsmViewportState: the transformed native's route
+     * (this method, which the hint calls) and the stub's own dispatch table (SEM_VIEWPORT).
      */
-    private static void recordViewportPacked(int x, int y, int width, int height) {
-        // Four 16-bit fields are enough for any real viewport; a negative or oversized rectangle is left out rather
-        // than truncated into a different one.
-        if (width >= 0 && height >= 0 && width <= 0xFFFF && height <= 0xFFFF) {
-            viewportPacked = ((long) (x & 0xFFFF) << 48) | ((long) (y & 0xFFFF) << 32)
-                    | ((long) (width & 0xFFFF) << 16) | (height & 0xFFFF);
-            viewportSeen = true;
-        }
-    }
-
-    /** Records the viewport selected through Minecraft's API or LWJGL3's native entry point. */
     public static void celtium$viewport(int x, int y, int width, int height) {
-        recordViewportPacked(x, y, width, height);
-        CeltiumGlStub stub = installed;
-        if (stub != null) {
-            stub.viewportX = x;
-            stub.viewportY = y;
-            stub.viewportW = width;
-            stub.viewportH = height;
-        }
+        GlsmHintLedger.current().noteArrival("glViewport");
+        GlsmViewportState.current().set(x, y, width, height);
     }
 
     /** glScissor calls seen, so a leg can say whether the scene clipped at all rather than only whether a group did. */
@@ -3608,20 +3493,20 @@ public final class CeltiumGlStub implements FunctionProvider {
      * batch was built with culling off and the back faces of items, entities and mirror-scaled models stayed visible.
      */
     public static boolean cullEnabled() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub != null
                 && stub.raster.cullEnabled();
     }
 
     /** {@return the last {@code glCullFace} argument}, or {@code GL_BACK} when it has not been called. */
     public static int cullFace() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null || !stub.cullFaceCalled ? GL_BACK : stub.raster.cullFace();
     }
 
     /** {@return the last {@code glFrontFace} argument}, or {@code GL_CCW} when it has not been called. */
     public static int frontFace() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null || !stub.frontFaceCalled ? GL_CCW : stub.raster.frontFace();
     }
 
@@ -3651,58 +3536,58 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@return whether GL_BLEND is enabled}, read from the same {@code enables} map glEnable/glDisable write. */
     public static boolean blendEnabled() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub != null && stub.raster.blendEnabled();
     }
 
     public static boolean blendEnableRecorded() {
-        CeltiumGlStub stub = installed;
-        return stub != null && stub.capabilityObserved[GL_BLEND];
+        GlsmFrontend stub = installed;
+        return stub != null && GlsmEnableState.current().observed(GL_BLEND);
     }
 
     public static boolean cullEnableRecorded() {
-        CeltiumGlStub stub = installed;
-        return stub != null && stub.capabilityObserved[GL_CULL_FACE];
+        GlsmFrontend stub = installed;
+        return stub != null && GlsmEnableState.current().observed(GL_CULL_FACE);
     }
 
     public static boolean cullFaceRecorded() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub != null && stub.cullFaceCalled;
     }
 
     /** {@return the RGB source factor GL was last given}, or GL's initial {@code ONE} when it was never told. */
     public static int blendSrcRgb() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? GL_SRC_ALPHA : stub.raster.blendSrcRgb();
     }
 
     /** {@return the RGB destination factor GL was last given}, or GL's initial {@code ZERO}. */
     public static int blendDstRgb() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? GL_ONE_MINUS_SRC_ALPHA : stub.raster.blendDstRgb();
     }
 
     /** {@return the alpha source factor GL was last given}, or GL's initial {@code ONE}. */
     public static int blendSrcAlpha() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? 1 : stub.raster.blendSrcAlpha();
     }
 
     /** {@return the alpha destination factor GL was last given}, or GL's initial {@code ZERO}. */
     public static int blendDstAlpha() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? 0 : stub.raster.blendDstAlpha();
     }
 
     /** {@return the RGB blend equation GL was last given}, or GL's initial {@code GL_FUNC_ADD}. */
     public static int blendEquationRgb() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? GL_FUNC_ADD : stub.raster.blendEquationRgb();
     }
 
     /** {@return the alpha blend equation GL was last given}, or GL's initial {@code GL_FUNC_ADD}. */
     public static int blendEquationAlpha() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? GL_FUNC_ADD : stub.raster.blendEquationAlpha();
     }
 
@@ -3711,31 +3596,31 @@ public final class CeltiumGlStub implements FunctionProvider {
      * red, 1 green, 2 blue, 3 alpha). GL's own initial state is all four, which is the value before any call.
      */
     public static int colorMask() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? 0xF : stub.raster.colorMask();
     }
 
     /** {@return whether any of the two blend-factor entry points was called at all}. */
     public static boolean blendFactorsRecorded() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub != null && stub.blendFactorsCalled;
     }
 
     /** {@return whether either blend-equation entry point was called at all}. */
     public static boolean blendEquationRecorded() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub != null && stub.blendEquationCalled;
     }
 
     /** {@return whether glColorMask was called at all}: (true,true,true,true) is a legal call, so the call is the fact. */
     public static boolean colorMaskRecorded() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub != null && stub.colorMaskCalled;
     }
 
     /** {@return a one-line census of the blend/mask entry points that were reached}, for the exit line. */
     public static String blendCensusSummary() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return "not-installed";
         }
@@ -3752,7 +3637,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@return the game's clip rectangle}, or {@code null} when glScissor has not been called in this process. */
     public static int[] scissorBox() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || !stub.raster.scissorCalled()) {
             return null;
         }
@@ -3761,13 +3646,13 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@return how many times glScissor has been called in this process}, the scene-level clip census. */
     public static long scissorCallCount() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? 0L : stub.scissorCallCount;
     }
 
     /** {@return how many times GL_SCISSOR_TEST was enabled or disabled in this process}. */
     public static long scissorToggleCount() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? 0L : stub.scissorToggleCount;
     }
 
@@ -3776,7 +3661,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * so there is one state rather than a mirror that can drift from it.
      */
     public static boolean scissorTest() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub != null && stub.raster.scissorTest();
     }
 
@@ -3789,27 +3674,27 @@ public final class CeltiumGlStub implements FunctionProvider {
      * differs.
      */
     public static boolean scissorCalled() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub != null && stub.raster.scissorCalled();
     }
 
     public static int scissorX() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? 0 : stub.raster.scissorX();
     }
 
     public static int scissorY() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? 0 : stub.raster.scissorY();
     }
 
     public static int scissorWidth() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? 0 : stub.raster.scissorWidth();
     }
 
     public static int scissorHeight() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? 0 : stub.raster.scissorHeight();
     }
 
@@ -3847,7 +3732,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * clears too - measured as 420 dropped clears with owner 1 and a picture gate that had been passing.
      */
     public static void noteDrawFramebufferIsMain(boolean isMain) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.drawFramebufferIsMain = isMain;
         }
@@ -3855,11 +3740,11 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@return whether the pending clear belongs to the main render target}, false when no clear is pending. */
     public static boolean pendingClearIsMain() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return false;
         }
-        return stub.pendingClears.get() != 0 && stub.pendingClearIsMain;
+        return GlsmClearState.current().hasPending() && GlsmClearState.current().pendingIsMain();
     }
 
     /**
@@ -3867,11 +3752,11 @@ public final class CeltiumGlStub implements FunctionProvider {
      * value means the clear names one of the game's own framebuffers rather than the delivered frame.
      */
     public static int pendingClearDrawFbo() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return -1;
         }
-        return stub.pendingClears.get() == 0 ? -1 : stub.pendingClearDrawFbo;
+        return GlsmClearState.current().pendingDrawFbo();
     }
 
     /**
@@ -3882,8 +3767,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * plain read of the same counter {@link #consumePendingClears()} drains, not a second bookkeeping of it.
      */
     public static boolean hasPendingClears() {
-        CeltiumGlStub stub = installed;
-        return stub != null && stub.pendingClears.get() != 0;
+        GlsmFrontend stub = installed;
+        return stub != null && GlsmClearState.current().hasPending();
     }
 
     /** Uniform-block introspection: no block or active uniform exists, so the integer answer is zero. */
@@ -4055,12 +3940,12 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (index < 0 || index >= MAX_VERTEX_ATTRIBS) {
             return 0;
         }
-        VaoAttrib attrib = boundAttribs()[index];
+        GlsmClientArrayState.VaoAttrib attrib = boundAttribs()[index];
         switch (pname) {
             case 0x8622: // GL_VERTEX_ATTRIB_ARRAY_ENABLED
                 // Attribute 0 keeps its two legacy spellings as well: the client-array enable and the capability
                 // record the enable route writes are the same fact in older dress.
-                return attrib.enabled || (index == 0 && (this.enables[0x8074] != 0 || this.enables[0x8622] != 0))
+                return attrib.enabled || (index == 0 && (GlsmEnableState.current().enabled(0x8074) || GlsmEnableState.current().enabled(0x8622)))
                         ? 1 : 0;
             case 0x8623: // GL_VERTEX_ATTRIB_ARRAY_SIZE
                 return attrib.size;
@@ -4081,7 +3966,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glGetVertexAttribfv/dv}: the recorded attribute answer in the caller's numeric width. */
     public static void celtium$getVertexAttribFloats(int index, int pname, long out, boolean asDouble) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || out == 0L) {
             return;
         }
@@ -4095,7 +3980,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glGetVertexAttribPointerv}: the recorded pointer or buffer offset of the named attribute. */
     public static void celtium$getVertexAttribPointer(int index, int pname, long out) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || out == 0L) {
             return;
         }
@@ -4106,7 +3991,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glGetVertexAttribiv}, answered from the bound VAO's per-attribute record. */
     public static void celtium$getVertexAttribiv(int index, int pname, long out) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || out == 0L) {
             return;
         }
@@ -4153,7 +4038,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static void celtium$framebufferAttachmentParameter(boolean named, int framebufferOrTarget, int attachment,
             int pname, long out) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || out == 0L) {
             return;
         }
@@ -4165,7 +4050,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glClearBufferfv} from the transformer's route: colour or depth, with the caller's value. */
     public static void celtium$clearBufferfv(int buffer, int drawBuffer, long value) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || value == 0L) {
             return;
         }
@@ -4174,43 +4059,40 @@ public final class CeltiumGlStub implements FunctionProvider {
             float green = org.lwjgl.system.MemoryUtil.memGetFloat(value + 4L);
             float blue = org.lwjgl.system.MemoryUtil.memGetFloat(value + 8L);
             float alpha = org.lwjgl.system.MemoryUtil.memGetFloat(value + 12L);
-            float oldRed = stub.clearRed, oldGreen = stub.clearGreen, oldBlue = stub.clearBlue, oldAlpha = stub.clearAlpha;
+            GlsmClearState clear = GlsmClearState.current();
+            float oldRed = clear.red(), oldGreen = clear.green(), oldBlue = clear.blue(), oldAlpha = clear.alpha();
             try {
-                stub.clearRed = red;
-                stub.clearGreen = green;
-                stub.clearBlue = blue;
-                stub.clearAlpha = alpha;
+                clear.clearColor(red, green, blue, alpha);
                 stub.recordClear(0x4000);
             } finally {
-                stub.clearRed = oldRed;
-                stub.clearGreen = oldGreen;
-                stub.clearBlue = oldBlue;
-                stub.clearAlpha = oldAlpha;
+                clear.clearColor(oldRed, oldGreen, oldBlue, oldAlpha);
             }
         } else if (buffer == 0x1801) { // GL_DEPTH
             double depth = org.lwjgl.system.MemoryUtil.memGetFloat(value);
-            double old = stub.clearDepth;
+            GlsmClearState clear = GlsmClearState.current();
+            double old = clear.depth();
             try {
-                stub.clearDepth = depth;
+                clear.clearDepth(depth);
                 stub.recordClear(0x0100);
             } finally {
-                stub.clearDepth = old;
+                clear.clearDepth(old);
             }
         }
     }
 
     /** {@code glClearBufferfi} from the transformer's route: the depth/stencil pair clear. */
     public static void celtium$clearBufferfi(int buffer, int drawBuffer, float depth, int stencil) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || buffer != 0x84F9) { // GL_DEPTH_STENCIL
             return;
         }
-        double old = stub.clearDepth;
+        GlsmClearState clear = GlsmClearState.current();
+        double old = clear.depth();
         try {
-            stub.clearDepth = depth;
+            clear.clearDepth(depth);
             stub.recordClear(0x4100);
         } finally {
-            stub.clearDepth = old;
+            clear.clearDepth(old);
         }
     }
 
@@ -4283,21 +4165,23 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Records a clear through the same producer used by callback dispatch. */
     public static void celtium$clear(int mask) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.recordClear(mask);
         }
     }
 
     public static void celtium$clearColor(float red, float green, float blue, float alpha) {
-        CeltiumGlStub stub = installed;
+        GlsmHintLedger.current().noteArrival("glClearColor");
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.recordClearColor(red, green, blue, alpha);
         }
     }
 
     public static void celtium$clearDepth(double depth) {
-        CeltiumGlStub stub = installed;
+        GlsmHintLedger.current().noteArrival("glClearDepth");
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.recordClearDepth(depth);
         }
@@ -4317,45 +4201,21 @@ public final class CeltiumGlStub implements FunctionProvider {
     private void recordClear(int mask) {
         mask = celtium$effectiveClearMask(mask);
         // The routing owner, not raw name 0, distinguishes the game's main framebuffer from other targets.
-        this.pendingClearDrawFbo = this.drawFbo;
-        this.pendingClearIsMain = this.drawFramebufferIsMain;
-        // How often the game clears what it calls its main framebuffer, and with what colour. The E2E scene's black
-        // horizon needed exactly this: the model says the world frame clears that framebuffer with the fog colour every
-        // frame, while a census of the routes said the clear never reached the delivered image.
-        if (this.drawFramebufferIsMain) {
-            this.mainClears++;
-            if (CLEAR_CALLERS && this.mainClearCallerLogs < CLEAR_CALLER_LINES) {
-                // Which caller clears the main framebuffer, and how often: 23 a frame is not vanilla's one, and the
-                // answer decides whether the clear-order flush can ever be skipped for it.
-                this.mainClearCallerLogs++;
-                StackTraceElement[] stack = Thread.currentThread().getStackTrace();
-                StringBuilder callers = new StringBuilder(200);
-                for (int i = 2; i < Math.min(stack.length, 11); i++) {
-                    callers.append(" <- ").append(stack[i].getClassName()).append('#').append(stack[i].getMethodName());
-                }
-                System.out.println("[Celtium] CELTIUM_MAIN_CLEAR mask=0x" + Integer.toHexString(mask)
-                        + " colour=(" + this.clearRed + "," + this.clearGreen + "," + this.clearBlue + ","
-                        + this.clearAlpha + ") callers=" + callers);
+        // How often the game clears what it calls its main framebuffer, and with what colour, is the
+        // GlsmClearState census (GAP-ST-4): issue() latches the pending mask and snapshots per buffer.
+        if (this.drawFramebufferIsMain && CLEAR_CALLERS && this.mainClearCallerLogs < CLEAR_CALLER_LINES) {
+            this.mainClearCallerLogs++;
+            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+            StringBuilder callers = new StringBuilder(200);
+            for (int i = 2; i < Math.min(stack.length, 11); i++) {
+                callers.append(" <- ").append(stack[i].getClassName()).append('#').append(stack[i].getMethodName());
             }
-            // Per buffer: a later depth-only clear must not replace the colour the colour clear was issued with.
-            if ((mask & 0x4000) != 0) {
-                this.lastMainClearRed = this.clearRed;
-                this.lastMainClearGreen = this.clearGreen;
-                this.lastMainClearBlue = this.clearBlue;
-                this.lastMainClearAlpha = this.clearAlpha;
-                this.mainClearValuesKnown = true;
-            }
-            if ((mask & 0x0100) != 0) {
-                this.lastMainClearDepth = this.clearDepth;
-            }
-        } else {
-            this.foreignClears++;
-            this.lastForeignClearRed = this.clearRed;
-            this.lastForeignClearGreen = this.clearGreen;
-            this.lastForeignClearBlue = this.clearBlue;
+            GlsmClearState clear = GlsmClearState.current();
+            System.out.println("[Celtium] CELTIUM_MAIN_CLEAR mask=0x" + Integer.toHexString(mask)
+                    + " colour=(" + clear.red() + "," + clear.green() + "," + clear.blue() + ","
+                    + clear.alpha() + ") callers=" + callers);
         }
-        int pendingMask = mask;
-        this.pendingClears.getAndUpdate(previous -> previous | pendingMask);
+        GlsmClearState.current().issue(mask, this.drawFbo, this.drawFramebufferIsMain);
         if (this.drawFramebufferIsMain) {
             // The main framebuffer's clear can be carried by the draw queue instead of by the latch: the backend
             // attached it to the last queued group of the frame image when the ordering flush was asked for
@@ -4416,14 +4276,11 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     private void recordClearColor(float red, float green, float blue, float alpha) {
-        this.clearRed = red;
-        this.clearGreen = green;
-        this.clearBlue = blue;
-        this.clearAlpha = alpha;
+        GlsmClearState.current().clearColor(red, green, blue, alpha);
     }
 
     private void recordClearDepth(double depth) {
-        this.clearDepth = Math.max(0.0D, Math.min(1.0D, depth));
+        GlsmClearState.current().clearDepth(Math.max(0.0D, Math.min(1.0D, depth)));
     }
 
     /**
@@ -4434,8 +4291,30 @@ public final class CeltiumGlStub implements FunctionProvider {
      * wrong pixel.
      */
     public static int consumePendingClears() {
-        CeltiumGlStub stub = installed;
-        return stub == null ? 0 : stub.pendingClears.getAndSet(0);
+        GlsmFrontend stub = installed;
+        if (stub == null) return 0;
+        int consumed = GlsmClearState.current().consumePending();
+        if (consumed != 0) FlushBoundaryCensus.current().note(FlushBoundaryCensus.Reason.CLEAR_CONSUME);
+        return consumed;
+    }
+
+    /**
+     * Puts back a main-framebuffer clear that {@link #consumePendingClears()} drained because the draw
+     * queue was carrying it, after the group that carried it was discarded undrawn.
+     * <p>
+     * The restore is the record {@link #recordClear} made, replayed: the pending mask, the owner the
+     * latch resolves the image from, and the per-buffer value snapshots {@link #mainClearValues} reads -
+     * colour only when the mask names colour, depth only when it names depth, the same per-buffer rule
+     * the record follows, so a depth-only rescue cannot replace the colour an earlier colour clear was
+     * issued with. The frame machinery then applies the clear at the next pass begin, the route it would
+     * have taken had the queue never carried it.
+     */
+    public static void celtium$rependMainClear(int mask, int drawFbo, float[] rgba, double depth) {
+        GlsmFrontend stub = installed;
+        if (stub == null || mask == 0) {
+            return;
+        }
+        GlsmClearState.current().repend(mask, drawFbo, rgba, depth);
     }
 
     /**
@@ -4448,21 +4327,18 @@ public final class CeltiumGlStub implements FunctionProvider {
      * colour vanilla's clear used - the E2E pack's black area below the horizon beyond the loaded chunks.
      */
     public static double mainClearValues(float[] out) {
-        CeltiumGlStub stub = installed;
-        if (stub == null || !stub.mainClearValuesKnown) {
+        GlsmFrontend stub = installed;
+        if (stub == null || !GlsmClearState.current().mainValuesKnown()) {
             clearColor(out);
             return Double.NaN;
         }
-        out[0] = stub.lastMainClearRed;
-        out[1] = stub.lastMainClearGreen;
-        out[2] = stub.lastMainClearBlue;
-        out[3] = stub.lastMainClearAlpha;
-        return stub.lastMainClearDepth;
+        GlsmClearState.current().mainValues(out);
+        return GlsmClearState.current().lastMainDepth();
     }
 
     /** The colour the game last asked {@code glClear} to use, into {@code out} as {r,g,b,a}. */
     public static void clearColor(float[] out) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             out[0] = 0.0f;
             out[1] = 0.0f;
@@ -4470,16 +4346,17 @@ public final class CeltiumGlStub implements FunctionProvider {
             out[3] = 1.0f;
             return;
         }
-        out[0] = stub.clearRed;
-        out[1] = stub.clearGreen;
-        out[2] = stub.clearBlue;
-        out[3] = stub.clearAlpha;
+        GlsmClearState clear = GlsmClearState.current();
+        out[0] = clear.red();
+        out[1] = clear.green();
+        out[2] = clear.blue();
+        out[3] = clear.alpha();
     }
 
     /** The depth the game last asked {@code glClear} to use. */
     public static double clearDepth() {
-        CeltiumGlStub stub = installed;
-        return stub == null ? 1.0 : stub.clearDepth;
+        GlsmFrontend stub = installed;
+        return stub == null ? 1.0 : GlsmClearState.current().depth();
     }
 
     // ---- texture captures: the answers the mirrors read --------------------------------------------------
@@ -4490,7 +4367,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The RGBA8 pixels the game uploaded for a texture level; see {@link GlTextureCaptures}. */
     public static java.nio.ByteBuffer textureUploadRgba8(int textureName, int level, int[] outWidthHeight) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             if (outWidthHeight != null && outWidthHeight.length >= 2) {
                 outWidthHeight[0] = 0;
@@ -4503,7 +4380,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The texel offset the level's captured record covers inside its level; see {@link GlTextureCaptures}. */
     public static boolean textureUploadOffset(int textureName, int level, int[] outXY) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub != null && stub.textureCaptures.textureUploadOffset(textureName, level, outXY);
     }
 
@@ -4533,13 +4410,13 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Whether the level has backlog patches waiting; see {@link GlTextureCaptures}. */
     public static boolean textureHasPendingPatches(int textureName, int level) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub != null && stub.textureCaptures.textureHasPendingPatches(textureName, level);
     }
 
     /** A snapshot of the level's backlog patches, ordered by write serial; see {@link GlTextureCaptures}. */
     public static java.util.List<PendingPatch> texturePendingPatches(int textureName, int level) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null
                 ? new java.util.ArrayList<PendingPatch>()
                 : stub.textureCaptures.texturePendingPatches(textureName, level);
@@ -4547,7 +4424,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Drops every backlog patch at or below {@code uptoSerial} for the level; see {@link GlTextureCaptures}. */
     public static void texturePatchesConsumed(int textureName, int level, long uptoSerial) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.textureCaptures.texturePatchesConsumed(textureName, level, uptoSerial);
         }
@@ -4555,37 +4432,37 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The serial the most recent level write took, any texture; see {@link GlTextureCaptures}. */
     public static long textureWriteEpoch() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? Long.MIN_VALUE : stub.textureCaptures.textureWriteEpoch();
     }
 
     /** The write serial the level's captured record carries; see {@link GlTextureCaptures}. */
     public static long textureUploadSerial(int textureName, int level) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? Long.MIN_VALUE : stub.textureCaptures.textureUploadSerial(textureName, level);
     }
 
     /** Whether the texture was allocated with a NULL data pointer; see {@link GlTextureCaptures}. */
     public static boolean textureAllocatedWithoutData(int textureName) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub != null && stub.textureCaptures.textureAllocatedWithoutData(stub, textureName);
     }
 
     /** Whether the level exists but holds no game pixels; see {@link GlTextureCaptures}. */
     public static boolean textureLevelAllocatedWithoutPixels(int textureName, int level) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub != null && stub.textureCaptures.textureLevelAllocatedWithoutPixels(textureName, level);
     }
 
     /** Whether the level holds pixels the game itself wrote; see {@link GlTextureCaptures}. */
     public static boolean textureLevelHasGamePixels(int textureName, int level) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub != null && stub.textureCaptures.textureLevelHasGamePixels(textureName, level);
     }
 
     /** Whether a mirror upload of this level has provably nothing to read; see {@link GlTextureCaptures}. */
     public static boolean celtium$levelHasNothingToRead(int textureName, int level) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null || stub.textureCaptures.celtium$levelHasNothingToRead(textureName, level);
     }
 
@@ -4631,7 +4508,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Which of the three supply outcomes this level has; see {@link GlTextureCaptures}. */
     public static int celtium$supplyDecision(int textureName, int level) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null
                 ? SUPPLY_NOTHING_TO_READ
                 : stub.textureCaptures.celtium$supplyDecision(textureName, level);
@@ -4639,7 +4516,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** One line of capture diagnostics; see {@link GlTextureCaptures}. */
     public static String textureCaptureSummary() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null
                 ? "texture capture: levels=0 full=0 patches=0 undefined=0 unconverted=0 bytes=0"
                 : stub.textureCaptures.textureCaptureSummary();
@@ -4647,13 +4524,13 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The RGBA8 bytes the filed captures currently hold; see {@link GlTextureCaptures}. */
     public static long textureCaptureBytes() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? 0L : stub.textureCaptures.textureCaptureBytes();
     }
 
     /** Drops the stub's CPU copy of every captured level that has settled; see {@link GlTextureCaptures}. */
     public static long[] releaseSettledTextureCaptures() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null
                 ? new long[] { 0L, 0L }
                 : stub.textureCaptures.releaseSettledTextureCaptures(stub);
@@ -4663,29 +4540,29 @@ public final class CeltiumGlStub implements FunctionProvider {
     final org.soutalab.celtium.vulkan.NativeTextureBindings textures;
     private final ReadableMemoryRanges.Provider readableRangeProvider;
 
-    private CeltiumGlStub() {
+    private GlsmFrontend() {
         this(org.soutalab.celtium.vulkan.NativeRasterState.current(),
                 org.soutalab.celtium.vulkan.NativeTextureBindings.current(),
                 ReadableMemoryRanges.defaultProvider());
     }
 
-    CeltiumGlStub(ReadableMemoryRanges.Provider readableRangeProvider) {
+    GlsmFrontend(ReadableMemoryRanges.Provider readableRangeProvider) {
         this(org.soutalab.celtium.vulkan.NativeRasterState.current(),
                 org.soutalab.celtium.vulkan.NativeTextureBindings.current(),
                 readableRangeProvider);
     }
 
-    private CeltiumGlStub(org.soutalab.celtium.vulkan.NativeRasterState raster) {
+    private GlsmFrontend(org.soutalab.celtium.vulkan.NativeRasterState raster) {
         this(raster, new org.soutalab.celtium.vulkan.NativeTextureBindings(raster),
                 ReadableMemoryRanges.defaultProvider());
     }
 
-    private CeltiumGlStub(org.soutalab.celtium.vulkan.NativeRasterState raster,
+    private GlsmFrontend(org.soutalab.celtium.vulkan.NativeRasterState raster,
             org.soutalab.celtium.vulkan.NativeTextureBindings textures) {
         this(raster, textures, ReadableMemoryRanges.defaultProvider());
     }
 
-    private CeltiumGlStub(org.soutalab.celtium.vulkan.NativeRasterState raster,
+    private GlsmFrontend(org.soutalab.celtium.vulkan.NativeRasterState raster,
             org.soutalab.celtium.vulkan.NativeTextureBindings textures,
             ReadableMemoryRanges.Provider readableRangeProvider) {
         this.raster = raster;
@@ -4697,7 +4574,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         this.textureBindings.defaultReturnValue(-1);
         // GL's initial GL_DEPTH_WRITEMASK is GL_TRUE. The record existed but started at zero, so a query before any
         // glDepthMask answered "writes disabled" - the opposite of the context's initial state.
-        this.enables[GlStateQueries.GL_DEPTH_WRITEMASK_CAP] = 1;
+        GlsmEnableState.current().set(GlStateQueries.GL_DEPTH_WRITEMASK_CAP, true);
     }
 
     // ---- FunctionProvider ------------------------------------------------------------
@@ -5190,7 +5067,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (open != null && fn.semantics != SEM_NEW_LIST && fn.semantics != SEM_END_LIST) {
             if (fn.semantics == SEM_DRAW_ARRAYS) {
                 drawArrays((int) c[0], (int) c[1], (int) c[2], true);
-                if (this.compilingListMode != GL_COMPILE_AND_EXECUTE) return 0L;
+                if (GlsmDisplayListLedger.current().compilingMode() != GL_COMPILE_AND_EXECUTE) return 0L;
             } else if (!notCompiledIntoDisplayList(fn.semantics)
                     && !fn.name.equals("glEnableClientState") && !fn.name.equals("glDisableClientState")) {
                 long[] recorded = c.clone();
@@ -5202,7 +5079,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     this.openListPayloads.add(owned);
                 }
                 open.add(new Object[] { fn, recorded });
-                if (this.compilingListMode != GL_COMPILE_AND_EXECUTE) {
+                if (GlsmDisplayListLedger.current().compilingMode() != GL_COMPILE_AND_EXECUTE) {
                     return 0L;
                 }
                 // GL_COMPILE_AND_EXECUTE: the command is stored *and* runs now. Falling through executes it; the stored
@@ -5312,7 +5189,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 getBooleans((int) a0, a1, fn);
                 return 0L;
             case SEM_IS_OBJECT:
-                return this.liveNames.contains((int) a0) || this.liveSync.contains(a0)
+                return GlsmNameLedger.current().isLive((int) a0) || GlsmNameLedger.current().isLiveSync(a0)
                         || "glIsBuffer".equals(fn.name) && NativeGeometryBuffer.find((int) a0) != null ? 1L : 0L;
             case SEM_DELETE:
                 delete(fn, c);
@@ -5352,11 +5229,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 pixelStore((int) c[0], (int) c[1]);
                 return 0L;
             case SEM_VIEWPORT:
-                this.viewportX = (int) c[0];
-                this.viewportY = (int) c[1];
-                this.viewportW = (int) c[2];
-                this.viewportH = (int) c[3];
-                recordViewportPacked(this.viewportX, this.viewportY, this.viewportW, this.viewportH);
+                GlsmViewportState.current().set((int) c[0], (int) c[1], (int) c[2], (int) c[3]);
                 return 0L;
             case SEM_FOG_I:
                 org.soutalab.celtium.vulkan.ImmediateFogState.current().parameter((int) c[0], (int) c[1]);
@@ -5445,7 +5318,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 celtium$noteMatrixMultiplyArrival(fn);
                 return 0L;
             case SEM_MATRIX_MODE:
-                this.matrixMode = (int) c[0];
+                GlsmMatrixMode.current().set((int) c[0]);
                 return 0L;
             case SEM_BIND_FRAMEBUFFER:
                 bindFramebuffer((int) a0, (int) a1);
@@ -5465,10 +5338,10 @@ public final class CeltiumGlStub implements FunctionProvider {
                 bufferSubData(fn, c);
                 return 0L;
             case SEM_LINE_WIDTH:
-                this.lineWidth = Float.intBitsToFloat((int) c[0]);
+                GlsmImmediateState.current().lineWidth(Float.intBitsToFloat((int) c[0]));
                 return 0L;
             case SEM_USE_PROGRAM:
-                this.currentProgram = (int) c[0];
+                GlsmShaderLedger.current().useProgram((int) c[0]);
                 return 0L;
             case SEM_NEW_LIST:
                 // A name of zero is not a list (the spec makes glNewList(0) GL_INVALID_VALUE), and recording under it
@@ -5492,7 +5365,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     }
                     if (listAbandonedLogs < 8) {
                         listAbandonedLogs++;
-                        System.out.println("[Celtium] CELTIUM_LIST_ABANDONED list=" + this.compilingList
+                        System.out.println("[Celtium] CELTIUM_LIST_ABANDONED list=" + GlsmDisplayListLedger.current().compiling()
                                 + " payloads=" + (this.openListPayloads == null ? 0 : this.openListPayloads.size())
                                 + " legacyRunBytes=" + this.openListLegacyRunBytes);
                     }
@@ -5502,17 +5375,17 @@ public final class CeltiumGlStub implements FunctionProvider {
                     this.closeCompileState();
                 }
                 this.openListGeometry = null;
-                this.compilingList = (int) c[0];
-                this.compilingListMode = (int) c[1]; // GL_LIST_MODE answers this, and the model capture asks for it
-                this.openList = this.compilingList == 0 ? null : new ArrayList<Object[]>();
-                if (this.compilingList > 0) {
-                    this.openCompileState(this.compilingListMode);
+                GlsmDisplayListLedger.current().compiling((int) c[0]);
+                GlsmDisplayListLedger.current().compilingMode((int) c[1]); // GL_LIST_MODE answers this, and the model capture asks for it
+                this.openList = GlsmDisplayListLedger.current().compiling() == 0 ? null : new ArrayList<Object[]>();
+                if (GlsmDisplayListLedger.current().compiling() > 0) {
+                    this.openCompileState(GlsmDisplayListLedger.current().compilingMode());
                 }
                 // The model capture takes a new generation per compile. The GlStateManager path notifies it; a mod
                 // that calls GL11.glNewList directly did not, so recompiling a name kept the mesh built from its
                 // previous contents and the new geometry was never drawn.
-                if (this.compilingList > 0) {
-                    org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listCompileStarted(this.compilingList);
+                if (GlsmDisplayListLedger.current().compiling() > 0) {
+                    org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listCompileStarted(GlsmDisplayListLedger.current().compiling());
                 }
                 return 0L;
             case SEM_END_LIST:
@@ -5522,19 +5395,18 @@ public final class CeltiumGlStub implements FunctionProvider {
                 if (compiled != null) {
                     // The spec replaces a name's contents at glEndList, so the payloads of the list this one displaces
                     // are unreachable from here on and are released now rather than held for the life of the process.
-                    releaseListPayloads(Integer.valueOf(this.compilingList));
-                    this.displayLists.put(this.compilingList, compiled);
-                    if (this.openListGeometry != null) this.displayListGeometry.put(this.compilingList, this.openListGeometry);
+                    releaseListPayloads(Integer.valueOf(GlsmDisplayListLedger.current().compiling()));
+                    GlsmDisplayListLedger.current().putList(GlsmDisplayListLedger.current().compiling(), compiled);
+                    if (this.openListGeometry != null) GlsmDisplayListLedger.current().putGeometry(GlsmDisplayListLedger.current().compiling(), this.openListGeometry);
                     if (this.openListPayloads != null) {
-                        this.displayListPayloads.put(this.compilingList, this.openListPayloads);
+                        GlsmDisplayListLedger.current().putPayloads(GlsmDisplayListLedger.current().compiling(), this.openListPayloads);
                     }
                     // The compiled legacy runs' bytes become this name's, and the release path above subtracts them
                     // from the same accounting when the name is replaced or deleted.
                     if (this.openListLegacyRunBytes > 0L) {
-                        this.legacyListRunBytesByList.put(this.compilingList, this.openListLegacyRunBytes);
+                        this.legacyListRunBytesByList.put(GlsmDisplayListLedger.current().compiling(), this.openListLegacyRunBytes);
                     }
-                    this.displayListsCompiled++;
-                    // What a compiled list holds, named once per list for the first few: a list that replays every
+                                        // What a compiled list holds, named once per list for the first few: a list that replays every
                     // frame and draws nothing is either not recorded at all (no line here) or recorded without a draw
                     // (draws=0), and the two need different fixes. The geometry bytes are the recorded
                     // COMPILED_ARRAYS payloads, which is what a replay can actually draw. Only lists carrying a
@@ -5553,7 +5425,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                     }
                     if (listCompileLogs < LIST_COMPILE_LOGS && bytes >= 4096L) {
                         listCompileLogs++;
-                        System.out.println("[Celtium] CELTIUM_LIST_COMPILED list=" + this.compilingList
+                        System.out.println("[Celtium] CELTIUM_LIST_COMPILED list=" + GlsmDisplayListLedger.current().compiling()
                                 + " commands=" + compiled.size() + " draws=" + draws + " bytes=" + bytes
                                 + " legacyRunBytes=" + this.openListLegacyRunBytes
                                 + " backend=" + (org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends
@@ -5570,33 +5442,35 @@ public final class CeltiumGlStub implements FunctionProvider {
                 this.openListPayloads = null;
                 this.openListLegacyRunBytes = 0L;
                 this.openList = null;
-                this.compilingList = 0;
+                GlsmDisplayListLedger.current().compiling(0);
                 this.closeCompileState();
                 return 0L;
             case SEM_CALL_LIST:
                 replayDisplayList((int) c[0]);
                 return 0L;
             case SEM_LIST_BASE:
-                this.listBase = (int) c[0];
+                GlsmDisplayListLedger.current().listBase((int) c[0]);
                 return 0L;
             case SEM_CALL_LISTS:
                 callLists((int) c[0], (int) c[1], c[2]);
                 return 0L;
-            case SEM_BIND_VERTEX_ARRAY:
-                this.boundVertexArray = (int) c[0];
+            case SEM_BIND_VERTEX_ARRAY: {
+                int vao = (int) c[0];
+                GlsmClientArrayState.current().bindVertexArray(vao);
                 // The same swap the transformer's route performs: the VAO's own attribute records become live.
-                this.currentAttribs = attribsFor(this.boundVertexArray);
+                GlsmClientArrayState.current().bindAttribs(vao);
                 celtium$noteAttribZero();
                 return 0L;
+            }
             case SEM_VERTEX_POINTER:
                 // GL keeps one client vertex-array pointer; the last glVertexPointer wins, exactly as it does in a
                 // driver. The pointer is a byte offset into the bound array buffer (GL_ARRAY_BUFFER) - the value the
                 // game passes when a buffer is bound, which is the only case drawArrays() decodes.
-                this.vertexPointerSize = (int) c[0];
-                this.vertexPointerType = (int) c[1];
-                this.vertexPointerStride = (int) c[2];
-                this.vertexPointerOffset = c[3];
-                VaoAttrib pointerAttrib = boundAttribs()[0];
+                VERTEX_POINTER.size = (int) c[0];
+                VERTEX_POINTER.type = (int) c[1];
+                VERTEX_POINTER.stride = (int) c[2];
+                VERTEX_POINTER.offset = c[3];
+                GlsmClientArrayState.VaoAttrib pointerAttrib = boundAttribs()[0];
                 pointerAttrib.size = (int) c[0];
                 pointerAttrib.type = (int) c[1];
                 pointerAttrib.stride = (int) c[2];
@@ -5628,11 +5502,13 @@ public final class CeltiumGlStub implements FunctionProvider {
             case SEM_DRAW_ARRAYS:
                 drawArrays((int) c[0], (int) c[1], (int) c[2]);
                 return 0L;
-            case SEM_ROUTE:
-                route(fn, c);
-                return 0L;
             case SEM_NOOP:
             default:
+                // GAP-FL-1 (F-11 specification): a guest glFlush/glFinish is counted in the flush
+                // census as an arrival and never becomes a boundary.
+                if ("glFlush".equals(fn.name) || "glFinish".equals(fn.name)) {
+                    FlushBoundaryCensus.current().noteGuestFlush();
+                }
                 // A no-op is only safe for state the Vulkan side owns. For the transforms the state mirror is
                 // supposed to follow, a no-op means the hook that should have mirrored the call never ran - which is
                 // the silent fallback this class cannot afford, because without a context nothing else applies the
@@ -5904,7 +5780,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /**
      * Holds the drawing-name set, in its own class initializer.
      * <p>
-     * Not a field of {@link CeltiumGlStub} on purpose: this class's own {@code <clinit>} is at HotSpot's
+     * Not a field of {@link GlsmFrontend} on purpose: this class's own {@code <clinit>} is at HotSpot's
      * {@code HugeMethodLimit}. Measured while adding this census - the set built inline took the initializer to
      * <b>8030</b> bytes, over the 8000-byte limit, and {@code HugeMethodLimitTest} failed on it. Above the limit the
      * JIT never compiles the method, and this initializer is the one that registers every GL entry point, so it would
@@ -6093,8 +5969,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     private static final int GL_MODELVIEW = 0x1700;
     private static final int GL_PROJECTION = 0x1701;
     private static final int GL_TEXTURE_MATRIX_MODE = 0x1702;
-    /** The stack the stub last saw selected; GL starts in MODELVIEW. */
-    volatile int matrixMode = GL_MODELVIEW;
+    /* The matrix mode itself moved to GlsmMatrixMode (GAP-ST-11): the stub route's write
+       (SEM_MATRIX_MODE) and the mixin's skip read now meet in that one record. */
 
     /**
      * {@return whether the stub already believes {@code mode} is current}, for the GlStateManager mixin's redundant-
@@ -6107,8 +5983,8 @@ public final class CeltiumGlStub implements FunctionProvider {
      * semantics-preserving by construction.
      */
     public static boolean celtium$matrixModeIsCurrent(int mode) {
-        CeltiumGlStub stub = installed;
-        return stub != null && stub.matrixMode == mode;
+        GlsmFrontend stub = installed;
+        return stub != null && GlsmMatrixMode.current().isCurrent(mode);
     }
 
     private static String matrixModeName(int mode) {
@@ -6134,7 +6010,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (MATRIX_MULTIPLY_ARRIVALS.get() <= 4L
                 && org.soutalab.celtium.vulkan.VulkanDiagnostics.enabled()) {
             System.out.println("[Celtium] CELTIUM_MULT_MATRIX arrival-only fn=" + fn.name
-                    + " mode=" + matrixModeName(this.matrixMode)
+                    + " mode=" + matrixModeName(GlsmMatrixMode.current().get())
                     + " applied=" + MATRIX_MULTIPLY_APPLIED.get()
                     + " site=[" + celtium$callSite(8) + "]");
         }
@@ -6157,15 +6033,14 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
             int scalar = RenderObjectIds.reserve(range);
             for (int i = 0; i < range; i++) {
-                this.liveNames.add(scalar + i);
+                GlsmNameLedger.current().addName(scalar + i);
             }
             return scalar;
         }
         if (fn.ret == R_LONG) {
             // Sync object (glFenceSync): ids come from the 64-bit space.
-            long sync = this.nextSync.getAndIncrement();
-            this.liveSync.add(sync);
-            this.liveNames.add((int) sync);
+            long sync = GlsmNameLedger.current().newSync();
+            GlsmNameLedger.current().addName((int) sync);
             return sync;
         }
         // Array form (glGenTextures, glCreateTextures...): the out[] is the LAST pointer arg; the count is the
@@ -6173,7 +6048,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         int outIndex = lastPointerArg(fn);
         if (outIndex < 0) {
             int scalar = RenderObjectIds.reserve(1);
-            this.liveNames.add(scalar);
+            GlsmNameLedger.current().addName(scalar);
             return scalar;
         }
         long out = c[outIndex];
@@ -6183,7 +6058,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         int n = countFromArgs(fn, c, outIndex);
         for (int i = 0; i < n; i++) {
             int name = RenderObjectIds.reserve(1);
-            this.liveNames.add(name);
+            GlsmNameLedger.current().addName(name);
             memPutInt(out + (long) i * 4L, name);
         }
         return 0L;
@@ -6222,19 +6097,19 @@ public final class CeltiumGlStub implements FunctionProvider {
             boolean renderbuffers = "glDeleteRenderbuffers".equals(fn.name);
             for (int i = 0; i < count; i++) {
                 int name = memGetInt(names + (long) i * 4L);
-                this.liveNames.remove(name);
+                GlsmNameLedger.current().removeName(name);
                 if (vertexArrays) {
-                    this.vaoAttribRecords.remove(name);
-                    if (this.boundVertexArray == name) {
-                        this.boundVertexArray = 0;
-                        // The deleted VAO's records go with it; the default VAO's array is re-read on next use.
-                        this.currentAttribs = null;
+                    // M-5 rewired: the deleted VAO's records go with it in GlsmClientArrayState;
+                    // the default VAO's array is re-read on next use.
+                    GlsmClientArrayState.current().removeAttribs(name);
+                    if (GlsmClientArrayState.current().boundVertexArray() == name) {
+                        GlsmClientArrayState.current().bindVertexArray(0);
                     }
                 }
                 if (renderbuffers) {
-                    this.renderbufferDims.remove(name);
-                    if (this.boundRenderbuffer == name) {
-                        this.boundRenderbuffer = 0;
+                    GlsmClientArrayState.current().removeRenderbufferSize(name);
+                    if (GlsmClientArrayState.current().boundRenderbuffer() == name) {
+                        GlsmClientArrayState.current().bindRenderbuffer(0);
                     }
                 }
                 if (textures) {
@@ -6259,10 +6134,10 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         if (fn.args.length == 1) {
             if (fn.args[0] == A_LONG) {
-                this.liveSync.remove(c[0]);
+                GlsmNameLedger.current().removeSync(c[0]);
             } else {
                 int name = (int) c[0];
-                this.liveNames.remove(name);
+                GlsmNameLedger.current().removeName(name);
                 if ("glDeleteBuffers".equals(fn.name)) {
                     forgetBuffer(name);
                 }
@@ -6292,7 +6167,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(name);
         if (nativeBuffer != null) nativeBuffer.close();
         if (NativeGeometryBuffer.boundId() == name) NativeGeometryBuffer.unbind();
-        this.bufferStore.remove(name);
+        GlsmBufferState.current().removeStorage(name);
         this.bufferStorage.forget(name);
         if (this.pixelPackBuffer == name) {
             this.pixelPackBuffer = 0;
@@ -6300,11 +6175,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (this.pixelUnpackBuffer == name) {
             this.pixelUnpackBuffer = 0;
         }
-        for (int target = 0; target < this.bufferBindings.length; target++) {
-            if (this.bufferBindings[target] == name) {
-                this.bufferBindings[target] = 0;
-            }
-        }
+        GlsmBufferState.current().unbindName(name);
     }
 
     private void deleteTexture(int name) {
@@ -6312,11 +6183,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (name != 0) {
             Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
             if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
-                for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry entry
-                        : this.framebufferColorTextures.int2IntEntrySet()) {
-                    if (entry.getIntValue() == name) {
-                        vulkan.celtium$rawAttachmentTextureDeleted(entry.getIntKey());
-                    }
+                for (Integer fbo : GlsmFramebufferAttachments.current().framebuffersWithColorTexture(name)) {
+                    vulkan.celtium$rawAttachmentTextureDeleted(fbo.intValue());
                 }
                 vulkan.celtium$rawTextureDeleted(name);
             }
@@ -6336,7 +6204,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         // The "allocated without data" classification belongs to the deleted object (item 328, V-04): the
         // TextureUtil route removed it in forgetTextureAllocation, the raw route left it standing, and a
         // recycled name was then read as render-target idiom it never declared.
-        this.nullAllocatedNames.remove(name);
+        GlsmNameLedger.current().removeNullAllocated(name);
         if (!this.textureBindings.isEmpty()) {
             it.unimi.dsi.fastutil.longs.LongIterator bindings = this.textureBindings.keySet().iterator();
             while (bindings.hasNext()) {
@@ -6507,9 +6375,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     }
 
     /** Pixel/semantic routing - the layer the texture path plugs into; the body lives in {@link GlStateQueries}. */
-    private void route(Fn fn, long[] c) {
-        GlStateQueries.route(fn, c);
-    }
+    // GAP-SEM-1 (b): route(Fn, long[]) removed together with SEM_ROUTE.
     // ---- texture image extents: what glGetTexLevelParameter answers from ---------------------------------
 
     /** GL_FRAMEBUFFER (0x8D40) binds both slots; GL_DRAW/READ_FRAMEBUFFER (0x8CA9/0x8CA8) bind one each. */
@@ -6521,6 +6387,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             this.readFbo = name;
         }
         this.framebufferBindSerial++;
+        FlushBoundaryCensus.current().note(FlushBoundaryCensus.Reason.FBO_BIND);
         // The registration the renderer makes from a raw bind (identity, records, pair, shared-depth borrow)
         // is triggered here rather than in the hint's report: every raw bind lands in this record, including
         // the ones GLSM's state cache and the vanilla-bracket suppression kept the hint's report from ever
@@ -6570,7 +6437,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * GL per draw: the answer cannot change without a bind, and the bind is what bumps the serial.
      */
     public static long celtium$framebufferBindSerial() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? -1L : stub.framebufferBindSerial;
     }
 
@@ -6585,12 +6452,9 @@ public final class CeltiumGlStub implements FunctionProvider {
      * association exist at all; the resolution itself stays where it already is
      * ({@code celtium$publishFramebufferColorTexture}).
      */
-    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap framebufferColorTextures =
-            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
-
-    /** Reverse lookup for texture sampling: avoid a scan through every Mod FBO on each draw. */
-    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap colorTextureFramebuffers =
-            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+    // GAP-ST-3 rewired: the five attachment records (colour forward/reverse, per-slot colour,
+    // depth forward/reverse) are GlsmFramebufferAttachments'. The javadoc above is the record's
+    // history; the resolution stays at celtium$publishFramebufferColorTexture as it says.
 
     /** Colour attachment slots a framebuffer record carries: the MRT ledger size (GL_MAX_COLOR_ATTACHMENTS). */
     static final int COLOR_ATTACHMENT_SLOTS = 8;
@@ -6604,8 +6468,6 @@ public final class CeltiumGlStub implements FunctionProvider {
      * one pass (Iris's gbuffer targets attach colortex0/1/2 at once); the single-texture record above cannot say
      * that, so the tuple lives here and the backend's publication record is filled from it.
      */
-    private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<int[]> framebufferColorAttachments =
-            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
 
     /**
      * Depth attachments of raw framebuffers, mirroring {@link #framebufferColorTextures} for the depth slot.
@@ -6618,12 +6480,6 @@ public final class CeltiumGlStub implements FunctionProvider {
      * (every Iris shadow framebuffer attaches the same mainDepth) — so this record is the fact the backend's
      * shared depth store is keyed from.
      */
-    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap framebufferDepthTextures =
-            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
-
-    /** Reverse lookup for the depth record, mirroring {@link #colorTextureFramebuffers}. */
-    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap depthTextureFramebuffers =
-            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
 
     /** GL_DEPTH_ATTACHMENT. */
     private static final int DEPTH_ATTACHMENT = 0x8D00;
@@ -6698,14 +6554,12 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     private void forgetFramebuffer(int name) {
         if (name == 0) return;
-        int color = this.framebufferColorTextures.get(name);
+        int color = GlsmFramebufferAttachments.current().colorTexture(name);
         Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend instanceof org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan) {
             vulkan.celtium$rawFramebufferDeleted(name, color);
         }
-        updateColorAttachment(this.framebufferColorTextures, this.colorTextureFramebuffers, name, 0);
-        updateColorAttachment(this.framebufferDepthTextures, this.depthTextureFramebuffers, name, 0);
-        this.framebufferColorAttachments.remove(name);
+        GlsmFramebufferAttachments.current().framebufferDeleted(name);
         if (this.drawFbo == name) {
             this.drawFbo = 0;
             this.framebufferBindSerial++;
@@ -6735,13 +6589,12 @@ public final class CeltiumGlStub implements FunctionProvider {
         // Depth attachments have their own record (see framebufferDepthTextures): they are not sampled as
         // colour, but the backend keys its shared depth storage from the texture named here.
         if (isDepthAttachment(attachment)) {
-            updateDepthAttachment(this.framebufferDepthTextures, this.depthTextureFramebuffers,
-                    framebuffer, attachment, texture);
+            GlsmFramebufferAttachments.current().attachDepth(framebuffer, texture);
             if (texture != 0 && framebufferDepthAttachmentLogs < 8) {
                 framebufferDepthAttachmentLogs++;
                 System.out.println("[Celtium] CELTIUM_RAW_FBO_DEPTH framebuffer=" + framebuffer
                         + " depthTexture=" + texture
-                        + " depthAttachments=" + this.framebufferDepthTextures.size());
+                        + " depthAttachments=" + GlsmFramebufferAttachments.current().depthTextureCount());
             }
             // The depth attach completes most framebuffers' records (colour went on first), so it is a
             // registration point too: a framebuffer whose binds never reach the renderer's bind report still
@@ -6760,10 +6613,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (slot < 0) {
             return;
         }
-        updateColorAttachmentSlot(this.framebufferColorAttachments, framebuffer, slot, texture);
-        if (slot == 0) {
-            updateColorAttachment(this.framebufferColorTextures, this.colorTextureFramebuffers, framebuffer, texture);
-        }
+        GlsmFramebufferAttachments.current().attachColor(framebuffer, slot, texture);
         // After the record update, not before: the backend's registration reads the record this call just wrote
         // (it used to be notified first and so registered the previous attachment, or none).
         Object backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
@@ -6776,7 +6626,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             System.out.println("[Celtium] CELTIUM_RAW_FBO framebuffer=" + framebuffer + " slot=" + slot
                     + " colorTexture=" + texture
                     + " textarget=0x" + Integer.toHexString(textarget) + " level=" + level
-                    + " colorAttachments=" + this.framebufferColorTextures.size());
+                    + " colorAttachments=" + GlsmFramebufferAttachments.current().colorTextureCount());
         }
     }
 
@@ -6800,7 +6650,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@return a texture's level-0 width and height as GL last defined them}, or null when nothing was recorded. */
     public static int[] celtium$textureExtent(int glTextureName) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || glTextureName == 0) {
             return null;
         }
@@ -6815,13 +6665,13 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@return the draw framebuffer the stub last bound}, or -1 when no stub is installed. */
     public static int celtium$drawFramebuffer() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? -1 : stub.drawFbo;
     }
 
     /** {@return the read framebuffer the stub last bound}, or -1 when no stub is installed. */
     public static int celtium$readFramebuffer() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? -1 : stub.readFbo;
     }
 
@@ -6833,47 +6683,35 @@ public final class CeltiumGlStub implements FunctionProvider {
      * non-main clear can ride the draw queue as a marker on the last group of its own target.
      */
     public static boolean celtium$drawFramebufferIsMain() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null || stub.drawFramebufferIsMain;
     }
 
     /** {@return the colour texture of a raw framebuffer, or 0 when none was recorded}. */
     public static int celtium$framebufferColorTexture(int glFramebufferName) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || glFramebufferName == 0) {
             return 0;
         }
-        return stub.framebufferColorTextures.get(glFramebufferName);
+        return GlsmFramebufferAttachments.current().colorTexture(glFramebufferName);
     }
 
     /** {@return the depth texture of a raw framebuffer, or 0 when none was recorded}. */
     public static int celtium$framebufferDepthTexture(int glFramebufferName) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || glFramebufferName == 0) {
             return 0;
         }
-        return stub.framebufferDepthTextures.get(glFramebufferName);
+        return GlsmFramebufferAttachments.current().depthTexture(glFramebufferName);
     }
 
     /** {@return the framebuffer a depth texture is attached to, or 0 when the texture is not a raw depth attachment}. */
     public static int celtium$framebufferForDepthTexture(int glTextureName) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || glTextureName == 0) {
             return 0;
         }
-        int cached = stub.depthTextureFramebuffers.get(glTextureName);
-        if (cached != 0 && stub.framebufferDepthTextures.get(cached) == glTextureName) {
-            return cached;
-        }
-        stub.depthTextureFramebuffers.remove(glTextureName);
-        for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry entry
-                : stub.framebufferDepthTextures.int2IntEntrySet()) {
-            if (entry.getIntValue() == glTextureName) {
-                stub.depthTextureFramebuffers.put(glTextureName, entry.getIntKey());
-                return entry.getIntKey();
-            }
-        }
-        return 0;
+        return GlsmFramebufferAttachments.current().framebufferForDepthTexture(glTextureName);
     }
 
     /**
@@ -6883,69 +6721,27 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     public static int[] celtium$framebufferColorAttachments(int glFramebufferName) {
         int[] out = new int[COLOR_ATTACHMENT_SLOTS];
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || glFramebufferName == 0) {
             return out;
         }
-        int[] recorded = stub.framebufferColorAttachments.get(glFramebufferName);
-        if (recorded != null) {
-            System.arraycopy(recorded, 0, out, 0, COLOR_ATTACHMENT_SLOTS);
-        } else {
-            out[0] = stub.framebufferColorTextures.get(glFramebufferName);
-        }
+        GlsmFramebufferAttachments.current().colorAttachments(glFramebufferName, out);
         return out;
     }
 
     /** {@return the framebuffer a colour texture belongs to, or 0 when the texture is not a raw attachment}. */
     public static int celtium$framebufferForColorTexture(int glTextureName) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || glTextureName == 0) {
             return 0;
         }
-        int cached = stub.colorTextureFramebuffers.get(glTextureName);
-        if (cached != 0 && celtium$framebufferAttachesColor(stub, cached, glTextureName)) {
-            return cached;
-        }
-        stub.colorTextureFramebuffers.remove(glTextureName);
-        for (it.unimi.dsi.fastutil.ints.Int2IntMap.Entry entry
-                : stub.framebufferColorTextures.int2IntEntrySet()) {
-            if (entry.getIntValue() == glTextureName) {
-                stub.colorTextureFramebuffers.put(glTextureName, entry.getIntKey());
-                return entry.getIntKey();
-            }
-        }
-        // The slot-0 map above is not the whole record: a multi-target framebuffer's other colour textures
-        // live only in its attachment tuple, and a name filling one of those slots belongs to that
-        // framebuffer just the same (the measured case is a shadow framebuffer's second colour target -
-        // the sampling publication's adoption asked this lookup and was told the texture belonged nowhere).
-        for (it.unimi.dsi.fastutil.ints.Int2ObjectMap.Entry<int[]> entry
-                : stub.framebufferColorAttachments.int2ObjectEntrySet()) {
-            int[] slots = entry.getValue();
-            for (int slot = 1; slot < slots.length; slot++) {
-                if (slots[slot] == glTextureName) {
-                    stub.colorTextureFramebuffers.put(glTextureName, entry.getIntKey());
-                    return entry.getIntKey();
-                }
-            }
-        }
-        return 0;
+        return GlsmFramebufferAttachments.current().framebufferForColorTexture(glTextureName);
     }
 
     /** {@return whether {@code framebuffer}'s recorded colour attachments name {@code glTextureName} at any slot}. */
-    private static boolean celtium$framebufferAttachesColor(CeltiumGlStub stub, int framebuffer,
+    private static boolean celtium$framebufferAttachesColor(GlsmFrontend stub, int framebuffer,
             int glTextureName) {
-        if (stub.framebufferColorTextures.get(framebuffer) == glTextureName) {
-            return true;
-        }
-        int[] slots = stub.framebufferColorAttachments.get(framebuffer);
-        if (slots != null) {
-            for (int slot = 1; slot < slots.length; slot++) {
-                if (slots[slot] == glTextureName) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        return GlsmFramebufferAttachments.current().attachesColor(framebuffer, glTextureName);
     }
 
     /**
@@ -6961,10 +6757,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (capability == GL_SCISSOR_TEST) {
             this.scissorToggleCount++;
         }
-        if (capability < 0 || capability >= this.enables.length) {
+        if (capability < 0 || capability >= FLAT_MAP_SIZE) {
             return;
         }
-        byte next = (byte) (enabled ? 1 : 0);
         switch (capability) {
             case GL_FOG: org.soutalab.celtium.vulkan.ImmediateFogState.current().enabled(enabled); break;
             // The capabilities whose state the immediate pipeline reads from the backend's mirror. Vanilla reaches them
@@ -6994,11 +6789,10 @@ public final class CeltiumGlStub implements FunctionProvider {
             case GL_POLYGON_OFFSET_FILL: this.raster.polygonOffsetFillEnabled(enabled); break;
             case GL_TEXTURE_2D: this.textures.enabled2d(enabled); break;
             default:
-                if (this.enables[capability] != next && isDrawStateCapability(capability)) noteDrawStateBoundary();
+                if (GlsmEnableState.current().enabled(capability) != enabled && isDrawStateCapability(capability)) noteDrawStateBoundary();
                 break;
         }
-        this.enables[capability] = next;
-        this.capabilityObserved[capability] = true;
+        GlsmEnableState.current().set(capability, enabled);
     }
 
     static boolean isProxyTarget(int target) {
@@ -7119,7 +6913,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             }
             return;
         }
-        ByteBuffer storage = this.bufferStore.get(name);
+        ByteBuffer storage = GlsmBufferState.current().storage(name);
         int logicalSize = this.logicalSizeOf(name, storage == null ? 0 : storage.capacity());
         if (storage == null || data == 0L || mapRangeOffset(offset, size, logicalSize) < 0L) {
             return;
@@ -7133,22 +6927,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glPixelStorei}: the unpack state upload conversion reads rows with. Only the UNPACK_* pnames matter. */
     private void pixelStore(int pname, int value) {
-        switch (pname) {
-            case 0x0CF5: // GL_UNPACK_ALIGNMENT - 1, 2, 4 or 8; anything else is not a legal GL value
-                this.unpackAlignment = value == 1 || value == 2 || value == 8 ? value : 4;
-                break;
-            case 0x0CF2: // GL_UNPACK_ROW_LENGTH
-                this.unpackRowLength = Math.max(0, value);
-                break;
-            case 0x0CF3: // GL_UNPACK_SKIP_ROWS
-                this.unpackSkipRows = Math.max(0, value);
-                break;
-            case 0x0CF4: // GL_UNPACK_SKIP_PIXELS
-                this.unpackSkipPixels = Math.max(0, value);
-                break;
-            default:
-                break;
-        }
+        GlsmBufferState.current().pixelStore(pname, value);
     }
 
     // ---- texture pixels: the uploads the Vulkan mirrors are built from -----------------------------------
@@ -7248,7 +7027,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * The mip argument is the maximum level, not a level count, just like TextureUtil.allocateTextureImpl.
      */
     public static void recordTextureAllocation(int name, int mipmapLevels, int width, int height) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || name <= 0 || mipmapLevels < 0 || mipmapLevels > 31 || width < 0 || height < 0) {
             return;
         }
@@ -7263,11 +7042,11 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** Deletes the named storage record too when native glDeleteTextures cannot reach callback dispatch. */
     public static void forgetTextureAllocation(int name) {
-        CeltiumGlStub stub0 = installed;
+        GlsmFrontend stub0 = installed;
         if (stub0 != null) {
-            stub0.nullAllocatedNames.remove(name);
+            GlsmNameLedger.current().removeNullAllocated(name);
         }
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null && name > 0) {
             stub.deleteTexture(name);
         }
@@ -7280,7 +7059,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * before the stub is installed answers 0 as well.
      */
     public static int textureLevelParameter(int name, int level, int pname) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? 0 : stub.texLevelParamForName(name, level, pname);
     }
 
@@ -7312,7 +7091,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * the caller's "no extent" test needs; a query before the stub is installed answers {@code false} too.
      */
     public static boolean textureLevelExtent(int name, int level, int[] out) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub != null && stub.texLevelExtentForName(name, level, out);
     }
 
@@ -7366,7 +7145,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * that names the buffer a call applies to and the delegations the dispatch, the transformer's route and
      * the census land on.
      */
-    private final BufferStorageRecord bufferStorage = new BufferStorageRecord(this.bufferStore);
+    private final BufferStorageRecord bufferStorage = new BufferStorageRecord(GlsmBufferState.current().store());
 
     /**
      * The buffer whose storage an operation applies to: the bound name for {@code glBufferData}, or the name arg
@@ -7383,7 +7162,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             return this.pixelPackBuffer;
         }
         return target == GL_ARRAY_BUFFER ? NativeGeometryBuffer.boundId()
-                : target >= 0 && target < this.bufferBindings.length ? this.bufferBindings[target] : 0;
+                : GlsmBufferState.current().bound(target);
     }
 
     private int bufferFor(Fn fn, long[] c) {
@@ -7411,7 +7190,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@return the map calls and how many were refused for an out-of-range request}, for the verification line. */
     public static String mapBufferCensus() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return "calls=none refusals=none";
         }
@@ -7429,13 +7208,13 @@ public final class CeltiumGlStub implements FunctionProvider {
      * crashed on its first tile upload ({@code PixelBuffers.glMapBuffer(...) is null}).
      */
     public static long celtium$mapBuffer(int target, boolean range, long offset, long length, int access) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? 0L : stub.bufferStorage.mapBufferFor(stub.boundBuffer(target), range, offset, length, access);
     }
 
     /** {@code glUnmapBuffer}: the storage is the caller's memory already, so there is nothing to flush. */
     public static boolean celtium$unmapBuffer(int target) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return true;
         }
@@ -7444,7 +7223,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The DSA mapping forms: the buffer is named, not the bound target. */
     public static long celtium$mapNamedBuffer(int name, boolean range, long offset, long length, int access) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? 0L : stub.bufferStorage.mapBufferFor(name, range, offset, length, access);
     }
 
@@ -7504,7 +7283,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@return how many times this texture's recorded parameters changed}, 0 when the game never set one. */
     public static int textureParameterVersion(int textureName) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? 0 : stub.textureParameters.version(textureName);
     }
 
@@ -7570,13 +7349,13 @@ public final class CeltiumGlStub implements FunctionProvider {
         PARTICLE_UV_LINES.incrementAndGet();
         StringBuilder uvs = new StringBuilder();
         for (int i = 0; i < 4 && i < count; i++) {
-            long at = address + (long) i * this.vertexPointerStride + 12L;
+            long at = address + (long) i * VERTEX_POINTER.stride + 12L;
             float u = MemoryUtil.memGetFloat(at);
             float v = MemoryUtil.memGetFloat(at + 4L);
             uvs.append(i == 0 ? "" : " ").append('(').append(celtium$round3(u)).append(',').append(celtium$round3(v))
                     .append(") cell=").append(Math.round(u * 16.0f)).append(',').append(Math.round(v * 16.0f));
         }
-        System.out.println("[Celtium] CELTIUM_PARTICLE_UV count=" + count + " stride=" + this.vertexPointerStride
+        System.out.println("[Celtium] CELTIUM_PARTICLE_UV count=" + count + " stride=" + VERTEX_POINTER.stride
                 + " uvs=[" + uvs + "]");
     }
 
@@ -7587,7 +7366,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * this door stays because the transformer-facing query entry points above answer through it.
      */
     static int textureParameterValue(int textureName, int pname) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? TextureParameterRecord.defaultValue(pname)
                 : stub.textureParameters.valueOrDefault(textureName, pname);
     }
@@ -7599,7 +7378,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * while a caller that wants to keep its own fallback (the mirror's clamp) can tell the two apart here.
      */
     public static int recordedTextureParameter(int textureName, int pname) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub == null ? -1 : stub.textureParameters.recordedValue(textureName, pname);
     }
 
@@ -7613,13 +7392,13 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@return whether the game set this pname on this texture} - false for the GL defaults. */
     public static boolean textureParameterRecorded(int textureName, int pname) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         return stub != null && stub.textureParameters.isRecorded(textureName, pname);
     }
 
     /** The named texture parameters, bounded: the record census and the query answers. */
     private static String texParamSummary() {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null) {
             return "texture params: recorded=0 textures=0 repeat=0 clamp=0 unbound=0 overflow=0 queries=0";
         }
@@ -7650,7 +7429,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             text.append(fn.name).append(':').append(fn.calls);
             shown++;
         }
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null && !stub.getIntegervPnames.isEmpty()) {
             List<it.unimi.dsi.fastutil.ints.Int2LongMap.Entry> pnames =
                     new ArrayList<>(stub.getIntegervPnames.int2LongEntrySet());
@@ -7845,8 +7624,8 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         this.blitDepthRequests++;
-        int sourceTexture = this.framebufferDepthTextures.get(this.readFbo);
-        int destTexture = this.framebufferDepthTextures.get(this.drawFbo);
+        int sourceTexture = GlsmFramebufferAttachments.current().depthTexture(this.readFbo);
+        int destTexture = GlsmFramebufferAttachments.current().depthTexture(this.drawFbo);
         int width = srcX1 - srcX0;
         int height = srcY1 - srcY0;
         String servedFrom;
@@ -7891,7 +7670,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      * which they are in a GL-less run - so before this route existed the buffer it encoded was the zero-writer's.
      */
     public static void celtium$getTexImage(int target, int level, int format, int type, long address) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || target != 0x0DE1) {
             return;
         }
@@ -7899,7 +7678,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (stub.pixelPackBuffer > 0) {
             // With a pack buffer bound the argument is an offset into it: resolve it against the buffer's storage,
             // and refuse an offset outside its logical size rather than write through a small integer or stale tail.
-            ByteBuffer storage = stub.bufferStore.get(stub.pixelPackBuffer);
+            ByteBuffer storage = GlsmBufferState.current().storage(stub.pixelPackBuffer);
             int logicalSize = storage == null ? 0
                     : stub.logicalSizeOf(stub.pixelPackBuffer, storage.capacity());
             if (storage == null || address < 0L || address >= logicalSize) {
@@ -7916,7 +7695,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** The transformer's entry for {@code glReadPixels}: forwards to the installed stub when one exists. */
     public static void celtium$readPixels(int x, int y, int width, int height, int format, int type, long address) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.serveReadPixels(x, y, width, height, format, type, address);
         }
@@ -8045,7 +7824,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     /** {@code glDrawElements} from the transformer's route: the one guarded indexed case this decoder can serve. */
     public static void celtium$drawElements(int mode, int count, int type, long indices) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.drawElementsNow(mode, count, type, indices, 0);
         }
@@ -8053,7 +7832,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glMultiDrawArrays} from the transformer's route: each sub-draw is one decoded batch. */
     public static void celtium$multiDrawArrays(int mode, long firsts, long counts, int drawcount) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || firsts == 0L || counts == 0L || drawcount <= 0) {
             return;
         }
@@ -8067,7 +7846,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glMultiDrawElements} from the transformer's route: an array of index pointers, each one batch. */
     public static void celtium$multiDrawElements(int mode, long counts, int type, long indices, int drawcount) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub == null || counts == 0L || indices == 0L || drawcount <= 0) {
             return;
         }
@@ -8081,7 +7860,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glDrawElementsBaseVertex}: the same decode, with the base vertex added to every index. */
     public static void celtium$drawElementsBaseVertex(int mode, int count, int type, long indices, int baseVertex) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.drawElementsNow(mode, count, type, indices, baseVertex);
         }
@@ -8090,7 +7869,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /**
      * Indexed draws, decoded like {@link #drawArrays}: the layout comes from the vertex pointer's stride and the
      * enabled arrays - the legacy client enables OR the placements the bound VAO's attribute records prove
-     * ({@link #celtium$vaoArrayMask(VaoAttrib[], int)}) - and the indices from a mirrored element buffer.
+     * ({@link #celtium$vaoArrayMask(GlsmClientArrayState.VaoAttrib[], int)}) - and the indices from a mirrored element buffer.
      * Anything else is refused by name in the indexed census rather than guessed - the same rule the unindexed
      * decoder follows, and the reason a refused draw stays blank instead of drawing garbage.
      */
@@ -8099,11 +7878,11 @@ public final class CeltiumGlStub implements FunctionProvider {
             return;
         }
         GlDrawCensus.DrawElementCensus.CALLS.incrementAndGet();
-        int stride = this.vertexPointerStride;
-        if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT
+        int stride = VERTEX_POINTER.stride;
+        if (VERTEX_POINTER.size != 3 || VERTEX_POINTER.type != GL_FLOAT
                 || (stride != 12 && stride != 16 && stride != 20 && stride != 24 && stride != 32)) {
-            GlDrawCensus.celtium$noteDrawElementRefusal("vertex pointer size=" + this.vertexPointerSize + " type=0x"
-                    + Integer.toHexString(this.vertexPointerType) + " stride=" + stride
+            GlDrawCensus.celtium$noteDrawElementRefusal("vertex pointer size=" + VERTEX_POINTER.size + " type=0x"
+                    + Integer.toHexString(VERTEX_POINTER.type) + " stride=" + stride
                     + " is not a float3 layout this decode serves");
             GlDrawCensus.celtium$reportDrawElements();
             return;
@@ -8113,7 +7892,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         java.nio.ByteBuffer vertices;
         try {
             vertices = bound != null ? bound.compatibilityView()
-                    : boundName == 0 ? null : this.bufferStore.get(boundName);
+                    : boundName == 0 ? null : GlsmBufferState.current().storage(boundName);
         } catch (RuntimeException error) {
             return;
         }
@@ -8121,13 +7900,13 @@ public final class CeltiumGlStub implements FunctionProvider {
         // setup left behind - the resolution drawArrays already performs for the same reason (the fullscreen
         // quad's renderer unbinds its VBO before drawing). A VAO renderer's draw - Demonica's GLSM streaming
         // renderer is the measured one - reaches this decoder with the association recorded only there.
-        VaoAttrib[] attribs = boundAttribs();
-        VaoAttrib positionAttrib = attribs[0];
+        GlsmClientArrayState.VaoAttrib[] attribs = boundAttribs();
+        GlsmClientArrayState.VaoAttrib positionAttrib = attribs[0];
         if (positionAttrib.pointerSet && positionAttrib.buffer != 0 && positionAttrib.buffer != boundName) {
             bound = NativeGeometryBuffer.find(positionAttrib.buffer);
             boundName = positionAttrib.buffer;
             try {
-                vertices = bound != null ? bound.compatibilityView() : this.bufferStore.get(boundName);
+                vertices = bound != null ? bound.compatibilityView() : GlsmBufferState.current().storage(boundName);
             } catch (RuntimeException error) {
                 return;
             }
@@ -8141,7 +7920,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         int vertexCapacity;
         if (clientVertices) {
             // No array buffer bound: the pointer glVertexPointer was given is a client address, the legacy spelling.
-            vertexBase = this.vertexPointerOffset;
+            vertexBase = VERTEX_POINTER.offset;
             if (vertexBase == 0L) {
                 GlDrawCensus.celtium$noteDrawElementRefusal(
                         "the client vertex pointer is null, so there is no vertex array to read");
@@ -8151,7 +7930,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         } else {
             int logicalVertexSize = bound != null ? vertices.capacity()
                     : this.logicalSizeOf(boundName, vertices.capacity());
-            long offset = this.vertexPointerOffset;
+            long offset = VERTEX_POINTER.offset;
             if (offset < 0L || offset > logicalVertexSize) {
                 GlDrawCensus.celtium$noteDrawElementRefusal("the vertex pointer offset " + offset + " is outside the "
                         + logicalVertexSize + "-byte buffer");
@@ -8186,7 +7965,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (elementName > 0) {
             try {
                 elements = NativeGeometryBuffer.find(elementName);
-                elementView = elements != null ? elements.compatibilityView() : this.bufferStore.get(elementName);
+                elementView = elements != null ? elements.compatibilityView() : GlsmBufferState.current().storage(elementName);
             } catch (RuntimeException error) {
                 return;
             }
@@ -8315,17 +8094,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         int boundName = NativeGeometryBuffer.boundId();
         int buffer = boundName;
         ByteBuffer storage = nativeBuffer != null ? nativeBuffer.compatibilityView()
-                : buffer == 0 ? null : this.bufferStore.get(buffer);
+                : buffer == 0 ? null : GlsmBufferState.current().storage(buffer);
         // A VAO-carried draw names its vertex buffer through attribute 0's record, not through the binding the
         // setup left behind: the full-screen quad's renderer binds its VBO only while it sets the pointers and
         // unbinds it again before the draw, so the live binding at draw time is 0 and the pointer read as client
         // memory. The record is the only place the association survives (offer-path diagnosis, 2026-11-20).
-        VaoAttrib[] attribs = boundAttribs();
-        VaoAttrib position = attribs[0];
+        GlsmClientArrayState.VaoAttrib[] attribs = boundAttribs();
+        GlsmClientArrayState.VaoAttrib position = attribs[0];
         if (position.pointerSet && position.buffer != 0 && position.buffer != boundName) {
             nativeBuffer = NativeGeometryBuffer.find(position.buffer);
             buffer = position.buffer;
-            storage = nativeBuffer != null ? nativeBuffer.compatibilityView() : this.bufferStore.get(buffer);
+            storage = nativeBuffer != null ? nativeBuffer.compatibilityView() : GlsmBufferState.current().storage(buffer);
         }
         // No array buffer bound means the pointer glVertexPointer was handed is a **client address**, not an offset
         // into GL-owned storage: the vertices are process memory the game wrote, and under a stub there is no GL object
@@ -8340,17 +8119,17 @@ public final class CeltiumGlStub implements FunctionProvider {
         // repackPaddedTexColor on the first run where the projection guard stopped refusing these draws).
         this.drawClientMemory = clientMemory;
         this.texColorRepackArmed = false;
-        long offset = this.vertexPointerOffset;
+        long offset = VERTEX_POINTER.offset;
         // A stride of 0 is GL's tightly-packed spelling: the attribute's own size in floats, not a stride of zero.
-        int pointerStride = this.vertexPointerStride != 0 ? this.vertexPointerStride
-                : this.vertexPointerType == GL_FLOAT ? this.vertexPointerSize * 4 : this.vertexPointerStride;
+        int pointerStride = VERTEX_POINTER.stride != 0 ? VERTEX_POINTER.stride
+                : VERTEX_POINTER.type == GL_FLOAT ? VERTEX_POINTER.size * 4 : VERTEX_POINTER.stride;
         long end = 0L;
         long asked = 0L;
         int formatId = 0;
         String reason = null;
         if (storage == null && !clientMemory) {
             reason = "the bound array buffer " + buffer + " has no mirrored storage";
-        } else if (this.enables[GL_VERTEX_ARRAY] == 0 && this.enables[0x8622] == 0 && !position.enabled) {
+        } else if (!GlsmEnableState.current().enabled(GL_VERTEX_ARRAY) && !GlsmEnableState.current().enabled(0x8622) && !position.enabled) {
             // Core code enables attribute 0 instead of the legacy GL_VERTEX_ARRAY bit; both describe the same position
             // attribute the decode reads, so either enable makes this draw describable. The third spelling is the
             // VAO's own per-attribute enable, which is the only one a VAO setup leaves behind - the two global bits
@@ -8365,9 +8144,9 @@ public final class CeltiumGlStub implements FunctionProvider {
             GlDrawCensus.DRAWARRAY_EMPTY.incrementAndGet();
             celtium$reportDrawArrays();
             return;
-        } else if (this.vertexPointerSize != 3 || this.vertexPointerType != GL_FLOAT) {
-            reason = "vertex pointer size=" + this.vertexPointerSize + " type=0x"
-                    + Integer.toHexString(this.vertexPointerType)
+        } else if (VERTEX_POINTER.size != 3 || VERTEX_POINTER.type != GL_FLOAT) {
+            reason = "vertex pointer size=" + VERTEX_POINTER.size + " type=0x"
+                    + Integer.toHexString(VERTEX_POINTER.type)
                     + " is not the float3 position every layout this path decodes uses";
         } else {
             String[] layoutRefusal = new String[1];
@@ -8432,8 +8211,9 @@ public final class CeltiumGlStub implements FunctionProvider {
         if (reason == null) {
             celtium$noteClientTuple(clientMemory, buffer, count, formatId);
         }
-        if (this.currentProgram != 0 && this.celtium$programDraws.add(this.currentProgram)) {
-            System.out.println("[Celtium] CELTIUM_PROGRAM_DRAW program=" + this.currentProgram + " mode=" + mode
+        if (GlsmShaderLedger.current().currentProgram() != 0
+                && this.celtium$programDraws.add(GlsmShaderLedger.current().currentProgram())) {
+            System.out.println("[Celtium] CELTIUM_PROGRAM_DRAW program=" + GlsmShaderLedger.current().currentProgram() + " mode=" + mode
                     + " count=" + count + " format=" + formatId + " reason=" + reason);
         }
         long address = 0L;
@@ -8594,12 +8374,12 @@ public final class CeltiumGlStub implements FunctionProvider {
                                 + " col0..col3=[" + colours + "]"
                                 + " uv0..uv3=[" + uvs + "]"
                                 + " buffer=" + buffer + " clientMemory=" + clientMemory + " pointerOffset=" + offset
-                                + " pointerSize=" + this.vertexPointerSize + " pointerType=0x"
-                                + Integer.toHexString(this.vertexPointerType) + " pointerStride="
+                                + " pointerSize=" + VERTEX_POINTER.size + " pointerType=0x"
+                                + Integer.toHexString(VERTEX_POINTER.type) + " pointerStride="
                                 + stride + " otherArrays=" + celtium$otherArrayNames()
                                 + " v0..v3=[" + vertices + "] "
                                 + celtium$mirroredMatrices(backend)
-                                + " texture2dEnabled=" + (this.enables[GL_TEXTURE_2D] != 0)
+                                + " texture2dEnabled=" + GlsmEnableState.current().enabled(GL_TEXTURE_2D)
                                 + " site=[" + celtium$callSite(10) + "]");
                         GlDrawCensus.drawArrayFirst = "mode=" + mode + " first=" + first + " count=" + count + " stride="
                                 + stride + " format=" + formatId + " buffer=" + buffer
@@ -8639,14 +8419,14 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
         String shortReason = reason == null ? "none"
                 : reason.substring(0, Math.min(48, reason.length()));
-        String key = this.drawFbo + "/" + this.viewportW + "x" + this.viewportH + "/" + shortReason;
+        String key = this.drawFbo + "/" + GlsmViewportState.current().width() + "x" + GlsmViewportState.current().height() + "/" + shortReason;
         if (!REFUSAL_CONTEXTS.add(key)) {
             return;
         }
         System.out.println("[Celtium] CELTIUM_DRAWARRAY_REFUSAL_CONTEXT drawFbo=" + this.drawFbo
                 + " readFbo=" + this.readFbo
-                + " viewport=" + this.viewportW + "x" + this.viewportH
-                + " stride=" + this.vertexPointerStride
+                + " viewport=" + GlsmViewportState.current().width() + "x" + GlsmViewportState.current().height()
+                + " stride=" + VERTEX_POINTER.stride
                 + " otherArrays=" + celtium$otherArrayNames()
                 + " reason=" + shortReason
                 + " site=[" + celtium$callSite(8) + "]");
@@ -8663,7 +8443,7 @@ public final class CeltiumGlStub implements FunctionProvider {
         int[] caps = { GL_NORMAL_ARRAY, GL_COLOR_ARRAY, GL_TEXTURE_COORD_ARRAY };
         String[] names = { "GL_NORMAL_ARRAY", "GL_COLOR_ARRAY", "GL_TEXTURE_COORD_ARRAY" };
         for (int i = 0; i < caps.length; i++) {
-            if ((this.enables[caps[i]] != 0)) {
+            if (GlsmEnableState.current().enabled(caps[i])) {
                 if (enabled.length() > 0) {
                     enabled.append(", ");
                 }
@@ -8681,13 +8461,13 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     private int celtium$otherArrayMask() {
         int mask = 0;
-        if ((this.enables[GL_NORMAL_ARRAY] != 0)) {
+        if (GlsmEnableState.current().enabled(GL_NORMAL_ARRAY)) {
             mask |= 1;
         }
-        if ((this.enables[GL_COLOR_ARRAY] != 0)) {
+        if (GlsmEnableState.current().enabled(GL_COLOR_ARRAY)) {
             mask |= 2;
         }
-        if ((this.enables[GL_TEXTURE_COORD_ARRAY] != 0)) {
+        if (GlsmEnableState.current().enabled(GL_TEXTURE_COORD_ARRAY)) {
             mask |= 4;
         }
         return mask;
@@ -8700,9 +8480,9 @@ public final class CeltiumGlStub implements FunctionProvider {
      * position-plus-texture form - without this bit the tuple read as "no other array" and the row never matched.
      * Only float attributes count: any other type's bytes are not the floats the layouts describe.
      */
-    private static int celtium$genericArrayMask(VaoAttrib[] attribs) {
+    private static int celtium$genericArrayMask(GlsmClientArrayState.VaoAttrib[] attribs) {
         for (int i = 1; i < attribs.length; i++) {
-            VaoAttrib attrib = attribs[i];
+            GlsmClientArrayState.VaoAttrib attrib = attribs[i];
             if (attrib.enabled && attrib.pointerSet && attrib.type == GL_FLOAT) {
                 return 4;
             }
@@ -8712,7 +8492,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /**
      * The layout mask a VAO's generic attributes prove for the indexed decoder, in
-     * {@link #celtium$otherArrayMask()}'s numbering. {@link #celtium$genericArrayMask(VaoAttrib[])} can only
+     * {@link #celtium$otherArrayMask()}'s numbering. {@link #celtium$genericArrayMask(GlsmClientArrayState.VaoAttrib[])} can only
      * name the texture bit - it accepts any enabled float attribute past position - which leaves a VAO
      * renderer whose colour rides in a normalized byte attribute (Demonica's GLSM streaming renderer is the
      * measured one) undecodable even though its records describe the layout exactly. Here a bit is granted
@@ -8720,10 +8500,10 @@ public final class CeltiumGlStub implements FunctionProvider {
      * size, normalization and offset all have to match that row - so a VAO interleaved differently keeps
      * the refusal instead of being decoded as a layout it is not.
      */
-    static int celtium$vaoArrayMask(VaoAttrib[] attribs, int stride) {
+    static int celtium$vaoArrayMask(GlsmClientArrayState.VaoAttrib[] attribs, int stride) {
         int mask = 0;
         for (int i = 1; i < attribs.length; i++) {
-            VaoAttrib attrib = attribs[i];
+            GlsmClientArrayState.VaoAttrib attrib = attribs[i];
             if (!attrib.enabled || !attrib.pointerSet) {
                 continue;
             }
@@ -9043,23 +8823,24 @@ public final class CeltiumGlStub implements FunctionProvider {
         org.soutalab.celtium.vulkan.VulkanModelQuadCapture.listsDeleted(first, range);
         for (int i = 0; i < range; i++) {
             Integer name = Integer.valueOf(first + i);
-            this.displayLists.remove(name.intValue());
-            this.liveNames.remove(name.intValue());
+            GlsmDisplayListLedger.current().removeList(name.intValue());
+            GlsmNameLedger.current().removeName(name.intValue());
             releaseListPayloads(name);
         }
     }
 
     /** {@code glListBase} from the transformer's route. */
     public static void celtium$listBase(int base) {
-        CeltiumGlStub stub = installed;
+        GlsmHintLedger.current().noteArrival("glListBase");
+        GlsmFrontend stub = installed;
         if (stub != null) {
-            stub.listBase = base;
+            GlsmDisplayListLedger.current().listBase(base);
         }
     }
 
     /** {@code glCallLists} from the transformer's route. */
     public static void celtium$callLists(int count, int type, long address) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null) {
             stub.callLists(count, type, address);
         }
@@ -9067,7 +8848,7 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glDeleteLists} from the transformer's route. */
     public static void celtium$deleteLists(int first, int range) {
-        CeltiumGlStub stub = installed;
+        GlsmFrontend stub = installed;
         if (stub != null && first > 0 && range > 0) {
             stub.deleteListsRange(first, range);
         }
@@ -9075,20 +8856,20 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     /** {@code glIsTexture/glIsBuffer/...} from the transformer's route: whether the name was generated here. */
     public static boolean celtium$isObject(int name) {
-        CeltiumGlStub stub = installed;
-        return stub != null && name != 0 && (stub.liveNames.contains(name) || stub.liveSync.contains(name));
+        GlsmFrontend stub = installed;
+        return stub != null && name != 0 && (GlsmNameLedger.current().isLive(name) || GlsmNameLedger.current().isLiveSync(name));
     }
 
     /** {@code glIsSync} from the transformer's route: the sync names are 64-bit. */
     public static boolean celtium$isSync(long sync) {
-        CeltiumGlStub stub = installed;
-        return stub != null && sync != 0L && stub.liveSync.contains(sync);
+        GlsmFrontend stub = installed;
+        return stub != null && sync != 0L && GlsmNameLedger.current().isLiveSync(sync);
     }
 
     /** {@code glIsList} from the transformer's route: whether this stub compiled the name. */
     public static boolean celtium$isList(int list) {
-        CeltiumGlStub stub = installed;
-        return stub != null && stub.liveNames.contains(list);
+        GlsmFrontend stub = installed;
+        return stub != null && GlsmNameLedger.current().isLive(list);
     }
 
     /** Upper bound on one glCallLists run: a malformed count must not stall the render thread. */
@@ -9115,7 +8896,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 for (int byteIndex = 0; byteIndex < group; byteIndex++) {
                     int offset = org.lwjgl.system.MemoryUtil.memGetByte(
                             address + (long) index * group + byteIndex) & 0xFF;
-                    replayDisplayList(this.listBase + offset);
+                    replayDisplayList(GlsmDisplayListLedger.current().listBase() + offset);
                 }
             }
             return;
@@ -9132,7 +8913,7 @@ public final class CeltiumGlStub implements FunctionProvider {
                 case 0x1406: offset = (int) org.lwjgl.system.MemoryUtil.memGetFloat(address + (long) i * 4L); break;
                 default: return;
             }
-            replayDisplayList(this.listBase + offset);
+            replayDisplayList(GlsmDisplayListLedger.current().listBase() + offset);
         }
     }
 
@@ -9142,8 +8923,8 @@ public final class CeltiumGlStub implements FunctionProvider {
         // VulkanModelQuadCapture's hook sits inside that compilation, so it saw the recording and refused the
         // quads with `reason=unknown-list list=0`, and the draw itself reached this no-op. Entities, the
         // player, held items, the sky, the stars and the horizon plane all arrive here.
-        this.lastCalledList = listId;
-        List<Object[]> list = this.displayLists.get(listId);
+        GlsmDisplayListLedger.current().noteCalled(listId);
+        List<Object[]> list = GlsmDisplayListLedger.current().list(listId);
         if (list == null) {
             // The spec: an undefined list is ignored, not an error. Counted so a silent miss is visible - and filed
             // under the id that missed, because "12 unresolved" says nothing about which lists a caller expected.
@@ -9157,13 +8938,13 @@ public final class CeltiumGlStub implements FunctionProvider {
             if (listId <= 0) {
                 listCallsWithoutAList++;
             } else {
-                this.displayListsUnresolved++;
+                GlsmDisplayListLedger.current().noteUnresolved();
                 ListCensus.UNRESOLVED.addTo(listId, 1);
             }
         } else if (this.replayDepth < MAX_LIST_NESTING) {
             this.replayDepth++;
-            int outerExecutingList = this.executingList;
-            this.executingList = listId;
+            int outerExecutingList = GlsmDisplayListLedger.current().executingListId();
+            GlsmDisplayListLedger.current().executingListId(listId);
             try {
                 for (int i = 0; i < list.size(); i++) {
                     Object[] call = list.get(i);
@@ -9182,9 +8963,9 @@ public final class CeltiumGlStub implements FunctionProvider {
                 // Restored to the outer list on the way out, and cleared only at the outermost exit: a quad
                 // drawn after the replay is not filed under the last list, and a quad the outer list draws
                 // after an inner list returns is not filed under the inner one either.
-                this.executingList = this.replayDepth == 0 ? 0 : outerExecutingList;
+                GlsmDisplayListLedger.current().executingListId(this.replayDepth == 0 ? 0 : outerExecutingList);
             }
-            this.displayListsReplayed++;
+            GlsmDisplayListLedger.current().noteReplayed();
             noteListReplayed(listId, list.size());
         } else {
             // The spec's floor for the nesting limit is 64 and this class stops there. A stopped replay used to be
@@ -9334,13 +9115,13 @@ public final class CeltiumGlStub implements FunctionProvider {
                 || !org.soutalab.celtium.vulkan.VulkanDiagnostics.withinLimit(CLIENT_TUPLES.size(), 12)) {
             return;
         }
-        String key = this.vertexPointerStride + "/" + formatId + "/" + celtium$otherArrayMask();
+        String key = VERTEX_POINTER.stride + "/" + formatId + "/" + celtium$otherArrayMask();
         if (!CLIENT_TUPLES.add(key)) {
             return;
         }
-        System.out.println("[Celtium] CELTIUM_CLIENT_ARRAY stride=" + this.vertexPointerStride
+        System.out.println("[Celtium] CELTIUM_CLIENT_ARRAY stride=" + VERTEX_POINTER.stride
                 + " format=" + formatId + " otherArrays=" + celtium$otherArrayNames()
-                + " count=" + count + " pointer=0x" + Long.toHexString(this.vertexPointerOffset)
+                + " count=" + count + " pointer=0x" + Long.toHexString(VERTEX_POINTER.offset)
                 + " readableRanges=" + readableMappingRanges
                 + " mappingFailure=" + readableMappingFailure
                 + " site=[" + celtium$callSite(8) + "]");
@@ -9684,9 +9465,7 @@ public final class CeltiumGlStub implements FunctionProvider {
             int slot = colorAttachmentSlot(attachment);
             int colorTexture = 0;
             if (framebuffer != 0 && slot >= 0) {
-                int[] recorded = this.framebufferColorAttachments.get(framebuffer);
-                colorTexture = recorded != null ? recorded[slot]
-                        : slot == 0 ? this.framebufferColorTextures.get(framebuffer) : 0;
+                colorTexture = GlsmFramebufferAttachments.current().colorSlot(framebuffer, slot);
             }
             boolean colorAttached = colorTexture != 0;
             int value;

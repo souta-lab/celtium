@@ -3,7 +3,7 @@ package org.soutalab.celtium.vulkan.gl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import org.junit.jupiter.api.Test;
-import org.soutalab.celtium.vulkan.gl.CeltiumGlStub.VaoAttrib;
+import org.soutalab.celtium.vulkan.gl.GlsmClientArrayState.VaoAttrib;
 
 /**
  * Pins the VAO half of the indexed decoder's layout decision.
@@ -51,28 +51,28 @@ class VaoArrayMaskTest {
     void positionTexGrantsTheTextureBit() {
         // POSITION_TEX (the panorama faces, button backgrounds, the logo): stride 20, texture at byte 12.
         VaoAttrib[] attribs = attribs(field(2, GL_FLOAT, false, 12L));
-        assertEquals(4, CeltiumGlStub.celtium$vaoArrayMask(attribs, 20));
+        assertEquals(4, GlsmFrontend.celtium$vaoArrayMask(attribs, 20));
     }
 
     @Test
     void positionTexColorGrantsTextureAndColour() {
         // POSITION_TEX_COLOR (the menu text): stride 24, texture at 12, colour at 20 as 4 normalized bytes.
         VaoAttrib[] attribs = attribs(field(2, GL_FLOAT, false, 12L), field(4, GL_UNSIGNED_BYTE, true, 20L));
-        assertEquals(6, CeltiumGlStub.celtium$vaoArrayMask(attribs, 24));
+        assertEquals(6, GlsmFrontend.celtium$vaoArrayMask(attribs, 24));
     }
 
     @Test
     void positionColorGrantsTheColourBit() {
         // POSITION_COLOR: stride 16, the colour directly after the position at byte 12.
         VaoAttrib[] attribs = attribs(field(4, GL_UNSIGNED_BYTE, true, 12L));
-        assertEquals(2, CeltiumGlStub.celtium$vaoArrayMask(attribs, 16));
+        assertEquals(2, GlsmFrontend.celtium$vaoArrayMask(attribs, 16));
     }
 
     @Test
     void positionTexNormalGrantsTextureAndNormal() {
         // POSITION_TEX_NORMAL: stride 24, texture at 12, the byte normal at 20.
         VaoAttrib[] attribs = attribs(field(2, GL_FLOAT, false, 12L), field(3, GL_BYTE, true, 20L));
-        assertEquals(5, CeltiumGlStub.celtium$vaoArrayMask(attribs, 24));
+        assertEquals(5, GlsmFrontend.celtium$vaoArrayMask(attribs, 24));
     }
 
     @Test
@@ -80,7 +80,7 @@ class VaoArrayMaskTest {
         // Texture at 12, colour at 20, byte normal at 24: the stride-32 row the repack carries.
         VaoAttrib[] attribs = attribs(field(2, GL_FLOAT, false, 12L), field(4, GL_UNSIGNED_BYTE, true, 20L),
                 field(3, GL_BYTE, true, 24L));
-        assertEquals(7, CeltiumGlStub.celtium$vaoArrayMask(attribs, 32));
+        assertEquals(7, GlsmFrontend.celtium$vaoArrayMask(attribs, 32));
     }
 
     @Test
@@ -89,7 +89,7 @@ class VaoArrayMaskTest {
         // byte 12 is not the row's placement, and a texture field at byte 20 is not the canonical one either.
         // Granting either bit would decode the batch as a layout it is not - wrong pixels, silently.
         VaoAttrib[] attribs = attribs(field(4, GL_UNSIGNED_BYTE, true, 12L), field(2, GL_FLOAT, false, 20L));
-        assertEquals(0, CeltiumGlStub.celtium$vaoArrayMask(attribs, 24));
+        assertEquals(0, GlsmFrontend.celtium$vaoArrayMask(attribs, 24));
     }
 
     @Test
@@ -97,17 +97,17 @@ class VaoArrayMaskTest {
         // The generic mask accepts any enabled float attribute past position as texture; this one must not:
         // a 4-float field at byte 12 is not the 2-float texture coordinate of any row.
         VaoAttrib[] attribs = attribs(field(4, GL_FLOAT, false, 12L));
-        assertEquals(0, CeltiumGlStub.celtium$vaoArrayMask(attribs, 20));
+        assertEquals(0, GlsmFrontend.celtium$vaoArrayMask(attribs, 20));
     }
 
     @Test
     void disabledAndUnsetRecordsGrantNothing() {
         VaoAttrib disabled = field(2, GL_FLOAT, false, 12L);
         disabled.enabled = false;
-        assertEquals(0, CeltiumGlStub.celtium$vaoArrayMask(attribs(disabled), 20));
+        assertEquals(0, GlsmFrontend.celtium$vaoArrayMask(attribs(disabled), 20));
         VaoAttrib unset = field(2, GL_FLOAT, false, 12L);
         unset.pointerSet = false;
-        assertEquals(0, CeltiumGlStub.celtium$vaoArrayMask(attribs(unset), 20));
+        assertEquals(0, GlsmFrontend.celtium$vaoArrayMask(attribs(unset), 20));
     }
 
     @Test
@@ -115,6 +115,6 @@ class VaoArrayMaskTest {
         // The colour of every known row is a normalized byte field; a raw byte field at the same offset is a
         // different layout (an integer attribute), not the colour.
         VaoAttrib[] attribs = attribs(field(2, GL_FLOAT, false, 12L), field(4, GL_UNSIGNED_BYTE, false, 20L));
-        assertEquals(4, CeltiumGlStub.celtium$vaoArrayMask(attribs, 24));
+        assertEquals(4, GlsmFrontend.celtium$vaoArrayMask(attribs, 24));
     }
 }

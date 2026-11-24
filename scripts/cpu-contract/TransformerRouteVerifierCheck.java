@@ -442,7 +442,7 @@ public class TransformerRouteVerifierCheck {
         // so a harness that fails it is failing its own marshalling rather than the route.
         int queryAnswerFailures = 0;
         try {
-            Class<?> stubClass = Class.forName("org.soutalab.celtium.vulkan.gl.CeltiumGlStub");
+            Class<?> stubClass = Class.forName("org.soutalab.celtium.vulkan.gl.GlsmFrontend");
             Class<?> rasterClass = Class.forName("org.soutalab.celtium.vulkan.NativeRasterState");
             Class<?> bindingsClass = Class.forName("org.soutalab.celtium.vulkan.NativeTextureBindings");
             Object raster = rasterClass.getMethod("current").invoke(null);
