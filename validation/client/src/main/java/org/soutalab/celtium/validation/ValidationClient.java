@@ -10049,10 +10049,64 @@ public final class ValidationClient {
                     : mc.player.getLocationSkin().toString());
             report.addProperty("probeGuiScale", Integer.valueOf(mc.gameSettings.guiScale));
             report.addProperty("probeRotation", mc.player.rotationPitch + "/" + mc.player.rotationYaw);
+            // The anchor light counter rides in the same capture, under its own guard so a failure there
+            // cannot lose the probe fields above (or the capture itself).
+            try {
+                celtium$recordAnchorLight(mc);
+            } catch (Throwable anchorError) {
+                report.addProperty("anchorInstrumentError", anchorError.toString());
+            }
         } catch (Throwable error) {
             // A probe must never break the capture it is describing.
             report.addProperty("probeError", error.toString());
         }
+    }
+
+    /**
+     * The anchor light counter for item 378 REV3 Phase 0 (design {@code item378-rev3-design-2026-11-24.md}
+     * section 3.2-2, procedure section 4): the vanilla block light at the dynamic-light item's anchor and at
+     * the four floor positions corresponding to the pool bbox's corners, recorded at the world capture beside
+     * {@link #celtium$recordDarkRegionProbe}. It records only; nothing here changes what is drawn or how the
+     * game behaves.
+     * <p>
+     * The anchor is the dropped item's own floor position, derived exactly the way the spawn derives it: the
+     * item is spawned at the player +2.5 / -5 through {@code celtium$spawnEntity}, which puts it at
+     * {@code world.getHeight} of that column. Arms that drop no item (the {@code dynamicLightItem=false}
+     * arms) therefore measure the identical relative position, because the position is recomputed from the
+     * player here rather than read back from a spawned entity.
+     * <p>
+     * The pool corners use fixed offsets from the anchor, adopted for this instrument and recorded here and
+     * in the leg record: the pool bbox (x760-920 / y280-320 of the 1280x720 capture) is a screen rectangle, so
+     * its corners have no exact world positions; the adopted correspondence is a floor rectangle centred on
+     * the anchor, 8 blocks wide (x -4..+4) and 4 blocks deep (z -2..+2), emitted in the runner's TL, TR, BL,
+     * BR order. With the scene's pose (the player faces -Z), screen-left is -X, screen-right is +X, the top
+     * of the bbox is the far side (-Z) and the bottom is the near side (+Z). Each corner's Y is that column's
+     * own surface height, the same floor convention as the anchor.
+     */
+    private void celtium$recordAnchorLight(Minecraft mc) {
+        int anchorX = (int) Math.floor(mc.player.posX + 2.5D);
+        int anchorZ = (int) Math.floor(mc.player.posZ - 5.0D);
+        int anchorY = mc.world.getHeight(new net.minecraft.util.math.BlockPos(anchorX, 0, anchorZ)).getY();
+        net.minecraft.util.math.BlockPos anchor = new net.minecraft.util.math.BlockPos(anchorX, anchorY, anchorZ);
+        report.addProperty("anchorBlockPos", anchorX + "," + anchorY + "," + anchorZ);
+        report.addProperty("anchorBlockLight", Integer.valueOf(mc.world.getLightFromNeighbors(anchor)));
+        int[][] cornerOffsets = {{-4, -2}, {4, -2}, {-4, 2}, {4, 2}};
+        com.google.gson.JsonArray corners = new com.google.gson.JsonArray();
+        StringBuilder cornerPositions = new StringBuilder();
+        for (int i = 0; i < cornerOffsets.length; i++) {
+            int cornerX = anchorX + cornerOffsets[i][0];
+            int cornerZ = anchorZ + cornerOffsets[i][1];
+            int cornerY = mc.world.getHeight(new net.minecraft.util.math.BlockPos(cornerX, 0, cornerZ)).getY();
+            corners.add(new com.google.gson.JsonPrimitive(Integer.valueOf(
+                    mc.world.getLightFromNeighbors(new net.minecraft.util.math.BlockPos(cornerX, cornerY, cornerZ)))));
+            if (i > 0) {
+                cornerPositions.append(';');
+            }
+            cornerPositions.append(cornerX).append(',').append(cornerY).append(',').append(cornerZ);
+        }
+        report.add("poolCornerBlockLight", corners);
+        report.addProperty("poolCornerBlockPos", cornerPositions.toString());
+        report.addProperty("poolCornerOffsets", "-4,-2;4,-2;-4,2;4,2");
     }
 
     // ---------------------------------------------------------------------------------------------------------------
