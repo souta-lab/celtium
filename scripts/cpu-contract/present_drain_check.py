@@ -24,6 +24,7 @@ import sys
 
 ROOT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java"
+PRESENT = ROOT / "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/PresentSwapchain.java"
 SWAPCHAIN = ROOT / "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java"
 FIXTURE = ROOT / "validation/client/src/main/java/org/soutalab/celtium/validation/ValidationClient.java"
 
@@ -46,14 +47,21 @@ def check(condition, label):
 
 def main():
     backend = BACKEND.read_text()
+    present_source = PRESENT.read_text()
     swapchain = SWAPCHAIN.read_text()
     fixture = FIXTURE.read_text()
 
     # The present was split into presentFrame -> presentFrameImpl -> presentFrameBody so each stays under HotSpot's
     # HugeMethodLimit; the contract is about the order across that chain, so the three bodies are read in order.
-    present = (method(backend, "public boolean celtium$presentFrame()")
-               + method(backend, "private boolean celtium$presentFrameImpl()")
-               + method(backend, "private boolean celtium$presentFrameBody()"))
+    # The chain itself was extracted from the backend into PresentSwapchain (refactoring plan R10, item 704);
+    # the backend's celtium$presentFrame() is now a one-line delegation to it, and the state the chain gates on
+    # (lastFrameReachedQueue, presentFlushFailures, the immediate flush) stayed backend-owned, so inside the
+    # extracted class those reads are spelled backend.<field>, not this.<field>.
+    check("presentSwapchain.celtium$presentFrame()" in backend,
+          "the backend's presentFrame must delegate to the extracted PresentSwapchain chain")
+    present = (method(present_source, "public boolean celtium$presentFrame()")
+               + method(present_source, "private boolean celtium$presentFrameImpl()")
+               + method(present_source, "private boolean celtium$presentFrameBody()"))
     check("ensureSwapchain()" in present, "presentFrame no longer ensures a swapchain")
     check("flushPendingBeforeGlDraw()" in present,
           "presentFrame does not drain pending immediate work before presenting")
@@ -61,7 +69,7 @@ def main():
           "the drain must keep an opt-out switch for comparison legs")
     drain = present.index("flushPendingBeforeGlDraw()")
     swap = present.index("ensureSwapchain()")
-    gate = present.index("if (!this.lastFrameReachedQueue)")
+    gate = present.index("if (!backend.lastFrameReachedQueue)")
     check(swap < drain < gate,
           "the drain must run after ensureSwapchain() and before the completed-frame gate "
           "- a drain placed after the gate still presents a frame behind")
