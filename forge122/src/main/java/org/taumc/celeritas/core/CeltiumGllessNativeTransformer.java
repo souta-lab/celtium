@@ -123,6 +123,19 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                         method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                                 "noteRewritten", "(Ljava/lang/String;)V", false);
                     }
+                    if (CALLER_CENSUS) {
+                        // Opt-in (celtium.glless.callerCensus=true): the caller-attributed form of the census
+                        // above. The name census says which natives a run calls; in a large pack the operative
+                        // question is whose they are - which mod, and for a tile-entity renderer usually which
+                        // entity, because the renderer class is named for the tile it draws. The rewritten body
+                        // executes inside the caller's own stack, so the issuing class is still on it here. No
+                        // stub-side counter can offer this: the trampoline's stack starts at the libffi closure,
+                        // the Java caller already unwound through the native hop. Off by default: resolving the
+                        // caller costs a short stack walk per call, which a renderer's steady state must not pay.
+                        method.visitLdcInsn(methodName + descriptor);
+                        method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                                "noteCaller", "(Ljava/lang/String;)V", false);
+                    }
                     emitDefaultReturn(method, methodName, descriptor);
                     method.visitMaxs(2, argumentSlots(access, descriptor));
                     method.visitEnd();
@@ -581,6 +594,12 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
 
     /** {@code -Dceltium.glless.census=true} makes every rewritten native count its own calls; see the emitter. */
     private static final boolean REWRITE_CENSUS = Boolean.getBoolean("celtium.glless.census");
+
+    /**
+     * {@code -Dceltium.glless.callerCensus=true} makes every rewritten native also record who called it;
+     * see the emitter and {@code CeltiumGllessHint.noteCaller}.
+     */
+    private static final boolean CALLER_CENSUS = Boolean.getBoolean("celtium.glless.callerCensus");
 
     /** The raw GL raster ABI is forwarded as typed arguments, with no per-call array or libffi trampoline. */
     private static boolean emitNativeRasterAdapter(MethodVisitor method, String name, String descriptor) {
