@@ -785,7 +785,7 @@ final class GlStateQueries {
                 return;
             case 0x0B53: { // GL_LIGHT_MODEL_AMBIENT - the ambient the shader lighting uses
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                float[] ambient = vulkan == null ? stub.lightAmbientDefault : vulkan.celtium$lightAmbient();
+                float[] ambient = vulkan == null ? GlsmImmediateState.current().lightAmbientDefault() : vulkan.celtium$lightAmbient();
                 for (int i = 0; i < 4; i++) {
                     putFloatOrDouble(out, i, ambient != null && i < ambient.length ? ambient[i] : 0.0f, asDouble);
                 }
