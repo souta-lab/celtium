@@ -12716,14 +12716,17 @@ this.frameBufferOpen = false;
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glDrawExempt", "true"));
 
     /**
-     * Default-off guard for the E2 {@link #GL_DRAW_EXEMPT} unbind edge: when enabled
-     * ({@code -Dceltium.vulkan.presentUnbindFlushGuard=true}), leaving the main framebuffer for the
-     * default framebuffer ({@code bindFramebuffer(0L, false)} from {@code Framebuffer.unbindFramebuffer})
-     * is not exempted, so main-target HUD/GUI groups are flushed before {@code currentIdentity()} switches
+     * Guard for the E2 {@link #GL_DRAW_EXEMPT} unbind edge, default ON since the probe proof
+     * (lanechat #8232: the frozen jar with {@code -Dceltium.vulkan.glDrawExempt=false} alone presented
+     * the GUI again): leaving the main framebuffer for the default framebuffer
+     * ({@code bindFramebuffer(0L, false)} from {@code Framebuffer.unbindFramebuffer}) is not exempted,
+     * so main-target HUD/GUI groups are flushed before {@code currentIdentity()} switches
      * to {@code 0L} ahead of {@code updateDisplay()} / {@code celtium$presentFrame()}.
+     * The exemption itself stays default-on for every other target bind; opt out with
+     * {@code -Dceltium.vulkan.presentUnbindFlushGuard=false}.
      */
     private static final boolean PRESENT_UNBIND_FLUSH_GUARD =
-            Boolean.parseBoolean(System.getProperty("celtium.vulkan.presentUnbindFlushGuard", "false"));
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentUnbindFlushGuard", "true"));
 
     /**
      * Default-off guard for {@link PresentSwapchain}'s present-time drain ordering: when enabled
