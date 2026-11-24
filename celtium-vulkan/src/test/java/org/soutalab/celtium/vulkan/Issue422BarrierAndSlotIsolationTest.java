@@ -97,6 +97,31 @@ class Issue422BarrierAndSlotIsolationTest {
     }
 
     @Test
+    void handbackMergeRequiresPendingSameBufferAndSelfTransitionAcquire() {
+        // Nothing held: nothing to merge.
+        assertTrue(!GllessFrameTarget.handbackCanMerge(false, 0x1000L, 0x1000L, true));
+        // Held on a different command buffer: the merged barrier would execute in the wrong submission.
+        assertTrue(!GllessFrameTarget.handbackCanMerge(true, 0x1000L, 0x2000L, true));
+        // The acquire owes a real layout transition: it must not absorb the hand-back.
+        assertTrue(!GllessFrameTarget.handbackCanMerge(true, 0x1000L, 0x1000L, false));
+        assertTrue(GllessFrameTarget.handbackCanMerge(true, 0x1000L, 0x1000L, true));
+    }
+
+    @Test
+    void handbackMergedMasksNeverNarrowEitherSide() {
+        int[] release = GllessFrameTarget.selfTransitionBarrierMasks(true, false);
+        int[] acquire = GllessFrameTarget.selfTransitionBarrierMasks(false, false);
+        int[] merged = GllessFrameTarget.handbackMergedMasks(release, acquire);
+        assertEquals(release[0] | acquire[0], merged[0]);
+        assertEquals(release[1] | acquire[1], merged[1]);
+        // Every access either barrier named is still named after the merge (issue #422 (a)).
+        assertEquals(merged[0], merged[0] | release[0] | acquire[0]);
+        assertEquals(merged[1], merged[1] | release[1] | acquire[1]);
+        // Both steady-state pairs are non-empty, so the merged barrier is a real dependency, not a no-op.
+        assertTrue(merged[0] != 0 && merged[1] != 0);
+    }
+
+    @Test
     void colorToTransferCoversPriorReadsAndWrites() {
         int mask = GllessFrameTarget.colorToTransferSrcAccessMask();
         assertTrue((mask & VK10.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT) != 0);

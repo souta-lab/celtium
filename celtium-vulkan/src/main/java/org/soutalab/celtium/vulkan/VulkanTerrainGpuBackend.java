@@ -1828,6 +1828,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 this.frameTarget.recordAcquireBarriers(this.commandBuffer);
                 gpuMark("acq1");
                 this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+                this.frameTarget.flushPendingHandback(this.commandBuffer);
                 progress = this.frameCoordinator.submitCommands();
             } catch (RuntimeException | LinkageError error) {
                 record("frame recovery failed: " + describe(error));
@@ -3820,6 +3821,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 this.nativePassExecutor.executeStage(stage, this.commandBuffer, this.targetWidth, this.targetHeight,
                         celtium$frameSerial(), bindCache);
                 this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+                this.frameTarget.flushPendingHandback(this.commandBuffer);
                 FrameCoordinator.Submission progress = this.frameCoordinator.submitCommands();
                 if (progress.canCloseTarget(this.frameTarget.needsFrameSemaphores())) {
                     this.frameTarget.endFrame();
@@ -13536,6 +13538,10 @@ this.frameBufferOpen = false;
                             throw recordError;
                         }
                     }
+                    // A release the target held for hand-back aggregation must be recorded before this
+                    // buffer can be submitted: the submission is where a deferred barrier stops being
+                    // reachable by the next acquire's merge.
+                    this.frameTarget.flushPendingHandback(this.commandBuffer);
                     org.soutalab.celtium.vulkan.FramePassTimings.begin("winSubmit");
                     org.soutalab.celtium.vulkan.FrameCoordinator.Submission submission =
                             this.frameCoordinator.submitCommands();
@@ -13622,6 +13628,7 @@ this.frameBufferOpen = false;
                         this.frameTarget.recordAcquireBarriers(this.commandBuffer);
                         gpuMark("acq3");
                         this.frameTarget.recordReleaseBarriers(this.commandBuffer);
+                        this.frameTarget.flushPendingHandback(this.commandBuffer);
                         this.frameCoordinator.submitCommands();
                         // The recovery submission is waited on its own slot - bounded, and the only completion the
                         // endFrame below needs confirmed before the frame may close.

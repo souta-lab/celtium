@@ -197,6 +197,23 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private boolean frameOpen;
     private boolean deleted;
     private boolean firstAcquire = true;
+    // Pass-to-pass hand-back aggregation (prepbarriers next lever, after the self-transition form landed):
+    // a steady-state release records no layout transition - it is one memory barrier - so instead of
+    // recording it at the pass tail it is held here and merged into the next acquire on the same command
+    // buffer, halving the barrier calls on every pass boundary after the first. The held barrier is
+    // flushed verbatim before anything else that must observe it (a real layout transition, a clear's
+    // transfer transition, a window that does not attach the frame image, a submission the backend is
+    // about to make through flushPendingHandback, or a second release). The masks are the release's own
+    // self-transition pair, captured at defer time; merging unions them with the acquire's pair, which is
+    // a widening, never a narrowing, so the merged barrier's dependency is at least as strong as the two
+    // it replaces (see handbackMergedMasks).
+    private boolean handbackPending;
+    private long handbackBufferAddress;
+    private int handbackSrcAccessMask;
+    private int handbackDstAccessMask;
+    private long handbacksDeferred;
+    private long handbacksMerged;
+    private long handbacksFlushed;
     /** The first acquire clears both images whatever the game asked: their content starts undefined. */
     private boolean neverCleared = true;
 
@@ -762,6 +779,11 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.firstAcquire = false;
             this.colorImageLayout = COLOR_RENDER_LAYOUT;
             this.depthImageLayout = DEPTH_RENDER_LAYOUT;
+        } else {
+            // This window records no acquire barrier of its own, so a held hand-back cannot merge into it;
+            // the window's pass may still sample the frame image (the post chain does), so the previous
+            // pass' release dependency must be recorded before the pass, not after it.
+            flushPendingHandback(commandBuffer);
         }
         applyGameClears(commandBuffer);
     }
@@ -806,6 +828,13 @@ public final class GllessFrameTarget implements FrameImageTarget {
         private long glsmAppliedTotal;
         private boolean glsmSnapshot;
         private boolean defaultAcquired;
+        // A held hand-back is owner state too: it is a release the recording owes but has not recorded, so
+        // a discarded recording must restore it exactly - dropping it would lose the dependency, and
+        // keeping a merged one would record the release twice on the re-record.
+        private boolean handbackPending;
+        private long handbackBufferAddress;
+        private int handbackSrcAccessMask;
+        private int handbackDstAccessMask;
         // Parallel arrays, not two boxed maps: a snapshot is taken for every window flush (~10 a frame) and covers
         // every chain pair, while a rollback that reads it back is rare.
         private int chainCount;
@@ -843,6 +872,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
             snapshot.glsmLatched = null;
         }
         snapshot.defaultAcquired = this.defaultPair.acquired;
+        snapshot.handbackPending = this.handbackPending;
+        snapshot.handbackBufferAddress = this.handbackBufferAddress;
+        snapshot.handbackSrcAccessMask = this.handbackSrcAccessMask;
+        snapshot.handbackDstAccessMask = this.handbackDstAccessMask;
         int size = this.chainPairs.size();
         if (snapshot.chainKeys == null || snapshot.chainKeys.length < size) {
             snapshot.chainKeys = new long[size];
@@ -889,6 +922,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.glsmFrameState.clearState().restoreAppliedTotal(snapshot.glsmAppliedTotal);
         }
         this.defaultPair.acquired = snapshot.defaultAcquired;
+        this.handbackPending = snapshot.handbackPending;
+        this.handbackBufferAddress = snapshot.handbackBufferAddress;
+        this.handbackSrcAccessMask = snapshot.handbackSrcAccessMask;
+        this.handbackDstAccessMask = snapshot.handbackDstAccessMask;
         for (int i = 0; i < snapshot.chainCount; i++) {
             Pair pair = this.chainPairs.get(snapshot.chainKeys[i]);
             if (pair != null) {
@@ -1134,6 +1171,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
             // A stencil-only clear names neither image (the frame has no stencil), so nothing moves.
             return;
         }
+        // A real layout transition of the frame images: a held hand-back must execute before it.
+        flushPendingHandback(command);
         try (MemoryStack stack = stackPush()) {
             VkImageMemoryBarrier.Buffer barriers =
                     VkImageMemoryBarrier.calloc((color ? 1 : 0) + (depth ? 1 : 0), stack);
@@ -1231,6 +1270,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
         if (!color && !depth) {
             return;
         }
+        // A real layout transition of the frame images: a held hand-back must execute before it.
+        flushPendingHandback(command);
         int queueFamily = this.context.queueFamilyIndex();
         try (MemoryStack stack = stackPush()) {
             VkImageMemoryBarrier.Buffer barriers = VkImageMemoryBarrier.calloc((color ? 1 : 0) + (depth ? 1 : 0), stack);
@@ -1281,6 +1322,10 @@ public final class GllessFrameTarget implements FrameImageTarget {
         if (frameImageAttached) {
             recordLayoutBarriers(commandBuffer, true);
             this.colorImageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        } else {
+            // No release is recorded for this window, so nothing here will carry a held hand-back from an
+            // earlier pass either: record it now, while this buffer is the one being recorded into.
+            flushPendingHandback(commandBuffer);
         }
         // Depth stays in its attachment layout across windows: moving it to GENERAL and back at every window would
         // resolve HiZ each time on the hardware this layout exists for.
@@ -1297,8 +1342,55 @@ public final class GllessFrameTarget implements FrameImageTarget {
         int colorNewLayout = release ? VK_IMAGE_LAYOUT_GENERAL : COLOR_RENDER_LAYOUT;
         int depthOldLayout = release ? DEPTH_RENDER_LAYOUT : this.depthImageLayout;
         int srcStage = first ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-        if (layoutsAreSelfTransitions(colorOldLayout, colorNewLayout, depthOldLayout, DEPTH_RENDER_LAYOUT)) {
-            // Steady state (every terrain pass after the first, and every release): both images already sit
+        boolean selfTransition = layoutsAreSelfTransitions(colorOldLayout, colorNewLayout,
+                depthOldLayout, DEPTH_RENDER_LAYOUT);
+        if (release && selfTransition) {
+            // Hand-back aggregation: a steady-state release is a pure memory dependency with no layout
+            // move, and in the pass sequence it sits immediately before the next pass' acquire, which is
+            // the same kind of barrier at the same stages. Recording both costs two vkCmdPipelineBarrier
+            // calls per pass boundary; holding the release and merging it into that acquire costs one.
+            // The hold is not a skip: flushPendingHandback records the held barrier verbatim before any
+            // recording that must observe it and before any submission, and the merge below only happens
+            // on the same command buffer, with no frame-image access recorded in between (the next
+            // pass' descriptor and timestamp recording does not touch the images, and the union masks
+            // still cover any other memory that work wrote, from the acquire's position).
+            if (this.handbackPending) {
+                flushPendingHandback(command);
+            }
+            int[] masks = selfTransitionBarrierMasks(true, false);
+            this.handbackPending = true;
+            this.handbackBufferAddress = command.address();
+            this.handbackSrcAccessMask = masks[0];
+            this.handbackDstAccessMask = masks[1];
+            this.handbacksDeferred++;
+            return;
+        }
+        if (!release && handbackCanMerge(this.handbackPending, this.handbackBufferAddress,
+                command.address(), selfTransition)) {
+            int[] acquireMasks = selfTransitionBarrierMasks(false, first);
+            int[] merged = handbackMergedMasks(
+                    new int[] { this.handbackSrcAccessMask, this.handbackDstAccessMask }, acquireMasks);
+            this.handbackPending = false;
+            this.handbacksMerged++;
+            try (MemoryStack stack = stackPush()) {
+                VkMemoryBarrier.Buffer memoryBarrier = VkMemoryBarrier.calloc(1, stack);
+                memoryBarrier.get(0).sType$Default()
+                        .srcAccessMask(merged[0])
+                        .dstAccessMask(merged[1]);
+                vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, memoryBarrier, null, null);
+            }
+            return;
+        }
+        if (this.handbackPending) {
+            // A real layout transition (or an acquire on another buffer): the held release must be
+            // recorded before it, in this buffer, so the order the passes were issued in is the order
+            // the barriers execute in.
+            flushPendingHandback(command);
+        }
+        if (selfTransition) {
+            // Steady state (every terrain pass acquire after the first; releases take the hand-back hold
+            // above and reach this form only as the acquire they merge into): both images already sit
             // in the layout this barrier would move them to, so the two image barriers perform no layout
             // transition at all - they are purely the execution and memory dependency the frame render pass
             // relies on (it declares no subpass dependencies; see VulkanTerrainPipeline.buildFrameRenderPass).
@@ -1380,6 +1472,76 @@ public final class GllessFrameTarget implements FrameImageTarget {
         int[] color = layoutBarrierAccessMasks(release, firstAcquire, false);
         int[] depth = layoutBarrierAccessMasks(release, firstAcquire, true);
         return new int[] { color[0] | depth[0], color[1] | depth[1] };
+    }
+
+    /**
+     * {@return whether a held hand-back may merge into the acquire that is about to be recorded}.
+     * <p>
+     * All four conditions are load-bearing: a hand-back must be held, it must have been deferred on the
+     * same command buffer (a barrier recorded into a different buffer would execute in a different
+     * submission than the release it stands for), and the acquire must itself be the steady-state memory
+     * barrier form - merging into a real layout transition would have to move the transition, not just
+     * widen a dependency.
+     */
+    static boolean handbackCanMerge(boolean pending, long pendingBufferAddress, long bufferAddress,
+            boolean acquireSelfTransition) {
+        return pending && pendingBufferAddress == bufferAddress && acquireSelfTransition;
+    }
+
+    /**
+     * {@return the {@code [srcAccessMask, dstAccessMask]} pair of the merged hand-back barrier}: the
+     * component-wise union of the held release pair and the acquire pair.
+     * <p>
+     * Two memory barriers recorded back to back at {@code ALL_COMMANDS} to {@code ALL_COMMANDS} establish
+     * exactly the dependencies their union establishes in one: every access in either source mask is made
+     * available, and made visible to every access in either destination mask. The union only widens, so
+     * the merged form stays inside the issue #422 (a) full-mask rule for the same reason
+     * {@link #selfTransitionBarrierMasks} does.
+     */
+    static int[] handbackMergedMasks(int[] releaseMasks, int[] acquireMasks) {
+        return new int[] { releaseMasks[0] | acquireMasks[0], releaseMasks[1] | acquireMasks[1] };
+    }
+
+    /**
+     * Records a held hand-back verbatim, if one is pending.
+     * <p>
+     * Called by every recording path that must observe the previous pass' release before its own work -
+     * real layout transitions, the clear paths' transfer transitions, windows that do not attach the
+     * frame image - and by the backend immediately before it submits or closes a buffer a release was
+     * deferred into. A pending hand-back whose buffer was discarded without submission is not lost by
+     * being kept: it merges into, or is flushed ahead of, the next acquire, and a discarded recording's
+     * rollback restores it from the snapshot instead (see {@link RecordingSnapshot}).
+     */
+    @Override
+    public void flushPendingHandback(VkCommandBuffer commandBuffer) {
+        if (!this.handbackPending) {
+            return;
+        }
+        this.handbackPending = false;
+        this.handbacksFlushed++;
+        try (MemoryStack stack = stackPush()) {
+            VkMemoryBarrier.Buffer memoryBarrier = VkMemoryBarrier.calloc(1, stack);
+            memoryBarrier.get(0).sType$Default()
+                    .srcAccessMask(this.handbackSrcAccessMask)
+                    .dstAccessMask(this.handbackDstAccessMask);
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, memoryBarrier, null, null);
+        }
+    }
+
+    /** {@return how many steady-state releases were held for hand-back aggregation}. */
+    public long handbacksDeferred() {
+        return this.handbacksDeferred;
+    }
+
+    /** {@return how many held hand-backs merged into the next acquire (one barrier saved each)}. */
+    public long handbacksMerged() {
+        return this.handbacksMerged;
+    }
+
+    /** {@return how many held hand-backs were recorded verbatim instead of merging}. */
+    public long handbacksFlushed() {
+        return this.handbacksFlushed;
     }
 
     @Override

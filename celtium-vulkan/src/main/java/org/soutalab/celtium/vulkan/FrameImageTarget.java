@@ -115,6 +115,17 @@ public interface FrameImageTarget {
     /** Records the commands that hand the images over after this frame's rendering. */
     void recordReleaseBarriers(VkCommandBuffer commandBuffer);
 
+    /**
+     * Records a hand-back barrier an implementation deferred at the previous release, if one is pending.
+     * <p>
+     * A target that aggregates the pass-to-pass hand-back (release of one pass merged into the acquire of
+     * the next) must be told when the command buffer is about to be submitted or closed, so the last pass'
+     * release is not left unrecorded. The default records nothing: targets that record every release
+     * eagerly have nothing pending.
+     */
+    default void flushPendingHandback(VkCommandBuffer commandBuffer) {
+    }
+
     /** Whether the target still matches the given size. */
     boolean matches(int width, int height);
 
