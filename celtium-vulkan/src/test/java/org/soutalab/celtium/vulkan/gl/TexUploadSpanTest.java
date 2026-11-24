@@ -20,15 +20,31 @@ class TexUploadSpanTest {
         return (CeltiumGlStub) ctor.newInstance();
     }
 
-    private static void setField(CeltiumGlStub stub, String name, int value) throws Exception {
-        var field = CeltiumGlStub.class.getDeclaredField(name);
-        field.setAccessible(true);
-        field.setInt(stub, value);
+    // Pixel-store state is owned by GlsmBufferState (GAP-ST-2); the tests write it through the
+    // owner's own pixelStore route, which applies the same sanitising/clamping as production.
+    private static void setField(CeltiumGlStub stub, String name, int value) {
+        int pname = switch (name) {
+            case "unpackAlignment" -> 0x0CF5; // GL_UNPACK_ALIGNMENT
+            case "unpackRowLength" -> 0x0CF2; // GL_UNPACK_ROW_LENGTH
+            case "unpackSkipPixels" -> 0x0CF4; // GL_UNPACK_SKIP_PIXELS
+            case "unpackSkipRows" -> 0x0CF3; // GL_UNPACK_SKIP_ROWS
+            default -> throw new IllegalArgumentException(name);
+        };
+        GlsmBufferState.current().pixelStore(pname, value);
+    }
+
+    /** The owner is a singleton, so each test starts from GL's initial pixel-store values. */
+    private static void resetPixelStore(CeltiumGlStub stub) {
+        setField(stub, "unpackAlignment", 4);
+        setField(stub, "unpackRowLength", 0);
+        setField(stub, "unpackSkipPixels", 0);
+        setField(stub, "unpackSkipRows", 0);
     }
 
     @Test
     void theSpanPadsRowsToTheUnpackAlignment() throws Exception {
         CeltiumGlStub stub = stub();
+        resetPixelStore(stub);
         setField(stub, "unpackAlignment", 8);
         // A 9-byte row pads to 16: two padded rows plus the last row unpadded.
         assertEquals(16L * 2 + 9L, stub.texUploadSpanBytes(9, 3, 3));
@@ -41,6 +57,7 @@ class TexUploadSpanTest {
     @Test
     void aRowLengthOrSkipTheConversionRefusesIsRefusedHereToo() throws Exception {
         CeltiumGlStub stub = stub();
+        resetPixelStore(stub);
         setField(stub, "unpackRowLength", 4);
         assertEquals(-1L, stub.texUploadSpanBytes(9, 3, 3), "a row length wider than the image");
         setField(stub, "unpackRowLength", 3);

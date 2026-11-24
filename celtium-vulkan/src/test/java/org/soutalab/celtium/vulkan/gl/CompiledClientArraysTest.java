@@ -36,8 +36,7 @@ class CompiledClientArraysTest {
             invoke(dispatch, stub, ids, "glVertexPointer", 3, 0x1406, 32, MemoryUtil.memAddress(source));
             CeltiumGlStub.celtium$drawArrays(4, 0, 3);
             CeltiumGlStub.compatibilityEndList();
-            Field listsField = CeltiumGlStub.class.getDeclaredField("displayLists"); listsField.setAccessible(true);
-            List<?> list = (List<?>) ((Map<?, ?>) listsField.get(stub)).get(400);
+            List<Object[]> list = GlsmDisplayListLedger.current().list(400);
             assertEquals(1, list.size(), "client state executes during compile; only the captured draw is stored");
             long[] command = (long[]) ((Object[]) list.get(0))[1];
             assertEquals(24, command[1]); assertEquals(9, command[2]);
@@ -93,9 +92,7 @@ class CompiledClientArraysTest {
             invoke(dispatch, stub, ids, "glVertexPointer", 3, 0x1406, 32, MemoryUtil.memAddress(source));
             CeltiumGlStub.celtium$drawArrays(6, 1, 4);
             CeltiumGlStub.compatibilityEndList();
-            Field listsField = CeltiumGlStub.class.getDeclaredField("displayLists");
-            listsField.setAccessible(true);
-            List<?> list = (List<?>) ((Map<?, ?>) listsField.get(stub)).get(401);
+            List<Object[]> list = GlsmDisplayListLedger.current().list(401);
             assertEquals(1, list.size(), "GL_TRIANGLE_FAN must reach retained geometry");
             long[] command = (long[]) ((Object[]) list.get(0))[1];
             assertEquals(4, command[3]); assertEquals(6, command[4]);

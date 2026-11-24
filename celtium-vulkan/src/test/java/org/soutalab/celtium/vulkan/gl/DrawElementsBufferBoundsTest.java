@@ -111,6 +111,35 @@ class DrawElementsBufferBoundsTest {
         this.ids = (Map<?, ?>) idsField.get(null);
         this.installedField = CeltiumGlStub.class.getDeclaredField("installed");
         this.installedField.setAccessible(true);
+        resetSharedGlState();
+    }
+
+    /**
+     * The routes rewiring moved the capability record, the legacy vertex-pointer tuple and the
+     * buffer bindings into singleton owners (GlsmEnableState / GlsmClientArrayState /
+     * GlsmBufferState), where they outlive a stub instance. A fresh stub used to start from GL's
+     * initial values; restore that here so another test's client state cannot describe this
+     * test's draws.
+     */
+    private static void resetSharedGlState() {
+        GlsmEnableState.current().set(GL_VERTEX_ARRAY, false);
+        GlsmEnableState.current().set(0x8075, false); // GL_NORMAL_ARRAY
+        GlsmEnableState.current().set(0x8076, false); // GL_COLOR_ARRAY
+        GlsmEnableState.current().set(0x8078, false); // GL_TEXTURE_COORD_ARRAY
+        GlsmEnableState.current().set(0x8622, false); // the attribute-0 enable mirror
+        GlsmClientArrayState.Pointer vertexPointer =
+                GlsmClientArrayState.current().clientPointer(GL_VERTEX_ARRAY, true);
+        vertexPointer.size = 4;
+        vertexPointer.type = GL_FLOAT;
+        vertexPointer.stride = 0;
+        vertexPointer.offset = 0L;
+        vertexPointer.buffer = 0;
+        vertexPointer.enabled = false;
+        vertexPointer.normalized = false;
+        vertexPointer.integer = false;
+        GlsmBufferState.current().bind(GL_ARRAY_BUFFER, 0);
+        GlsmBufferState.current().bind(GL_ELEMENT_ARRAY_BUFFER, 0);
+        NativeGeometryBuffer.unbind();
     }
 
     private long call(String name, long... args) throws Exception {

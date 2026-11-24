@@ -34,6 +34,24 @@ class VaoAttribRecordTest {
         Field installed = CeltiumGlStub.class.getDeclaredField("installed");
         installed.setAccessible(true);
         installed.set(null, stub);
+        // The routes rewiring moved the legacy vertex-pointer tuple and the capability record
+        // into singleton owners (GlsmClientArrayState / GlsmEnableState), where they outlive a
+        // stub instance. A fresh stub used to start from GL's initial values; restore that here
+        // so one test's setup cannot describe the next test's draw.
+        GlsmClientArrayState.Pointer vertexPointer = GlsmClientArrayState.current().clientPointer(0x8074, true);
+        vertexPointer.size = 4;
+        vertexPointer.type = GL_FLOAT;
+        vertexPointer.stride = 0;
+        vertexPointer.offset = 0L;
+        vertexPointer.buffer = 0;
+        vertexPointer.enabled = false;
+        vertexPointer.normalized = false;
+        vertexPointer.integer = false;
+        GlsmEnableState.current().set(0x8074, false); // GL_VERTEX_ARRAY
+        GlsmEnableState.current().set(0x8075, false); // GL_NORMAL_ARRAY
+        GlsmEnableState.current().set(0x8076, false); // GL_COLOR_ARRAY
+        GlsmEnableState.current().set(0x8078, false); // GL_TEXTURE_COORD_ARRAY
+        GlsmEnableState.current().set(ENABLED, false); // the attribute-0 enable mirror
         return stub;
     }
 
@@ -44,10 +62,9 @@ class VaoAttribRecordTest {
         CeltiumGlStub.celtium$bindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
-    private static void setCurrentProgram(CeltiumGlStub stub, int program) throws Exception {
-        Field field = CeltiumGlStub.class.getDeclaredField("currentProgram");
-        field.setAccessible(true);
-        field.setInt(stub, program);
+    private static void setCurrentProgram(CeltiumGlStub stub, int program) {
+        // The current program is owned by GlsmShaderLedger (GAP-PROG-1); SEM_USE_PROGRAM writes it there.
+        GlsmShaderLedger.current().useProgram(program);
     }
 
     private static int attribIv(int index, int pname) {
