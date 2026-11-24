@@ -146,7 +146,7 @@ public final class CeltiumGllessHint {
      * Before provider installation, reserve from the same native identity allocator to avoid an early-name collision.
      */
     public static int glGenNames(int range) {
-        int reserved = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$reserveNames(range);
+        int reserved = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$reserveNames(range);
         return reserved >= 0 ? reserved : org.soutalab.celtium.vulkan.RenderObjectIds.reserve(range);
     }
 
@@ -176,7 +176,7 @@ public final class CeltiumGllessHint {
      * own Kirino patch ({@code com.cleanroommc.kirino.KirinoClientCore}), which parses {@code glGetString(GL_VERSION)}
      * and cannot parse a renderer name.
      * <p>
-     * So the answers are per name and deliberately the same strings {@code CeltiumGlStub} gives the LWJGL2 surface -
+     * So the answers are per name and deliberately the same strings {@code GlsmFrontend} gives the LWJGL2 surface -
      * the {@code GlContextTerms} version string for GL_VERSION ({@code "3.0.0 Celtium"} by default, the version
      * whose gates are all backed, per the stub's own note; the core terms when a core-profile context was
      * requested at creation, per {@code GlContextTerms}),
@@ -232,7 +232,7 @@ public final class CeltiumGllessHint {
     public static void glGetShaderInfoLog(int object, int maxLength, long lengthPtr, long logPtr) {
         int written = 0;
         if (logPtr != 0L) {
-            written = org.soutalab.celtium.vulkan.gl.CeltiumGlStub
+            written = org.soutalab.celtium.vulkan.gl.GlsmFrontend
                     .celtium$writeInfoLog(object, maxLength, logPtr);
         }
         if (lengthPtr != 0L) {
@@ -254,7 +254,7 @@ public final class CeltiumGllessHint {
      * drawn with the world transform instead.
      */
     public static void glUseProgram(int program) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$useProgram(program);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$useProgram(program);
     }
 
     /**
@@ -305,7 +305,7 @@ public final class CeltiumGllessHint {
     }
 
     private static int boundProgram() {
-        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$currentProgram();
+        return org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$currentProgram();
     }
 
     /** The scalar uniform setters: the values belong to the program currently bound, as in GL. */
@@ -366,153 +366,153 @@ public final class CeltiumGllessHint {
 
     /** The DSA spellings of the texture-parameter setter (the first argument is the texture name). */
     public static void glTextureParameteri(int texture, int pname, int value) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$textureParameteri(texture, pname, value);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$textureParameteri(texture, pname, value);
     }
 
     public static void glTextureParameterf(int texture, int pname, float value) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$textureParameterf(texture, pname, value);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$textureParameterf(texture, pname, value);
     }
 
     public static void glTextureParameterPointer(int texture, int pname, long values, boolean floats) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$textureParameterPointer(texture, pname, values, floats);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$textureParameterPointer(texture, pname, values, floats);
     }
 
     /** The float and pointer spellings of the texture-parameter setter, as glTexParameterf/iv/fv/Iiv/Iuiv. */
     public static void glTexParameterf(int target, int pname, float value) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texParameterf(target, pname, value);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$texParameterf(target, pname, value);
     }
 
     public static void glTexParameterPointer(int target, int pname, long values, boolean floats) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texParameterPointer(target, pname, values, floats);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$texParameterPointer(target, pname, values, floats);
     }
 
     /** Raw buffer readback into the caller's address. */
     public static void glGetBufferSubData(int target, long offset, long size, long out) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getBufferSubData(target, offset, size, out);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getBufferSubData(target, offset, size, out);
     }
 
     public static void glGetNamedBufferSubData(int name, long offset, long size, long out) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getNamedBufferSubData(name, offset, size, out);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getNamedBufferSubData(name, offset, size, out);
     }
 
     /** Raw buffer-to-buffer copies. */
     public static void glCopyBufferSubData(int readTarget, int writeTarget, long readOffset, long writeOffset,
             long size) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$copyBufferSubData(readTarget, writeTarget, readOffset,
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$copyBufferSubData(readTarget, writeTarget, readOffset,
                 writeOffset, size);
     }
 
     public static void glCopyNamedBufferSubData(int readBuffer, int writeBuffer, long readOffset, long writeOffset,
             long size) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$copyNamedBufferSubData(readBuffer, writeBuffer, readOffset,
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$copyNamedBufferSubData(readBuffer, writeBuffer, readOffset,
                 writeOffset, size);
     }
 
     /** Raw {@code glDelete*}: the object-name and array spellings, forwarded to the stub's delete families. */
     public static void glDeleteObjects(String name, int count, long names) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$deleteObjects(name, count, names);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$deleteObjects(name, count, names);
     }
 
     public static void glDeleteObject(String name, int object) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$deleteObject(name, object);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$deleteObject(name, object);
     }
 
     /** Raw {@code glNamedFramebufferTexture}: the DSA spelling of the colour-attachment record. */
     public static void glNamedFramebufferTexture(int framebuffer, int attachment, int texture, int level) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$namedFramebufferTexture(framebuffer, attachment, texture, level);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$namedFramebufferTexture(framebuffer, attachment, texture, level);
     }
 
     /** The int-returning texture-parameter query (bound or named). */
     public static int glGetTextureParameterInt(int targetOrName, int pname, boolean named) {
-        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTextureParameterInt(targetOrName, pname, named);
+        return org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getTextureParameterInt(targetOrName, pname, named);
     }
 
     /** Raw {@code glGetTextureParameter*}: the named texture-parameter record. */
     public static void glGetTextureParameterNamed(int texture, int pname, long out, boolean floats) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTextureParameterNamed(texture, pname, out, floats);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getTextureParameterNamed(texture, pname, out, floats);
     }
 
     /** Raw {@code glGetTextureLevelParameteriv/i64v}: the named level extent. */
     public static void glGetTexLevelParameterNamed(int texture, int level, int pname, long out, boolean wide) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTexLevelParameterNamed(texture, level, pname, out, wide);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getTexLevelParameterNamed(texture, level, pname, out, wide);
     }
 
     /** The DSA sub-image form: a patch into the named texture's mirror. */
     public static void glTexSubImageNamed(int texture, int level, int x, int y, int width, int height, int format, int type,
             long pixels) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texSubImageNamed(texture, level, x, y, width, height, format,
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$texSubImageNamed(texture, level, x, y, width, height, format,
                 type, pixels);
     }
 
     /** The DSA immutable-storage form: the texture is named instead of bound. */
     public static void glTexStorageNamed(int texture, int levels, int internalFormat, int width, int height) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texStorageNamed(texture, levels, internalFormat, width, height);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$texStorageNamed(texture, levels, internalFormat, width, height);
     }
 
     /** Raw immutable texture storage: records the level-0 extent the texture queries answer. */
     public static void glTexStorage2D(int target, int levels, int internalFormat, int width, int height) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texStorage(target, levels, internalFormat, width, height);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$texStorage(target, levels, internalFormat, width, height);
     }
 
     public static void glTexStorage3D(int target, int levels, int internalFormat, int width, int height, int depth) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texStorage(target, levels, internalFormat, width, height);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$texStorage(target, levels, internalFormat, width, height);
     }
 
     /** Raw buffer storage/sub-data and VAO binding: the stub's buffer mirrors are fed from here. */
     public static void glBufferStorage(int target, long size, long data, int flags) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bufferDataTarget(target, size, data);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$bufferDataTarget(target, size, data);
     }
 
     public static void glNamedBufferData(int name, long size, long data, int usage) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bufferDataNamed(name, size, data);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$bufferDataNamed(name, size, data);
     }
 
     public static void glNamedBufferStorage(int name, long size, long data, int flags) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bufferDataNamed(name, size, data);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$bufferDataNamed(name, size, data);
     }
 
     public static void glBufferSubData(int target, long offset, long size, long data) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bufferSubDataTarget(target, offset, size, data);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$bufferSubDataTarget(target, offset, size, data);
     }
 
     public static void glNamedBufferSubData(int name, long offset, long size, long data) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bufferSubDataNamed(name, offset, size, data);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$bufferSubDataNamed(name, offset, size, data);
     }
 
     public static void glBindVertexArray(int array) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindVertexArray(array);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$bindVertexArray(array);
     }
 
     /** Raw display-list surface: list base, batched call, delete range and the compiled-name test. */
     public static void glListBase(int base) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$listBase(base);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$listBase(base);
     }
 
     public static void glCallLists(int count, int type, long lists) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$callLists(count, type, lists);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$callLists(count, type, lists);
     }
 
     public static void glDeleteLists(int list, int range) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$deleteLists(list, range);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$deleteLists(list, range);
     }
 
     public static boolean glIsList(int list) {
-        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$isList(list);
+        return org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$isList(list);
     }
 
     /** Raw {@code glIsTexture/glIsBuffer/...}: whether the object name was generated by this stub. */
     public static boolean glIsObject(int name) {
-        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$isObject(name);
+        return org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$isObject(name);
     }
 
     /** Raw {@code glIsSync}: the sync-name test. */
     public static boolean glIsSync(long sync) {
-        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$isSync(sync);
+        return org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$isSync(sync);
     }
 
     /** Raw {@code glPixelStorei/glPixelStoref}: the unpack state the texture capture reads rows with. */
     public static void glPixelStorei(int pname, int value) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$pixelStorei(pname, value);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$pixelStorei(pname, value);
     }
 
     public static void glPixelStoref(int pname, float value) {
@@ -581,12 +581,12 @@ public final class CeltiumGllessHint {
 
     /** Raw {@code glPointSize}: recorded for the point-size query. */
     public static void glPointSize(float size) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$pointSize(size);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$pointSize(size);
     }
 
     /** Raw {@code glLineWidth}: recorded so the narrowing report knows what the caller asked for. */
     public static void glLineWidth(float width) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$lineWidth(width);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$lineWidth(width);
     }
 
     /** Indexed blend/colour-mask state: index 0 is the single target this renderer has. */
@@ -617,12 +617,12 @@ public final class CeltiumGllessHint {
     /** Indexed enables: this renderer has one target, so index 0 is the same as the unindexed call. */
     public static void glEnableIndexed(int capability, int index, boolean enabled) {
         if (index == 0) {
-            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clientState(capability, enabled);
+            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$clientState(capability, enabled);
         }
     }
 
     public static boolean glIsEnabledIndexed(int capability, int index) {
-        return index == 0 && org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$isEnabled(capability);
+        return index == 0 && org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$isEnabled(capability);
     }
 
     /** Raw {@code glGetLightiv}: the light record in integer components, the shape GL's int query writes. */
@@ -774,40 +774,40 @@ public final class CeltiumGllessHint {
 
     /** LWJGL3's buffer-parameter query natives: GL_BUFFER_SIZE comes from the recorded or native buffer. */
     public static void glGetBufferParameteriv(int target, int pname, long params) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getBufferParameter("glGetBufferParameteriv",
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getBufferParameter("glGetBufferParameteriv",
                 target, pname, params);
     }
 
     public static void glGetBufferParameteri64v(int target, int pname, long params) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getBufferParameter("glGetBufferParameteri64v",
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getBufferParameter("glGetBufferParameteri64v",
                 target, pname, params);
     }
 
     /** LWJGL3's tex-parameter query natives: the bind state the stub records answers them. */
     public static void glGetTexParameteriv(int target, int pname, long params) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTexParameter("glGetTexParameteriv", target, pname, params);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getTexParameter("glGetTexParameteriv", target, pname, params);
     }
 
     public static void glGetTexParameterfv(int target, int pname, long params) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTexParameter("glGetTexParameterfv", target, pname, params);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getTexParameter("glGetTexParameterfv", target, pname, params);
     }
 
     public static void glGetTexParameterIiv(int target, int pname, long params) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTexParameter("glGetTexParameterIiv", target, pname, params);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getTexParameter("glGetTexParameterIiv", target, pname, params);
     }
 
     public static void glGetTexParameterIuiv(int target, int pname, long params) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTexParameter("glGetTexParameterIuiv", target, pname, params);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getTexParameter("glGetTexParameterIuiv", target, pname, params);
     }
 
     /** LWJGL3's {@code nglGetBooleanv}: the query family's boolean side. */
     public static void glGetBooleanv(int pname, long params) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getBooleans(pname, params);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getBooleans(pname, params);
     }
 
     /** A raw {@code glIsEnabled}: answered by the same capability record the stub's queries use. */
     public static boolean glIsEnabled(int capability) {
-        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$isEnabled(capability);
+        return org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$isEnabled(capability);
     }
 
     /**
@@ -833,13 +833,13 @@ public final class CeltiumGllessHint {
         }
         // ActiveRenderInfo unprojects through a four-component viewport. The native replacement must use
         // the same live rectangles/bindings as the callback path, not write one zero into that array.
-        if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getIntegers(pname, params)) {
+        if (org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getIntegers(pname, params)) {
             return;
         }
         int value;
         switch (pname) {
             case 0x0D33: // GL_MAX_TEXTURE_SIZE - the device limit, from the scalar the stub answers
-                value = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(pname);
+                value = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(pname);
                 break;
             case 0x8872: // GL_MAX_TEXTURE_IMAGE_UNITS - the stub's TEXTURE_UNITS_PER_STAGE, for the
                 // window before the stub provider is installed (TEXUNIT-DESIGN-2026-11-17)
@@ -915,14 +915,14 @@ public final class CeltiumGllessHint {
                 value = 0;
                 break;
         }
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.noteTextureUnitAnswer(pname, value);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.noteTextureUnitAnswer(pname, value);
         org.lwjgl.system.MemoryUtil.memPutInt(params, value);
     }
 
     /**
      * The display list {@code glNewList} opened, or 0 when none is.
      *
-     * <p>Tracked here rather than in {@code CeltiumGlStub} because this class is the layer the transformer actually
+     * <p>Tracked here rather than in {@code GlsmFrontend} because this class is the layer the transformer actually
      * delegates to: the stub's provider carries only the capability query (the function census from the leg shows
      * four {@code glGetIntegerv} and two {@code glGetError} and nothing else), while every other native goes through
      * {@code CeltiumGllessNativeTransformer} and lands in the methods here.
@@ -944,7 +944,7 @@ public final class CeltiumGllessHint {
      */
     public static void glNewList(int list, int mode) {
         nativeNewList(list, mode);
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.compatibilityNewList(list, mode);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.compatibilityNewList(list, mode);
     }
 
     /** Native vanilla compilation tracks its own geometry; it does not use the Mod GL compiler. */
@@ -954,14 +954,14 @@ public final class CeltiumGllessHint {
         listIndex = list;
         listMode = mode;
         // Published to the stub as well, because that is where the model capture reads the open list from
-        // (CeltiumGlStub.compilingList). This class is the layer the transformer delegates to, so without this the
+        // (GlsmFrontend.compilingList). This class is the layer the transformer delegates to, so without this the
         // stub's field stays 0 and every quad is filed under no list at all - measured on leg gv-cohort-dl9.
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteListOpened(list, mode);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteListOpened(list, mode);
     }
 
     /** Closes the open display list, as {@code glEndList()} does. */
     public static void glEndList() {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.compatibilityEndList();
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.compatibilityEndList();
         nativeEndList();
     }
 
@@ -970,7 +970,7 @@ public final class CeltiumGllessHint {
         END_LIST_CALLS.incrementAndGet();
         listIndex = 0;
         listMode = 0;
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteListClosed();
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteListClosed();
     }
 
     /**
@@ -1019,7 +1019,7 @@ public final class CeltiumGllessHint {
         noteDisplayListCall();
         CALL_LIST_CALLS.incrementAndGet();
         lastCalledList = list;
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.compatibilityCallList(list);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.compatibilityCallList(list);
     }
 
     /**
@@ -1030,32 +1030,32 @@ public final class CeltiumGllessHint {
      * untinted and the stub recorded zero COMBINE writes.
      */
     public static void glTexEnvi(int target, int pname, int param) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glTexEnvi(target, pname, param);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glTexEnvi(target, pname, param);
     }
 
     /** {@code nglTexEnvf}: the float form of the same write. */
     public static void glTexEnvf(int target, int pname, float param) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glTexEnvf(target, pname, param);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glTexEnvf(target, pname, param);
     }
 
     /** {@code nglTexEnviv}/{@code nglTexEnvfv}: the pointer forms of the same write. */
     public static void glTexEnvPtr(int target, int pname, long values) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glTexEnvPtr(target, pname, values);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glTexEnvPtr(target, pname, values);
     }
 
     /** {@code nglGetTexEnvi(II)I}: the int-returning form of the same read. */
     public static int glGetTexEnvI(int target, int pname) {
-        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glGetTexEnvI(target, pname);
+        return org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glGetTexEnvI(target, pname);
     }
 
     /** {@code nglGetTexEnvi}/{@code nglGetTexEnviv}: the int read-back, through the out pointer. */
     public static void glGetTexEnvInt(int target, int pname, long out) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glGetTexEnvInt(target, pname, out);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glGetTexEnvInt(target, pname, out);
     }
 
     /** {@code nglGetTexEnvfv}: the float read-back, four floats through the out pointer. */
     public static void glGetTexEnvFloats(int target, int pname, long out) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glGetTexEnvFloats(target, pname, out);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glGetTexEnvFloats(target, pname, out);
     }
 
     /**
@@ -1386,7 +1386,7 @@ public final class CeltiumGllessHint {
      * texture was sampled LINEAR and the item looked blurred. The stub resolves which texture the parameter belongs to.
      */
     public static void glTexParameteri(int target, int pname, int value) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texParameteri(target, pname, value);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$texParameteri(target, pname, value);
     }
 
     /**
@@ -1399,7 +1399,7 @@ public final class CeltiumGllessHint {
      */
     public static void glCopyTexSubImage2D(int target, int level, int xoffset, int yoffset, int x, int y, int width,
             int height) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$copyTexSubImage2D(target, level, xoffset, yoffset, x, y,
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$copyTexSubImage2D(target, level, xoffset, yoffset, x, y,
                 width, height);
     }
 
@@ -1414,13 +1414,13 @@ public final class CeltiumGllessHint {
     public static void glCopyImageSubData(int srcName, int srcTarget, int srcLevel, int srcX, int srcY, int srcZ,
             int dstName, int dstTarget, int dstLevel, int dstX, int dstY, int dstZ, int width, int height,
             int depth) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$copyImageSubData(srcName, srcTarget, srcLevel, srcX,
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$copyImageSubData(srcName, srcTarget, srcLevel, srcX,
                 srcY, srcZ, dstName, dstTarget, dstLevel, dstX, dstY, dstZ, width, height, depth);
     }
 
     /** Serves a copy, as {@code glCopyTexImage2D(target, level, internalFormat, x, y, width, height, border)} does. */
     public static void glCopyTexImage2D(int target, int level, int internalFormat, int x, int y, int width, int height) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$copyTexImage2D(target, level, internalFormat, x, y, width,
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$copyTexImage2D(target, level, internalFormat, x, y, width,
                 height);
     }
 
@@ -1444,7 +1444,7 @@ public final class CeltiumGllessHint {
      * {@code nglVertexPointer=5332}, {@code glEnableClientState=7117}, {@code glBindBuffer=12474}.
      */
     public static void glDrawArrays(int mode, int first, int count) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$drawArrays(mode, first, count);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$drawArrays(mode, first, count);
     }
 
     /**
@@ -1458,11 +1458,11 @@ public final class CeltiumGllessHint {
     }
 
     public static void glMultiDrawArrays(int mode, long firsts, long counts, int drawcount) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$multiDrawArrays(mode, firsts, counts, drawcount);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$multiDrawArrays(mode, firsts, counts, drawcount);
     }
 
     public static void glMultiDrawElements(int mode, long counts, int type, long indices, int drawcount) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$multiDrawElements(mode, counts, type, indices, drawcount);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$multiDrawElements(mode, counts, type, indices, drawcount);
     }
 
     public static void glDrawElementsInstanced(int mode, int count, int type, long indices, int instanceCount) {
@@ -1494,7 +1494,7 @@ public final class CeltiumGllessHint {
 
     /** Binds an array buffer, as {@code glBindBuffer(target, name)} does. */
     public static void glBindBuffer(int target, int name) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindBuffer(target, name);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$bindBuffer(target, name);
     }
 
     /**
@@ -1503,17 +1503,17 @@ public final class CeltiumGllessHint {
      * filed under whatever texture the game last bound, and the name was later refused "no mirror".
      */
     public static void glBindTexture(int target, int texture) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glBindTexture(target, texture);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glBindTexture(target, texture);
     }
 
     /** Selects the active texture unit, as {@code glActiveTexture(unit)} does. */
     public static void glActiveTexture(int unit) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glActiveTexture(unit);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glActiveTexture(unit);
     }
 
     /** Deletes texture names, as {@code glDeleteTextures(count, namesPointer)} does. */
     public static void glDeleteTextures(int count, long names) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glDeleteTextures(count, names);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glDeleteTextures(count, names);
     }
 
     /** A deleted bound draw FBO becomes the default framebuffer before the stub forgets it. */
@@ -1523,59 +1523,59 @@ public final class CeltiumGllessHint {
             int name = org.lwjgl.system.MemoryUtil.memGetInt(names + (long) i * 4L);
             if (name != 0 && name == rawDrawFramebuffer) {
                 if (vanillaFramebufferDepth == 0) {
-                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$registerRawFramebuffer(0);
+                    org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$registerRawFramebuffer(0);
                 }
                 rawDrawFramebuffer = 0;
                 break;
             }
         }
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$glDeleteFramebuffers(count, names);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$glDeleteFramebuffers(count, names);
     }
 
     /** Enables a client array, as {@code glEnableClientState(capability)} does. */
     public static void glEnableClientState(int capability) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clientState(capability, true);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$clientState(capability, true);
     }
 
     /** Disables a client array, as {@code glDisableClientState(capability)} does. */
     public static void glDisableClientState(int capability) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clientState(capability, false);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$clientState(capability, false);
     }
 
     /** The generic attribute pointer, recorded for index 0 (the position attribute the decoder reads). */
     public static void glVertexAttribPointer(int index, int size, int type, boolean normalized, int stride, long pointer) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$vertexAttribPointer(index, size, type, normalized, stride,
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$vertexAttribPointer(index, size, type, normalized, stride,
                 pointer);
     }
 
     /** The integer attribute pointer, recorded for index 0 so the state queries answer it. */
     public static void glVertexAttribIPointer(int index, int size, int type, int stride, long pointer) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$vertexAttribIPointer(index, size, type, stride, pointer);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$vertexAttribIPointer(index, size, type, stride, pointer);
     }
 
     /** Attribute-array enables, recorded per attribute in the bound VAO; index 0 also feeds the position enable. */
     public static void glEnableVertexAttribArray(int index, boolean enabled) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$vertexAttribEnabled(index, enabled);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$vertexAttribEnabled(index, enabled);
     }
 
     /** Sets the client vertex-array pointer, as {@code glVertexPointer(size, type, stride, pointer)} does. */
     public static void glVertexPointer(int size, int type, int stride, long pointer) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$vertexPointer(size, type, stride, pointer);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$vertexPointer(size, type, stride, pointer);
     }
 
     /** Sets the split texture-coordinate pointer, as {@code glTexCoordPointer(size, type, stride, pointer)} does. */
     public static void glTexCoordPointer(int size, int type, int stride, long pointer) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texCoordPointer(size, type, stride, pointer);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$texCoordPointer(size, type, stride, pointer);
     }
 
     /** Sets the split colour pointer, as {@code glColorPointer(size, type, stride, pointer)} does. */
     public static void glColorPointer(int size, int type, int stride, long pointer) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colorPointer(size, type, stride, pointer);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$colorPointer(size, type, stride, pointer);
     }
 
     /** Sets the split normal pointer, as {@code glNormalPointer(type, stride, pointer)} does. */
     public static void glNormalPointer(int type, int stride, long pointer) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$normalPointer(type, stride, pointer);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$normalPointer(type, stride, pointer);
     }
 
     /**
@@ -1585,14 +1585,14 @@ public final class CeltiumGllessHint {
      */
     public static void glTexImage2D(int target, int level, int internal, int width, int height, int border, int format,
             int type, long pixels) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texImage2D(target, level, internal, width, height, border,
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$texImage2D(target, level, internal, width, height, border,
                 format, type, pixels);
     }
 
     /** Sub-image writes, the other half of the same family. */
     public static void glTexSubImage2D(int target, int level, int xOffset, int yOffset, int width, int height,
             int format, int type, long pixels) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texSubImage2D(target, level, xOffset, yOffset, width,
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$texSubImage2D(target, level, xOffset, yOffset, width,
                 height, format, type, pixels);
     }
 
@@ -1603,7 +1603,7 @@ public final class CeltiumGllessHint {
      * run for texture 506.
      */
     public static void glFramebufferTexture2D(int target, int attachment, int textarget, int texture, int level) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferTexture2D(target, attachment, textarget,
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferTexture2D(target, attachment, textarget,
                 texture, level);
         // Bounded census of raw attachments: which framebuffer took which colour texture, and the identity its draws
         // will use. Xaero's radar icons move one framebuffer between its own texture and the icon atlas, and the
@@ -1641,13 +1641,13 @@ public final class CeltiumGllessHint {
         // registration is suppressed for the bracket's duration instead.
         boolean suppressed = vanillaFramebufferDepth > 0;
         if (suppressed) {
-            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$pushBindReportSuppression();
+            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$pushBindReportSuppression();
         }
         try {
-            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindFramebuffer(target, framebuffer);
+            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$bindFramebuffer(target, framebuffer);
         } finally {
             if (suppressed) {
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$popBindReportSuppression();
+                org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$popBindReportSuppression();
             }
         }
         if (target != GL_READ_FRAMEBUFFER) {
@@ -1662,7 +1662,7 @@ public final class CeltiumGllessHint {
      * failure, which is what ScreenShotHelper's screenshots and the fixture's format-2 readback measured.
      */
     public static void glReadPixels(int x, int y, int width, int height, int format, int type, long pixels) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$readPixels(x, y, width, height, format, type, pixels);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$readPixels(x, y, width, height, format, type, pixels);
     }
 
     /**
@@ -1672,7 +1672,7 @@ public final class CeltiumGllessHint {
      * never touched the {@code glReadPixels} route and its buffer stayed zeroed - a black PNG.
      */
     public static void glGetTexImage(int target, int level, int format, int type, long pixels) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getTexImage(target, level, format, type, pixels);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getTexImage(target, level, format, type, pixels);
     }
 
     /**
@@ -1882,7 +1882,7 @@ public final class CeltiumGllessHint {
         org.taumc.celeritas.impl.font.CeltiumFontGlyphCapture.currentColor(red, green, blue, alpha);
         // The legacy immediate capture keeps its own current colour: glBegin geometry carries the colour at vertex
         // time, and the mirror's colour is state the batch path reads later.
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyColor(red, green, blue, alpha);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyColor(red, green, blue, alpha);
         var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend != null) backend.setColor(red, green, blue, alpha);
         // Keep GlStateManager's colour cache honest. 1.12.2's `GlStateManager.color` only reaches GL when the value
@@ -1906,80 +1906,80 @@ public final class CeltiumGllessHint {
 
     // ---- legacy immediate mode, routed by the transformer ----
     public static void glLegacyBegin(int mode) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyBegin(mode);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyBegin(mode);
     }
 
     public static void glLegacyEnd() {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyEnd();
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyEnd();
     }
 
     public static void glLegacyVertex3f(float x, float y, float z) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex3f(x, y, z);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyVertex3f(x, y, z);
     }
 
     /** {@code glVertex2f}: the two-component spelling flat legacy geometry uses; z stays at GL's current zero. */
     public static void glLegacyVertex2f(float x, float y) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex2f(x, y);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyVertex2f(x, y);
     }
 
     /** {@code glVertex2d}, narrowed to the float layout. */
     public static void glLegacyVertex2d(double x, double y) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex2d(x, y);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyVertex2d(x, y);
     }
 
     /** {@code glVertex3d}: the double spelling a mod uses when it rounds its own positions. */
     public static void glLegacyVertex3d(double x, double y, double z) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex3d(x, y, z);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyVertex3d(x, y, z);
     }
 
     /** {@code glVertex4f}: the capture projects by {@code w}, as GL does. */
     public static void glLegacyVertex4f(float x, float y, float z, float w) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex4f(x, y, z, w);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyVertex4f(x, y, z, w);
     }
 
     /** {@code glVertex4d}, narrowed before the projection. */
     public static void glLegacyVertex4d(double x, double y, double z, double w) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex4d(x, y, z, w);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyVertex4d(x, y, z, w);
     }
 
     /** {@code glVertex2i}: the integer spelling GL rounds to float. */
     public static void glLegacyVertex2i(int x, int y) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex2i(x, y);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyVertex2i(x, y);
     }
 
     public static void glLegacyVertex3i(int x, int y, int z) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex3i(x, y, z);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyVertex3i(x, y, z);
     }
 
     /** {@code glVertex4i}: the capture projects by {@code w}, as the float spelling does. */
     public static void glLegacyVertex4i(int x, int y, int z, int w) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex4i(x, y, z, w);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyVertex4i(x, y, z, w);
     }
 
     /** {@code glVertex2s}: a {@code (SS)V} caller leaves the shorts sign-extended in int locals. */
     public static void glLegacyVertex2s(int x, int y) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex2s(x, y);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyVertex2s(x, y);
     }
 
     public static void glLegacyVertex3s(int x, int y, int z) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyVertex3s(x, y, z);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyVertex3s(x, y, z);
     }
 
     public static void glLegacyTexCoord2f(float u, float v) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyTexCoord2f(u, v);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyTexCoord2f(u, v);
     }
 
     public static void glLegacyTexCoord2d(double u, double v) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyTexCoord2d(u, v);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyTexCoord2d(u, v);
     }
 
     /** {@code glTexCoord2i}/{@code glTexCoord2s}: narrowed to the float coordinate the capture stores. */
     public static void glLegacyTexCoord2i(int u, int v) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyTexCoord2i(u, v);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyTexCoord2i(u, v);
     }
 
     public static void glLegacyTexCoord2s(int u, int v) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyTexCoord2s(u, v);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyTexCoord2s(u, v);
     }
 
     /**
@@ -1987,7 +1987,7 @@ public final class CeltiumGllessHint {
      * {@code glTexCoord2f}; any other unit is counted rather than written into that one pair.
      */
     public static void glLegacyMultiTexCoord2f(int unit, float u, float v) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyMultiTexCoord2f(unit, u, v);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyMultiTexCoord2f(unit, u, v);
     }
 
     // ---- the other component counts and widths of the same current-value coordinate ----
@@ -2003,7 +2003,7 @@ public final class CeltiumGllessHint {
 
     /** {@code glTexCoord1f}: s, with GL's default t of zero. */
     public static void glLegacyTexCoordF(float s, float t) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyTexCoord2f(s, t);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyTexCoord2f(s, t);
     }
 
     /** {@code glTexCoord1d}/{@code glTexCoord3d}/{@code glTexCoord4d}, narrowed before the write. */
@@ -2018,7 +2018,7 @@ public final class CeltiumGllessHint {
 
     /** The multi-texture forms of the same rule: unit 0 is the pair, every other unit is counted by the stub. */
     public static void glLegacyMultiTexCoordF(int unit, float s, float t) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyMultiTexCoord2f(unit, s, t);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyMultiTexCoord2f(unit, s, t);
     }
 
     public static void glLegacyMultiTexCoordD(int unit, double s, double t) {
@@ -2075,22 +2075,22 @@ public final class CeltiumGllessHint {
 
     /** {@code glRectf}: one complete quad, expanded by the capture into four texcoord/vertex pairs. */
     public static void glLegacyRectf(float x1, float y1, float x2, float y2) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyRectf(x1, y1, x2, y2);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyRectf(x1, y1, x2, y2);
     }
 
     /** {@code glRectd}, narrowed to the float layout the capture stores. */
     public static void glLegacyRectd(double x1, double y1, double x2, double y2) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyRectd(x1, y1, x2, y2);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyRectd(x1, y1, x2, y2);
     }
 
     /** {@code glRecti}: GL rounds the corners to float, which is what the layout carries. */
     public static void glLegacyRecti(int x1, int y1, int x2, int y2) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyRecti(x1, y1, x2, y2);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyRecti(x1, y1, x2, y2);
     }
 
     /** {@code glRects}: a {@code (SSSS)V} caller leaves the shorts sign-extended in int locals. */
     public static void glLegacyRects(int x1, int y1, int x2, int y2) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$legacyRects(x1, y1, x2, y2);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$legacyRects(x1, y1, x2, y2);
     }
 
     /** {@code glColor4ub}: the bytes are unsigned and map to [0, 1], as GL does. */
@@ -2163,10 +2163,10 @@ public final class CeltiumGllessHint {
      * so the unsigned interpretation is what keeps a mod's colour matching its own glColor4ub spelling.
      */
     public static void glColor4b(byte red, byte green, byte blue, byte alpha) {
-        glColor4f(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent(red),
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent(green),
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent(blue),
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent(alpha));
+        glColor4f(org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$colourComponent(red),
+                org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$colourComponent(green),
+                org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$colourComponent(blue),
+                org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$colourComponent(alpha));
     }
 
     /**
@@ -2180,10 +2180,10 @@ public final class CeltiumGllessHint {
      * therefore the scale, is decided.
      */
     public static void glColor4s(int red, int green, int blue, int alpha) {
-        glColor4f(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent((short) red),
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent((short) green),
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent((short) blue),
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent((short) alpha));
+        glColor4f(org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$colourComponent((short) red),
+                org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$colourComponent((short) green),
+                org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$colourComponent((short) blue),
+                org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$colourComponent((short) alpha));
     }
 
     public static void glColor4us(int red, int green, int blue, int alpha) {
@@ -2195,10 +2195,10 @@ public final class CeltiumGllessHint {
      * which is the value a caller writes when it means the maximum of an unsigned int.
      */
     public static void glColor4i(int red, int green, int blue, int alpha) {
-        glColor4f(org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent(red),
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent(green),
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent(blue),
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$colourComponent(alpha));
+        glColor4f(org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$colourComponent(red),
+                org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$colourComponent(green),
+                org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$colourComponent(blue),
+                org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$colourComponent(alpha));
     }
 
     public static void glColor4ui(int red, int green, int blue, int alpha) {
@@ -2316,12 +2316,12 @@ public final class CeltiumGllessHint {
         if (backend != null) backend.setAlphaFunc(func, reference);
         // Same reason as glDepthFunc: glPushAttrib(GL_COLOR_BUFFER_BIT) saves the comparison, and the stack that puts
         // it back is the stub's.
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteAlphaFunc(func, reference);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteAlphaFunc(func, reference);
     }
 
         /** Releases a sync id, as {@code glDeleteSync} does; the transformer used to answer this with a zero. */
     public static void glDeleteSync(long sync) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$deleteSync(sync);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$deleteSync(sync);
     }
 
     /**
@@ -2335,53 +2335,53 @@ public final class CeltiumGllessHint {
         // The stub keeps the same value for its attribute stack: a glPushAttrib(GL_DEPTH_BUFFER_BIT) has to be able
         // to put the comparison back, and the stub is what owns that stack (the backend's mirror is what it reads
         // while one is installed, but a push may outlive the backend whose mirror it took the value from).
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteDepthFunc(func);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteDepthFunc(func);
     }
 
         /** A raw {@code GL11.glDepthMask}, for the same reason as {@link #glColor4f}: canopies and overlays set it raw. */
     public static void glDepthMask(boolean mask) {
         var backend = org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend != null) backend.setDepthMask(mask);
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteDepthMask(mask);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteDepthMask(mask);
     }
 
     /** Maps the bound buffer's storage, as {@code glMapBuffer}/{@code glMapBufferRange} do; 0 is GL's NULL. */
     public static long glMapBuffer(int target, boolean range, long offset, long length, int access) {
-        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$mapBuffer(target, range, offset, length, access);
+        return org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$mapBuffer(target, range, offset, length, access);
     }
 
     /** Raw {@code glGetNamedBufferParameteriv/i64v}: the named size query. */
     public static void glGetNamedBufferParameter(int name, int pname, long out, boolean wide) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getNamedBufferParameter(name, pname, out, wide);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getNamedBufferParameter(name, pname, out, wide);
     }
 
     /** Raw {@code glClearBufferData/SubData} and named forms: the zero fill of a buffer range. */
     public static void glClearBuffer(int targetOrName, boolean named, long offset, long size, long data) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clearBuffer(targetOrName, named, offset, size, data);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$clearBuffer(targetOrName, named, offset, size, data);
     }
 
     /** The DSA mapping forms, where the buffer name is the first argument. */
     public static long glMapNamedBuffer(int name, boolean range, long offset, long length, int access) {
-        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$mapNamedBuffer(name, range, offset, length, access);
+        return org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$mapNamedBuffer(name, range, offset, length, access);
     }
 
     public static boolean glUnmapNamedBuffer(int name) {
-        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$unmapNamedBuffer(name);
+        return org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$unmapNamedBuffer(name);
     }
 
     /** Unmaps the bound buffer, as {@code glUnmapBuffer} does. */
     public static boolean glUnmapBuffer(int target) {
-        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$unmapBuffer(target);
+        return org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$unmapBuffer(target);
     }
 
     /** Mirrors array-buffer storage, as {@code glBufferData(target, size, data, usage)} does. */
     public static void glBufferData(int target, long size, long data, int usage) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bufferData(target, size, data, usage);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$bufferData(target, size, data, usage);
     }
 
     /** Keeps the viewport query and the draw grouping key consistent after resize and offscreen passes. */
     public static void glViewport(int x, int y, int width, int height) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$viewport(x, y, width, height);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$viewport(x, y, width, height);
         org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                 org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();
         if (backend != null) {
@@ -2391,39 +2391,39 @@ public final class CeltiumGllessHint {
 
     /** Raw uniform-block introspection: zeroed integer and empty-name answers. */
     public static void glGetActiveUniformInt(int program, int index, int pname, long out) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getActiveUniformInt(program, index, pname, out);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getActiveUniformInt(program, index, pname, out);
     }
 
     public static void glGetInternalFormat(int bufSize, long params, boolean wide) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInternalFormat(bufSize, params, wide);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInternalFormat(bufSize, params, wide);
     }
 
     public static void glGetProgramResourceName(int program, int programInterface, int index, int bufSize, long length,
             long name) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getProgramResourceName(program, programInterface, index,
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getProgramResourceName(program, programInterface, index,
                 bufSize, length, name);
     }
 
     public static void glGetProgramResourceLength(int bufSize, long length) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getProgramResourceLength(bufSize, length);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getProgramResourceLength(bufSize, length);
     }
 
     public static void glGetActiveUniforms(int count, long out) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getActiveUniforms(count, out);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getActiveUniforms(count, out);
     }
 
     public static void glGetActiveUniformName(int program, int index, long length, long name, int bufSize) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getActiveUniformName(program, index, length, name, bufSize);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getActiveUniformName(program, index, length, name, bufSize);
     }
 
     /** Raw {@code glGetProgramBinary} and {@code glGetShaderPrecisionFormat}: written answers. */
     public static void glGetProgramBinary(int program, int bufSize, long length, long binaryFormat, long binary) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getProgramBinary(program, bufSize, length, binaryFormat,
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getProgramBinary(program, bufSize, length, binaryFormat,
                 binary);
     }
 
     public static void glGetShaderPrecisionFormat(int shaderType, int precisionType, long range, long precision) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getShaderPrecisionFormat(shaderType, precisionType, range,
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getShaderPrecisionFormat(shaderType, precisionType, range,
                 precision);
     }
 
@@ -2434,7 +2434,7 @@ public final class CeltiumGllessHint {
     public static void glGetInfoLogARB(int object, int maxLength, long length, long infoLog) {
         int written = 0;
         if (infoLog != 0L && maxLength > 0) {
-            written = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$writeInfoLog(object, maxLength,
+            written = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$writeInfoLog(object, maxLength,
                     infoLog);
         }
         if (length != 0L) {
@@ -2444,140 +2444,140 @@ public final class CeltiumGllessHint {
 
     /** Raw {@code glGetShaderSource/glGetAttachedShaders}: written empty answers. */
     public static void glGetShaderSource(int shader, int bufSize, long length, long source) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getShaderSource(shader, bufSize, length, source);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getShaderSource(shader, bufSize, length, source);
     }
 
     public static void glGetAttachedShaders(int program, int maxCount, long count, long shaders) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getAttachedShaders(program, maxCount, count, shaders);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getAttachedShaders(program, maxCount, count, shaders);
     }
 
     /** Raw {@code glGetActiveUniform/Attrib}: no active objects, written rather than left untouched. */
     public static void glGetActiveObject(int program, int index, int bufSize, long length, long size, long type,
             long name) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getActiveObject(program, index, bufSize, length, size,
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getActiveObject(program, index, bufSize, length, size,
                 type, name);
     }
 
     /** Raw {@code glGetTextureImage}: an image readback the renderer cannot produce, zeroed deterministically. */
     public static void glGetTextureImageZero(long pixels, long bytes) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$zeroBytes(pixels, bytes);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$zeroBytes(pixels, bytes);
     }
 
     /** Raw debug-label queries: no label exists, so the answer is an empty one. */
     public static void glGetObjectLabel(int bufSize, long length, long label) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getObjectLabel(bufSize, length, label);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getObjectLabel(bufSize, length, label);
     }
 
     /** Renderbuffer storage and its size query. */
     public static void glBindRenderbuffer(int target, int renderbuffer) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindRenderbuffer(target, renderbuffer);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$bindRenderbuffer(target, renderbuffer);
     }
 
     public static void glRenderbufferStorage(int width, int height) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$renderbufferStorage(width, height);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$renderbufferStorage(width, height);
     }
 
     public static void glGetRenderbufferParameter(int pname, long out) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getRenderbufferParameter(pname, out);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getRenderbufferParameter(pname, out);
     }
 
     /** Raw unmodelled getters: a zeroed output is deterministic, unlike an untouched caller buffer. */
     public static void glZeroOut(long out, int count, boolean wide) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$zeroOut(out, count, wide);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$zeroOut(out, count, wide);
     }
 
     /** Raw {@code glGetQueryObject*}: result and availability answer 1 so culling does not hide everything. */
     public static void glGetQueryObject(int query, int pname, long out, boolean wide) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getQueryObject(query, pname, out, wide);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getQueryObject(query, pname, out, wide);
     }
 
     /** Raw {@code glGetVertexAttribfv/dv}: the attribute-0 state in the caller's numeric width. */
     public static void glGetVertexAttribFloats(int index, int pname, long out, boolean asDouble) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getVertexAttribFloats(index, pname, out, asDouble);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getVertexAttribFloats(index, pname, out, asDouble);
     }
 
     /** Raw {@code glPushAttrib/glPopAttrib}: the tracked server-side capabilities. */
     public static void glPushAttrib(int mask) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$pushAttrib(mask);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$pushAttrib(mask);
     }
 
     public static void glPopAttrib() {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$popAttrib();
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$popAttrib();
     }
 
     /** Raw {@code glPushClientAttrib/glPopClientAttrib}: the client vertex-array record. */
     public static void glPushClientAttrib(int mask) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$pushClientAttrib();
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$pushClientAttrib();
     }
 
     public static void glPopClientAttrib() {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$popClientAttrib();
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$popClientAttrib();
     }
 
     /** Raw {@code glDrawElementsBaseVertex}: the indexed decode with an index bias. */
     public static void glDrawElementsBaseVertex(int mode, int count, int type, long indices, int baseVertex) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$drawElementsBaseVertex(mode, count, type, indices, baseVertex);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$drawElementsBaseVertex(mode, count, type, indices, baseVertex);
     }
 
     /** Raw indexed draws, in the one guarded layout the decoder can serve. */
     public static void glDrawElements(int mode, int count, int type, long indices) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$drawElements(mode, count, type, indices);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$drawElements(mode, count, type, indices);
     }
 
     /** Raw {@code glGetVertexAttribPointerv}: attribute 0 answers the recorded pointer. */
     public static void glGetVertexAttribPointer(int index, int pname, long out) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getVertexAttribPointer(index, pname, out);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getVertexAttribPointer(index, pname, out);
     }
 
     /** Raw {@code glGetVertexAttribiv}: attribute 0 answers the recorded client-array state. */
     public static void glGetVertexAttribiv(int index, int pname, long out) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getVertexAttribiv(index, pname, out);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getVertexAttribiv(index, pname, out);
     }
 
     /** Raw {@code glGetBooleani_v}: one zeroed GLboolean byte. */
     public static void glGetBooleanIndexed(long out) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getBooleanIndexed(out);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getBooleanIndexed(out);
     }
 
     /** Raw {@code glGetIntegeri_v}: the scalar query, index ignored. */
     public static void glGetIntegerIndexed(int pname, long out) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getIntegerIndexed(pname, out);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getIntegerIndexed(pname, out);
     }
 
     /** Raw {@code glGetInteger64v/i_v}: the scalar query widened to the 64-bit output. */
     public static void glGetInteger64(int pname, long out) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger64(pname, out);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger64(pname, out);
     }
 
     /** Raw {@code glGetSynciv}: the sync objects this stub hands out are always signalled. */
     public static void glGetSynciv(long sync, int pname, int bufSize, long length, long values) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getSynciv(sync, pname, bufSize, length, values);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getSynciv(sync, pname, bufSize, length, values);
     }
 
     /** Raw framebuffer attachment queries, forwarded to the stub's attachment record. */
     public static void glGetFramebufferAttachmentParameteriv(int target, int attachment, int pname, long out) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferAttachmentParameter(false, target, attachment,
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferAttachmentParameter(false, target, attachment,
                 pname, out);
     }
 
     public static void glGetNamedFramebufferAttachmentParameteriv(int framebuffer, int attachment, int pname,
             long out) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferAttachmentParameter(true, framebuffer, attachment,
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferAttachmentParameter(true, framebuffer, attachment,
                 pname, out);
     }
 
     /** Raw shader/program object parameters: compile, link and validate status answer true. */
     public static void glShaderObjectParameter(int object, int pname, long out) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$shaderObjectParameter(object, pname, out);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$shaderObjectParameter(object, pname, out);
     }
 
     /** Raw {@code glClearBufferfv/fi}: the value-carrying clear forms, routed to the same clear record. */
     public static void glClearBufferfv(int buffer, int drawBuffer, long value) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clearBufferfv(buffer, drawBuffer, value);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$clearBufferfv(buffer, drawBuffer, value);
     }
 
     public static void glClearBufferfi(int buffer, int drawBuffer, float depth, int stencil) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clearBufferfi(buffer, drawBuffer, depth, stencil);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$clearBufferfi(buffer, drawBuffer, depth, stencil);
     }
 
     /** A raw GL clear is also a draw-order boundary, even when no GlStateManager wrapper called it. */
@@ -2587,25 +2587,25 @@ public final class CeltiumGllessHint {
         if (backend != null) {
             backend.flushBeforeClear(mask);
         }
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clear(mask);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$clear(mask);
     }
 
     public static void glClearColor(float red, float green, float blue, float alpha) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clearColor(red, green, blue, alpha);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$clearColor(red, green, blue, alpha);
     }
 
     public static void glClearDepth(double depth) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clearDepth(depth);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$clearDepth(depth);
     }
 
     /** Returns the live mirrored state with the component count implied by pname, not one scalar zero. */
     public static void glGetFloatv(int pname, long params) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getFloats(pname, params, false);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getFloats(pname, params, false);
     }
 
     /** Double-precision output follows the same state/query contract as the float entry point. */
     public static void glGetDoublev(int pname, long params) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getFloats(pname, params, true);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getFloats(pname, params, true);
     }
 
     /**
@@ -2615,7 +2615,7 @@ public final class CeltiumGllessHint {
      * treats a shader as usable. Vanilla's {@code RenderGlobal.makeEntityOutlineShader} and {@code ShaderGroup} check
      * {@code GL_COMPILE_STATUS} and {@code GL_LINK_STATUS} and log or throw when they are false, so answering zero
      * would turn every shader into a failed one. The answer itself is the stub's shared one
-     * ({@code CeltiumGlStub.celtium$shaderProgramQueryAnswer}): a program whose link the registry recorded answers
+     * ({@code GlsmFrontend.celtium$shaderProgramQueryAnswer}): a program whose link the registry recorded answers
      * with that link's truth, so a mod's own failure path - Iris's and Embeddium's builders throw on a false
      * LINK_STATUS - fires with the reason in the info log instead of the pack proceeding over passes this renderer
      * refuses by name at prepare. An object with no recorded link keeps the default true, and COMPILE_STATUS is
@@ -2626,7 +2626,7 @@ public final class CeltiumGllessHint {
             return;
         }
         org.lwjgl.system.MemoryUtil.memPutInt(params,
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$shaderProgramQueryAnswer(object, pname));
+                org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$shaderProgramQueryAnswer(object, pname));
     }
 
     /**
@@ -2651,7 +2651,7 @@ public final class CeltiumGllessHint {
 
     /** {@return the integer answer for the single-value shader and program queries} */
     public static int glGetShaderProgrami(int object, int pname) {
-        return org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$shaderProgramQueryAnswer(object, pname);
+        return org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$shaderProgramQueryAnswer(object, pname);
     }
 
     /** Fence tokens for the GL-less path; 0 means "no object" to every caller, as with the names. */
@@ -2709,7 +2709,7 @@ public final class CeltiumGllessHint {
      * a zero is not.
      */
     public static int glGetTexLevelParameteri(int target, int level, int pname) {
-        int measured = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texLevelSize(target, level, pname);
+        int measured = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$texLevelSize(target, level, pname);
         return org.soutalab.celtium.vulkan.gl.TextureLevelAnswer.withFallback(measured, pname);
     }
     /**
@@ -2728,7 +2728,7 @@ public final class CeltiumGllessHint {
      * the kind of lying the stub's comments elsewhere refuse.
      */
     public static void glGetTexLevelParameteriv(int target, int level, int pname, long params) {
-        int measured = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$texLevelSize(target, level, pname);
+        int measured = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$texLevelSize(target, level, pname);
         int value = org.soutalab.celtium.vulkan.gl.TextureLevelAnswer.withFallback(measured, pname);
         if (params == 0L) {
             return;

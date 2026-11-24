@@ -37,7 +37,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanTerrainGpuBackend.java'
-STUB = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java'
+STUB = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/GlsmFrontend.java'
 RASTER = ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/NativeRasterState.java'
 
 # (setter name, mutation call that must come after the boundary) in VulkanTerrainGpuBackend.

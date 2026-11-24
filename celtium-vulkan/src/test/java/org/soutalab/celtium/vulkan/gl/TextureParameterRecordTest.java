@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Pins the contract of the per-texture parameter record extracted from {@code CeltiumGlStub}
+ * Pins the contract of the per-texture parameter record extracted from {@code GlsmFrontend}
  * (refactor/giant-split-1): GL's defaults for unset pnames, the recorded/absent distinction the mirror
  * relies on, the per-name version the sampler re-confirm compares, the forget that a recycled name goes
  * through, and the record cap.

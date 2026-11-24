@@ -5,7 +5,7 @@ package org.soutalab.celtium.vulkan.gl;
  * it claims, decided once at window creation from the creation request that was actually in force.
  * <p>
  * The default terms are the BH-35 floor ({@code "3.0.0 Celtium"}, see the GL_VERSION case in
- * {@code CeltiumGlStub.stringFor}): 3.0 is the version whose gates are all backed for the
+ * {@code GlsmFrontend.stringFor}): 3.0 is the version whose gates are all backed for the
  * <i>compatibility</i> promise, which is what a compatibility context - the default request - asks for.
  * Advertising more for that promise claims entry points this stub answers with recorded no-ops.
  * <p>
@@ -23,7 +23,7 @@ package org.soutalab.celtium.vulkan.gl;
  * LWJGL3 {@code nglGetString} route in {@code CeltiumGllessHint}, and the integer queries) reads this
  * one value, because two surfaces disagreeing about the version is a crash, not a difference of
  * opinion (the two used to disagree - string 3.0, integers 4.6 - and a capability consumer took the
- * 4.4 path and stalled the client; see the GL_MAJOR_VERSION case in {@code CeltiumGlStub}).
+ * 4.4 path and stalled the client; see the GL_MAJOR_VERSION case in {@code GlsmFrontend}).
  * <p>
  * The latch is first-wins and is fed from the window-creation path only (forge122's context-terms
  * transformer, at the same anchor the requester itself writes the request). If nothing latches - a

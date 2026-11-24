@@ -26,15 +26,15 @@ class ForgetTextureCleanupTest {
 
     @Test
     void deletesAllRecordedMipLevelsCapturesAndParameters() throws Exception {
-        var ctor = CeltiumGlStub.class.getDeclaredConstructor();
+        var ctor = GlsmFrontend.class.getDeclaredConstructor();
         ctor.setAccessible(true);
-        CeltiumGlStub stub = ctor.newInstance();
-        Method dispatch = CeltiumGlStub.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+        GlsmFrontend stub = ctor.newInstance();
+        Method dispatch = GlsmFrontend.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
         dispatch.setAccessible(true);
-        Field idsField = CeltiumGlStub.class.getDeclaredField("IDS");
+        Field idsField = GlsmFrontend.class.getDeclaredField("IDS");
         idsField.setAccessible(true);
         Map<?, ?> ids = (Map<?, ?>) idsField.get(null);
-        Field installedField = CeltiumGlStub.class.getDeclaredField("installed");
+        Field installedField = GlsmFrontend.class.getDeclaredField("installed");
         installedField.setAccessible(true);
         Object previous = installedField.get(null);
         installedField.set(null, stub);
@@ -42,32 +42,32 @@ class ForgetTextureCleanupTest {
         ByteBuffer pixels = MemoryUtil.memAlloc(4 * 4 * 4);
         try {
             invoke(dispatch, stub, ids, "glBindTexture", GL_TEXTURE_2D, 25);
-            CeltiumGlStub.recordTextureAllocation(25, 4, 16, 16);
+            GlsmFrontend.recordTextureAllocation(25, 4, 16, 16);
             invoke(dispatch, stub, ids, "glTexParameteri", GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             invoke(dispatch, stub, ids, "glTexImage2D", GL_TEXTURE_2D, 5, GL_RGBA, 1, 1, 0, GL_RGBA,
                     GL_UNSIGNED_BYTE, MemoryUtil.memAddress(pixels));
 
-            assertTrue(CeltiumGlStub.textureParameterRecorded(25, GL_TEXTURE_WRAP_S));
-            assertEquals(16, CeltiumGlStub.celtium$textureExtent(25)[0]);
+            assertTrue(GlsmFrontend.textureParameterRecorded(25, GL_TEXTURE_WRAP_S));
+            assertEquals(16, GlsmFrontend.celtium$textureExtent(25)[0]);
 
             // Keep a second texture intact while forgetting texture 25.
             invoke(dispatch, stub, ids, "glBindTexture", GL_TEXTURE_2D, 26);
-            CeltiumGlStub.recordTextureAllocation(26, 2, 8, 8);
+            GlsmFrontend.recordTextureAllocation(26, 2, 8, 8);
 
-            CeltiumGlStub.forgetTextureAllocation(25);
+            GlsmFrontend.forgetTextureAllocation(25);
 
-            assertFalse(CeltiumGlStub.textureParameterRecorded(25, GL_TEXTURE_WRAP_S),
+            assertFalse(GlsmFrontend.textureParameterRecorded(25, GL_TEXTURE_WRAP_S),
                     "recorded texture parameter must be cleared on delete");
-            assertNull(CeltiumGlStub.celtium$textureExtent(25),
+            assertNull(GlsmFrontend.celtium$textureExtent(25),
                     "level 0 extent must be cleared on delete");
 
-            Field texLevelsField = CeltiumGlStub.class.getDeclaredField("texLevels");
+            Field texLevelsField = GlsmFrontend.class.getDeclaredField("texLevels");
             texLevelsField.setAccessible(true);
             Map<?, ?> texLevels = (Map<?, ?>) texLevelsField.get(stub);
             // Only texture 26's 3 mip levels (0, 1, 2) should remain.
             assertEquals(3, texLevels.size(), "all mip levels 0..5 of texture 25 must be cleared");
 
-            Field texCapturesField = CeltiumGlStub.class.getDeclaredField("texCaptures");
+            Field texCapturesField = GlsmFrontend.class.getDeclaredField("texCaptures");
             texCapturesField.setAccessible(true);
             Map<?, ?> texCaptures = (Map<?, ?>) texCapturesField.get(stub);
             assertEquals(3, texCaptures.size(), "all mip captures 0..5 of texture 25 must be cleared");
@@ -77,7 +77,7 @@ class ForgetTextureCleanupTest {
         }
     }
 
-    private static void invoke(Method dispatch, CeltiumGlStub stub, Map<?, ?> ids, String name, long... args)
+    private static void invoke(Method dispatch, GlsmFrontend stub, Map<?, ?> ids, String name, long... args)
             throws Exception {
         long[] c = new long[16];
         System.arraycopy(args, 0, c, 0, args.length);

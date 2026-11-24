@@ -7,7 +7,7 @@ package org.soutalab.celtium.vulkan.gl;
  * The packing is byte-identical to the stub's recordViewportPacked: x|y|w|h in four 16-bit
  * fields, and a negative or oversized rectangle is left out rather than truncated into a
  * different one. {@link #packed()} answers -1 until the first valid set, matching
- * {@code CeltiumGlStub.celtium$viewportPacked()}. The backend's currentViewportKey becomes a
+ * {@code GlsmFrontend.celtium$viewportPacked()}. The backend's currentViewportKey becomes a
  * dependent of {@link #version()} at merge time.
  */
 public final class GlsmViewportState {

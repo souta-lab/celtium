@@ -38,7 +38,7 @@ public class TextureUtilMixin {
     @Inject(method = "func_180600_a(IIII)V", at = @At("TAIL"), require = 1)
     private static void celtium$recordAllocatedTexture(int glTextureId, int mipmapLevels, int width, int height,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.recordTextureAllocation(glTextureId, mipmapLevels, width, height);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.recordTextureAllocation(glTextureId, mipmapLevels, width, height);
     }
 
     /**
@@ -208,7 +208,7 @@ public class TextureUtilMixin {
     @Inject(method = "func_147942_a", at = @At("HEAD"), require = 0)
     private static void celtium$forgetDeletedTexture(int glTextureId,
             org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.forgetTextureAllocation(glTextureId);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.forgetTextureAllocation(glTextureId);
         try {
             org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend backend =
                     org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends.current();

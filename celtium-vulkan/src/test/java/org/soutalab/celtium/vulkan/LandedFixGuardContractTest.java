@@ -32,7 +32,7 @@ class LandedFixGuardContractTest {
     private static final String MOD_COMPILER =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/ModShaderCompiler.java";
     private static final String GL_STUB =
-            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java";
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/GlsmFrontend.java";
 
     private static String read(String repoRelative) throws IOException {
         return Files.readString(findRepoFile(repoRelative));

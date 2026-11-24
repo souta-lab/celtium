@@ -3,7 +3,7 @@ package org.soutalab.celtium.vulkan.gl;
 /**
  * GLSM stage 3, GAP-ST-1: the single owner of the guest's capability enable/disable record.
  * <p>
- * Mirrors the stub's flat-array shape exactly (CeltiumGlStub: enables byte[0x10000] plus
+ * Mirrors the stub's flat-array shape exactly (GlsmFrontend: enables byte[0x10000] plus
  * capabilityObserved boolean[0x10000]): capability constants are dense and bounded well under
  * 0x10000, an index of 0 means "never set" which GL reads as disabled, and the observed bit
  * distinguishes an observed disable from an untouched provider default - a native replacement

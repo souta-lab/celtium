@@ -21,7 +21,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * {@code LayerSpiderEyes.java:42,50} and {@code LayerHeldBlock.java:42} for layers, and the deliberately full-bright
  * {@code LayerEndermanEyes.java:34} / {@code LayerEnderDragonEyes.java:34}, which pass {@code (61680, 0)}.
  * <p>
- * Under the GL-less window that call is a no-op: {@code glMultiTexCoord2f} sits in {@code CeltiumGlStub}'s no-op list
+ * Under the GL-less window that call is a no-op: {@code glMultiTexCoord2f} sits in {@code GlsmFrontend}'s no-op list
  * and nothing mirrors it, so the coordinate was discarded and the lit ITEM batch - the model path's batch since
  * task-12 - had no world-position term at all: entities kept their noon brightness at midnight (measured
  * 1.3-2.1x the upstream reference on the body families while the full-bright eye layer matched at 0.98). The value

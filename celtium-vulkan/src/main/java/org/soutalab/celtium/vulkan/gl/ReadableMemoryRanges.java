@@ -19,7 +19,7 @@ import org.lwjgl.system.MemoryUtil;
 
 /**
  * OS-independent range normalization, containment checks, and platform mapping providers for the client-pointer
- * fault guard in {@link CeltiumGlStub}.
+ * fault guard in {@link GlsmFrontend}.
  * <p>
  * This is a guard against dereferencing unmapped or uncommitted process memory, not an ownership or lifetime record.
  */

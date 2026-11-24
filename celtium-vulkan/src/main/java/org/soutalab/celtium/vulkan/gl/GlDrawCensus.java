@@ -1,9 +1,9 @@
 package org.soutalab.celtium.vulkan.gl;
 
 /**
- * The glDrawArrays / glDrawElements census, extracted from {@code CeltiumGlStub} (giant-split seam 5,
+ * The glDrawArrays / glDrawElements census, extracted from {@code GlsmFrontend} (giant-split seam 5,
  * QUEUE 653). Behaviour is unchanged: this class owns the counters, the refusal records and the two
- * summary lines; {@code CeltiumGlStub} keeps the public doors ({@code drawArraySummary()} /
+ * summary lines; {@code GlsmFrontend} keeps the public doors ({@code drawArraySummary()} /
  * {@code drawElementSummary()}) and passes the client-array decode counters it still owns into
  * {@link #drawArraySummary(long, long, long, long, int, String)}.
  */
@@ -61,10 +61,10 @@ static void celtium$noteImmediateBegin(int mode) {
     if (IMMEDIATE_SITES.size() >= 8) {
         return;
     }
-    String site = mode + "@" + CeltiumGlStub.celtium$callSite(6);
+    String site = mode + "@" + GlsmFrontend.celtium$callSite(6);
     if (IMMEDIATE_SITES.add(site)) {
         System.out.println("[Celtium] CELTIUM_IMMEDIATE_BEGIN mode=" + mode + "(" + immediateModeName(mode)
-                + ") calls=" + BEGIN_END_CALLS.get() + " site=[" + CeltiumGlStub.celtium$callSite(6) + "]");
+                + ") calls=" + BEGIN_END_CALLS.get() + " site=[" + GlsmFrontend.celtium$callSite(6) + "]");
     }
 }
 

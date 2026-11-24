@@ -27,14 +27,14 @@ import org.soutalab.celtium.vulkan.RenderTargetRegistry.TargetFormatClass;
  * fallback's reason kept apart. Under {@code -Dceltium.vulkan.targetFormatCensus=true} the first
  * {@value #MAX_LINES} decisions also print as {@code CELTIUM_TARGET_FORMAT} lines - the bound caps the
  * printing only, never the counting.</li>
- * <li><b>S5, the stub-side distribution.</b> {@code CeltiumGlStub} counts every colour internal format
+ * <li><b>S5, the stub-side distribution.</b> {@code GlsmFrontend} counts every colour internal format
  * recorded into its extent table (the same switch), and {@link #summary()} carries that distribution
  * beside the decision counters. The pair of numbers is what answers "did this fixture's mods actually
  * ask for 16F": the distribution says what was requested at the GL surface, the decisions say what the
  * pairs did with it.</li>
  * <li><b>S6, the stale bit-count answer.</b> The stub answers {@code GL_RED_BITS} and its siblings with
  * the delivered frame's 8 bits whatever the current target is (see the answer's own comment in
- * {@code CeltiumGlStub}); while a 16F pair is the current target that answer is stale for the target a
+ * {@code GlsmFrontend}); while a 16F pair is the current target that answer is stale for the target a
  * mod is actually drawing into. QUEUE 405 allows either fixing the answer or counting the mismatch;
  * this change counts it ({@link #noteBitsAnswer}), because the answer a mod probes to pick a format is
  * behaviour, and an observation item does not change behaviour. The count is
@@ -315,7 +315,7 @@ public final class TargetFormatCensus {
                 + " targetFormatDeviceRefused=" + DEVICE_REFUSED.get()
                 + " targetFormatForced=" + FORCED_DECISIONS.get()
                 + " targetFormatBitsAnsweredStale=" + BITS_ANSWERED_STALE.get()
-                + " targetFormatRequests[" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.targetFormatDistribution() + "]";
+                + " targetFormatRequests[" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.targetFormatDistribution() + "]";
     }
 
     // The counters, read by the pinning tests as deltas (the census is process-wide, so a test asserts

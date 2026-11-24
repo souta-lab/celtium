@@ -6,7 +6,7 @@ import org.soutalab.celtium.vulkan.NativeGeometryBuffer;
 import java.nio.ByteBuffer;
 
 /**
- * The buffer-object storage record, extracted from {@code CeltiumGlStub} unchanged in behaviour
+ * The buffer-object storage record, extracted from {@code GlsmFrontend} unchanged in behaviour
  * (refactor/giant-split-2): what {@code glBufferData} allocates, the logical size each buffer was last told it
  * holds, and what {@code glMapBuffer}/{@code glMapBufferRange} answer live here, while the stub keeps the
  * binding resolution that names the buffer a call applies to and the static doors the transformer route and

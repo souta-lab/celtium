@@ -28,15 +28,15 @@ class ReadableMappingRefreshTest {
                 return new ReadableMemoryRanges.Range[] {new ReadableMemoryRanges.Range(0x1000L, 0x2000L)};
             }
         };
-        CeltiumGlStub stub = new CeltiumGlStub(provider);
+        GlsmFrontend stub = new GlsmFrontend(provider);
         // The state a long run reaches: hundreds of refreshes already done, the last one long ago.
-        var refreshes = CeltiumGlStub.class.getDeclaredField("readableMappingRefreshes");
+        var refreshes = GlsmFrontend.class.getDeclaredField("readableMappingRefreshes");
         refreshes.setAccessible(true);
         refreshes.setInt(stub, 500);
-        var lastRefresh = CeltiumGlStub.class.getDeclaredField("readableMappingLastRefreshNanos");
+        var lastRefresh = GlsmFrontend.class.getDeclaredField("readableMappingLastRefreshNanos");
         lastRefresh.setAccessible(true);
         lastRefresh.setLong(stub, 0L);
-        var method = CeltiumGlStub.class.getDeclaredMethod("celtium$refreshReadableMappings");
+        var method = GlsmFrontend.class.getDeclaredMethod("celtium$refreshReadableMappings");
         method.setAccessible(true);
 
         ReadableMemoryRanges.Range[] ranges = (ReadableMemoryRanges.Range[]) method.invoke(stub);

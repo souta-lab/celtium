@@ -775,7 +775,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * release has to make the same decision.
      */
     public boolean frameImageAcquireNeeded() {
-        return this.neverCleared || org.soutalab.celtium.vulkan.gl.CeltiumGlStub.hasPendingClears();
+        return this.neverCleared || org.soutalab.celtium.vulkan.gl.GlsmFrontend.hasPendingClears();
     }
 
     /**
@@ -1006,14 +1006,14 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 this.gameClearLatched = false;
             }
         } else {
-            int owner = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.pendingClearDrawFbo();
-            boolean ownerIsMain = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.pendingClearIsMain();
+            int owner = org.soutalab.celtium.vulkan.gl.GlsmFrontend.pendingClearDrawFbo();
+            boolean ownerIsMain = org.soutalab.celtium.vulkan.gl.GlsmFrontend.pendingClearIsMain();
             if (owner >= 0 && !ownerIsMain) {
                 // The clear names one of the game's own framebuffers. Every non-main identity shares the chain pair,
                 // so applying it here wipes whatever another identity drew into that image - measured as the
                 // panorama's faces being cleared to white between their draw and the copy that reads them. The clear
                 // belongs to an image this path does not own, so it is dropped and counted rather than applied.
-                clears = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.consumePendingClears();
+                clears = org.soutalab.celtium.vulkan.gl.GlsmFrontend.consumePendingClears();
                 this.gameClearsDroppedForeignTarget++;
                 this.lastDroppedClearOwner = owner;
                 if (!first) {
@@ -1024,7 +1024,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 initializeOnly = true;
                 clears = 0;
             } else {
-                clears = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.consumePendingClears();
+                clears = org.soutalab.celtium.vulkan.gl.GlsmFrontend.consumePendingClears();
             }
         }
         if (clears == 0 && !first) {
@@ -1059,7 +1059,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     rgba[3] = latchedAlpha;
                 } else {
                     // The frame image is the main framebuffer: its clear uses the values that clear was issued with.
-                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mainClearValues(rgba);
+                    org.soutalab.celtium.vulkan.gl.GlsmFrontend.mainClearValues(rgba);
                 }
                 org.lwjgl.vulkan.VkClearColorValue value =
                         org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
@@ -1080,9 +1080,9 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         DEPTH_TRANSFER_LAYOUT, value, range);
             }
             if (depth) {
-                double mainDepth = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.mainClearValues(this.clearColourScratch);
+                double mainDepth = org.soutalab.celtium.vulkan.gl.GlsmFrontend.mainClearValues(this.clearColourScratch);
                 double depthValue = latched || initializeOnly ? latchedDepth
-                        : Double.isNaN(mainDepth) ? org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth() : mainDepth;
+                        : Double.isNaN(mainDepth) ? org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth() : mainDepth;
                 org.lwjgl.vulkan.VkClearDepthStencilValue value =
                         org.lwjgl.vulkan.VkClearDepthStencilValue.calloc(stack);
                 value.depth((float) depthValue).stencil(0);
@@ -3189,7 +3189,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 // keeps its own background (measured: the fixture's 0x081020 read back as 0 under the fixed pair
                 // clear, every untouched pixel a mismatch).
                 float[] clearColor = this.clearColourFloats;
-                org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(clearColor);
+                org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearColor(clearColor);
                 VkClearColorValue color = this.clearColour;
                 color.float32(0, clearColor[0]);
                 color.float32(1, clearColor[1]);
@@ -3206,7 +3206,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 vkCmdClearColorImage(command, this.colorImage, colorClearLayout(), color, range);
 
                 VkClearDepthStencilValue depth = this.clearDepthValue;
-                depth.depth((float) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth()).stencil(0);
+                depth.depth((float) org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth()).stencil(0);
                 range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
                 vkCmdClearDepthStencilImage(command, this.depthImage, DEPTH_TRANSFER_LAYOUT, depth, range);
 
@@ -3274,8 +3274,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
             if (celtium$deferredClearNeedsDepthBarrier(depthLayout())) {
                 recordDepthToRender(command);
             }
-            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(this.deferredClearColour);
-            this.deferredClearDepth = (float) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth();
+            org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearColor(this.deferredClearColour);
+            this.deferredClearDepth = (float) org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth();
             this.deferredClearPending = true;
             this.clears++;
         }
@@ -3473,7 +3473,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     // because this image is a framebuffer's content and GL's framebuffer starts from the game's
                     // state, not a renderer-chosen one.
                     float[] clearColor = new float[4];
-                    org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearColor(clearColor);
+                    org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearColor(clearColor);
                     VkClearColorValue color = VkClearColorValue.calloc(stack);
                     color.float32(0, clearColor[0]);
                     color.float32(1, clearColor[1]);
@@ -3488,7 +3488,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 // The game's glClearDepth, because this clear is the game's own "clear just the depth" - the real
                 // default framebuffer answers it with the recorded value, not with 1.0.
                 VkClearDepthStencilValue depth = VkClearDepthStencilValue.calloc(stack);
-                depth.depth((float) org.soutalab.celtium.vulkan.gl.CeltiumGlStub.clearDepth()).stencil(0);
+                depth.depth((float) org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth()).stencil(0);
                 range.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT);
                 vkCmdClearDepthStencilImage(command, this.depthImage, DEPTH_TRANSFER_LAYOUT, depth, range);
 

@@ -14,7 +14,7 @@ import static org.lwjgl.system.MemoryUtil.memAddress;
  * game compares or prints the string, it does not keep the pointer. The buffer is direct,
  * holds the ASCII bytes plus a NUL terminator, and grows only when a string larger than
  * what is already interned arrives; the returned address therefore changes only on a
- * grow, exactly as when the buffer lived in {@code CeltiumGlStub}'s fields. The answers
+ * grow, exactly as when the buffer lived in {@code GlsmFrontend}'s fields. The answers
  * themselves (which string each pname gets) stay in {@code GlStateQueries}; this class
  * owns only the storage the answers are delivered through, so a string answer and the
  * buffer it was read from can no longer belong to different records.
