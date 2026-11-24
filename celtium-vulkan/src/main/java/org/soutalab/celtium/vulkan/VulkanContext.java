@@ -2865,17 +2865,16 @@ public final class VulkanContext {
                     .apiVersion(VK12.VK_API_VERSION_1_2);
             VkInstanceCreateInfo createInfo = VkInstanceCreateInfo.calloc(stack).sType$Default()
                     .pApplicationInfo(application);
-            // The platform surface extensions are instance extensions, so they have to be enabled here - but only
-            // when the swapchain probe asks for them. A normal run keeps the exact extension set it was verified
-            // with, and the probe reports "extension not enabled" instead of the instance being changed silently.
+            // The platform surface extensions are instance extensions, so they have to be enabled here.
             List<String> enabledInstanceExtensions = new ArrayList<String>();
-            // Enabled when anything wants to present: the diagnostic probe, or the frame present itself. Gating it on the probe
-            // alone is what made a run with the probe off create no swapchain at all and look validation-clean for the
-            // trivial reason that it presented nothing. It is still capability-checked below.
-            if (SWAPCHAIN_REQUESTED || PRESENT_FROM_COMPOSITE) {
-                java.util.Set<String> available = instanceExtensionNames(stack);
-                enabledInstanceExtensions.addAll(presentationInstanceExtensions(available));
-            }
+            // Enabled unconditionally: the window-backend present path creates a swapchain whether or not the
+            // frame is presented from the composite, so the surface extensions cannot be gated on the probe or
+            // on presentFromComposite. That gate is what made presentFromComposite=false unstartable - the
+            // present path retried swapchain creation against a device created without VK_KHR_swapchain until
+            // the bounded escalation crashed the run. The selection itself stays capability-checked:
+            // presentationInstanceExtensions only returns extensions the instance advertises.
+            java.util.Set<String> available = instanceExtensionNames(stack);
+            enabledInstanceExtensions.addAll(presentationInstanceExtensions(available));
             Object messengerInfo = null;
             if (validation) {
                 // Validation is a diagnostic, not a requirement: a machine without the layer or the debug-utils
@@ -3186,9 +3185,9 @@ public final class VulkanContext {
             required.add(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
             required.add(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
         }
-        if (SWAPCHAIN_REQUESTED || PRESENT_FROM_COMPOSITE) {
-            required.add(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-        }
+        // The swapchain extension is enabled unconditionally (see createLogicalDevice), so the contract
+        // names it unconditionally too.
+        required.add(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
         // Choosing it here is the same device the renderer will use, and it makes the contract line name the format
         // instead of "unresolved" (the chooser is idempotent and registers the device on first use).
         int depthFormat = VulkanDepthFormat.chosen(this.physicalDevice);
@@ -3445,12 +3444,13 @@ public final class VulkanContext {
             // The swapchain functions live in a device extension, so a surface alone is not enough: without it
             // enabled the loader table has no vkCreateSwapchainKHR and LWJGL's own capability check reports a
             // NullPointerException on the missing function pointer, which is exactly what the first probes hit.
-            // Enabled only for the probe, and only when the device advertises it.
-            if (SWAPCHAIN_REQUESTED || PRESENT_FROM_COMPOSITE) {
-                Set<String> available = deviceExtensionNames(stack, this.physicalDevice);
-                if (available.contains(VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
-                    deviceExtensions.add(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-                }
+            // Enabled whenever the device advertises it, independently of the probe and of
+            // presentFromComposite: the window-backend present path creates a swapchain on either setting of
+            // that flag, so gating the extension on it left presentFromComposite=false with a present path
+            // that could never create its swapchain.
+            Set<String> available = deviceExtensionNames(stack, this.physicalDevice);
+            if (available.contains(VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
+                deviceExtensions.add(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
             }
             // Dynamic rendering, for the shaderpack path: a pack's fragment stage writes however many colour attachments
             // its DRAWBUFFERS line asks for, and a VkPipeline has to be created against render targets whose formats
