@@ -11,14 +11,18 @@ package org.soutalab.celtium.vulkan.gl;
  * does NOT flush (it is SEM_NOOP today) - {@link #noteGuestFlush()} counts the arrival
  * so the decision stays visible, and never triggers a boundary.
  * <p>
- * Wiring status (stage-3 routes landing): F-2 (stub bindFramebuffer), F-3 (backend
- * flushBeforeClear entry), F-7 (NativeRasterState.changing), F-9 (stub
- * consumePendingClears) and F-11 (stub SEM_NOOP dispatch) record here. Still pending
- * for the merge phase, with no stub-side counter of their own to retire: F-1 (group
- * queue capacity, inside the backend's queue), F-4 (GL draw entry), F-5 (frame drain),
- * F-6 (post-chain input), F-8 (immediate run commit), F-10 (program materialize) -
- * their triggers live inside VulkanTerrainGpuBackend's submission machinery, whose
- * own accounting (GlDrawWindowCensus/FramePassTimings) stays until those six land.
+ * Wiring status: F-2 (stub bindFramebuffer), F-3 (backend flushBeforeClear entry),
+ * F-7 (NativeRasterState.changing), F-9 (stub consumePendingClears) and F-11 (stub
+ * SEM_NOOP dispatch) record here since the stage-3 routes landing. The M-6 landing
+ * wired the five remaining backend triggers at their single funnels: F-1 (the size
+ * trip's celtium$flushImmediateWindowForCause, CAUSE_SIZE), F-4 (the stamped funnel
+ * celtium$flushPendingForGlDrawCause, CAUSE_BATCH_SUBMIT only - the funnel's other
+ * causes are F-3 ordering), F-5 (celtium$flushPendingAtFrameBoundary entry), F-6
+ * (celtium$flushPendingForChainInput entry) and F-8 (submitImmediateBatch entry, the
+ * funnel of every immediate-run commit). F-10 (program materialize) is not recorded
+ * here: its trigger is owned by GlsmPackState's per-bucket versions (superset proof
+ * section 6). The backend's own accounting (GlDrawWindowCensus/FramePassTimings)
+ * still runs alongside; retiring it is a separate slice, not part of this wiring.
  */
 public final class FlushBoundaryCensus {
     /** The eleven flush triggers of census §5, in census order. */
