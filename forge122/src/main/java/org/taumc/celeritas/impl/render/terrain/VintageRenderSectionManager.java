@@ -199,9 +199,28 @@ public class VintageRenderSectionManager extends RenderSectionManager {
         int y = render.getChunkY();
         var section = y >= 0 && y < storage.length ? storage[y] : null;
 
-        PrepareNullCensus.GLOBAL.recordAddEmpty(PrepareNullCensus.classifyForNullBranch(
+        PrepareNullCensus.Reason reason = PrepareNullCensus.classifyForNullBranch(
                 chunk.isEmpty(), storage.length, y,
-                section == null, section != null && section.isEmpty()));
+                section == null, section != null && section.isEmpty());
+        PrepareNullCensus.GLOBAL.recordAddEmpty(reason);
+
+        if (reason == PrepareNullCensus.Reason.SLOT_ABSENT
+                || reason == PrepareNullCensus.Reason.SLOT_EMPTY) {
+            // The discrimination this census cannot make today (item 683, leg-3): a slot that
+            // is absent/empty at add time is classified legitimateEmpty, but the commit is
+            // final - onSectionAdded is a no-op for an existing section and the only
+            // re-prepare trigger is a per-block markBlockRangeForRenderUpdate. Register the
+            // section so the sweep in updateChunks can count a later bulk arrival of geometry
+            // into this slot (chunk-data re-fill allocates storage without per-block marks).
+            // Interior = the section top is below the column height value at the centre
+            // column: geometry already exists above it, so "air above the terrain" cannot
+            // explain this section later gaining blocks.
+            int topY = y * 16 + 15;
+            int height = chunk.getHeightValue(8, 8);
+            PrepareNullCensus.GLOBAL.registerAddEmpty(
+                    PrepareNullCensus.packSectionKey(render.getChunkX(), y, render.getChunkZ()),
+                    topY < height);
+        }
     }
 
     @Override
@@ -258,10 +277,38 @@ public class VintageRenderSectionManager extends RenderSectionManager {
         super.scheduleSectionForRebuild(x, y, z, important);
     }
 
+    /** Sweep throttle: one bounded slice every 300 updateChunks calls. */
+    private int celtium$lateArrivalSweepCalls;
+
     @Override
     public void updateChunks(boolean updateImmediately) {
         this.sectionCache.cleanup();
         super.updateChunks(updateImmediately);
+
+        if (PrepareNullCensus.enabled()
+                && PrepareNullCensus.GLOBAL.trackedEmptyCount() > 0
+                && ++this.celtium$lateArrivalSweepCalls >= 300) {
+            this.celtium$lateArrivalSweepCalls = 0;
+            // 512 keys per sweep: at the leg-3 population (1700 registered) the whole set is
+            // re-read roughly every 1200 frames, and a single sweep is a few hundred map/slot
+            // reads on the render thread - desk estimate < 0.05 ms, and only while the census
+            // property is set.
+            PrepareNullCensus.GLOBAL.sweepAddEmpty(512, key -> {
+                int sx = PrepareNullCensus.unpackSectionX(key);
+                int sy = PrepareNullCensus.unpackSectionY(key);
+                int sz = PrepareNullCensus.unpackSectionZ(key);
+                Chunk chunk = this.world.getChunk(sx, sz);
+                if (chunk.isEmpty()) {
+                    return 2; // no longer loaded: lifecycle over, drop silently
+                }
+                var array = chunk.getBlockStorageArray();
+                if (sy < 0 || sy >= array.length) {
+                    return 0;
+                }
+                var slot = array[sy];
+                return (slot != Chunk.NULL_BLOCK_STORAGE && !slot.isEmpty()) ? 1 : 0;
+            });
+        }
     }
 
     /**

@@ -122,4 +122,54 @@ class PrepareNullCensusTest {
         org.junit.jupiter.api.Assertions.assertTrue(line.endsWith(" addEmpty=1"),
                 "add-path share must be the line-end addEmpty field: " + line);
     }
+
+    @Test
+    void sectionKeyPackRoundTripsIncludingNegatives() {
+        long key = PrepareNullCensus.packSectionKey(-1555, 7, 2153);
+        org.junit.jupiter.api.Assertions.assertEquals(-1555, PrepareNullCensus.unpackSectionX(key));
+        org.junit.jupiter.api.Assertions.assertEquals(7, PrepareNullCensus.unpackSectionY(key));
+        org.junit.jupiter.api.Assertions.assertEquals(2153, PrepareNullCensus.unpackSectionZ(key));
+
+        long zero = PrepareNullCensus.packSectionKey(0, 0, 0);
+        org.junit.jupiter.api.Assertions.assertEquals(0, PrepareNullCensus.unpackSectionX(zero));
+        org.junit.jupiter.api.Assertions.assertEquals(0, PrepareNullCensus.unpackSectionZ(zero));
+    }
+
+    @Test
+    void sweepCountsLateArrivalOnceAndDropsResolvedKeys() {
+        var census = new PrepareNullCensus(24);
+        long arrived = PrepareNullCensus.packSectionKey(10, 3, -4);
+        long interiorArrived = PrepareNullCensus.packSectionKey(11, 2, -4);
+        long stillEmpty = PrepareNullCensus.packSectionKey(12, 3, -4);
+        long gone = PrepareNullCensus.packSectionKey(13, 3, -4);
+
+        census.registerAddEmpty(arrived, false);
+        census.registerAddEmpty(interiorArrived, true);
+        census.registerAddEmpty(stillEmpty, false);
+        census.registerAddEmpty(gone, false);
+        org.junit.jupiter.api.Assertions.assertEquals(4, census.trackedEmptyCount());
+
+        java.util.Map<Long, Integer> states = java.util.Map.of(
+                arrived, 1, interiorArrived, 1, stillEmpty, 0, gone, 2);
+        int inspected = census.sweepAddEmpty(512, k -> states.getOrDefault(k, 0));
+
+        org.junit.jupiter.api.Assertions.assertEquals(4, inspected);
+        org.junit.jupiter.api.Assertions.assertEquals(2, census.lateArrivalCount());
+        org.junit.jupiter.api.Assertions.assertEquals(1, census.lateInteriorCount());
+        // Only the still-empty key remains registered; a second sweep must not recount.
+        org.junit.jupiter.api.Assertions.assertEquals(1, census.trackedEmptyCount());
+        census.sweepAddEmpty(512, k -> 1);
+        org.junit.jupiter.api.Assertions.assertEquals(3, census.lateArrivalCount());
+        org.junit.jupiter.api.Assertions.assertEquals(0, census.trackedEmptyCount());
+    }
+
+    @Test
+    void sweepRespectsItsSliceBound() {
+        var census = new PrepareNullCensus(0);
+        for (int i = 0; i < 10; i++) {
+            census.registerAddEmpty(PrepareNullCensus.packSectionKey(i, 1, 0), false);
+        }
+        org.junit.jupiter.api.Assertions.assertEquals(3, census.sweepAddEmpty(3, k -> 0));
+        org.junit.jupiter.api.Assertions.assertEquals(10, census.trackedEmptyCount());
+    }
 }

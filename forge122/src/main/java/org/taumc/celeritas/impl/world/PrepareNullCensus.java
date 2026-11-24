@@ -152,6 +152,11 @@ public final class PrepareNullCensus {
     private long slotAbsent;
     private long slotEmpty;
     private long yOutOfRange;
+    private final java.util.Set<Long> addEmptyTracked = new java.util.HashSet<>();
+    private final java.util.Set<Long> addEmptyInterior = new java.util.HashSet<>();
+    private long lateArrival;
+    private long lateInterior;
+    private long trackedResolvedGone;
 
     public PrepareNullCensus(int lineLimit) {
         this.lineLimit = Math.max(0, lineLimit);
@@ -181,6 +186,109 @@ public final class PrepareNullCensus {
         this.bump(reason);
     }
 
+    // ---- late-arrival tracker (item 683 slot-absent diagnosis) ----
+    // Sections committed EMPTY at add time whose reason was SLOT_ABSENT / SLOT_EMPTY are
+    // registered here; a throttled sweep from VintageRenderSectionManager.updateChunks
+    // re-reads their storage slots, and a slot that has since become allocated and non-empty
+    // is a late arrival: the commit was final (onSectionAdded is a no-op for an existing
+    // section and the only re-prepare trigger is a per-block markBlockRangeForRenderUpdate),
+    // so bulk chunk-data arrival into the slot is never re-prepared. Default off: every entry
+    // point is gated on enabled(), exactly like the existing census hooks.
+
+    // ---- section key packing (self-contained; section coords |x|,|z| < 2^23, 0 <= y < 2^14) ----
+    public static long packSectionKey(int x, int y, int z) {
+        return ((long) (x & 0xFFFFFF) << 38) | ((long) (z & 0xFFFFFF) << 14) | (y & 0x3FFF);
+    }
+
+    public static int unpackSectionX(long key) {
+        int v = (int) (key >> 38) & 0xFFFFFF;
+        return (v & 0x800000) != 0 ? v - 0x1000000 : v;
+    }
+
+    public static int unpackSectionZ(long key) {
+        int v = (int) (key >> 14) & 0xFFFFFF;
+        return (v & 0x800000) != 0 ? v - 0x1000000 : v;
+    }
+
+    public static int unpackSectionY(long key) {
+        return (int) (key & 0x3FFF);
+    }
+
+    /** Hard cap so a pathological session cannot grow the registry without bound. */
+    private static final int TRACKED_CAP = 262144;
+
+    /**
+     * Registers a section committed EMPTY at add time (SLOT_ABSENT / SLOT_EMPTY only; the
+     * caller filters). interior = the section's top was below the chunk's height value at
+     * registration, i.e. the column already had geometry above this section.
+     */
+    public void registerAddEmpty(long key, boolean interior) {
+        if (this.addEmptyTracked.size() < TRACKED_CAP) {
+            this.addEmptyTracked.add(key);
+            if (interior) {
+                this.addEmptyInterior.add(key);
+            }
+        }
+    }
+
+    /** Sections currently registered as add-empty and not yet resolved by the sweep. */
+    public int trackedEmptyCount() {
+        return this.addEmptyTracked.size();
+    }
+
+    public long lateArrivalCount() {
+        return this.lateArrival;
+    }
+
+    public long lateInteriorCount() {
+        return this.lateInterior;
+    }
+
+    /**
+     * One sweep step over at most maxKeys registered sections. slotState is the caller's fresh
+     * read for the section: 0 = still absent/empty, 1 = slot now allocated and non-empty
+     * (late arrival), 2 = chunk no longer loaded (section lifecycle over; drop silently).
+     * Returns how many keys were inspected. The caller supplies the read so this class stays
+     * free of Minecraft types and unit-testable, the same split classify() already uses.
+     */
+    public int sweepAddEmpty(int maxKeys, java.util.function.LongFunction<Integer> slotState) {
+        int inspected = 0;
+        var it = this.addEmptyTracked.iterator();
+        while (it.hasNext() && inspected < maxKeys) {
+            long key = it.next();
+            inspected++;
+            int state = slotState.apply(key);
+            if (state == 1) {
+                this.lateArrival++;
+                if (this.addEmptyInterior.remove(key)) {
+                    this.lateInterior++;
+                }
+                it.remove();
+                this.printLateArrivalIfDue();
+            } else if (state == 2) {
+                this.addEmptyInterior.remove(key);
+                it.remove();
+                this.trackedResolvedGone++;
+            }
+        }
+        return inspected;
+    }
+
+    private void printLateArrivalIfDue() {
+        // Same cadence discipline as bump(): first sighting and every hundredth, under the
+        // session line cap, so a leg sees arrivals without a line per section. CeltiumLogLimiter
+        // note: [Celtium] lines are capped at 16 per tag by default; legs already raise
+        // -Dceltium.debug.logLinesPerTag=100000 (leg-3 §2), and this print shares the census's
+        // existing line budget instead of adding a new marker.
+        if (this.printedLines >= this.lineLimit) {
+            return;
+        }
+        if (this.lateArrival == 1 || this.lateArrival % 100 == 0) {
+            this.printedLines++;
+            this.printSnapshot();
+        }
+    }
+
     private void bump(Reason reason) {
         switch (reason) {
             case BLANK_CHUNK -> this.blankChunk++;
@@ -206,6 +314,9 @@ public final class PrepareNullCensus {
                 + " yOutOfRange=" + s.yOutOfRange
                 + " legitimateEmpty=" + s.legitimateEmpty()
                 + " suspicious=" + s.suspicious()
+                + " lateArrival=" + this.lateArrival
+                + " lateInterior=" + this.lateInterior
+                + " trackedEmpty=" + this.addEmptyTracked.size()
                 + " addEmpty=" + this.addEmptyCommits);
     }
 
