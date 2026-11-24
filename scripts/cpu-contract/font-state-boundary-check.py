@@ -123,11 +123,20 @@ def check_stub(text, failures):
         nxt = text.find('case SEM_', match.end())
         body = text[match.end():nxt if nxt > 0 else len(text)]
         if write not in body and 'setCapability(' in body:
+            # The producer's own record write: the enables array before the GLSM rewiring
+            # (GAP-ST-1: `enables[capability] = next`), GlsmEnableState's set since. The boundary
+            # call the default branch makes on a real draw-state change must precede that write;
+            # capabilities routed to NativeRasterState fire the same boundary through the raster
+            # owner's before-change hook inside its setters, before their stores.
+            enable_write = 'GlsmEnableState.current().set(capability, enabled)'
             if producer is None:
                 failures.append('stub: %s writes through setCapability, which the contract cannot find' % case)
             elif 'noteDrawStateBoundary()' not in producer:
                 failures.append('stub: %s writes through setCapability, which fires no boundary' % case)
-            elif producer.index('noteDrawStateBoundary()') > producer.index('enables[capability] = next'):
+            elif enable_write not in producer:
+                failures.append('stub: %s writes through setCapability, whose enable write the contract cannot find'
+                                % case)
+            elif producer.index('noteDrawStateBoundary()') > producer.index(enable_write):
                 failures.append('stub: %s boundary fires AFTER the write in setCapability' % case)
             continue
         # Since the raster records moved into NativeRasterState, a case writes through `this.raster.<setter>(`, and
