@@ -17,6 +17,8 @@ public final class GlsmClearState {
 
     private float red, green, blue = 0.0f, alpha = 1.0f;
     private double depth = 1.0;
+    /** The stencil clear value (GLSM M-4); GL's initial value is 0. Read back by GL_STENCIL_CLEAR_VALUE. */
+    private int stencil;
     private int pendingMask;
     private int pendingDrawFbo;
     private boolean pendingIsMain = true;
@@ -36,6 +38,10 @@ public final class GlsmClearState {
     }
 
     public void clearDepth(double depth) { this.depth = depth; this.version++; }
+
+    public void clearStencil(int stencil) { this.stencil = stencil; this.version++; }
+
+    public int stencil() { return this.stencil; }
 
     public float red() { return this.red; }
     public float green() { return this.green; }

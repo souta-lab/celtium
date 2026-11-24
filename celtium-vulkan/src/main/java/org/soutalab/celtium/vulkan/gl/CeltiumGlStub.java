@@ -4230,6 +4230,38 @@ public final class CeltiumGlStub implements FunctionProvider {
         }
     }
 
+    /** {@code glClearStencil} (GLSM M-4): the third clear value joins GlsmClearState beside colour and depth. */
+    public static void celtium$clearStencil(int stencil) {
+        GlsmHintLedger.current().noteArrival("glClearStencil");
+        CeltiumGlStub stub = installed;
+        if (stub != null) {
+            stub.recordClearStencil(stencil);
+        }
+    }
+
+    /**
+     * {@code glBindSampler} (GLSM M-4): the sampler-object binding lands in the texture-unit ledger.
+     * No installed-stub gate: NativeTextureBindings is a standalone render-thread owner (the raster
+     * adapter writes it the same way), so a binding that arrives before installation is still state
+     * a later draw reads, not an arrival to drop.
+     */
+    public static void celtium$bindSampler(int unit, int sampler) {
+        GlsmHintLedger.current().noteArrival("glBindSampler");
+        org.soutalab.celtium.vulkan.NativeTextureBindings.current().bindSampler(unit, sampler);
+    }
+
+    /** {@code glBindBufferBase} (GLSM M-4): the indexed binding lands in GlsmBufferState's indexed ledger. */
+    public static void celtium$bindBufferBase(int target, int index, int buffer) {
+        GlsmHintLedger.current().noteArrival("glBindBufferBase");
+        GlsmBufferState.current().bindBufferBase(target, index, buffer);
+    }
+
+    /** {@code glBindBufferRange} (GLSM M-4): as {@link #celtium$bindBufferBase}, with the named range. */
+    public static void celtium$bindBufferRange(int target, int index, int buffer, long offset, long size) {
+        GlsmHintLedger.current().noteArrival("glBindBufferRange");
+        GlsmBufferState.current().bindBufferRange(target, index, buffer, offset, size);
+    }
+
     /** {@return the game's current depth-write state}; assumed true when no backend is installed. */
     private static boolean depthWritesEnabled() {
         try {
@@ -4324,6 +4356,10 @@ public final class CeltiumGlStub implements FunctionProvider {
 
     private void recordClearDepth(double depth) {
         GlsmClearState.current().clearDepth(Math.max(0.0D, Math.min(1.0D, depth)));
+    }
+
+    private void recordClearStencil(int stencil) {
+        GlsmClearState.current().clearStencil(stencil);
     }
 
     /**

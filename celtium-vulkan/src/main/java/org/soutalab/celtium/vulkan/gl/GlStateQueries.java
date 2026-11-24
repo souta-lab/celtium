@@ -693,8 +693,10 @@ final class GlStateQueries {
                 putFloatOrDouble(out, 0, (float) CeltiumGlStub.clearDepth(), asDouble);
                 return;
             }
-            case 0x0B91: { // GL_STENCIL_CLEAR_VALUE - no stencil state is recorded, GL's default is 0
-                putFloatOrDouble(out, 0, 0.0f, asDouble);
+            case 0x0B91: { // GL_STENCIL_CLEAR_VALUE - the value glClearStencil recorded in GlsmClearState
+                // (GLSM M-4; before the record existed this answered the constant 0, so a write/read
+                // round trip through glClearStencil and glGet* could never close).
+                putFloatOrDouble(out, 0, (float) GlsmClearState.current().stencil(), asDouble);
                 return;
             }
             case 0x0BC1: { // GL_ALPHA_TEST_FUNC, as a float as glGetFloatv reports enums

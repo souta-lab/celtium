@@ -1372,6 +1372,21 @@ public final class CeltiumGllessHint {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindBuffer(target, name);
     }
 
+    /** Binds a sampler object to a texture unit, as {@code glBindSampler(unit, sampler)} does (GLSM M-4). */
+    public static void glBindSampler(int unit, int sampler) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindSampler(unit, sampler);
+    }
+
+    /** Binds a buffer at an indexed target point, as {@code glBindBufferBase(target, index, buffer)} does (GLSM M-4). */
+    public static void glBindBufferBase(int target, int index, int buffer) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindBufferBase(target, index, buffer);
+    }
+
+    /** Binds a buffer range at an indexed target point, as {@code glBindBufferRange} does (GLSM M-4). */
+    public static void glBindBufferRange(int target, int index, int buffer, long offset, long size) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$bindBufferRange(target, index, buffer, offset, size);
+    }
+
     /**
      * Binds a texture, as {@code glBindTexture(target, name)} does. The call used to be dropped whole by the no-op
      * trampoline, so a mod's raw {@code GL11.glBindTexture} left no record anywhere: the upload that followed was
@@ -2471,6 +2486,11 @@ public final class CeltiumGllessHint {
 
     public static void glClearDepth(double depth) {
         org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clearDepth(depth);
+    }
+
+    /** Raw {@code glClearStencil}: the stencil clear value, recorded in GlsmClearState (GLSM M-4). */
+    public static void glClearStencil(int stencil) {
+        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$clearStencil(stencil);
     }
 
     /** Returns the live mirrored state with the component count implied by pname, not one scalar zero. */

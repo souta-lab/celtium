@@ -32,6 +32,24 @@ public final class NativeRasterState {
     private boolean polygonOffsetEnabled;
     private boolean polygonOffsetCalled;
     private float polygonOffsetFactor, polygonOffsetUnits;
+    // GLSM M-4 (INT-2 remainder): the stencil family, polygon mode, sample coverage and the constant blend
+    // colour. Front and back stencil state is kept separately; the non-Separate setters write both faces.
+    // Defaults are GL's initial values: func GL_ALWAYS (0x0207), ref 0, read/write masks all bits, ops
+    // GL_KEEP (0x1E00), polygon mode GL_FILL (0x1B02), coverage 1.0 not inverted, blend colour (0,0,0,0).
+    // This renderer has no stencil attachment (GL_STENCIL_BITS answers 0), so these fields are the state
+    // record only: nothing applies them to a pipeline yet, but the record is what the GL_STENCIL_* queries
+    // and a future stencil-capable pipeline read.
+    private int stencilFuncFront = 0x0207, stencilFuncBack = 0x0207;
+    private int stencilRefFront, stencilRefBack;
+    private int stencilValueMaskFront = ~0, stencilValueMaskBack = ~0;
+    private int stencilFailFront = 0x1E00, stencilFailBack = 0x1E00;
+    private int stencilDepthFailFront = 0x1E00, stencilDepthFailBack = 0x1E00;
+    private int stencilDepthPassFront = 0x1E00, stencilDepthPassBack = 0x1E00;
+    private int stencilWriteMaskFront = ~0, stencilWriteMaskBack = ~0;
+    private int polygonModeFront = 0x1B02, polygonModeBack = 0x1B02;
+    private float sampleCoverageValue = 1.0f;
+    private boolean sampleCoverageInvert;
+    private float blendColorRed, blendColorGreen, blendColorBlue, blendColorAlpha;
     private Runnable beforeChange;
     private boolean notifying;
     /**
@@ -175,5 +193,91 @@ public final class NativeRasterState {
     public void polygonOffset(float factor, float units) {
         if (!this.polygonOffsetCalled || this.polygonOffsetFactor != factor || this.polygonOffsetUnits != units) changing();
         this.polygonOffsetFactor = factor; this.polygonOffsetUnits = units; this.polygonOffsetCalled = true;
+    }
+
+    /** GL_FRONT (0x0404) and GL_FRONT_AND_BACK (0x0408) both name the front face here; anything else is back. */
+    private static boolean isFrontFace(int face) { return face != 0x0405; }
+
+    public int stencilFunc(boolean front) { return front ? this.stencilFuncFront : this.stencilFuncBack; }
+    public int stencilRef(boolean front) { return front ? this.stencilRefFront : this.stencilRefBack; }
+    public int stencilValueMask(boolean front) { return front ? this.stencilValueMaskFront : this.stencilValueMaskBack; }
+    /** {@code glStencilFunc}: the non-Separate form sets both faces. */
+    public void stencilFunc(int func, int ref, int mask) {
+        stencilFuncSeparate(0x0408, func, ref, mask);
+    }
+    public void stencilFuncSeparate(int face, int func, int ref, int mask) {
+        boolean front = isFrontFace(face), back = face != 0x0404;
+        boolean changed = (front && (this.stencilFuncFront != func || this.stencilRefFront != ref
+                || this.stencilValueMaskFront != mask))
+                || (back && (this.stencilFuncBack != func || this.stencilRefBack != ref
+                || this.stencilValueMaskBack != mask));
+        if (!changed) return;
+        changing();
+        if (front) { this.stencilFuncFront = func; this.stencilRefFront = ref; this.stencilValueMaskFront = mask; }
+        if (back) { this.stencilFuncBack = func; this.stencilRefBack = ref; this.stencilValueMaskBack = mask; }
+        this.version++;
+    }
+    public int stencilFail(boolean front) { return front ? this.stencilFailFront : this.stencilFailBack; }
+    public int stencilDepthFail(boolean front) { return front ? this.stencilDepthFailFront : this.stencilDepthFailBack; }
+    public int stencilDepthPass(boolean front) { return front ? this.stencilDepthPassFront : this.stencilDepthPassBack; }
+    /** {@code glStencilOp}: the non-Separate form sets both faces. */
+    public void stencilOp(int fail, int depthFail, int depthPass) {
+        stencilOpSeparate(0x0408, fail, depthFail, depthPass);
+    }
+    public void stencilOpSeparate(int face, int fail, int depthFail, int depthPass) {
+        boolean front = isFrontFace(face), back = face != 0x0404;
+        boolean changed = (front && (this.stencilFailFront != fail || this.stencilDepthFailFront != depthFail
+                || this.stencilDepthPassFront != depthPass))
+                || (back && (this.stencilFailBack != fail || this.stencilDepthFailBack != depthFail
+                || this.stencilDepthPassBack != depthPass));
+        if (!changed) return;
+        changing();
+        if (front) { this.stencilFailFront = fail; this.stencilDepthFailFront = depthFail; this.stencilDepthPassFront = depthPass; }
+        if (back) { this.stencilFailBack = fail; this.stencilDepthFailBack = depthFail; this.stencilDepthPassBack = depthPass; }
+        this.version++;
+    }
+    public int stencilWriteMask(boolean front) { return front ? this.stencilWriteMaskFront : this.stencilWriteMaskBack; }
+    /** {@code glStencilMask}: the non-Separate form sets both faces' write masks. */
+    public void stencilMask(int mask) { stencilMaskSeparate(0x0408, mask); }
+    public void stencilMaskSeparate(int face, int mask) {
+        boolean front = isFrontFace(face), back = face != 0x0404;
+        boolean changed = (front && this.stencilWriteMaskFront != mask) || (back && this.stencilWriteMaskBack != mask);
+        if (!changed) return;
+        changing();
+        if (front) this.stencilWriteMaskFront = mask;
+        if (back) this.stencilWriteMaskBack = mask;
+        this.version++;
+    }
+    public int polygonMode(boolean front) { return front ? this.polygonModeFront : this.polygonModeBack; }
+    /** {@code glPolygonMode}: GL_FRONT / GL_BACK / GL_FRONT_AND_BACK select the recorded face(s). */
+    public void polygonMode(int face, int mode) {
+        boolean front = isFrontFace(face), back = face != 0x0404;
+        boolean changed = (front && this.polygonModeFront != mode) || (back && this.polygonModeBack != mode);
+        if (!changed) return;
+        changing();
+        if (front) this.polygonModeFront = mode;
+        if (back) this.polygonModeBack = mode;
+        this.version++;
+    }
+    public float sampleCoverageValue() { return this.sampleCoverageValue; }
+    public boolean sampleCoverageInvert() { return this.sampleCoverageInvert; }
+    public void sampleCoverage(float value, boolean invert) {
+        if (this.sampleCoverageValue == value && this.sampleCoverageInvert == invert) return;
+        changing();
+        this.sampleCoverageValue = value; this.sampleCoverageInvert = invert;
+        this.version++;
+    }
+    public float blendColorRed() { return this.blendColorRed; }
+    public float blendColorGreen() { return this.blendColorGreen; }
+    public float blendColorBlue() { return this.blendColorBlue; }
+    public float blendColorAlpha() { return this.blendColorAlpha; }
+    /** {@code glBlendColor}: the constant colour the GL_CONSTANT_* blend factors read. */
+    public void blendColor(float red, float green, float blue, float alpha) {
+        if (this.blendColorRed == red && this.blendColorGreen == green
+                && this.blendColorBlue == blue && this.blendColorAlpha == alpha) return;
+        changing();
+        this.blendColorRed = red; this.blendColorGreen = green;
+        this.blendColorBlue = blue; this.blendColorAlpha = alpha;
+        this.version++;
     }
 }

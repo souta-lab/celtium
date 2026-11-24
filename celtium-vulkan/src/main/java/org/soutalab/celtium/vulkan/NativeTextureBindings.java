@@ -8,6 +8,8 @@ public final class NativeTextureBindings {
     private final NativeRasterState boundaries;
     private final int[] texture2d = new int[UNIT_COUNT];
     private final boolean[] enabled2d = new boolean[UNIT_COUNT];
+    /** Sampler objects bound per unit by {@code glBindSampler} (GLSM M-4); 0 = no sampler object. */
+    private final int[] samplers = new int[UNIT_COUNT];
     private int activeUnit;
 
     public NativeTextureBindings(NativeRasterState boundaries) {
@@ -32,6 +34,16 @@ public final class NativeTextureBindings {
         this.boundaries.flushBeforeChange();
         this.texture2d[unit] = texture;
     }
+    /**
+     * Records a {@code glBindSampler} binding. Unlike {@link #texture2d(int)}'s read side, an out-of-range
+     * unit is ignored rather than folded onto unit 0 (the same discipline as {@link #activeUnit(int)}):
+     * folding a write would corrupt unit 0's sampler with a binding GL addressed elsewhere.
+     */
+    public void bindSampler(int unit, int sampler) {
+        if (unit < 0 || unit >= UNIT_COUNT) return;
+        this.samplers[unit] = sampler;
+    }
+    public int sampler(int unit) { return unit >= 0 && unit < UNIT_COUNT ? this.samplers[unit] : 0; }
     public boolean enabled2d(int unit) { return this.enabled2d[unitIndex(unit)]; }
     public void enabled2d(boolean enabled) {
         int unit = this.activeUnit;

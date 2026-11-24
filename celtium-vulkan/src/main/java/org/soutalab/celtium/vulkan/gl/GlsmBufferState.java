@@ -23,6 +23,27 @@ public final class GlsmBufferState {
     public static GlsmBufferState current() { return CURRENT; }
 
     private final int[] bindings = new int[FLAT_MAP_SIZE];
+    /**
+     * Indexed bindings from {@code glBindBufferBase}/{@code glBindBufferRange} (GLSM M-4), keyed by
+     * (target, index) packed into one long. Kept apart from the flat {@link #bindings}: folding an
+     * indexed binding into the flat map would drop the index, which is the whole content of the call.
+     * A base binding is recorded with offset 0, size -1 (the whole buffer) and ranged=false.
+     */
+    private final Map<Long, IndexedBinding> indexedBindings = new HashMap<Long, IndexedBinding>();
+
+    /** One indexed binding record: the buffer name plus the range a Range call named. */
+    public static final class IndexedBinding {
+        public final int buffer;
+        public final long offset;
+        /** The range length, or -1 when the binding covers the whole buffer (a Base binding). */
+        public final long size;
+        public final boolean ranged;
+
+        IndexedBinding(int buffer, long offset, long size, boolean ranged) {
+            this.buffer = buffer; this.offset = offset; this.size = size; this.ranged = ranged;
+        }
+    }
+
     private final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ByteBuffer> store =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ByteBuffer>();
     /** Readable ranges per buffer name: {address, length} pairs, S-24. */
@@ -51,6 +72,39 @@ public final class GlsmBufferState {
 
     public int bound(int target) {
         return target >= 0 && target < FLAT_MAP_SIZE ? this.bindings[target] : 0;
+    }
+
+    private static long indexedKey(int target, int index) {
+        return ((long) target << 32) | (index & 0xFFFFFFFFL);
+    }
+
+    /** {@code glBindBufferBase}: binds the whole buffer at (target, index). Name 0 unbinds the slot. */
+    public void bindBufferBase(int target, int index, int buffer) {
+        bindIndexed(target, index, buffer, 0L, -1L, false);
+    }
+
+    /** {@code glBindBufferRange}: binds [offset, offset+size) of the buffer at (target, index). */
+    public void bindBufferRange(int target, int index, int buffer, long offset, long size) {
+        bindIndexed(target, index, buffer, offset, size, true);
+    }
+
+    private void bindIndexed(int target, int index, int buffer, long offset, long size, boolean ranged) {
+        if (target < 0 || index < 0) return;
+        long key = indexedKey(target, index);
+        if (buffer == 0) {
+            if (this.indexedBindings.remove(key) != null) this.version++;
+            return;
+        }
+        IndexedBinding next = new IndexedBinding(buffer, offset, size, ranged);
+        IndexedBinding previous = this.indexedBindings.put(key, next);
+        if (previous == null || previous.buffer != buffer || previous.offset != offset
+                || previous.size != size || previous.ranged != ranged) this.version++;
+    }
+
+    /** @return the indexed binding at (target, index), or null when the slot is unbound. */
+    public IndexedBinding indexedBinding(int target, int index) {
+        if (target < 0 || index < 0) return null;
+        return this.indexedBindings.get(indexedKey(target, index));
     }
 
     /** The live storage map BufferStorageRecord operates on (the stub's fastutil shape). */
@@ -106,6 +160,15 @@ public final class GlsmBufferState {
         for (int target = 0; target < FLAT_MAP_SIZE; target++) {
             if (this.bindings[target] == name) {
                 this.bindings[target] = 0;
+                this.version++;
+            }
+        }
+        // The indexed ledger names the same buffers: a deleted name must fall out of it too, or a
+        // later query would answer a binding to an object that no longer exists (GLSM M-4).
+        java.util.Iterator<Map.Entry<Long, IndexedBinding>> sweep = this.indexedBindings.entrySet().iterator();
+        while (sweep.hasNext()) {
+            if (sweep.next().getValue().buffer == name) {
+                sweep.remove();
                 this.version++;
             }
         }

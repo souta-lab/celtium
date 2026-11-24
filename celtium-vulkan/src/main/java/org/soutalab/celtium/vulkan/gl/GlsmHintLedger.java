@@ -38,6 +38,10 @@ public final class GlsmHintLedger {
         CURRENT.registerDoor("glViewport", "viewport");
         CURRENT.registerDoor("glClearColor", "clear");
         CURRENT.registerDoor("glClearDepth", "clear");
+        CURRENT.registerDoor("glClearStencil", "clear");
+        CURRENT.registerDoor("glBindSampler", "binding");
+        CURRENT.registerDoor("glBindBufferBase", "binding");
+        CURRENT.registerDoor("glBindBufferRange", "binding");
         CURRENT.registerDoor("glDepthMask", "enable");
         CURRENT.registerDoor("glDepthFunc", "raster");
         CURRENT.registerDoor("glLineWidth", "immediate");

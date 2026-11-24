@@ -44,9 +44,10 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
     // glSampleCoverage, glBindSampler, glBindBufferBase, glBindBufferRange) is NOT listed
     // here any more. A direct call to one of them must not be dropped as a no-op before it
     // can reach the state record its route names; names with an unconditional route above
-    // (glDepthFunc, glDepthMask) are answered there, the rest now fall through to the
-    // counted fallback instead of vanishing, until the merge phase delivers them to the
-    // owners GlsmVoidNoopRoutes names. The pure no-op remainder stays listed by design.
+    // (glDepthFunc, glDepthMask) are answered there. GLSM M-4 delivered the remaining 13:
+    // the raster nine go through emitNativeRasterAdapter, glClearStencil and the three
+    // binding names through their explicit Hint routes below. The pure no-op remainder
+    // stays listed by design.
     private static final java.util.Set<String> VOID_NOOPS = new java.util.HashSet<>(java.util.Arrays.asList(
             // The routes are consulted before this set, so a name that has one must not be listed here: it would look
             // like the answer came from the set and would shadow the route outright if the two were ever evaluated in
@@ -601,6 +602,17 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             case "glFrontFace": expected = "(I)V"; break;
             case "glPolygonOffset": expected = "(FF)V"; break;
             case "glScissor": expected = "(IIII)V"; break;
+            // GLSM M-4 (INT-2 remainder): the stencil family, polygon mode, sample coverage and the
+            // constant blend colour reach NativeRasterState through the same adapter funnel.
+            case "glStencilFunc": expected = "(III)V"; break;
+            case "glStencilFuncSeparate": expected = "(IIII)V"; break;
+            case "glStencilOp": expected = "(III)V"; break;
+            case "glStencilOpSeparate": expected = "(IIII)V"; break;
+            case "glStencilMask": expected = "(I)V"; break;
+            case "glStencilMaskSeparate": expected = "(II)V"; break;
+            case "glPolygonMode": expected = "(II)V"; break;
+            case "glSampleCoverage": expected = "(FZ)V"; break;
+            case "glBlendColor": expected = "(FFFF)V"; break;
             default: return false;
         }
         if (!expected.equals(descriptor)) return false;
@@ -1310,6 +1322,15 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
             method.visitInsn(Opcodes.F2D);
             method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                     "glClearDepth", "(D)V", false);
+            method.visitInsn(Opcodes.RETURN);
+            return;
+        }
+        // GLSM M-4: the stencil clear value joins colour and depth in GlsmClearState, which is
+        // what GL_STENCIL_CLEAR_VALUE now reads back.
+        if ("glClearStencil".equals(name) && "(I)V".equals(descriptor)) {
+            method.visitVarInsn(Opcodes.ILOAD, 0);
+            method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                    "glClearStencil", "(I)V", false);
             method.visitInsn(Opcodes.RETURN);
             return;
         }
@@ -2808,6 +2829,39 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
                 method.visitVarInsn(Opcodes.ILOAD, 1);
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
                         "glBindBuffer", "(II)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            // GLSM M-4: the sampler binding and the indexed buffer bindings reach their ledgers
+            // (NativeTextureBindings / GlsmBufferState) instead of the counted fallback.
+            if ("glBindSampler".equals(name) || "nglBindSampler".equals(name)) {
+                // (II)V
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glBindSampler", "(II)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("glBindBufferBase".equals(name) || "nglBindBufferBase".equals(name)) {
+                // (III)V
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.ILOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glBindBufferBase", "(III)V", false);
+                method.visitInsn(Opcodes.RETURN);
+                return;
+            }
+            if ("glBindBufferRange".equals(name) || "nglBindBufferRange".equals(name)) {
+                // (IIIJJ)V - offset and size are 64-bit, at slots 3 and 5.
+                method.visitVarInsn(Opcodes.ILOAD, 0);
+                method.visitVarInsn(Opcodes.ILOAD, 1);
+                method.visitVarInsn(Opcodes.ILOAD, 2);
+                method.visitVarInsn(Opcodes.LLOAD, 3);
+                method.visitVarInsn(Opcodes.LLOAD, 5);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, "org/taumc/celeritas/core/CeltiumGllessHint",
+                        "glBindBufferRange", "(IIIJJ)V", false);
                 method.visitInsn(Opcodes.RETURN);
                 return;
             }
