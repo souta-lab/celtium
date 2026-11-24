@@ -402,8 +402,8 @@ public final class CeltiumGlStub implements FunctionProvider {
     /** Scratch the clear-value query fills through {@link #mainClearValues(float[])}. */
     final float[] clearValueScratch = new float[4];
 
-    /** GL's initial light-model ambient, answered when no backend mirror exists. */
-    final float[] lightAmbientDefault = {0.2f, 0.2f, 0.2f, 1.0f};
+    // M-9 rewired: GL's initial light-model ambient is GlsmImmediateState's
+    // (the GL_LIGHT_MODEL_AMBIENT fallback in GlStateQueries reads it there).
     /** The last {@code glPointSize} request. Points are not rasterized, so this exists for the query only. */
     // GAP-ST-9: line width and point size are GlsmImmediateState's too.
     /** The program glUseProgram bound, the display list being compiled, and the bound vertex array. */
