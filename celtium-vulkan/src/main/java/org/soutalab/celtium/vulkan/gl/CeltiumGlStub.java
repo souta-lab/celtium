@@ -344,8 +344,7 @@ public final class CeltiumGlStub implements FunctionProvider {
     /* The per-name logical sizes that used to sit here live in BufferStorageRecord, which operates on the store below. */
     final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ByteBuffer> bufferStore =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
-    long getStringAddress;
-    ByteBuffer getStringBuffer;
+    /* The glGetString intern buffer that used to sit here is owned by GlsmStringState (census S-23). */
     volatile int viewportX, viewportY;
     volatile int viewportW = 1280, viewportH = 720;
     /** GL_DRAW_FRAMEBUFFER / GL_READ_FRAMEBUFFER bindings; GL_FRAMEBUFFER sets both. */
