@@ -125,17 +125,11 @@ public abstract class RenderSectionManager {
     private int celtium$layerReports;
 
     /**
-     * Opt-in ({@code -Dceltium.terrain.deferUnarrivedEmptyCommit=true}, default off) runtime switch
-     * for item-683 deferral of unarrived empty sections in {@link #onSectionAdded} and
-     * {@link #submitRebuildTasks}. Keeping this behind a default-off switch on this branch preserves
-     * the baseline alpha behavior while allowing single-jar A/B isolation of item-683 flight overhead
-     * without a separate revert build.
-     */
-    private final boolean deferUnarrivedEmptyCommit = Boolean.getBoolean("celtium.terrain.deferUnarrivedEmptyCommit");
-
-    /**
      * Opt-in ({@code -Dceltium.debug.deferEmptyCommitCensus=true}, default off) counter for empty
      * commit vs deferral decisions in {@link #onSectionAdded} and {@link #submitRebuildTasks}.
+     * The item-683 deferral itself is unconditional since the main landing (the former
+     * {@code celtium.terrain.deferUnarrivedEmptyCommit} switch is retired); this census only
+     * observes the decisions.
      */
     private final boolean deferEmptyCommitCensus = Boolean.getBoolean("celtium.debug.deferEmptyCommitCensus");
     private long deferCensusAddEmptyFinal;
@@ -597,9 +591,23 @@ public abstract class RenderSectionManager {
     protected abstract boolean isSectionVisuallyEmpty(int x, int y, int z);
 
     /**
+     * Called when a section is committed as EMPTY at add time because {@link #isSectionVisuallyEmpty}
+     * judged it empty, before the EMPTY_DATA commit lands. This is the dominant way a section
+     * becomes built-and-empty (the present census's terminalBuilt population): it bypasses the
+     * rebuild-task path entirely, so no rebuild task is created and WorldSlice.prepare is never
+     * called for the section. The default does nothing; implementations override it to observe
+     * the commit (the prepare-null census counts it here, item 683).
+     */
+    protected void onSectionAddedAsEmpty(RenderSection section) {
+    }
+
+    /**
      * Whether an empty verdict at section-add time is final, so the section may be committed as
-     * EMPTY in {@link #onSectionAdded}. Only consulted when
-     * {@code -Dceltium.terrain.deferUnarrivedEmptyCommit=true} (default off on this branch).
+     * EMPTY in {@link #onSectionAdded}. Implementations return false when the verdict means
+     * "the data has not arrived yet" rather than "the section is empty": the section is then
+     * left pending as an initial build instead of being committed built-and-empty, so the
+     * rebuild path can build it once its data arrives. The default is final, which preserves
+     * the historical add-time commit for managers that cannot tell the two apart.
      */
     protected boolean isSectionAddedEmptyFinal(RenderSection section) {
         return true;
@@ -624,7 +632,7 @@ public abstract class RenderSectionManager {
 
     private void logDeferEmptyCensus(String phase) {
         System.out.println("[Celtium] CELTIUM_DEFER_EMPTY_CENSUS phase=" + phase
-                + " enabled=" + this.deferUnarrivedEmptyCommit
+                + " enabled=true"
                 + " addEmptyFinal=" + this.deferCensusAddEmptyFinal
                 + " addDeferred=" + this.deferCensusAddDeferred
                 + " submitEmptyFinal=" + this.deferCensusSubmitEmptyFinal
@@ -652,15 +660,23 @@ public abstract class RenderSectionManager {
         this.invalidateCachedSectionData(renderSection);
 
         boolean visuallyEmpty = this.isSectionVisuallyEmpty(x, y, z);
-        if (visuallyEmpty && (!this.deferUnarrivedEmptyCommit || this.isSectionAddedEmptyFinal(renderSection))) {
+        if (visuallyEmpty && this.isSectionAddedEmptyFinal(renderSection)) {
             if (this.deferEmptyCommitCensus) {
                 this.recordDeferEmptyCensus(true, false);
             }
+            this.onSectionAddedAsEmpty(renderSection);
             this.updateSectionInfo(renderSection, RenderSection.EMPTY_DATA);
         } else {
             if (visuallyEmpty && this.deferEmptyCommitCensus) {
                 this.recordDeferEmptyCensus(true, true);
             }
+            // Either the section has content, or its empty verdict is not final: the data behind
+            // it has not arrived yet, so committing EMPTY_DATA here would mark it built with no
+            // geometry and no path back (section-add is a no-op for sections that already exist,
+            // and the pending update is what a later graph traversal re-offers). Leave it as an
+            // initial build instead; once the data arrives, the rebuild path builds it for real
+            // (item 683: this add-time commit, not the submit-time fabrication, is where most
+            // terminal-built sections are born).
             renderSection.setPendingUpdate(ChunkUpdateType.INITIAL_BUILD);
             this.celtiumPendingMeshUpdates.add(renderSection);
         }
@@ -1186,10 +1202,19 @@ public abstract class RenderSectionManager {
                     section.lastCameraY = this.cameraPosition.y;
                     section.lastCameraZ = this.cameraPosition.z;
                 }
-            } else if (this.deferUnarrivedEmptyCommit && !this.isRebuildDataFinal(section)) {
+            } else if (!this.isRebuildDataFinal(section)) {
                 if (this.deferEmptyCommitCensus) {
                     this.recordDeferEmptyCensus(false, true);
                 }
+                // The task factory found nothing to build because the section's data has not arrived
+                // yet, not because the section is empty. Committing a fabricated EMPTY result here
+                // would mark the section built with no geometry and no path back: the pending update
+                // is cleared below, and section-add is a no-op for sections that already exist, so
+                // the hole would stay for the rest of the session (item 683, candidate A2). Leave
+                // the update pending instead; the next graph traversal re-offers the section, and
+                // chunk arrival marks the graph dirty, so the retry is event-driven. This is also
+                // what keeps a section deferred at add time (isSectionAddedEmptyFinal) from being
+                // fabricated away on its first submission.
                 section.setBuildCancellationToken(null);
                 section.setLastSubmittedFrame(frame);
                 continue;
@@ -1212,9 +1237,11 @@ public abstract class RenderSectionManager {
     protected abstract @Nullable ChunkBuilderTask<ChunkBuildOutput> createRebuildTask(RenderSection render, int frame);
 
     /**
-     * Whether the data behind a section is final, so that a null rebuild task may be committed as
-     * an empty build. Only consulted when {@code -Dceltium.terrain.deferUnarrivedEmptyCommit=true}
-     * (default off on this branch).
+     * Whether the data behind a section is final, so that a null rebuild task may be committed as an
+     * empty build. Implementations return false when the null means "the data has not arrived yet"
+     * rather than "the section is empty": the submission then fabricates nothing and leaves the
+     * update pending, so a later graph traversal retries the section once its data has arrived
+     * instead of the section being committed as built-and-empty with no way back.
      */
     protected boolean isRebuildDataFinal(RenderSection section) {
         return true;

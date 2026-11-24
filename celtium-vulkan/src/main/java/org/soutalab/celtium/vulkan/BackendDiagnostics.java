@@ -513,6 +513,11 @@ final class BackendDiagnostics {
                 // (terrainToBoundTarget) - the routing half of the bloom-halo split belongs in
                 // this summary, the one the fixture reads, not only in b.diagnostics().
                 + " terrainPassesToBoundTarget=" + b.terrainPassesToBoundTarget()
+                // Item 644 follow-up (bdisc2): the bound-target refusal census was collected and printed
+                // only on the diagnostics() line, never on this VERIFY summary, so a leg reading the
+                // summary the fixture surfaces could not see attempts or refusals at all. Same summary
+                // string the diagnostics line uses, so the two cannot drift apart.
+                + b.boundTargetCensusSummary()
                 + " worldPassBoundaryFlushes=" + b.terrainStatistics.worldPassBoundaryFlushes()
                 // Item 328 (V-03): the terrain frame budget's cumulative account - what the per-frame caps
                 // dropped and what the rebuild discipline deferred or reused - so a leg that hit either says

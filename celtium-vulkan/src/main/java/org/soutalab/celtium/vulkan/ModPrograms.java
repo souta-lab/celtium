@@ -778,12 +778,29 @@ final class ModPrograms {
                     } else {
                         this.chainInputPatchReported = true;
                     }
+                    // Item 644 next discrimination: a second patch over the lamp band (x 320..540,
+                    // y 265..315 of the presented frame, scaled and flipped like the halo patch), so
+                    // one line separates "the routed draw wrote nothing anywhere in the pair" (both
+                    // patches zero) from "the mask exists but not in the halo band" (lamp non-zero,
+                    // halo zero). The bound-pair probe fields are the sample-side half of the
+                    // draw/sample identity and order split.
+                    int lampSize = Math.min((540 - 320) * width / 1280, (315 - 265) * height / 720);
+                    String lampPatch = "skipped";
+                    if (lampSize >= 4) {
+                        int lampX = Math.max(0, Math.min(
+                                (320 + 540) / 2 * width / 1280 - lampSize / 2, width - lampSize));
+                        int lampY = Math.max(0, Math.min(
+                                height - (265 + 315) / 2 * height / 720 - lampSize / 2, height - lampSize));
+                        lampPatch = b.postChainBridge.celtium$patchMean(input.image(), lampX, lampY, lampSize);
+                    }
                     System.out.println("[Celtium] CELTIUM_CHAIN_INPUT_PATCH frame=" + b.frameId
                             + " identity=0x" + Long.toHexString(identity.longValue())
                             + " pairImage=0x" + Long.toHexString(input.image())
                             + " size=" + width + "x" + height
                             + " patch=" + x + "," + y + " " + size + "x" + size
                             + " haloPatch=" + b.postChainBridge.celtium$patchMean(input.image(), x, y, size)
+                            + " lampPatch=" + lampPatch
+                            + b.celtium$boundPairProbe(identity.longValue())
                             + " program=" + (draw.label == null ? "pass"
                                     : draw.label.replaceAll(" inputs=.*", "")));
                     return;

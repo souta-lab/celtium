@@ -27,6 +27,7 @@ import org.taumc.celeritas.CeleritasVintage;
 import org.taumc.celeritas.impl.render.terrain.compile.VintageChunkBuildContext;
 import org.taumc.celeritas.impl.render.terrain.compile.task.ChunkBuilderMeshingTask;
 import org.taumc.celeritas.impl.render.terrain.sprite.SpriteUtil;
+import org.taumc.celeritas.impl.world.PrepareNullCensus;
 import org.taumc.celeritas.impl.world.WorldSlice;
 import org.taumc.celeritas.impl.world.cloned.ChunkRenderContext;
 import org.taumc.celeritas.impl.world.cloned.ClonedChunkSectionCache;
@@ -183,7 +184,38 @@ public class VintageRenderSectionManager extends RenderSectionManager {
     }
 
     @Override
+    protected void onSectionAddedAsEmpty(RenderSection render) {
+        // The add-time EMPTY commit is where most terminal-built sections are actually born, and
+        // it never reaches WorldSlice.prepare, so the prepare-null census (item 701) counted
+        // nothing for it and a leg could not split the population. Classify it here with the same
+        // inputs prepare would have used, so the census sees both formation paths in one set of
+        // reason buckets (the add-path share is the line's addEmpty field).
+        if (!PrepareNullCensus.enabled()) {
+            return;
+        }
+
+        Chunk chunk = this.world.getChunk(render.getChunkX(), render.getChunkZ());
+        var storage = chunk.getBlockStorageArray();
+        int y = render.getChunkY();
+        var section = y >= 0 && y < storage.length ? storage[y] : null;
+
+        PrepareNullCensus.GLOBAL.recordAddEmpty(PrepareNullCensus.classifyForNullBranch(
+                chunk.isEmpty(), storage.length, y,
+                section == null, section != null && section.isEmpty()));
+    }
+
+    @Override
     protected boolean isSectionAddedEmptyFinal(RenderSection render) {
+        // isSectionVisuallyEmpty returns true both for a section that is genuinely empty (a
+        // received chunk whose storage slot is absent or empty, or a Y outside the storage
+        // array) and for a chunk the client has not received yet, where ChunkProviderClient
+        // answers with its blank EmptyChunk. Only the first is final: committing the second as
+        // EMPTY at add time guesses at geometry that has not arrived, and the section is never
+        // re-added, so the guess is permanent (item 683). Chunk.isEmpty is true only for the
+        // blank placeholder, never for a received chunk (the same distinction
+        // isSectionVisuallyEmpty relies on). The emptiness re-check closes the arrival race:
+        // if the chunk landed between the caller's verdict and this one and the slot now has
+        // blocks, the verdict is not final either and the section goes to initial build.
         Chunk chunk = this.world.getChunk(render.getChunkX(), render.getChunkZ());
 
         if (chunk.isEmpty()) {
@@ -195,6 +227,12 @@ public class VintageRenderSectionManager extends RenderSectionManager {
 
     @Override
     protected boolean isRebuildDataFinal(RenderSection render) {
+        // WorldSlice.prepare returns null both for a section that is genuinely empty (a received
+        // chunk whose storage slot is absent or empty) and for a chunk the client has not received
+        // yet, where ChunkProviderClient answers with its blank EmptyChunk. Only the first is
+        // final: committing the second as EMPTY would guess at geometry that has not arrived.
+        // Chunk.isEmpty is true only for the blank placeholder, never for a received chunk (the
+        // same distinction isSectionVisuallyEmpty relies on).
         return !this.world.getChunk(render.getChunkX(), render.getChunkZ()).isEmpty();
     }
 

@@ -1526,6 +1526,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + " shaderProgramRefusedIds=" + this.shaderProgramRefusedIds
                 + " shaderProgramRefusedPrograms=" + programRefusalsText()
                 + " terrainPassesToBoundTarget=" + this.terrainPassesToBoundTarget
+                + boundTargetCensusSummary()
                     + " textureRefusals=" + this.textureStats.textureRefusalsBeforeAccept()
                     + " accepted=" + this.immediateStatistics.frameAccepted());
         }
@@ -3683,6 +3684,53 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** Item 384: read by BackendDiagnostics so the count reaches the summary line a leg actually surfaces. */
     long terrainPassesToBoundTarget() {
         return this.terrainPassesToBoundTarget;
+    }
+
+    // Item 644 follow-up (bloom-boundtarget-leg): the bound-target route's refusal census. The route's
+    // success line and counter existed, but every refusal path was silent, so a leg whose counter read 0
+    // (bdisc1, jar 1da94b21a: all CELTIUM_VERIFY lines 0 against b644's 454) could not say which condition
+    // failed. These counters are always on (one increment per non-main pass at most) and the refusal
+    // prints are bounded, the depth route's census shape. Reason indexes:
+    // 0=pair-owner-null 1=pair-mismatch 2=no-framebuffer 3=depth-route-preempted 4=pack-route-preempted.
+    private long boundTargetAttempts;
+    private final long[] boundTargetRefusals = new long[5];
+    private int boundTargetRefusalLogs;
+
+    private void celtium$noteBoundTargetRefusal(int reason, String passName, long identity, String detail) {
+        this.boundTargetRefusals[reason]++;
+        if (this.boundTargetRefusalLogs < 12) {
+            this.boundTargetRefusalLogs++;
+            System.out.println("[Celtium] CELTIUM_BOUND_TARGET_CENSUS refusal=" + reason + " pass=" + passName
+                    + " identity=0x" + Long.toHexString(identity) + " " + detail
+                    + " frame=" + this.frameId);
+        }
+    }
+
+    String boundTargetCensusSummary() {
+        return " boundTargetAttempts=" + this.boundTargetAttempts
+                + " boundTargetRefusals[ownerNull=" + this.boundTargetRefusals[0]
+                + " pairMismatch=" + this.boundTargetRefusals[1]
+                + " noFramebuffer=" + this.boundTargetRefusals[2]
+                + " depthPreempt=" + this.boundTargetRefusals[3]
+                + " packPreempt=" + this.boundTargetRefusals[4] + "]";
+    }
+
+    // Item 644 next discrimination (bdisc2 §7): bdisc2 proved the route succeeds and the pair identity
+    // the chain samples matches the routed identity, yet the halo patch stays (0,0,0). The remaining
+    // split is (i) coverage, (ii) in-frame order, (iii) real image identity - none of which the
+    // identity values alone can decide. These fields carry the draw-side half of that split; the
+    // chain-input patch line carries the sample-side half through the same helper.
+    private int boundTargetCoverageLogs;
+    /** Frame of the most recent successful bound-target route, -1 before the first. */
+    long boundTargetLastRoutedFrame = -1L;
+
+    /** The pair's live generation / colour view / last cleared frame, read at the caller's moment. */
+    String celtium$boundPairProbe(long identity) {
+        GllessFrameTarget owner = offTargetTarget();
+        return " pairGeneration=" + (owner == null ? -1L : owner.chainPairGeneration(identity))
+                + " pairColorView=0x" + Long.toHexString(owner == null ? 0L : owner.chainPairColorView(identity))
+                + " pairClearedFrame=" + this.targetRegistry.chainPairClearedFrame(identity)
+                + " boundTargetLastRoutedFrame=" + this.boundTargetLastRoutedFrame;
     }
     /**
      * {@code -Dceltium.vulkan.terrainToDepthTarget=true}: draw a terrain pass into the bound framebuffer's chain pair
@@ -19492,6 +19540,10 @@ this.frameBufferOpen = false;
         int passAreaHeight = this.targetHeight;
         if (celtium$tryRenderPackTerrainPass(stack, matrices, renderLists, pass, occlusionCamera, camera, view,
                 useBlockFaceCulling, primitiveType)) {
+            if (!this.targetRegistry.currentIsMain()) {
+                celtium$noteBoundTargetRefusal(4, pass.name(), this.targetRegistry.currentIdentity(),
+                        "route=pack");
+            }
             org.soutalab.celtium.vulkan.FramePassTimings.end("recHead");
             return;
         }
@@ -19626,6 +19678,10 @@ this.frameBufferOpen = false;
             }
         }
         if (depthRouting != null) {
+            if (!this.targetRegistry.currentIsMain()) {
+                celtium$noteBoundTargetRefusal(3, pass.name(), this.targetRegistry.currentIdentity(),
+                        "route=depth");
+            }
             // Item 332: the bound framebuffer's pair borrows this framebuffer's depth texture, so the terrain of this
             // pass belongs in that pair - that image is what the pre-translucent depth copy reads. The pair's own
             // extent decides the render area; the window's does not (the shadow pair is 2048x2048).
@@ -19649,6 +19705,21 @@ this.frameBufferOpen = false;
             // the same render pass the immediate windows already use for it.
             GllessFrameTarget pairOwner = offTargetTarget();
             long identity = this.targetRegistry.currentIdentity();
+            this.boundTargetAttempts++;
+            if (this.boundTargetAttempts == 1) {
+                // Positive control: the census reached a non-main pass at least once this run, so a final
+                // counter of 0 with no refusal lines means the branch was never evaluated, not refused.
+                System.out.println("[Celtium] CELTIUM_BOUND_TARGET_CENSUS attempt pass=" + pass.name()
+                        + " identity=0x" + Long.toHexString(identity) + " frame=" + this.frameId);
+            }
+            if (pairOwner == null) {
+                celtium$noteBoundTargetRefusal(0, pass.name(), identity, "pairOwner=null");
+            } else if (!pairOwner.chainPairMatches(identity, this.targetWidth, this.targetHeight)) {
+                long[] pairExtentNow = pairOwner.chainPairExtent(identity);
+                celtium$noteBoundTargetRefusal(1, pass.name(), identity,
+                        "pair=" + (pairExtentNow == null ? "none" : pairExtentNow[0] + "x" + pairExtentNow[1])
+                                + " target=" + this.targetWidth + "x" + this.targetHeight);
+            }
             if (pairOwner != null && pairOwner.chainPairMatches(identity, this.targetWidth, this.targetHeight)) {
                 // The pair is attached whole - colour and depth - so it is acquired whole, the depth route's way:
                 // the frame pass declares the depth's initial layout as the attachment layout, and a pair depth
@@ -19672,6 +19743,9 @@ this.frameBufferOpen = false;
                     }
                 }
                 long pairFramebuffer = ensureChainPairFramebuffer(renderPass);
+                if (pairFramebuffer == 0L) {
+                    celtium$noteBoundTargetRefusal(2, pass.name(), identity, "pairFramebuffer=0");
+                }
                 if (pairFramebuffer != 0L) {
                     terrainFramebuffer = pairFramebuffer;
                     // The owed clear is consumed here, in the depth route's order - before this pass draws,
@@ -19698,6 +19772,21 @@ this.frameBufferOpen = false;
                     if (this.terrainPassesToBoundTarget <= 4) {
                         System.out.println("[Celtium] CELTIUM_TERRAIN_BOUND_TARGET pass=" + pass.name() + " identity=0x"
                                 + Long.toHexString(identity) + " frame=" + this.frameId);
+                    }
+                    this.boundTargetLastRoutedFrame = this.frameId;
+                    if (this.boundTargetCoverageLogs < 8) {
+                        this.boundTargetCoverageLogs++;
+                        long[] pairExtent = pairOwner.chainPairExtent(identity);
+                        System.out.println("[Celtium] CELTIUM_BOUND_TARGET_COVERAGE pass=" + pass.name()
+                                + " identity=0x" + Long.toHexString(identity)
+                                + " frame=" + this.frameId
+                                + " framebuffer=0x" + Long.toHexString(pairFramebuffer)
+                                + " pairColorImage=0x" + Long.toHexString(routedBoundColor)
+                                + celtium$boundPairProbe(identity)
+                                + " pairExtent=" + (pairExtent == null ? "none"
+                                        : pairExtent[0] + "x" + pairExtent[1])
+                                + " renderArea=" + passAreaWidth + "x" + passAreaHeight
+                                + " routed=" + this.terrainPassesToBoundTarget);
                     }
                 }
             }

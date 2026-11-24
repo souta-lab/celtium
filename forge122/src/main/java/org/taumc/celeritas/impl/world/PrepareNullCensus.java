@@ -121,14 +121,33 @@ public final class PrepareNullCensus {
     /** The production census; inert (and never consulted by prepare) unless the property is set. */
     public static final PrepareNullCensus GLOBAL = new PrepareNullCensus(lineLimitFromProperty());
 
+    private static boolean armedLinePrinted;
+
     public static boolean enabled() {
-        return GLOBAL.lineLimit > 0;
+        if (GLOBAL.lineLimit <= 0) {
+            return false;
+        }
+
+        if (!armedLinePrinted) {
+            armedLinePrinted = true;
+            // Positive control (item 683 follow-up): a leg that sees no CELTIUM_PREPARE_NULL line at
+            // all must be able to tell "the census was armed and counted zero events" from "the
+            // census never became active". The counters only ever printed on a null, and the
+            // section-add population this census exists to split never passes through prepare, so
+            // a silent session was ambiguous between the two. Print one all-zero snapshot the
+            // first time the census is consulted and found enabled; the format is the census line
+            // itself, so no new log marker is introduced.
+            GLOBAL.printSnapshot();
+        }
+
+        return true;
     }
 
     private final int lineLimit;
     private int printedLines;
     private long calls;
     private long contexts;
+    private long addEmptyCommits;
     private long blankChunk;
     private long slotAbsent;
     private long slotEmpty;
@@ -145,7 +164,24 @@ public final class PrepareNullCensus {
 
     public void recordNull(Reason reason) {
         this.calls++;
+        this.bump(reason);
+    }
 
+    /**
+     * Counts a section that was committed as EMPTY at section-add time (RenderSectionManager
+     * .onSectionAdded, via the manager's onSectionAddedAsEmpty hook) rather than after a prepare
+     * null at submit time. The reason taxonomy is the same - that population is the bulk of the
+     * present census's terminalBuilt count, and it never passes through WorldSlice.prepare, so
+     * before this hook existed the census could not see it at all (item 683: a full leg printed
+     * zero census lines while terminalBuilt stood at 680). The add-path share of the reason
+     * buckets is reported separately in the line's addEmpty field.
+     */
+    public void recordAddEmpty(Reason reason) {
+        this.addEmptyCommits++;
+        this.bump(reason);
+    }
+
+    private void bump(Reason reason) {
         switch (reason) {
             case BLANK_CHUNK -> this.blankChunk++;
             case SLOT_ABSENT -> this.slotAbsent++;
@@ -155,17 +191,22 @@ public final class PrepareNullCensus {
 
         if (this.shouldPrint(reason)) {
             this.printedLines++;
-            Snapshot s = this.snapshot();
-            System.out.println("[Celtium] CELTIUM_PREPARE_NULL calls=" + s.calls
-                    + " contexts=" + s.contexts
-                    + " nulls=" + s.nulls()
-                    + " blankChunk=" + s.blankChunk
-                    + " slotAbsent=" + s.slotAbsent
-                    + " slotEmpty=" + s.slotEmpty
-                    + " yOutOfRange=" + s.yOutOfRange
-                    + " legitimateEmpty=" + s.legitimateEmpty()
-                    + " suspicious=" + s.suspicious());
+            this.printSnapshot();
         }
+    }
+
+    private void printSnapshot() {
+        Snapshot s = this.snapshot();
+        System.out.println("[Celtium] CELTIUM_PREPARE_NULL calls=" + s.calls
+                + " contexts=" + s.contexts
+                + " nulls=" + s.nulls()
+                + " blankChunk=" + s.blankChunk
+                + " slotAbsent=" + s.slotAbsent
+                + " slotEmpty=" + s.slotEmpty
+                + " yOutOfRange=" + s.yOutOfRange
+                + " legitimateEmpty=" + s.legitimateEmpty()
+                + " suspicious=" + s.suspicious()
+                + " addEmpty=" + this.addEmptyCommits);
     }
 
     /**
