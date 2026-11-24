@@ -3,7 +3,7 @@ package org.soutalab.celtium.vulkan.gl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import org.junit.jupiter.api.Test;
-import org.soutalab.celtium.vulkan.gl.CeltiumGlStub.VaoAttrib;
+import org.soutalab.celtium.vulkan.gl.GlsmClientArrayState.VaoAttrib;
 
 /**
  * Pins the VAO half of the indexed decoder's layout decision.
