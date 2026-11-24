@@ -13,17 +13,17 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Calls the real mod adapter's dispatcher, without creating a GL context or a Vulkan device. */
 class NativeBufferAdapterTest {
-    private final CeltiumGlStub stub;
+    private final GlsmFrontend stub;
     private final Method dispatch;
     private final Map<?, ?> ids;
 
     NativeBufferAdapterTest() throws Exception {
-        var constructor = CeltiumGlStub.class.getDeclaredConstructor();
+        var constructor = GlsmFrontend.class.getDeclaredConstructor();
         constructor.setAccessible(true);
         this.stub = constructor.newInstance();
-        this.dispatch = CeltiumGlStub.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+        this.dispatch = GlsmFrontend.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
         this.dispatch.setAccessible(true);
-        Field table = CeltiumGlStub.class.getDeclaredField("IDS");
+        Field table = GlsmFrontend.class.getDeclaredField("IDS");
         table.setAccessible(true);
         this.ids = (Map<?, ?>) table.get(null);
     }

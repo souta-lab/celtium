@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
  *   every non-pixel, non-array target;</li>
  *   <li>the raster and texture-binding reads come from the owner instances the stub
  *   holds - for the installed stub those are the very {@code current()} singletons
- *   {@code CeltiumGlStub.install()} builds it on; an injected stub's own owners answer
+ *   {@code GlsmFrontend.install()} builds it on; an injected stub's own owners answer
  *   for that stub, because its writers write through them.</li>
  * </ul>
  * Not run by the alpha lane (desk-only rule); the merge gate runs it.

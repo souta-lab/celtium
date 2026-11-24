@@ -8,7 +8,7 @@ import org.lwjgl.system.MemoryUtil;
  * Legacy immediate-mode geometry ({@code glBegin}/{@code glVertex*}/{@code glEnd}) collected into the vertex layouts
  * the immediate path already draws.
  * <p>
- * Why this is a class of its own: the capture used to live inside {@link CeltiumGlStub} as a handful of fields, which
+ * Why this is a class of its own: the capture used to live inside {@link GlsmFrontend} as a handful of fields, which
  * made the one half of legacy immediate mode that can be checked without a GPU - "which vertices, in which layout, for
  * which mode" - reachable only by starting a game. The packing rules here are pure arithmetic over a direct buffer, so
  * they are pinned by {@code LegacyImmediateCaptureTest} instead. The stub keeps the GL surface and the backend keeps

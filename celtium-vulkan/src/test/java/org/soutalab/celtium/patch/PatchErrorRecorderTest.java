@@ -46,7 +46,7 @@ class PatchErrorRecorderTest {
                 PatchErrorRecorder.record(ledger(), "apply", null, new IllegalStateException("gone")).outcome());
         assertEquals(PatchErrorRecorder.Outcome.IGNORED,
                 PatchErrorRecorder.record(ledger(), "prepare",
-                        "org.taumc.celeritas.core.CeltiumGlStub", new IllegalStateException("gone")).outcome(),
+                        "org.taumc.celeritas.core.GlsmFrontend", new IllegalStateException("gone")).outcome(),
                 "celtium's own package is not enough: only the mixin package is recorded");
         assertFalse(Files.exists(ledgerFile()));
     }

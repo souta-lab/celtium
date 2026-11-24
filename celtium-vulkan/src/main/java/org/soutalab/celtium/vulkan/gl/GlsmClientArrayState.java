@@ -47,7 +47,7 @@ public final class GlsmClientArrayState {
      * behind: Demonica's full-screen quad (three attributes set once at setup, its VBO unbound again before the
      * draw) was refused on every frame for exactly that (offer-path diagnosis, 2026-11-20).
      * <p>
-     * Moved verbatim from CeltiumGlStub (M-5): field set, defaults and package-private
+     * Moved verbatim from GlsmFrontend (M-5): field set, defaults and package-private
      * access are unchanged, so every existing reader/writer in this package sees the
      * same record it saw in the stub.
      */
@@ -77,6 +77,8 @@ public final class GlsmClientArrayState {
     private VaoAttrib[] currentAttribs;
     /** The VAO name {@link #currentAttribs} belongs to; meaningful only while it is non-null. */
     private int currentAttribsVao;
+    /** S3-2 (GAP-ST-8): the currently bound vertex array object name (0 = default VAO). */
+    private volatile int boundVertexArray;
     private int boundRenderbuffer;
     private final Map<Integer, int[]> renderbufferSizes = new HashMap<Integer, int[]>();
     private long version;
@@ -146,6 +148,22 @@ public final class GlsmClientArrayState {
             this.currentAttribs = null;
         }
         this.version++;
+    }
+
+    /** S3-2 (GAP-ST-8): binds the vertex array object name (0 = default VAO). */
+    public void bindVertexArray(int vao) {
+        this.boundVertexArray = vao;
+        this.version++;
+    }
+
+    /** {@return the currently bound vertex array object name} (0 = default VAO). */
+    public int boundVertexArray() {
+        return this.boundVertexArray;
+    }
+
+    /** {@return the currently bound VAO's attribute records}, binding them on first use. */
+    public VaoAttrib[] boundAttribs() {
+        return boundAttribs(this.boundVertexArray);
     }
 
     public void bindRenderbuffer(int name) { this.boundRenderbuffer = name; this.version++; }

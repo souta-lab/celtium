@@ -8,10 +8,10 @@ import static org.lwjgl.system.MemoryUtil.memPutInt;
 import static org.lwjgl.system.MemoryUtil.memPutLong;
 
 /**
- * The stub's state queries, extracted from {@code CeltiumGlStub} (giant-split seam 6, QUEUE 674).
+ * The stub's state queries, extracted from {@code GlsmFrontend} (giant-split seam 6, QUEUE 674).
  * Behaviour is unchanged: this class owns the {@code glGet*} answer bodies - the string, integer,
  * float, boolean and buffer/texture-parameter answers, the texture-unit and extension answer
- * censuses, and the capability record read - while {@code CeltiumGlStub} keeps the public doors
+ * censuses, and the capability record read - while {@code GlsmFrontend} keeps the public doors
  * ({@code celtium$getInteger} and kin) and the dispatch that calls in.
  * <p>
  * The answers read the stub's live recorded state (the raster and texture ledgers, the enable
@@ -69,7 +69,7 @@ final class GlStateQueries {
         return "unavailable";
     }
 
-    static long stringFor(CeltiumGlStub stub, int pname) {
+    static long stringFor(GlsmFrontend stub, int pname) {
         String value;
         switch (pname) {
             case 0x1F00: // GL_VENDOR
@@ -121,13 +121,13 @@ final class GlStateQueries {
         return intern(stub, value);
     }
 
-    static long stringIndexed(CeltiumGlStub stub, int pname, int index) {
+    static long stringIndexed(GlsmFrontend stub, int pname, int index) {
         return pname == 0x1F03 && index == 0 ? intern(stub, "GL_ARB_shader_image_load_store") : 0L;
     }
 
     // M-8 residual, closed by M-2: the intern buffer is owned by GlsmStringState
     // (census S-23), so this read goes through that owner, not the stub.
-    static long intern(CeltiumGlStub stub, String ascii) {
+    static long intern(GlsmFrontend stub, String ascii) {
         // The intern buffer itself is owned by GlsmStringState (census S-23, superset-proof residual M-2);
         // this door stays so the string answers keep one shape while the storage has one owner.
         return GlsmStringState.current().intern(ascii);
@@ -203,7 +203,7 @@ final class GlStateQueries {
      * GL_TEXTURE_BINDING_2D, most of them this project's own capture and mirror code re-reading state the stub tracks.
      */
     static int celtium$getInteger(int pname) {
-        CeltiumGlStub stub = CeltiumGlStub.installed;
+        GlsmFrontend stub = GlsmFrontend.installed;
         if (stub == null) {
             return Integer.MIN_VALUE;
         }
@@ -220,7 +220,7 @@ final class GlStateQueries {
      * hundred times a frame.
      */
     static int celtium$currentProgram() {
-        CeltiumGlStub stub = CeltiumGlStub.installed;
+        GlsmFrontend stub = GlsmFrontend.installed;
         return stub == null ? Integer.MIN_VALUE : GlsmQueryFacade.current().currentProgram();
     }
 
@@ -241,19 +241,19 @@ final class GlStateQueries {
      * is and the stack does.
      */
     static void celtium$useProgram(int program) {
-        CeltiumGlStub stub = CeltiumGlStub.installed;
+        GlsmFrontend stub = GlsmFrontend.installed;
         if (stub == null) {
             return;
         }
         GlsmShaderLedger.current().useProgram(program);
         if (program != 0 && stub.celtium$programBinds.add(program)) {
             System.out.println("[Celtium] CELTIUM_PROGRAM_BOUND program=" + program
-                    + " site=[" + CeltiumGlStub.celtium$callSite() + "]");
+                    + " site=[" + GlsmFrontend.celtium$callSite() + "]");
         }
     }
 
     /** The buffer-object query: GL_BUFFER_SIZE answers the recorded or native size, everything else 0. */
-    static void getBufferParameterQuery(CeltiumGlStub stub, String name, int target, int pname, long out) {
+    static void getBufferParameterQuery(GlsmFrontend stub, String name, int target, int pname, long out) {
         if (pname == 0x8764) { // GL_BUFFER_SIZE - LWJGL needs this to size glMapBuffer results
             int bound = stub.boundBuffer(target);
             NativeGeometryBuffer nativeBuffer = NativeGeometryBuffer.find(bound);
@@ -272,22 +272,22 @@ final class GlStateQueries {
 
     /** LWJGL3's buffer-parameter query natives; see {@link #getBufferParameterQuery}. */
     static void celtium$getBufferParameter(String name, int target, int pname, long out) {
-        CeltiumGlStub stub = CeltiumGlStub.installed;
+        GlsmFrontend stub = GlsmFrontend.installed;
         if (stub != null && out != 0L) {
             getBufferParameterQuery(stub, name, target, pname, out);
         }
     }
 
     /** The non-DSA tex-parameter query: (target, pname, out) on the texture bound to that target's active unit. */
-    static void getTexParameterQuery(CeltiumGlStub stub, String name, int target, int paramPname, long out) {
+    static void getTexParameterQuery(GlsmFrontend stub, String name, int target, int paramPname, long out) {
         int textureName = 0;
-        if (!CeltiumGlStub.isProxyTarget(target)) {
-            int bound = (target == CeltiumGlStub.GL_TEXTURE_2D ? stub.textures.texture2d() : stub.textureBindings.get(stub.texBindKey(target)));
+        if (!GlsmFrontend.isProxyTarget(target)) {
+            int bound = (target == GlsmFrontend.GL_TEXTURE_2D ? stub.textures.texture2d() : stub.textureBindings.get(stub.texBindKey(target)));
             textureName = bound < 0 ? 0 : bound;
         }
-        int value = CeltiumGlStub.textureParameterValue(textureName, paramPname);
+        int value = GlsmFrontend.textureParameterValue(textureName, paramPname);
         stub.celtium$noteTextureParameterQuery(name, textureName, paramPname, value,
-                CeltiumGlStub.textureParameterRecorded(textureName, paramPname));
+                GlsmFrontend.textureParameterRecorded(textureName, paramPname));
         if (name.endsWith("fv")) {
             if (paramPname == 0x1004) { // GL_TEXTURE_BORDER_COLOR - four components, GL's initial zero
                 for (int i = 0; i < 4; i++) {
@@ -303,14 +303,14 @@ final class GlStateQueries {
 
     /** LWJGL3's tex-parameter query natives, which bypass the dispatch path; see {@link #getTexParameterQuery}. */
     static void celtium$getTexParameter(String name, int target, int pname, long out) {
-        CeltiumGlStub stub = CeltiumGlStub.installed;
+        GlsmFrontend stub = GlsmFrontend.installed;
         if (stub != null && out != 0L) {
             getTexParameterQuery(stub, name, target, pname, out);
         }
     }
 
     /** The scalar half of {@link #getInts}; {@link Integer#MIN_VALUE} means "not a tracked scalar pname". */
-    static int getIntegerValue(CeltiumGlStub stub, int pname) {
+    static int getIntegerValue(GlsmFrontend stub, int pname) {
         switch (pname) {
             case 0x0BE1: // GL_BLEND_SRC
             case 0x80C9: return stub.raster.blendSrcRgb(); // GL_BLEND_SRC_RGB
@@ -386,10 +386,10 @@ final class GlStateQueries {
                 return reference >= 0.5f ? 1 : 0;
             }
             case 0x0B50: return enabledCap(stub, 0x0B50) ? 1 : 0; // GL_LIGHTING
-            case 0x0B60: return enabledCap(stub, CeltiumGlStub.GL_FOG) ? 1 : 0; // GL_FOG
-            case 0x0B71: return enabledCap(stub, CeltiumGlStub.GL_DEPTH_TEST) ? 1 : 0; // GL_DEPTH_TEST
-            case 0x0BC0: return enabledCap(stub, CeltiumGlStub.GL_ALPHA_TEST) ? 1 : 0; // GL_ALPHA_TEST
-            case 0x0C11: return enabledCap(stub, CeltiumGlStub.GL_SCISSOR_TEST) ? 1 : 0; // GL_SCISSOR_TEST
+            case 0x0B60: return enabledCap(stub, GlsmFrontend.GL_FOG) ? 1 : 0; // GL_FOG
+            case 0x0B71: return enabledCap(stub, GlsmFrontend.GL_DEPTH_TEST) ? 1 : 0; // GL_DEPTH_TEST
+            case 0x0BC0: return enabledCap(stub, GlsmFrontend.GL_ALPHA_TEST) ? 1 : 0; // GL_ALPHA_TEST
+            case 0x0C11: return enabledCap(stub, GlsmFrontend.GL_SCISSOR_TEST) ? 1 : 0; // GL_SCISSOR_TEST
             // The delivered frame is RGBA8 colour with D24 depth and no stencil. Mods probe these to pick a format or
             // a shadow path; the old answer was zero for every one of them, which reads as "no colour bits at all".
             // The colour answers describe the frame, so while a non-default chain pair is the current target
@@ -449,18 +449,15 @@ final class GlStateQueries {
             case 0x0D3B: // GL_MAX_CLIENT_ATTRIB_STACK_DEPTH - the bounded stack the push/pop routes use
                 return 16;
             case 0x85B5: // GL_VERTEX_ARRAY_BINDING
-                // M-8 residual: the bound vertex-array NAME (S-10) has no stage-3 owner yet.
-                // M-5 moved the attribute RECORDS into GlsmClientArrayState; the name itself is
-                // written by the stub's two bind doors and its delete sweep, so its move is the
-                // same shape as M-5 but a separate slice (the owner-side precedent is
-                // GlsmClientArrayState's boundRenderbuffer pair).
-                return stub.boundVertexArray;
+                // S3-2 (GAP-ST-8) rewired: bound vertex-array name is owned by GlsmClientArrayState
+                // and read through GlsmQueryFacade.
+                return GlsmQueryFacade.current().boundVertexArray();
             case 0x8CDF: // GL_MAX_COLOR_ATTACHMENTS - the MRT ledger size: a chain target holds a colour image
                 // per slot up to COLOR_ATTACHMENT_SLOTS, and a pass is built with that many attachments
-                return CeltiumGlStub.COLOR_ATTACHMENT_SLOTS;
+                return GlsmFrontend.COLOR_ATTACHMENT_SLOTS;
             case 0x8824: // GL_MAX_DRAW_BUFFERS - the same ledger: a program's outputs lower to that many
                 // per-location fragment outputs (ModGlslTranslator's MAX_FRAG_OUTPUTS)
-                return CeltiumGlStub.COLOR_ATTACHMENT_SLOTS;
+                return GlsmFrontend.COLOR_ATTACHMENT_SLOTS;
             case 0x84E8: { // GL_MAX_RENDERBUFFER_SIZE
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
                 return vulkan != null ? vulkan.celtium$maxTextureSize() : 16384;
@@ -528,7 +525,7 @@ final class GlStateQueries {
      * left to the bootstrap helper, which can also answer them before this provider is installed.
      */
     static boolean celtium$getIntegers(int pname, long out) {
-        CeltiumGlStub stub = CeltiumGlStub.installed;
+        GlsmFrontend stub = GlsmFrontend.installed;
         if (stub == null || out == 0L) {
             return false;
         }
@@ -539,7 +536,7 @@ final class GlStateQueries {
         return true;
     }
 
-    static void getInts(CeltiumGlStub stub, int pname, long out, CeltiumGlStub.Fn fn) {
+    static void getInts(GlsmFrontend stub, int pname, long out, GlsmFrontend.Fn fn) {
         if (out == 0L) {
             return;
         }
@@ -601,7 +598,7 @@ final class GlStateQueries {
         memPutInt(out, value);
     }
 
-    static void getLongs(CeltiumGlStub stub, int pname, long out, CeltiumGlStub.Fn fn) {
+    static void getLongs(GlsmFrontend stub, int pname, long out, GlsmFrontend.Fn fn) {
         if (out != 0L) {
             memPutLong(out, 0L);
         }
@@ -615,13 +612,13 @@ final class GlStateQueries {
      * transform built from it was garbage. Matrices read the renderer's live state mirror (identity only before a
      * backend exists); scalar and vector queries write exactly the number of components implied by their pname.
      */
-    static void getFloats(CeltiumGlStub stub, int pname, long out, CeltiumGlStub.Fn fn) {
+    static void getFloats(GlsmFrontend stub, int pname, long out, GlsmFrontend.Fn fn) {
         getFloats(stub, pname, out, "glGetDoublev".equals(fn.name));
     }
 
     /** {@return whether the boolean query was answered}; the caller's buffer receives one byte per component. */
     static boolean celtium$getBooleans(int pname, long out) {
-        CeltiumGlStub stub = CeltiumGlStub.installed;
+        GlsmFrontend stub = GlsmFrontend.installed;
         if (stub == null || out == 0L) {
             return false;
         }
@@ -631,7 +628,7 @@ final class GlStateQueries {
 
     /** {@return whether the capability is enabled}, answered from the same record {@code glIsEnabled} reads. */
     static boolean celtium$isEnabled(int capability) {
-        CeltiumGlStub stub = CeltiumGlStub.installed;
+        GlsmFrontend stub = GlsmFrontend.installed;
         return stub != null && enabledCap(stub, capability);
     }
 
@@ -640,7 +637,7 @@ final class GlStateQueries {
         if (out == 0L) {
             return;
         }
-        CeltiumGlStub stub = CeltiumGlStub.installed;
+        GlsmFrontend stub = GlsmFrontend.installed;
         if (stub != null) {
             getFloats(stub, pname, out, asDouble);
         } else {
@@ -648,7 +645,7 @@ final class GlStateQueries {
         }
     }
 
-    static void getFloats(CeltiumGlStub stub, int pname, long out, boolean asDouble) {
+    static void getFloats(GlsmFrontend stub, int pname, long out, boolean asDouble) {
         org.soutalab.celtium.vulkan.ImmediateFogState fog = org.soutalab.celtium.vulkan.ImmediateFogState.current();
         if (out != 0L && pname >= 0x0B62 && pname <= 0x0B66) {
             if (pname == 0x0B66) {
@@ -707,14 +704,14 @@ final class GlStateQueries {
                 // copies it out in the same call, so the stub's shared scratch array was never
                 // observable state - and sharing it made concurrent queries race on it.
                 float[] clearScratch = new float[4];
-                CeltiumGlStub.mainClearValues(clearScratch);
+                GlsmFrontend.mainClearValues(clearScratch);
                 for (int i = 0; i < 4; i++) {
                     putFloatOrDouble(out, i, clearScratch[i], asDouble);
                 }
                 return;
             }
             case 0x0B73: { // GL_DEPTH_CLEAR_VALUE
-                putFloatOrDouble(out, 0, (float) CeltiumGlStub.clearDepth(), asDouble);
+                putFloatOrDouble(out, 0, (float) GlsmFrontend.clearDepth(), asDouble);
                 return;
             }
             case 0x0B91: { // GL_STENCIL_CLEAR_VALUE - no stencil state is recorded, GL's default is 0
@@ -858,7 +855,7 @@ final class GlStateQueries {
         }
     }
 
-    static void getBooleans(CeltiumGlStub stub, int pname, long out, CeltiumGlStub.Fn fn) {
+    static void getBooleans(GlsmFrontend stub, int pname, long out, GlsmFrontend.Fn fn) {
         if (out == 0L) {
             return;
         }
@@ -889,7 +886,7 @@ final class GlStateQueries {
                 return;
             }
             case 0x0BE2: { // GL_BLEND
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(stub, CeltiumGlStub.GL_BLEND) ? 1 : 0));
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(stub, GlsmFrontend.GL_BLEND) ? 1 : 0));
                 return;
             }
             case 0x0B90: { // GL_STENCIL_TEST
@@ -899,19 +896,19 @@ final class GlStateQueries {
             case 0x0B71: { // GL_DEPTH_TEST
                 // The label here used to name the scissor test while the case answered 0x0B71 (the depth test), so a
                 // save/restore of the GL state read the depth test as whatever the scissor test was.
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(stub, CeltiumGlStub.GL_DEPTH_TEST) ? 1 : 0));
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(stub, GlsmFrontend.GL_DEPTH_TEST) ? 1 : 0));
                 return;
             }
             case 0x0C11: { // GL_SCISSOR_TEST
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(stub, CeltiumGlStub.GL_SCISSOR_TEST) ? 1 : 0));
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(stub, GlsmFrontend.GL_SCISSOR_TEST) ? 1 : 0));
                 return;
             }
             case 0x8037: { // GL_POLYGON_OFFSET_FILL
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(stub, CeltiumGlStub.GL_POLYGON_OFFSET_FILL) ? 1 : 0));
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(stub, GlsmFrontend.GL_POLYGON_OFFSET_FILL) ? 1 : 0));
                 return;
             }
             case 0x0B44: { // GL_CULL_FACE
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(stub, CeltiumGlStub.GL_CULL_FACE) ? 1 : 0));
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(stub, GlsmFrontend.GL_CULL_FACE) ? 1 : 0));
                 return;
             }
             case 0x0B50: { // GL_LIGHTING
@@ -919,17 +916,17 @@ final class GlStateQueries {
                 return;
             }
             case 0x0B60: { // GL_FOG
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(stub, CeltiumGlStub.GL_FOG) ? 1 : 0));
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(stub, GlsmFrontend.GL_FOG) ? 1 : 0));
                 return;
             }
             case 0x0BC0: { // GL_ALPHA_TEST
                 // 0x3000 is GL_CLIP_PLANE0, not the alpha test: the query answered "disabled" every time alpha testing
                 // was on, and a mod restoring the state it read turned the test off.
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(stub, CeltiumGlStub.GL_ALPHA_TEST) ? 1 : 0));
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(stub, GlsmFrontend.GL_ALPHA_TEST) ? 1 : 0));
                 return;
             }
             case 0x0DE1: { // GL_TEXTURE_2D
-                MemoryUtil.memPutByte(out, (byte) (enabledCap(stub, CeltiumGlStub.GL_TEXTURE_2D) ? 1 : 0));
+                MemoryUtil.memPutByte(out, (byte) (enabledCap(stub, GlsmFrontend.GL_TEXTURE_2D) ? 1 : 0));
                 return;
             }
             default:
@@ -974,24 +971,24 @@ final class GlStateQueries {
     }
 
     /** {@return whether a capability this stub records is enabled}. */
-    static boolean enabledCap(CeltiumGlStub stub, int cap) {
+    static boolean enabledCap(GlsmFrontend stub, int cap) {
         switch (cap) {
-            case CeltiumGlStub.GL_FOG: return org.soutalab.celtium.vulkan.ImmediateFogState.current().enabled();
-            case CeltiumGlStub.GL_BLEND: return stub.raster.blendEnabled();
-            case CeltiumGlStub.GL_CULL_FACE: return stub.raster.cullEnabled();
-            case CeltiumGlStub.GL_SCISSOR_TEST: return stub.raster.scissorTest();
-            case CeltiumGlStub.GL_POLYGON_OFFSET_FILL: return stub.raster.polygonOffsetFillEnabled();
-            case CeltiumGlStub.GL_TEXTURE_2D: return stub.textures.enabled2d(stub.textures.activeUnit());
+            case GlsmFrontend.GL_FOG: return org.soutalab.celtium.vulkan.ImmediateFogState.current().enabled();
+            case GlsmFrontend.GL_BLEND: return stub.raster.blendEnabled();
+            case GlsmFrontend.GL_CULL_FACE: return stub.raster.cullEnabled();
+            case GlsmFrontend.GL_SCISSOR_TEST: return stub.raster.scissorTest();
+            case GlsmFrontend.GL_POLYGON_OFFSET_FILL: return stub.raster.polygonOffsetFillEnabled();
+            case GlsmFrontend.GL_TEXTURE_2D: return stub.textures.enabled2d(stub.textures.activeUnit());
             // The mirror is the authority for these three: vanilla's GlStateManager cache can skip the native
             // glEnable/glDisable entirely, so this stub's own enable record never sees the change - the model state
             // probe measured glIsEnabled(GL_DEPTH_TEST)=false against a captured depthTest=1.
-            case CeltiumGlStub.GL_DEPTH_TEST: {
+            case GlsmFrontend.GL_DEPTH_TEST: {
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                return vulkan != null ? vulkan.celtium$depthTestEnabled() : GlsmEnableState.current().enabled(CeltiumGlStub.GL_DEPTH_TEST);
+                return vulkan != null ? vulkan.celtium$depthTestEnabled() : GlsmEnableState.current().enabled(GlsmFrontend.GL_DEPTH_TEST);
             }
-            case CeltiumGlStub.GL_ALPHA_TEST: {
+            case GlsmFrontend.GL_ALPHA_TEST: {
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
-                return vulkan != null ? vulkan.celtium$alphaTestEnabled() : GlsmEnableState.current().enabled(CeltiumGlStub.GL_ALPHA_TEST);
+                return vulkan != null ? vulkan.celtium$alphaTestEnabled() : GlsmEnableState.current().enabled(GlsmFrontend.GL_ALPHA_TEST);
             }
             case 0x0B50: { // GL_LIGHTING
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
@@ -1000,10 +997,5 @@ final class GlStateQueries {
             default: break;
         }
         return GlsmQueryFacade.current().isEnabled(cap);
-    }
-
-    /** Pixel/semantic routing - the layer the texture path plugs into. Nothing routes yet: calls no-op. */
-    static void route(CeltiumGlStub.Fn fn, long[] c) {
-        // Intentionally empty.
     }
 }

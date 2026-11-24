@@ -19,17 +19,17 @@ class BufferLogicalSizeBoundsTest {
     private static final int GL_ARRAY_BUFFER = 0x8892;
     private static final int GL_STATIC_DRAW = 0x88E4;
 
-    private final CeltiumGlStub stub;
+    private final GlsmFrontend stub;
     private final Method dispatch;
     private final Map<?, ?> ids;
 
     BufferLogicalSizeBoundsTest() throws Exception {
-        var constructor = CeltiumGlStub.class.getDeclaredConstructor();
+        var constructor = GlsmFrontend.class.getDeclaredConstructor();
         constructor.setAccessible(true);
         this.stub = constructor.newInstance();
-        this.dispatch = CeltiumGlStub.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+        this.dispatch = GlsmFrontend.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
         this.dispatch.setAccessible(true);
-        Field table = CeltiumGlStub.class.getDeclaredField("IDS");
+        Field table = GlsmFrontend.class.getDeclaredField("IDS");
         table.setAccessible(true);
         this.ids = (Map<?, ?>) table.get(null);
     }
@@ -131,7 +131,7 @@ class BufferLogicalSizeBoundsTest {
             call("glBindBuffer", 0x88EC, pbo); // GL_PIXEL_UNPACK_BUFFER
             call("glBufferData", 0x88EC, 4, MemoryUtil.memAddress(small), GL_STATIC_DRAW);
 
-            Method uploadToRgba8 = CeltiumGlStub.class.getDeclaredMethod(
+            Method uploadToRgba8 = GlsmFrontend.class.getDeclaredMethod(
                     "uploadToRgba8", int.class, int.class, int.class, int.class, long.class);
             uploadToRgba8.setAccessible(true);
             Object result = uploadToRgba8.invoke(this.stub, 4, 4, 0x1908, 0x1401, 0L);

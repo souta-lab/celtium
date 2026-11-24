@@ -183,7 +183,7 @@ public abstract class GlStateManagerMixin {
         }
         // The stub's attribute stack needs the same value to put back on glPopAttrib, and vanilla's cache means this
         // hook is the only place the managed route is visible at all.
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteDepthMask(mask);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteDepthMask(mask);
     }
 
     @Inject(method = "func_179097_i", at = @At("HEAD"), require = 0)
@@ -217,7 +217,7 @@ public abstract class GlStateManagerMixin {
             } catch (Throwable ignored) {
             }
         }
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteAlphaFunc(glFunc, reference);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteAlphaFunc(glFunc, reference);
     }
 
     @Inject(method = "func_179098_w", at = @At("HEAD"), require = 0)
@@ -272,7 +272,7 @@ public abstract class GlStateManagerMixin {
             } catch (Throwable ignored) {
             }
         }
-        org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$noteDepthFunc(func);
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteDepthFunc(func);
     }
 
     @Inject(method = "func_179094_E", at = @At("HEAD"), require = 0)
@@ -739,7 +739,7 @@ public abstract class GlStateManagerMixin {
     @Inject(method = {"matrixMode", "func_179128_n"}, at = @At("HEAD"), cancellable = true, require = 0)
     private static void celtium$skipRedundantMatrixMode(int mode, CallbackInfo info) {
         try {
-            if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$matrixModeIsCurrent(mode)) {
+            if (org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$matrixModeIsCurrent(mode)) {
                 info.cancel();
             }
         } catch (Throwable ignored) {

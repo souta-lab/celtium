@@ -804,7 +804,7 @@ public abstract class WorldVertexBufferUploaderMixin {
      */
     private static int celtium$listIndex() {
         try {
-            int stub = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x0B33);
+            int stub = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(0x0B33);
             return stub != Integer.MIN_VALUE ? stub
                     : org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_LIST_INDEX);
         } catch (RuntimeException | LinkageError error) {
@@ -818,7 +818,7 @@ public abstract class WorldVertexBufferUploaderMixin {
      * same map the query would have served.
      */
     private static int celtium$getInteger(int pname) {
-        int stub = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(pname);
+        int stub = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(pname);
         return stub != Integer.MIN_VALUE ? stub
                 : org.lwjgl.opengl.GL11.glGetInteger(pname);
     }
@@ -881,7 +881,7 @@ public abstract class WorldVertexBufferUploaderMixin {
             return;
         }
         try {
-            int texture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$boundTexture();
+            int texture = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$boundTexture();
             if (texture != celtium$PROBE_TEXTURE) {
                 return;
             }
@@ -991,7 +991,7 @@ public abstract class WorldVertexBufferUploaderMixin {
             int unit = celtium$getInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
             // The model capture reads the same value from the same place, so the compile and replay halves of the
             // census pair cannot disagree about which texture the list was built under.
-            int texture = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$boundTexture();
+            int texture = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$boundTexture();
             if (texture <= 0) {
                 texture = celtium$getInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
             }

@@ -1,7 +1,7 @@
 package org.taumc.celeritas.impl;
 
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
-import org.soutalab.celtium.vulkan.gl.CeltiumGlStub;
+import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -34,7 +34,7 @@ import java.util.WeakHashMap;
  * Sprites whose custom loader succeeded take neither the census nor the release: they never reach the
  * {@code generateMipmaps} call this class is fed from, which is the conservative direction.
  * <p>
- * Third, the GL stub's own captures, through {@link CeltiumGlStub#releaseSettledTextureCaptures} under the
+ * Third, the GL stub's own captures, through {@link GlsmFrontend#releaseSettledTextureCaptures} under the
  * same switch: the stub keeps an RGBA8 copy of every upload as the mirrors' supply source, and the settled
  * rule there drops only the copies a mirror has already taken in full and nothing has patched since.
  */
@@ -146,7 +146,7 @@ public final class CeltiumFrameRelease {
                 }
             }
         }
-        long captureBytes = CeltiumGlStub.textureCaptureBytes();
+        long captureBytes = GlsmFrontend.textureCaptureBytes();
         System.out.println("[Celtium] CELTIUM_FRAME_CENSUS pass=" + passes
                 + " sprites=" + sprites
                 + " animated=" + animated + " animatedBytes=" + animatedBytes
@@ -172,7 +172,7 @@ public final class CeltiumFrameRelease {
             sprite.clearFramesTextureData();
             releasedSprites++;
         }
-        long[] captures = CeltiumGlStub.releaseSettledTextureCaptures();
+        long[] captures = GlsmFrontend.releaseSettledTextureCaptures();
         System.out.println("[Celtium] CELTIUM_FRAME_RELEASE pass=" + passes
                 + " spritesReleased=" + releasedSprites + " spriteBytesFreed=" + releasedBytes
                 + " excluded=" + excludedSprites

@@ -744,7 +744,7 @@ public class CeltiumGllessNativeTransformer implements IClassTransformer {
         for (int i = 0; i < order.size(); i++) {
             int id = order.get(i).intValue();
             if (id >= names.length
-                    || !org.soutalab.celtium.vulkan.gl.CeltiumGlStub.isDrawingEntryPointKey(names[id])) {
+                    || !org.soutalab.celtium.vulkan.gl.GlsmFrontend.isDrawingEntryPointKey(names[id])) {
                 continue;
             }
             if (drawingNames > 0) {

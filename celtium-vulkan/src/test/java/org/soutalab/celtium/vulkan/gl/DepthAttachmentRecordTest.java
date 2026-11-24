@@ -23,23 +23,23 @@ class DepthAttachmentRecordTest {
 
     @Test
     void depthAttachmentEnumsAreRecognised() {
-        assertTrue(CeltiumGlStub.isDepthAttachment(GL_DEPTH_ATTACHMENT));
-        assertTrue(CeltiumGlStub.isDepthAttachment(GL_DEPTH_STENCIL_ATTACHMENT),
+        assertTrue(GlsmFrontend.isDepthAttachment(GL_DEPTH_ATTACHMENT));
+        assertTrue(GlsmFrontend.isDepthAttachment(GL_DEPTH_STENCIL_ATTACHMENT),
                 "the depth/stencil attachment's depth half is the same storage");
-        assertFalse(CeltiumGlStub.isDepthAttachment(GL_COLOR_ATTACHMENT0));
-        assertFalse(CeltiumGlStub.isDepthAttachment(0));
+        assertFalse(GlsmFrontend.isDepthAttachment(GL_COLOR_ATTACHMENT0));
+        assertFalse(GlsmFrontend.isDepthAttachment(0));
     }
 
     @Test
     void aSharedDepthTextureKeepsOneForwardEntryPerFramebuffer() {
         var forward = new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
         var reverse = new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
-        CeltiumGlStub.updateDepthAttachment(forward, reverse, 183, GL_DEPTH_ATTACHMENT, 179);
-        CeltiumGlStub.updateDepthAttachment(forward, reverse, 184, GL_DEPTH_ATTACHMENT, 179);
+        GlsmFrontend.updateDepthAttachment(forward, reverse, 183, GL_DEPTH_ATTACHMENT, 179);
+        GlsmFrontend.updateDepthAttachment(forward, reverse, 184, GL_DEPTH_ATTACHMENT, 179);
         assertEquals(179, forward.get(183));
         assertEquals(179, forward.get(184), "the family's second framebuffer attaches the same texture");
         // Detaching one framebuffer must not drop the other's record.
-        CeltiumGlStub.updateDepthAttachment(forward, reverse, 183, GL_DEPTH_ATTACHMENT, 0);
+        GlsmFrontend.updateDepthAttachment(forward, reverse, 183, GL_DEPTH_ATTACHMENT, 0);
         assertEquals(0, forward.get(183));
         assertEquals(179, forward.get(184));
     }
@@ -48,8 +48,8 @@ class DepthAttachmentRecordTest {
     void nonDepthAttachmentsAndTheDefaultFramebufferAreIgnored() {
         var forward = new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
         var reverse = new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
-        CeltiumGlStub.updateDepthAttachment(forward, reverse, 183, GL_COLOR_ATTACHMENT0, 179);
-        CeltiumGlStub.updateDepthAttachment(forward, reverse, 0, GL_DEPTH_ATTACHMENT, 179);
+        GlsmFrontend.updateDepthAttachment(forward, reverse, 183, GL_COLOR_ATTACHMENT0, 179);
+        GlsmFrontend.updateDepthAttachment(forward, reverse, 0, GL_DEPTH_ATTACHMENT, 179);
         assertEquals(0, forward.size());
         assertEquals(0, reverse.size());
     }

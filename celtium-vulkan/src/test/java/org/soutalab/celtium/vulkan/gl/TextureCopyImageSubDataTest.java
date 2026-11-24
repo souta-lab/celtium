@@ -27,9 +27,9 @@ class TextureCopyImageSubDataTest {
     private static final int UNSIGNED_BYTE = 0x1401;
 
     private static Object install() throws Exception {
-        var ctor = CeltiumGlStub.class.getDeclaredConstructor();
+        var ctor = GlsmFrontend.class.getDeclaredConstructor();
         ctor.setAccessible(true);
-        var installed = CeltiumGlStub.class.getDeclaredField("installed");
+        var installed = GlsmFrontend.class.getDeclaredField("installed");
         installed.setAccessible(true);
         Object previous = installed.get(null);
         installed.set(null, ctor.newInstance());
@@ -37,21 +37,21 @@ class TextureCopyImageSubDataTest {
     }
 
     private static void restore(Object previous) throws Exception {
-        var installed = CeltiumGlStub.class.getDeclaredField("installed");
+        var installed = GlsmFrontend.class.getDeclaredField("installed");
         installed.setAccessible(true);
         installed.set(null, previous);
     }
 
     /** Uploads a {@code width}x{@code height} RGBA level whose byte at index {@code i} is {@code i % 251}. */
     private static void uploadPattern(int texture, int width, int height) {
-        CeltiumGlStub.celtium$glBindTexture(GL_TEXTURE_2D, texture);
+        GlsmFrontend.celtium$glBindTexture(GL_TEXTURE_2D, texture);
         ByteBuffer pixels = MemoryUtil.memAlloc(width * height * 4);
         try {
             long address = MemoryUtil.memAddress(pixels);
             for (int i = 0; i < width * height * 4; i++) {
                 MemoryUtil.memPutByte(address + i, (byte) (i % 251));
             }
-            CeltiumGlStub.celtium$texImage2D(GL_TEXTURE_2D, 0, RGBA8, width, height, 0, RGBA, UNSIGNED_BYTE,
+            GlsmFrontend.celtium$texImage2D(GL_TEXTURE_2D, 0, RGBA8, width, height, 0, RGBA, UNSIGNED_BYTE,
                     address);
         } finally {
             MemoryUtil.memFree(pixels);
@@ -60,12 +60,12 @@ class TextureCopyImageSubDataTest {
 
     /** Allocates a level with no data, the render-target idiom the atlas starts from. */
     private static void allocate(int texture, int width, int height) {
-        CeltiumGlStub.celtium$glBindTexture(GL_TEXTURE_2D, texture);
-        CeltiumGlStub.celtium$texImage2D(GL_TEXTURE_2D, 0, RGBA8, width, height, 0, RGBA, UNSIGNED_BYTE, 0L);
+        GlsmFrontend.celtium$glBindTexture(GL_TEXTURE_2D, texture);
+        GlsmFrontend.celtium$texImage2D(GL_TEXTURE_2D, 0, RGBA8, width, height, 0, RGBA, UNSIGNED_BYTE, 0L);
     }
 
     private static void copy(int src, int srcX, int dst, int dstX, int width, int height) {
-        CeltiumGlStub.celtium$copyImageSubData(src, GL_TEXTURE_2D, 0, srcX, 0, 0,
+        GlsmFrontend.celtium$copyImageSubData(src, GL_TEXTURE_2D, 0, srcX, 0, 0,
                 dst, GL_TEXTURE_2D, 0, dstX, 0, 0, width, height, 1);
     }
 
@@ -75,18 +75,18 @@ class TextureCopyImageSubDataTest {
         try {
             uploadPattern(600, 32, 16);
             allocate(601, 16, 16);
-            long allocated = CeltiumGlStub.textureUploadSerial(601, 0);
-            assertFalse(CeltiumGlStub.textureLevelHasGamePixels(601, 0),
+            long allocated = GlsmFrontend.textureUploadSerial(601, 0);
+            assertFalse(GlsmFrontend.textureLevelHasGamePixels(601, 0),
                     "the destination starts as an allocation with no game pixels");
 
             copy(600, 16, 601, 0, 16, 16);
 
-            assertTrue(CeltiumGlStub.textureLevelHasGamePixels(601, 0),
+            assertTrue(GlsmFrontend.textureLevelHasGamePixels(601, 0),
                     "the copied rectangle is game content in the destination level");
-            assertTrue(CeltiumGlStub.textureUploadSerial(601, 0) > allocated,
+            assertTrue(GlsmFrontend.textureUploadSerial(601, 0) > allocated,
                     "a copy is a write to the level, so a mirror that deferred on the allocation is asked again");
-            ByteBuffer source = CeltiumGlStub.textureUploadRgba8(600, 0, new int[2]);
-            ByteBuffer dest = CeltiumGlStub.textureUploadRgba8(601, 0, new int[2]);
+            ByteBuffer source = GlsmFrontend.textureUploadRgba8(600, 0, new int[2]);
+            ByteBuffer dest = GlsmFrontend.textureUploadRgba8(601, 0, new int[2]);
             for (int row = 0; row < 16; row++) {
                 for (int i = 0; i < 16 * 4; i++) {
                     assertEquals(source.get(row * 32 * 4 + 16 * 4 + i), dest.get(row * 16 * 4 + i),
@@ -105,17 +105,17 @@ class TextureCopyImageSubDataTest {
             uploadPattern(600, 32, 16);
             allocate(601, 16, 16);
             copy(600, 16, 601, 0, 16, 16);
-            long afterFirst = CeltiumGlStub.textureUploadSerial(601, 0);
+            long afterFirst = GlsmFrontend.textureUploadSerial(601, 0);
 
             // FoamFix copies the current frame every tick, and a frame lasts several ticks: the repeats carry
             // the same bytes, and the serial is what makes a mirror re-supply, so they must not move it.
             copy(600, 16, 601, 0, 16, 16);
-            assertEquals(afterFirst, CeltiumGlStub.textureUploadSerial(601, 0),
+            assertEquals(afterFirst, GlsmFrontend.textureUploadSerial(601, 0),
                     "an identical copy is not a write to the level's content");
 
             // A different frame is a different rectangle: that one is a write.
             copy(600, 0, 601, 0, 16, 16);
-            assertTrue(CeltiumGlStub.textureUploadSerial(601, 0) > afterFirst,
+            assertTrue(GlsmFrontend.textureUploadSerial(601, 0) > afterFirst,
                     "a copy of different bytes moves the serial, so the mirror re-supplies");
         } finally {
             restore(previous);
@@ -127,13 +127,13 @@ class TextureCopyImageSubDataTest {
         Object previous = install();
         try {
             allocate(601, 16, 16);
-            long allocated = CeltiumGlStub.textureUploadSerial(601, 0);
+            long allocated = GlsmFrontend.textureUploadSerial(601, 0);
 
             copy(999, 0, 601, 0, 16, 16);
 
-            assertEquals(allocated, CeltiumGlStub.textureUploadSerial(601, 0),
+            assertEquals(allocated, GlsmFrontend.textureUploadSerial(601, 0),
                     "nothing was captured for the source, so nothing was written");
-            assertFalse(CeltiumGlStub.textureLevelHasGamePixels(601, 0),
+            assertFalse(GlsmFrontend.textureLevelHasGamePixels(601, 0),
                     "and the destination did not gain game pixels from an empty source");
         } finally {
             restore(previous);
@@ -146,14 +146,14 @@ class TextureCopyImageSubDataTest {
         try {
             uploadPattern(600, 32, 16);
             allocate(601, 16, 16);
-            long allocated = CeltiumGlStub.textureUploadSerial(601, 0);
+            long allocated = GlsmFrontend.textureUploadSerial(601, 0);
 
             // The rectangle starts inside the source level but runs past its captured rows.
             copy(600, 24, 601, 0, 16, 16);
 
-            assertEquals(allocated, CeltiumGlStub.textureUploadSerial(601, 0),
+            assertEquals(allocated, GlsmFrontend.textureUploadSerial(601, 0),
                     "a copy the source record cannot cover writes nothing, the way GL leaves the level alone");
-            assertFalse(CeltiumGlStub.textureLevelHasGamePixels(601, 0));
+            assertFalse(GlsmFrontend.textureLevelHasGamePixels(601, 0));
         } finally {
             restore(previous);
         }
@@ -165,18 +165,18 @@ class TextureCopyImageSubDataTest {
         try {
             uploadPattern(600, 32, 16);
             allocate(601, 16, 16);
-            long allocated = CeltiumGlStub.textureUploadSerial(601, 0);
+            long allocated = GlsmFrontend.textureUploadSerial(601, 0);
 
             // A depth other than 1 is a 3D copy, which a 2D capture cannot serve.
-            CeltiumGlStub.celtium$copyImageSubData(600, GL_TEXTURE_2D, 0, 0, 0, 0,
+            GlsmFrontend.celtium$copyImageSubData(600, GL_TEXTURE_2D, 0, 0, 0, 0,
                     601, GL_TEXTURE_2D, 0, 0, 0, 0, 16, 16, 2);
             // A non-2D target on either side is likewise outside the route.
-            CeltiumGlStub.celtium$copyImageSubData(600, GL_TEXTURE_3D, 0, 0, 0, 0,
+            GlsmFrontend.celtium$copyImageSubData(600, GL_TEXTURE_3D, 0, 0, 0, 0,
                     601, GL_TEXTURE_2D, 0, 0, 0, 0, 16, 16, 1);
 
-            assertEquals(allocated, CeltiumGlStub.textureUploadSerial(601, 0),
+            assertEquals(allocated, GlsmFrontend.textureUploadSerial(601, 0),
                     "neither refused shape wrote into the destination level");
-            assertFalse(CeltiumGlStub.textureLevelHasGamePixels(601, 0));
+            assertFalse(GlsmFrontend.textureLevelHasGamePixels(601, 0));
         } finally {
             restore(previous);
         }

@@ -8,7 +8,7 @@ import java.util.Map;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
-import org.soutalab.celtium.vulkan.gl.CeltiumGlStub;
+import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 
 /** Opt-in GPU probe for the raw-FBO fallback; never part of the renderer distribution. */
 final class RawFboIdentityProbe {
@@ -40,8 +40,8 @@ final class RawFboIdentityProbe {
     private static void run() throws Exception {
         final int fbo = 170000001;
         final int texture = 170000002;
-        if (!CeltiumGlStub.isInstalled() || CeltiumGlStub.celtium$framebufferColorTexture(fbo) != 0
-                || CeltiumGlStub.celtium$textureExtent(texture) != null) {
+        if (!GlsmFrontend.isInstalled() || GlsmFrontend.celtium$framebufferColorTexture(fbo) != 0
+                || GlsmFrontend.celtium$textureExtent(texture) != null) {
             throw new IllegalStateException("GL-less stub unavailable or synthetic names already in use");
         }
         Object backend = Class.forName("org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends")
@@ -66,21 +66,21 @@ final class RawFboIdentityProbe {
         Field rawDraw = hint.getDeclaredField("rawDrawFramebuffer");
         rawDraw.setAccessible(true);
         int previousRawDraw = rawDraw.getInt(null);
-        Field installed = CeltiumGlStub.class.getDeclaredField("installed");
+        Field installed = GlsmFrontend.class.getDeclaredField("installed");
         installed.setAccessible(true);
         Object stub = installed.get(null);
-        Field draw = CeltiumGlStub.class.getDeclaredField("drawFbo");
-        Field read = CeltiumGlStub.class.getDeclaredField("readFbo");
+        Field draw = GlsmFrontend.class.getDeclaredField("drawFbo");
+        Field read = GlsmFrontend.class.getDeclaredField("readFbo");
         draw.setAccessible(true);
         read.setAccessible(true);
         int previousDraw = draw.getInt(stub);
         int previousRead = read.getInt(stub);
 
         try {
-            CeltiumGlStub.recordTextureAllocation(texture, 0, 64, 64);
+            GlsmFrontend.recordTextureAllocation(texture, 0, 64, 64);
             hint.getMethod("glBindFramebuffer", int.class, int.class).invoke(null, 0x8D40, fbo);
             // Deliberately bypass the hint's attachment report to exercise the fallback rather than its normal bind path.
-            CeltiumGlStub.celtium$framebufferTexture2D(0x8D40, 0x8CE0, 0x0DE1, texture, 0);
+            GlsmFrontend.celtium$framebufferTexture2D(0x8D40, 0x8CE0, 0x0DE1, texture, 0);
             if (((Number) registryClass.getMethod("currentIdentity").invoke(registry)).longValue() != identity) {
                 throw new IllegalStateException("raw bind did not select the expected target");
             }
@@ -197,7 +197,7 @@ final class RawFboIdentityProbe {
             // A raw FBO deletion must keep the texture's contents alive. Deleting the texture afterwards
             // must then retire the orphaned target. Use LWJGL entry points to exercise the transformer route.
             org.lwjgl.opengl.GL30C.glDeleteFramebuffers(fbo);
-            if (CeltiumGlStub.celtium$framebufferColorTexture(fbo) != 0
+            if (GlsmFrontend.celtium$framebufferColorTexture(fbo) != 0
                     || ((Number) imageFor.invoke(target, identity)).longValue() != drawnImage
                     || !((Map<?, ?>) images.get(backend)).containsKey(Integer.valueOf(texture))) {
                 throw new IllegalStateException("raw FBO deletion did not preserve its live texture image");
@@ -225,9 +225,9 @@ final class RawFboIdentityProbe {
             // Reverse deletion order: retain the pair while its FBO exists, then retire it on FBO deletion.
             int secondFbo = fbo + 20;
             int secondTexture = texture + 20;
-            CeltiumGlStub.recordTextureAllocation(secondTexture, 0, 64, 64);
+            GlsmFrontend.recordTextureAllocation(secondTexture, 0, 64, 64);
             hint.getMethod("glBindFramebuffer", int.class, int.class).invoke(null, 0x8D40, secondFbo);
-            CeltiumGlStub.celtium$framebufferTexture2D(0x8D40, 0x8CE0, 0x0DE1, secondTexture, 0);
+            GlsmFrontend.celtium$framebufferTexture2D(0x8D40, 0x8CE0, 0x0DE1, secondTexture, 0);
             long secondIdentity = ((Number) registryClass.getMethod("rawFramebufferIdentity", int.class)
                     .invoke(null, secondFbo)).longValue();
             ensure.invoke(target, secondIdentity, 64, 64);
@@ -261,16 +261,16 @@ final class RawFboIdentityProbe {
                     + " extent=64x64 fallback=exercised liveTargets=" + identities.length
                     + " retired=true rawDeleteBothOrders=true vanillaDelete=true reverseOwners=true extentBounds=true");
         } finally {
-            CeltiumGlStub.celtium$bindFramebuffer(0x8CA9, previousDraw);
-            CeltiumGlStub.celtium$bindFramebuffer(0x8CA8, previousRead);
+            GlsmFrontend.celtium$bindFramebuffer(0x8CA9, previousDraw);
+            GlsmFrontend.celtium$bindFramebuffer(0x8CA8, previousRead);
             rawDraw.setInt(null, previousRawDraw);
             backendClass.getMethod("bindFramebuffer", long.class, boolean.class)
                     .invoke(backend, previousIdentity, previousMain);
             currentFramebufferIdentity.setLong(backend, previousReportedIdentity);
-            Method forget = CeltiumGlStub.class.getDeclaredMethod("forgetFramebuffer", int.class);
+            Method forget = GlsmFrontend.class.getDeclaredMethod("forgetFramebuffer", int.class);
             forget.setAccessible(true);
             forget.invoke(stub, fbo);
-            CeltiumGlStub.forgetTextureAllocation(texture);
+            GlsmFrontend.forgetTextureAllocation(texture);
         }
     }
 

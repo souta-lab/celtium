@@ -435,12 +435,12 @@ public final class CeltiumFontGlyphCapture {
             openLogged++;
             System.out.println("[Celtium] CELTIUM_OPENGLYPH color=" + colorRed + "," + colorGreen + ","
                     + colorBlue + "," + colorAlpha
-                    + " boundTex=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8069)
-                    + " blendSrc=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x0BE1)
-                    + " blendDst=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x0BE0)
-                    + " tex2d=" + (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x0DE1) != 0)
+                    + " boundTex=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(0x8069)
+                    + " blendSrc=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(0x0BE1)
+                    + " blendDst=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(0x0BE0)
+                    + " tex2d=" + (org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(0x0DE1) != 0)
                     + " dump=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.celtium$mirrorProbe(
-                            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8069)));
+                            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(0x8069)));
         }
         // The startup windows run before a backend exists and before the overlay matrices are installed (identity), so
         // the lines worth having are the armed ones - the glyphs that are actually offered to the renderer. Three of
@@ -626,11 +626,11 @@ public final class CeltiumFontGlyphCapture {
                     + Integer.toHexString(ch) + " i=0x" + Integer.toHexString(i)
                     + " f4=" + f4 + " uv=[" + f2 / 256.0F + "," + f3 / 256.0F + "->"
                     + (f2 + f4) / 256.0F + "," + (f3 + 15.98F) / 256.0F + "] pos=" + posX + "," + posY
-                    + " boundTex=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8069)
+                    + " boundTex=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(0x8069)
                     + " mirror=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.celtium$mirrorDims(
-                            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8069))
+                            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(0x8069))
                     + " dump=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.celtium$mirrorProbe(
-                            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8069)));
+                            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(0x8069)));
         }
         windows++;
         unicodeWindows++;
@@ -714,11 +714,11 @@ public final class CeltiumFontGlyphCapture {
                         + Integer.toHexString(ch) + " i=0x" + Integer.toHexString(i)
                         + " f4=" + f4 + " uv=[" + ATLAS_UV[0] + "," + ATLAS_UV[1] + "->"
                         + ATLAS_UV[2] + "," + ATLAS_UV[3] + "] pos=" + posX + "," + posY
-                        + " boundTex=" + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8069)
+                        + " boundTex=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(0x8069)
                     + " mirror=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.celtium$mirrorDims(
-                            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8069))
+                            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(0x8069))
                     + " dump=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.celtium$mirrorProbe(
-                            org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8069)));
+                            org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(0x8069)));
             }
             float f5 = italic ? 1.0F : 0.0F;
             x0 = posX + f5;
@@ -1092,7 +1092,7 @@ public final class CeltiumFontGlyphCapture {
             if (GLYPH_DEBUG && endLogged < 80 && windowUnicode) {
                 endLogged++;
                 System.out.println("[Celtium] CELTIUM_GLYPHEND texAtEnd="
-                        + org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8069)
+                        + org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(0x8069)
                         + " u=" + textureU[0] + " v=" + textureV[0]);
             }
             submit();

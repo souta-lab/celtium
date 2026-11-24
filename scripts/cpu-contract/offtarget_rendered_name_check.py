@@ -45,7 +45,7 @@ def main():
     assert len(re.findall(r'glGetNamedFramebufferAttachmentParameteri', backend_source)) == 2
 
     harness = '''package org.soutalab.celtium.vulkan;
-import org.soutalab.celtium.vulkan.gl.CeltiumGlStub;
+import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 class OffTargetRenderedNameContract {
 ''' + resolver + '''
     static void assertValue(int actual, int expected, String name) {
@@ -57,7 +57,7 @@ class OffTargetRenderedNameContract {
         // bind reported colour texture 42 at 256x256.
         census.bindColorTexture(0x15f76244L, 42, 256, 256);
         // GL-less: the name comes from the recorded association and GL is never asked.
-        CeltiumGlStub.installed = new CeltiumGlStub();
+        GlsmFrontend.installed = new GlsmFrontend();
         assertValue(offTargetRenderedTextureName(0x15f76244L, census), 42, "gl-less recorded attachment");
         assertValue(offTargetRenderedTextureName(0xdeadbeefL, census), 0, "gl-less unrecorded identity");
         assertValue(offTargetRenderedTextureName(0L, census), 0, "gl-less identity zero");
@@ -72,8 +72,8 @@ class OffTargetRenderedNameContract {
 '''
     census = CENSUS.read_text()
     stub = '''package org.soutalab.celtium.vulkan.gl;
-public class CeltiumGlStub {
-    public static CeltiumGlStub installed;
+public class GlsmFrontend {
+    public static GlsmFrontend installed;
     public static boolean isInstalled() { return installed != null; }
 }
 '''
@@ -160,7 +160,7 @@ public class GL45C {
         (pkg / 'VulkanGlTexture.java').write_text(gltexture)
         (pkg / 'RenderTargetRegistry.java').write_text(registry)
         (pkg / 'gl').mkdir()
-        (pkg / 'gl' / 'CeltiumGlStub.java').write_text(stub)
+        (pkg / 'gl' / 'GlsmFrontend.java').write_text(stub)
         lwjgl = root / 'org/lwjgl/opengl'
         lwjgl.mkdir(parents=True)
         (lwjgl / 'GL11.java').write_text(gl11)

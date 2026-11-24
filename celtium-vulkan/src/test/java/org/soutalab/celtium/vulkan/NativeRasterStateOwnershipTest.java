@@ -2,7 +2,7 @@ package org.soutalab.celtium.vulkan;
 
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
-import org.soutalab.celtium.vulkan.gl.CeltiumGlStub;
+import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -15,17 +15,17 @@ class NativeRasterStateOwnershipTest {
     private final NativeRasterState raster = new NativeRasterState();
     private final NativeTextureBindings textures = new NativeTextureBindings(this.raster);
     private final VulkanGlState nativeState = new VulkanGlState(this.raster, this.textures);
-    private final CeltiumGlStub adapter;
+    private final GlsmFrontend adapter;
     private final Method dispatch;
     private final Map<?, ?> ids;
 
     NativeRasterStateOwnershipTest() throws Exception {
-        var constructor = CeltiumGlStub.class.getDeclaredConstructor(NativeRasterState.class, NativeTextureBindings.class);
+        var constructor = GlsmFrontend.class.getDeclaredConstructor(NativeRasterState.class, NativeTextureBindings.class);
         constructor.setAccessible(true);
         this.adapter = constructor.newInstance(this.raster, this.textures);
-        this.dispatch = CeltiumGlStub.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
+        this.dispatch = GlsmFrontend.class.getDeclaredMethod("dispatchArgs", int.class, long[].class);
         this.dispatch.setAccessible(true);
-        var table = CeltiumGlStub.class.getDeclaredField("IDS");
+        var table = GlsmFrontend.class.getDeclaredField("IDS");
         table.setAccessible(true);
         this.ids = (Map<?, ?>) table.get(null);
     }
@@ -172,21 +172,21 @@ class NativeRasterStateOwnershipTest {
     void allocatingReplacementStorageKeepsItsBindingButDeletingTheNameUnbindsIt() throws Exception {
         // TextureUtil.allocateTextureImpl deletes/rebinds first and records storage at TAIL. Treating that storage
         // notification as a second deletion silently unbound the atlas before every sprite upload.
-        var installed = CeltiumGlStub.class.getDeclaredField("installed");
+        var installed = GlsmFrontend.class.getDeclaredField("installed");
         installed.setAccessible(true);
         Object previous = installed.get(null);
         var out = MemoryUtil.memAlloc(16);
         try {
             installed.set(null, this.adapter);
             this.nativeState.bindTexture(73);
-            CeltiumGlStub.recordTextureAllocation(73, 2, 8, 4);
+            GlsmFrontend.recordTextureAllocation(73, 2, 8, 4);
             assertEquals(73, this.nativeState.boundTextureName());
             call("glGetIntegerv", 0x8069, MemoryUtil.memAddress(out));
             assertEquals(73, out.getInt(0));
-            assertEquals(8, CeltiumGlStub.textureLevelParameter(73, 0, 0x1000));
-            CeltiumGlStub.forgetTextureAllocation(73);
+            assertEquals(8, GlsmFrontend.textureLevelParameter(73, 0, 0x1000));
+            GlsmFrontend.forgetTextureAllocation(73);
             assertEquals(0, this.nativeState.boundTextureName());
-            assertEquals(0, CeltiumGlStub.textureLevelParameter(73, 0, 0x1000));
+            assertEquals(0, GlsmFrontend.textureLevelParameter(73, 0, 0x1000));
         } finally { installed.set(null, previous); MemoryUtil.memFree(out); }
     }
 

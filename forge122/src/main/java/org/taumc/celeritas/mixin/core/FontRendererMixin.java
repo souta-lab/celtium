@@ -101,7 +101,7 @@ public abstract class FontRendererMixin {
      * A real-GL build still gets the answer from GL, so the fallback is the call itself.
      */
     private static int celtium$boundTexture2D() {
-        int stub = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8069);
+        int stub = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(0x8069);
         return stub != Integer.MIN_VALUE ? stub
                 : org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
     }

@@ -32,7 +32,7 @@ def main():
     require('the early path has no mode property to opt out of',
             'System.getProperty' not in plugin)
     require('the early path installs the stub',
-            'CeltiumGlStub.install()' in plugin)
+            'GlsmFrontend.install()' in plugin)
     # A call, not a mention: the method's javadoc explains why the hint cannot be set here.
     require('the early path does NOT call glfwWindowHint before init',
             'glfwWindowHint(' not in plugin)
@@ -69,7 +69,7 @@ def main():
     # built without a current context aborted the JVM in native code, which no catch can survive, so the stub now
     # answers the methods themselves. The property and the early install are what this check is about, and those are
     # unchanged - what follows asserts the mechanism that exists rather than the one that was abandoned.
-    stub = (ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/CeltiumGlStub.java').read_text(encoding='utf-8')
+    stub = (ROOT / 'celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/GlsmFrontend.java').read_text(encoding='utf-8')
     require('the stub still installs itself as the process GL function source',
             'install()' in stub and 'FunctionProvider' in stub)
     transformer_path = ROOT / 'forge122/src/main/java/org/taumc/celeritas/core/CeltiumGllessNativeTransformer.java'

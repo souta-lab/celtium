@@ -893,7 +893,7 @@ public final class RenderTargetRegistry {
          * The mapping is deliberately a table and not a guess: these are the internal formats the D18 split's readiness
          * note (item 394, §2.1) enumerates with both a GLenum and a class in this enum - five GLenums onto four classes.
          * {@code GL_RGBA} is the unsized base format, which GL resolves to 8 bits per channel; that is the precision
-         * the delivered frame has ({@code CeltiumGlStub} answers {@code GL_RED_BITS}=8 for it).
+         * the delivered frame has ({@code GlsmFrontend} answers {@code GL_RED_BITS}=8 for it).
          * <p>
          * <b>{@code null} is the refusal, and the caller owns the fallback.</b> An unmapped internal format must be
          * allocated as {@link #RGBA8_UNORM} <em>and counted</em> (readiness §2.2 rule 2: no silent defaults), so this

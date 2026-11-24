@@ -1,6 +1,6 @@
 package org.soutalab.celtium.vulkan;
 
-import org.soutalab.celtium.vulkan.gl.CeltiumGlStub;
+import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 
 /**
  * Snapshot/restore bracket for one pack terrain execution
@@ -77,9 +77,9 @@ final class PackStageStateGuard {
         this.alphaTestEnabled = state.alphaTestEnabled();
         this.alphaFunc = state.alphaFunc();
         this.alphaRef = state.alphaFuncReference();
-        this.drawFramebuffer = CeltiumGlStub.celtium$drawFramebuffer();
-        this.readFramebuffer = CeltiumGlStub.celtium$readFramebuffer();
-        this.viewportPacked = CeltiumGlStub.celtium$viewportPacked();
+        this.drawFramebuffer = GlsmFrontend.celtium$drawFramebuffer();
+        this.readFramebuffer = GlsmFrontend.celtium$readFramebuffer();
+        this.viewportPacked = GlsmFrontend.celtium$viewportPacked();
     }
 
     /**
@@ -145,18 +145,18 @@ final class PackStageStateGuard {
             sink.setAlphaFunc(this.alphaFunc, this.alphaRef);
         }
         if (this.drawFramebuffer >= 0
-                && (CeltiumGlStub.celtium$drawFramebuffer() != this.drawFramebuffer
-                        || CeltiumGlStub.celtium$readFramebuffer() != this.readFramebuffer)) {
+                && (GlsmFrontend.celtium$drawFramebuffer() != this.drawFramebuffer
+                        || GlsmFrontend.celtium$readFramebuffer() != this.readFramebuffer)) {
             if (this.drawFramebuffer == this.readFramebuffer) {
-                CeltiumGlStub.celtium$bindFramebuffer(GL_FRAMEBUFFER, this.drawFramebuffer);
+                GlsmFrontend.celtium$bindFramebuffer(GL_FRAMEBUFFER, this.drawFramebuffer);
             } else {
-                CeltiumGlStub.celtium$bindFramebuffer(GL_DRAW_FRAMEBUFFER, this.drawFramebuffer);
-                CeltiumGlStub.celtium$bindFramebuffer(GL_READ_FRAMEBUFFER, this.readFramebuffer);
+                GlsmFrontend.celtium$bindFramebuffer(GL_DRAW_FRAMEBUFFER, this.drawFramebuffer);
+                GlsmFrontend.celtium$bindFramebuffer(GL_READ_FRAMEBUFFER, this.readFramebuffer);
             }
         }
-        if (this.viewportPacked >= 0 && CeltiumGlStub.celtium$viewportPacked() != this.viewportPacked) {
+        if (this.viewportPacked >= 0 && GlsmFrontend.celtium$viewportPacked() != this.viewportPacked) {
             long packed = this.viewportPacked;
-            CeltiumGlStub.celtium$viewport((int) ((packed >>> 48) & 0xFFFF), (int) ((packed >>> 32) & 0xFFFF),
+            GlsmFrontend.celtium$viewport((int) ((packed >>> 48) & 0xFFFF), (int) ((packed >>> 32) & 0xFFFF),
                     (int) ((packed >>> 16) & 0xFFFF), (int) (packed & 0xFFFF));
         }
     }

@@ -17,7 +17,7 @@ class TextureParameterSiteGuardTest {
         if (VulkanDiagnostics.withinLimit(0, 24)) {
             return;
         }
-        Method paramSite = CeltiumGlStub.class.getDeclaredMethod("celtium$paramSite");
+        Method paramSite = GlsmFrontend.class.getDeclaredMethod("celtium$paramSite");
         paramSite.setAccessible(true);
         assertEquals("", paramSite.invoke(null));
     }

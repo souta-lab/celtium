@@ -36,7 +36,7 @@ public class OpenGlHelperMixin {
             }
             org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan =
                     (org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend) current;
-            int bound = org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$getInteger(0x8CA6);
+            int bound = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$getInteger(0x8CA6);
             if (bound == Integer.MIN_VALUE) {
                 bound = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_DRAW_FRAMEBUFFER_BINDING);
             }

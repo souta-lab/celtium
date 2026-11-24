@@ -59,6 +59,8 @@ public final class GlsmQueryFacade {
 
     public int currentProgram() { return GlsmShaderLedger.current().currentProgram(); }
 
+    public int boundVertexArray() { return GlsmClientArrayState.current().boundVertexArray(); }
+
     public int colorAttachmentTexture(int framebuffer) {
         return GlsmFramebufferAttachments.current().colorTexture(framebuffer);
     }

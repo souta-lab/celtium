@@ -3,7 +3,7 @@ package org.soutalab.celtium.vulkan;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.soutalab.celtium.vulkan.gl.CeltiumGlStub;
+import org.soutalab.celtium.vulkan.gl.GlsmFrontend;
 
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_2D;
 import static org.lwjgl.opengl.GL11.glGetTexLevelParameteri;
@@ -235,7 +235,7 @@ public final class VulkanTextureRegistry {
      * Under the GL stub, captured surfaces refused because the game never wrote a pixel into the level.
      * <p>
      * A level allocated with a NULL data pointer has a surface (zeros) but no game bytes; the stub answers that through
-     * {@code CeltiumGlStub.textureLevelHasGamePixels}. Filling a mirror from one would mark whole content over an image
+     * {@code GlsmFrontend.textureLevelHasGamePixels}. Filling a mirror from one would mark whole content over an image
      * no upload ever filled - measured as two 1280x720 mirrors and the light map's first read reporting
      * {@code opaque=0/… full=true}. Non-zero here is the number of times that was refused instead.
      */
@@ -1134,12 +1134,12 @@ public final class VulkanTextureRegistry {
 
     /** Named texture size/format query: the GL-less recording owns it, so never call GL45C under the stub. */
     private static int textureLevelParameter(int glTextureId, int level, int pname) {
-        return CeltiumGlStub.textureLevelParameter(glTextureId, level, pname);
+        return GlsmFrontend.textureLevelParameter(glTextureId, level, pname);
     }
 
     /** Named texture sampler query: prefer the recorded GL-less state, not the missing native GL context. */
     private static int textureParameter(int glTextureId, int pname) {
-        return CeltiumGlStub.textureParameter(glTextureId, pname);
+        return GlsmFrontend.textureParameter(glTextureId, pname);
     }
 
     /** {@return whether the texture's magnification filter is nearest}, asked of the texture itself, not of a binding. */
@@ -1158,7 +1158,7 @@ public final class VulkanTextureRegistry {
      * the bridge the texture's own answer is the real one and is asked exactly as before.
      */
     private static boolean nearestFilterFor(int glTextureId, int x, int y, int width, int height) {
-        if (CeltiumGlStub.textureParameterRecorded(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER)) {
+        if (GlsmFrontend.textureParameterRecorded(glTextureId, org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER)) {
             // The stub records glTexParameteri, so the texture's own answer is real. The record wins over the
             // write-shape inference below: the inference is a guess about which writes are the dynamic ones, and it is
             // kept only for a texture whose MAG_FILTER the game never set.
@@ -1179,7 +1179,7 @@ public final class VulkanTextureRegistry {
      * @return a read-only RGBA8 buffer positioned at 0, or null when the stub captured nothing for this name
      */
     private static java.nio.ByteBuffer capturedRgbaOf(int glTextureId, int[] outWidthHeight) {
-        java.nio.ByteBuffer captured = CeltiumGlStub.textureUploadRgba8(glTextureId, 0, outWidthHeight);
+        java.nio.ByteBuffer captured = GlsmFrontend.textureUploadRgba8(glTextureId, 0, outWidthHeight);
         int width = outWidthHeight[0];
         int height = outWidthHeight[1];
         if (captured == null || width <= 0 || height <= 0 || captured.remaining() < width * height * 4) {
@@ -1218,10 +1218,10 @@ public final class VulkanTextureRegistry {
             int expectedWidth = Math.max(1, baseWidth >> level);
             int expectedHeight = Math.max(1, baseHeight >> level);
             int[] extent = new int[2];
-            java.nio.ByteBuffer captured = CeltiumGlStub.textureUploadRgba8(glTextureId, level, extent);
+            java.nio.ByteBuffer captured = GlsmFrontend.textureUploadRgba8(glTextureId, level, extent);
             if (captured == null || extent[0] != expectedWidth || extent[1] != expectedHeight
                     || captured.remaining() < expectedWidth * expectedHeight * 4
-                    || !CeltiumGlStub.textureLevelHasGamePixels(glTextureId, level)) {
+                    || !GlsmFrontend.textureLevelHasGamePixels(glTextureId, level)) {
                 break;
             }
             found[level] = captured;
@@ -1276,15 +1276,15 @@ public final class VulkanTextureRegistry {
         if (rgba == null) {
             return false;
         }
-        if (!gameWritesThisLevel && !CeltiumGlStub.textureLevelHasGamePixels(glTextureId, 0)) {
+        if (!gameWritesThisLevel && !GlsmFrontend.textureLevelHasGamePixels(glTextureId, 0)) {
             // A surface exists but the game never wrote a pixel into it: it is the zero fill an allocation with a NULL
             // data pointer leaves so that later sub-image writes have somewhere to land. Copying it would mark a mirror
             // whole over an image no upload ever filled, and the sampling side would draw those zeros as content. Two
             // frame-sized colour textures and the light map's first read arrived exactly this way. Refused and counted:
             // the mirror keeps whatever it had, and the announcement carrying the real pixels fills it as before.
             this.capturesRefusedWithoutGamePixels++;
-            if (CeltiumGlStub.textureAllocatedWithoutData(glTextureId)
-                    || CeltiumGlStub.textureLevelAllocatedWithoutPixels(glTextureId, 0)) {
+            if (GlsmFrontend.textureAllocatedWithoutData(glTextureId)
+                    || GlsmFrontend.textureLevelAllocatedWithoutPixels(glTextureId, 0)) {
                 // The render-target idiom: GL reserves the level with NULL data and a framebuffer renders into it. The
                 // content is not late, it never comes through an upload, so this is a deferred fill rather than a miss.
                 this.noteMirrorDeferred(glTextureId, extent[0], extent[1],
@@ -1584,7 +1584,7 @@ public final class VulkanTextureRegistry {
             // nobody sized. Accepting it is also the only way the coverage rule above can ever reach "full" for an
             // atlas that is uploaded one sprite at a time and never announced whole: refusing here deadlocked the
             // 8192x8192 block atlas at 35,389 refused patches and a 43%-black frame.
-            boolean extentRecorded = CeltiumGlStub.textureLevelParameter(glTextureId, 0,
+            boolean extentRecorded = GlsmFrontend.textureLevelParameter(glTextureId, 0,
                     org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH) > 0;
             if (!extentRecorded) {
                 // A partial patch into an image that has never been filled whole would sit next to undefined texels. The draw
@@ -2537,7 +2537,7 @@ public final class VulkanTextureRegistry {
                 // Deferring is the trade the creation branch already documents: the publisher owns the association,
                 // and when it cannot publish either the draw refuses and says so instead of drawing black. Counted
                 // apart from the creation deferral, so a leg can say which of the two ran.
-                if (org.soutalab.celtium.vulkan.gl.CeltiumGlStub.celtium$framebufferForColorTexture(glTextureId) != 0) {
+                if (org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferForColorTexture(glTextureId) != 0) {
                     this.staleAttachmentsDeferred++;
                     this.noteMirrorDeferred(glTextureId, existing.width, existing.height,
                             "stale and content-less, but a framebuffer's colour attachment; the owner publishes it");
@@ -2562,7 +2562,7 @@ public final class VulkanTextureRegistry {
         // 1920x1080 name that every group of a window samples. The serial moves with the stub's next write to the
         // level, so a late upload is still seen: what is remembered is an answer about content, not a refusal. The
         // backend's lazy supply records the same serial for the same reason.
-        long contentSerial = CeltiumGlStub.textureUploadSerial(glTextureId, 0);
+        long contentSerial = GlsmFrontend.textureUploadSerial(glTextureId, 0);
         if (this.deferrals.isCurrent(glTextureId, contentSerial)) {
             // The same answer to the same question: counted apart from the content-less decision below, so that
             // counter keeps meaning "lookups that had to decide this", not "lookups that asked".
@@ -2583,7 +2583,7 @@ public final class VulkanTextureRegistry {
         // logged a PATCH_REJECTED (measured: seven per run, for 1280x720 render targets). Returning null leaves the
         // decision to the path that owns the association; if that path cannot publish either, the draw refuses and
         // says so, which is the honest outcome rather than drawing black.
-        if (CeltiumGlStub.celtium$framebufferForColorTexture(glTextureId) != 0) {
+        if (GlsmFrontend.celtium$framebufferForColorTexture(glTextureId) != 0) {
             return null;
         }
         // Asked by name, not of whatever happens to be bound: the stub records an extent per texture, and the
@@ -2717,7 +2717,7 @@ public final class VulkanTextureRegistry {
      */
     private static boolean wrapRepeats(int glTextureId, int pname) {
         try {
-            if (!CeltiumGlStub.textureParameterRecorded(glTextureId, pname)) {
+            if (!GlsmFrontend.textureParameterRecorded(glTextureId, pname)) {
                 // Nothing was recorded for this pname, so the answer is GL's context default - which for WRAP_S/T is
                 // GL_REPEAT (GlStateManager.Profile.DEFAULT re-asserts it), not the CLAMP the stub used to hardcode.
                 // Counted so a texture that relied on the default is distinguishable from one set to REPEAT.
