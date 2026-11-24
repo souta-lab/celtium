@@ -16,8 +16,10 @@ import static org.junit.jupiter.api.Assertions.assertSame;
  *   GL_ELEMENT_ARRAY_BUFFER_BINDING (0x8895, via target 0x8893) come from
  *   {@link GlsmBufferState} directly - the same table the stub's boundBuffer door read for
  *   every non-pixel, non-array target;</li>
- *   <li>the raster and texture-binding reads come from the {@code current()} singletons -
- *   the very instances {@code CeltiumGlStub.install()} builds the stub on.</li>
+ *   <li>the raster and texture-binding reads come from the owner instances the stub
+ *   holds - for the installed stub those are the very {@code current()} singletons
+ *   {@code CeltiumGlStub.install()} builds it on; an injected stub's own owners answer
+ *   for that stub, because its writers write through them.</li>
  * </ul>
  * Not run by the alpha lane (desk-only rule); the merge gate runs it.
  */
@@ -27,6 +29,16 @@ class GlsmM8RewireTest {
     void genericBufferBindingsRoundTripThroughTheOwner() {
         GlsmBufferState buffers = GlsmBufferState.current();
         int[] targets = {0x8A11, 0x8F36, 0x8F37, 0x8893};
+        // The owner is a JVM singleton shared by the whole suite: other test classes bind
+        // these targets through their stubs and do not all unbind (DrawElementsBufferBoundsTest
+        // leaves its element-array name bound, for one). Save whatever the suite left, establish
+        // the unbound precondition explicitly instead of assuming a pristine singleton, and put
+        // the saved bindings back afterwards so this test leaves no residue of its own either.
+        int[] saved = new int[targets.length];
+        for (int i = 0; i < targets.length; i++) {
+            saved[i] = buffers.bound(targets[i]);
+            buffers.bind(targets[i], 0);
+        }
         try {
             for (int i = 0; i < targets.length; i++) {
                 assertEquals(0, buffers.bound(targets[i]), "target starts unbound");
@@ -34,8 +46,8 @@ class GlsmM8RewireTest {
                 assertEquals(9100 + i, buffers.bound(targets[i]));
             }
         } finally {
-            for (int target : targets) {
-                buffers.bind(target, 0);
+            for (int i = 0; i < targets.length; i++) {
+                buffers.bind(targets[i], saved[i]);
             }
         }
     }
