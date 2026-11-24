@@ -41,6 +41,12 @@ KNOWN_NAME_COLLISIONS = {
     ("NativePassRegistry.java", "targetRegistry"),
     ("PassExecutor.java", "targetRegistry"),
     ("PassExecutor.java", "publishedTextures"),
+    # Audited 2026-11-24: the backend's `timestampPeriod` field was moved into
+    # VulkanGpuTerrainCensus as a `private final` field; its constructor assigns
+    # it from VkPhysicalDeviceProperties.limits().timestampPeriod(), the same
+    # source the backend's reassignment used, so the baseline initializer
+    # (`= 1.0f`, immediately overwritten) is not lost.
+    ("VulkanGpuTerrainCensus.java", "timestampPeriod"),
 }
 
 
