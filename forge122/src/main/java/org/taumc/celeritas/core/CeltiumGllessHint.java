@@ -1115,6 +1115,128 @@ public final class CeltiumGllessHint {
     }
 
     /**
+     * Calls of each rewritten native, attributed to the caller that issued them, when
+     * {@code -Dceltium.glless.callerCensus=true} made the transformer emit {@link #noteCaller} at the head of
+     * every rewritten body.
+     *
+     * <p>The name census ({@link #rewriteCensus}) answers "which natives does the run call". In a large pack the
+     * question that follows is "whose are they": which mod issued a direct GL call, and for a tile-entity renderer
+     * usually which entity, because the renderer's class is named for the tile it draws. The rewritten body
+     * executes inside the caller's own stack, so the issuing class is still on it here. The stub's trampoline
+     * cannot offer this - its stack starts at the libffi closure, the Java caller already unwound through the
+     * native hop - and neither can the surface census, which counts names only. An unrouted name in this census
+     * carries its issuers with it, which is what decides whether a silent zero answer has a victim at all.
+     */
+    private static final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> CALLER_COUNTS =
+            new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
+
+    /** Distinct (command, caller) pairs tracked before later pairs fall into the untracked bucket. */
+    private static final int MAX_CALLER_PAIRS = 8192;
+
+    /** Calls whose (command, caller) pair arrived after the pair bound, counted rather than tracked. */
+    private static final java.util.concurrent.atomic.AtomicLong UNTRACKED_CALLER_CALLS =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /** The code-source file each caller class was loaded from, resolved once per class. */
+    private static final java.util.Map<Class<?>, String> CALLER_SOURCES =
+            new java.util.concurrent.ConcurrentHashMap<Class<?>, String>();
+
+    /**
+     * Records one call of a rewritten native under the caller that issued it.
+     *
+     * <p>The caller is the first stack frame outside the interception machinery: this class, the LWJGL classes
+     * (the rewritten body, its wrappers and the lwjglx delegation shim) and the JDK walk machinery are skipped,
+     * and what remains is the class that called into LWJGL - a mod's renderer, a vanilla class, or
+     * {@code GlStateManager} when the call arrived through it, which is itself the attribution for that path.
+     *
+     * <p>The resolution is cached at the two levels that make it repeatable. The walk stops at that first
+     * external frame (StackWalker is lazy, so the frames past it are never materialised), and the caller's code
+     * source - the jar file the class was loaded from - is resolved once per class. What remains per call is the
+     * short walk, one map lookup on the composed key and one increment. This is a diagnostic instrument for
+     * census legs, not a steady-state counter: the walk is the price, and the switch stays off outside them.
+     * Emitted by the transformer only, under {@code celtium.glless.callerCensus}.
+     */
+    public static void noteCaller(String command) {
+        noteDisplayListCall();
+        String caller = callerFrame();
+        String key = command + " <- " + caller;
+        java.util.concurrent.atomic.AtomicLong count = CALLER_COUNTS.get(key);
+        if (count == null) {
+            if (CALLER_COUNTS.size() >= MAX_CALLER_PAIRS) {
+                UNTRACKED_CALLER_CALLS.incrementAndGet();
+                return;
+            }
+            count = CALLER_COUNTS.computeIfAbsent(key, k -> new java.util.concurrent.atomic.AtomicLong());
+        }
+        count.incrementAndGet();
+    }
+
+    /** {@return the issuing caller of a rewritten native, as {@code class.method [code-source file]}}. */
+    private static String callerFrame() {
+        try {
+            java.lang.StackWalker.StackFrame frame = java.lang.StackWalker
+                    .getInstance(java.lang.StackWalker.Option.RETAIN_CLASS_REFERENCE)
+                    .walk(frames -> frames.filter(f -> {
+                        Class<?> declaring = f.getDeclaringClass();
+                        if (declaring == CeltiumGllessHint.class) {
+                            return false;
+                        }
+                        String name = declaring.getName();
+                        return !name.startsWith("org.lwjgl.") && !name.startsWith("org.lwjglx.")
+                                && !name.startsWith("java.") && !name.startsWith("jdk.");
+                    }).findFirst().orElse(null));
+            if (frame == null) {
+                return "<unknown> [?]";
+            }
+            Class<?> declaring = frame.getDeclaringClass();
+            return declaring.getName() + "." + frame.getMethodName() + " [" + callerSource(declaring) + "]";
+        } catch (Throwable ignored) {
+            // Attribution must never break the call it observes.
+            return "<unknown> [?]";
+        }
+    }
+
+    /** {@return the file name of the code source {@code caller} was loaded from, resolved once per class}. */
+    private static String callerSource(Class<?> caller) {
+        String source = CALLER_SOURCES.get(caller);
+        if (source != null) {
+            return source;
+        }
+        String resolved = "?";
+        try {
+            java.security.CodeSource codeSource = caller.getProtectionDomain().getCodeSource();
+            if (codeSource != null && codeSource.getLocation() != null) {
+                String path = codeSource.getLocation().getPath();
+                int slash = path.lastIndexOf('/');
+                resolved = slash >= 0 && slash + 1 < path.length() ? path.substring(slash + 1) : path;
+                if (resolved.isEmpty()) {
+                    resolved = "?";
+                }
+            }
+        } catch (Throwable ignored) {
+            // A class whose source cannot be named is still a caller; the class name carries the record.
+        }
+        CALLER_SOURCES.putIfAbsent(caller, resolved);
+        return resolved;
+    }
+
+    /** {@return the caller-attributed census, largest first, for the exit line}. */
+    public static String callerCensus() {
+        java.util.List<java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong>> entries =
+                new java.util.ArrayList<java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicLong>>(
+                        CALLER_COUNTS.entrySet());
+        entries.sort((a, b) -> Long.compare(b.getValue().get(), a.getValue().get()));
+        StringBuilder line = new StringBuilder();
+        for (int i = 0; i < entries.size() && i < 100; i++) {
+            if (i > 0) {
+                line.append(' ');
+            }
+            line.append(entries.get(i).getKey()).append('=').append(entries.get(i).getValue().get());
+        }
+        return "pairs=" + entries.size() + " untracked=" + UNTRACKED_CALLER_CALLS.get() + " [" + line + "]";
+    }
+
+    /**
      * Calls of each window-layer GL entry point the window guard answered, by entry name.
      *
      * <p>The guard ({@code CeltiumGllessWindowGlTransformer}) replaces GLFW's swap/context-current and SDL's GL
@@ -1231,6 +1353,9 @@ public final class CeltiumGllessHint {
                     out.println("CELTIUM_HINT_DISPLAY_LISTS " + displayListCensus());
                     if (!REWRITTEN_CALLS.isEmpty()) {
                         out.println("CELTIUM_TRANSFORM_CENSUS " + rewriteCensus());
+                    }
+                    if (!CALLER_COUNTS.isEmpty()) {
+                        out.println("CELTIUM_GL_CALLERS " + callerCensus());
                     }
                     if (!WINDOW_GL_CALLS.isEmpty()) {
                         out.println("CELTIUM_WINDOW_GL " + windowGlCensus());
