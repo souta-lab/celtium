@@ -1,17 +1,17 @@
 package org.soutalab.celtium.vulkan.gl;
 
 /**
- * GLSM stage 3, GAP-ST-11 (transitional half): the matrix mode's single record for the
- * stub route.
+ * GLSM stage 3, GAP-ST-11 / M-3: the matrix mode's single owner for both routes.
  * <p>
- * The mode is owned twice today: VulkanGlState's per-backend instance field (the stack
- * machinery reads it) and CeltiumGlStub's own {@code matrixMode} (SEM_MATRIX_MODE writes
- * it, {@code celtium$matrixModeIsCurrent} reads it for the mixin's redundant-call skip).
- * They can disagree exactly when a direct GL11.glMatrixMode call reaches one route and
- * not the other. This record is where the stub route's write and the skip's read meet
- * from stage 3 on; folding VulkanGlState's instance field into it (or routing the stub
- * to the backend's instance) is the merge phase's remaining half, because the backend
- * instance is not reachable from the stub's static surface today.
+ * The stub route writes this record in GL enum values (SEM_MATRIX_MODE) and reads it for the
+ * mixin's redundant-call skip ({@code celtium$matrixModeIsCurrent}). Since M-3, VulkanGlState
+ * holds no per-instance mode field either: its getter/setter delegate here, converting between
+ * this record's GL enum values and its own ordinals (0=MODELVIEW / 1=PROJECTION / 2=TEXTURE),
+ * with unrecognised values on either side falling through to MODELVIEW. A direct
+ * GL11.glMatrixMode call that reaches only one route therefore still moves the mode the other
+ * route's stack machinery selects by — the disagreement the former double ownership allowed is
+ * gone. VulkanGlState's constructor initialises this record to MODELVIEW, preserving the
+ * "a fresh state starts in MODELVIEW" meaning the old per-instance field gave it.
  * <p>
  * GL starts in GL_MODELVIEW (0x1700); the texture mode is 0x1702.
  */
