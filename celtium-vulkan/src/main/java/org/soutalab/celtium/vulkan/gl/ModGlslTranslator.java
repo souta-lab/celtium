@@ -1826,6 +1826,76 @@ public final class ModGlslTranslator {
             """;
 
     /**
+     * Opt-in ({@code -Dceltium.vulkan.fractionalPowGuard.fastSqrt=true}, default off) fast-path
+     * overloads for uniform {@code 0.5} and {@code 0.25} constant exponents. They preserve the
+     * exact non-positive and NaN semantics of {@link #POW_GUARD_HELPERS} (zero, negative, or NaN
+     * base yields {@code 0.0} before {@code sqrt} runs), while replacing the general
+     * {@code exp2(e * log2(x))} lowering with one or two hardware {@code sqrt} instructions.
+     */
+    private static final String POW_GUARD_FAST_SQRT_HELPERS = """
+            float celtium_pow_guard_half(float celtium_base, float celtium_exp) {
+                return celtium_base > 0.0 ? sqrt(celtium_base) : 0.0;
+            }
+            vec2 celtium_pow_guard_half(vec2 celtium_base, vec2 celtium_exp) {
+                return sqrt(mix(vec2(0.0), celtium_base, greaterThan(celtium_base, vec2(0.0))));
+            }
+            vec3 celtium_pow_guard_half(vec3 celtium_base, vec3 celtium_exp) {
+                return sqrt(mix(vec3(0.0), celtium_base, greaterThan(celtium_base, vec3(0.0))));
+            }
+            vec4 celtium_pow_guard_half(vec4 celtium_base, vec4 celtium_exp) {
+                return sqrt(mix(vec4(0.0), celtium_base, greaterThan(celtium_base, vec4(0.0))));
+            }
+            vec2 celtium_pow_guard_half(vec2 celtium_base, float celtium_exp) {
+                return celtium_pow_guard_half(celtium_base, vec2(celtium_exp));
+            }
+            vec3 celtium_pow_guard_half(vec3 celtium_base, float celtium_exp) {
+                return celtium_pow_guard_half(celtium_base, vec3(celtium_exp));
+            }
+            vec4 celtium_pow_guard_half(vec4 celtium_base, float celtium_exp) {
+                return celtium_pow_guard_half(celtium_base, vec4(celtium_exp));
+            }
+            vec2 celtium_pow_guard_half(float celtium_base, vec2 celtium_exp) {
+                return celtium_pow_guard_half(vec2(celtium_base), celtium_exp);
+            }
+            vec3 celtium_pow_guard_half(float celtium_base, vec3 celtium_exp) {
+                return celtium_pow_guard_half(vec3(celtium_base), celtium_exp);
+            }
+            vec4 celtium_pow_guard_half(float celtium_base, vec4 celtium_exp) {
+                return celtium_pow_guard_half(vec4(celtium_base), celtium_exp);
+            }
+            float celtium_pow_guard_quarter(float celtium_base, float celtium_exp) {
+                return celtium_base > 0.0 ? sqrt(sqrt(celtium_base)) : 0.0;
+            }
+            vec2 celtium_pow_guard_quarter(vec2 celtium_base, vec2 celtium_exp) {
+                return sqrt(sqrt(mix(vec2(0.0), celtium_base, greaterThan(celtium_base, vec2(0.0)))));
+            }
+            vec3 celtium_pow_guard_quarter(vec3 celtium_base, vec3 celtium_exp) {
+                return sqrt(sqrt(mix(vec3(0.0), celtium_base, greaterThan(celtium_base, vec3(0.0)))));
+            }
+            vec4 celtium_pow_guard_quarter(vec4 celtium_base, vec4 celtium_exp) {
+                return sqrt(sqrt(mix(vec4(0.0), celtium_base, greaterThan(celtium_base, vec4(0.0)))));
+            }
+            vec2 celtium_pow_guard_quarter(vec2 celtium_base, float celtium_exp) {
+                return celtium_pow_guard_quarter(celtium_base, vec2(celtium_exp));
+            }
+            vec3 celtium_pow_guard_quarter(vec3 celtium_base, float celtium_exp) {
+                return celtium_pow_guard_quarter(celtium_base, vec3(celtium_exp));
+            }
+            vec4 celtium_pow_guard_quarter(vec4 celtium_base, float celtium_exp) {
+                return celtium_pow_guard_quarter(celtium_base, vec4(celtium_exp));
+            }
+            vec2 celtium_pow_guard_quarter(float celtium_base, vec2 celtium_exp) {
+                return celtium_pow_guard_quarter(vec2(celtium_base), celtium_exp);
+            }
+            vec3 celtium_pow_guard_quarter(float celtium_base, vec3 celtium_exp) {
+                return celtium_pow_guard_quarter(vec3(celtium_base), celtium_exp);
+            }
+            vec4 celtium_pow_guard_quarter(float celtium_base, vec4 celtium_exp) {
+                return celtium_pow_guard_quarter(vec4(celtium_base), celtium_exp);
+            }
+            """;
+
+    /**
      * {@return whether the fractional-pow guard is switched on for this translation}. Read at every
      * translation rather than latched into a static: a program is translated when a mod links it, long
      * after the launch properties are set, and a per-call read leaves no initialization-order trap of
@@ -1834,6 +1904,24 @@ public final class ModGlslTranslator {
     private static boolean fractionalPowGuardEnabled() {
         return !"false".equalsIgnoreCase(
                 System.getProperty("celtium.vulkan.fractionalPowGuard", "true"));
+    }
+
+    /** {@return whether uniform {@code 0.5}/{@code 0.25} guarded pow calls use the {@code sqrt} fast path (default off)}. */
+    private static boolean fractionalPowGuardFastSqrtEnabled() {
+        return Boolean.getBoolean("celtium.vulkan.fractionalPowGuard.fastSqrt");
+    }
+
+    /** {@return whether each stage with guarded pow rewrites logs its rewrite counts (default off)}. */
+    private static boolean fractionalPowGuardCensusEnabled() {
+        return Boolean.getBoolean("celtium.vulkan.fractionalPowGuard.census");
+    }
+
+    private static final class PowRewriteStats {
+        int total;
+        int generalEmitted;
+        int fastSqrtEmitted;
+        int halfEligible;
+        int quarterEligible;
     }
 
     /**
@@ -1865,8 +1953,30 @@ public final class ModGlslTranslator {
         if (!fractionalPowGuardEnabled()) {
             return s;
         }
-        String rewritten = rewritePowCalls(s);
-        return rewritten.equals(s) ? s : POW_GUARD_HELPERS + rewritten;
+        boolean fastSqrt = fractionalPowGuardFastSqrtEnabled();
+        boolean census = fractionalPowGuardCensusEnabled();
+        PowRewriteStats stats = new PowRewriteStats();
+        String rewritten = rewritePowCalls(s, fastSqrt, census, stats);
+        if (stats.total == 0) {
+            return s;
+        }
+        if (census) {
+            System.out.println("[Celtium] CELTIUM_POW_GUARD_CENSUS total=" + stats.total
+                    + " halfEligible=" + stats.halfEligible
+                    + " quarterEligible=" + stats.quarterEligible
+                    + " generalEmitted=" + stats.generalEmitted
+                    + " fastSqrtEmitted=" + stats.fastSqrtEmitted
+                    + " fastSqrt=" + fastSqrt);
+        }
+        if (stats.fastSqrtEmitted == 0) {
+            return POW_GUARD_HELPERS + rewritten;
+        }
+        StringBuilder prefix = new StringBuilder();
+        if (stats.generalEmitted > 0) {
+            prefix.append(POW_GUARD_HELPERS);
+        }
+        prefix.append(POW_GUARD_FAST_SQRT_HELPERS);
+        return prefix.append(rewritten).toString();
     }
 
     /**
@@ -1875,7 +1985,7 @@ public final class ModGlslTranslator {
      * not the outer one qualifies. A call that does not qualify - and whose arguments no rewrite
      * touched - is copied out verbatim, comments and spacing included.
      */
-    private static String rewritePowCalls(String s) {
+    private static String rewritePowCalls(String s, boolean fastSqrt, boolean census, PowRewriteStats stats) {
         String scan = stripComments(s);
         Matcher m = POW_CALL_PATTERN.matcher(scan);
         StringBuilder out = null;
@@ -1893,7 +2003,7 @@ public final class ModGlslTranslator {
             List<String> args = new ArrayList<>(rawArgs.size());
             boolean argsChanged = false;
             for (String arg : rawArgs) {
-                String rewrittenArg = rewritePowCalls(arg);
+                String rewrittenArg = rewritePowCalls(arg, fastSqrt, census, stats);
                 argsChanged |= !rewrittenArg.equals(arg);
                 args.add(rewrittenArg);
             }
@@ -1905,7 +2015,36 @@ public final class ModGlslTranslator {
                 out = new StringBuilder(s.length() + 64);
             }
             out.append(s, copied, m.start());
-            out.append(guard ? "celtium_pow_guard(" : "pow(");
+            if (guard) {
+                stats.total++;
+                String callPrefix = "celtium_pow_guard(";
+                if (fastSqrt || census) {
+                    if (isUniformConstantValue(rawArgs.get(1), 0.5)) {
+                        stats.halfEligible++;
+                        if (fastSqrt) {
+                            callPrefix = "celtium_pow_guard_half(";
+                            stats.fastSqrtEmitted++;
+                        } else {
+                            stats.generalEmitted++;
+                        }
+                    } else if (isUniformConstantValue(rawArgs.get(1), 0.25)) {
+                        stats.quarterEligible++;
+                        if (fastSqrt) {
+                            callPrefix = "celtium_pow_guard_quarter(";
+                            stats.fastSqrtEmitted++;
+                        } else {
+                            stats.generalEmitted++;
+                        }
+                    } else {
+                        stats.generalEmitted++;
+                    }
+                } else {
+                    stats.generalEmitted++;
+                }
+                out.append(callPrefix);
+            } else {
+                out.append("pow(");
+            }
             out.append(String.join(", ", args));
             out.append(')');
             copied = close + 1;
@@ -1916,6 +2055,36 @@ public final class ModGlslTranslator {
         }
         out.append(s, copied, s.length());
         return out.toString();
+    }
+
+    /**
+     * {@return whether {@code exponent} is a bare literal or {@code vecN} constructor whose
+     * component literals all equal {@code target}} (used for exact binary powers of two such as
+     * {@code 0.5} and {@code 0.25}).
+     */
+    private static boolean isUniformConstantValue(String exponent, double target) {
+        String t = exponent.strip();
+        Matcher ctor = EXPONENT_CONSTRUCTOR.matcher(t);
+        if (ctor.matches()) {
+            for (String part : splitDeclarators(ctor.group(2))) {
+                if (!isExactLiteralValue(part.strip(), target)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return isExactLiteralValue(t, target);
+    }
+
+    private static boolean isExactLiteralValue(String text, double target) {
+        if (!NUMBER_LITERAL.matcher(text).matches()) {
+            return false;
+        }
+        try {
+            return Double.parseDouble(text.replaceAll("[fF]$", "")) == target;
+        } catch (NumberFormatException notDecimal) {
+            return false;
+        }
     }
 
     /**
