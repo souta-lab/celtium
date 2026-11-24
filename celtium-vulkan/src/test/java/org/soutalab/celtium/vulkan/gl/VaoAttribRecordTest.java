@@ -52,6 +52,24 @@ class VaoAttribRecordTest {
         GlsmEnableState.current().set(0x8076, false); // GL_COLOR_ARRAY
         GlsmEnableState.current().set(0x8078, false); // GL_TEXTURE_COORD_ARRAY
         GlsmEnableState.current().set(ENABLED, false); // the attribute-0 enable mirror
+        // The per-attribute records are VAO state in the same singleton owner (M-5), so they outlive a stub
+        // instance too - and the resets above do not touch them. The quad setup leaves VAO 77 bound with
+        // attribute 0 enabled; a draw that is supposed to be unrecorded then decodes under the quad's enable
+        // and refuses on the legacy pointer's size instead of by name (the main-promotion full gate's one
+        // failure, 2026-11-25). Bind the default VAO and restore its records to GL's initial values, so the
+        // unrecorded-draw premise is actually established.
+        GlsmFrontend.celtium$bindVertexArray(0);
+        for (GlsmClientArrayState.VaoAttrib attrib : GlsmClientArrayState.current().attribsFor(0)) {
+            attrib.enabled = false;
+            attrib.pointerSet = false;
+            attrib.normalized = false;
+            attrib.integer = false;
+            attrib.size = 4;
+            attrib.type = GL_FLOAT;
+            attrib.stride = 0;
+            attrib.offset = 0L;
+            attrib.buffer = 0;
+        }
         return stub;
     }
 
