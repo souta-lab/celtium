@@ -335,8 +335,7 @@ public final class CeltiumGlStub implements FunctionProvider {
      */
     // GAP-ST-2 (S-5): pixel-store state is also GlsmBufferState's.
     /* The per-name logical sizes that used to sit here live in BufferStorageRecord, which operates on the store below. */
-    long getStringAddress;
-    ByteBuffer getStringBuffer;
+    /* The glGetString intern buffer that used to sit here is owned by GlsmStringState (census S-23). */
     // GAP-ST-5 rewired: the viewport's raw rectangle and packed form are owned by GlsmViewportState.
     /** GL_DRAW_FRAMEBUFFER / GL_READ_FRAMEBUFFER bindings; GL_FRAMEBUFFER sets both. */
     volatile int drawFbo, readFbo;

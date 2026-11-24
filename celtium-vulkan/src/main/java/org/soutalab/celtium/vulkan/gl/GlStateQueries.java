@@ -1,11 +1,9 @@
 package org.soutalab.celtium.vulkan.gl;
 
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import org.lwjgl.system.MemoryUtil;
 import org.soutalab.celtium.vulkan.NativeGeometryBuffer;
 
-import static org.lwjgl.system.MemoryUtil.memAddress;
 import static org.lwjgl.system.MemoryUtil.memPutInt;
 import static org.lwjgl.system.MemoryUtil.memPutLong;
 
@@ -34,7 +32,7 @@ import static org.lwjgl.system.MemoryUtil.memPutLong;
  * writes through those instances - a query reading the singletons would answer another
  * stub's state (the M-8 landing fix; NativeRasterStateOwnershipTest and
  * LegacyAttribStackTest pin this). The stub parameter remains only for the reads that
- * still have no stage-3 owner (the getString intern buffer, the non-2D texture binding
+ * still have no stage-3 owner (the non-2D texture binding
  * map, the pixel buffer fields, the framebuffer and vertex-array binding names, and the
  * attribute-stack snapshot mirrors).
  */
@@ -127,20 +125,12 @@ final class GlStateQueries {
         return pname == 0x1F03 && index == 0 ? intern(stub, "GL_ARB_shader_image_load_store") : 0L;
     }
 
-    // M-8 residual: the intern buffer is M-2's slice (GlsmStringState, branch
-    // alpha-glsm-m2-getstring); it does not exist on this base, so the read stays on the stub
-    // until that branch lands - duplicating the owner here would collide with it at merge.
+    // M-8 residual, closed by M-2: the intern buffer is owned by GlsmStringState
+    // (census S-23), so this read goes through that owner, not the stub.
     static long intern(CeltiumGlStub stub, String ascii) {
-        // One buffer is enough: the game compares/prints, it does not keep the pointer. Grow it only when the
-        // string is larger than what is already interned.
-        byte[] bytes = (ascii + "\0").getBytes(StandardCharsets.US_ASCII);
-        if (stub.getStringBuffer == null || stub.getStringBuffer.capacity() < bytes.length) {
-            stub.getStringBuffer = ByteBuffer.allocateDirect(bytes.length);
-            stub.getStringAddress = memAddress(stub.getStringBuffer);
-        }
-        stub.getStringBuffer.clear();
-        stub.getStringBuffer.put(bytes);
-        return stub.getStringAddress;
+        // The intern buffer itself is owned by GlsmStringState (census S-23, superset-proof residual M-2);
+        // this door stays so the string answers keep one shape while the storage has one owner.
+        return GlsmStringState.current().intern(ascii);
     }
 
     /**
