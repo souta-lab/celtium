@@ -578,6 +578,11 @@ final class PresentSwapchain {
                 } finally {
                     FramePassTimings.end("flush");
                 }
+                if (VulkanTerrainGpuBackend.PRESENT_DRAIN_FINISH_GUARD) {
+                    // If the present-time drain opened and recorded into the unified frame buffer,
+                    // close and queue it before the lastFrameReachedQueue gate and presentImage().
+                    backend.celtium$finishFrameBuffer();
+                }
             } catch (RuntimeException | LinkageError error) {
                 // A failed drain must not stop the present: the queued work keeps its owner, and whatever
                 // completed earlier is still worth showing.

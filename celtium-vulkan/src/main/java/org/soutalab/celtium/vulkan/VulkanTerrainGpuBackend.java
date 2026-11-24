@@ -8312,11 +8312,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     == org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_RAW_REGISTER
                     ? org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_RAW_REGISTER
                     : org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_VANILLA_BIND;
-            celtium$flushPendingForGlDrawCause(this.flushEntryHint
-                    == org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_RAW_REGISTER
-                    ? GlDrawWindowCensus.CAUSE_BIND_FRAMEBUFFER_RAW
-                    : isMain ? GlDrawWindowCensus.CAUSE_BIND_FRAMEBUFFER_MAIN
-                            : GlDrawWindowCensus.CAUSE_BIND_FRAMEBUFFER_TARGET);
+            boolean previousLeavingMainToDefault = this.pendingGlDrawLeavingMainToDefault;
+            this.pendingGlDrawLeavingMainToDefault = targetIdentity == 0L && this.targetRegistry.currentIsMain();
+            try {
+                celtium$flushPendingForGlDrawCause(this.flushEntryHint
+                        == org.soutalab.celtium.vulkan.CrashBreadcrumbs.FLUSH_ENTRY_RAW_REGISTER
+                        ? GlDrawWindowCensus.CAUSE_BIND_FRAMEBUFFER_RAW
+                        : isMain ? GlDrawWindowCensus.CAUSE_BIND_FRAMEBUFFER_MAIN
+                                : GlDrawWindowCensus.CAUSE_BIND_FRAMEBUFFER_TARGET);
+            } finally {
+                this.pendingGlDrawLeavingMainToDefault = previousLeavingMainToDefault;
+            }
         }
         if (targetIdentity != this.targetRegistry.currentIdentity() && this.currentImmediateMesh != null) {
             // A pass change is an ordering boundary: whatever is pending belongs to the pass that is ending, so it is closed
@@ -12709,6 +12715,29 @@ this.frameBufferOpen = false;
     private static final boolean GL_DRAW_EXEMPT =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.glDrawExempt", "true"));
 
+    /**
+     * Default-off guard for the E2 {@link #GL_DRAW_EXEMPT} unbind edge: when enabled
+     * ({@code -Dceltium.vulkan.presentUnbindFlushGuard=true}), leaving the main framebuffer for the
+     * default framebuffer ({@code bindFramebuffer(0L, false)} from {@code Framebuffer.unbindFramebuffer})
+     * is not exempted, so main-target HUD/GUI groups are flushed before {@code currentIdentity()} switches
+     * to {@code 0L} ahead of {@code updateDisplay()} / {@code celtium$presentFrame()}.
+     */
+    private static final boolean PRESENT_UNBIND_FLUSH_GUARD =
+            Boolean.parseBoolean(System.getProperty("celtium.vulkan.presentUnbindFlushGuard", "false"));
+
+    /**
+     * Default-off guard for {@link PresentSwapchain}'s present-time drain ordering: when enabled
+     * ({@code -Dceltium.vulkan.presentDrainFinishGuard=true}), {@code celtium$finishFrameBuffer()} is
+     * called after {@code flushPendingBeforeGlDraw()} inside {@code celtium$presentFrameBody()} so any
+     * groups drained there are ended and queued before {@code lastFrameReachedQueue} and
+     * {@code swapchain.presentImage()}.
+     */
+    static final boolean PRESENT_DRAIN_FINISH_GUARD =
+            Boolean.parseBoolean(System.getProperty("celtium.vulkan.presentDrainFinishGuard", "false"));
+
+    /** Set across {@code bindFramebuffer(0L, false)} while leaving the main framebuffer. */
+    private boolean pendingGlDrawLeavingMainToDefault;
+
     /** Ordering flushes the exemption let pass without a window, by cause. */
     private long glDrawExemptedBindFlushes;
     private long glDrawExemptedAnnounceFlushes;
@@ -12790,6 +12819,9 @@ this.frameBufferOpen = false;
     private boolean celtium$glDrawExemptApplies() {
         switch (this.pendingGlDrawCause) {
             case GlDrawWindowCensus.CAUSE_BIND_FRAMEBUFFER_TARGET:
+                if (PRESENT_UNBIND_FLUSH_GUARD && this.pendingGlDrawLeavingMainToDefault) {
+                    return false;
+                }
                 this.glDrawExemptedBindFlushes++;
                 return true;
             case GlDrawWindowCensus.CAUSE_TEXTURE_ANNOUNCE:
