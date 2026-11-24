@@ -1585,4 +1585,60 @@ class ModGlslTranslatorTest {
                 () -> "a one-argument call is passed through verbatim:\n" + result.fragment());
         assertFalse(result.fragment().contains("celtium_pow_guard"));
     }
+
+    @Test
+    void fractionalPowGuardFastSqrtIsOffByDefault() {
+        String fragment = """
+                #version 120
+                varying vec2 uv;
+                uniform vec3 tint;
+                void main() {
+                    float a = pow(uv.x, 0.5);
+                    vec3 b = pow(tint, vec3(0.25));
+                    gl_FragColor = vec4(b + vec3(a), 1.0);
+                }
+                """;
+        System.clearProperty("celtium.vulkan.fractionalPowGuard.fastSqrt");
+        ModGlslTranslator.Result result = translateWithPowGuard(true, QUAD_VERTEX, fragment);
+        assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+        assertTrue(result.fragment().contains("celtium_pow_guard(uv.x, 0.5)"),
+                () -> "default fastSqrt=off must keep general guard:\n" + result.fragment());
+        assertTrue(result.fragment().contains("celtium_pow_guard(tint, vec3(0.25))"),
+                () -> "default fastSqrt=off must keep general guard:\n" + result.fragment());
+        assertFalse(result.fragment().contains("celtium_pow_guard_half"));
+        assertFalse(result.fragment().contains("celtium_pow_guard_quarter"));
+        assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+    }
+
+    @Test
+    void fractionalPowGuardFastSqrtRewritesHalfAndQuarterExponents() {
+        String fragment = """
+                #version 120
+                varying vec2 uv;
+                uniform vec3 tint;
+                void main() {
+                    float a = pow(uv.x, 0.5);
+                    vec3 b = pow(tint, vec3(0.25));
+                    vec3 c = pow(tint, vec3(0.25, 0.5, 2.2));
+                    float d = pow(pow(uv.y, 0.5), 0.25);
+                    gl_FragColor = vec4(b + c + vec3(a + d), 1.0);
+                }
+                """;
+        System.setProperty("celtium.vulkan.fractionalPowGuard.fastSqrt", "true");
+        try {
+            ModGlslTranslator.Result result = translateWithPowGuard(true, QUAD_VERTEX, fragment);
+            assertNull(result.failure(), () -> "unexpected failure: " + result.failure());
+            assertTrue(result.fragment().contains("celtium_pow_guard_half(uv.x, 0.5)"),
+                    () -> "0.5 exponent routes to half fast path:\n" + result.fragment());
+            assertTrue(result.fragment().contains("celtium_pow_guard_quarter(tint, vec3(0.25))"),
+                    () -> "uniform vec3(0.25) exponent routes to quarter fast path:\n" + result.fragment());
+            assertTrue(result.fragment().contains("celtium_pow_guard(tint, vec3(0.25, 0.5, 2.2))"),
+                    () -> "mixed vector exponent stays on general guard:\n" + result.fragment());
+            assertTrue(result.fragment().contains("celtium_pow_guard_quarter(celtium_pow_guard_half(uv.y, 0.5), 0.25)"),
+                    () -> "nested half/quarter calls both use fast path:\n" + result.fragment());
+            assertCompiles(result.fragment(), Shaderc.shaderc_fragment_shader);
+        } finally {
+            System.clearProperty("celtium.vulkan.fractionalPowGuard.fastSqrt");
+        }
+    }
 }

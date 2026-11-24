@@ -124,6 +124,26 @@ public abstract class RenderSectionManager {
     /** Bounded report counter for the terrain pass reaching the backend. */
     private int celtium$layerReports;
 
+    /**
+     * Opt-in ({@code -Dceltium.terrain.deferUnarrivedEmptyCommit=true}, default off) runtime switch
+     * for item-683 deferral of unarrived empty sections in {@link #onSectionAdded} and
+     * {@link #submitRebuildTasks}. Keeping this behind a default-off switch on this branch preserves
+     * the baseline alpha behavior while allowing single-jar A/B isolation of item-683 flight overhead
+     * without a separate revert build.
+     */
+    private final boolean deferUnarrivedEmptyCommit = Boolean.getBoolean("celtium.terrain.deferUnarrivedEmptyCommit");
+
+    /**
+     * Opt-in ({@code -Dceltium.debug.deferEmptyCommitCensus=true}, default off) counter for empty
+     * commit vs deferral decisions in {@link #onSectionAdded} and {@link #submitRebuildTasks}.
+     */
+    private final boolean deferEmptyCommitCensus = Boolean.getBoolean("celtium.debug.deferEmptyCommitCensus");
+    private long deferCensusAddEmptyFinal;
+    private long deferCensusAddDeferred;
+    private long deferCensusSubmitEmptyFinal;
+    private long deferCensusSubmitDeferred;
+    private long deferCensusEvents;
+
     private final Set<TerrainRenderPass> disabledRenderPasses;
 
     private final int minSection, maxSection;
@@ -576,6 +596,41 @@ public abstract class RenderSectionManager {
 
     protected abstract boolean isSectionVisuallyEmpty(int x, int y, int z);
 
+    /**
+     * Whether an empty verdict at section-add time is final, so the section may be committed as
+     * EMPTY in {@link #onSectionAdded}. Only consulted when
+     * {@code -Dceltium.terrain.deferUnarrivedEmptyCommit=true} (default off on this branch).
+     */
+    protected boolean isSectionAddedEmptyFinal(RenderSection section) {
+        return true;
+    }
+
+    private void recordDeferEmptyCensus(boolean addPath, boolean deferred) {
+        if (addPath) {
+            if (deferred) {
+                this.deferCensusAddDeferred++;
+            } else {
+                this.deferCensusAddEmptyFinal++;
+            }
+        } else if (deferred) {
+            this.deferCensusSubmitDeferred++;
+        } else {
+            this.deferCensusSubmitEmptyFinal++;
+        }
+        if (++this.deferCensusEvents % 1000L == 0L) {
+            this.logDeferEmptyCensus("window");
+        }
+    }
+
+    private void logDeferEmptyCensus(String phase) {
+        System.out.println("[Celtium] CELTIUM_DEFER_EMPTY_CENSUS phase=" + phase
+                + " enabled=" + this.deferUnarrivedEmptyCommit
+                + " addEmptyFinal=" + this.deferCensusAddEmptyFinal
+                + " addDeferred=" + this.deferCensusAddDeferred
+                + " submitEmptyFinal=" + this.deferCensusSubmitEmptyFinal
+                + " submitDeferred=" + this.deferCensusSubmitDeferred);
+    }
+
     public void onSectionAdded(int x, int y, int z) {
         long key = PositionUtil.packSection(x, y, z);
 
@@ -596,9 +651,16 @@ public abstract class RenderSectionManager {
 
         this.invalidateCachedSectionData(renderSection);
 
-        if (this.isSectionVisuallyEmpty(x, y, z)) {
+        boolean visuallyEmpty = this.isSectionVisuallyEmpty(x, y, z);
+        if (visuallyEmpty && (!this.deferUnarrivedEmptyCommit || this.isSectionAddedEmptyFinal(renderSection))) {
+            if (this.deferEmptyCommitCensus) {
+                this.recordDeferEmptyCensus(true, false);
+            }
             this.updateSectionInfo(renderSection, RenderSection.EMPTY_DATA);
         } else {
+            if (visuallyEmpty && this.deferEmptyCommitCensus) {
+                this.recordDeferEmptyCensus(true, true);
+            }
             renderSection.setPendingUpdate(ChunkUpdateType.INITIAL_BUILD);
             this.celtiumPendingMeshUpdates.add(renderSection);
         }
@@ -1124,7 +1186,17 @@ public abstract class RenderSectionManager {
                     section.lastCameraY = this.cameraPosition.y;
                     section.lastCameraZ = this.cameraPosition.z;
                 }
+            } else if (this.deferUnarrivedEmptyCommit && !this.isRebuildDataFinal(section)) {
+                if (this.deferEmptyCommitCensus) {
+                    this.recordDeferEmptyCensus(false, true);
+                }
+                section.setBuildCancellationToken(null);
+                section.setLastSubmittedFrame(frame);
+                continue;
             } else {
+                if (this.deferEmptyCommitCensus) {
+                    this.recordDeferEmptyCensus(false, false);
+                }
                 var result = new ChunkJobResult.Success<>(new ChunkBuildOutput(section, RenderSection.EMPTY_DATA, Reference2ReferenceMaps.emptyMap(), frame), -1);
                 this.buildResults.add(result);
 
@@ -1138,6 +1210,15 @@ public abstract class RenderSectionManager {
     }
 
     protected abstract @Nullable ChunkBuilderTask<ChunkBuildOutput> createRebuildTask(RenderSection render, int frame);
+
+    /**
+     * Whether the data behind a section is final, so that a null rebuild task may be committed as
+     * an empty build. Only consulted when {@code -Dceltium.terrain.deferUnarrivedEmptyCommit=true}
+     * (default off on this branch).
+     */
+    protected boolean isRebuildDataFinal(RenderSection section) {
+        return true;
+    }
 
     public ChunkBuilderSortTask createSortTask(RenderSection render, int frame) {
         if(render.getTranslucencySortStates().isEmpty())
@@ -1202,6 +1283,10 @@ public abstract class RenderSectionManager {
         failure = destroyStage(failure, this.terrainBackend::delete);
 
         this.sectionsWithGlobalEntities.clear();
+
+        if (this.deferEmptyCommitCensus && this.deferCensusEvents > 0L) {
+            this.logDeferEmptyCensus("destroy");
+        }
 
         if (failure != null) {
             throw failure;

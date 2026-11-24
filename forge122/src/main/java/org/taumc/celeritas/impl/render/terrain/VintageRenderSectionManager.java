@@ -183,6 +183,22 @@ public class VintageRenderSectionManager extends RenderSectionManager {
     }
 
     @Override
+    protected boolean isSectionAddedEmptyFinal(RenderSection render) {
+        Chunk chunk = this.world.getChunk(render.getChunkX(), render.getChunkZ());
+
+        if (chunk.isEmpty()) {
+            return false;
+        }
+
+        return this.isSectionVisuallyEmpty(render.getChunkX(), render.getChunkY(), render.getChunkZ());
+    }
+
+    @Override
+    protected boolean isRebuildDataFinal(RenderSection render) {
+        return !this.world.getChunk(render.getChunkX(), render.getChunkZ()).isEmpty();
+    }
+
+    @Override
     protected @Nullable ChunkBuilderTask<ChunkBuildOutput> createRebuildTask(RenderSection render, int frame) {
         ChunkRenderContext context = WorldSlice.prepare(this.world, new SectionPos(render.getChunkX(), render.getChunkY(), render.getChunkZ()), this.sectionCache);
 
