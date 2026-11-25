@@ -1607,6 +1607,27 @@ public final class VulkanSwapchain {
                         .pSwapchains(stack.longs(this.swapchain))
                         .pImageIndices(index);
                 int bareResult = vkQueuePresentKHR(this.context.queue(), bare);
+                // Classify the verdict exactly like the recorded present further down (bughunt R3): the bare
+                // path used to ignore it and report success unconditionally, so an out-of-date verdict never
+                // keyed a rebuild, a lost surface never keyed the recreation, and lastPresentSucceeded stayed
+                // false even on success - the caller's verdict was never the one this present produced, which
+                // skewed the bisection this switch exists for.
+                if (bareResult == VK_SUBOPTIMAL_KHR || bareResult == VK_ERROR_OUT_OF_DATE_KHR) {
+                    this.outOfDate = true;
+                    if (bareResult == VK_ERROR_OUT_OF_DATE_KHR) {
+                        celtium$noteRebuildNeeded("the bare present reported the swapchain out of date");
+                    }
+                }
+                if (bareResult == VK_ERROR_SURFACE_LOST_KHR) {
+                    this.surfaceLost = true;
+                }
+                if (bareResult != VK_SUCCESS && bareResult != VK_SUBOPTIMAL_KHR) {
+                    // A failed present may not have consumed the acquire wait, leaving the semaphore
+                    // signaled; replace it as the acquire-side failure paths do.
+                    replaceAcquireSemaphore(stack, acquire);
+                    return "present image (no record): vkQueuePresentKHR returned " + bareResult;
+                }
+                this.lastPresentSucceeded = true;
                 return "present image (no record): presented image " + index.get(0) + " (" + bareResult + ")";
             }
             boolean initVariant = initializationNeeded(this.imageInitialized, this.imageInitializationWanted,

@@ -1639,11 +1639,18 @@ public final class VulkanContext {
     public static long presenterJoins;
     public static long presenterJobs;
 
-    /** The only recoverable asynchronous present results are success and a changed swapchain. */
+    /**
+     * The only recoverable asynchronous present results are success, a changed swapchain and a lost surface.
+     * A lost surface is recoverable - the backend recreates the surface together with the swapchain - and the
+     * synchronous present path already classifies it that way; treating it as fatal here threw in
+     * {@link #celtium$awaitPresenter()} before the swapchain side's surface-lost recovery branch could run,
+     * which made that branch dead code on the async path (bughunt R2).
+     */
     static boolean presenterResultIsFatal(int result) {
         return result != VK_SUCCESS
                 && result != org.lwjgl.vulkan.KHRSwapchain.VK_SUBOPTIMAL_KHR
-                && result != org.lwjgl.vulkan.KHRSwapchain.VK_ERROR_OUT_OF_DATE_KHR;
+                && result != org.lwjgl.vulkan.KHRSwapchain.VK_ERROR_OUT_OF_DATE_KHR
+                && result != org.lwjgl.vulkan.KHRSwapchain.VK_ERROR_SURFACE_LOST_KHR;
     }
 
     /** Waits for the worker's queue work, then frees a batch it could not submit; a no-op without a job in flight. */
@@ -1716,9 +1723,18 @@ public final class VulkanContext {
         return false;
     }
 
-    /** {@return the last worker present's vkQueuePresentKHR result}; read after {@link #celtium$awaitPresenter()}. */
+    /**
+     * {@return the last worker present's vkQueuePresentKHR result}; read after {@link #celtium$awaitPresenter()}.
+     * The read consumes the verdict: the field falls back to VK_SUCCESS, so each verdict is applied exactly
+     * once. Nothing reset it before, so a single OUT_OF_DATE verdict was re-applied by every later present -
+     * including the first presents of the swapchain recreated because of it, whose synchronous warm-up
+     * presents (presentTraces < 4) run no worker job that could overwrite the field - and the swapchain was
+     * dropped and recreated every frame for the rest of the session (bughunt R1).
+     */
     public int celtium$presenterResult() {
-        return this.presenterResult;
+        int result = this.presenterResult;
+        this.presenterResult = VK_SUCCESS;
+        return result;
     }
 
     /**

@@ -7,6 +7,7 @@ import static org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST;
 import static org.lwjgl.vulkan.VK10.VK_ERROR_OUT_OF_DEVICE_MEMORY;
 import static org.lwjgl.vulkan.KHRSwapchain.VK_SUBOPTIMAL_KHR;
 import static org.lwjgl.vulkan.KHRSwapchain.VK_ERROR_OUT_OF_DATE_KHR;
+import static org.lwjgl.vulkan.KHRSwapchain.VK_ERROR_SURFACE_LOST_KHR;
 
 class PresenterFatalResultTest {
     @Test void lostDeviceOrMemoryMustAbortRatherThanRecreateSwapchain() {
@@ -59,5 +60,8 @@ class PresenterFatalResultTest {
         assertFalse(VulkanContext.presenterResultIsFatal(VK_SUCCESS));
         assertFalse(VulkanContext.presenterResultIsFatal(VK_SUBOPTIMAL_KHR));
         assertFalse(VulkanContext.presenterResultIsFatal(VK_ERROR_OUT_OF_DATE_KHR));
+        // A lost surface is recovered by recreating the surface with the swapchain, as the synchronous
+        // present path classifies it; as fatal it aborted the renderer before that recovery could run (R2).
+        assertFalse(VulkanContext.presenterResultIsFatal(VK_ERROR_SURFACE_LOST_KHR));
     }
 }
