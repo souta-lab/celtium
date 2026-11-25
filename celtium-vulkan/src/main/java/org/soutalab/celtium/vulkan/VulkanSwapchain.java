@@ -361,6 +361,8 @@ public final class VulkanSwapchain {
     private boolean lastPresentSubmitDone;
     /** Whether the last present actually reached the presentation engine; GL's composite may only be cancelled then. */
     private boolean lastPresentSucceeded;
+    /** Direct presents whose diagnostics stage threw and was stepped over so the present could still run. */
+    private long presentDiagnosticsFailures;
     private float lastPresentedMean = -1.0f;
     /** The harness's {@code presentReadback} reads the presented image back and records its mean. */
     private static final boolean PRESENT_READBACK = HarnessConfig.bool("presentReadback", true);
@@ -1890,14 +1892,35 @@ public final class VulkanSwapchain {
             }
             this.lastPresentSubmitDone = true;
             this.lastPresentSucceeded = false;
-            celtium$presentDiagnostics(image, imageIndex, VK_NULL_HANDLE, renderFinished);
+            try {
+                celtium$presentDiagnostics(image, imageIndex, VK_NULL_HANDLE, renderFinished);
+            } catch (RuntimeException diagnosticsFailure) {
+                // The diagnostics only observe the submitted image; they must never decide the present.
+                // A throw here would escape with renderFinished already signalled by the transition
+                // submission above and no present left to wait it, so the signal would linger and the
+                // next present of this image would signal it again
+                // (VUID-vkQueueSubmit-pSignalSemaphores-00067). Count it and present anyway.
+                this.presentDiagnosticsFailures++;
+                if (this.presentDiagnosticsFailures <= 4) {
+                    System.out.println("[Celtium] CELTIUM_PRESENT_DIAGNOSTICS_FAILED " + diagnosticsFailure
+                            + " (the present continues)");
+                }
+            }
             long queueStartedNanos = System.nanoTime();
             int presented;
             try {
                 presented = this.context.presentEngine().present(borrowed, renderFinished);
             } catch (IllegalStateException stale) {
                 // The lender refused the handle (not live in its registry): the borrow bookkeeping and the
-                // lender disagree, which is a dropped frame, not a crash of the frame loop.
+                // lender disagree, which is a dropped frame, not a crash of the frame loop. The transition
+                // submission above already signalled renderFinished, though, and the refused present never
+                // waits it: a binary semaphore's signal cannot be withdrawn, so the acquisition is retired
+                // like every other post-acquire failure (audit #367) - the rebuild destroys the semaphore
+                // pool and recreates it unsignalled, which is the only disposal the 1.2 baseline offers.
+                if ("retire".equals(presentStageDisposition(true, true, true, false))) {
+                    abandonAcquiredImage("the lender refused the borrowed image at present, after the"
+                            + " transition submission had already signalled render-finished");
+                }
                 target.releasePresentBorrow();
                 return "present image: the lender refused the borrowed image at present (" + stale.getMessage()
                         + "; the frame is dropped)";
@@ -2576,6 +2599,20 @@ public final class VulkanSwapchain {
             return "present";
         }
         return submitted && recorded ? "present" : "retire";
+    }
+
+    /**
+     * The four-stage form of {@link #presentStageDisposition(boolean, boolean, boolean)}, for an attempt
+     * whose submission succeeded and whose present call itself then failed (the direct present's lender
+     * refusal): the submission has already signalled render-finished, and a present that never runs never
+     * waits it, so the present stage counts as a failure like the earlier ones.
+     */
+    static String presentStageDisposition(boolean acquired, boolean recorded, boolean submitted,
+            boolean presented) {
+        if (!acquired) {
+            return "present";
+        }
+        return recorded && submitted && presented ? "present" : "retire";
     }
 
     /** Acquisitions retired instead of presented because a later stage failed. */

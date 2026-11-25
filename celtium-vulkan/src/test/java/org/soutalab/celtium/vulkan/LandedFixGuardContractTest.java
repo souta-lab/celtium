@@ -35,6 +35,8 @@ class LandedFixGuardContractTest {
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/gl/GlsmFrontend.java";
     private static final String FRAME_TARGET =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java";
+    private static final String SWAPCHAIN =
+            "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanSwapchain.java";
     private static final String FRAMEBUFFER_CACHE =
             "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/FramebufferCache.java";
 
@@ -302,6 +304,36 @@ class LandedFixGuardContractTest {
                 "a successful borrow records which image owns its acquire semaphore");
         assertTrue(frameRegion.contains("VUID-vkAcquireNextImageKHR-semaphore-01779"),
                 "the pool documents the measured failure the discipline prevents");
+    }
+
+    /**
+     * R-51 (D1 review, driver memo (b)): the direct present's transition submission signals the
+     * per-image render-finished semaphore before the present call, so a stage that fails after the
+     * submission must not leave the signal unconsumed - the next present of the same image would
+     * signal it again (VUID-vkQueueSubmit-pSignalSemaphores-00067). The lender refusal retires the
+     * acquisition through the four-stage disposition, and the diagnostics stage is guarded so it
+     * can never decide the present.
+     */
+    @Test
+    void theDirectPresentRetiresWhenThePresentStageRefusesAfterTheSubmission() throws IOException {
+        String swapchain = read(SWAPCHAIN);
+        int method = swapchain.indexOf("private String celtium$presentDirect(");
+        assertTrue(method >= 0, "celtium$presentDirect is declared");
+        int diagnosticsMethod = swapchain.indexOf("private void celtium$presentDiagnostics(", method);
+        assertTrue(diagnosticsMethod > method, "celtium$presentDiagnostics follows the direct present");
+        String body = swapchain.substring(method, diagnosticsMethod);
+        int refusal = body.indexOf("catch (IllegalStateException stale)");
+        assertTrue(refusal >= 0, "the lender-refusal catch is present");
+        String catchBlock = body.substring(refusal, refusal + 2400);
+        assertTrue(catchBlock.contains("presentStageDisposition(true, true, true, false)"),
+                "the refusal is decided by the four-stage disposition");
+        assertTrue(catchBlock.contains("abandonAcquiredImage("),
+                "the refusal retires the acquisition, destroying the signalled semaphore with the pool");
+        int diagnostics = body.indexOf("celtium$presentDiagnostics(image, imageIndex");
+        int guard = body.indexOf("catch (RuntimeException", diagnostics);
+        int present = body.indexOf("presentEngine().present(borrowed, renderFinished)");
+        assertTrue(diagnostics >= 0 && guard > diagnostics && present > guard,
+                "the diagnostics stage is guarded and the present still runs after it");
     }
 
     /** Test working directories differ between the module gate and a repo-root run; both shapes are tried. */
