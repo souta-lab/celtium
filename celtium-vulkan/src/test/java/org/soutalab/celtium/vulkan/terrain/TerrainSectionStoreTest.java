@@ -99,7 +99,9 @@ class TerrainSectionStoreTest {
         assertEquals(1, store.recordCount());
         SectionDesc packed = SectionDesc.unpack(store.descImage(), 0);
         assertEquals(2, packed.sectionX, "the surviving record is packed at index 0");
-        assertEquals(0, store.factorBaseImage()[0]);
+        // Arena placements are stable across a swap-remove (nothing is copied); only
+        // the image slot moves, so slot 0 now carries the survivor's own factor base.
+        assertEquals(4096 / 4, store.factorBaseImage()[0]);
     }
 
     @Test
