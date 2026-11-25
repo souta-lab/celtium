@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.compat.PostChainPass;
+
 import it.unimi.dsi.fastutil.objects.Object2LongMap;
 import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Reference2ObjectMap;
@@ -1877,7 +1879,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** The post-process chain bridge: runs a collected shader chain natively, adopts its framebuffers and keeps the textures it publishes to the game in the right layout. */
     final PostChainBridge postChainBridge = new PostChainBridge(this);
 
-    public boolean celtium$postChainRun(java.util.List<VulkanPostChain.Pass> passes) {
+    public boolean celtium$postChainRun(java.util.List<PostChainPass> passes) {
         return this.postChainBridge.celtium$postChainRun(passes);
     }
 

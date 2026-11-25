@@ -19,9 +19,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class ChainGraphTest {
 
-    private static VulkanPostChain.Pass pass(String program, boolean inMain, int inId,
+    private static PostChainPass pass(String program, boolean inMain, int inId,
             boolean outMain, int outId) {
-        VulkanPostChain.Pass pass = new VulkanPostChain.Pass();
+        PostChainPass pass = new PostChainPass();
         pass.program = program;
         pass.inIsMain = inMain;
         pass.inFbId = inId;
@@ -38,8 +38,8 @@ class ChainGraphTest {
 
     @Test
     void aTwoPassChainExecutesInChainOrderWithABarrierBetween() {
-        VulkanPostChain.Pass blur = pass("blur", true, 11, false, 22);
-        VulkanPostChain.Pass blit = pass("blit", false, 22, true, 11);
+        PostChainPass blur = pass("blur", true, 11, false, 22);
+        PostChainPass blit = pass("blit", false, 22, true, 11);
         PostChainGraphAdapter.Result result = PostChainGraphAdapter.convert(List.of(blur, blit));
 
         List<String> recorded = new ArrayList<>();
@@ -62,7 +62,7 @@ class ChainGraphTest {
 
     @Test
     void theOutlineChainCompilesToOnePassOverItsImport() {
-        VulkanPostChain.Pass sobel = pass("entity_outline", false, 77, false, 77);
+        PostChainPass sobel = pass("entity_outline", false, 77, false, 77);
         sobel.groupMainFbId = 77;
         sobel.groupMainTextureId = 5;
         sobel.groupMainW = 854;
@@ -80,7 +80,7 @@ class ChainGraphTest {
 
     @Test
     void aRefusedChainHasNoGraph() {
-        VulkanPostChain.Pass spider = pass("spider", false, 99, true, 11);
+        PostChainPass spider = pass("spider", false, 99, true, 11);
         PostChainGraphAdapter.Result result = PostChainGraphAdapter.convert(List.of(spider));
         assertThrows(IllegalArgumentException.class,
                 () -> ChainGraph.build(result, (node, context) -> { }));
