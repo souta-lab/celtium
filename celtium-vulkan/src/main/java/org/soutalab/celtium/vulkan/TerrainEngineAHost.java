@@ -20,7 +20,10 @@ import org.soutalab.celtium.vulkan.terrain.TerrainUploadBudget;
  * drives collection with real GPU completion values.
  */
 final class TerrainEngineAHost {
-    static final boolean ENABLED = Boolean.getBoolean("celtium.vulkan.terrainEngineA");
+    // Tier-A is the default terrain route (wave-2 cutover, 2026-11-25): the property
+    // remains only as a bisection switch to turn it off, not a parallel route flag.
+    static final boolean ENABLED =
+            Boolean.parseBoolean(System.getProperty("celtium.vulkan.terrainEngineA", "true"));
 
     private final AsyncSectionMesher mesher = new AsyncSectionMesher();
     private final TerrainSectionStore store = new TerrainSectionStore();
@@ -59,6 +62,20 @@ final class TerrainEngineAHost {
             this.engines.put(pass, engine);
         }
         return engine;
+    }
+
+    /** Re-uploads one pass' sorted indices for a section after a translucent re-sort. */
+    void updateSortedSection(int sectionX, int sectionY, int sectionZ, TerrainRenderPass pass,
+                             org.embeddedt.embeddium.impl.common.util.NativeBuffer indices) {
+        Integer ordinal = this.ordinals.get(pass);
+        if (ordinal == null) {
+            return;
+        }
+        TerrainEngineA engine = this.engines.get(pass);
+        if (engine != null) {
+            engine.updateSorted(new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinal),
+                    indices, this.generation);
+        }
     }
 
     /** Removes every pass' record of one section, deferred against the generation lag. */

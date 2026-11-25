@@ -35,6 +35,8 @@ public final class SpirvShaders {
     /** Classpath name of the SOLID terrain pass vertex module. */
 
     public static final String SOLID_VERTEX = "terrain_solid.vert";
+    /** Vertex module for the Tier-A 16-byte terrain format (stride 16, new architecture). */
+    public static final String TERRAIN_A_VERTEX = "terrain_a.vert";
     /** Vertex module for the uncompressed VanillaLikeChunkVertex layout (stride 32). */
     public static final String SOLID_VERTEX_VANILLA = "terrain_solid_vanilla.vert";
 

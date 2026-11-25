@@ -2798,6 +2798,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private boolean gpuTerrainDrawFailed;
     /** The last frame the executor's pass head ran for; the pass head is once per frame, not per pass. */
     private long gpuTerrainDrawFrame = -1L;
+
+    // Tier-A terrain (new architecture, wave-2 cutover): the per-pass engines the
+    // pass head armed for the current frame, keyed by pass identity. The map is
+    // rebuilt when the frame id moves, so prepareFrame runs once per pass per frame.
+    private long terrainAArmedFrame = -1L;
+    private final java.util.Map<TerrainRenderPass, TerrainEngineA> terrainAArmedEngines =
+            new java.util.IdentityHashMap<>();
+    private boolean terrainAFailed;
     /**
      * The shadow stage's own E10 census stream (E10 shadow preparation): a second
      * {@link VulkanGpuTerrainCensus} fed from the pack route's shadow stage. The shadow
@@ -17026,6 +17034,10 @@ this.frameBufferOpen = false;
             resources.delete();
         }
         this.terrain.releaseAll();
+        if (this.terrain.terrainAHost() != null) {
+            this.terrain.terrainAHost().delete(this.context);
+        }
+        this.terrainAArmedEngines.clear();
         for (VulkanTerrainPipeline pipeline : this.terrain.pipelines().values()) {
             pipeline.delete();
         }
@@ -19094,6 +19106,47 @@ this.frameBufferOpen = false;
     }
 
     /**
+     * Tier-A pass head (wave-2 item 1): records this pass' cull dispatch into the
+     * frame's command buffer, outside the render pass, and returns the armed
+     * executor, or {@code null} when Tier-A is off, the store has no records for
+     * drawing yet, or the executor disabled itself. Runs once per pass per frame;
+     * repeat calls within the frame answer from the armed map.
+     */
+    private TerrainEngineA celtium$terrainAPassHead(TerrainRenderPass pass, ChunkRenderMatrices matrices,
+            CameraTransform occlusionCamera) {
+        if (this.terrainAFailed || this.commandBuffer == null) {
+            return null;
+        }
+        if (this.terrainAArmedFrame != this.frameId) {
+            this.terrainAArmedEngines.clear();
+            this.terrainAArmedFrame = this.frameId;
+        }
+        TerrainEngineA armed = this.terrainAArmedEngines.get(pass);
+        if (armed != null) {
+            return armed;
+        }
+        TerrainEngineAHost host = this.terrain.terrainAHost();
+        if (host == null) {
+            return null;
+        }
+        try {
+            TerrainEngineA engine = host.engineFor(this.context, pass);
+            boolean ok = engine.prepareFrame(this.commandBuffer, this.frameSlot,
+                    celtium$gpuTerrainCensusVp(matrices),
+                    occlusionCamera.x, occlusionCamera.y, occlusionCamera.z);
+            if (!ok) {
+                return null;
+            }
+            this.terrainAArmedEngines.put(pass, engine);
+            return engine;
+        } catch (RuntimeException | LinkageError error) {
+            this.terrainAFailed = true;
+            System.out.println("[Celtium] CELTIUM_TERRAIN_A_BACKEND_DISABLED at=passHead reason=" + error);
+            return null;
+        }
+    }
+
+    /**
      * The ordered list of regions this pass' region loop will draw, resolved exactly as the
      * loop resolves them (same iterator order, same storage lookup, same validity test), or
      * {@code null} when any region's drawn batch is not predictable here — a region with no
@@ -19178,6 +19231,12 @@ this.frameBufferOpen = false;
         boolean gpuDrawArmed = celtium$gpuTerrainDrawPassHead(pass, renderLists, matrices, occlusionCamera,
                 useBlockFaceCulling, view);
         int gpuDrawVisited = 0;
+        // Tier-A (new architecture, wave-2 item 1): the pass head records the cull
+        // dispatch outside the render pass; when it arms, the region loop below
+        // records no per-batch draws for this pass and the pass ends with the
+        // executor's IndirectCount draws instead (recordDraws at the pass tail).
+        TerrainEngineA tierAEngine = celtium$terrainAPassHead(pass, matrices, occlusionCamera);
+        boolean tierAArmed = tierAEngine != null;
         org.soutalab.celtium.vulkan.FramePassTimings.end("recHead");
         org.soutalab.celtium.vulkan.FramePassTimings.begin("recordPrepare");
         try {
@@ -19533,6 +19592,13 @@ this.frameBufferOpen = false;
         long passUniformOffset = this.terrain.writePassUniforms(pass, camera);
         long passAfterUniform = System.nanoTime();
         this.terrainUniformNanos += passAfterUniform - passUniformStarted;
+        if (tierAArmed) {
+            // Tier-A bindings 6/7/8 (wave-2 item 2): the resident desc table, factor
+            // bases and factor arena terrain_a.vert reads, written into this slot's
+            // set before it is bound for the pass.
+            pipeline.bindTierABuffers(tierAEngine.descBufferHandle(), tierAEngine.factorBaseBufferHandle(),
+                    tierAEngine.factorBufferHandle(), this.frameSlot);
+        }
         pipeline.bindDescriptors(this.commandBuffer, passUniformOffset, this.frameSlot, regionDescSet, regionDynOffset);
         this.terrainBindNanos += System.nanoTime() - passAfterUniform;
         org.soutalab.celtium.vulkan.FramePassTimings.end("recBind");
@@ -19756,6 +19822,11 @@ this.frameBufferOpen = false;
                 // can verify the reproduction the pass head predicted.
                 indirect = true;
                 gpuDrawVisited++;
+            } else if (tierAArmed) {
+                // Tier-A: this pass' sections are resident in the SectionDesc table
+                // and were culled at the pass head; the executor's IndirectCount
+                // draws at the pass tail replace every per-batch draw here.
+                indirect = true;
             } else if (TERRAIN_INDIRECT_ENABLED) {
                 indirect = this.terrain.offerChainedBatch(this.context, this.commandBuffer, this.sharedIndexBuffers, resources, batch, sortedPass, primitiveType, regionIndex, pipeline);
             } else {
@@ -19872,6 +19943,13 @@ this.frameBufferOpen = false;
             // bound explicitly — in an armed pass no chain flush has bound anything.
             this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
             this.gpuTerrainDraw.recordDraw(this.commandBuffer, gpuDrawVisited);
+        }
+        if (tierAArmed) {
+            // Tier-A: the pass' terrain draws are the executor's per-slab
+            // IndirectCount draws over the resident slabs (bindings 6/7/8 were
+            // written at the pass head; the pipeline and push matrices bound for
+            // this pass are the Tier-A variant's, selected by the 16-byte stride).
+            tierAEngine.recordDraws(this.commandBuffer, this.frameSlot);
         }
         this.terrain.endTerrainChain(this.commandBuffer);
         } finally {
