@@ -101,8 +101,18 @@ public final class SwapchainCreateArguments {
     }
 
     /**
-     * Chooses the creation arguments using the default transfer-only present usage (issue #422 (a): the native
-     * present path only blits/clears swapchain images and never attaches them as colour attachments).
+     * Chooses the creation arguments for the direct present path (design CELTIUM-A-TO-B Stage 1; lanechat
+     * #8830 (3)(4)): the frame renders straight into the swapchain image, so colour-attachment usage is
+     * required and transfer usage is kept wherever the surface offers it, for the readback/dump block and
+     * the loading screen's standalone present.
+     * <p>
+     * The previous default was transfer-only usage, chosen for issue #422 (a): on RDNA3 proprietary
+     * drivers, displayable DCC compression metadata on colour-attachment swapchain images collided with
+     * {@code UNDEFINED -> TRANSFER_DST} blit presents. That trade belonged to the blit path it protected:
+     * a transfer-only swapchain cannot be rendered into at all, and the direct path's own transitions -
+     * the frame target's acquire/release barriers, which already carry the full attachment/transfer/shader
+     * masks #422 (a) asked for - are the DCC-relevant surface now. The transfer-only shape survives only
+     * behind {@code -Dceltium.present.direct=false}, through the overload below.
      *
      * @param surface         what the surface reported
      * @param requestedWidth  the window's framebuffer width
@@ -111,19 +121,22 @@ public final class SwapchainCreateArguments {
      * @return the arguments to request, or a {@link Result#refusal} when this surface cannot carry a frame
      */
     public static Result select(Surface surface, int requestedWidth, int requestedHeight, int desiredImages) {
-        return select(surface, requestedWidth, requestedHeight, desiredImages, true);
+        return select(surface, requestedWidth, requestedHeight, desiredImages, false);
     }
 
     /**
      * Chooses the creation arguments, optionally dropping {@link #USAGE_COLOR_ATTACHMENT} so swapchain images are
      * allocated as transfer surfaces rather than renderable colour attachments (issue #422 (a): avoids RDNA3
      * displayable DCC compression metadata colliding with {@code UNDEFINED -> TRANSFER_DST} blit presents).
+     * The transfer-only request is the composite fallback path's shape, reached only with
+     * {@code -Dceltium.present.direct=false}.
      *
      * @param surface             what the surface reported
      * @param requestedWidth      the window's framebuffer width
      * @param requestedHeight     the window's framebuffer height
      * @param desiredImages       the application's preference for the image count (3 for triple buffering)
-     * @param transferOnlyPresent true to request only transfer usage (default), false to include colour-attachment
+     * @param transferOnlyPresent true to request only transfer usage (fallback path), false to include
+     *                            colour-attachment (the direct present path)
      * @return the arguments to request, or a {@link Result#refusal} when this surface cannot carry a frame
      */
     public static Result select(Surface surface, int requestedWidth, int requestedHeight, int desiredImages,

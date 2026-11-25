@@ -287,6 +287,40 @@ final class PresentSwapchain {
      * advertises, and presents one cleared image. GL still presents this window in the hybrid build, so this runs
      * once and only when {@code -Dceltium.vulkan.swapchainProbe=true} is set.
      */
+    /**
+     * Establishes the frame target's borrow of the next swapchain image, when none is live (direct
+     * present path, lanechat #8830 (3)(4)).
+     * <p>
+     * Called from the render path when the frame target is (re)made ready and from the end of the present
+     * body, so a frame's borrow exists before its first pass records - the passes attach the borrowed
+     * image through the target's ordinary colour accessors. A borrow abandoned unpresented (its owner
+     * died holding it) leaves its image acquired until the generation is retired, so the generation is
+     * retired here before borrowing again. Never called while a recording is open: an acquire is a queue
+     * operation, not a recording, and the frame being recorded already holds its borrow.
+     */
+    void celtium$ensureBorrowedFrameImage() {
+        if (!VulkanContext.PRESENT_DIRECT) {
+            return;
+        }
+        if (!(backend.frameTarget instanceof GllessFrameTarget)) {
+            return;
+        }
+        GllessFrameTarget target = (GllessFrameTarget) backend.frameTarget;
+        if (target.hasLivePresentBorrow()) {
+            return;
+        }
+        if (backend.celtium$recordingOpen()) {
+            return;
+        }
+        if (backend.swapchain != null && backend.context.presentEngine().borrowAbandoned()) {
+            releaseSwapchainForRebuild();
+        }
+        if (!ensureSwapchain()) {
+            return;
+        }
+        target.borrowNextPresentImage(backend.context.presentEngine(), (int) (backend.frameId & 1L));
+    }
+
     void runSwapchainProbe() {
         if (backend.gpuStalled) {
             // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
@@ -321,9 +355,12 @@ final class PresentSwapchain {
             } else if (backend.ensureFrameTarget()) {
                 backend.frameSubmitReachedQueue = false;
                 backend.frameTarget.beginFrame();
-                backend.lastPresentResult = backend.swapchain.presentImage(backend.frameTarget.colorImage(),
-                        org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, backend.targetWidth,
-                        backend.targetHeight);
+                celtium$ensureBorrowedFrameImage();
+                backend.lastPresentResult = backend.frameTarget.borrowedPresentImage() != null
+                        ? backend.swapchain.presentDirect(backend.frameTarget)
+                        : backend.swapchain.presentImage(backend.frameTarget.colorImage(),
+                                org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                backend.targetWidth, backend.targetHeight);
                 backend.record(backend.lastPresentResult);
                 backend.frameTarget.endFrame();
             } else {
@@ -580,7 +617,7 @@ final class PresentSwapchain {
                 }
                 if (VulkanTerrainGpuBackend.PRESENT_DRAIN_FINISH_GUARD) {
                     // If the present-time drain opened and recorded into the unified frame buffer,
-                    // close and queue it before the lastFrameReachedQueue gate and presentImage().
+                    // close and queue it before the lastFrameReachedQueue gate and presentDirect().
                     backend.celtium$finishFrameBuffer();
                 }
             } catch (RuntimeException | LinkageError error) {
@@ -623,23 +660,14 @@ final class PresentSwapchain {
                 backend.presentSkipsByReason[3]++;
                 return false;
             }
-            // No beginFrame/endFrame around this any more. The probe needed them because it produced the content itself,
-            // but in the normal frame the content and the copyback have already happened: the shading was measured as
-            // +13.4 ms per frame on Intel with them (AMD: no measurable cost), which is the price of a second copyback and
-            // its waits per frame. The shared image is left in the layout GL declares, which is what is passed here.
-            // VK_IMAGE_LAYOUT_GENERAL is the layout both targets leave the colour image in after a frame's release
-            // barrier (GllessFrameTarget.recordReleaseBarriers ends
-            // there), so it is the layout this present really finds. Taking it from the target's own bookkeeping was
-            // tried and reverted: the bridge target records the layout its *GL* side leaves, which is a different
-            // question from the one this call asks.
-            // Except when ensureFrameTarget() above has just rebuilt the target - a world or dimension change does -
-            // because a fresh image is UNDEFINED and no barrier for it has reached any submitted buffer yet.
-            // Declaring GENERAL for it makes this blit's source barrier claim a layout the image is not in, which the
-            // layer reports at vkQueueSubmit as VUID-vkCmdDraw-None-09600 (its submit-time first-layout check, whose
-            // "vkCmdDraw" is a hardcoded label rather than the command). The GL-less target's own bookkeeping answers
-            // this exactly - UNDEFINED while fresh, GENERAL once a submitted frame has transitioned it - so it is
-            // asked only in the configuration that owns the image; the bridge's tracking answers a different question.
-            int presentSourceLayout = backend.frameTarget.colorImageLayout();
+            // Direct present (lanechat #8830 (3)(4)): the frame rendered into a swapchain image it
+            // borrowed at frame start, so there is nothing to copy and no source layout to declare -
+            // the target's own bookkeeping names the layout the borrowed image rests in, and the
+            // swapchain's presentDirect takes it from there to PRESENT_SRC and presents it through
+            // the lender. A frame that holds no borrow (the escape flag
+            // -Dceltium.present.direct=false, a failed borrow acquire, or a target that is not the
+            // GL-less one) takes the composite fallback below and is blitted from the owned image,
+            // exactly as before this stage.
             // The image is handed back in GENERAL whatever it was found in, because UNDEFINED is a legal oldLayout for
             // the source transition and an illegal newLayout for the hand-back: passing the found layout through as the
             // restore target produced VUID-VkImageMemoryBarrier-newLayout-01198 on a freshly rebuilt target (the
@@ -709,9 +737,16 @@ final class PresentSwapchain {
                         + " skyDraws=" + backend.skyDrawsThisFrame
                         + " " + PixelSignatures.celtium$skyBandSignature(presentFramePixels, backend.targetWidth, backend.targetHeight));
             }
-            backend.lastPresentResult = backend.swapchain.presentImage(backend.frameTarget.colorImage(),
-                    presentSourceLayout, backend.targetWidth, backend.targetHeight, org.lwjgl.vulkan.VK10.VK_NULL_HANDLE,
-                    org.lwjgl.vulkan.VK10.VK_NULL_HANDLE, org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);            backend.frameTarget.noteColorImageLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
+            if (backend.frameTarget.borrowedPresentImage() != null) {
+                backend.lastPresentResult = backend.swapchain.presentDirect(backend.frameTarget);
+            } else {
+                int presentSourceLayout = backend.frameTarget.colorImageLayout();
+                backend.lastPresentResult = backend.swapchain.presentImage(backend.frameTarget.colorImage(),
+                        presentSourceLayout, backend.targetWidth, backend.targetHeight,
+                        org.lwjgl.vulkan.VK10.VK_NULL_HANDLE, org.lwjgl.vulkan.VK10.VK_NULL_HANDLE,
+                        org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
+                backend.frameTarget.noteColorImageLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL);
+            }
             long presentImageNanos = System.nanoTime() - presentImageStartedNanos;
             this.swapPointImageNanos += presentImageNanos;
             celtium$noteSwapPointImage(presentImageNanos);
@@ -751,6 +786,10 @@ final class PresentSwapchain {
             } else {
                 backend.presentFailures++;
             }
+            // The present released the frame's borrow on every path through presentDirect: borrow the
+            // next frame's image now, so the rendering that starts when this call returns attaches the
+            // swapchain image from its first pass.
+            celtium$ensureBorrowedFrameImage();
             return reached;
         } catch (RuntimeException | LinkageError error) {
             backend.presentFailures++;

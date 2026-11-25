@@ -42,6 +42,40 @@ public interface FrameImageTarget {
     }
 
     /**
+     * {@return the swapchain image this frame is borrowing as its colour target}, or {@code null} when the
+     * frame renders into an owned image.
+     * <p>
+     * The direct present path (design section 2.5, lanechat #8830 (3)(4)): the frame target borrows one
+     * swapchain image per frame from the context's {@code PresentEngine} and every pass attaches it through
+     * {@link #colorImage()} / {@link #colorView()} exactly as it attached the owned image, so the finished
+     * frame is already in the swapchain when the frame ends and the present is a layout transition and a
+     * {@code vkQueuePresentKHR}, never a blit. The handle is the lender's: it is invalidated by the present
+     * that ends the borrow, and a caller must not destroy the image or its view. The default is the owned
+     * shape - no borrow - for a target with no lender.
+     */
+    default org.soutalab.celtium.vulkan.hal.PresentEngine.BorrowedImage borrowedPresentImage() {
+        return null;
+    }
+
+    /**
+     * Ends the frame's borrow of a swapchain image: the target forgets the handle and destroys nothing
+     * (the image and its view are the lender's). Called by the present path once the present that ends the
+     * borrow has been attempted, and when a borrow is dropped unpresented.
+     */
+    default void releasePresentBorrow() {
+    }
+
+    /**
+     * {@return the acquire semaphore the next submission touching the frame's colour image must wait on},
+     * or {@code VK_NULL_HANDLE} when no wait is owed. Consume-on-read: a borrow's acquire is waited on
+     * exactly once, by the first submission recorded after the borrow, so only that reader is handed the
+     * semaphore; every later reader gets {@code VK_NULL_HANDLE}.
+     */
+    default long presentAcquireSemaphore() {
+        return org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
+    }
+
+    /**
      * {@return whether this target's frames take part in the wait/done semaphore contract}.
      * <p>
      * The pair exists so two producers meet on the queue: under the shared target, GL's signal is what the frame's

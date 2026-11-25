@@ -36,13 +36,17 @@ final class FramebufferCache {
     private final VulkanContext context;
     private final RenderTargetRegistry registry;
     /**
-     * The frame target's framebuffers keyed by the render pass each is compatible with. One entry per render pass,
-     * not one framebuffer total: the terrain and immediate pipelines build their own render passes, and a
-     * single-slot cache replaced the entry on every pass alternation - each replacement paying a device-idle wait
-     * to retire the old handle. Measured ~5 settleGpu calls per frame on leg ind2-amd. Each entry also carries the
-     * attachments it was built over; see {@link FrameEntry}.
+     * The frame target's framebuffers keyed by the render pass each is compatible with, then by the colour
+     * view each was built over. One entry per render pass was the rule while the frame target owned its
+     * colour image: a single-slot cache replaced the entry on every pass alternation - each replacement
+     * paying a device-idle wait to retire the old handle (measured ~5 settleGpu calls per frame on leg
+     * ind2-amd). The direct present path (lanechat #8830 (3)(4)) rotates the colour view with the borrowed
+     * swapchain image, so the colour view joins the key: each (pass, view) pair builds its framebuffer
+     * once and keeps it for the swapchain generation's life, instead of retiring and recreating on every
+     * frame's rotation. Each entry also carries the attachments it was built over; see {@link FrameEntry}.
      */
-    private final Long2ObjectOpenHashMap<FrameEntry> frameFramebuffers = new Long2ObjectOpenHashMap<>();
+    private final Long2ObjectOpenHashMap<Long2ObjectOpenHashMap<FrameEntry>> frameFramebuffers =
+            new Long2ObjectOpenHashMap<>();
     /** Per identity, the chain-pair generation its cached framebuffers were built over. */
     private final Long2LongOpenHashMap chainPairGenerations = new Long2LongOpenHashMap();
     /** Per identity, the colour-tuple generation its cached multi-target framebuffers were built over. */
@@ -92,8 +96,9 @@ final class FramebufferCache {
     private FrameEntry lastFrameEntry;
 
     long frame(long renderPass, long colorView, long depthView, int width, int height) {
+        Long2ObjectOpenHashMap<FrameEntry> byView = this.frameFramebuffers.get(renderPass);
         FrameEntry cached = (renderPass == this.lastFramePass) ? this.lastFrameEntry
-                : this.frameFramebuffers.get(renderPass);
+                : (byView == null ? null : byView.get(colorView));
         if (celtium$frameEntryReusable(cached, colorView, depthView, width, height)) {
             this.lastFramePass = renderPass;
             this.lastFrameEntry = cached;
@@ -101,11 +106,16 @@ final class FramebufferCache {
             return cached.handle;
         }
         if (cached != null) {
-            // Built over a target that is gone. This handle is named by nothing the GPU can still be reading - it is
-            // an unused cache entry, not a pass in an open recording - so it goes to the retire queue rather than
-            // being destroyed in place: the queue is the rule every handle of this kind follows (see the class note).
-            this.frameFramebuffers.remove(renderPass);
-            if (renderPass == this.lastFramePass) {
+            // Built over attachments that are gone (same colour view, a depth view or extent that moved).
+            // This handle is named by nothing the GPU can still be reading - it is an unused cache entry,
+            // not a pass in an open recording - so it goes to the retire queue rather than being destroyed
+            // in place: the queue is the rule every handle of this kind follows (see the class note).
+            // Entries built over the other colour views are not touched: their views are still live.
+            byView.remove(colorView);
+            if (byView.isEmpty()) {
+                this.frameFramebuffers.remove(renderPass);
+            }
+            if (cached == this.lastFrameEntry) {
                 this.lastFramePass = Long.MIN_VALUE;
                 this.lastFrameEntry = null;
             }
@@ -113,7 +123,12 @@ final class FramebufferCache {
         }
         FrameEntry entry = new FrameEntry(create(renderPass, colorView, depthView, width, height, null),
                 colorView, depthView, width, height);
-        this.frameFramebuffers.put(renderPass, entry);
+        Long2ObjectOpenHashMap<FrameEntry> slot = this.frameFramebuffers.get(renderPass);
+        if (slot == null) {
+            slot = new Long2ObjectOpenHashMap<>();
+            this.frameFramebuffers.put(renderPass, slot);
+        }
+        slot.put(colorView, entry);
         this.lastFramePass = renderPass;
         this.lastFrameEntry = entry;
         noteFrameCache(CrashBreadcrumbs.FRAME_CACHE_MISS, entry);
@@ -191,9 +206,11 @@ final class FramebufferCache {
         if (this.frameFramebuffers.isEmpty()) {
             return 0;
         }
-        List<Long> handles = new ArrayList<>(this.frameFramebuffers.size());
-        for (FrameEntry entry : this.frameFramebuffers.values()) {
-            handles.add(entry.handle);
+        List<Long> handles = new ArrayList<>();
+        for (Long2ObjectOpenHashMap<FrameEntry> byView : this.frameFramebuffers.values()) {
+            for (FrameEntry entry : byView.values()) {
+                handles.add(entry.handle);
+            }
         }
         this.frameFramebuffers.clear();
         this.lastFramePass = Long.MIN_VALUE;
@@ -354,8 +371,10 @@ final class FramebufferCache {
         this.registry.clearAllChainPairFramebuffers();
         this.chainPairGenerations.clear();
         this.chainPairTupleGenerations.clear();
-        for (FrameEntry entry : this.frameFramebuffers.values()) {
-            vkDestroyFramebuffer(device, entry.handle, null);
+        for (Long2ObjectOpenHashMap<FrameEntry> byView : this.frameFramebuffers.values()) {
+            for (FrameEntry entry : byView.values()) {
+                vkDestroyFramebuffer(device, entry.handle, null);
+            }
         }
         this.frameFramebuffers.clear();
         this.framebufferGenerations.clear();

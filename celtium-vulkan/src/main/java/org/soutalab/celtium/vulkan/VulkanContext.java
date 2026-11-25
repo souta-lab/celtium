@@ -2,6 +2,7 @@ package org.soutalab.celtium.vulkan;
 
 import org.lwjgl.PointerBuffer;
 import org.soutalab.celtium.harness.HarnessConfig;
+import org.soutalab.celtium.vulkan.hal.PresentEngine;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.EXTDebugUtils;
@@ -86,6 +87,14 @@ public final class VulkanContext {
     private static final boolean SWAPCHAIN_REQUESTED = Boolean.getBoolean(SWAPCHAIN_PROPERTY);
     private static final boolean PRESENT_FROM_COMPOSITE =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
+    /**
+     * The direct present path (A→B overhaul Stage 1): frames render into a borrowed swapchain image and
+     * the present is a layout transition plus {@code vkQueuePresentKHR}, never a blit. This is the one
+     * emergency escape flag of the stage: {@code -Dceltium.present.direct=false} takes the frame path
+     * back to the composite blit present (and transfer-only swapchain usage) exactly as before.
+     */
+    public static final boolean PRESENT_DIRECT =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.present.direct", "true"));
     private static final boolean HIDE_FD_EXTENSIONS =
             Boolean.getBoolean(VulkanContext.HIDE_FD_EXTENSIONS_PROPERTY);
     private static final boolean PIPELINE_CACHE_DISABLED =
@@ -131,6 +140,8 @@ public final class VulkanContext {
     // Deliberately leak device-owned handles until the failed process exits.
     private volatile boolean deviceLost;
     private VkQueue queue;
+    /** The owner of the swapchain lending contract (lanechat #8830); built with the queue, before any swapchain. */
+    private PresentEngine presentEngine;
     private int queueFamilyIndex = -1;
     private String deviceName;
     private String deviceUuid;
@@ -688,6 +699,11 @@ public final class VulkanContext {
     public VkQueue queue() {
         celtium$awaitPresenter();
         return this.queue;
+    }
+
+    /** {@return this context's present engine}: the owner of the swapchain lending contract (lanechat #8830). */
+    public PresentEngine presentEngine() {
+        return this.presentEngine;
     }
 
     /** Index of the queue family the queue was taken from. */
@@ -3690,6 +3706,7 @@ public final class VulkanContext {
             PointerBuffer handle = stack.mallocPointer(1);
             vkGetDeviceQueue(this.device, this.queueFamilyIndex, 0, handle);
             this.queue = new VkQueue(handle.get(0), this.device);
+            this.presentEngine = new PresentEngine(this.device, this.queue);
             VkCommandPoolCreateInfo pool = VkCommandPoolCreateInfo.calloc(stack).sType$Default()
                     .queueFamilyIndex(this.queueFamilyIndex)
                     .flags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
