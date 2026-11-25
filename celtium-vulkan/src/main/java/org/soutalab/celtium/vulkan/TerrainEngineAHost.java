@@ -4,6 +4,7 @@ import java.util.IdentityHashMap;
 import java.util.Map;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
 import org.soutalab.celtium.vulkan.terrain.AsyncSectionMesher;
+import org.soutalab.celtium.vulkan.terrain.TerrainResidencyGate;
 import org.soutalab.celtium.vulkan.terrain.TerrainSectionStore;
 import org.soutalab.celtium.vulkan.terrain.TerrainUploadBudget;
 
@@ -29,6 +30,7 @@ final class TerrainEngineAHost {
     private final TerrainSectionStore store = new TerrainSectionStore();
     private final TerrainUploadBudget budget = new TerrainUploadBudget(
             Long.getLong("celtium.vulkan.terrainUploadMiB", 4L) * 1024 * 1024);
+    private final TerrainResidencyGate residencyGate = new TerrainResidencyGate();
     private final Map<TerrainRenderPass, Integer> ordinals = new IdentityHashMap<>();
     private final Map<TerrainRenderPass, TerrainEngineA> engines = new IdentityHashMap<>();
     private long generation;
@@ -39,6 +41,27 @@ final class TerrainEngineAHost {
 
     TerrainSectionStore store() {
         return this.store;
+    }
+
+    TerrainResidencyGate residencyGate() {
+        return this.residencyGate;
+    }
+
+    /**
+     * Counts one section the renderer's stride gate kept out of Tier-A
+     * (order (i)): the region was not built with the TerrainVertex16 format,
+     * so {@code registerTierA} was never called for it — a permanent leak the
+     * engine-side counters cannot see.
+     */
+    void noteStrideGate(int sectionX, int sectionY, int sectionZ, TerrainRenderPass pass) {
+        this.residencyGate.noteMissing(new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinalFor(pass)),
+                TerrainResidencyGate.Reason.STRIDE_GATE);
+    }
+
+    /** Counts one section whose Tier-A build threw before registration (order (i)). */
+    void noteBuildException(int sectionX, int sectionY, int sectionZ, TerrainRenderPass pass) {
+        this.residencyGate.noteMissing(new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinalFor(pass)),
+                TerrainResidencyGate.Reason.BUILD_EXCEPTION);
     }
 
     long nextGeneration() {
@@ -58,7 +81,7 @@ final class TerrainEngineAHost {
         TerrainEngineA engine = this.engines.get(pass);
         if (engine == null) {
             engine = new TerrainEngineA(context, ordinalFor(pass),
-                    "pass-" + ordinalFor(pass), this.store, this.budget);
+                    "pass-" + ordinalFor(pass), this.store, this.budget, this.residencyGate);
             this.engines.put(pass, engine);
         }
         return engine;
@@ -81,8 +104,9 @@ final class TerrainEngineAHost {
     /** Removes every pass' record of one section, deferred against the generation lag. */
     void unregisterSection(int sectionX, int sectionY, int sectionZ) {
         for (int ordinal : this.ordinals.values()) {
-            this.store.unregister(new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinal),
-                    this.generation);
+            TerrainSectionStore.Key key = new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinal);
+            this.store.unregister(key, this.generation);
+            this.residencyGate.forget(key);
         }
         this.store.collectReleased(Math.max(0, this.generation - 2));
     }

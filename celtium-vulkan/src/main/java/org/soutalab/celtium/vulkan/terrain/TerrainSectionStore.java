@@ -88,6 +88,13 @@ public final class TerrainSectionStore {
     private boolean imageDirty = true;
     private long imageGeneration;
 
+    /** Why a registration was refused: the distinction the residency gate counts by. */
+    public enum RegisterFailure { OVERSIZE, ARENA_FULL }
+
+    /** The outcome of a diagnosed registration: exactly one of the two fields is non-null. */
+    public record RegisterResult(Registration registration, RegisterFailure failure) {
+    }
+
     /**
      * Registers one built section, assigning its slab placement.
      *
@@ -95,17 +102,26 @@ public final class TerrainSectionStore {
      *         (oversize) or an arena is exhausted; on failure nothing is allocated
      */
     public synchronized Registration register(AsyncSectionMesher.BuiltSectionA built, long generation) {
+        return registerDiagnosed(built, generation).registration();
+    }
+
+    /**
+     * {@link #register} with the refusal reason named, for the residency gate's
+     * leak counters (order (i)): oversize and arena exhaustion used to be the
+     * same silent {@code null}.
+     */
+    public synchronized RegisterResult registerDiagnosed(AsyncSectionMesher.BuiltSectionA built, long generation) {
         Key key = new Key(built.sectionX, built.sectionY, built.sectionZ, built.passOrdinal);
         if (this.byKey.containsKey(key)) {
             throw new IllegalStateException("section already registered: " + key);
         }
         if (built.oversize || built.descDraft.oversize()) {
-            return null;
+            return new RegisterResult(null, RegisterFailure.OVERSIZE);
         }
         long vertexBytes = (long) built.totalQuads * 4 * 16;
         TerrainSlabAllocator.Allocation geometry = this.geometryAllocator.allocate(vertexBytes);
         if (geometry == null) {
-            return null;
+            return new RegisterResult(null, RegisterFailure.ARENA_FULL);
         }
         TerrainSlabAllocator.Allocation quadSpace = this.quadSpaceAllocator.allocate(built.totalQuads);
         TerrainSlabAllocator.Allocation factor = null;
@@ -124,7 +140,7 @@ public final class TerrainSectionStore {
             if (quadSpace != null) this.quadSpaceAllocator.free(quadSpace);
             if (factor != null) this.factorAllocator.free(factor);
             if (sorted != null) this.sortedAllocator.free(sorted);
-            return null;
+            return new RegisterResult(null, RegisterFailure.ARENA_FULL);
         }
 
         SectionDesc desc = built.descDraft;
@@ -141,7 +157,7 @@ public final class TerrainSectionStore {
         this.byKey.put(key, registration);
         this.imageDirty = true;
         this.imageGeneration++;
-        return registration;
+        return new RegisterResult(registration, null);
     }
 
     /**
