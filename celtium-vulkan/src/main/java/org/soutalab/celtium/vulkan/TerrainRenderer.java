@@ -402,15 +402,20 @@ public final class TerrainRenderer {
     private VulkanContext context;
 
     /**
-     * Tier-A terrain state (new rendering architecture), present only under
-     * {@code -Dceltium.vulkan.terrainEngineA}. While the flag is on, built sections in
-     * the 16-byte format are additionally registered into the resident SectionDesc
-     * table at upload; the legacy route keeps drawing them until the backend's pass
-     * loop cuts over to the Tier-A executors (the integration step that consumes
-     * {@link TerrainEngineA#prepareFrame} / {@link TerrainEngineA#recordDraws}).
+     * Tier-A terrain state (new rendering architecture): the default terrain route
+     * since the wave-2 cutover ({@code -Dceltium.vulkan.terrainEngineA=false} is the
+     * bisection switch that turns it off). Built sections in the 16-byte format are
+     * registered into the resident SectionDesc table at upload, and the backend's
+     * pass loop drives the Tier-A executors
+     * ({@link TerrainEngineA#prepareFrame} / {@link TerrainEngineA#recordDraws}).
      */
     private final TerrainEngineAHost terrainAHost = TerrainEngineAHost.ENABLED ? new TerrainEngineAHost() : null;
     private boolean terrainARegisterFailurePrinted;
+
+    /** The Tier-A host, or null when Tier-A is switched off; the backend's pass loop drives it. */
+    TerrainEngineAHost terrainAHost() {
+        return this.terrainAHost;
+    }
     /** Where a message goes: the backend's diagnostics list, so the report still sees it. */
     private java.util.function.Consumer<String> diagnostics = message -> { };
 
@@ -1813,6 +1818,12 @@ public final class TerrainRenderer {
                     SectionRenderDataStorage storage = region.getStorage(meshEntry.getKey());
                     if (storage != null) {
                         storage.removeIndexBuffer(sort.render.getSectionIndex());
+                    }
+                    if (this.terrainAHost != null && meshEntry.getValue() != null) {
+                        // Wave-2 item 4: the re-sort regenerated this section's sorted
+                        // indices; the resident Tier-A record must carry the new order.
+                        this.terrainAHost.updateSortedSection(sort.render.getChunkX(), sort.render.getChunkY(),
+                                sort.render.getChunkZ(), meshEntry.getKey(), meshEntry.getValue().indexData());
                     }
                     pending.add(TerrainRenderer.PendingMesh.obtain(sort.render.getSectionIndex(), meshEntry.getKey(), null,
                             meshEntry.getValue(), null, null));

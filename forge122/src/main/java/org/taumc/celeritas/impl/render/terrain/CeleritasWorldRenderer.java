@@ -411,7 +411,8 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
     private static final boolean FORCE_COMPACT_FORMAT = Boolean.getBoolean("celtium.terrain.forceCompactFormat");
 
     /** New rendering architecture, Tier-A terrain engine (SectionDesc + GPU culling). */
-    private static final boolean TERRAIN_ENGINE_A = Boolean.getBoolean("celtium.vulkan.terrainEngineA");
+    private static final boolean TERRAIN_ENGINE_A =
+            Boolean.parseBoolean(System.getProperty("celtium.vulkan.terrainEngineA", "true"));
 
     private ChunkVertexType chooseVertexType() {
         if (TERRAIN_ENGINE_A) {
