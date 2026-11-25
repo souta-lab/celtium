@@ -120,7 +120,7 @@ public final class PostChainGraphAdapter {
      * (when it names an external framebuffer) is imported and supplied, and every later input must
      * have been written by an earlier pass of this chain.
      */
-    public static Result convert(List<VulkanPostChain.Pass> passes) {
+    public static Result convert(List<PostChainPass> passes) {
         List<PostChainNode> nodes = new ArrayList<>();
         List<Import> imports = new ArrayList<>();
         if (passes == null || passes.isEmpty()) {
@@ -128,7 +128,7 @@ public final class PostChainGraphAdapter {
         }
         Set<String> supplied = new HashSet<>();
         supplied.add(FRAME);
-        VulkanPostChain.Pass first = passes.get(0);
+        PostChainPass first = passes.get(0);
         if (first.groupMainFbId != 0) {
             String groupMain = attachment(first.groupMainFbId);
             imports.add(new Import(groupMain, first.groupMainTextureId, first.groupMainW,
@@ -136,7 +136,7 @@ public final class PostChainGraphAdapter {
             supplied.add(groupMain);
         }
         String unsupplied = null;
-        for (VulkanPostChain.Pass pass : passes) {
+        for (PostChainPass pass : passes) {
             String input = pass.inIsMain ? FRAME : attachment(pass.inFbId);
             if (unsupplied == null && !supplied.contains(input)) {
                 unsupplied = pass.program;

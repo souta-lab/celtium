@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.compat.PostChainPass;
+
 import java.util.Iterator;
 import java.util.List;
 import static org.lwjgl.vulkan.VK10.*;
@@ -28,7 +30,7 @@ final class PostChainBridge {
      *
      * @return true when every pass was recorded and submitted; false leaves the caller's GL path to run instead
      */
-    boolean celtium$postChainRun(java.util.List<VulkanPostChain.Pass> passes) {
+    boolean celtium$postChainRun(java.util.List<PostChainPass> passes) {
         if (!b.celtium$postChainAvailable() || passes == null || passes.isEmpty()) {
             return false;
         }
@@ -52,7 +54,7 @@ final class PostChainBridge {
         RenderTargetRegistry.TargetFormatClass chainFormatClass = celtium$chainFormatClass(passes);
         if (!b.postChain.supportsAll(passes, chainFormatClass)) {
             StringBuilder reason = new StringBuilder("post chain refused:");
-            for (VulkanPostChain.Pass pass : passes) {
+            for (PostChainPass pass : passes) {
                 reason.append(' ').append(pass.program).append('(').append(pass.pushBytes).append("B)");
             }
             b.record(reason.toString());
@@ -94,7 +96,37 @@ final class PostChainBridge {
             // The same hand-back for every other published name: the chain is about to attach the pair image, which
             // declares GENERAL, and the sampling side left it in SHADER_READ_ONLY.
             celtium$transitionPublishedFrameTextures(true);
-            int chainRecording = b.postChain.recordPasses(b.commandBuffer, passes, chainFormatClass);
+            // Milestone 2 (arch-graph): the passes are recorded by walking the compiled chain
+            // graph - ChainGraph over the adapter's restatement of this same pass list - and each
+            // graph pass records through the executor's incremental ChainRecording session, in
+            // graph order. The bridge no longer calls the whole-list recorder. The barriers the
+            // graph compiler synthesizes between passes are declarations over imported images
+            // the executor does not own; the recording's own per-pass barriers (first use,
+            // shader-read) are recorded inside recordOnePass exactly as before, so the barrier
+            // sink is a no-op here. A refusal mid-walk abandons the recording and propagates,
+            // landing in the same failure path a failed recordPasses used.
+            int chainRecording;
+            org.soutalab.celtium.vulkan.compat.PostChainGraphAdapter.Result adapted =
+                    org.soutalab.celtium.vulkan.compat.PostChainGraphAdapter.convert(passes);
+            if (adapted.accepted()) {
+                VulkanPostChain.ChainRecording recording =
+                        b.postChain.beginChainRecording(b.commandBuffer, chainFormatClass);
+                try {
+                    final java.util.Iterator<PostChainPass> passOrder = passes.iterator();
+                    org.soutalab.celtium.vulkan.compat.ChainGraph chainGraph =
+                            org.soutalab.celtium.vulkan.compat.ChainGraph.build(adapted,
+                                    (node, context) -> recording.recordOnePass(passOrder.next()));
+                    chainGraph.execute(null, (barriers, context) -> { });
+                    chainRecording = recording.finishChainRecording();
+                } catch (RuntimeException | Error failure) {
+                    recording.abandonChainRecording();
+                    throw failure;
+                }
+            } else {
+                // The adapter's walk refused a chain the executor's preflight accepted: keep the
+                // legacy whole-list recording rather than drop a chain on a restatement gap.
+                chainRecording = b.postChain.recordPasses(b.commandBuffer, passes, chainFormatClass);
+            }
             // The chain records into *this* command buffer and sets its own viewport and scissor
             // (`VulkanPostChain.recordPasses` -> vkCmdSetViewport/vkCmdSetScissor at VulkanPostChain.java:965/968).
             // The dedup trackers describe what this stream last set, so a writer that does not go through them makes
@@ -180,12 +212,12 @@ b.frameBufferOpen = false;
      *
      * @return whether the identity now resolves to the chain image (or already did)
      */
-    boolean declareChainInputAdoption(java.util.List<VulkanPostChain.Pass> passes) {
+    boolean declareChainInputAdoption(java.util.List<PostChainPass> passes) {
         GllessFrameTarget glless = b.offTargetTarget();
         if (glless == null || b.postChain == null || passes.isEmpty()) {
             return false;
         }
-        VulkanPostChain.Pass first = passes.get(0);
+        PostChainPass first = passes.get(0);
         int identity = first.groupMainFbId;
         if (identity == 0 || first.groupMainW <= 0 || first.groupMainH <= 0
                 || identity == (int) b.targetRegistry.mainIdentity()) {
@@ -228,7 +260,7 @@ b.frameBufferOpen = false;
      * unchanged.
      */
     private RenderTargetRegistry.TargetFormatClass celtium$chainFormatClass(
-            java.util.List<VulkanPostChain.Pass> passes) {
+            java.util.List<PostChainPass> passes) {
         GllessFrameTarget glless = b.offTargetTarget();
         if (glless == null || passes.isEmpty()) {
             return RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM;
@@ -349,7 +381,7 @@ b.frameBufferOpen = false;
      * identity routing in {@link #recordImmediateOnlyPass}, before this runs - the bind the caller performs just
      * ahead of the chain is what flushes them.
      */
-    void adoptChainFramebuffers(java.util.List<VulkanPostChain.Pass> passes) {
+    void adoptChainFramebuffers(java.util.List<PostChainPass> passes) {
         GllessFrameTarget glless = b.offTargetTarget();
         if (glless == null || b.postChain == null || passes.isEmpty()) {
             // The GL bridge has real GL framebuffers behind these identities; there is no stand-in image to adopt.
@@ -362,7 +394,7 @@ b.frameBufferOpen = false;
         // all four of its own targets (postTargets=0, postAdopted=4) and every blur pass read and wrote one image. A
         // chain-created target can never be reported as the chain's input, because the mixin reports what the group
         // reads first.
-        VulkanPostChain.Pass first = passes.get(0);
+        PostChainPass first = passes.get(0);
         if (first.groupMainFbId == 0) {
             return;
         }
@@ -1391,7 +1423,7 @@ b.frameBufferOpen = false;
      * {@code -Dceltium.vulkan.chainFrameDumpPath} (default {@code /tmp/celtium-chain-frame.png}) and the count from
      * {@code -Dceltium.vulkan.chainFrameDumps} (default 1).
      */
-    void celtium$dumpImagesAtChainTime(java.util.List<VulkanPostChain.Pass> passes) {
+    void celtium$dumpImagesAtChainTime(java.util.List<PostChainPass> passes) {
         if (!b.CHAIN_FRAME_DUMP) {
             return;
         }

@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.compat.PostChainPass;
+
 import org.soutalab.celtium.harness.HarnessConfig;
 
 import static org.lwjgl.system.MemoryStack.stackPush;
@@ -100,44 +102,6 @@ import org.lwjgl.vulkan.VkWriteDescriptorSet;
 public final class VulkanPostChain {
 
     /** One collected pass, handed over by the mixin with everything already resolved to plain values. */
-    public static final class Pass {
-        public String program;
-        public int inFbId;
-        public int inW;
-        public int inH;
-        public int outFbId;
-        public int outW;
-        public int outH;
-        public boolean inIsMain;
-        public boolean outIsMain;
-        public int[] auxFbIds = new int[0];
-        public int[] auxW = new int[0];
-        public int[] auxH = new int[0];
-        public float[] push = new float[0];
-        public int pushBytes;
-        /**
-         * The block the collector packed, as the member names it wrote and the byte offset it wrote each at, in
-         * packing order. {@link #push} holds the values and {@link #pushBytes} how many of them are meaningful; this
-         * is the same layout said member by member, which is the only form the shader's own declaration can be
-         * compared against: two blocks of equal size whose members are permuted are indistinguishable in a length.
-         * <p>
-         * Null when the collector does not report it. The uniform-buffer route then refuses these passes rather than
-         * write a block whose offsets nothing has checked - see {@link #blockRefusal}.
-         */
-        public String[] blockNames;
-        public int[] blockOffsets;
-        /**
-         * Nonzero when the chain's input framebuffer is not the game's own - the entity-outline case, whose chain
-         * reads and writes the target the game filled with the silhouette: the identity its passes carry, the GL
-         * texture name the game binds again to composite it, and its size, so the caller can adopt the image it
-         * already keeps under that identity instead of letting the chain allocate an empty target for it. Only
-         * pass[0] carries it; zero marks the game's own framebuffer, which resolves to the shared image.
-         */
-        public int groupMainTextureId;
-        public int groupMainFbId;
-        public int groupMainW;
-        public int groupMainH;
-    }
 
     /** program name -> (vertex module, fragment module); names are program JSON ids without path/extension. */
     private static final Map<String, String[]> PROGRAMS = new HashMap<>();
@@ -218,7 +182,7 @@ public final class VulkanPostChain {
     private int passesRecorded;
     private int chainsRun;
     /**
-     * Chain runs whose caller reported an image to adopt ({@link Pass#groupMainFbId}) and had not adopted one under
+     * Chain runs whose caller reported an image to adopt ({@link PostChainPass#groupMainFbId}) and had not adopted one under
      * that identity: the passes then ran on an empty target this class allocated, which is the difference between
      * "the chain ran" and "the chain ran on the image the game drew into". Zero with a caller that adopts.
      * <p>
@@ -702,7 +666,7 @@ public final class VulkanPostChain {
      * {@link #programRefusals} with its reason and answered "no", which leaves the caller its GL chain and, under the
      * GL-less window, the named refusal it has today.
      */
-    public boolean supportsAll(List<Pass> passes, RenderTargetRegistry.TargetFormatClass chainFormatClass) {
+    public boolean supportsAll(List<PostChainPass> passes, RenderTargetRegistry.TargetFormatClass chainFormatClass) {
         if (passes.isEmpty()) {
             return false;
         }
@@ -724,7 +688,7 @@ public final class VulkanPostChain {
             }
             return false;
         }
-        for (Pass pass : passes) {
+        for (PostChainPass pass : passes) {
             Program program = programFor(pass, celtium$outFormatClass(pass.outIsMain, chainClass));
             if (program == null) {
                 return false;
@@ -746,7 +710,7 @@ public final class VulkanPostChain {
      * (program, class): a pipeline is created against one class's render pass, so a program that runs in two
      * classes holds two pipelines, one per pass it may be begun in (QUEUE 395).
      */
-    private Program programFor(Pass pass, RenderTargetRegistry.TargetFormatClass outFormatClass) {
+    private Program programFor(PostChainPass pass, RenderTargetRegistry.TargetFormatClass outFormatClass) {
         if (pass == null || pass.program == null || PROGRAMS.get(pass.program) == null || pass.pushBytes <= 0) {
             return null;
         }
@@ -818,7 +782,7 @@ public final class VulkanPostChain {
      * shader will compute with and not only the picture that leaves the window. Read with the member offsets the
      * trace prints beside it, this is what says whether a pass's own uniform values or the program's defaults went in.
      */
-    private static String packedBits(Pass pass) {
+    private static String packedBits(PostChainPass pass) {
         StringBuilder bits = new StringBuilder(pass.pushBytes * 2);
         for (int i = 0; i < pass.pushBytes / 4; ++i) {
             String word = Integer.toHexString(Float.floatToRawIntBits(pass.push[i]));
@@ -831,7 +795,7 @@ public final class VulkanPostChain {
     }
 
     /** {@return the reason this pass's packed block cannot feed the program's declared block, or null}. */
-    private static String blockRefusal(Pass pass, Program program) {
+    private static String blockRefusal(PostChainPass pass, Program program) {
         int limit = program.uniformBlock ? program.blockBytes : program.pushRange;
         if (pass.pushBytes > limit) {
             return "the collector packed " + pass.pushBytes + "B for " + pass.program + ", whose "
@@ -842,7 +806,7 @@ public final class VulkanPostChain {
             // above is all the evidence there is; the buffer route in particular must not write a block whose member
             // placement nothing has compared with the shader's declaration.
             return program.uniformBlock ? "the collector did not report the block's member layout"
-                    + " (Pass.blockNames), which the uniform-buffer route requires" : null;
+                    + " (PostChainPass.blockNames), which the uniform-buffer route requires" : null;
         }
         if (pass.blockNames.length != pass.blockOffsets.length) {
             return "the collector reported " + pass.blockNames.length + " member names and "
@@ -882,7 +846,7 @@ public final class VulkanPostChain {
     }
 
     /** Prints the first block-layout refusal with everything the diagnosis needs; the rest are counted. */
-    private void reportBlockRefusal(Pass pass, Program program, String reason) {
+    private void reportBlockRefusal(PostChainPass pass, Program program, String reason) {
         if (this.blockLayoutRefusalReported) {
             return;
         }
@@ -986,6 +950,240 @@ public final class VulkanPostChain {
     }
 
     /**
+     * Opens an incremental chain recording: the same prologue {@link #recordPasses} runs (ring accounting reset,
+     * uncommitted first-use barriers re-armed, recording token issued), but the passes are then handed over one
+     * at a time through {@link ChainRecording#recordOnePass} and the recording is closed by
+     * {@link ChainRecording#finishChainRecording}. This is the entry the frame graph's executor drives: the
+     * graph decides pass order and boundaries, and each graph pass records through this session in that order.
+     * <p>
+     * Without a whole pass list up front there is no whole-list preflight: each pass's inputs are judged when
+     * the pass is offered, against the frame image, the adopted targets and the outputs earlier passes of
+     * <em>this</em> recording produced - the same three supplies {@link #unsuppliedInput(List)} accepts, checked
+     * incrementally. A refusal therefore lands mid-recording instead of before it; the caller must
+     * {@link ChainRecording#abandonChainRecording abandon} the recording and discard the command buffer, exactly
+     * as a failed {@code recordPasses} already required of it.
+     */
+    public ChainRecording beginChainRecording(VkCommandBuffer commandBuffer,
+            RenderTargetRegistry.TargetFormatClass chainFormatClass) {
+        return beginChainRecording(commandBuffer, chainFormatClass, null);
+    }
+
+    private ChainRecording beginChainRecording(VkCommandBuffer commandBuffer,
+            RenderTargetRegistry.TargetFormatClass chainFormatClass, List<PostChainPass> precheckedPasses) {
+        RenderTargetRegistry.TargetFormatClass chainClass = chainFormatClass == null
+                ? RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM : chainFormatClass;
+        // The ring accounting is reset here, at the head of the recording, before every refusal the session can
+        // raise: the abandon path (celtium$returnSlotsOfAbandonedRecording) reads these two fields for any throw,
+        // so a refusal raised before this point - the unsupplied-input refusal below is the one such point - would
+        // otherwise be handed the previous recording's count and start cursor and would "return" slots that
+        // recording legitimately took and may still have in flight (audit-vulkan-core F1). Resetting here makes
+        // the pre-prologue refusal see zero taken, which is the truth: it took nothing. Nothing between here and
+        // the first recordOnePass advances the cursor - descriptorSet() is the only writer, and it pairs every
+        // advance with an increment of the count reset here.
+        this.setsThisRecording = 0;
+        this.recordingStartCursor = this.setCursor;
+        if (precheckedPasses != null) {
+            String unsupplied = unsuppliedInput(precheckedPasses);
+            if (unsupplied != null) {
+                // Nothing has been recorded yet, so there is nothing to roll back: the caller still owns a frame
+                // it can hand back to GL, and the only thing this class did was refuse to stand in for an image
+                // it does not have.
+                this.refusedInputs++;
+                noteReportedButUnadoptedInput(precheckedPasses);
+                if (!this.refusalReported) {
+                    this.refusalReported = true;
+                    PostChainPass first = precheckedPasses.get(0);
+                    System.out.println("[Celtium] CELTIUM_POST_REFUSED_UNSUPPLIED_INPUT run=" + this.chainsRun
+                            + " reportedIdentity=" + first.groupMainFbId + " reportedTexture="
+                            + first.groupMainTextureId
+                            + " " + first.groupMainW + "x" + first.groupMainH + " adopted=" + adoptedCount()
+                            + " reason=" + unsupplied + " - the chain is not run natively; the caller's GL chain"
+                            + " keeps it");
+                }
+                throw new UnsuppliedInputException(unsupplied);
+            }
+        }
+        if (!this.pendingInit.isEmpty()) {
+            // Not a second recording inside one command buffer: a non-empty set means the recording that carried
+            // these targets' first-use barrier ended without commitPasses(). Either its command buffer was reset or
+            // abandoned - in which case the transitions never ran and the images are still UNDEFINED - or the caller
+            // does not report submissions at all. Both cases are answered the same way: the barrier goes into this
+            // recording too, because nothing here may assume the image is in GENERAL.
+            this.uncommittedRecordings++;
+            this.repeatInits += this.pendingInit.size();
+            if (this.uncommittedRecordings <= 4) {
+                for (Target target : this.pendingInit) {
+                    trace("UNCOMMITTED identity=" + target.identity + " image=0x" + hex(target.image)
+                            + " recording=" + this.recordings + " (committedRecording=" + this.pendingRecording
+                            + "): its UNDEFINED -> GENERAL barrier was recorded but commitPasses("
+                            + this.pendingRecording + ") did not report that recording as submitted, so it is"
+                            + " recorded again here (the caller patch: commitPasses(token) right after the submit)");
+                }
+            }
+        }
+        this.pendingInit.clear();
+        this.recordings++;
+        this.pendingRecording = this.recordings;
+        // The completion epoch this recording starts at: what the ring's ownership rule compares against (audit B11).
+        this.recordingEpochStart = VulkanContext.completedEpoch();
+        // The recording's outputs, in pass order, for the caller's chain-time image dump: cleared here so a
+        // recording that throws leaves no stale half-list, and readable before commitPasses (the dump runs right
+        // after the submit, and an output image that is only correct after the commit is a measurement one step
+        // too late).
+        this.lastRecordedOutputs.clear();
+        return new ChainRecording(commandBuffer, chainClass, this.frameTargetGeneration,
+                this.recordings, precheckedPasses != null);
+    }
+
+    /**
+     * One open chain recording, driven pass by pass. Owns no Vulkan object: it borrows the executor's ring,
+     * targets and counters for the duration of one command-buffer recording, and its token is the value
+     * {@link #commitPasses(int)} expects once the submission carrying it has been accepted by the queue.
+     */
+    public final class ChainRecording {
+        private final VkCommandBuffer commandBuffer;
+        private final RenderTargetRegistry.TargetFormatClass chainClass;
+        private final long recordedUnder;
+        private final int token;
+        private final boolean prechecked;
+        /** Identities earlier passes of this recording wrote - the incremental form of the preflight's walk. */
+        private final it.unimi.dsi.fastutil.ints.IntOpenHashSet produced =
+                new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
+        private final List<String> details = new ArrayList<>();
+        private final List<PostChainPass> seenPasses = new ArrayList<>();
+        private boolean interesting;
+        private int passIndex;
+        private boolean finished;
+        private boolean abandoned;
+
+        private ChainRecording(VkCommandBuffer commandBuffer,
+                RenderTargetRegistry.TargetFormatClass chainClass, long recordedUnder, int token,
+                boolean prechecked) {
+            this.commandBuffer = commandBuffer;
+            this.chainClass = chainClass;
+            this.recordedUnder = recordedUnder;
+            this.token = token;
+            this.prechecked = prechecked;
+        }
+
+        /** {@return the token {@link #commitPasses(int)} expects for this recording}. */
+        public int token() {
+            return this.token;
+        }
+
+        /** {@return how many passes this recording has taken so far}. */
+        public int recordedPasses() {
+            return this.passIndex;
+        }
+
+        /**
+         * Records one pass into the session's command buffer. In incremental use (no prechecked list) the
+         * pass's inputs are supply-checked first, against this recording's own earlier outputs and the adopted
+         * targets; a refusal throws {@link UnsuppliedInputException} and the caller must abandon the recording.
+         */
+        public void recordOnePass(PostChainPass pass) {
+            if (this.finished || this.abandoned) {
+                throw new IllegalStateException("chain recording already closed");
+            }
+            if (!this.prechecked) {
+                String refusal = unsuppliedInput(this.passIndex, pass, this.produced, pass.inIsMain,
+                        pass.inFbId, pass.inW, pass.inH);
+                if (refusal == null && pass.auxFbIds.length > 0) {
+                    refusal = unsuppliedInput(this.passIndex, pass, this.produced,
+                            pass.auxFbIds[0] == 0, pass.auxFbIds[0], pass.auxW[0], pass.auxH[0]);
+                }
+                if (refusal != null) {
+                    VulkanPostChain.this.preflightRefusals++;
+                    VulkanPostChain.this.refusedInputs++;
+                    List<PostChainPass> soFar = new ArrayList<>(this.seenPasses);
+                    soFar.add(pass);
+                    noteReportedButUnadoptedInput(soFar);
+                    if (!VulkanPostChain.this.refusalReported) {
+                        VulkanPostChain.this.refusalReported = true;
+                        PostChainPass first = soFar.get(0);
+                        System.out.println("[Celtium] CELTIUM_POST_REFUSED_UNSUPPLIED_INPUT run="
+                                + VulkanPostChain.this.chainsRun
+                                + " reportedIdentity=" + first.groupMainFbId + " reportedTexture="
+                                + first.groupMainTextureId
+                                + " " + first.groupMainW + "x" + first.groupMainH + " adopted=" + adoptedCount()
+                                + " reason=" + refusal + " - the chain is not run natively; the caller's GL chain"
+                                + " keeps it");
+                    }
+                    throw new UnsuppliedInputException(refusal);
+                }
+            }
+            if (!pass.outIsMain) {
+                this.produced.add(pass.outFbId);
+            }
+            this.seenPasses.add(pass);
+            celtium$recordOnePass(this, pass);
+        }
+
+        /**
+         * Closes the recording: the run is counted, the frame-target generation is checked against the one the
+         * recording started under, and the token is returned for {@link #commitPasses(int)}.
+         */
+        public int finishChainRecording() {
+            if (this.finished || this.abandoned) {
+                throw new IllegalStateException("chain recording already closed");
+            }
+            // The header and the per-pass lines go out together, and the per-pass detail only for a run that
+            // touched a target's first use: a run that reuses targets already in GENERAL has nothing to say about
+            // layouts, and printing every pass of every run would spend the whole trace budget before the
+            // interesting frame.
+            // Built only while the budget can print it: one recording a frame for a whole session, eight parts each.
+            if (VulkanPostChain.this.traceLines < TRACE_LIMIT) {
+                trace("run=" + VulkanPostChain.this.chainsRun + " recording=" + VulkanPostChain.this.recordings
+                        + " cmd=0x" + hex(this.commandBuffer.address())
+                        + " frame=0x" + hex(VulkanPostChain.this.frameTarget.colorImage()) + " frameView=0x"
+                        + hex(VulkanPostChain.this.frameTarget.colorView()) + " passes=" + this.passIndex
+                        + " pendingInit=" + VulkanPostChain.this.pendingInit.size());
+            }
+            if (this.interesting) {
+                for (String detail : this.details) {
+                    trace(detail);
+                }
+            }
+            if (INJECTION_ALLOWED && VulkanPostChain.this.injectedFirstUseFailures < FAIL_FIRST_USE_RECORDINGS) {
+                // The recording is complete - barriers and draws are in the command buffer - and the queue has
+                // not seen it. Raising here is the closest a class that does not own the submit can get to a
+                // refused vkQueueSubmit: the caller's own failure path runs (frame abandoned, false returned, GL
+                // chain kept), and every target whose first-use barrier went into this buffer must stay
+                // uninitialized.
+                VulkanPostChain.this.injectedFirstUseFailures++;
+                trace("INJECTED_FAILURE recording=" + VulkanPostChain.this.recordings + " pendingInit="
+                        + VulkanPostChain.this.pendingInit.size()
+                        + " - recorded, never submitted; the next recording must carry these barriers again"
+                        + " (injected=" + VulkanPostChain.this.injectedFirstUseFailures + "/"
+                        + FAIL_FIRST_USE_RECORDINGS + ")");
+                throw new IllegalStateException("injected post chain submit failure before queue ownership:"
+                        + " recording=" + VulkanPostChain.this.recordings + " pendingInit="
+                        + VulkanPostChain.this.pendingInit.size() + " injected="
+                        + VulkanPostChain.this.injectedFirstUseFailures + "/" + FAIL_FIRST_USE_RECORDINGS);
+            }
+            // Counted only now: a recording that was refused (unsupplied input) or thrown away (injected failure)
+            // never reached the queue, and postChains is read as "chains this executor ran", not "chains it was
+            // asked to run".
+            requireTargetGeneration(this.recordedUnder);
+            VulkanPostChain.this.chainsRun++;
+            this.finished = true;
+            return this.token;
+        }
+
+        /**
+         * Gives back the ring slots this recording took and closes it without counting a run. A no-op once the
+         * recording has finished; safe to call from a failure path that cannot tell how far recording got.
+         */
+        public void abandonChainRecording() {
+            if (this.finished || this.abandoned) {
+                return;
+            }
+            this.abandoned = true;
+            celtium$returnSlotsOfAbandonedRecording();
+        }
+    }
+
+    /**
      * Records every pass into the caller's command buffer. A pass whose input or output is the group's main
      * framebuffer samples or writes the shared frame image, which the caller must already have acquired; every other
      * framebuffer resolves to a chain target - one allocated here, or the image the caller adopted for its identity.
@@ -1012,16 +1210,20 @@ public final class VulkanPostChain {
      * @return the recording's token, to be passed to {@link #commitPasses(int)} once - and only once - the submission
      *     that carried it has been accepted by the queue
      */
-    public int recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes,
+    public int recordPasses(VkCommandBuffer commandBuffer, List<PostChainPass> passes,
             RenderTargetRegistry.TargetFormatClass chainFormatClass) {
+        ChainRecording recording = beginChainRecording(commandBuffer, chainFormatClass, passes);
         try {
-            return celtium$recordPasses(commandBuffer, passes, chainFormatClass);
+            for (PostChainPass pass : passes) {
+                recording.recordOnePass(pass);
+            }
+            return recording.finishChainRecording();
         } catch (RuntimeException | Error failure) {
             // B11, second finding: a recording that throws after it has taken ring slots never returned them, because
             // the ring's accounting is reset at the start of a recording rather than at the end. The slots go back
             // before the caller sees the failure, and their ownership marks are cleared: the command buffer that bound
             // those sets was thrown away, so no submission reads them and they are free again.
-            celtium$returnSlotsOfAbandonedRecording();
+            recording.abandonChainRecording();
             throw failure;
         }
     }
@@ -1045,72 +1247,16 @@ public final class VulkanPostChain {
         this.ringSlotsReclaimedOnAbandon += taken;
     }
 
-    private int celtium$recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes,
-            RenderTargetRegistry.TargetFormatClass chainFormatClass) {
-        RenderTargetRegistry.TargetFormatClass chainClass = chainFormatClass == null
-                ? RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM : chainFormatClass;
-        long recordedUnder = this.frameTargetGeneration;
-        // The ring accounting is reset here, at the head of the recording, before every refusal this method can
-        // raise: the wrapper's abandon path (celtium$returnSlotsOfAbandonedRecording) reads these two fields for
-        // any throw, so a refusal raised before this point - the unsupplied-input refusal below is the one such
-        // point - would otherwise be handed the previous recording's count and start cursor and would "return"
-        // slots that recording legitimately took and may still have in flight (audit-vulkan-core F1). Resetting
-        // here makes the pre-prologue refusal see zero taken, which is the truth: it took nothing. Nothing between
-        // here and the pass loop advances the cursor - descriptorSet() is the only writer, and it pairs every
-        // advance with an increment of the count reset here.
-        this.setsThisRecording = 0;
-        this.recordingStartCursor = this.setCursor;
-        String unsupplied = unsuppliedInput(passes);
-        if (unsupplied != null) {
-            // Nothing has been recorded yet, so there is nothing to roll back: the caller still owns a frame it can
-            // hand back to GL, and the only thing this class did was refuse to stand in for an image it does not have.
-            this.refusedInputs++;
-            noteReportedButUnadoptedInput(passes);
-            if (!this.refusalReported) {
-                this.refusalReported = true;
-                Pass first = passes.get(0);
-                System.out.println("[Celtium] CELTIUM_POST_REFUSED_UNSUPPLIED_INPUT run=" + this.chainsRun
-                        + " reportedIdentity=" + first.groupMainFbId + " reportedTexture=" + first.groupMainTextureId
-                        + " " + first.groupMainW + "x" + first.groupMainH + " adopted=" + adoptedCount()
-                        + " reason=" + unsupplied + " - the chain is not run natively; the caller's GL chain keeps it");
-            }
-            throw new UnsuppliedInputException(unsupplied);
-        }
-        if (!this.pendingInit.isEmpty()) {
-            // Not a second recording inside one command buffer: a non-empty set means the recording that carried
-            // these targets' first-use barrier ended without commitPasses(). Either its command buffer was reset or
-            // abandoned - in which case the transitions never ran and the images are still UNDEFINED - or the caller
-            // does not report submissions at all. Both cases are answered the same way: the barrier goes into this
-            // recording too, because nothing here may assume the image is in GENERAL.
-            this.uncommittedRecordings++;
-            this.repeatInits += this.pendingInit.size();
-            if (this.uncommittedRecordings <= 4) {
-                for (Target target : this.pendingInit) {
-                    trace("UNCOMMITTED identity=" + target.identity + " image=0x" + hex(target.image)
-                            + " recording=" + this.recordings + " (committedRecording=" + this.pendingRecording
-                            + "): its UNDEFINED -> GENERAL barrier was recorded but commitPasses("
-                            + this.pendingRecording + ") did not report that recording as submitted, so it is"
-                            + " recorded again here (the caller patch: commitPasses(token) right after the submit)");
-                }
-            }
-        }
-        this.pendingInit.clear();
-        this.recordings++;
-        this.pendingRecording = this.recordings;
-        // The ring budget was reset at the head of this method, before the unsupplied-input refusal: what earlier
-        // recordings took is already behind a submitted (or abandoned) command buffer and plays no part in this
-        // one's safety, and a refusal raised before this point must not be handed their accounting.
-        // The completion epoch this recording starts at: what the ring's ownership rule compares against (audit B11).
-        this.recordingEpochStart = VulkanContext.completedEpoch();
-
-        List<String> details = new ArrayList<>();
-        boolean interesting = false;
-        // The recording's outputs, in pass order, for the caller's chain-time image dump: cleared here so a recording
-        // that throws leaves no stale half-list, and readable before commitPasses (the dump runs right after the
-        // submit, and an output image that is only correct after the commit is a measurement one step too late).
-        this.lastRecordedOutputs.clear();
-        int passIndex = 0;
-        for (Pass pass : passes) {
+    /**
+     * Records one pass of an open {@link ChainRecording} into its command buffer: program and block checks,
+     * target resolution, first-use and shader-read barriers, descriptor take, and the fullscreen draw. This is
+     * the per-pass body {@link #recordPasses} always ran, unchanged; the session owns the recording around it.
+     */
+    private void celtium$recordOnePass(ChainRecording recording, PostChainPass pass) {
+        VkCommandBuffer commandBuffer = recording.commandBuffer;
+        RenderTargetRegistry.TargetFormatClass chainClass = recording.chainClass;
+        List<String> details = recording.details;
+        int passIndex = recording.passIndex;
             RenderTargetRegistry.TargetFormatClass outFormatClass =
                     celtium$outFormatClass(pass.outIsMain, chainClass);
             Program program = programFor(pass, outFormatClass);
@@ -1170,7 +1316,7 @@ public final class VulkanPostChain {
             // A target that was just created is still UNDEFINED: bring it to GENERAL exactly once, before any use.
             // An adopted target is never in that state - its caller declares it live and already in GENERAL - so it
             // arrives here initialized and its content survives the first use.
-            interesting |= beginUse(commandBuffer, inTarget) | beginUse(commandBuffer, auxTarget)
+            recording.interesting |= beginUse(commandBuffer, inTarget) | beginUse(commandBuffer, auxTarget)
                     | beginUse(commandBuffer, outTarget);
 
             // The previous pass's attachment writes (or the acquired GL frame) must be visible to this sampler.
@@ -1229,41 +1375,7 @@ public final class VulkanPostChain {
                 vkCmdEndRenderPass(commandBuffer);
             }
             this.passesRecorded++;
-            passIndex++;
-        }
-        // The header and the per-pass lines go out together, and the per-pass detail only for a run that touched a
-        // target's first use: a run that reuses targets already in GENERAL has nothing to say about layouts, and
-        // printing every pass of every run would spend the whole trace budget before the interesting frame.
-        // Built only while the budget can print it: one recording a frame for a whole session, eight parts each.
-        if (this.traceLines < TRACE_LIMIT) {
-            trace("run=" + this.chainsRun + " recording=" + this.recordings + " cmd=0x" + hex(commandBuffer.address())
-                    + " frame=0x" + hex(this.frameTarget.colorImage()) + " frameView=0x"
-                    + hex(this.frameTarget.colorView()) + " passes=" + passes.size()
-                    + " pendingInit=" + this.pendingInit.size());
-        }
-        if (interesting) {
-            for (String detail : details) {
-                trace(detail);
-            }
-        }
-        if (INJECTION_ALLOWED && this.injectedFirstUseFailures < FAIL_FIRST_USE_RECORDINGS) {
-            // The recording is complete - barriers and draws are in the command buffer - and the queue has not seen
-            // it. Raising here is the closest a class that does not own the submit can get to a refused
-            // vkQueueSubmit: the caller's own failure path runs (frame abandoned, false returned, GL chain kept), and
-            // every target whose first-use barrier went into this buffer must stay uninitialized.
-            this.injectedFirstUseFailures++;
-            trace("INJECTED_FAILURE recording=" + this.recordings + " pendingInit=" + this.pendingInit.size()
-                    + " - recorded, never submitted; the next recording must carry these barriers again"
-                    + " (injected=" + this.injectedFirstUseFailures + "/" + FAIL_FIRST_USE_RECORDINGS + ")");
-            throw new IllegalStateException("injected post chain submit failure before queue ownership: recording="
-                    + this.recordings + " pendingInit=" + this.pendingInit.size() + " injected="
-                    + this.injectedFirstUseFailures + "/" + FAIL_FIRST_USE_RECORDINGS);
-        }
-        // Counted only now: a recording that was refused (unsupplied input) or thrown away (injected failure) never
-        // reached the queue, and postChains is read as "chains this executor ran", not "chains it was asked to run".
-        requireTargetGeneration(recordedUnder);
-        this.chainsRun++;
-        return this.pendingRecording;
+            recording.passIndex++;
     }
 
     /**
@@ -1416,7 +1528,7 @@ public final class VulkanPostChain {
      * <p>
      * "From outside itself" is the whole rule. An input resolves to one of exactly three real images:
      * <ul>
-     *   <li>the group's main framebuffer ({@link Pass#inIsMain}, {@code auxFbIds[0] == 0}) - the shared frame image
+     *   <li>the group's main framebuffer ({@link PostChainPass#inIsMain}, {@code auxFbIds[0] == 0}) - the shared frame image
      *       the caller acquired, which holds what the game drew;</li>
      *   <li>a target the caller adopted under the identity the pass carries ({@link #adoptTarget}) - the caller's own
      *       image, already in {@code GENERAL} with its content live;</li>
@@ -1433,14 +1545,14 @@ public final class VulkanPostChain {
      * reads its own intermediate targets is accepted even though those identities were unknown to this class a moment
      * ago, and a chain whose first read is unknown is refused whether or not the caller reported an identity for it.
      */
-    public String unsuppliedInput(List<Pass> passes) {
+    public String unsuppliedInput(List<PostChainPass> passes) {
         if (passes == null || passes.isEmpty()) {
             return "empty pass list";
         }
         it.unimi.dsi.fastutil.ints.IntOpenHashSet produced = this.producedScratch;
         produced.clear();
         for (int index = 0; index < passes.size(); ++index) {
-            Pass pass = passes.get(index);
+            PostChainPass pass = passes.get(index);
             String refusal = unsuppliedInput(index, pass, produced, pass.inIsMain, pass.inFbId, pass.inW, pass.inH);
             if (refusal != null) {
                 this.preflightRefusals++;
@@ -1463,7 +1575,7 @@ public final class VulkanPostChain {
     }
 
     /** {@return the refusal for one pass side, or null when this recording or an adoption supplies it}. */
-    private String unsuppliedInput(int index, Pass pass, it.unimi.dsi.fastutil.ints.IntOpenHashSet produced,
+    private String unsuppliedInput(int index, PostChainPass pass, it.unimi.dsi.fastutil.ints.IntOpenHashSet produced,
             boolean isMain, int identity, int width, int height) {
         if (isMain) {
             // The group's main framebuffer is the frame image: the one image the executor is handed for free.
@@ -1498,7 +1610,7 @@ public final class VulkanPostChain {
      * refusals, not runs, and the identity, the GL texture name and the size the caller reported are carried because
      * they are everything an adoption needs.
      */
-    private void noteReportedButUnadoptedInput(List<Pass> passes) {
+    private void noteReportedButUnadoptedInput(List<PostChainPass> passes) {
         if (passes.isEmpty() || passes.get(0).groupMainFbId == 0) {
             return;
         }
@@ -1509,7 +1621,7 @@ public final class VulkanPostChain {
         this.standInRefusals++;
         if (!this.standInReported) {
             this.standInReported = true;
-            Pass first = passes.get(0);
+            PostChainPass first = passes.get(0);
             System.out.println("[Celtium] CELTIUM_POST_ADOPT_REFUSED identity=" + first.groupMainFbId
                     + " texture=" + first.groupMainTextureId + " " + first.groupMainW + "x" + first.groupMainH
                     + " adopted=false (no image under this identity: the chain is refused rather than run on an empty"
@@ -1847,7 +1959,7 @@ public final class VulkanPostChain {
      * The slot is the one the pass's descriptor set was just updated with, and the ring refuses to hand the same slot
      * out twice inside one recording, so this write cannot reach a block a pending command buffer still reads.
      */
-    private void writeUniformBlock(int slot, Pass pass, Program program) {
+    private void writeUniformBlock(int slot, PostChainPass pass, Program program) {
         int base = (int) (slot * this.uniformStride) / 4;
         int floats = pass.pushBytes / 4;
         for (int i = 0; i < floats; ++i) {

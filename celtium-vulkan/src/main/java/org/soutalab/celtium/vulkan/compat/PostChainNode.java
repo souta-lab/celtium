@@ -6,7 +6,7 @@ import java.util.List;
  * One fullscreen pass of a vanilla post-process chain, restated as a frame graph node: the program,
  * the attachments it samples (its main input first, then the auxiliaries, in the chain's own order),
  * the attachment it writes, and the uniform block the collector packed for it. Produced by {@link
- * PostChainGraphAdapter} from the collected {@code VulkanPostChain.Pass} shape, so the collector in
+ * PostChainGraphAdapter} from the collected {@code PostChainPass} shape, so the collector in
  * {@code ShaderGroupMixin} - which resolves the chain's live uniforms and framebuffer identities -
  * does not change; only the consumer does.
  */

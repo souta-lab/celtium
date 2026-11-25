@@ -1,5 +1,7 @@
 package org.taumc.celeritas.mixin.core;
 
+import org.soutalab.celtium.vulkan.compat.PostChainPass;
+
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
@@ -121,9 +123,9 @@ public abstract class ShaderGroupMixin {
         }
         float passTime = this.time / 20.0F;
 
-        List<VulkanPostChain.Pass> passes = new ArrayList<>(this.listShaders.size());
+        List<PostChainPass> passes = new ArrayList<>(this.listShaders.size());
         for (Shader shader : this.listShaders) {
-            VulkanPostChain.Pass pass = collect(shader, passTime, minecraft, this.mainFramebuffer);
+            PostChainPass pass = collect(shader, passTime, minecraft, this.mainFramebuffer);
             if (pass == null) {
                 // A pass that cannot be described natively keeps the whole group on GL - partial chains are not a
                 // mode the GL and native outputs can be compared on.
@@ -139,7 +141,7 @@ public abstract class ShaderGroupMixin {
             // The framebuffer whose image the executor must adopt, on the pass it reads it from: identity, GL colour
             // texture and size. Zero - the game's own framebuffer - marks the shared frame image instead, which the
             // chain already resolves without an adoption.
-            VulkanPostChain.Pass first = passes.get(0);
+            PostChainPass first = passes.get(0);
             first.groupMainFbId = inputIdentity;
             first.groupMainTextureId = inputTexture;
             first.groupMainW = inputW;
@@ -184,7 +186,7 @@ public abstract class ShaderGroupMixin {
         return this.listShaders.isEmpty() ? null : this.listShaders.get(0).framebufferIn;
     }
 
-    private static VulkanPostChain.Pass collect(Shader shader, float passTime, Minecraft minecraft,
+    private static PostChainPass collect(Shader shader, float passTime, Minecraft minecraft,
             net.minecraft.client.shader.Framebuffer groupMain) {
         try {
             ShaderManager manager = shader.getShaderManager();
@@ -210,7 +212,7 @@ public abstract class ShaderGroupMixin {
                 }
             }
 
-            VulkanPostChain.Pass pass = new VulkanPostChain.Pass();
+            PostChainPass pass = new PostChainPass();
             pass.program = programName(manager);
             // 'main' in a chain means the group's own main framebuffer; how the executor resolves it - shared
             // image for the game's, seeded chain target for an external one - is the run's decision.
