@@ -9,6 +9,16 @@ public interface ChunkVertexEncoder {
         return true;
     }
 
+    /**
+     * Whether this encoder drops the per-vertex bilinear correction factor from the vertex
+     * stream and instead wants it recorded once per quad in a side stream (the correction
+     * is constant over a quad). When true, the buffer builder keeps the factors in push
+     * order and the built mesh parts carry them next to the vertex data.
+     */
+    default boolean capturesRdhFactorSideStream() {
+        return false;
+    }
+
     class Vertex {
         public float x;
         public float y;
