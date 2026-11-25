@@ -46,7 +46,8 @@ public final class TerrainSectionStore {
         public final TerrainSlabAllocator.Allocation geometry;
         public final TerrainSlabAllocator.Allocation quadSpace;
         public final TerrainSlabAllocator.Allocation factor;
-        public final TerrainSlabAllocator.Allocation sorted;
+        /** Mutable: a translucent re-sort may replace the range (see {@link #updateSorted}). */
+        public TerrainSlabAllocator.Allocation sorted;
         public final AsyncSectionMesher.BuiltSectionA built;
 
         private Registration(Key key, SectionDesc desc, int recordIndex,
@@ -168,6 +169,38 @@ public final class TerrainSectionStore {
         this.imageDirty = true;
         this.imageGeneration++;
         return removed;
+    }
+
+    public enum SortedUpdate { NOT_REGISTERED, IN_PLACE, RESIZED, ARENA_FULL }
+
+    /**
+     * Re-points one record's sorted-index range at a re-sorted index buffer of
+     * {@code byteSize} bytes (translucent re-sort, wave-2 item 4). Same size keeps
+     * the existing allocation ({@link SortedUpdate#IN_PLACE}); a different size
+     * frees the old range deferred and allocates a new one, updating the desc's
+     * {@code sortedIndexBase} ({@link SortedUpdate#RESIZED}). The caller re-uploads
+     * the bytes at the resulting allocation either way.
+     */
+    public synchronized SortedUpdate updateSorted(Key key, long byteSize, long releaseTimeline) {
+        Registration registration = this.byKey.get(key);
+        if (registration == null) {
+            return SortedUpdate.NOT_REGISTERED;
+        }
+        if (registration.sorted != null && registration.sorted.byteSize == byteSize) {
+            return SortedUpdate.IN_PLACE;
+        }
+        TerrainSlabAllocator.Allocation next = this.sortedAllocator.allocate(byteSize);
+        if (next == null) {
+            return SortedUpdate.ARENA_FULL;
+        }
+        if (registration.sorted != null) {
+            this.sortedAllocator.freeDeferred(registration.sorted, releaseTimeline);
+        }
+        registration.sorted = next;
+        registration.desc.sortedIndexBase = next.byteOffset / 4;
+        this.imageDirty = true;
+        this.imageGeneration++;
+        return SortedUpdate.RESIZED;
     }
 
     /** Returns deferred arena ranges whose timeline has completed. */

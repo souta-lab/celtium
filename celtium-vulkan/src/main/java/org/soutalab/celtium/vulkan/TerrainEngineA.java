@@ -179,6 +179,52 @@ final class TerrainEngineA {
         return this.store.get(key) != null;
     }
 
+    /** Raw VkBuffer of the resident desc table, for graphics binding 6. */
+    long descBufferHandle() {
+        uploadDescImageIfMoved();
+        return this.descBuffer == null ? 0L : this.descBuffer.buffer();
+    }
+
+    /** Raw VkBuffer of the factor-base image, for graphics binding 7. */
+    long factorBaseBufferHandle() {
+        uploadDescImageIfMoved();
+        return this.factorBaseBuffer == null ? 0L : this.factorBaseBuffer.buffer();
+    }
+
+    /** Raw VkBuffer of the factor arena, for graphics binding 8. */
+    long factorBufferHandle() {
+        return factorBuffer().buffer();
+    }
+
+    /**
+     * Re-uploads a section's sorted indices after a translucent re-sort (wave-2
+     * item 4): the store keeps or replaces the sorted allocation, and the new
+     * bytes are copied into the sorted arena at the resulting offset.
+     *
+     * @return whether the resident record now carries these indices
+     */
+    boolean updateSorted(TerrainSectionStore.Key key, org.embeddedt.embeddium.impl.common.util.NativeBuffer indices,
+                         long releaseTimeline) {
+        if (this.disabled || indices == null) {
+            return false;
+        }
+        try {
+            TerrainSectionStore.SortedUpdate result =
+                    this.store.updateSorted(key, indices.getLength(), releaseTimeline);
+            if (result == TerrainSectionStore.SortedUpdate.NOT_REGISTERED
+                    || result == TerrainSectionStore.SortedUpdate.ARENA_FULL) {
+                return false;
+            }
+            TerrainSectionStore.Registration registration = this.store.get(key);
+            long address = sortedBuffer().mappedAddress() + registration.sorted.byteOffset;
+            MemoryUtil.memCopy(MemoryUtil.memAddress(indices.getDirectBuffer()), address, indices.getLength());
+            return true;
+        } catch (RuntimeException error) {
+            disable("updateSorted", error);
+            return false;
+        }
+    }
+
     int deferredCount() {
         return this.deferred.size();
     }

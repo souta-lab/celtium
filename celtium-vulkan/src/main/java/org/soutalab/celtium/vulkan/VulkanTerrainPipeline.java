@@ -248,7 +248,17 @@ public final class VulkanTerrainPipeline {
          * depends on - can be checked without constructing a game pass. The refusal stays here: a format this backend
          * does not implement must not be drawn wrong.
          */
+        /** Tier-A's single attribute: the whole 16-byte vertex as one uvec4 (terrain_a.vert). */
+        private static final int[] TIER_A_ATTRIBUTE_FORMATS = {
+                VK_FORMAT_R32G32B32A32_UINT, // 0: a_VertexData 4 x unsigned int, raw
+        };
+        private static final int[] TIER_A_ATTRIBUTE_OFFSETS = {0};
+
         static VertexLayout forVertexStride(int stride, String passName) {
+            if (stride == 16) {
+                return new VertexLayout(16, TIER_A_ATTRIBUTE_FORMATS, TIER_A_ATTRIBUTE_OFFSETS,
+                        SpirvShaders.TERRAIN_A_VERTEX);
+            }
             if (stride == 24) {
                 return new VertexLayout(24, COMPACT_ATTRIBUTE_FORMATS, COMPACT_ATTRIBUTE_OFFSETS,
                         SpirvShaders.SOLID_VERTEX);
@@ -314,6 +324,15 @@ public final class VulkanTerrainPipeline {
      * own buffer, so {@code bindDescriptors} keeps its single dynamic offset.
      */
     static final int REGION_OFFSETS_BINDING = 5;
+
+    /** Tier-A binding 6: the resident SectionDesc table (std430), read by terrain_a.vert. */
+    static final int SECTION_DESCS_BINDING = 6;
+
+    /** Tier-A binding 7: one factor-stream base (in uints) per SectionDesc record. */
+    static final int SECTION_FACTOR_BASES_BINDING = 7;
+
+    /** Tier-A binding 8: the per-quad RdhFactor arena the bases index into. */
+    static final int RDH_FACTORS_BINDING = 8;
 
     /** The byte size of the dynamic light block: the info vec4 plus one vec4 per source. */
     static final int DYNAMIC_LIGHT_BLOCK_SIZE = 16 + DynamicLightService.MAX_LIGHTS * 16;
@@ -489,6 +508,7 @@ public final class VulkanTerrainPipeline {
     private final long[] writtenLightmapView = new long[DESCRIPTOR_SLOTS];
     private final long[] writtenDynamicLightBuffer = new long[DESCRIPTOR_SLOTS];
     private final long[] writtenRegionOffsetsBuffer = new long[DESCRIPTOR_SLOTS];
+    private final long[] writtenTierABuffers = new long[DESCRIPTOR_SLOTS * 3];
     private boolean deleted;
 
     /**
@@ -916,6 +936,48 @@ public final class VulkanTerrainPipeline {
     }
 
     /**
+     * Writes the Tier-A resident buffers (bindings 6/7/8: SectionDesc table, factor
+     * bases, factor arena) into this slot's descriptor set. Called by the backend's
+     * Tier-A pass head after {@code bindTextures} and before {@code bindDescriptors};
+     * rewritten only when a buffer handle changes, under the same rule as
+     * {@link #bindTextures}. A zero handle leaves the binding unwritten (the Tier-A
+     * vertex stage is then never bound, because the executor arms no draws).
+     */
+    public void bindTierABuffers(long descBuffer, long factorBaseBuffer, long factorBuffer, int slot) {
+        requireAlive();
+        if (descBuffer == 0L || factorBaseBuffer == 0L || factorBuffer == 0L) {
+            return;
+        }
+        int writeSlot = slot & (DESCRIPTOR_SLOTS - 1);
+        int base = writeSlot * 3;
+        if (this.writtenTierABuffers[base] == descBuffer
+                && this.writtenTierABuffers[base + 1] == factorBaseBuffer
+                && this.writtenTierABuffers[base + 2] == factorBuffer) {
+            return;
+        }
+        this.writtenTierABuffers[base] = descBuffer;
+        this.writtenTierABuffers[base + 1] = factorBaseBuffer;
+        this.writtenTierABuffers[base + 2] = factorBuffer;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            long[] buffers = {descBuffer, factorBaseBuffer, factorBuffer};
+            int[] bindings = {SECTION_DESCS_BINDING, SECTION_FACTOR_BASES_BINDING, RDH_FACTORS_BINDING};
+            VkDescriptorBufferInfo.Buffer infos = VkDescriptorBufferInfo.calloc(3, stack);
+            VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(3, stack);
+            for (int i = 0; i < 3; i++) {
+                infos.get(i).buffer(buffers[i]).offset(0L).range(org.lwjgl.vulkan.VK10.VK_WHOLE_SIZE);
+                writes.get(i).sType$Default().dstSet(this.descriptorSets[writeSlot])
+                        .dstBinding(bindings[i]).dstArrayElement(0).descriptorCount(1)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                        .pBufferInfo(infos.slice(i, 1));
+            }
+            VulkanDescriptorWrites.note(writes, "VulkanTerrainPipeline.tierA");
+            vkUpdateDescriptorSets(context.device(), writes, null);
+        }
+        // The shadow variant copies from the ordinary set; force its next copy.
+        this.shadowCopiedSerial[writeSlot] = -1L;
+    }
+
+    /**
      * Selects the set the next {@link #bindDescriptors} calls bind for this pass: the shadow variant with
      * {@code shadowMap} at binding 4, or (null) the ordinary set. Call after {@link #bindTextures} and before the
      * pass' draws. The shadow variant is a copy of the ordinary set plus binding 4, rewritten only when the ordinary
@@ -939,9 +1001,10 @@ public final class VulkanTerrainPipeline {
                 long from = this.descriptorSets[useSlot];
                 long to = this.shadowDescriptorSets[useSlot];
                 org.lwjgl.vulkan.VkCopyDescriptorSet.Buffer copies =
-                        org.lwjgl.vulkan.VkCopyDescriptorSet.calloc(5, stack);
+                        org.lwjgl.vulkan.VkCopyDescriptorSet.calloc(8, stack);
                 int[] copied = {UNIFORM_BINDING, BLOCK_ATLAS_BINDING, LIGHTMAP_BINDING, DYNAMIC_LIGHTS_BINDING,
-                        REGION_OFFSETS_BINDING};
+                        REGION_OFFSETS_BINDING, SECTION_DESCS_BINDING, SECTION_FACTOR_BASES_BINDING,
+                        RDH_FACTORS_BINDING};
                 for (int i = 0; i < copied.length; i++) {
                     copies.get(i).sType$Default().srcSet(from).srcBinding(copied[i]).srcArrayElement(0)
                             .dstSet(to).dstBinding(copied[i]).dstArrayElement(0).descriptorCount(1);
@@ -1576,7 +1639,7 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
         int stages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         // Six bindings: the region uniforms, the atlas, the light map, the dynamic light block, the shadow map
         // and the per-region offset array.
-        VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(6, stack);
+        VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(9, stack);
         bindings.get(0).binding(UNIFORM_BINDING)
                 .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
                 .descriptorCount(1)
@@ -1598,6 +1661,22 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
                 .descriptorCount(1)
                 .stageFlags(stages);
         bindings.get(5).binding(REGION_OFFSETS_BINDING)
+                .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                .descriptorCount(1)
+                .stageFlags(stages);
+        // Tier-A bindings 6/7/8 (terrain_a.vert): the SectionDesc table, the factor
+        // bases and the factor arena. Declared on every terrain layout so the Tier-A
+        // pipeline variant needs no second layout; the legacy shaders never statically
+        // use them, so an unwritten 6/7/8 is legal on the legacy route.
+        bindings.get(6).binding(SECTION_DESCS_BINDING)
+                .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                .descriptorCount(1)
+                .stageFlags(stages);
+        bindings.get(7).binding(SECTION_FACTOR_BASES_BINDING)
+                .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                .descriptorCount(1)
+                .stageFlags(stages);
+        bindings.get(8).binding(RDH_FACTORS_BINDING)
                 .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
                 .descriptorCount(1)
                 .stageFlags(stages);

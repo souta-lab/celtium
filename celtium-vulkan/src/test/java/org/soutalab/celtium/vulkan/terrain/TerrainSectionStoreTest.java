@@ -90,6 +90,41 @@ class TerrainSectionStoreTest {
     }
 
     @Test
+    void updateSortedKeepsOrReplacesTheSortedRange() {
+        AsyncSectionMesher mesher = new AsyncSectionMesher();
+        TerrainSectionStore store = new TerrainSectionStore();
+        // A sorted pass part: an index buffer beside the 16-byte vertices.
+        int quads = 2;
+        NativeBuffer vertices = new NativeBuffer(quads * 4 * TerrainVertex16.STRIDE);
+        NativeBuffer indices = new NativeBuffer(quads * 6 * 4);
+        Map<ModelQuadFacing, VertexRange> ranges = new EnumMap<>(ModelQuadFacing.class);
+        ranges.put(ModelQuadFacing.POS_X, new VertexRange(0, quads * 4));
+        BuiltSectionMeshParts sortedParts = new BuiltSectionMeshParts(vertices, indices, null, ranges, null);
+        var built = mesher.build(9, 9, 9, 0, sortedParts, 0);
+        assertNotNull(built);
+        var registration = store.register(built, 21);
+        assertNotNull(registration);
+        assertNotNull(registration.sorted);
+        TerrainSectionStore.Key key = new TerrainSectionStore.Key(9, 9, 9, 0);
+        long generationBefore = store.imageGeneration();
+
+        // Same size: the range is kept and the desc image does not move.
+        assertEquals(TerrainSectionStore.SortedUpdate.IN_PLACE,
+                store.updateSorted(key, indices.getLength(), 22));
+        assertEquals(generationBefore, store.imageGeneration());
+
+        // Different size: a new range is allocated and the desc follows it.
+        assertEquals(TerrainSectionStore.SortedUpdate.RESIZED,
+                store.updateSorted(key, indices.getLength() + 24, 23));
+        assertEquals(indices.getLength() + 24, registration.sorted.byteSize);
+        assertEquals(registration.sorted.byteOffset / 4, registration.desc.sortedIndexBase);
+        assertTrue(store.imageGeneration() > generationBefore);
+
+        assertEquals(TerrainSectionStore.SortedUpdate.NOT_REGISTERED,
+                store.updateSorted(new TerrainSectionStore.Key(1, 1, 1, 0), 24, 24));
+    }
+
+    @Test
     void unregisterSwapsTheLastRecordIntoTheHole() {
         AsyncSectionMesher mesher = new AsyncSectionMesher();
         TerrainSectionStore store = new TerrainSectionStore();
