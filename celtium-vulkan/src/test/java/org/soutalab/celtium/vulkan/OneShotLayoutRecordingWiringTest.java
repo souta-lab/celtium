@@ -53,9 +53,10 @@ class OneShotLayoutRecordingWiringTest {
     void endCommandsCommitsTheRecordingAfterItsSubmitIsAccepted() throws IOException {
         String context = Files.readString(findRepoFile(MAIN + "VulkanContext.java"));
         String end = methodSlice(context, "public void endCommands(VkCommandBuffer commandBuffer) {", 7000);
-        int submitted = end.indexOf("check(vkQueueSubmit(this.queue, submit, fence), \"vkQueueSubmit\")");
+        int submitted = end.indexOf("check(vkQueueSubmit(this.queue, submit, VK_NULL_HANDLE), \"vkQueueSubmit\")");
         int committed = end.indexOf("VulkanGlTexture.commitLayoutRecording(commandBuffer);");
-        assertTrue(submitted >= 0, "endCommands still submits through the checked call");
+        assertTrue(submitted >= 0, "endCommands still submits through the checked call"
+                + " (fenceless since the HAL timeline rework: completion is the signalled timeline value)");
         assertTrue(committed > submitted,
                 "the one-shot recording is committed at acceptance, not at record time");
     }
