@@ -426,14 +426,6 @@ public final class SlabAllocator {
     }
 
     /**
-     * The collect-on-allocate retry behind {@link #allocate(long, long)}: collects every release the frame
-     * timeline has already passed, then asks the ledger once more. Returns {@code null} when there is nothing
-     * pending to collect, when the context has no frame timeline yet (startup, before the first frame), or when
-     * the timeline's counter cannot be read - an unreadable counter defers collection to the next drive point,
-     * the same disposition {@code celtium$collectSlabReleases} takes at the drain, and the caller reports the
-     * original refusal.
-     */
-    /**
      * Serves one fixed-page-class request from the fixed pool, with the same collect-on-allocate retry the
      * ordinary path gets: a refusal whose cause is uncollected deferred releases is retried once after a
      * collection against the frame timeline. Returns {@code null} when the fixed pool still cannot serve, and

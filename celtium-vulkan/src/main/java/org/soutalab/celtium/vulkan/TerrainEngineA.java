@@ -56,6 +56,7 @@ final class TerrainEngineA {
     private final TerrainSectionStore store;
     private final TerrainUploadBudget budget;
     private final TerrainResidencyGate residencyGate;
+    private final TerrainEngineAHost host;
     // The residency gate's arming verdict (order (i)): by default the gate only
     // reports — Tier-A keeps arming while sections are missing, exactly as
     // before — and with -Dceltium.vulkan.terrainResidencyGate=enforce an
@@ -75,16 +76,16 @@ final class TerrainEngineA {
     private VulkanHostBuffer factorBaseBuffer;
     private long uploadedGeneration = -1;
     // Geometry slabs (wave-2 item 3): each slab's VkBuffer is bound to a dedicated
-    // allocation of the hal SlabAllocator below (SlabAllocator.bindBuffer), not to a
-    // private vkAllocateMemory as a VulkanHostBuffer would make. The allocator is
-    // host-visible so uploads still write through the mapping, at the allocation's
-    // offset. Created lazily with the first slab, from that buffer's own memory
-    // requirement bits, and deleted after every slab buffer in delete().
-    private SlabAllocator slabAllocator;
+    // allocation of the host's shared hal SlabAllocator (SlabAllocator.bindBuffer),
+    // not to a private vkAllocateMemory as a VulkanHostBuffer would make. The
+    // allocator is host-visible so uploads still write through the mapping, at the
+    // allocation's offset. It is shared by every pass (designer audit 2026-11-25,
+    // Stage 4 item 5-②): one allocator caps the terrain geometry slabs at the
+    // shared maximum instead of multiplying it by the pass count, and the host —
+    // not this engine — deletes it, after every engine's slab buffers.
     private final List<SlabBuffer> slabBuffers = new ArrayList<>();
     private VulkanHostBuffer factorBuffer;
     private VulkanHostBuffer sortedBuffer;
-    private VulkanHostBuffer sharedIndexBuffer;
 
     private final Slot[] slots = new Slot[FrameSubmissionScheduler.FRAME_SLOTS];
     private final ArrayDeque<AsyncSectionMesher.BuiltSectionA> deferred = new ArrayDeque<>();
@@ -110,13 +111,14 @@ final class TerrainEngineA {
 
     TerrainEngineA(VulkanContext context, int passOrdinal, String passName,
                    TerrainSectionStore store, TerrainUploadBudget budget,
-                   TerrainResidencyGate residencyGate) {
+                   TerrainResidencyGate residencyGate, TerrainEngineAHost host) {
         this.context = context;
         this.passOrdinal = passOrdinal;
         this.passName = passName;
         this.store = store;
         this.budget = budget;
         this.residencyGate = residencyGate;
+        this.host = host;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             createPipeline(stack);
         }
@@ -511,8 +513,8 @@ final class TerrainEngineA {
     }
 
     /**
-     * One geometry slab's {@code VkBuffer}, bound to a dedicated allocation of this
-     * engine's host-visible hal {@link SlabAllocator} (wave-2 item 3). The buffer owns
+     * One geometry slab's {@code VkBuffer}, bound to a dedicated allocation of the
+     * host's shared host-visible hal {@link SlabAllocator} (wave-2 item 3). The buffer owns
      * no {@code VkDeviceMemory} of its own: the allocator's slab is its memory, bound
      * through {@link SlabAllocator#bindBuffer} at the allocation's offset, and the
      * upload mapping is the allocator's mapping plus that offset. A slab-sized request
@@ -542,18 +544,21 @@ final class TerrainEngineA {
                 createdBuffer = handleBuffer.get(0);
                 VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
                 vkGetBufferMemoryRequirements(device, createdBuffer, requirements);
-                if (TerrainEngineA.this.slabAllocator == null) {
-                    int memoryType = TerrainEngineA.this.context.memoryTypeIndex(
-                            requirements.memoryTypeBits(),
-                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                            "a host-visible terrain slab of " + sizeBytes + " bytes");
-                    TerrainEngineA.this.slabAllocator = new SlabAllocator(TerrainEngineA.this.context,
-                            "terrainGeometry", memoryType,
-                            TerrainEngineA.this.store.geometryAllocator().slabBytes(), MAX_SLABS, true);
-                }
-                createdAllocation = TerrainEngineA.this.slabAllocator.allocate(
+                // The allocator is the host's, shared by every pass: the memory
+                // type is read from this buffer's own requirement bits, and the
+                // host keeps the first buffer's choice for all of them (every
+                // pass' slab buffers carry the same usage over the same slab
+                // size, so the choice cannot differ between passes).
+                int memoryType = TerrainEngineA.this.context.memoryTypeIndex(
+                        requirements.memoryTypeBits(),
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                        "a host-visible terrain slab of " + sizeBytes + " bytes");
+                SlabAllocator allocator = TerrainEngineA.this.host.geometrySlabAllocator(
+                        TerrainEngineA.this.context, memoryType,
+                        TerrainEngineA.this.store.geometryAllocator().slabBytes());
+                createdAllocation = allocator.allocate(
                         requirements.size(), requirements.alignment());
-                TerrainEngineA.this.slabAllocator.bindBuffer(createdBuffer, createdAllocation);
+                allocator.bindBuffer(createdBuffer, createdAllocation);
             } catch (RuntimeException | Error error) {
                 if (createdBuffer != VK_NULL_HANDLE) {
                     vkDestroyBuffer(device, createdBuffer, null);
@@ -565,7 +570,7 @@ final class TerrainEngineA {
             }
             this.handle = createdBuffer;
             this.allocation = createdAllocation;
-            this.mapped = TerrainEngineA.this.slabAllocator.mappedAddress(createdAllocation);
+            this.mapped = createdAllocation.owner().mappedAddress(createdAllocation);
         }
 
         long buffer() {
@@ -623,24 +628,14 @@ final class TerrainEngineA {
         return this.sortedBuffer;
     }
 
+    /**
+     * The static quad index buffer, owned by the host and shared by every pass
+     * (designer audit 2026-11-25, Stage 4 item 5-②): its contents depend only on
+     * {@link TerrainSectionStore#MAX_QUADS_PER_SLAB}, never on this pass, so one
+     * buffer serves all passes' bucket draws and the host deletes it.
+     */
     private VulkanHostBuffer sharedIndexBuffer() {
-        if (this.sharedIndexBuffer == null) {
-            int quads = TerrainSectionStore.MAX_QUADS_PER_SLAB;
-            this.sharedIndexBuffer = new VulkanHostBuffer(this.context, (long) quads * 6 * 4,
-                    VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-            long address = this.sharedIndexBuffer.mappedAddress();
-            for (int q = 0; q < quads; q++) {
-                long at = address + (long) q * 6 * 4;
-                int baseVertex = q * 4;
-                MemoryUtil.memPutInt(at, baseVertex);
-                MemoryUtil.memPutInt(at + 4, baseVertex + 1);
-                MemoryUtil.memPutInt(at + 8, baseVertex + 2);
-                MemoryUtil.memPutInt(at + 12, baseVertex);
-                MemoryUtil.memPutInt(at + 16, baseVertex + 2);
-                MemoryUtil.memPutInt(at + 20, baseVertex + 3);
-            }
-        }
-        return this.sharedIndexBuffer;
+        return this.host.sharedIndexBuffer(this.context);
     }
 
     private void ensureStreamBuffers(Slot slot, int slab, int capacityCommands) {
@@ -760,12 +755,11 @@ final class TerrainEngineA {
         for (SlabBuffer slab : this.slabBuffers) {
             if (slab != null) slab.delete();
         }
-        // After the slab buffers: the allocator's slabs are the buffers' memory, so
-        // they are freed last (its delete is teardown, freeing live slabs outright).
-        if (this.slabAllocator != null) this.slabAllocator.delete();
+        // The slab allocator and the shared index buffer are the host's, shared
+        // with the other passes' engines: the host deletes them after every
+        // engine, so nothing is freed here while a sibling pass still draws.
         if (this.factorBuffer != null) this.factorBuffer.delete();
         if (this.sortedBuffer != null) this.sortedBuffer.delete();
-        if (this.sharedIndexBuffer != null) this.sharedIndexBuffer.delete();
         if (this.pipeline != 0L) {
             vkDestroyPipeline(device, this.pipeline, null);
         }

@@ -3,10 +3,14 @@ package org.soutalab.celtium.vulkan;
 import java.util.IdentityHashMap;
 import java.util.Map;
 import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
+import org.lwjgl.system.MemoryUtil;
+import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 import org.soutalab.celtium.vulkan.terrain.AsyncSectionMesher;
 import org.soutalab.celtium.vulkan.terrain.TerrainResidencyGate;
 import org.soutalab.celtium.vulkan.terrain.TerrainSectionStore;
 import org.soutalab.celtium.vulkan.terrain.TerrainUploadBudget;
+
+import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
 
 /**
  * Owns the Tier-A terrain state for one backend: the shared
@@ -14,6 +18,15 @@ import org.soutalab.celtium.vulkan.terrain.TerrainUploadBudget;
  * {@link TerrainEngineA} executor per render pass. Pass ordinals are assigned by
  * identity in first-use order and are the same ordinals the SectionDesc records
  * carry, so registration and culling always agree on them.
+ * <p>
+ * The host also owns the pass-independent GPU resources every executor shares
+ * (designer audit 2026-11-25, Stage 4 item 5-②): the geometry slab allocator —
+ * one allocator for all passes keeps the terrain geometry within the shared
+ * slab cap instead of multiplying it by the pass count — and the static quad
+ * index buffer, whose contents depend only on
+ * {@link TerrainSectionStore#MAX_QUADS_PER_SLAB}. Both are created lazily and
+ * deleted here, after every engine, because the allocator's slabs are the
+ * engines' slab buffers' memory.
  * <p>
  * Deferred arena releases are collected against the host's own generation counter
  * with a two-generation lag — an interim completion rule that approximates the
@@ -37,6 +50,8 @@ final class TerrainEngineAHost {
     private final Map<TerrainRenderPass, Integer> ordinals = new IdentityHashMap<>();
     private final Map<TerrainRenderPass, TerrainEngineA> engines = new IdentityHashMap<>();
     private long generation;
+    private SlabAllocator geometrySlabAllocator;
+    private VulkanHostBuffer sharedIndexBuffer;
 
     AsyncSectionMesher mesher() {
         return this.mesher;
@@ -84,10 +99,51 @@ final class TerrainEngineAHost {
         TerrainEngineA engine = this.engines.get(pass);
         if (engine == null) {
             engine = new TerrainEngineA(context, ordinalFor(pass),
-                    "pass-" + ordinalFor(pass), this.store, this.budget, this.residencyGate);
+                    "pass-" + ordinalFor(pass), this.store, this.budget, this.residencyGate, this);
             this.engines.put(pass, engine);
         }
         return engine;
+    }
+
+    /**
+     * The one geometry slab allocator shared by every pass' executor, created
+     * lazily from the first slab buffer's own memory-type choice. Every pass'
+     * slab buffers carry the same usage over the shared store's slab size, so
+     * the first buffer's memory type is every buffer's; a later call's
+     * arguments are the same values by construction and are not re-read.
+     */
+    SlabAllocator geometrySlabAllocator(VulkanContext context, int memoryType, long slabBytes) {
+        if (this.geometrySlabAllocator == null) {
+            this.geometrySlabAllocator = new SlabAllocator(context, "terrainGeometry", memoryType,
+                    slabBytes, org.soutalab.celtium.vulkan.terrain.TerrainSlabAllocator.DEFAULT_MAX_SLABS, true);
+        }
+        return this.geometrySlabAllocator;
+    }
+
+    /**
+     * The static quad index buffer shared by every pass: its contents are the
+     * fixed quad triangulation for {@link TerrainSectionStore#MAX_QUADS_PER_SLAB}
+     * quads and depend on nothing a pass owns. Written once, at creation.
+     */
+    VulkanHostBuffer sharedIndexBuffer(VulkanContext context) {
+        if (this.sharedIndexBuffer == null) {
+            int quads = TerrainSectionStore.MAX_QUADS_PER_SLAB;
+            VulkanHostBuffer buffer = new VulkanHostBuffer(context, (long) quads * 6 * 4,
+                    VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+            long address = buffer.mappedAddress();
+            for (int q = 0; q < quads; q++) {
+                long at = address + (long) q * 6 * 4;
+                int baseVertex = q * 4;
+                MemoryUtil.memPutInt(at, baseVertex);
+                MemoryUtil.memPutInt(at + 4, baseVertex + 1);
+                MemoryUtil.memPutInt(at + 8, baseVertex + 2);
+                MemoryUtil.memPutInt(at + 12, baseVertex);
+                MemoryUtil.memPutInt(at + 16, baseVertex + 2);
+                MemoryUtil.memPutInt(at + 20, baseVertex + 3);
+            }
+            this.sharedIndexBuffer = buffer;
+        }
+        return this.sharedIndexBuffer;
     }
 
     /** Re-uploads one pass' sorted indices for a section after a translucent re-sort. */
@@ -119,5 +175,17 @@ final class TerrainEngineAHost {
             engine.delete();
         }
         this.engines.clear();
+        // After every engine: the shared allocator's slabs are the engines' slab
+        // buffers' memory, so they are freed last (its delete is teardown,
+        // freeing live slabs outright), and the shared index buffer is read by
+        // every pass' draws until the engines are gone.
+        if (this.sharedIndexBuffer != null) {
+            this.sharedIndexBuffer.delete();
+            this.sharedIndexBuffer = null;
+        }
+        if (this.geometrySlabAllocator != null) {
+            this.geometrySlabAllocator.delete();
+            this.geometrySlabAllocator = null;
+        }
     }
 }
