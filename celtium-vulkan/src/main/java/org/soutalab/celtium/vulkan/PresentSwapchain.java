@@ -38,8 +38,8 @@ final class PresentSwapchain {
     long swapPointCalls;
     /** The three blocks inside a present call that are not the swapchain stages themselves. */
     long swapPointImageNanos;
-    /** The image ring of the swap-point accounting; its size is the backend's {@code DISTRIBUTION_SAMPLES}, shared with the submit-to-fence ring that stayed there. */
-    final long[] swapPointImageRing = new long[VulkanTerrainGpuBackend.DISTRIBUTION_SAMPLES];
+    /** The image ring of the swap-point accounting; its size is {@code DrawCounters.DISTRIBUTION_SAMPLES}, shared with the submit-to-fence ring in the backend. */
+    final long[] swapPointImageRing = new long[DrawCounters.DISTRIBUTION_SAMPLES];
     private int swapPointImageRingAt;
     int swapPointImageRingCount;
     long swapPointDumpNanos;
@@ -47,8 +47,8 @@ final class PresentSwapchain {
 
     private void celtium$noteSwapPointImage(long nanos) {
         this.swapPointImageRing[this.swapPointImageRingAt] = nanos;
-        this.swapPointImageRingAt = (this.swapPointImageRingAt + 1) % VulkanTerrainGpuBackend.DISTRIBUTION_SAMPLES;
-        if (this.swapPointImageRingCount < VulkanTerrainGpuBackend.DISTRIBUTION_SAMPLES) {
+        this.swapPointImageRingAt = (this.swapPointImageRingAt + 1) % DrawCounters.DISTRIBUTION_SAMPLES;
+        if (this.swapPointImageRingCount < DrawCounters.DISTRIBUTION_SAMPLES) {
             this.swapPointImageRingCount++;
         }
     }
@@ -775,8 +775,8 @@ final class PresentSwapchain {
             // The frame image as the blit is about to read it, in the present that serves it: the boundary probe reads
             // the same image one frame later, and a difference between the two is the frame's own draws landing after
             // the present rather than before it.
-            if (VulkanTerrainGpuBackend.SKY_FRAME_PROBE >= 0L && backend.frameId >= VulkanTerrainGpuBackend.SKY_FRAME_PROBE
-                    && backend.skyPresentProbeLines < VulkanTerrainGpuBackend.SKY_FRAME_PROBE_LIMIT
+            if (DrawCounters.SKY_FRAME_PROBE >= 0L && backend.frameId >= DrawCounters.SKY_FRAME_PROBE
+                    && backend.skyPresentProbeLines < DrawCounters.SKY_FRAME_PROBE_LIMIT
                     && backend.frameTarget.colorImage() != 0L) {
                 backend.skyPresentProbeLines++;
                 int[] presentFramePixels = backend.celtium$readImageRectangle(backend.frameTarget.colorImage(), 0, 0,

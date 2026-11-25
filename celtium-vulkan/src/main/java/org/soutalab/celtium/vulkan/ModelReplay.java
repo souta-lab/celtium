@@ -139,7 +139,7 @@ final class ModelReplay {
         }
         // Declared outside the try because the finally below measures it: a local declared inside a try block is not
         // in scope in its finally.
-        long modelEnqueueStart = b.BATCH_TIMINGS ? System.nanoTime() : 0L;
+        long modelEnqueueStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0L;
         try {
             // The texture the model is actually bound to, asked of GL at the moment of the replay: a player model samples
             // its own skin, not the block atlas the immediate path last used.
@@ -197,10 +197,10 @@ final class ModelReplay {
             // Timed with the batch-timing switch: this bracket sits inside the enqueue's own, so a leg reports both the
             // guard's cost and the whole path's, and the difference is the preamble this path cannot remove (texture
             // lookup, matrix relativisation, projection remap) - the split r18g's 402 ns a replay could not name.
-            long fastPathStart = b.BATCH_TIMINGS ? System.nanoTime() : 0L;
+            long fastPathStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0L;
             boolean served = celtium$tryModelReplayFastPath(listId, texture, mesh, projectionRemapped, modelViewNow,
                     lightCoord, combineColor);
-            if (b.BATCH_TIMINGS) {
+            if (DrawCounters.BATCH_TIMINGS) {
                 b.modelReplayFastPath.noteAttempt(System.nanoTime() - fastPathStart, served);
             }
             if (served) {
@@ -290,7 +290,7 @@ final class ModelReplay {
         } finally {
             // Timed only with the switch on: the question is whether a model replay's own CPU work is worth
             // attacking, or whether its drawn packet is all the frame pays for.
-            if (b.BATCH_TIMINGS) b.modelStats.noteEnqueue(System.nanoTime() - modelEnqueueStart);
+            if (DrawCounters.BATCH_TIMINGS) b.modelStats.noteEnqueue(System.nanoTime() - modelEnqueueStart);
         }
     }
 

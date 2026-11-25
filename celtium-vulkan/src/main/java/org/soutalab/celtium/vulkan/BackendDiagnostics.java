@@ -45,7 +45,7 @@ final class BackendDiagnostics {
                 // Where a batch's time goes, per batch, with -Dceltium.vulkan.batchTimings=true. The counters existed but
                 // were never printed, so the question "is the per-batch cost the state capture, the key, the program query or
                 // the preparation" had no answer in a run.
-                + (b.BATCH_TIMINGS ? b.immediateStatistics.batchTimingSummary() + b.offerStageNanosSummary() : "")
+                + (DrawCounters.BATCH_TIMINGS ? b.immediateStatistics.batchTimingSummary() + b.offerStageNanosSummary() : "")
                 // "off" rather than "0/0": the per-frame hash is opt-in, and a counter that can only read zero would
                 // invite "no two frames were identical" from a number that was never measured.
                 + " identicalFrameSignatures=" + (b.FRAME_SIGNATURE
@@ -201,15 +201,15 @@ final class BackendDiagnostics {
                         : b.lastOrderingFlushFailure.replace(' ', '_').substring(0,
                                 Math.min(200, b.lastOrderingFlushFailure.length())))
                 + " batchCallCount=" + b.batchCallCount
-                + " batchCallMillis=" + (b.batchCallNanos / 1000000L)
-                + " batchCallWorstMillis=" + (b.batchCallWorstNanos / 1000000L)
-                + " batchCallOpeningMillis=" + (b.batchCallOpeningNanos / 1000000L)
-                + " batchCallOpeningCount=" + b.batchCallOpeningCount
-                + " batchCallCpuMillis=" + (b.batchCallCpuNanos / 1000000L)
-                + " threadCpuSupported=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.THREAD_CPU_SUPPORTED
-                + " threadWaitedMillis=" + b.threadWaitedMillis()
-                + " threadBlockedMillis=" + b.threadBlockedMillis()
-                + " threadCpuTotalMillis=" + (b.threadCpuNanos() / 1000000L)
+                + " batchCallMillis=" + (DrawCounters.batchCallNanos / 1000000L)
+                + " batchCallWorstMillis=" + (DrawCounters.batchCallWorstNanos / 1000000L)
+                + " batchCallOpeningMillis=" + (DrawCounters.batchCallOpeningNanos / 1000000L)
+                + " batchCallOpeningCount=" + DrawCounters.batchCallOpeningCount
+                + " batchCallCpuMillis=" + (DrawCounters.batchCallCpuNanos / 1000000L)
+                + " threadCpuSupported=" + DrawCounters.THREAD_CPU_SUPPORTED
+                + " threadWaitedMillis=" + DrawCounters.threadWaitedMillis()
+                + " threadBlockedMillis=" + DrawCounters.threadBlockedMillis()
+                + " threadCpuTotalMillis=" + (DrawCounters.threadCpuNanos() / 1000000L)
                 + " uniformPreparationFailures=" + b.immediateStatistics.uniformPreparationFailures()
                 + " lastUniformPreparationFailure=" + b.immediateStatistics.lastUniformPreparationFailure()
                 + " regionUploadFailures=" + b.regionUploadFailures
@@ -541,7 +541,7 @@ final class BackendDiagnostics {
                 + b.celtium$arenaUploadedBytes()
                 + " arenaCreateCalls=" + org.soutalab.celtium.vulkan.VulkanArena.arenaCreateCalls
                 + " arenaCreateMillis=" + (org.soutalab.celtium.vulkan.VulkanArena.arenaCreateNanos / 1000000L)
-                + " textureDiagnostics=" + b.TEXTURE_DIAGNOSTICS + " diagnosed=" + b.diagnosedTextures.size()
+                + " textureDiagnostics=" + DrawCounters.TEXTURE_DIAGNOSTICS + " diagnosed=" + b.diagnosedTextures.size()
                 + " blendObserved=" + b.immediateStatistics.blendObserved() + "(" + b.observedBlendSrc + "," + b.observedBlendDst + ")"
                 + " blendPairs=" + b.blendPairs + " blendFuncIgnored=" + b.immediateStatistics.blendFuncIgnored()
                 + " blendOutlier=\"" + (b.blendOutlier == null ? "none" : b.blendOutlier) + "\""

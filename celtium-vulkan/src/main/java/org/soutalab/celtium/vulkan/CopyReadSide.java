@@ -1260,7 +1260,7 @@ final class CopyReadSide {
         // CELTIUM_TEXTURE_DIAG: off by default. The atlas is the texture whose mip state matters, and this is the
         // only method that ever mirrors it, so the question is asked here - with the binding read rather than set, so
         // nothing the game is drawing can be disturbed.
-        if (VulkanTerrainGpuBackend.TEXTURE_DIAGNOSTICS && atlasId != 0 && this.backend.diagnosedTextures.add(atlasId)) {
+        if (DrawCounters.TEXTURE_DIAGNOSTICS && atlasId != 0 && this.backend.diagnosedTextures.add(atlasId)) {
             int levels = 0;
             while (levels < 16 && org.lwjgl.opengl.GL11.glGetTexLevelParameteri(
                     org.lwjgl.opengl.GL11.GL_TEXTURE_2D, levels, org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH) > 0) {

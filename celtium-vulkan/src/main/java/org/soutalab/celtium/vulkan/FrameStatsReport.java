@@ -144,7 +144,7 @@ final class FrameStatsReport {
         this.lastPipelineBindNanos = pipelineBindTotal;
         this.lastDescriptorBindNanos = descriptorBindTotal;
 
-        if (VulkanTerrainGpuBackend.BUFFER_CENSUS) {
+        if (DrawCounters.BUFFER_CENSUS) {
             System.out.println("[Celtium] CELTIUM_BUFFER_CENSUS groups=" + b.bufferCensusGroups
                     + " vertexBuffers=" + b.bufferCensusVertexBuffers.size()
                     + " indexBuffers=" + b.bufferCensusIndexBuffers.size()
@@ -156,7 +156,7 @@ final class FrameStatsReport {
             b.bufferCensusVertexBuffers.clear();
             b.bufferCensusIndexBuffers.clear();
         }
-        if (VulkanTerrainGpuBackend.GROUP_CENSUS) {
+        if (DrawCounters.GROUP_CENSUS) {
             StringBuilder census = new StringBuilder();
             String[] families = {"texture", "litItem", "unlitItem", "colour", "other"};
             for (int i = 0; i < b.groupCensusCounts.length; i++) {
@@ -172,7 +172,7 @@ final class FrameStatsReport {
             java.util.Arrays.fill(b.groupCensusCounts, 0L);
             b.groupCensusMain = 0;
         }
-        if (VulkanTerrainGpuBackend.DRAW_KEY_CENSUS) {
+        if (DrawCounters.DRAW_KEY_CENSUS) {
             System.out.println("[Celtium] CELTIUM_DRAW_KEY_CENSUS groups=" + b.drawKeyGroups
                     + " distinctKeys=" + b.drawKeyCounts.size()
                     + " switches=" + b.drawKeySwitches
@@ -192,7 +192,7 @@ final class FrameStatsReport {
             b.arrayKeyLargest = 0;
             b.arrayKeyCounts.clear();
         }
-        if (VulkanTerrainGpuBackend.RETAINED_CENSUS) {
+        if (DrawCounters.RETAINED_CENSUS) {
             System.out.println("[Celtium] CELTIUM_RETAINED_CENSUS groups=" + b.retainedCensusGroups
                     + " retainedAtAccept=" + b.retainedAccept
                     + " preTransformEligible=" + b.preTransformEligible
@@ -218,7 +218,7 @@ final class FrameStatsReport {
                 + " fps[p50=" + String.format(java.util.Locale.ROOT, "%.1f", 1e9 / Math.max(1L, p50)) + "] "
                 + org.soutalab.celtium.vulkan.FrameCoordinator.submitQueueSummary()
                 + " " + org.soutalab.celtium.vulkan.VulkanContext.batchedSubmitSummary()
-                + (VulkanTerrainGpuBackend.BATCH_TIMINGS ? b.offerStageNanosSummary() + " " + b.acceptSpanSummary() + " "
+                + (DrawCounters.BATCH_TIMINGS ? b.offerStageNanosSummary() + " " + b.acceptSpanSummary() + " "
                         + b.batchDistSummary() : "")
                 + " append[ms=" + (b.immediateStatistics.appendNanos() / 1000000L) + "]"
                 + " prepare[nanos=" + b.immediateStatistics.prepareImmediateNanos()
@@ -227,7 +227,7 @@ final class FrameStatsReport {
                         b.immediateStatistics.prepareImmediateNanos() / 1e6
                                 / Math.max(1L, this.debugFrameReports))
                 + "]"
-                + (VulkanTerrainGpuBackend.FRAME_STATS ? " loop[" + celtium$gameLoopSummary() + "]" : "")
+                + (DrawCounters.FRAME_STATS ? " loop[" + celtium$gameLoopSummary() + "]" : "")
                 + " texCopy[calls=" + b.copyReadSide.textureCopyCalls + " totalMs=" + (b.copyReadSide.textureCopyNanos / 1000000L) + "]"
                 + " copyBlit[refusals=" + b.textureCopyService.textureCopyBlitRefusals()
                 + " last=" + b.textureCopyService.lastTextureCopyBlitRefusal() + "]"

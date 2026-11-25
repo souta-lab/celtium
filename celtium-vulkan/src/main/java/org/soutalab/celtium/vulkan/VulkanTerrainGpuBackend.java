@@ -861,23 +861,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private int skyFanBatches;
     private String skyFanFirst = "none";
     private String skyFanLastState = "none";
-    /**
-     * {@code -Dceltium.vulkan.skyFrameProbe=<n>}: for the frames from n on (bounded), read the frame image's sky band at
-     * the frame boundary and print it beside the number of sky draws the frame issued.
-     * <p>
-     * The offer census says the plane is offered every frame, the group census says it is drawn every frame, and the
-     * picture says its pixels are in one frame of a pair and not in the next. Those three can only all be true if the
-     * loss is downstream of the draw, and the two candidates are the frame image and the present. This probe reads the
-     * frame image itself, so the frame whose picture is flat is named: a flat frame image means the draw's pixels never
-     * reached the image the present blits, and a gradient frame image beside a flat presented frame means the blit or
-     * the present is where they went.
-     * <p>
-     * The band is the picture's top rows, which are the image's last rows: the frame image is in GL texture order (row 0
-     * is the picture's bottom), the same order {@code readImageRectangle} returns.
-     */
-    static final long SKY_FRAME_PROBE = Long.getLong("celtium.vulkan.skyFrameProbe", -1L).longValue();
-    static final int SKY_FRAME_PROBE_LIMIT =
-            Integer.getInteger("celtium.vulkan.skyFrameProbeLimit", 24).intValue();
     private int skyFrameProbeLines;
     /** Sky draws issued in the frame that is running; the probe prints it for the frame that just ended. */
     int skyDrawsThisFrame;
@@ -2156,15 +2139,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     int presentHookCalls;
     // The swap-point accounting (swapPoint*) lives in PresentSwapchain with the present path it
     // measures (item 704, R3 candidate 2 carried out with the R10 extraction).
-    /**
-     * The last {@link #DISTRIBUTION_SAMPLES} durations of the two frame costs that decide the interval but are invisible
-     * in the render brackets: the swap-point image path (frame image to swapchain blit plus the wait for the frame's
-     * completion) and the time from a submission reaching the queue to its fence being confirmed. Totals cannot answer
-     * "what does a steady-state frame pay" - the load phase dominates them - so the summary reports p50/p95/worst of
-     * both.
-     */
-    static final int DISTRIBUTION_SAMPLES = 512;
-    final long[] submitToFenceRing = new long[DISTRIBUTION_SAMPLES];
+    final long[] submitToFenceRing = new long[DrawCounters.DISTRIBUTION_SAMPLES];
     private int submitToFenceRingAt;
     int submitToFenceRingCount;
     /** When the current slot's submission reached the queue, for the submit-to-fence measurement. */
@@ -2176,8 +2151,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             return;
         }
         this.submitToFenceRing[this.submitToFenceRingAt] = nanos;
-        this.submitToFenceRingAt = (this.submitToFenceRingAt + 1) % DISTRIBUTION_SAMPLES;
-        if (this.submitToFenceRingCount < DISTRIBUTION_SAMPLES) {
+        this.submitToFenceRingAt = (this.submitToFenceRingAt + 1) % DrawCounters.DISTRIBUTION_SAMPLES;
+        if (this.submitToFenceRingCount < DrawCounters.DISTRIBUTION_SAMPLES) {
             this.submitToFenceRingCount++;
         }
     }
@@ -3077,8 +3052,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private int lightBindPrints;
     /** Set for reference captures: load the mod, run the fixture, install nothing, let OpenGL draw. */
     private static final boolean REFERENCE_RENDER = Boolean.getBoolean("celtium.vulkan.referenceRender");
-    static final boolean TEXTURE_DIAGNOSTICS =
-            Boolean.getBoolean("celtium.vulkan.textureDiagnostics");
     final it.unimi.dsi.fastutil.ints.IntOpenHashSet diagnosedTextures =
             new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
     String blendOutlier;
@@ -3540,12 +3513,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + height + " ok=" + ok + " (the surface-extent change that rebuilds the swapchain)");
     }
 
-    /**
-     * {@code -Dceltium.vulkan.frameStats=true}: report the real interval between completed frames, once every 120
-     * frames. Each bracketed section can be short while the delivered rate is low, and that gap is what a user sees as
-     * low FPS, so it is measured on the frame boundary instead of inferred from the sections.
-     */
-    static final boolean FRAME_STATS = Boolean.getBoolean("celtium.vulkan.frameStats");
     /** Read once: these are consulted on frame and loading paths, not at startup only. */
     private static final boolean HANDOFF_TIMINGS = Boolean.getBoolean("celtium.vulkan.handoffTimings");
     static final String FRAME_DUMP_DIR = HarnessConfig.path("frameDumpDir");
@@ -3571,7 +3538,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (ModPrograms.MOD_READBACK) {
             this.modPrograms.celtium$reportModInputReadback();
         }
-        if (!FRAME_STATS) {
+        if (!DrawCounters.FRAME_STATS) {
             return;
         }
         this.frameStats.celtium$frameStatsReport(where);
@@ -4344,102 +4311,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private int lastReportedOutOfDate = -1;
     private int lastReportedAcquireOutOfDate = -1;
     private int lastReportedDirectRefreshes = -1;
-    /**
-     * Wall time of the game's batch call, measured by the caller (the mixin) around {@code submitImmediateBatch}.
-     * <p>
-     * The per-frame budget after the terrain passes (2.2 ms) and the handoffs (2.3 ms) left ~38.5 ms unaccounted for,
-     * and the {@code immediate=false} A/B says it belongs to the immediate path. This is the instrument for the part of
-     * that path the game calls.
-     */
-    public static long batchCallNanos;
     /** Long because one measured session uploaded 1.35e8 batches: an int overflows inside a day of play. */
     public static long batchCallCount;
-    /**
-     * The single most expensive batch call, and the total of the first 200.
-     * <p>
-     * The per-frame mean of this counter is 2.5x higher on Intel than on AMD even though the work is the same CPU-side
-     * code and the call counts per frame match, which points at the mean being inflated by a few very slow calls - the
-     * JIT compiling the path on a GPU that produces half as many frames. The maximum and the opening window separate
-     * that from a real per-call difference.
-     */
-    public static long batchCallWorstNanos;
-    /**
-     * The batch call measured as CPU time instead of wall time.
-     * <p>
-     * Every part measured inside the call adds up to ~1.1 ms/frame (AMD) and ~3.2 ms/frame (Intel), while the wall time
-     * around the same call is 3.8 / 10.2 ms/frame. If the CPU time matches the parts, the difference is time the thread
-     * spent descheduled - contention with the server thread, the upload thread or the driver - and not work this call
-     * does itself.
-     */
-    public static long batchCallCpuNanos;
-    /**
-     * The thread MXBean, looked up once.
-     * <p>
-     * OPT-01: this used to be `ManagementFactory.getThreadMXBean()` on every call - twice per immediate batch for the
-     * preflight split, plus once per group and once per frame - and the lookup is a synchronised platform-MBean
-     * resolution, not a field read. The instrument's own cost is part of what a performance run measures, so the bean
-     * and its support flag are resolved once here.
-     */
-    private static final java.lang.management.ThreadMXBean THREAD_MX_BEAN =
-            java.lang.management.ManagementFactory.getThreadMXBean();
-
-    /** Whether the JVM exposes per-thread CPU time here (it decides whether the split above means anything). */
-    public static final boolean THREAD_CPU_SUPPORTED = THREAD_MX_BEAN.isCurrentThreadCpuTimeSupported();
-    /**
-     * How the render thread spent its non-running time, split by kind.
-     * <p>
-     * The batch call's wall time exceeds its CPU time by 2.0 ms/frame on AMD and 7.8 ms/frame on Intel. If these two
-     * are near zero while that gap is large, the waiting is not Java-level contention but a native call blocking - the
-     * bridge's synchronisation - which is a different fix.
-     */
-    static long threadWaitedMillis() {
-        if (!THREAD_CPU_SUPPORTED) {
-            return -1L;
-        }
-        java.lang.management.ThreadInfo info = THREAD_MX_BEAN.getThreadInfo(Thread.currentThread().getId());
-        return info == null ? -1L : info.getWaitedTime();
-    }
-
-    static long threadBlockedMillis() {
-        if (!THREAD_CPU_SUPPORTED) {
-            return -1L;
-        }
-        java.lang.management.ThreadInfo info = THREAD_MX_BEAN.getThreadInfo(Thread.currentThread().getId());
-        return info == null ? -1L : info.getBlockedTime();
-    }
-
-    /**
-     * Whether the per-batch CPU split is measured at all.
-     * <p>
-     * OPT-01: the split costs two {@code getCurrentThreadCpuTime()} calls per immediate batch (preflight, group
-     * creation, append and flush each take a start and an end), and it is instrumentation, not rendering. It is off by
-     * default so a performance run measures the renderer rather than the meter; a run that wants the split turns it on
-     * with {@code -Dceltium.vulkan.cpuSplit=true} and reports it as an instrumented run, which is the distinction
-     * OPT-01's acceptance asks for.
-     */
-    public static final boolean CPU_SPLIT = Boolean.parseBoolean(
-            System.getProperty("celtium.vulkan.cpuSplit", "false"));
-
-    /**
-     * Whether the per-batch/per-group {@code System.nanoTime()} deltas the immediateStatistics *Nanos counters take
-     * are read at all. The investigation added one nanoTime pair per stage of the batch-accept path - matrix copy,
-     * state capture, state key, program query, preflight, clone, group create, append - eight-to-ten clock reads on a
-     * ~3600-batch frame ≈ 1.3-1.9 ms/frame spent measuring, not drawing. Off by default
-     * ({@code -Dceltium.vulkan.batchTimings=true} or a diagnostics run re-enables); with it off the counters read 0,
-     * which the reports already treat as a missing measurement.
-     */
-    public static final boolean BATCH_TIMINGS = Boolean.getBoolean("celtium.vulkan.batchTimings")
-            || VulkanDiagnostics.enabled();
-
-    /** The thread's CPU time right now, or -1 when unsupported. */
-    public static long threadCpuNanos() {
-        if (!CPU_SPLIT) {
-            return -1L;
-        }
-        return THREAD_CPU_SUPPORTED ? THREAD_MX_BEAN.getCurrentThreadCpuTime() : -1L;
-    }
-    public static long batchCallOpeningNanos;
-    public static int batchCallOpeningCount;
 
     /** CPU time of the same handoffs, so wall minus CPU says how much of it is blocking in a native call. */
     int frameDrawn;
@@ -4532,7 +4405,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * where the missing offers stop.
      */
     private void celtium$offerStage(int stage) {
-        if (BATCH_TIMINGS && stage > 0) {
+        if (DrawCounters.BATCH_TIMINGS && stage > 0) {
             this.offerStageMarks[stage - 1] = System.nanoTime();
         }
         this.offerStage = stage;
@@ -8666,8 +8539,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // The frame image as the frame that just ended left it, before the next frame's clear can touch it. Read here
         // rather than at the present because the present reads the swapchain image: the two together are what says
         // whether a flat picture was already flat in the image the blit copies from.
-        if (SKY_FRAME_PROBE >= 0L && this.frameId >= SKY_FRAME_PROBE
-                && this.skyFrameProbeLines < SKY_FRAME_PROBE_LIMIT
+        if (DrawCounters.SKY_FRAME_PROBE >= 0L && this.frameId >= DrawCounters.SKY_FRAME_PROBE
+                && this.skyFrameProbeLines < DrawCounters.SKY_FRAME_PROBE_LIMIT
                 && this.frameTarget != null && this.frameTarget.colorImage() != 0L) {
             this.skyFrameProbeLines++;
             int[] framePixels = celtium$readImageRectangle(this.frameTarget.colorImage(), 0, 0,
@@ -9548,7 +9421,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // nanoTime reads on every offered batch of every run - ~34 ns of a ~3.6 us batch, and the same defect the
         // font capture's per-glyph brackets had (26 reads a glyph). With neither instrument on, the counters read 0,
         // which the reports already treat as a missing measurement.
-        boolean timeBatch = BATCH_TIMINGS || org.soutalab.celtium.vulkan.FrameBudgetTimings.enabled();
+        boolean timeBatch = DrawCounters.BATCH_TIMINGS || org.soutalab.celtium.vulkan.FrameBudgetTimings.enabled();
         // The HUD's own share of the accept path: the `gui` bracket is the whole overlay, and this says how much of it
         // is this renderer's per-batch work rather than the game's. One static-field read when the HUD is not drawing.
         boolean guiBatch = org.soutalab.celtium.vulkan.FramePassTimings.guiSectionActive();
@@ -9603,12 +9476,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** The body of {@link #submitImmediateBatch}, with the per-call cost measured by the caller. */
     private boolean submitImmediateBatchTimed(Object vertexFormat, int vertexStride, int formatId, long vertexAddress,
                                               int vertexCount, int drawMode, NativeGeometryBuffer retained) {
-        long batchStartedNanos = BATCH_TIMINGS ? System.nanoTime() : 0L;
+        long batchStartedNanos = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0L;
         try {
             return this.submitImmediateBatchBody(vertexFormat, vertexStride, formatId, vertexAddress, vertexCount,
                     drawMode, retained);
         } finally {
-            if (BATCH_TIMINGS) {
+            if (DrawCounters.BATCH_TIMINGS) {
                 long took = System.nanoTime() - batchStartedNanos;
                 this.immediateStatistics.addSubmitBatchNanos(took);
                 celtium$noteBatchDuration(took);
@@ -9656,7 +9529,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 this.rawWriteGateSkips++;
             }
         }
-        long afterBatchStartNanos = BATCH_TIMINGS ? System.nanoTime() : 0L;
+        long afterBatchStartNanos = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0L;
         if (this.gpuStalled) {
             // A stalled GPU closes every entry that touches the frame target or the bridge: the injected timeout showed a
             // barrier recorded into a buffer that was never begun, and a framebuffer destroyed while a stale command buffer
@@ -9802,7 +9675,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // batch Minecraft composites with is drawn to the game framebuffer rather than to the screen. What the switch
         // controls in practice is which format-2 batches the present path may take; everything else falls through to
         // the immediate path. Recorded so the name is not read as evidence that a present happens.
-        if (BATCH_TIMINGS) {
+        if (DrawCounters.BATCH_TIMINGS) {
             this.batchCheckNanos = System.nanoTime() - afterBatchStartNanos;
         }
         celtium$offerStage(2);
@@ -9952,9 +9825,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             celtium$flushBeforeRefusal();
             return false;
         }
-        long expandStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
+        long expandStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0L;
         int[] indices = VulkanImmediateDrawer.expandIndices(drawMode, vertexCount);
-        if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_EXPAND, System.nanoTime() - expandStart);
+        if (DrawCounters.BATCH_TIMINGS) celtium$noteAcceptPart(PART_EXPAND, System.nanoTime() - expandStart);
         if (indices == null) {
             this.immediateLastRefusal = "topology " + drawMode + " has no expansion";
             // S10 is a GL-fallback rule: under GL-less the refused batch is drawn by nobody, so there is
@@ -9967,13 +9840,13 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // projection (it is installed by LWJGL 2's GLU utility class, outside the transforming loader -
             // matrixChannels=persp:0), while reading them on the render thread with the GL context current needs no
             // cooperation from any class and gives exactly what Minecraft is drawing with.
-            long matrixCaptureStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
+            long matrixCaptureStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0L;
             if (this.matricesDirty) {
                 captureGlMatrices();
                 this.matricesDirty = false;
                 compareMirroredAndLiveMatrices();
             }
-            if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_MATRIX, System.nanoTime() - matrixCaptureStart);
+            if (DrawCounters.BATCH_TIMINGS) celtium$noteAcceptPart(PART_MATRIX, System.nanoTime() - matrixCaptureStart);
             int boundTexture = this.immediateState.boundTextureName();
             boolean usesWhiteTexture = !this.immediateState.texture2dEnabled() || celtium$layoutHasNoTexture(formatId);
             if (usesWhiteTexture) {
@@ -10003,10 +9876,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     // (name, level)), so asking for them separately hashed the same key twice on every offer. Measured on
                     // the accept profile (leg r45b-accept, client thread, 1824 samples): the pair is ~0.2% of the frame,
                     // small but paid on each of ~220 offers.
-                    long extentStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
+                    long extentStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0L;
                     boolean hasExtent = org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureLevelExtent(
                             boundTexture, 0, this.textureExtentScratch);
-                    if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_EXTENT, System.nanoTime() - extentStart);
+                    if (DrawCounters.BATCH_TIMINGS) celtium$noteAcceptPart(PART_EXTENT, System.nanoTime() - extentStart);
                     // Either dimension missing is "no extent": a valid upload records both, so a record with one zero
                     // cannot describe a surface. The test used to require both to be zero, which would let a half-record
                     // through to the sampler.
@@ -10028,7 +9901,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     return false;
                 }
             }
-            long matrixCopyStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+            long matrixCopyStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0;
             if (MIRRORED_MATRICES && this.matricesDirty) {
                 // peekMatrix: matrix() returns a sixteen-float copy that is fed straight to arraycopy here - an
                 // allocation made only to be copied again. The stack's own array is the same sixteen floats.
@@ -10044,8 +9917,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                         this.glModelView, 0, 16);
                 this.matricesDirty = false;
             }
-            if (BATCH_TIMINGS) this.immediateStatistics.addMatrixCopyNanos(System.nanoTime() - matrixCopyStart);
-            long captureStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+            if (DrawCounters.BATCH_TIMINGS) this.immediateStatistics.addMatrixCopyNanos(System.nanoTime() - matrixCopyStart);
+            long captureStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0;
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offCapture");
             // The key is cached on the same three versions the signature is (round 58) plus the layout id: the key is
             // a pure function of the signature and the id, so "the versions and the id are the ones the key was taken
@@ -10054,7 +9927,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // place that reads the values.
             int[] state = this.celtium$stateScratch;
             long stateKey = celtium$offerStateKey(formatId);
-            if (BATCH_TIMINGS) this.immediateStatistics.addStateKeyNanos(System.nanoTime() - captureStart);
+            if (DrawCounters.BATCH_TIMINGS) this.immediateStatistics.addStateKeyNanos(System.nanoTime() - captureStart);
             if (SKY_NO_DEPTH && formatId == 7 && vertexCount == 676) {
                 // Diagnostic only: the same draw with the depth test removed, so the picture says whether the depth
                 // attachment is what removes it. It edits the captured values, so it needs them materialised.
@@ -10080,12 +9953,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // keeps drawing those passes with the program that is actually bound. The question is per-batch state the
             // group key cannot see, so it is answered before the fast-merge decision - the fast path must not skip a
             // check that would have refused.
-            long programQueryStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+            long programQueryStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0;
             int boundProgram = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$currentProgram();
             if (boundProgram == Integer.MIN_VALUE) {
                 boundProgram = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20C.GL_CURRENT_PROGRAM);
             }
-            if (BATCH_TIMINGS) {
+            if (DrawCounters.BATCH_TIMINGS) {
                 this.immediateStatistics.addProgramQueryNanos(System.nanoTime() - programQueryStart);
                 this.immediateStatistics.noteBatchTimed();
             }
@@ -10139,10 +10012,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // The registry keeps a one-entry memo keyed by the GL name, so resolving the same name twice in a row is a
             // field compare rather than a second hash - which is why this asks directly instead of threading the earlier
             // lookup through.
-            long registryStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
+            long registryStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0L;
             org.soutalab.celtium.vulkan.VulkanGlTexture liveTextureImage =
                     boundTexture == 0 ? null : celtium$registry().get(boundTexture);
-            if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_REGISTRY, System.nanoTime() - registryStart);
+            if (DrawCounters.BATCH_TIMINGS) celtium$noteAcceptPart(PART_REGISTRY, System.nanoTime() - registryStart);
             // Mark here unconditionally: the existing stage-9 mark sits inside a refusal-only branch, so the
             // interval that follows it averaged across whichever batches happened to mark both ends and read as an
             // artefact. From this point the marks measure the group decision and the append, which is where the accept
@@ -10150,7 +10023,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             celtium$offerStage(9);
             org.soutalab.celtium.vulkan.FramePassTimings.end("offPrepare");
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offMerge");
-            long acceptDecideStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
+            long acceptDecideStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0L;
             // NO_MERGE is tested here too: without it the diagnostic only reached the slow path's predicate, which sees
             // batches whose key already differs, and a noMerge leg kept the shipped group count (r65nomerge: 115-117 a
             // frame against the control's 117-120), so it measured nothing.
@@ -10174,7 +10047,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             }
             // Stage 10 marks the end of the fast-merge decision: the interval from stage 9 is what that decision costs.
             celtium$offerStage(10);
-            if (BATCH_TIMINGS && acceptDecideStart != 0L) {
+            if (DrawCounters.BATCH_TIMINGS && acceptDecideStart != 0L) {
                 this.acceptDecideNanos += System.nanoTime() - acceptDecideStart;
             }
             // The decision's bracket closes here, on both paths. It used to close at the end of the slow path only, so
@@ -10182,10 +10055,10 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // added, and the next slow path's close attributed everything since the first unanswered open to "merge".
             // The accept-path split in docs/development.md was read as "offMerge 0.5 ms, ~0.43 us a batch, no hotspot"
             // from exactly that: what the bracket actually held was the slow path's prepareImmediate, group open and
-            // mirror supply. The slow half is named by the offer-stage marks (stage 10 to 12, BATCH_TIMINGS) and by
+            // mirror supply. The slow half is named by the offer-stage marks (stage 10 to 12, DrawCounters.BATCH_TIMINGS) and by
             // acceptPreflightNanos, which is where to read it now that this bracket means only the predicate.
             org.soutalab.celtium.vulkan.FramePassTimings.end("offMerge");
-            long acceptPreflightStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
+            long acceptPreflightStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0L;
             if (!fastMerged) {
             // The accept path's own bracket for the section no bracket held: the mirror supply and the pipeline/descriptor
             // preparation. `offPrepare` closes before the merge decision and `offAppend` opens after the group is opened,
@@ -10195,8 +10068,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             org.soutalab.celtium.vulkan.FramePassTimings.begin("offPreflight");
             // Split of the 1.87 ms per batch call: the preflight (pipeline and descriptor preparation) against the rest
             // of the body (which the existing immediateSubmitNanos already times as a whole).
-            long preflightStart = BATCH_TIMINGS ? System.nanoTime() : 0;
-            long preflightCpuStart = BATCH_TIMINGS ? threadCpuNanos() : -1L;
+            long preflightStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0;
+            long preflightCpuStart = DrawCounters.BATCH_TIMINGS ? DrawCounters.threadCpuNanos() : -1L;
             // A texture nothing has announced yet gets its one full supply here, before the preflight that refuses when no
             // mirror exists. Entity and TESR models sample their own skins and none of the upload hooks see them, so without
             // this their offers could never be accepted however correct the rest of the path was. Once per GL id.
@@ -10211,7 +10084,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             // undefined (audit A04). The second was missing, so a partially patched texture kept every batch going to GL -
             // measured as 801 format-5 refusals per run, all reading "the mirror for texture N has never received its
             // full content" - while the fix was the same full upload that was already written here.
-            long supplyStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
+            long supplyStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0L;
             // Whether the supply below could have replaced the wrapper this offer already resolved. Only the branch
             // that hands a name with no complete mirror to celtium$supplyMirror can create one (imageFor); the refresh
             // branch uploads into the wrapper it is given. The answer is what lets the preflight and the group open
@@ -10224,17 +10097,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             else if (boundTexture > 0 && boundTexture != this.atlasGlId && boundTexture != this.lightmapGlId) {
                 celtium$refreshRawWrites(boundTexture, existing);
             }
-            if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_SUPPLY, System.nanoTime() - supplyStart);
+            if (DrawCounters.BATCH_TIMINGS) celtium$noteAcceptPart(PART_SUPPLY, System.nanoTime() - supplyStart);
             this.slowPathWriteEpoch = org.soutalab.celtium.vulkan.gl.GlsmFrontend.textureWriteEpoch();
             // The slow path is the only reader of the captured values, and the key cache may have left the scratch
             // array stale: materialise it here, once, before the preflight and the group open both read it.
             celtium$materializeOfferState();
-            long prepareStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
+            long prepareStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0L;
             PreparedImmediate prepared = prepareImmediate(formatId, boundTexture, stateKey, state,
                     liveTextureImage, !wrapperMayHaveMoved);
-            if (BATCH_TIMINGS) celtium$noteAcceptPart(PART_PREPARE, System.nanoTime() - prepareStart);
-            long preflightCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
-            if (BATCH_TIMINGS) this.immediateStatistics.addPrepareImmediateNanos(System.nanoTime() - preflightStart);
+            if (DrawCounters.BATCH_TIMINGS) celtium$noteAcceptPart(PART_PREPARE, System.nanoTime() - prepareStart);
+            long preflightCpuEnd = DrawCounters.BATCH_TIMINGS ? DrawCounters.threadCpuNanos() : -1L;
+            if (DrawCounters.BATCH_TIMINGS) this.immediateStatistics.addPrepareImmediateNanos(System.nanoTime() - preflightStart);
             if (preflightCpuStart >= 0 && preflightCpuEnd >= 0) this.preflightCpuNanos += preflightCpuEnd - preflightCpuStart;
             this.immediateStatistics.notePrepareImmediateCalls();
             org.soutalab.celtium.vulkan.FramePassTimings.end("offPreflight");
@@ -10420,8 +10293,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                         this.groupChange.celtium$textureAffineMoved(), this.groupChange.celtium$fogMoved(), lightParamsMoved));
                 // A new matrix pair means a new group: mixing them is what placed geometry off-screen.
                 closeCurrentImmediateGroup();
-                long groupCreateStart = BATCH_TIMINGS ? System.nanoTime() : 0;
-                long groupCreateCpuStart = BATCH_TIMINGS ? threadCpuNanos() : -1L;
+                long groupCreateStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0;
+                long groupCreateCpuStart = DrawCounters.BATCH_TIMINGS ? DrawCounters.threadCpuNanos() : -1L;
                 if (retained == null) {
                     this.currentImmediateMesh = celtium$newImmediateMesh();
                 } else {
@@ -10431,8 +10304,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     this.currentGeometryLease = this.retainedGeometry.acquire(retained, drawMode, indices);
                     this.currentImmediateMesh = this.currentGeometryLease.value();
                 }
-                long groupCreateCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
-                if (BATCH_TIMINGS) this.immediateStatistics.addGroupCreateNanos(System.nanoTime() - groupCreateStart);
+                long groupCreateCpuEnd = DrawCounters.BATCH_TIMINGS ? DrawCounters.threadCpuNanos() : -1L;
+                if (DrawCounters.BATCH_TIMINGS) this.immediateStatistics.addGroupCreateNanos(System.nanoTime() - groupCreateStart);
                 if (groupCreateCpuStart >= 0 && groupCreateCpuEnd >= 0) this.groupCreateCpuNanos += groupCreateCpuEnd - groupCreateCpuStart;
                 this.immediateStatistics.noteGroupCreateCount();
                 // The target and viewport belong to the group being created, here, and not to whichever group happened to be
@@ -10466,7 +10339,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // identity, so a batch drawn under a different GUI matrix can still join this group: the transform it
                 // would have had is baked into its vertices instead of being carried in the group's push constants.
                 // Everything else keeps the matrix as part of the key exactly as before.
-                if (RETAINED_CENSUS) {
+                if (DrawCounters.RETAINED_CENSUS) {
                     // Counted where the decision is made, not at the draw: a lease can be released before the group is
                     // recorded, and the draw-time census reported 3 retained groups a frame against 197 total.
                     if (retained != null) {
@@ -10561,7 +10434,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // depth test, depth write, culling and the alpha reference all off - a state-keyed pipeline cache whose
                 // keys were right and whose values were empty. Cloned rather than referenced so the snapshot cannot be
                 // overwritten by the next capture.
-                long cloneStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+                long cloneStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0;
                 // Copied into the field's own array rather than cloned into a new one: the group takes its own copy when
                 // it is closed (ImmediateGroup owns its state), so this array only has to stay stable while the group is
                 // open - one arraycopy, no allocation per group (~180 a frame).
@@ -10569,7 +10442,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     this.currentGroupState = new int[state.length];
                 }
                 System.arraycopy(state, 0, this.currentGroupState, 0, state.length);
-                if (BATCH_TIMINGS) this.immediateStatistics.addGroupCloneNanos(System.nanoTime() - cloneStart);
+                if (DrawCounters.BATCH_TIMINGS) this.immediateStatistics.addGroupCloneNanos(System.nanoTime() - cloneStart);
                 this.immediateStatistics.noteGroupCloneCount();
                 // The fog this batch was offered under, taken here for the same reason the state above is: at this
                 // moment the live fog state is the batch's own, and by the time the group closes the game may have
@@ -10734,7 +10607,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 return false;
             }
             }
-            if (BATCH_TIMINGS && acceptPreflightStart != 0L) {
+            if (DrawCounters.BATCH_TIMINGS && acceptPreflightStart != 0L) {
                 long now = System.nanoTime();
                 this.acceptPreflightNanos += now - acceptPreflightStart;
                 acceptPreflightStart = now;
@@ -10758,8 +10631,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 return false;
             }
 
-            long appendStart = BATCH_TIMINGS ? System.nanoTime() : 0;
-            long appendCpuStart = BATCH_TIMINGS ? threadCpuNanos() : -1L;
+            long appendStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0;
+            long appendCpuStart = DrawCounters.BATCH_TIMINGS ? DrawCounters.threadCpuNanos() : -1L;
             // A pre-transformed group bakes the live modelView into this batch's positions on append: the GUI matrices
             // that would have split the group are applied exactly here instead of being carried in its key.
             // The reuse census covers both families: it hashes the source block before either append, because the
@@ -10785,8 +10658,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                             : this.currentImmediateMesh.copyVerticesTransformed(vertexAddress, vertexStride, vertexCount,
                                     indices, this.glModelView))
                     : this.currentImmediateMesh.copyVertices(vertexAddress, vertexStride, vertexCount, indices));
-            long appendCpuEnd = BATCH_TIMINGS ? threadCpuNanos() : -1L;
-            if (BATCH_TIMINGS) this.immediateStatistics.addAppendNanos(System.nanoTime() - appendStart);
+            long appendCpuEnd = DrawCounters.BATCH_TIMINGS ? DrawCounters.threadCpuNanos() : -1L;
+            if (DrawCounters.BATCH_TIMINGS) this.immediateStatistics.addAppendNanos(System.nanoTime() - appendStart);
             if (appendCpuStart >= 0 && appendCpuEnd >= 0) this.appendCpuNanos += appendCpuEnd - appendCpuStart;
             org.soutalab.celtium.vulkan.FramePassTimings.end("offAppend");
             this.immediateStatistics.noteAppendCount();
@@ -10849,7 +10722,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                         ? this.immediateGroups.size() : 0;
                 long hudP0WindowStartedNanos = hudP0WindowGroups > 0
                         && HudP0Census.guiClosedGroups(this.immediateGroups) > 0 ? System.nanoTime() : 0L;
-                long acceptFlushStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
+                long acceptFlushStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0L;
                 // The flight-c4 census (flight-c3-desk section 4): this firing is a size trip, counted
                 // with the pending count it crossed at, and when the acceptance that tripped it is a
                 // retained one the flush it forces is timed under the acceptance's own bracket, so
@@ -11711,7 +11584,7 @@ this.frameBufferOpen = false;
         else if (environmentVersion != this.celtium$keyCacheEnvironments[slot]) this.celtium$keyMissEnvironment++;
         else this.celtium$keyMissWindow++;
         this.celtium$offerStateFresh = false;
-        long captureStarted = BATCH_TIMINGS ? System.nanoTime() : 0L;
+        long captureStarted = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0L;
         if (!sameFormatValid) {
             celtium$stateSignature(signature, stateVersion, currentEnvironment, environmentVersion, windowTarget);
         }
@@ -11775,7 +11648,7 @@ this.frameBufferOpen = false;
         if (this.celtium$offerStateFresh) {
             return;
         }
-        long started = BATCH_TIMINGS ? System.nanoTime() : 0L;
+        long started = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0L;
         int[] signature = this.celtium$stateSignature;
         celtium$stateSignature(signature);
         celtium$materializeSignature(signature, started);
@@ -11785,7 +11658,7 @@ this.frameBufferOpen = false;
         celtium$stateFromSignature(signature, this.celtium$stateScratch);
         celtium$noteStateStatistics(this.celtium$stateScratch, signature[SIGNATURE_COLOR_MASK]);
         this.celtium$offerStateFresh = true;
-        if (BATCH_TIMINGS) this.immediateStatistics.addCaptureStateNanos(System.nanoTime() - started);
+        if (DrawCounters.BATCH_TIMINGS) this.immediateStatistics.addCaptureStateNanos(System.nanoTime() - started);
     }
 
     /**
@@ -13151,8 +13024,8 @@ this.frameBufferOpen = false;
         // Counted here, after the emptiness check: clearOrderFlushes counts *calls* (many return early), so it cannot
         // say how many handoffs a frame really makes. The wall time is what says whether a handoff is a stall.
         this.immediateStatistics.noteActualFlushes();
-        long flushStartedNanos = BATCH_TIMINGS ? System.nanoTime() : 0;
-        long flushCpuStartedNanos = BATCH_TIMINGS ? threadCpuNanos() : -1L;
+        long flushStartedNanos = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0;
+        long flushCpuStartedNanos = DrawCounters.BATCH_TIMINGS ? DrawCounters.threadCpuNanos() : -1L;
         boolean guiFlush = FramePassTimings.guiSectionActive();
         // Item 312 P0: the flush window's group count is the pending list's size at entry (the caller
         // closed the open group before this point), and its wall time is fitted against that count in
@@ -13206,8 +13079,8 @@ this.frameBufferOpen = false;
                 }
             }
             this.immediateStatistics.noteOrderPreservingFlushes();
-            long tookNanos = BATCH_TIMINGS ? System.nanoTime() - flushStartedNanos : 0;
-            long flushCpuEndedNanos = BATCH_TIMINGS ? threadCpuNanos() : -1L;
+            long tookNanos = DrawCounters.BATCH_TIMINGS ? System.nanoTime() - flushStartedNanos : 0;
+            long flushCpuEndedNanos = DrawCounters.BATCH_TIMINGS ? DrawCounters.threadCpuNanos() : -1L;
             if (flushCpuStartedNanos >= 0 && flushCpuEndedNanos >= 0) {
                 this.immediateStatistics.addActualFlushCpuNanos(flushCpuEndedNanos - flushCpuStartedNanos);
             }
@@ -14359,7 +14232,7 @@ this.frameBufferOpen = false;
             TargetFormatClass pairClass) {
         // Split of the 1.09 ms per prepareImmediate call: the pipeline lookup and the texture registry lookup (which
         // can reach OpenGL and mirror an image) against the pipeline/descriptor branch below.
-        long prepLookupStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+        long prepLookupStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0;
         VulkanTerrainPipeline terrain = this.terrain.pipelineFor(this.lastUiPass);
         // A fallback to this.terrainPipelineForFrame was tried here and measured preparePassFallbacks=0: the frame's world
         // pipeline is null at the same moments, which is what says those offers belong to the composite path's own layout
@@ -14367,11 +14240,11 @@ this.frameBufferOpen = false;
         // rather than kept as an unreachable branch; only the named failure reason below is kept, because it is what
         // settled the question. Under the GL-less window the same absence means a UI-only screen, and those batches
         // must still draw: the standalone frame-compatible render pass stands in.
-        if (BATCH_TIMINGS) this.immediateStatistics.addPrepTerrainPipelineNanos(System.nanoTime() - prepLookupStart);
+        if (DrawCounters.BATCH_TIMINGS) this.immediateStatistics.addPrepTerrainPipelineNanos(System.nanoTime() - prepLookupStart);
         // A registry created here was absent when the caller asked, so the caller's value is "no registry" rather
         // than an answer about this name and is not used below.
         if (this.textureRegistry == null) this.textureRegistry = celtium$registry();
-        long prepRegistryStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+        long prepRegistryStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0;
         VulkanGlTexture texture = resolvedKnown ? resolved : this.textureRegistry.get(textureId);
         // A framebuffer's colour attachment stands for the image that framebuffer draws into even when the stub keeps
         // a mirror under the name: a mod that allocates its attachment with glTexImage2D(null) gets an (empty) mirror,
@@ -14403,8 +14276,8 @@ this.frameBufferOpen = false;
                 texture = this.textureRegistry.get(textureId);
             }
         }
-        if (BATCH_TIMINGS) this.immediateStatistics.addPrepRegistryNanos(System.nanoTime() - prepRegistryStart);
-        if (BATCH_TIMINGS) this.immediateStatistics.addPrepLookupNanos(System.nanoTime() - prepLookupStart);
+        if (DrawCounters.BATCH_TIMINGS) this.immediateStatistics.addPrepRegistryNanos(System.nanoTime() - prepRegistryStart);
+        if (DrawCounters.BATCH_TIMINGS) this.immediateStatistics.addPrepLookupNanos(System.nanoTime() - prepLookupStart);
         if (VulkanImmediateFormats.samplesTexture(format) && texture == null) {
             this.prepareDescriptorFailures++;
             // The two facts the "no mirror" line cannot say without: whether the stub recorded an extent for the
@@ -14440,7 +14313,7 @@ this.frameBufferOpen = false;
         long pass = pairClass != celtium$frameFormatClass()
                 ? formatClassPipelinePass(pairClass)
                 : terrain != null ? terrain.renderPass() : uiRenderPass();
-        long prepBranchStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+        long prepBranchStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0;
         Object pipeline;
         long descriptor = 0;
         if (format == 5) {
@@ -14567,7 +14440,7 @@ this.frameBufferOpen = false;
                 this.lineBatchesNative++;
             }
         }
-        if (BATCH_TIMINGS) this.immediateStatistics.addPrepBranchNanos(System.nanoTime() - prepBranchStart);
+        if (DrawCounters.BATCH_TIMINGS) this.immediateStatistics.addPrepBranchNanos(System.nanoTime() - prepBranchStart);
         if (VulkanImmediateFormats.samplesTexture(format) && descriptor == 0) {
             // "pipeline or descriptor preflight failed" merged three different causes into one line and a decision could
             // not be made from it: no mirror, a mirror that never received its full content, or a descriptor that could
@@ -21555,7 +21428,7 @@ this.frameBufferOpen = false;
     private static final int PART_PREPARE = 5;
 
     private void celtium$noteAcceptPart(int part, long nanos) {
-        if (BATCH_TIMINGS) {
+        if (DrawCounters.BATCH_TIMINGS) {
             this.acceptPartsNanos[part] += nanos;
             this.acceptPartsCounts[part]++;
         }
@@ -21575,7 +21448,7 @@ this.frameBufferOpen = false;
      * {@code [2^(b-1), 2^b)} nanoseconds, so the percentile bounds are exact upper bounds rather than interpolations:
      * {@code p50<=1024} with {@code max=1234567} says the median offer is a microsecond and the mean is a tail, and
      * {@code p50<=1024} with {@code max=4096} says the microsecond is real work. One array increment per offer, and
-     * only under {@link #BATCH_TIMINGS}.
+     * only under {@link DrawCounters#BATCH_TIMINGS}.
      */
     private final long[] batchDistBuckets = new long[65];
     private long batchDistMax;
@@ -21664,17 +21537,9 @@ this.frameBufferOpen = false;
      * registry's monitor on every format-2 group of every window for them.
      */
     private static final boolean SPLASH_CENSUS = Boolean.getBoolean("celtium.vulkan.splashCensus");
-    /** {@code -Dceltium.debug.retainedCensus=true}: how much of a frame is retained geometry, and how it repeats. */
-    static final boolean RETAINED_CENSUS = Boolean.getBoolean("celtium.debug.retainedCensus");
-    /** {@code -Dceltium.debug.drawKeyCensus=true}: the distinct material keys a frame uses and how often they alternate. */
-    static final boolean DRAW_KEY_CENSUS = Boolean.getBoolean("celtium.debug.drawKeyCensus");
-    /** {@code -Dceltium.debug.groupCensus=true}: the drawn groups' families and depth/blend state, for the ordering scope. */
-    static final boolean GROUP_CENSUS = Boolean.getBoolean("celtium.debug.groupCensus");
     /** Draws per family and state: texture/litItem/unlitItem/colour/other x blend x depthWrite. */
     final long[] groupCensusCounts = new long[12];
     long groupCensusMain;
-    /** {@code -Dceltium.debug.bufferCensus=true}: how many distinct buffers a frame's groups draw from. */
-    static final boolean BUFFER_CENSUS = Boolean.getBoolean("celtium.debug.bufferCensus");
     final java.util.Set<Long> bufferCensusVertexBuffers = new java.util.HashSet<Long>();
     final java.util.Set<Long> bufferCensusIndexBuffers = new java.util.HashSet<Long>();
     long bufferCensusGroups;
@@ -23838,7 +23703,7 @@ this.frameBufferOpen = false;
                 // CELTIUM_MODELVIEW_EXACT line reads groups=4685), and 4,685 bind arrays of 16
                 // bytes alone exceed the 64 KiB default stack. The shape is pinned by
                 // scripts/cpu-contract/immediate_group_stack_scope_check.py.
-                long groupDrawStart = BATCH_TIMINGS ? System.nanoTime() : 0;
+                long groupDrawStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0;
                 org.soutalab.celtium.vulkan.FramePassTimings.end("rcPrepared");
                 org.soutalab.celtium.vulkan.FramePassTimings.begin("grpPrep");
                 org.soutalab.celtium.vulkan.FramePassTimings.end("rcPush");
@@ -23919,22 +23784,22 @@ this.frameBufferOpen = false;
                     // calls per group draw is 324 clock reads on the shipped profile's 162 groups, paid by every run
                     // to fill counters only the diagnostics report reads. The counts stay unconditional, so "how many
                     // draws of each family" is still answered without the timings.
-                    long variantStart = BATCH_TIMINGS ? System.nanoTime() : 0L;
+                    long variantStart = DrawCounters.BATCH_TIMINGS ? System.nanoTime() : 0L;
                     if (pipeline instanceof VulkanImmediateTexturePipeline value) {
                         value.draw(this.commandBuffer, mesh, push, bindDescriptor, this.immediateBindCache);
-                        if (BATCH_TIMINGS) this.textureDrawNanos += System.nanoTime() - variantStart;
+                        if (DrawCounters.BATCH_TIMINGS) this.textureDrawNanos += System.nanoTime() - variantStart;
                         this.textureDrawCount++;
                     } else if (pipeline instanceof VulkanImmediateItemPipeline value) {
                         value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
-                        if (BATCH_TIMINGS) this.itemDrawNanos += System.nanoTime() - variantStart;
+                        if (DrawCounters.BATCH_TIMINGS) this.itemDrawNanos += System.nanoTime() - variantStart;
                         this.itemDrawCount++;
                     } else if (pipeline instanceof VulkanImmediateBlockPipeline value) {
                         value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
-                        if (BATCH_TIMINGS) this.blockDrawNanos += System.nanoTime() - variantStart;
+                        if (DrawCounters.BATCH_TIMINGS) this.blockDrawNanos += System.nanoTime() - variantStart;
                         this.blockDrawCount++;
                     } else if (pipeline instanceof VulkanImmediateParticlePipeline value) {
                         value.draw(this.commandBuffer, mesh, push, prepared.descriptor, this.immediateBindCache);
-                        if (BATCH_TIMINGS) this.particleDrawNanos += System.nanoTime() - variantStart;
+                        if (DrawCounters.BATCH_TIMINGS) this.particleDrawNanos += System.nanoTime() - variantStart;
                         this.particleDrawCount++;
                     } else if (pipeline instanceof VulkanModProgramPipeline.Draw value) {
                         if (value.label != null && this.modPrograms.modTraceLines < 400 && this.frameId >= 300
@@ -23951,7 +23816,7 @@ this.frameBufferOpen = false;
                         value.draw(this.commandBuffer, mesh, this.immediateBindCache);
                     } else {
                         ((VulkanImmediatePipeline) pipeline).draw(this.commandBuffer, mesh, push, this.immediateBindCache);
-                        if (BATCH_TIMINGS) this.genericDrawNanos += System.nanoTime() - variantStart;
+                        if (DrawCounters.BATCH_TIMINGS) this.genericDrawNanos += System.nanoTime() - variantStart;
                         this.genericDrawCount++;
                     }
                     org.soutalab.celtium.vulkan.FramePassTimings.end("grpDraw");
@@ -23978,8 +23843,8 @@ this.frameBufferOpen = false;
                         // erased by it, and the picture then shows the clear colour - which is the fog colour, the same
                         // value a fully fogged plane would have. The clear count is the frame target's, so this says
                         // whether the clear had already been applied when the plane's command was recorded.
-                        if (SKY_FRAME_PROBE >= 0L && this.frameId >= SKY_FRAME_PROBE
-                                && this.skyDrawProbeLines < SKY_FRAME_PROBE_LIMIT) {
+                        if (DrawCounters.SKY_FRAME_PROBE >= 0L && this.frameId >= DrawCounters.SKY_FRAME_PROBE
+                                && this.skyDrawProbeLines < DrawCounters.SKY_FRAME_PROBE_LIMIT) {
                             this.skyDrawProbeLines++;
                             GllessFrameTarget probeTarget = offTargetTarget();
                             System.out.println("[Celtium] CELTIUM_SKY_DRAW frame=" + this.frameId
@@ -23998,7 +23863,7 @@ this.frameBufferOpen = false;
                     // one, which is a visible neighbour in the same family and the same layout.
                     this.highlightProbe.probeLastPrepared = prepared;
                 }
-                if (BUFFER_CENSUS) {
+                if (DrawCounters.BUFFER_CENSUS) {
                     // The premise of one indirect command per run: every group of a run must draw from the same vertex
                     // and index buffer, because an indirect command cannot change the bindings. The frame arena hands
                     // out slices of one buffer per slot, so an arena-backed group qualifies; an owning mesh does not.
@@ -24013,7 +23878,7 @@ this.frameBufferOpen = false;
                         }
                     }
                 }
-                if (GROUP_CENSUS) {
+                if (DrawCounters.GROUP_CENSUS) {
                     // Which population the material ordering could ever move. Index: family (0 texture, 1 lit item,
                     // 2 unlit item, 3 colour, 4 other) * 4 + (blends ? 2 : 0) + (depthWrites ? 1 : 0).
                     Object censusPipeline = prepared.pipeline;
@@ -24032,7 +23897,7 @@ this.frameBufferOpen = false;
                     this.groupCensusCounts[family * 4 + (blends ? 2 : 0) + (depthWrites ? 1 : 0)]++;
                     this.groupCensusMain++;
                 }
-                if (DRAW_KEY_CENSUS) {
+                if (DrawCounters.DRAW_KEY_CENSUS) {
                     // How many distinct (pipeline, descriptor) pairs the frame's groups use, and how often the pair changes
                     // between consecutive groups. The distinct count is the floor on draws after sorting by material; the
                     // switch count says whether the stream is already sorted.
@@ -24069,7 +23934,7 @@ this.frameBufferOpen = false;
                     }
                     this.arrayKeyPrevious = arrayKey;
                 }
-                if (RETAINED_CENSUS) {
+                if (DrawCounters.RETAINED_CENSUS) {
                     // How many of the frame's groups are retained geometry, and how many of them share one cached mesh:
                     // that second number is the ceiling on instancing, and nothing has measured it yet.
                     this.retainedCensusGroups++;
@@ -24087,7 +23952,7 @@ this.frameBufferOpen = false;
                 if (DRAW_BENCH > 0 && this.lastDrawnMesh == null) {
                     this.lastDrawnMesh = mesh;
                 }
-                if (BATCH_TIMINGS) this.immediateStatistics.addGroupDrawNanos(System.nanoTime() - groupDrawStart);
+                if (DrawCounters.BATCH_TIMINGS) this.immediateStatistics.addGroupDrawNanos(System.nanoTime() - groupDrawStart);
                 this.immediateStatistics.noteGroupDrawCount();
                 int batches = group.batches;
                 this.immediateStatistics.addImmediateRecordedBatches(batches);
@@ -24171,7 +24036,7 @@ this.frameBufferOpen = false;
             }
             // The last run of the window has no following group to close it.
             this.indirectRuns.celtium$flushIndirectRun("record-full");
-            if (GROUP_CENSUS) {
+            if (DrawCounters.GROUP_CENSUS) {
                 StringBuilder census = new StringBuilder();
                 String[] families = {"texture", "litItem", "unlitItem", "colour", "other"};
                 for (int i = 0; i < this.groupCensusCounts.length; i++) {

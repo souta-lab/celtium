@@ -98,7 +98,7 @@ def main():
     require('no control-flow exits inside group scope can bypass close',
             'continue;' not in body and 'return;' not in body)
     require('group frame closes before draw-count accounting',
-            method.index('if (BATCH_TIMINGS) this.immediateStatistics.addGroupDrawNanos') > body_end)
+            method.index('if (DrawCounters.BATCH_TIMINGS) this.immediateStatistics.addGroupDrawNanos') > body_end)
     mesh = MESH.read_text(encoding='utf-8')
     require('mesh bind arrays still allocate from the current stack frame (the pattern the scope bounds)',
             'MemoryStack.stackGet()' in mesh and 'stack.longs(' in mesh)
