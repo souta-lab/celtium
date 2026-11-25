@@ -11,6 +11,7 @@ import org.lwjgl.vulkan.*;
 
 import static org.lwjgl.vulkan.VK10.*;
 
+import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 import org.soutalab.celtium.vulkan.terrain.AsyncSectionMesher;
 import org.soutalab.celtium.vulkan.terrain.SectionDesc;
 import org.soutalab.celtium.vulkan.terrain.TerrainSectionStore;
@@ -62,7 +63,14 @@ final class TerrainEngineA {
     private VulkanHostBuffer descBuffer;
     private VulkanHostBuffer factorBaseBuffer;
     private long uploadedGeneration = -1;
-    private final List<VulkanHostBuffer> slabBuffers = new ArrayList<>();
+    // Geometry slabs (wave-2 item 3): each slab's VkBuffer is bound to a dedicated
+    // allocation of the hal SlabAllocator below (SlabAllocator.bindBuffer), not to a
+    // private vkAllocateMemory as a VulkanHostBuffer would make. The allocator is
+    // host-visible so uploads still write through the mapping, at the allocation's
+    // offset. Created lazily with the first slab, from that buffer's own memory
+    // requirement bits, and deleted after every slab buffer in delete().
+    private SlabAllocator slabAllocator;
+    private final List<SlabBuffer> slabBuffers = new ArrayList<>();
     private VulkanHostBuffer factorBuffer;
     private VulkanHostBuffer sortedBuffer;
     private VulkanHostBuffer sharedIndexBuffer;
@@ -154,7 +162,7 @@ final class TerrainEngineA {
         if (registration == null) {
             return null;
         }
-        VulkanHostBuffer slab = slabBuffer(registration.geometry.slabId);
+        SlabBuffer slab = slabBuffer(registration.geometry.slabId);
         long vertexAddress = slab.mappedAddress() + registration.geometry.byteOffset;
         MemoryUtil.memCopy(MemoryUtil.memAddress(built.vertexData), vertexAddress, built.vertexBytes);
         if (built.rdhFactors != null) {
@@ -360,7 +368,7 @@ final class TerrainEngineA {
                 if (!slot.armed[s]) {
                     continue;
                 }
-                VulkanHostBuffer slab = slabBuffer(s);
+                SlabBuffer slab = slabBuffer(s);
                 vertexBuffers.put(0, slab.buffer());
                 offsets.put(0, 0L);
                 vkCmdBindVertexBuffers(commandBuffer, 0, vertexBuffers, offsets);
@@ -414,17 +422,107 @@ final class TerrainEngineA {
         this.uploadedGeneration = generation;
     }
 
-    private VulkanHostBuffer slabBuffer(int slab) {
+    private SlabBuffer slabBuffer(int slab) {
         while (this.slabBuffers.size() <= slab) {
             this.slabBuffers.add(null);
         }
-        VulkanHostBuffer buffer = this.slabBuffers.get(slab);
+        SlabBuffer buffer = this.slabBuffers.get(slab);
         if (buffer == null) {
-            buffer = new VulkanHostBuffer(this.context, this.store.geometryAllocator().slabBytes(),
+            buffer = new SlabBuffer(this.store.geometryAllocator().slabBytes(),
                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
             this.slabBuffers.set(slab, buffer);
         }
         return buffer;
+    }
+
+    /**
+     * One geometry slab's {@code VkBuffer}, bound to a dedicated allocation of this
+     * engine's host-visible hal {@link SlabAllocator} (wave-2 item 3). The buffer owns
+     * no {@code VkDeviceMemory} of its own: the allocator's slab is its memory, bound
+     * through {@link SlabAllocator#bindBuffer} at the allocation's offset, and the
+     * upload mapping is the allocator's mapping plus that offset. A slab-sized request
+     * occupies a whole allocator slab (or a dedicated oversized slab when the buffer's
+     * memory requirements round past the slab size), so the live
+     * {@code VkDeviceMemory} count stays the slab count, as the design's memory
+     * contract requires. Deletion mirrors {@link VulkanBuffer}: an open recording
+     * defers the destroy and the deferred release to the context's retired list.
+     */
+    private final class SlabBuffer {
+        private long handle = VK_NULL_HANDLE;
+        private SlabAllocator.SlabAllocation allocation;
+        private long mapped;
+
+        SlabBuffer(long sizeBytes, int usageFlags) {
+            VkDevice device = TerrainEngineA.this.context.device();
+            long createdBuffer = VK_NULL_HANDLE;
+            SlabAllocator.SlabAllocation createdAllocation = null;
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                VkBufferCreateInfo createInfo = VkBufferCreateInfo.calloc(stack).sType$Default()
+                        .size(sizeBytes)
+                        .usage(usageFlags)
+                        .sharingMode(VK_SHARING_MODE_EXCLUSIVE);
+                LongBuffer handleBuffer = stack.mallocLong(1);
+                check(vkCreateBuffer(device, createInfo, null, handleBuffer),
+                        "vkCreateBuffer(terrain slab, " + sizeBytes + " bytes)");
+                createdBuffer = handleBuffer.get(0);
+                VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
+                vkGetBufferMemoryRequirements(device, createdBuffer, requirements);
+                if (TerrainEngineA.this.slabAllocator == null) {
+                    int memoryType = TerrainEngineA.this.context.memoryTypeIndex(
+                            requirements.memoryTypeBits(),
+                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                            "a host-visible terrain slab of " + sizeBytes + " bytes");
+                    TerrainEngineA.this.slabAllocator = new SlabAllocator(TerrainEngineA.this.context,
+                            memoryType, TerrainEngineA.this.store.geometryAllocator().slabBytes(),
+                            MAX_SLABS, true);
+                }
+                createdAllocation = TerrainEngineA.this.slabAllocator.allocate(
+                        requirements.size(), requirements.alignment());
+                TerrainEngineA.this.slabAllocator.bindBuffer(createdBuffer, createdAllocation);
+            } catch (RuntimeException | Error error) {
+                if (createdBuffer != VK_NULL_HANDLE) {
+                    vkDestroyBuffer(device, createdBuffer, null);
+                }
+                if (createdAllocation != null) {
+                    createdAllocation.owner().release(createdAllocation,
+                            TerrainEngineA.this.context.frameTimeline() == null ? 0L
+                                    : TerrainEngineA.this.context.frameTimeline().lastAllocatedValue());
+                }
+                throw error;
+            }
+            this.handle = createdBuffer;
+            this.allocation = createdAllocation;
+            this.mapped = TerrainEngineA.this.slabAllocator.mappedAddress(createdAllocation);
+        }
+
+        long buffer() {
+            return this.handle;
+        }
+
+        long mappedAddress() {
+            return this.mapped;
+        }
+
+        void delete() {
+            if (this.handle == VK_NULL_HANDLE) {
+                return;
+            }
+            if (TerrainEngineA.this.context.celtium$recordingOpen()) {
+                TerrainEngineA.this.context.celtium$retireSlabBuffer(this.handle, this.allocation,
+                        "terrain-a.slabBuffer.delete");
+                this.handle = VK_NULL_HANDLE;
+                this.allocation = null;
+                return;
+            }
+            vkDestroyBuffer(TerrainEngineA.this.context.device(), this.handle, null);
+            this.handle = VK_NULL_HANDLE;
+            if (this.allocation != null) {
+                this.allocation.owner().release(this.allocation,
+                        TerrainEngineA.this.context.frameTimeline() == null ? 0L
+                                : TerrainEngineA.this.context.frameTimeline().lastAllocatedValue());
+                this.allocation = null;
+            }
+        }
     }
 
     private VulkanHostBuffer factorBuffer() {
@@ -573,9 +671,12 @@ final class TerrainEngineA {
         }
         if (this.descBuffer != null) this.descBuffer.delete();
         if (this.factorBaseBuffer != null) this.factorBaseBuffer.delete();
-        for (VulkanHostBuffer slab : this.slabBuffers) {
+        for (SlabBuffer slab : this.slabBuffers) {
             if (slab != null) slab.delete();
         }
+        // After the slab buffers: the allocator's slabs are the buffers' memory, so
+        // they are freed last (its delete is teardown, freeing live slabs outright).
+        if (this.slabAllocator != null) this.slabAllocator.delete();
         if (this.factorBuffer != null) this.factorBuffer.delete();
         if (this.sortedBuffer != null) this.sortedBuffer.delete();
         if (this.sharedIndexBuffer != null) this.sharedIndexBuffer.delete();
