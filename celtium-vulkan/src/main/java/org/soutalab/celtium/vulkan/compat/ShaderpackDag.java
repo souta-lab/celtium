@@ -34,6 +34,12 @@ public final class ShaderpackDag {
     public static final String SWAPCHAIN = "swapchain";
     /** The main depth the gbuffers stage produces and the deferred/composite stages read. */
     public static final String DEPTHTEX0 = "depthtex0";
+    /**
+     * The pre-translucent depth snapshot: a copy of {@link #DEPTHTEX0} taken when the opaque gbuffers
+     * finish, which the translucent programs sample (they render into the live depth, so the depth
+     * they test against has to be the copy).
+     */
+    public static final String DEPTHTEX1 = "depthtex1";
     /** The indirect draw buffer the main-camera cull produces for the gbuffers terrain node. */
     public static final String INDIRECT_MAIN = "indirect:main";
     /** The indirect draw buffer the light-camera cull produces for the shadow terrain node. */
@@ -124,14 +130,15 @@ public final class ShaderpackDag {
 
     /**
      * Builds the canonical pack DAG: shadow cull and shadow pass (when the pack has shadows), main
-     * cull, the gbuffers terrain pass writing {@code gbufferTargets} colour targets plus {@link
-     * #DEPTHTEX0}, then the pack's deferred and composite fullscreen passes over the colour set, and
-     * the final pass writing {@link #SWAPCHAIN}. Deferred and composite passes declare the colour set
-     * as both read and written - the ping-pong between them is the compiler's aliasing problem, not
-     * the DAG's; the DAG only fixes the order.
+     * cull, the opaque gbuffers terrain pass writing {@code gbufferTargets} colour targets plus
+     * {@link #DEPTHTEX0}, then the pack's deferred fullscreen passes over the colour set, the
+     * translucent terrain pass (when the pack renders translucent terrain) sampling {@link
+     * #DEPTHTEX1}, the composite passes, and the final pass writing {@link #SWAPCHAIN}. Deferred and
+     * composite passes declare the colour set as both read and written - the ping-pong between them
+     * is the compiler's aliasing problem, not the DAG's; the DAG only fixes the order.
      */
     public static ShaderpackDag standard(boolean shadowEnabled, int gbufferTargets,
-            int deferredPasses, int compositePasses) {
+            int deferredPasses, int compositePasses, boolean translucentTerrain) {
         if (gbufferTargets < 1 || gbufferTargets > 8) {
             throw new IllegalArgumentException("gbufferTargets out of range: " + gbufferTargets);
         }
@@ -161,9 +168,26 @@ public final class ShaderpackDag {
         builder.node("gbuffers", ShaderpackStage.GBUFFERS, NodeKind.TERRAIN, gbufferReads, gbufferWrites);
         List<String> resolved = new ArrayList<>(colours);
         resolved.add(DEPTHTEX0);
+        if (translucentTerrain) {
+            // The snapshot the translucent programs sample, taken as the opaque scene completes -
+            // before any deferred pass can be mistaken for its source.
+            builder.node("depthtex1-copy", ShaderpackStage.DEFERRED, NodeKind.FULLSCREEN,
+                    list(DEPTHTEX0), list(DEPTHTEX1));
+            resolved.add(DEPTHTEX1);
+        }
         for (int i = 0; i < deferredPasses; i++) {
             builder.node("deferred" + i, ShaderpackStage.DEFERRED, NodeKind.FULLSCREEN,
                     resolved, colours);
+        }
+        if (translucentTerrain) {
+            List<String> translucentReads = new ArrayList<>();
+            translucentReads.add(INDIRECT_MAIN);
+            translucentReads.add(DEPTHTEX1);
+            translucentReads.addAll(colours);
+            List<String> translucentWrites = new ArrayList<>(colours);
+            translucentWrites.add(DEPTHTEX0);
+            builder.node("translucent", ShaderpackStage.TRANSLUCENT, NodeKind.TERRAIN,
+                    translucentReads, translucentWrites);
         }
         for (int i = 0; i < compositePasses; i++) {
             builder.node("composite" + i, ShaderpackStage.COMPOSITE, NodeKind.FULLSCREEN,

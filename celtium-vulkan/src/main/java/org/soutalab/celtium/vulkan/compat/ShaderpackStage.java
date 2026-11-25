@@ -5,20 +5,29 @@ package org.soutalab.celtium.vulkan.compat;
  * Demonica's (Iris's) own: the pack does not invent new ones, it fills these in - so the host's DAG is
  * built over this closed set and a pack that omits a stage simply leaves that stage's nodes out.
  * <p>
- * Two stages draw terrain and therefore consume a GPU cull: {@link #SHADOW} culls against the light's
- * camera, {@link #GBUFFERS} against the player's. The culls are independent dispatches over the same
- * resident section data, which is what lets them run in parallel (design {@code CELTIUM-NEW-ARCH}
- * section 2.1: "Shadow/Main parallel GPU culling"). The remaining stages are fullscreen passes over
- * the gbuffer targets the terrain stages produced.
+ * Three stages draw terrain and therefore consume a GPU cull: {@link #SHADOW} culls against the
+ * light's camera, {@link #GBUFFERS} and {@link #TRANSLUCENT} against the player's. The culls are
+ * independent dispatches over the same resident section data, which is what lets them run in parallel
+ * (design {@code CELTIUM-NEW-ARCH} section 2.1: "Shadow/Main parallel GPU culling"). The remaining
+ * stages are fullscreen passes over the gbuffer targets the terrain stages produced.
+ * <p>
+ * {@link #TRANSLUCENT} sits between {@link #DEFERRED} and {@link #COMPOSITE}, not inside {@link
+ * #GBUFFERS}: that is where the pack actually runs its translucent terrain programs ({@code
+ * gbuffers_water}, {@code gbuffers_hand}) - after the deferred lighting has resolved the opaque
+ * scene, sampling the pre-translucent depth snapshot. The old GLSM path met this ordering as an
+ * accident of FBO binds (a depthless deferred FBO, then a depth-carrying water FBO over the same
+ * targets); the DAG states it.
  */
 public enum ShaderpackStage {
 
     /** The shadow map render: terrain and entities from the light's point of view. */
     SHADOW(true, CullCamera.SHADOW),
-    /** The geometry render: terrain, entities and block entities into the MRT gbuffer set. */
+    /** The opaque geometry render: terrain, entities and block entities into the MRT gbuffer set. */
     GBUFFERS(true, CullCamera.MAIN),
     /** Lighting and material resolution over the gbuffers, before translucency completes the scene. */
     DEFERRED(false, CullCamera.NONE),
+    /** The translucent terrain render (water, hand) over the resolved opaque scene. */
+    TRANSLUCENT(true, CullCamera.MAIN),
     /** Post effects over the resolved scene (bloom, tonemapping preparation, volumetrics). */
     COMPOSITE(false, CullCamera.NONE),
     /** The last pass: writes the frame to the swapchain image directly, no composite blit after it. */

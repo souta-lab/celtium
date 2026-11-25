@@ -32,11 +32,29 @@ public final class ShaderpackHost {
 
     /**
      * What the loaded pack declares: whether it renders shadows, how many colour targets its gbuffers
-     * stage writes, and how many fullscreen passes its deferred and composite stages run. A pack that
-     * declares a stage it cannot fill is refused by the DAG validation, not patched over.
+     * stage writes, how many fullscreen passes its deferred and composite stages run, and whether it
+     * renders translucent terrain in the post-deferred slot. A pack that declares a stage it cannot
+     * fill is refused by the DAG validation, not patched over.
      */
     public record Profile(boolean shadowEnabled, int gbufferTargets, int deferredPasses,
-            int compositePasses) {
+            int compositePasses, boolean translucentTerrain) {
+    }
+
+    /**
+     * The light's camera for the shadow cull: the view-projection the shadow stage will render with,
+     * as sixteen column-major floats. The parallel cull plan needs this <em>at frame start</em> -
+     * before the shadow stage opens - and today's tree has no such handoff: Demonica computes the
+     * shadow matrices inside its own shadow setup and celtium only ever sees them as the {@code
+     * ChunkRenderMatrices} of the terrain calls that follow, or as the arguments of {@code
+     * InternalShadowRenderingState.begin(...)} that the timing mixins already observe. This interface
+     * is the contract that handoff has to fill at integration; until a source is set, {@link
+     * #shadowViewProjection()} answers null and the shadow cull must be scheduled from the terrain
+     * call's matrices instead of in parallel - a scheduling fact the caller can see, not a silent
+     * fallback.
+     */
+    public interface ShadowCameraSource {
+        /** {@return the shadow view-projection for this frame}, or null when not yet known. */
+        float[] shadowViewProjection();
     }
 
     /**
@@ -136,6 +154,7 @@ public final class ShaderpackHost {
     private final PackProgramSource source;
     private volatile Profile profile;
     private volatile ShaderpackDag dag;
+    private volatile ShadowCameraSource shadowCameraSource;
 
     public ShaderpackHost(PackProgramSource source) {
         this.source = source;
@@ -153,9 +172,25 @@ public final class ShaderpackHost {
      */
     public void setProfile(Profile profile) {
         ShaderpackDag built = profile == null ? null : ShaderpackDag.standard(profile.shadowEnabled(),
-                profile.gbufferTargets(), profile.deferredPasses(), profile.compositePasses());
+                profile.gbufferTargets(), profile.deferredPasses(), profile.compositePasses(),
+                profile.translucentTerrain());
         this.profile = profile;
         this.dag = built;
+    }
+
+    /** Sets the frame-start source of the shadow camera, or clears it with null. */
+    public void setShadowCameraSource(ShadowCameraSource source) {
+        this.shadowCameraSource = source;
+    }
+
+    /**
+     * {@return the shadow view-projection for this frame} from the registered {@link
+     * ShadowCameraSource}, or null when no source is registered or it does not know yet - in which
+     * case the shadow cull cannot be scheduled in parallel at frame start (see the interface's note).
+     */
+    public float[] shadowViewProjection() {
+        ShadowCameraSource source = this.shadowCameraSource;
+        return source == null ? null : source.shadowViewProjection();
     }
 
     /** {@return whether a pack profile is loaded}; without one the frame takes the vanilla graph. */
