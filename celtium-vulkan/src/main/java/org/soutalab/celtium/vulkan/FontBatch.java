@@ -274,6 +274,15 @@ public final class FontBatch {
 
     /** Bounds on the retention queue: a refused run is kept, but a session that can never submit must not grow. */
     private static final int MAX_RETAINED_RUNS = 64;
+
+    /**
+     * Consecutive refusals after which retained re-offers back off for {@link #RETAINED_BACKOFF_NANOS}. Three, so an
+     * isolated refusal - the case the retention contract exists for - is still retried at the very next flush, and
+     * only a run the sink keeps refusing pays the delay.
+     */
+    private static final int RETAINED_BACKOFF_REFUSALS = 3;
+    /** How long retained re-offers pause once the backoff has engaged; see {@link #offer}. */
+    private static final long RETAINED_BACKOFF_NANOS = 50_000_000L;
     private static final int MAX_RETAINED_BYTES = 4 * 1024 * 1024;
 
     /**
@@ -376,6 +385,13 @@ public final class FontBatch {
     private boolean flushInProgress;
     /** How many re-entrant flush calls the guard turned away; reported with the retention census. */
     private long flushReentriesSuppressed;
+
+    /** Offers refused in a row, across the open run and the retained queue; reset by any accepted offer. */
+    private int consecutiveOfferRefusals;
+    /** While {@code System.nanoTime()} is below this, retained re-offers pause; set by {@link #offer}. */
+    private long retainedRetryNotBeforeNanos;
+    /** How many retained re-offers the backoff turned away; reported with the retention census. */
+    private long retainedOffersThrottled;
 
     /** How each coalesced run was flushed: by an intervening submission, a boundary, or a state change. */
     private int flushedIntervening;
@@ -939,11 +955,28 @@ public final class FontBatch {
      * run whose submission threw is not a run that was drawn.
      */
     private boolean offer(Run run, RunSink target) {
+        boolean accepted;
         try {
-            return target.submit(run);
+            accepted = target.submit(run);
         } catch (RuntimeException | LinkageError error) {
-            return false;
+            accepted = false;
         }
+        if (accepted) {
+            this.consecutiveOfferRefusals = 0;
+        } else {
+            // A refused run is re-offered at every flush point until the frame boundary drops it, and every
+            // attempt pays a full submission - which, when the refusal is an allocation failure in an exhausted
+            // slab pool, pays the allocator's refusal diagnostics on top. Measured on the integrated tree's B2
+            // run with the re-entrancy guard in place: 31,418 refusals in one run, visible as multi-second
+            // presentation stalls at the camera teleports. After a short streak of consecutive refusals the
+            // re-offers pause briefly; the run itself is still retained and still dropped at the same frame
+            // boundary as before, so the ordering and loss contracts are unchanged - only the retry rate is.
+            this.consecutiveOfferRefusals++;
+            if (this.consecutiveOfferRefusals >= RETAINED_BACKOFF_REFUSALS) {
+                this.retainedRetryNotBeforeNanos = System.nanoTime() + RETAINED_BACKOFF_NANOS;
+            }
+        }
+        return accepted;
     }
 
     /** Copies a refused run out of the pending buffer, bounded, so the next glyph cannot overwrite it. */
@@ -969,6 +1002,9 @@ public final class FontBatch {
      * flushes the open run is the only place this can be decided, so it is called there.
      */
     public void celtium$dropRetainedAtFrameBoundary() {
+        // The queue the refusal streak was about is gone with the frame; the next frame's runs start unthrottled.
+        this.consecutiveOfferRefusals = 0;
+        this.retainedRetryNotBeforeNanos = 0L;
         if (this.retained.isEmpty()) {
             return;
         }
@@ -994,6 +1030,12 @@ public final class FontBatch {
         }
         long current = view.targetIdentity();
         while (!this.retained.isEmpty() && this.retained.peekFirst().targetIdentity == current) {
+            if (System.nanoTime() < this.retainedRetryNotBeforeNanos) {
+                // The backoff from a streak of refusals (see offer): the head run stays queued, in order, and
+                // is offered again once the pause lapses or the frame boundary drops it.
+                this.retainedOffersThrottled++;
+                return;
+            }
             // Detached before the offer, for the same reason the open run is marked inactive before its submission:
             // the submission's own entry flush re-enters this method, and a head still on the queue is offered again
             // by that nested call - the leg-5 Demonica run recursed on exactly that until the stack ran out, because
@@ -1066,7 +1108,8 @@ public final class FontBatch {
                 + " retainedPendingBytes=" + this.retainedBytes
                 + " retainedDroppedRuns=" + this.retainedDroppedRuns
                 + " retainedDroppedQuads=" + this.retainedDroppedQuads
-                + " fontFlushReentriesSuppressed=" + this.flushReentriesSuppressed;
+                + " fontFlushReentriesSuppressed=" + this.flushReentriesSuppressed
+                + " retainedOffersThrottled=" + this.retainedOffersThrottled;
     }
 
     /**
