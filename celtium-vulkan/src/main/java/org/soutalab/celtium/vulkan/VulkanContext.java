@@ -5249,6 +5249,7 @@ public final class VulkanContext {
                 preCopyBarrier.get(0).sType$Default()
                         .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT)
                         .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+                DrawCounters.notePipelineBarrier();
                 vkCmdPipelineBarrier(commandBuffer,
                         VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT
                                 | VK_PIPELINE_STAGE_HOST_BIT,
@@ -5295,6 +5296,7 @@ public final class VulkanContext {
                                 | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT
                                 | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT
                                 | VK_ACCESS_MEMORY_READ_BIT);
+                DrawCounters.notePipelineBarrier();
                 vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, barrier, null, null);
             }
@@ -6141,6 +6143,7 @@ public final class VulkanContext {
             preCopy.get(0).sType$Default()
                     .srcAccessMask(VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
                     .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commandBuffer,
                     VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
                     VK_PIPELINE_STAGE_TRANSFER_BIT, 0, preCopy, null, null);
@@ -6153,6 +6156,7 @@ public final class VulkanContext {
                     .dstAccessMask(VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT
                             | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT
                             | VK_ACCESS_TRANSFER_WRITE_BIT);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
                     VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT
                             | VK_PIPELINE_STAGE_TRANSFER_BIT,

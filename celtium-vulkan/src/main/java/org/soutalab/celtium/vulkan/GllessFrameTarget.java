@@ -1243,6 +1243,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
                 barrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
             }
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                     0, null, null, barriers);
         }
@@ -1342,6 +1343,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                                 | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
                 barrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
             }
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                     0, null, null, barriers);
         }
@@ -1396,6 +1398,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                 memoryBarrier.get(0).sType$Default()
                         .srcAccessMask(masks[0])
                         .dstAccessMask(masks[1]);
+                DrawCounters.notePipelineBarrier();
                 vkCmdPipelineBarrier(command, srcStage, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                         0, memoryBarrier, null, null);
             }
@@ -1435,6 +1438,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     .dstAccessMask(depthMasks[1]);
             depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
 
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(command, srcStage,
                     VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barriers);
         }
@@ -2126,6 +2130,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         .srcAccessMask(0)
                         .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
                 toClear.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+                DrawCounters.notePipelineBarrier();
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                         0, null, null, toClear);
 
@@ -2146,6 +2151,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         .dstAccessMask(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT
                                 | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
                 toRead.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+                DrawCounters.notePipelineBarrier();
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                         0, null, null, toRead);
             }
@@ -2282,6 +2288,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     .srcAccessMask(dstLayout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : celtium$layoutSourceAccess(dstLayout))
                     .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
             pre.get(1).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                     0, null, null, pre);
 
@@ -2315,6 +2322,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                             | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
                             | VK_ACCESS_SHADER_READ_BIT);
             post.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                     0, null, null, post);
         }
@@ -2390,6 +2398,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     .srcAccessMask(celtium$layoutSourceAccess(dstLayout))
                     .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
             pre.get(1).subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                     0, null, null, pre);
 
@@ -2419,6 +2428,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                             | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
                             | VK_ACCESS_SHADER_READ_BIT);
             post.get(1).subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                     0, null, null, post);
         }
@@ -3132,6 +3142,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     barrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
                     this.extraColorLayouts[i] = VK_IMAGE_LAYOUT_GENERAL;
                 }
+                DrawCounters.notePipelineBarrier();
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barriers);
             }
@@ -3161,6 +3172,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                                     | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
                     barrier.subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
                 }
+                DrawCounters.notePipelineBarrier();
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barriers);
             }
@@ -3449,6 +3461,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         .dstAccessMask(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
                                 | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
                 barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+                DrawCounters.notePipelineBarrier();
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barrier);
                 depthLayout(command, DEPTH_RENDER_LAYOUT);
@@ -3647,6 +3660,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
                         .dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
                 barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+                DrawCounters.notePipelineBarrier();
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barrier);
             }
@@ -3783,6 +3797,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     barrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
                     depthLayout(command, DEPTH_TRANSFER_LAYOUT);
                 }
+                DrawCounters.notePipelineBarrier();
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                         0, null, null, barriers);
             }
@@ -3833,6 +3848,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                             .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
                     depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
 
+                    DrawCounters.notePipelineBarrier();
                     vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barriers);
                 } else {
@@ -3856,6 +3872,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                             .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
                     depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
 
+                    DrawCounters.notePipelineBarrier();
                     vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, colorBarriers);
                     // The depth barrier rides in its own call when the depth already holds content: TOP_OF_PIPE
@@ -3863,6 +3880,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                     // case above) under it is exactly VUID-vkCmdPipelineBarrier-pImageMemoryBarriers-02819 -
                     // measured on the first leg whose pairs borrowed a written shared depth (leg 16, item 333).
                     // ALL_COMMANDS as the source stage covers every stage those writes could have come from.
+                    DrawCounters.notePipelineBarrier();
                     vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, depthBarriers);
                 }
@@ -3918,6 +3936,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                                 | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
                 depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
 
+                DrawCounters.notePipelineBarrier();
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barriers);
             }
@@ -3960,6 +3979,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
                         .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT).dstAccessMask(depthAccess);
                 depthBarrier.subresourceRange().set(VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
 
+                DrawCounters.notePipelineBarrier();
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                         0, null, null, barriers);
                 depthLayout(command, DEPTH_RENDER_LAYOUT);
