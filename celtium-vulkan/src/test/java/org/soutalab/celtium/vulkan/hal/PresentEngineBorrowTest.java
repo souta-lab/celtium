@@ -77,6 +77,55 @@ class PresentEngineBorrowTest {
     }
 
     @Test
+    void aHandleCarriesTheLayoutItWasBorrowedIn() {
+        PresentEngine engine = new PresentEngine(null, null);
+        engine.adoptSwapchain(0xAA, new long[]{11}, new long[]{21});
+        // The constructor's default is the never-presented shape: a borrower naming an old layout for a
+        // first transition out of this image must say UNDEFINED (its content is undefined).
+        PresentEngine.BorrowedImage handle =
+                new PresentEngine.BorrowedImage(engine, 11, 21, 0, 0, engine.generation());
+        assertEquals(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED, handle.initialLayout());
+        PresentEngine.BorrowedImage presented =
+                new PresentEngine.BorrowedImage(engine, 11, 21, 0, 0, engine.generation(),
+                        org.lwjgl.vulkan.KHRSwapchain.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        assertEquals(org.lwjgl.vulkan.KHRSwapchain.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                presented.initialLayout());
+    }
+
+    @Test
+    void abandoningALiveHandleInvalidatesItAndIsReportedOnce() {
+        PresentEngine engine = new PresentEngine(null, null);
+        engine.adoptSwapchain(0xAA, new long[]{11}, new long[]{21});
+        PresentEngine.BorrowedImage handle =
+                new PresentEngine.BorrowedImage(engine, 11, 21, 0, 0, engine.generation());
+        assertFalse(engine.borrowAbandoned());
+        engine.abandon(handle);
+        assertFalse(handle.isValid());
+        // Consume-on-read: the rebuild the abandonment asks for is requested once, not per frame.
+        assertTrue(engine.borrowAbandoned());
+        assertFalse(engine.borrowAbandoned());
+    }
+
+    @Test
+    void abandoningAStaleOrForeignHandleSetsNothing() {
+        PresentEngine engine = new PresentEngine(null, null);
+        PresentEngine other = new PresentEngine(null, null);
+        engine.adoptSwapchain(0xAA, new long[]{11}, new long[]{21});
+        other.adoptSwapchain(0xBB, new long[]{11}, new long[]{21});
+        PresentEngine.BorrowedImage foreign =
+                new PresentEngine.BorrowedImage(other, 11, 21, 0, 0, other.generation());
+        engine.abandon(foreign);
+        assertTrue(foreign.isValid(), "a foreign handle is not this engine's to invalidate");
+        assertFalse(engine.borrowAbandoned());
+
+        PresentEngine.BorrowedImage stale =
+                new PresentEngine.BorrowedImage(engine, 11, 21, 0, 0, engine.generation());
+        engine.retireSwapchain();
+        engine.abandon(stale);
+        assertFalse(engine.borrowAbandoned());
+    }
+
+    @Test
     void aNewGenerationInvalidatesThePreviousOnesHandles() {
         PresentEngine engine = new PresentEngine(null, null);
         engine.adoptSwapchain(0xAA, new long[]{11}, new long[]{21});

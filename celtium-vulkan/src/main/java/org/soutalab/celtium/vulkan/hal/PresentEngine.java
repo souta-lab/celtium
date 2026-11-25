@@ -17,9 +17,11 @@ import static org.lwjgl.vulkan.KHRSurface.VK_PRESENT_MODE_FIFO_RELAXED_KHR;
 import static org.lwjgl.vulkan.KHRSurface.VK_PRESENT_MODE_IMMEDIATE_KHR;
 import static org.lwjgl.vulkan.KHRSurface.VK_PRESENT_MODE_MAILBOX_KHR;
 import static org.lwjgl.vulkan.KHRSwapchain.VK_ERROR_OUT_OF_DATE_KHR;
+import static org.lwjgl.vulkan.KHRSwapchain.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 import static org.lwjgl.vulkan.KHRSwapchain.VK_SUBOPTIMAL_KHR;
 import static org.lwjgl.vulkan.KHRSwapchain.vkAcquireNextImageKHR;
 import static org.lwjgl.vulkan.KHRSwapchain.vkQueuePresentKHR;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
 import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
@@ -58,6 +60,16 @@ public final class PresentEngine {
     private long swapchain = VK_NULL_HANDLE;
     private long[] swapchainImages = new long[0];
     private long[] swapchainViews = new long[0];
+    /**
+     * Per image index, whether this generation has presented that image at least once. A swapchain image's
+     * layout when it is acquired is {@code UNDEFINED} until its first present and
+     * {@code VK_IMAGE_LAYOUT_PRESENT_SRC_KHR} after it, and a borrower that records layout transitions
+     * against the image has to name the true one - so the fact is tracked here, where the presents that
+     * change it are the ones this engine performs. Reset by every {@link #adoptSwapchain}.
+     */
+    private boolean[] presentedOnce = new boolean[0];
+    /** Set when a live handle is abandoned (see {@link #abandon}); read consume-on-read by the rebuild path. */
+    private boolean borrowAbandoned;
     /** Bumped by every {@link #adoptSwapchain} / {@link #retireSwapchain}: handles from an older generation are stale. */
     private long generation;
     /** The handles currently lent out and not yet presented or invalidated. */
@@ -88,17 +100,24 @@ public final class PresentEngine {
         private final int index;
         private final int frameSlot;
         private final long generation;
+        private final int initialLayout;
         private boolean valid = true;
 
         /** Package-private so the lending contract can be pinned in tests without a device. */
         BorrowedImage(PresentEngine owner, long image, long view, int index, int frameSlot,
                 long generation) {
+            this(owner, image, view, index, frameSlot, generation, VK_IMAGE_LAYOUT_UNDEFINED);
+        }
+
+        BorrowedImage(PresentEngine owner, long image, long view, int index, int frameSlot,
+                long generation, int initialLayout) {
             this.owner = owner;
             this.image = image;
             this.view = view;
             this.index = index;
             this.frameSlot = frameSlot;
             this.generation = generation;
+            this.initialLayout = initialLayout;
         }
 
         /** {@return the swapchain image handle} (owned by the issuing engine, never by the borrower). */
@@ -126,6 +145,17 @@ public final class PresentEngine {
             return this.generation;
         }
 
+        /**
+         * {@return the layout the image is in at the moment of this borrow}:
+         * {@code VK_IMAGE_LAYOUT_UNDEFINED} when this generation has never presented the image (its
+         * content is undefined and any transition out of it discards), or
+         * {@code VK_IMAGE_LAYOUT_PRESENT_SRC_KHR} when it comes back from a present. A borrower that
+         * records the image's first layout transition of the frame names this as the old layout.
+         */
+        public int initialLayout() {
+            return this.initialLayout;
+        }
+
         /** {@return whether this handle may still be drawn into and presented}. */
         public boolean isValid() {
             return this.valid && this.owner.generation == this.generation;
@@ -150,6 +180,7 @@ public final class PresentEngine {
         this.swapchain = swapchain;
         this.swapchainImages = images == null ? new long[0] : images.clone();
         this.swapchainViews = views == null ? new long[0] : views.clone();
+        this.presentedOnce = new boolean[this.swapchainImages.length];
     }
 
     /**
@@ -163,6 +194,37 @@ public final class PresentEngine {
         this.swapchain = VK_NULL_HANDLE;
         this.swapchainImages = new long[0];
         this.swapchainViews = new long[0];
+        this.presentedOnce = new boolean[0];
+    }
+
+    /**
+     * Abandons a live handle without presenting it: the handle is invalidated and forgotten, and the
+     * abandonment is remembered for {@link #borrowAbandoned()}.
+     * <p>
+     * Core Vulkan has no way to hand an acquired image back, so the image this handle names stays acquired
+     * until the swapchain generation is retired - abandoning is therefore only a bookkeeping release, and
+     * the caller that abandons owes the generation a rebuild before it borrows again (the swapchain's own
+     * retired-acquisition recovery is the same shape). Abandoning a handle that is not live - another
+     * engine's, already presented, already retired - is a no-op and sets nothing; "live" is read through
+     * the same validity lens the rest of this class uses (this engine's handle, still valid).
+     */
+    public void abandon(BorrowedImage image) {
+        if (image == null || image.owner != this || !image.isValid()) {
+            return;
+        }
+        image.invalidate();
+        this.liveHandles.remove(image);
+        this.borrowAbandoned = true;
+    }
+
+    /**
+     * {@return whether a borrow was abandoned since the last read} (consume-on-read: the flag is cleared
+     * by reading it, so the rebuild it asks for is requested once, not on every frame that follows).
+     */
+    public boolean borrowAbandoned() {
+        boolean abandoned = this.borrowAbandoned;
+        this.borrowAbandoned = false;
+        return abandoned;
     }
 
     private void invalidateLiveHandles() {
@@ -221,8 +283,10 @@ public final class PresentEngine {
             }
             long view = imageIndex < this.swapchainViews.length ? this.swapchainViews[imageIndex]
                     : VK_NULL_HANDLE;
+            int initialLayout = imageIndex < this.presentedOnce.length && this.presentedOnce[imageIndex]
+                    ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED;
             BorrowedImage handle = new BorrowedImage(this, this.swapchainImages[imageIndex], view, imageIndex,
-                    frameSlot, this.generation);
+                    frameSlot, this.generation, initialLayout);
             this.liveHandles.add(handle);
             return handle;
         }
@@ -285,6 +349,9 @@ public final class PresentEngine {
     private void releaseHandle(BorrowedImage image) {
         image.invalidate();
         this.liveHandles.remove(image);
+        if (image.index() >= 0 && image.index() < this.presentedOnce.length) {
+            this.presentedOnce[image.index()] = true;
+        }
     }
 
     /**

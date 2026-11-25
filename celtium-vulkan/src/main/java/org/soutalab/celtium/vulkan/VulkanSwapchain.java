@@ -1,6 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
 import org.soutalab.celtium.harness.HarnessConfig;
+import org.soutalab.celtium.vulkan.hal.PresentEngine;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWNativeWayland;
 import org.lwjgl.glfw.GLFWNativeX11;
@@ -46,14 +47,6 @@ import static org.lwjgl.vulkan.VK10.*;
 public final class VulkanSwapchain {
     /** Startup constants: create() runs once per window, but the properties cannot change mid-run. */
     private static final boolean SWAPCHAIN_REQUESTED = Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY);
-    /**
-     * Request transfer-only swapchain image usage by default (issue #422 (a)): the native present path only blits
-     * and clears swapchain images and never attaches them as colour attachments. Dropping COLOR_ATTACHMENT_BIT
-     * avoids displayable DCC compression mismatches on RDNA3 proprietary drivers; set to {@code false} to opt back
-     * into colour-attachment swapchain usage.
-     */
-    private static final boolean PRESENT_TRANSFER_ONLY =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentTransferOnly", "true"));
     private static final boolean ASSUME_NO_PRESENT_SUPPORT =
             Boolean.getBoolean("celtium.vulkan.assumeNoPresentSupport");
     private final VulkanContext context;
@@ -1423,26 +1416,7 @@ public final class VulkanSwapchain {
         // Reset rather than accumulated (audit S18): this describes the present that is about to happen. Left set, a single
         // out-of-date acquire would keep the caller rebuilding the swapchain for the rest of the session.
         this.outOfDate = false;
-        if (VulkanContext.ASYNC_PRESENT) {
-            // The acquire below needs the swapchain the worker may still be presenting to; the previous worker
-            // present's verdict is applied here, one frame late, which is the only state that path defers.
-            this.context.celtium$awaitPresenter();
-            int previous = this.context.celtium$presenterResult();
-            if (previous == VK_ERROR_SURFACE_LOST_KHR) {
-                // The worker's present met a dead surface; the recovery is the backend recreating both, which the
-                // surfaceLost flag keys (bughunt LANE-05 #5: the constant was classified nowhere).
-                this.surfaceLost = true;
-            } else if (previous == VK_SUBOPTIMAL_KHR || previous == VK_ERROR_OUT_OF_DATE_KHR) {
-                this.outOfDate = true;
-                if (previous == VK_ERROR_OUT_OF_DATE_KHR) {
-                    celtium$noteRebuildNeeded("the presenter reported the swapchain out of date");
-                }
-            } else if (previous != VK_SUCCESS) {
-                this.asyncPresentFailures++;
-                this.outOfDate = true;
-                celtium$noteRebuildNeeded("the presenter failed with result " + previous);
-            }
-        }
+        celtium$drainPresenterVerdict();
         if (this.swapchain == VK_NULL_HANDLE || sourceImage == VK_NULL_HANDLE) {
             return "present image: no swapchain or no source image";
         }
@@ -1687,173 +1661,7 @@ public final class VulkanSwapchain {
                     .swapchainCount(1)
                     .pSwapchains(stack.longs(this.swapchain))
                     .pImageIndices(index);
-            // Read the blitted image back before it is presented, so "the screen shows the frame" becomes a
-            // measurement instead of an inference: the mean of a small centre patch of the presented image is compared
-            // against the same patch of the game's frame in the caller's log.
-            // Every present while the flag is on. It used to read back only the first three, which meant the value the
-            // fixture recorded at its capture was from the run's third frame - the same "value from another moment" mistake
-            // the recording was added to fix, one level down. The flag is a diagnostic, so its cost is acceptable; the
-            // count stays for reporting and as a bound.
-            // The dump the fixture asked for is not a diagnostic of the readback flag: it is the only picture a
-            // GL-bridge run has, and it used to live inside the PRESENT_READBACK block below. Every bridge leg
-            // therefore wrote no world dump at all while its report recorded pictureRequested_world and a
-            // presented-image mean - the request was made, the image was there, and the write was skipped because a
-            // diagnostic switch was off (legs hei005br and glref3: no dump file anywhere, presentedDumpFailure=none
-            // because writePresentedImage was never called). It runs here unconditionally, and clears the list so the
-            // block below cannot write the same path twice.
-            // Temporal stability measured instead of argued: two consecutive presented frames are read back and
-            // compared. A still camera whose two frames differ over large areas is the flicker a player reports, and it
-            // can only come from something that changes between frames (draw order, a rebuilt mesh, an alternating
-            // sample). Two full readbacks, so it is a diagnostic switch, not a default.
-            this.presentCount++;
-            // The first frames are the loading screen, where a difference says nothing about the world: sample after
-            // the world has been up for a while (present count, not a timer, so two legs sample the same frames).
-            //
-            // A present count is not a scene, though. The loading screen presents hundreds of frames before the world
-            // exists, and how many depends on the pack, so a fixed count lands in the world on one profile and on the
-            // loading screen on another - and a pair taken on the loading screen measures the splash, not the world.
-            // The fixture therefore arms the pair at a world tick it chooses (`-Dceltium.debug.flickerArm`, set from
-            // the tick handler), and the next two presents are the pair. The property is read once per present, not
-            // per offer, and only while the switch is on; without it the present-count rule above is unchanged.
-            if (FLICKER_SAMPLE && !this.flickerArmed && Boolean.getBoolean("celtium.debug.flickerArm")) {
-                this.flickerArmed = true;
-                this.flickerSeen = 0;
-                this.flickerSamples = 0;
-                this.flickerPrevious = null;
-                // The dump writes the worst pair seen, and the present-count rule may already have sampled the loading
-                // screen before the arm: leaving that pair's count here would suppress the armed pair's dump whenever
-                // the world is quieter than the splash, which is the case this instrument exists for.
-                this.flickerWorstChanged = -1L;
-                System.out.println("[Celtium] CELTIUM_FLICKER_ARMED present=" + this.presentCount);
-            }
-            boolean flickerDue = FLICKER_SAMPLE && this.flickerSamples < 2 * FLICKER_PAIRS
-                    && (FLICKER_ARM_ONLY
-                            ? this.flickerArmed
-                            : this.flickerArmed || (++this.flickerSeen > FLICKER_FROM
-                                    && (this.flickerPrevious != null
-                                            || (this.flickerSeen - FLICKER_FROM) % Math.max(1, FLICKER_EVERY) == 1)));
-            if (flickerDue) {
-                int[] pixels = readBackBlock(this.context, image, this.format, this.width, this.height, 0, 0,
-                        this.width, this.height);
-                if (pixels != null) {
-                    this.flickerSamples++;
-                    if (this.flickerPrevious == null) {
-                        this.flickerPrevious = pixels;
-                    } else {
-                        long changed = 0L;
-                        int maxDelta = 0;
-                        int count = Math.min(pixels.length, this.flickerPrevious.length);
-                        for (int i = 0; i < count; i++) {
-                            int a = pixels[i];
-                            int b = this.flickerPrevious[i];
-                            int dr = Math.abs(((a >> 16) & 0xFF) - ((b >> 16) & 0xFF));
-                            int dg = Math.abs(((a >> 8) & 0xFF) - ((b >> 8) & 0xFF));
-                            int db = Math.abs((a & 0xFF) - (b & 0xFF));
-                            int delta = Math.max(dr, Math.max(dg, db));
-                            if (delta > 8) {
-                                changed++;
-                            }
-                            if (delta > maxDelta) {
-                                maxDelta = delta;
-                            }
-                        }
-                        if (FLICKER_DUMP && changed > this.flickerWorstChanged) {
-                            this.flickerWorstChanged = changed;
-                            // The pair the count above is about, as images: where the differing pixels are says whether
-                            // the flicker sits on one object's edges (ordering) or across its whole surface (shading).
-                            writeIndexedPng(this.flickerPrevious, this.width, this.height, "celtium-flicker-prev.png");
-                            writeIndexedPng(pixels, this.width, this.height, "celtium-flicker-cur.png");
-                        }
-                        System.out.println("[Celtium] CELTIUM_FLICKER present=" + this.flickerSeen
-                                + " frame=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.lastFinishedFrameId
-                                + " changed=" + changed + "/" + count
-                                + " fraction=" + String.format(java.util.Locale.ROOT, "%.5f",
-                                        (double) changed / (double) count)
-                                + " maxDelta=" + maxDelta
-                                // The band the difference is in, as a colour per frame: the two frames' own sky rows
-                                // beside the count say whether the flat frame is the clear colour (the plane's pixels
-                                // absent) or the fog colour of a plane drawn fully fogged, without a second leg.
-                                + " prevSky=" + skyRowMean(this.flickerPrevious, this.width, this.height, 4)
-                                + " curSky=" + skyRowMean(pixels, this.width, this.height, 4)
-                                + " prevSkyMid=" + skyRowMean(this.flickerPrevious, this.width, this.height,
-                                        this.height / 4)
-                                + " curSkyMid=" + skyRowMean(pixels, this.width, this.height, this.height / 4));
-                        this.flickerPrevious = null;
-                    }
-                }
-            }
-            if (!this.pendingDumpPaths.isEmpty()) {
-                java.util.List<java.nio.file.Path> pendingPaths =
-                        new java.util.ArrayList<>(this.pendingDumpPaths);
-                this.pendingDumpPaths.clear();
-                boolean anyWritten = false;
-                java.util.List<java.nio.file.Path> failedPaths = new java.util.ArrayList<>();
-                for (java.nio.file.Path path : pendingPaths) {
-                    long writeStartedNanos = System.nanoTime();
-                    boolean wrote = writePresentedImage(path, image);
-                    presentDumpWriteNanos += System.nanoTime() - writeStartedNanos;
-                    if (wrote) {
-                        anyWritten = true;
-                    } else {
-                        failedPaths.add(path);
-                    }
-                }
-                this.lastDumpWritten = anyWritten;
-                if (!failedPaths.isEmpty() && this.pendingDumpPaths.size() + failedPaths.size() <= DUMP_RETRY_CAP) {
-                    this.pendingDumpPaths.addAll(failedPaths);
-                    this.lastDumpFailure = "a presented-image dump did not write this present (image=0x"
-                            + Long.toHexString(image) + ", size=" + this.width + "x" + this.height
-                            + "); the request is kept for the next present";
-                }
-            }
-            if (PRESENT_READBACK && this.presentReadbacks < 100000) {
-                this.presentReadbacks++;
-                long readbackStartedNanos = System.nanoTime();
-                this.lastPresentedMean = readBackMean(this.context, image, this.width, this.height);
-                presentReadbackNanos += System.nanoTime() - readbackStartedNanos;
-                if (!this.pendingDumpPaths.isEmpty()) {
-                    java.util.List<java.nio.file.Path> paths =
-                            new java.util.ArrayList<>(this.pendingDumpPaths);
-                    this.pendingDumpPaths.clear();
-                    boolean written = false;
-                    // A request whose write fails is put back rather than swallowed. Measured need (leg
-                    // r212-world-glref): the bridge run recorded presentedDumpRequestedAtCapture=True and
-                    // presentedImageMeanAtCapture=44.0 - the request was made and the presented image was read back -
-                    // and yet no world dump file existed anywhere in the run directory, because this loop cleared the
-                    // path before trying and the attempt did not write. The capture's dump is the only picture a
-                    // GL-bridge run has, so the retry belongs here, bounded so a permanently failing path cannot grow
-                    // the list without end.
-                    java.util.List<java.nio.file.Path> failed = new java.util.ArrayList<>();
-                    for (java.nio.file.Path path : paths) {
-                        long writeStartedNanos = System.nanoTime();
-                        boolean wrote = writePresentedImage(path, image);
-                        presentDumpWriteNanos += System.nanoTime() - writeStartedNanos;
-                        if (wrote) {
-                            written = true;
-                        } else {
-                            failed.add(path);
-                        }
-                    }
-                    this.lastDumpWritten = written;
-                    if (!failed.isEmpty() && this.pendingDumpPaths.size() + failed.size() <= DUMP_RETRY_CAP) {
-                        this.pendingDumpPaths.addAll(failed);
-                        this.lastDumpFailure = "a presented-image dump did not write this present (image=0x"
-                                + Long.toHexString(image) + ", size=" + this.width + "x" + this.height
-                                + "); the request is kept for the next present";
-                    }
-                }
-            }
-            if (this.presentTraces < 4) {
-                // One line per present with the handles involved: the validation messages named the acquire semaphore
-                // in both a submit complaint and a present complaint, and with the handles in hand the pairing error is
-                // arithmetic instead of inference.
-                this.presentTraces++;
-                System.out.println("celtium present trace: image=" + index.get(0) + " acquire=0x"
-                        + Long.toHexString(acquire) + " renderFinished=0x" + Long.toHexString(renderFinished)
-                        + " submitWaits=0x" + Long.toHexString(acquire) + " presentWaits=0x"
-                        + Long.toHexString(renderFinished) + " acquireCursor=" + this.acquireSemaphoreCursor
-                        + " renderCursor=" + this.renderFinishedCursor);
-            }
+            celtium$presentDiagnostics(image, index.get(0), acquire, renderFinished);
             long queueStartedNanos = System.nanoTime();
             int presented = vkQueuePresentKHR(this.context.queue(), present);
             presentQueueNanos += System.nanoTime() - queueStartedNanos;
@@ -1876,6 +1684,461 @@ public final class VulkanSwapchain {
             return "present image: blitted " + width + "x" + height + " onto image " + index.get(0) + " (" + presented
                     + ")";
         }
+    }
+
+    /**
+     * Applies the verdict of a present handed to the presenter path, one frame late: the acquire below (or
+     * the direct present's own verdict handling) needs the swapchain the previous present may still be
+     * presenting to, and the deferred verdict is the only state that path defers. Shared by
+     * {@link #celtium$presentImage} and {@link #celtium$presentDirect} so the verdict keeps flowing
+     * whichever path presented last (the loading screen still presents through the former).
+     */
+    private void celtium$drainPresenterVerdict() {
+        if (VulkanContext.ASYNC_PRESENT) {
+            this.context.celtium$awaitPresenter();
+            int previous = this.context.celtium$presenterResult();
+            if (previous == VK_ERROR_SURFACE_LOST_KHR) {
+                // The worker's present met a dead surface; the recovery is the backend recreating both, which the
+                // surfaceLost flag keys (bughunt LANE-05 #5: the constant was classified nowhere).
+                this.surfaceLost = true;
+            } else if (previous == VK_SUBOPTIMAL_KHR || previous == VK_ERROR_OUT_OF_DATE_KHR) {
+                this.outOfDate = true;
+                if (previous == VK_ERROR_OUT_OF_DATE_KHR) {
+                    celtium$noteRebuildNeeded("the presenter reported the swapchain out of date");
+                }
+            } else if (previous != VK_SUCCESS) {
+                this.asyncPresentFailures++;
+                this.outOfDate = true;
+                celtium$noteRebuildNeeded("the presenter failed with result " + previous);
+            }
+        }
+    }
+
+    /**
+     * The direct present's pre-recorded final transitions, one per (swapchain image, resting layout): the
+     * frame rendered into the borrowed image itself, so all that is left at present time is the single
+     * barrier that takes the image from the layout the frame left it in to
+     * {@code VK_IMAGE_LAYOUT_PRESENT_SRC_KHR}. Recorded once per swapchain generation in their own pool
+     * and dropped with the blit set by {@link #discardPreRecorded()}.
+     */
+    private long presentTransitionPool = VK_NULL_HANDLE;
+    private long[] preRecordedPresentTransitions = new long[0];
+    private long preRecordedTransitionSwapchain = VK_NULL_HANDLE;
+    private long preRecordedTransitionPresents;
+
+    /** {@return the transition slot for a resting layout}, or -1 for a layout no frame rests in. */
+    private static int celtium$presentTransitionSlot(int fromLayout) {
+        if (fromLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
+            return 0;
+        }
+        if (fromLayout == VK_IMAGE_LAYOUT_GENERAL) {
+            return 1;
+        }
+        if (fromLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
+            return 2;
+        }
+        return -1;
+    }
+
+    /**
+     * {@return the pre-recorded final transition for {@code imageIndex} out of {@code fromLayout}}, or
+     * {@code VK_NULL_HANDLE} when the layout has no transition or the recording failed. The whole set is
+     * recorded at first use, keyed by the swapchain handle like the blit set.
+     */
+    private long preRecordedPresentTransition(int imageIndex, int fromLayout) {
+        int slot = celtium$presentTransitionSlot(fromLayout);
+        if (slot < 0 || imageIndex < 0 || imageIndex >= this.images.length) {
+            return VK_NULL_HANDLE;
+        }
+        if (this.preRecordedTransitionSwapchain == this.swapchain
+                && this.preRecordedPresentTransitions.length == this.images.length * 3) {
+            long recorded = this.preRecordedPresentTransitions[imageIndex * 3 + slot];
+            if (recorded != VK_NULL_HANDLE) {
+                this.preRecordedTransitionPresents++;
+                return recorded;
+            }
+        }
+        discardPreRecordedTransitions();
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            org.lwjgl.vulkan.VkCommandPoolCreateInfo poolInfo =
+                    org.lwjgl.vulkan.VkCommandPoolCreateInfo.calloc(stack).sType$Default()
+                            .queueFamilyIndex(this.context.queueFamilyIndex());
+            LongBuffer poolOut = stack.mallocLong(1);
+            if (vkCreateCommandPool(this.context.device(), poolInfo, null, poolOut) != VK_SUCCESS) {
+                return VK_NULL_HANDLE;
+            }
+            this.presentTransitionPool = poolOut.get(0);
+            int bufferCount = this.images.length * 3;
+            org.lwjgl.vulkan.VkCommandBufferAllocateInfo alloc =
+                    org.lwjgl.vulkan.VkCommandBufferAllocateInfo.calloc(stack).sType$Default()
+                            .commandPool(this.presentTransitionPool)
+                            .level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
+                            .commandBufferCount(bufferCount);
+            PointerBuffer handles = stack.mallocPointer(bufferCount);
+            if (vkAllocateCommandBuffers(this.context.device(), alloc, handles) != VK_SUCCESS) {
+                return VK_NULL_HANDLE;
+            }
+            int[] layouts = {VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+                    VK_IMAGE_LAYOUT_PRESENT_SRC_KHR};
+            this.preRecordedPresentTransitions = new long[bufferCount];
+            for (int i = 0; i < this.images.length; i++) {
+                for (int s = 0; s < layouts.length; s++) {
+                    long handle = handles.get(i * layouts.length + s);
+                    if (!recordPresentTransition(stack, handle, this.images[i], layouts[s])) {
+                        return VK_NULL_HANDLE;
+                    }
+                    this.preRecordedPresentTransitions[i * layouts.length + s] = handle;
+                }
+            }
+            this.preRecordedTransitionSwapchain = this.swapchain;
+            this.preRecordedTransitionPresents++;
+            return this.preRecordedPresentTransitions[imageIndex * 3 + slot];
+        }
+    }
+
+    /**
+     * Records one final transition: {@code fromLayout -> VK_IMAGE_LAYOUT_PRESENT_SRC_KHR} on one swapchain
+     * image. Out of GENERAL the barrier flushes the union of accesses a frame may leave pending in that
+     * layout (the same union the frame target's own barriers carry); out of UNDEFINED or PRESENT_SRC there
+     * is nothing of ours to flush - the acquire semaphore the frame's submissions waited on is the ordering
+     * fact for the presentation engine's side.
+     *
+     * @return whether the buffer was begun and ended successfully
+     */
+    private boolean recordPresentTransition(MemoryStack stack, long handle, long image, int fromLayout) {
+        VkCommandBuffer commands = new VkCommandBuffer(handle, this.context.device());
+        org.lwjgl.vulkan.VkCommandBufferBeginInfo begin =
+                org.lwjgl.vulkan.VkCommandBufferBeginInfo.calloc(stack).sType$Default()
+                        .flags(VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT);
+        if (vkBeginCommandBuffer(commands, begin) != VK_SUCCESS) {
+            return false;
+        }
+        int srcAccess = 0;
+        int srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        if (fromLayout == VK_IMAGE_LAYOUT_GENERAL) {
+            srcAccess = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT
+                    | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+            srcStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        }
+        VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
+        barrier.get(0).sType$Default()
+                .srcAccessMask(srcAccess)
+                .dstAccessMask(0)
+                .oldLayout(fromLayout)
+                .newLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+                .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .image(image);
+        barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+        vkCmdPipelineBarrier(commands, srcStage, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, null, null, barrier);
+        return vkEndCommandBuffer(commands) == VK_SUCCESS;
+    }
+
+    /** Drops the recorded transition set; the queue is drained first, as for the blit set. */
+    private void discardPreRecordedTransitions() {
+        this.preRecordedTransitionSwapchain = VK_NULL_HANDLE;
+        this.preRecordedPresentTransitions = new long[0];
+        if (this.presentTransitionPool != VK_NULL_HANDLE && drainForCleanup("present transition pool")) {
+            vkDestroyCommandPool(this.context.device(), this.presentTransitionPool, null);
+            this.presentTransitionPool = VK_NULL_HANDLE;
+        }
+    }
+
+    /**
+     * Presents the frame {@code target} rendered into a borrowed swapchain image - the direct present path
+     * (design section 2.5; lanechat #8830 (3)(4)).
+     * <p>
+     * There is no copy left to make: the frame's passes attached the swapchain image itself, so the present
+     * is the image's final layout transition (pre-recorded per image and resting layout), the shared
+     * diagnostics while the image rests in {@code PRESENT_SRC}, and the lender's own
+     * {@code vkQueuePresentKHR}. The borrow's acquire semaphore is waited by the frame's first submission
+     * (see {@code FrameCoordinator}); when no submission consumed it - a frame that reached the queue
+     * without touching the image - the transition submission waits it instead, so the transition never
+     * races the presentation engine's release of the image. The async-presenter route is not taken here:
+     * its hand-off presents by (swapchain, index) and cannot release the lender's borrow handle, so the
+     * direct present is synchronous and its verdict is final when this returns.
+     * <p>
+     * {@link #presentImage} survives only for the loading screen's standalone texture present, whose
+     * source is not a frame the target rendered.
+     */
+    public String presentDirect(FrameImageTarget target) {
+        long presentStarted = System.nanoTime();
+        String presentResult = celtium$presentDirect(target);
+        long presentSpent = System.nanoTime() - presentStarted;
+        celtium$notePresentTime(presentSpent);
+        presentWholeNanos += presentSpent;
+        return presentResult;
+    }
+
+    private String celtium$presentDirect(FrameImageTarget target) {
+        // Reset per present, as in celtium$presentImage: a caller reading them after a failure must not see
+        // the previous present's verdict.
+        this.lastPresentSubmitDone = false;
+        this.lastPresentSucceeded = false;
+        this.outOfDate = false;
+        celtium$drainPresenterVerdict();
+        if (this.swapchain == VK_NULL_HANDLE || target == null) {
+            return "present image: no swapchain or no frame target for the direct present";
+        }
+        PresentEngine.BorrowedImage borrowed = target.borrowedPresentImage();
+        if (borrowed == null) {
+            return "present image: the frame holds no borrowed swapchain image (it rendered into the owned"
+                    + " image, which the direct path does not present)";
+        }
+        if (!borrowed.isValid()) {
+            target.releasePresentBorrow();
+            return "present image: the borrowed swapchain image's generation was retired before the present"
+                    + " (the frame is dropped; the next frame borrows from the live generation)";
+        }
+        int imageIndex = borrowed.index();
+        long image = borrowed.image();
+        if (imageIndex < 0 || imageIndex >= this.images.length || this.images[imageIndex] != image) {
+            target.releasePresentBorrow();
+            return "present image: the borrowed image does not belong to this swapchain (the frame is"
+                    + " dropped)";
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            long renderFinished = renderFinishedFor(stack, imageIndex);
+            if (renderFinished == VK_NULL_HANDLE) {
+                abandonAcquiredImage("render-finished allocation failed for a borrowed image");
+                target.releasePresentBorrow();
+                return "present image: could not create the render-finished semaphore";
+            }
+            int restingLayout = target.colorImageLayout();
+            long transition = preRecordedPresentTransition(imageIndex, restingLayout);
+            if (transition == VK_NULL_HANDLE) {
+                abandonAcquiredImage("the direct present transition could not be recorded from layout "
+                        + restingLayout);
+                target.releasePresentBorrow();
+                return "present image: could not record the direct present transition from layout "
+                        + restingLayout;
+            }
+            // Consume-on-read: the semaphore comes back only when the frame's submissions did not already
+            // wait the borrow's acquire, in which case this submission is the first to touch the image and
+            // takes the wait itself (submitPreRecorded compacts the null handle away otherwise).
+            long unconsumedAcquire = target.presentAcquireSemaphore();
+            long submitStartedNanos = System.nanoTime();
+            String submitError = submitPreRecorded(stack, transition,
+                    new long[] {unconsumedAcquire}, new long[] {renderFinished});
+            presentSubmitNanos += System.nanoTime() - submitStartedNanos;
+            if (submitError != null) {
+                if ("retire".equals(presentStageDisposition(true, true, false))) {
+                    abandonAcquiredImage("the direct present transition submission failed");
+                }
+                target.releasePresentBorrow();
+                return submitError;
+            }
+            this.lastPresentSubmitDone = true;
+            this.lastPresentSucceeded = false;
+            celtium$presentDiagnostics(image, imageIndex, VK_NULL_HANDLE, renderFinished);
+            long queueStartedNanos = System.nanoTime();
+            int presented;
+            try {
+                presented = this.context.presentEngine().present(borrowed, renderFinished);
+            } catch (IllegalStateException stale) {
+                // The lender refused the handle (not live in its registry): the borrow bookkeeping and the
+                // lender disagree, which is a dropped frame, not a crash of the frame loop.
+                target.releasePresentBorrow();
+                return "present image: the lender refused the borrowed image at present (" + stale.getMessage()
+                        + "; the frame is dropped)";
+            }
+            presentQueueNanos += System.nanoTime() - queueStartedNanos;
+            presentStageCalls++;
+            target.releasePresentBorrow();
+            if (presented == VK_SUBOPTIMAL_KHR || presented == VK_ERROR_OUT_OF_DATE_KHR) {
+                this.outOfDate = true;
+                if (presented == VK_ERROR_OUT_OF_DATE_KHR) {
+                    celtium$noteRebuildNeeded("the direct present reported the swapchain out of date");
+                }
+            }
+            if (presented == VK_ERROR_SURFACE_LOST_KHR) {
+                this.surfaceLost = true;
+            }
+            if (presented != VK_SUCCESS && presented != VK_SUBOPTIMAL_KHR) {
+                return "present image: the direct present returned " + presented;
+            }
+            this.lastPresentSucceeded = true;
+            return "present image: direct image " + imageIndex + " (" + presented + ")";
+        }
+    }
+
+    /**
+     * Runs the present diagnostics against an image that is in {@code VK_IMAGE_LAYOUT_PRESENT_SRC_KHR}
+     * and still owned by this thread (submitted, not yet presented): the flicker pair, the pending
+     * presented-image dumps, the readback mean and the first presents' handle traces. Shared by the
+     * blit present (which reaches this state through its pre-recorded blit) and the direct present
+     * (which reaches it through its pre-recorded final transition), so a leg's verification instruments
+     * measure the same thing on both paths.
+     */
+    private void celtium$presentDiagnostics(long image, int imageIndex, long acquire, long renderFinished) {
+        // Read the blitted image back before it is presented, so "the screen shows the frame" becomes a
+        // measurement instead of an inference: the mean of a small centre patch of the presented image is compared
+        // against the same patch of the game's frame in the caller's log.
+        // Every present while the flag is on. It used to read back only the first three, which meant the value the
+        // fixture recorded at its capture was from the run's third frame - the same "value from another moment" mistake
+        // the recording was added to fix, one level down. The flag is a diagnostic, so its cost is acceptable; the
+        // count stays for reporting and as a bound.
+        // The dump the fixture asked for is not a diagnostic of the readback flag: it is the only picture a
+        // GL-bridge run has, and it used to live inside the PRESENT_READBACK block below. Every bridge leg
+        // therefore wrote no world dump at all while its report recorded pictureRequested_world and a
+        // presented-image mean - the request was made, the image was there, and the write was skipped because a
+        // diagnostic switch was off (legs hei005br and glref3: no dump file anywhere, presentedDumpFailure=none
+        // because writePresentedImage was never called). It runs here unconditionally, and clears the list so the
+        // block below cannot write the same path twice.
+        // Temporal stability measured instead of argued: two consecutive presented frames are read back and
+        // compared. A still camera whose two frames differ over large areas is the flicker a player reports, and it
+        // can only come from something that changes between frames (draw order, a rebuilt mesh, an alternating
+        // sample). Two full readbacks, so it is a diagnostic switch, not a default.
+        this.presentCount++;
+        // The first frames are the loading screen, where a difference says nothing about the world: sample after
+        // the world has been up for a while (present count, not a timer, so two legs sample the same frames).
+        //
+        // A present count is not a scene, though. The loading screen presents hundreds of frames before the world
+        // exists, and how many depends on the pack, so a fixed count lands in the world on one profile and on the
+        // loading screen on another - and a pair taken on the loading screen measures the splash, not the world.
+        // The fixture therefore arms the pair at a world tick it chooses (`-Dceltium.debug.flickerArm`, set from
+        // the tick handler), and the next two presents are the pair. The property is read once per present, not
+        // per offer, and only while the switch is on; without it the present-count rule above is unchanged.
+        if (FLICKER_SAMPLE && !this.flickerArmed && Boolean.getBoolean("celtium.debug.flickerArm")) {
+            this.flickerArmed = true;
+            this.flickerSeen = 0;
+            this.flickerSamples = 0;
+            this.flickerPrevious = null;
+            // The dump writes the worst pair seen, and the present-count rule may already have sampled the loading
+            // screen before the arm: leaving that pair's count here would suppress the armed pair's dump whenever
+            // the world is quieter than the splash, which is the case this instrument exists for.
+            this.flickerWorstChanged = -1L;
+            System.out.println("[Celtium] CELTIUM_FLICKER_ARMED present=" + this.presentCount);
+        }
+        boolean flickerDue = FLICKER_SAMPLE && this.flickerSamples < 2 * FLICKER_PAIRS
+                && (FLICKER_ARM_ONLY
+                        ? this.flickerArmed
+                        : this.flickerArmed || (++this.flickerSeen > FLICKER_FROM
+                                && (this.flickerPrevious != null
+                                        || (this.flickerSeen - FLICKER_FROM) % Math.max(1, FLICKER_EVERY) == 1)));
+        if (flickerDue) {
+            int[] pixels = readBackBlock(this.context, image, this.format, this.width, this.height, 0, 0,
+                    this.width, this.height);
+            if (pixels != null) {
+                this.flickerSamples++;
+                if (this.flickerPrevious == null) {
+                    this.flickerPrevious = pixels;
+                } else {
+                    long changed = 0L;
+                    int maxDelta = 0;
+                    int count = Math.min(pixels.length, this.flickerPrevious.length);
+                    for (int i = 0; i < count; i++) {
+                        int a = pixels[i];
+                        int b = this.flickerPrevious[i];
+                        int dr = Math.abs(((a >> 16) & 0xFF) - ((b >> 16) & 0xFF));
+                        int dg = Math.abs(((a >> 8) & 0xFF) - ((b >> 8) & 0xFF));
+                        int db = Math.abs((a & 0xFF) - (b & 0xFF));
+                        int delta = Math.max(dr, Math.max(dg, db));
+                        if (delta > 8) {
+                            changed++;
+                        }
+                        if (delta > maxDelta) {
+                            maxDelta = delta;
+                        }
+                    }
+                    if (FLICKER_DUMP && changed > this.flickerWorstChanged) {
+                        this.flickerWorstChanged = changed;
+                        // The pair the count above is about, as images: where the differing pixels are says whether
+                        // the flicker sits on one object's edges (ordering) or across its whole surface (shading).
+                        writeIndexedPng(this.flickerPrevious, this.width, this.height, "celtium-flicker-prev.png");
+                        writeIndexedPng(pixels, this.width, this.height, "celtium-flicker-cur.png");
+                    }
+                    System.out.println("[Celtium] CELTIUM_FLICKER present=" + this.flickerSeen
+                            + " frame=" + org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend.lastFinishedFrameId
+                            + " changed=" + changed + "/" + count
+                            + " fraction=" + String.format(java.util.Locale.ROOT, "%.5f",
+                                    (double) changed / (double) count)
+                            + " maxDelta=" + maxDelta
+                            // The band the difference is in, as a colour per frame: the two frames' own sky rows
+                            // beside the count say whether the flat frame is the clear colour (the plane's pixels
+                            // absent) or the fog colour of a plane drawn fully fogged, without a second leg.
+                            + " prevSky=" + skyRowMean(this.flickerPrevious, this.width, this.height, 4)
+                            + " curSky=" + skyRowMean(pixels, this.width, this.height, 4)
+                            + " prevSkyMid=" + skyRowMean(this.flickerPrevious, this.width, this.height,
+                                    this.height / 4)
+                            + " curSkyMid=" + skyRowMean(pixels, this.width, this.height, this.height / 4));
+                    this.flickerPrevious = null;
+                }
+            }
+        }
+        if (!this.pendingDumpPaths.isEmpty()) {
+            java.util.List<java.nio.file.Path> pendingPaths =
+                    new java.util.ArrayList<>(this.pendingDumpPaths);
+            this.pendingDumpPaths.clear();
+            boolean anyWritten = false;
+            java.util.List<java.nio.file.Path> failedPaths = new java.util.ArrayList<>();
+            for (java.nio.file.Path path : pendingPaths) {
+                long writeStartedNanos = System.nanoTime();
+                boolean wrote = writePresentedImage(path, image);
+                presentDumpWriteNanos += System.nanoTime() - writeStartedNanos;
+                if (wrote) {
+                    anyWritten = true;
+                } else {
+                    failedPaths.add(path);
+                }
+            }
+            this.lastDumpWritten = anyWritten;
+            if (!failedPaths.isEmpty() && this.pendingDumpPaths.size() + failedPaths.size() <= DUMP_RETRY_CAP) {
+                this.pendingDumpPaths.addAll(failedPaths);
+                this.lastDumpFailure = "a presented-image dump did not write this present (image=0x"
+                        + Long.toHexString(image) + ", size=" + this.width + "x" + this.height
+                        + "); the request is kept for the next present";
+            }
+        }
+        if (PRESENT_READBACK && this.presentReadbacks < 100000) {
+            this.presentReadbacks++;
+            long readbackStartedNanos = System.nanoTime();
+            this.lastPresentedMean = readBackMean(this.context, image, this.width, this.height);
+            presentReadbackNanos += System.nanoTime() - readbackStartedNanos;
+            if (!this.pendingDumpPaths.isEmpty()) {
+                java.util.List<java.nio.file.Path> paths =
+                        new java.util.ArrayList<>(this.pendingDumpPaths);
+                this.pendingDumpPaths.clear();
+                boolean written = false;
+                // A request whose write fails is put back rather than swallowed. Measured need (leg
+                // r212-world-glref): the bridge run recorded presentedDumpRequestedAtCapture=True and
+                // presentedImageMeanAtCapture=44.0 - the request was made and the presented image was read back -
+                // and yet no world dump file existed anywhere in the run directory, because this loop cleared the
+                // path before trying and the attempt did not write. The capture's dump is the only picture a
+                // GL-bridge run has, so the retry belongs here, bounded so a permanently failing path cannot grow
+                // the list without end.
+                java.util.List<java.nio.file.Path> failed = new java.util.ArrayList<>();
+                for (java.nio.file.Path path : paths) {
+                    long writeStartedNanos = System.nanoTime();
+                    boolean wrote = writePresentedImage(path, image);
+                    presentDumpWriteNanos += System.nanoTime() - writeStartedNanos;
+                    if (wrote) {
+                        written = true;
+                    } else {
+                        failed.add(path);
+                    }
+                }
+                this.lastDumpWritten = written;
+                if (!failed.isEmpty() && this.pendingDumpPaths.size() + failed.size() <= DUMP_RETRY_CAP) {
+                    this.pendingDumpPaths.addAll(failed);
+                    this.lastDumpFailure = "a presented-image dump did not write this present (image=0x"
+                            + Long.toHexString(image) + ", size=" + this.width + "x" + this.height
+                            + "); the request is kept for the next present";
+                }
+            }
+        }
+        if (this.presentTraces < 4) {
+            // One line per present with the handles involved: the validation messages named the acquire semaphore
+            // in both a submit complaint and a present complaint, and with the handles in hand the pairing error is
+            // arithmetic instead of inference.
+            this.presentTraces++;
+            System.out.println("celtium present trace: image=" + imageIndex + " acquire=0x"
+                    + Long.toHexString(acquire) + " renderFinished=0x" + Long.toHexString(renderFinished)
+                    + " submitWaits=0x" + Long.toHexString(acquire) + " presentWaits=0x"
+                    + Long.toHexString(renderFinished) + " acquireCursor=" + this.acquireSemaphoreCursor
+                    + " renderCursor=" + this.renderFinishedCursor);
+        }
+
     }
 
     /**
@@ -2421,6 +2684,7 @@ public final class VulkanSwapchain {
     /** Drops the recorded blit set - both the normal buffers and the initialization variants (item 515, B2):
      * the queue is drained first because a previous present may still read them. */
     private void discardPreRecorded() {
+        discardPreRecordedTransitions();
         this.preRecordedSourceImage = VK_NULL_HANDLE;
         this.preRecordedSwapchain = VK_NULL_HANDLE;
         this.preRecordedBlits = new long[0];
@@ -2730,7 +2994,7 @@ public final class VulkanSwapchain {
             surfaceOfferValues.formats = offeredFormats;
             SwapchainCreateArguments.Result choice =
                     SwapchainCreateArguments.select(surfaceOfferValues, requestedWidth, requestedHeight,
-                            desiredImageCount(), PRESENT_TRANSFER_ONLY);
+                            desiredImageCount());
             if (choice.refusal != null) {
                 // The one classification the caller acts on: a pinned 0x0 extent is a wait, carried on the
                 // outcome rather than in the reason text, so the creation escalation never has to re-read

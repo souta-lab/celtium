@@ -1041,6 +1041,10 @@ final class CopyReadSide {
      */
     boolean ensureFrameTarget(int width, int height) {
         if (this.backend.frameTarget != null && this.backend.frameTarget.matches(width, height)) {
+            // Direct present path: the frame's swapchain borrow is established here, on the render path,
+            // so it exists before the frame's first pass records against the target (a no-op while a
+            // borrow is live or a recording is open).
+            this.backend.presentSwapchain.celtium$ensureBorrowedFrameImage();
             return true;
         }
         if (this.backend.frameTarget != null && this.backend.celtium$recordingOpen()) {
@@ -1101,6 +1105,8 @@ final class CopyReadSide {
             if (this.backend.postChain != null) {
                 this.backend.postChain.adoptFrameTarget(this.backend.frameTarget, this.backend.targetRegistry.generation());
             }
+            // The fresh target's first frame borrows its swapchain image from here (see the match path).
+            this.backend.presentSwapchain.celtium$ensureBorrowedFrameImage();
             return true;
         } catch (RuntimeException | LinkageError error) {
             this.backend.record("frame target " + width + "x" + height + " failed: " + VulkanTerrainGpuBackend.describe(error));

@@ -101,8 +101,20 @@ public final class SwapchainCreateArguments {
     }
 
     /**
-     * Chooses the creation arguments using the default transfer-only present usage (issue #422 (a): the native
-     * present path only blits/clears swapchain images and never attaches them as colour attachments).
+     * Chooses the creation arguments for the direct present path (design section 2.5; lanechat #8830
+     * (3)(4)): the frame renders straight into the swapchain image, so colour-attachment usage is required
+     * and transfer usage is kept wherever the surface offers it, for the readback/dump block and the
+     * loading screen's standalone present.
+     * <p>
+     * The previous default was transfer-only usage, chosen for issue #422 (a): on RDNA3 proprietary
+     * drivers, displayable DCC compression metadata on colour-attachment swapchain images collided with
+     * {@code UNDEFINED -> TRANSFER_DST} blit presents. That trade belonged to the blit path it protected:
+     * with the blit deleted in the same landing, a transfer-only swapchain cannot be rendered into at
+     * all, and the direct path's own transitions - the frame target's acquire/release barriers, which
+     * already carry the full attachment/transfer/shader masks #422 (a) asked for - are the DCC-relevant
+     * surface now. The drivers this project verifies on are Intel ANV and RADV (open); the proprietary
+     * RDNA3 caveat is recorded here for the reporter environment rather than kept as a creation default
+     * that would make direct rendering impossible.
      *
      * @param surface         what the surface reported
      * @param requestedWidth  the window's framebuffer width
@@ -111,23 +123,6 @@ public final class SwapchainCreateArguments {
      * @return the arguments to request, or a {@link Result#refusal} when this surface cannot carry a frame
      */
     public static Result select(Surface surface, int requestedWidth, int requestedHeight, int desiredImages) {
-        return select(surface, requestedWidth, requestedHeight, desiredImages, true);
-    }
-
-    /**
-     * Chooses the creation arguments, optionally dropping {@link #USAGE_COLOR_ATTACHMENT} so swapchain images are
-     * allocated as transfer surfaces rather than renderable colour attachments (issue #422 (a): avoids RDNA3
-     * displayable DCC compression metadata colliding with {@code UNDEFINED -> TRANSFER_DST} blit presents).
-     *
-     * @param surface             what the surface reported
-     * @param requestedWidth      the window's framebuffer width
-     * @param requestedHeight     the window's framebuffer height
-     * @param desiredImages       the application's preference for the image count (3 for triple buffering)
-     * @param transferOnlyPresent true to request only transfer usage (default), false to include colour-attachment
-     * @return the arguments to request, or a {@link Result#refusal} when this surface cannot carry a frame
-     */
-    public static Result select(Surface surface, int requestedWidth, int requestedHeight, int desiredImages,
-            boolean transferOnlyPresent) {
         if (surface == null) {
             throw new IllegalArgumentException("surface must not be null");
         }
@@ -173,33 +168,22 @@ public final class SwapchainCreateArguments {
             return result;
         }
 
-        // --- usage: the present path writes swapchain images solely through vkCmdBlitImage (and first-acquire
-        // vkCmdClearColorImage), never as render-pass colour attachments. Requesting transfer-only usage by default
-        // avoids displayable DCC compression allocation mismatches on RDNA3 proprietary drivers (issue #422 (a)).
-        if (transferOnlyPresent) {
-            if ((surface.supportedUsage & USAGE_TRANSFER_DST) == 0) {
-                result.refusal = "the surface does not support transfer-destination usage (supported=0x"
-                        + Integer.toHexString(surface.supportedUsage) + "), which the transfer-only present blit"
-                        + " writes to";
-                return result;
-            }
-            result.usage = USAGE_TRANSFER_DST | (surface.supportedUsage & USAGE_TRANSFER_SRC);
-            result.droppedUsage = ("transfer-only"
-                    + ((surface.supportedUsage & USAGE_TRANSFER_SRC) == 0 ? " TRANSFER_SRC" : "")).trim();
-        } else {
-            if ((surface.supportedUsage & USAGE_COLOR_ATTACHMENT) == 0) {
-                result.refusal = "the surface does not support colour-attachment usage (supported=0x"
-                        + Integer.toHexString(surface.supportedUsage) + "), which the native present path attaches the"
-                        + " frame to";
-                return result;
-            }
-            result.usage = USAGE_COLOR_ATTACHMENT
-                    | (surface.supportedUsage & USAGE_TRANSFER_DST)
-                    | (surface.supportedUsage & USAGE_TRANSFER_SRC);
-            result.droppedUsage = ((surface.supportedUsage & USAGE_TRANSFER_DST) == 0 ? "TRANSFER_DST " : "")
-                    + ((surface.supportedUsage & USAGE_TRANSFER_SRC) == 0 ? "TRANSFER_SRC" : "");
-            result.droppedUsage = result.droppedUsage.trim();
+        // --- usage: the direct present path attaches the swapchain image as the frame's colour target, so
+        // colour-attachment usage is a requirement, not an option. Transfer bits are kept wherever offered:
+        // the present readback/dump block reads the presented image as a transfer source, and the loading
+        // screen's standalone present still writes its texture as a transfer destination.
+        if ((surface.supportedUsage & USAGE_COLOR_ATTACHMENT) == 0) {
+            result.refusal = "the surface does not support colour-attachment usage (supported=0x"
+                    + Integer.toHexString(surface.supportedUsage) + "), which the direct present path attaches the"
+                    + " frame to";
+            return result;
         }
+        result.usage = USAGE_COLOR_ATTACHMENT
+                | (surface.supportedUsage & USAGE_TRANSFER_DST)
+                | (surface.supportedUsage & USAGE_TRANSFER_SRC);
+        result.droppedUsage = ((surface.supportedUsage & USAGE_TRANSFER_DST) == 0 ? "TRANSFER_DST " : "")
+                + ((surface.supportedUsage & USAGE_TRANSFER_SRC) == 0 ? "TRANSFER_SRC" : "");
+        result.droppedUsage = result.droppedUsage.trim();
 
         // --- composite alpha: OPAQUE when offered, else the next one the surface does offer, named.
         if (surface.supportedCompositeAlpha == 0) {

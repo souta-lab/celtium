@@ -53,6 +53,7 @@ import java.nio.LongBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.soutalab.celtium.vulkan.RenderTargetRegistry.TargetFormatClass;
 import org.soutalab.celtium.vulkan.hal.FrameTargetPair;
+import org.soutalab.celtium.vulkan.hal.PresentEngine;
 import org.soutalab.celtium.vulkan.hal.PresentLagRecord;
 import org.soutalab.celtium.vulkan.hal.SharedDepthStore;
 import org.lwjgl.vulkan.VkClearColorValue;
@@ -268,6 +269,28 @@ public final class GllessFrameTarget implements FrameImageTarget {
     }
     private int colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     private int depthImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    /**
+     * The swapchain image the current frame borrows as its colour target (direct present path, lanechat
+     * #8830 (3)(4)), or null while the frame renders into the owned image. While a borrow is live,
+     * {@link #colorImage()} / {@link #colorView()} answer the borrowed handles and
+     * {@link #colorImageLayout} tracks the borrowed image; the owned image's resting layout is kept in
+     * {@link #ownedColorImageLayout} and restored when the borrow ends. The borrowed image and its view
+     * are the lender's (the context's {@code PresentEngine}): this class never destroys them.
+     */
+    private PresentEngine.BorrowedImage presentBorrow;
+    /** The owned colour image's tracked layout, saved at borrow time and restored when the borrow ends. */
+    private int ownedColorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    /**
+     * The per-image acquire semaphore pool for borrowed images, cursor-cycled exactly like the
+     * swapchain's own acquire pool: an acquire semaphore may not be reused while a previous signal is
+     * still unconsumed, and with one borrow outstanding at a time the cursor cycle is what keeps reuse
+     * behind the present that consumed the last signal. Sized to the lender's image count.
+     */
+    private long[] presentAcquireSemaphores = new long[0];
+    private int presentAcquireCursor;
+    /** The semaphore the live borrow's acquire signals; handed out once by {@link #presentAcquireSemaphore()}. */
+    private long presentAcquireSemaphoreUsed = VK_NULL_HANDLE;
+    private boolean presentAcquireWaitPending;
     private int abandonedFrames;
     private String lastAbandonReason = "none";
 
@@ -477,7 +500,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
     @Override
     public long colorImage() {
         checkAlive();
-        return this.colorImage;
+        return hasLivePresentBorrow() ? this.presentBorrow.image() : this.colorImage;
     }
 
     /** {@return the delivered image's width}, which the probe reports instead of assuming the capture's size. */
@@ -494,7 +517,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
     @Override
     public long colorView() {
         checkAlive();
-        return this.colorView;
+        return hasLivePresentBorrow() ? this.presentBorrow.view() : this.colorView;
     }
 
     @Override
@@ -517,6 +540,124 @@ public final class GllessFrameTarget implements FrameImageTarget {
     @Override
     public void noteColorImageLayout(int layout) {
         this.colorImageLayout = layout;
+    }
+
+    /**
+     * Borrows the next swapchain image from {@code engine} as this frame's colour target.
+     * <p>
+     * On success the borrowed image becomes what {@link #colorImage()} / {@link #colorView()} answer, the
+     * tracked colour layout is switched to the layout the lender reports the image in
+     * ({@link PresentEngine.BorrowedImage#initialLayout()}), and the acquire semaphore the borrow signals
+     * is held for the frame's first submission ({@link #presentAcquireSemaphore()}). The owned image's
+     * tracked layout is saved for {@link #releasePresentBorrow()} to restore. A borrow already live is
+     * kept (one frame borrows one image); a failed acquire leaves the frame on the owned image and
+     * returns false, with the acquire verdict readable from the engine.
+     *
+     * @return whether a borrow is live after the call
+     */
+    public boolean borrowNextPresentImage(PresentEngine engine, int frameSlot) {
+        checkAlive();
+        if (this.presentBorrow != null && !this.presentBorrow.isValid()) {
+            // The lender retired the generation under this borrow (a swapchain rebuild): forget the stale
+            // handle and fall through to a fresh borrow from the live generation.
+            releasePresentBorrow();
+        }
+        if (this.presentBorrow != null) {
+            return true;
+        }
+        if (engine == null || !ensurePresentAcquirePool(engine.imageCount())) {
+            return false;
+        }
+        long acquireSemaphore = this.presentAcquireSemaphores[this.presentAcquireCursor
+                % this.presentAcquireSemaphores.length];
+        this.presentAcquireCursor++;
+        PresentEngine.BorrowedImage borrowed = engine.acquireNextImage(acquireSemaphore, frameSlot);
+        if (borrowed == null) {
+            return false;
+        }
+        this.ownedColorImageLayout = this.colorImageLayout;
+        this.presentBorrow = borrowed;
+        this.colorImageLayout = borrowed.initialLayout();
+        this.presentAcquireSemaphoreUsed = acquireSemaphore;
+        this.presentAcquireWaitPending = true;
+        return true;
+    }
+
+    /** {@return whether a swapchain borrow is live and still valid}. */
+    public boolean hasLivePresentBorrow() {
+        return this.presentBorrow != null && this.presentBorrow.isValid();
+    }
+
+    @Override
+    public PresentEngine.BorrowedImage borrowedPresentImage() {
+        return this.presentBorrow;
+    }
+
+    @Override
+    public void releasePresentBorrow() {
+        if (this.presentBorrow == null) {
+            return;
+        }
+        this.presentBorrow = null;
+        this.presentAcquireWaitPending = false;
+        this.presentAcquireSemaphoreUsed = VK_NULL_HANDLE;
+        // The tracked layout goes back to describing the owned image, which nothing touched while the
+        // borrow was live.
+        this.colorImageLayout = this.ownedColorImageLayout;
+    }
+
+    @Override
+    public long presentAcquireSemaphore() {
+        if (!this.presentAcquireWaitPending) {
+            return VK_NULL_HANDLE;
+        }
+        this.presentAcquireWaitPending = false;
+        return this.presentAcquireSemaphoreUsed;
+    }
+
+    /**
+     * Sizes the acquire semaphore pool to the lender's image count. A pool of the previous size is retired
+     * through the retire queue rather than destroyed in place: a replaced semaphore can still be the one a
+     * queued submission waits on, the same hazard the swapchain's own pool replacement guards against.
+     *
+     * @return whether a usable pool exists
+     */
+    private boolean ensurePresentAcquirePool(int imageCount) {
+        if (imageCount <= 0) {
+            return false;
+        }
+        if (this.presentAcquireSemaphores.length == imageCount) {
+            return true;
+        }
+        VkDevice device = this.context.device();
+        long[] created = new long[imageCount];
+        try (MemoryStack stack = stackPush()) {
+            org.lwjgl.vulkan.VkSemaphoreCreateInfo semaphoreInfo = org.lwjgl.vulkan.VkSemaphoreCreateInfo
+                    .calloc(stack).sType$Default();
+            LongBuffer pointer = stack.mallocLong(1);
+            for (int i = 0; i < imageCount; i++) {
+                int result = org.lwjgl.vulkan.VK10.vkCreateSemaphore(device, semaphoreInfo, null, pointer);
+                if (result != VK_SUCCESS) {
+                    for (int j = 0; j < i; j++) {
+                        org.lwjgl.vulkan.VK10.vkDestroySemaphore(device, created[j], null);
+                    }
+                    return false;
+                }
+                created[i] = pointer.get(0);
+            }
+        }
+        long[] replaced = this.presentAcquireSemaphores;
+        this.presentAcquireSemaphores = created;
+        this.presentAcquireCursor = 0;
+        if (replaced.length > 0) {
+            final long[] retired = replaced;
+            VulkanRetireQueue.retire(() -> {
+                for (long semaphore : retired) {
+                    org.lwjgl.vulkan.VK10.vkDestroySemaphore(device, semaphore, null);
+                }
+            });
+        }
+        return true;
     }
 
     @Override
@@ -2266,6 +2407,18 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
         this.deleted = true;
         VkDevice device = this.context.device();
+        if (this.presentBorrow != null) {
+            // The target dies holding an unpresented borrow. The image itself is the lender's and stays
+            // acquired until the swapchain generation is retired; abandoning tells the lender, whose
+            // borrowAbandoned flag makes the present path rebuild the generation before borrowing again.
+            this.context.presentEngine().abandon(this.presentBorrow);
+            this.presentBorrow = null;
+            this.presentAcquireWaitPending = false;
+        }
+        for (long semaphore : this.presentAcquireSemaphores) {
+            org.lwjgl.vulkan.VK10.vkDestroySemaphore(device, semaphore, null);
+        }
+        this.presentAcquireSemaphores = new long[0];
         this.defaultPair.release();
         for (FrameTargetPair pair : this.chainPairs.values()) {
             pair.release();
