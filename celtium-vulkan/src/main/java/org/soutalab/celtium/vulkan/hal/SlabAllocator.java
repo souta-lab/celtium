@@ -42,6 +42,18 @@ import static org.lwjgl.vulkan.VK10.vkUnmapMemory;
  * release rule; the only difference is that {@link #collectCompleted(long)} frees its memory once it is empty,
  * because a slab shaped for one request is unlikely to fit the next one, while ordinary slabs are kept for reuse.
  * <p>
+ * <b>Fixed-page path (r8 ruling #8945 (A)):</b> a request whose 4096-page-rounded size is exactly
+ * {@link FixedPagePool#FIXED_PAGE_SIZE_BYTES} (the 64 KiB staging class) is served first by a
+ * {@link FixedPagePool} whose pages are exactly that size, so a free page is always a contiguous run of the
+ * full request size and the r8 refusal (151,552 bytes free, largest run 28,672) cannot recur on this path.
+ * The fixed pool's slabs are ordinary slabs of this allocator - same memory type, same
+ * {@code VulkanContext.allocateMemory} accounting, same deferred release rule, counted in
+ * {@link #liveSlabCount()} and {@link #usedBytes()} - so the path adds no allocation outside the slab census.
+ * When the fixed pool cannot serve (its cap is reached, or the alignment does not divide the page size), the
+ * request falls back to the ordinary pool, so this path never makes a request fail that the ordinary pool
+ * would have served. Fixed slabs are numbered above the ordinary range with a wide offset
+ * ({@link #FIXED_SLAB_INDEX_BASE}) so an index never collides with an ordinary or oversized slab index.
+ * <p>
  * <b>Memory accounting:</b> every allocation goes through
  * {@link VulkanContext#allocateMemory(VkDevice, VkMemoryAllocateInfo, LongBuffer)} and every free through
  * {@link VulkanContext#freeMemory(VkDevice, long)}, never the raw {@code vkAllocateMemory}/{@code vkFreeMemory}, so
@@ -60,15 +72,26 @@ public final class SlabAllocator {
     /** Default size of one ordinary slab: 64 MiB. */
     public static final long DEFAULT_SLAB_SIZE = 64L * 1024 * 1024;
 
+    /**
+     * Slab index base for fixed-page slabs: fixed slab {@code i} of an allocator is numbered
+     * {@code maxSlabs + FIXED_SLAB_INDEX_BASE + i}, far above the ordinary range and the oversized range that
+     * grows upward from {@code maxSlabs}, so an index always names exactly one kind of slab.
+     */
+    static final int FIXED_SLAB_INDEX_BASE = 1024;
+
     private final VulkanContext context;
     private final int memoryTypeIndex;
     private final long slabSizeBytes;
     private final int maxSlabs;
     private final boolean hostVisible;
     private final SlabPool pool;
+    private final FixedPagePool fixedPool;
 
     /** Device slabs backing the ledger's slabs, in the same index order; entries are appended, never removed. */
     private final List<SlabRecord> poolSlabs = new ArrayList<SlabRecord>();
+
+    /** Device slabs backing the fixed-page ledger's slabs, in the same index order; appended, never removed. */
+    private final List<SlabRecord> fixedSlabs = new ArrayList<SlabRecord>();
 
     /** Dedicated slabs created for oversized requests; an entry is removed when its memory is freed. */
     private final List<SlabRecord> oversizedSlabs = new ArrayList<SlabRecord>();
@@ -104,6 +127,7 @@ public final class SlabAllocator {
         this.maxSlabs = maxSlabs;
         this.hostVisible = hostVisible;
         this.pool = new SlabPool(slabSizeBytes, SlabPool.DEFAULT_PAGE_SIZE_BYTES, maxSlabs);
+        this.fixedPool = new FixedPagePool(slabSizeBytes, FixedPagePool.FIXED_PAGE_SIZE_BYTES, maxSlabs);
     }
 
     /**
@@ -131,6 +155,14 @@ public final class SlabAllocator {
         long pagedSize = alignUp(sizeBytes, SlabPool.DEFAULT_PAGE_SIZE_BYTES);
         if (pagedSize > this.slabSizeBytes) {
             return allocateOversized(pagedSize);
+        }
+        if (pagedSize == FixedPagePool.FIXED_PAGE_SIZE_BYTES) {
+            SlabAllocation fixed = allocateFixedPage(sizeBytes, alignment);
+            if (fixed != null) {
+                return fixed;
+            }
+            // The fixed pool is full or cannot honour the alignment: fall through to the ordinary pool, so
+            // the fixed path never refuses a request the ordinary pool would have served.
         }
         SlabPool.Allocation pooled = this.pool.allocate(sizeBytes, alignment);
         if (pooled == null) {
@@ -189,7 +221,9 @@ public final class SlabAllocator {
             throw new IllegalStateException("This SlabAllocation has already been released.");
         }
         allocation.released = true;
-        if (allocation.pooled != null) {
+        if (allocation.fixed != null) {
+            this.fixedPool.freeDeferred(allocation.fixed, timelineValue);
+        } else if (allocation.pooled != null) {
             this.pool.freeDeferred(allocation.pooled, timelineValue);
         } else {
             this.pendingOversized.add(new PendingOversizedRelease(allocation.record, timelineValue));
@@ -204,6 +238,7 @@ public final class SlabAllocator {
     public void collectCompleted(long completedTimelineValue) {
         requireLive();
         this.pool.collectCompleted(completedTimelineValue);
+        this.fixedPool.collectCompleted(completedTimelineValue);
         Iterator<PendingOversizedRelease> iterator = this.pendingOversized.iterator();
         while (iterator.hasNext()) {
             PendingOversizedRelease pending = iterator.next();
@@ -235,7 +270,12 @@ public final class SlabAllocator {
 
     /** Number of live {@code VkDeviceMemory} objects held by this allocator, ordinary and oversized slabs alike. */
     public int liveSlabCount() {
-        return this.poolSlabs.size() + this.oversizedSlabs.size();
+        return this.poolSlabs.size() + this.fixedSlabs.size() + this.oversizedSlabs.size();
+    }
+
+    /** Number of live fixed-page slabs held by this allocator, a subset of {@link #liveSlabCount()}. */
+    public int fixedSlabCount() {
+        return this.fixedSlabs.size();
     }
 
     /** Size of one ordinary slab in bytes. */
@@ -256,21 +296,21 @@ public final class SlabAllocator {
      * process holds in total.
      */
     public long usedBytes() {
-        long used = this.pool.usedBytes();
+        long used = this.pool.usedBytes() + this.fixedPool.usedBytes();
         for (SlabRecord record : this.oversizedSlabs) {
             used += record.size;
         }
         return used;
     }
 
-    /** Bytes not held by any live allocation across this pool's ordinary slabs. */
+    /** Bytes not held by any live allocation across this pool's ordinary and fixed-page slabs. */
     public long freeBytes() {
-        return this.pool.freeBytes();
+        return this.pool.freeBytes() + this.fixedPool.freeBytes();
     }
 
-    /** Length of the longest single free run in any ordinary slab of this pool. */
+    /** Length of the longest single free run in any ordinary or fixed-page slab of this pool. */
     public long largestFreeRun() {
-        return this.pool.largestFreeRun();
+        return Math.max(this.pool.largestFreeRun(), this.fixedPool.largestFreeRun());
     }
 
     /**
@@ -287,10 +327,14 @@ public final class SlabAllocator {
         for (SlabRecord record : this.poolSlabs) {
             freeSlab(record);
         }
+        for (SlabRecord record : this.fixedSlabs) {
+            freeSlab(record);
+        }
         for (SlabRecord record : this.oversizedSlabs) {
             freeSlab(record);
         }
         this.poolSlabs.clear();
+        this.fixedSlabs.clear();
         this.oversizedSlabs.clear();
         this.pendingOversized.clear();
     }
@@ -303,6 +347,45 @@ public final class SlabAllocator {
      * the same disposition {@code celtium$collectSlabReleases} takes at the drain, and the caller reports the
      * original refusal.
      */
+    /**
+     * Serves one fixed-page-class request from the fixed pool, with the same collect-on-allocate retry the
+     * ordinary path gets: a refusal whose cause is uncollected deferred releases is retried once after a
+     * collection against the frame timeline. Returns {@code null} when the fixed pool still cannot serve, and
+     * the caller falls back to the ordinary pool.
+     */
+    private SlabAllocation allocateFixedPage(long sizeBytes, long alignment) {
+        FixedPagePool.Allocation fixed = this.fixedPool.allocate(sizeBytes, alignment);
+        if (fixed == null && this.fixedPool.pendingDeferredCount() > 0) {
+            collectAndRetryFixed();
+            fixed = this.fixedPool.allocate(sizeBytes, alignment);
+        }
+        if (fixed == null) {
+            return null;
+        }
+        try {
+            ensureFixedSlabs();
+        } catch (RuntimeException | Error error) {
+            this.fixedPool.free(fixed);
+            throw error;
+        }
+        return new SlabAllocation(this, this.fixedSlabs.get(fixed.slab()), null, fixed);
+    }
+
+    /** Collection half of the fixed-page retry; mirrors {@link #collectAndRetry} without the ledger retry. */
+    private void collectAndRetryFixed() {
+        FrameTimeline timeline = this.context.frameTimeline();
+        if (timeline == null) {
+            return;
+        }
+        long completed;
+        try {
+            completed = timeline.completedValue();
+        } catch (RuntimeException failure) {
+            return;
+        }
+        collectCompleted(completed);
+    }
+
     private SlabPool.Allocation collectAndRetry(long sizeBytes, long alignment) {
         if (this.pool.pendingDeferredCount() == 0 && this.pendingOversized.isEmpty()) {
             return null;
@@ -327,6 +410,15 @@ public final class SlabAllocator {
         SlabRecord record = createSlab(pagedSize, this.maxSlabs + this.oversizedSlabs.size(), true);
         this.oversizedSlabs.add(record);
         return new SlabAllocation(this, record, null);
+    }
+
+    /** Creates the device memory for every fixed-page slab that does not have one yet, in slab index order. */
+    private void ensureFixedSlabs() {
+        while (this.fixedSlabs.size() < this.fixedPool.slabCount()) {
+            int slabIndex = this.fixedSlabs.size();
+            this.fixedSlabs.add(createSlab(this.slabSizeBytes,
+                    this.maxSlabs + FIXED_SLAB_INDEX_BASE + slabIndex, false));
+        }
     }
 
     /** Creates the device memory for every ledger slab that does not have one yet, in slab index order. */
@@ -435,19 +527,31 @@ public final class SlabAllocator {
     /**
      * One allocation handed out by {@link SlabAllocator#allocate(long, long)}: the slab memory to bind, and where
      * inside it the allocation lives. For an ordinary allocation this wraps the ledger's
-     * {@link SlabPool.Allocation}; a dedicated oversized slab has no ledger entry, so its offset is 0 and its size is
-     * the whole slab.
+     * {@link SlabPool.Allocation}; for a fixed-page allocation it wraps a {@link FixedPagePool.Allocation}; a
+     * dedicated oversized slab has no ledger entry, so its offset is 0 and its size is the whole slab.
      */
     public static final class SlabAllocation {
         private final SlabAllocator owner;
         private final SlabRecord record;
         private final SlabPool.Allocation pooled;
+        private final FixedPagePool.Allocation fixed;
         private boolean released;
 
         SlabAllocation(SlabAllocator owner, SlabRecord record, SlabPool.Allocation pooled) {
+            this(owner, record, pooled, null);
+        }
+
+        SlabAllocation(SlabAllocator owner, SlabRecord record, SlabPool.Allocation pooled,
+                FixedPagePool.Allocation fixed) {
             this.owner = owner;
             this.record = record;
             this.pooled = pooled;
+            this.fixed = fixed;
+        }
+
+        /** Whether this allocation is a fixed page of the 64 KiB staging class (see {@link FixedPagePool}). */
+        public boolean fixedPage() {
+            return this.fixed != null;
         }
 
         /** The allocator that created this allocation; the only allocator this allocation may be released to. */
@@ -462,17 +566,24 @@ public final class SlabAllocator {
 
         /** Byte offset of the allocation inside its slab. */
         public long offset() {
+            if (this.fixed != null) {
+                return this.fixed.offset();
+            }
             return this.pooled != null ? this.pooled.offset() : 0L;
         }
 
         /** Size in bytes after rounding up to whole pages; the range actually reserved. */
         public long size() {
+            if (this.fixed != null) {
+                return this.fixed.size();
+            }
             return this.pooled != null ? this.pooled.size() : this.record.size;
         }
 
         /**
          * Index of the backing slab. Ordinary slabs use the ledger's slab index; a dedicated oversized slab is
-         * numbered above the ordinary range, starting at the allocator's slab cap.
+         * numbered above the ordinary range, starting at the allocator's slab cap, and a fixed-page slab is
+         * numbered above that range plus {@link SlabAllocator#FIXED_SLAB_INDEX_BASE}.
          */
         public int slab() {
             return this.record.slabIndex;
