@@ -1,7 +1,9 @@
 package org.soutalab.celtium.vulkan;
 
+import org.lwjgl.opengl.GL11;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VkCommandBuffer;
+import org.soutalab.celtium.vulkan.batch.SharedQuadIndex;
 
 import java.nio.LongBuffer;
 
@@ -111,6 +113,16 @@ public final class VulkanDynamicMesh {
     private long indexBytes;
     private int vertexCount;
     private int indexCount;
+    /**
+     * Whether this mesh's indices are the shared quad pattern rather than bytes in its own index
+     * stream (Stage 5 slice S5-0). Adopted by the first quad append to an empty mesh: the mesh
+     * then writes no indices at all, {@link #indexBuffer()} answers the context's one shared
+     * buffer, and {@link #indexCount} is derived as {@code (vertexCount / 4) * 6}. A streamed
+     * (non-quad) append to such a mesh first materialises the pattern into the mesh's own stream
+     * ({@link #celtium$materializeSharedIndices()}), so a group that mixes topologies keeps the
+     * exact index sequence the per-batch expansion used to produce.
+     */
+    private boolean sharedQuadIndexing;
 
     /**
      * The display list whose geometry this mesh holds, or -1 while it is an immediate batch's mesh.
@@ -201,6 +213,7 @@ public final class VulkanDynamicMesh {
         this.indexBytes = 0L;
         this.vertexCount = 0;
         this.indexCount = 0;
+        this.sharedQuadIndexing = false;
     }
 
     public Layout layout() {
@@ -220,8 +233,18 @@ public final class VulkanDynamicMesh {
         return this.frameRegion != null ? this.frameRegion.vertexBaseAddress() : this.vertices.mappedAddress();
     }
 
-    /** {@return the address this mesh's indices are mapped at}, or 0 when it has none. */
+    /**
+     * {@return the address this mesh's indices are mapped at}, or 0 when it has none.
+     * <p>
+     * A shared-quad mesh answers 0: its indices live in the context's device-local shared buffer
+     * and have no host address. Callers that copy a mesh's indices out (the model-instance pool)
+     * only ever see streamed meshes - model geometry is built vertex by vertex through
+     * {@link #index(int)} and never adopts the shared pattern.
+     */
     public long indexAddress() {
+        if (this.sharedQuadIndexing) {
+            return 0L;
+        }
         if (this.frameRegion != null) {
             return this.frameRegion.indexBaseAddress();
         }
@@ -240,6 +263,9 @@ public final class VulkanDynamicMesh {
     }
 
     public long indexBuffer() {
+        if (this.sharedQuadIndexing) {
+            return this.context.sharedQuadIndexBuffer().buffer();
+        }
         if (this.frameRegion != null) {
             return this.frameRegion.indexBuffer();
         }
@@ -259,6 +285,11 @@ public final class VulkanDynamicMesh {
 
     /** {@return the byte offset this mesh's indices are bound at inside {@link #indexBuffer()}}. */
     public long indexBindOffset() {
+        if (this.sharedQuadIndexing) {
+            // The shared pattern is always addressed from its first quad; a mesh's place inside
+            // it is carried by the draw's vertex offset, never by the binding.
+            return 0L;
+        }
         return this.frameRegion != null ? this.frameRegion.indexByteOffset() : 0L;
     }
 
@@ -330,7 +361,11 @@ public final class VulkanDynamicMesh {
             // The skip switch applies here as well: this is the path the immediate flush actually uses, so leaving it out
             // meant -Dceltium.debug.skipDrawCalls measured nothing on the one path that matters. With it, the difference
             // is the cost of the vkCmdDrawIndexed command itself.
-            drawRangeInternal(commandBuffer, (int) (ibo >>> 2), this.indexCount, vbo == 0L ? 0 : (int) (vbo / stride));
+            if (this.sharedQuadIndexing) {
+                celtium$drawSharedQuadChunks(commandBuffer, vbo == 0L ? 0 : (int) (vbo / stride));
+            } else {
+                drawRangeInternal(commandBuffer, (int) (ibo >>> 2), this.indexCount, vbo == 0L ? 0 : (int) (vbo / stride));
+            }
             if (timed) {
                 PacketCost.noteDraw(PacketCost.start() - drawStart);
                 PacketCost.notePacket(bound);
@@ -410,6 +445,23 @@ public final class VulkanDynamicMesh {
             return;
         }
         org.lwjgl.vulkan.VK10.vkCmdDrawIndexed(commandBuffer, indexCount, 1, firstIndex, vertexOffset, 0);
+    }
+
+    /**
+     * Records the draws of a shared-quad mesh: one indexed draw per {@link SharedQuadIndex#MAX_QUADS}
+     * chunk of the mesh's quads, each addressing the shared pattern from its start (firstIndex 0)
+     * with the chunk's first quad carried in the vertex offset on top of {@code vertexOffset} (the
+     * mesh's own slice base, in vertices). A mesh at or under the pattern's limit is a single
+     * chunk, so this is also the ordinary shared-quad draw; the slicing exists only for the
+     * extreme single batch past 65,536 quads, whose indices would run off the pattern's end.
+     */
+    private void celtium$drawSharedQuadChunks(VkCommandBuffer commandBuffer, int vertexOffset) {
+        int totalQuads = this.vertexCount / SharedQuadIndex.VERTICES_PER_QUAD;
+        for (int firstQuad = 0; firstQuad < totalQuads; firstQuad += SharedQuadIndex.MAX_QUADS) {
+            int quads = Math.min(SharedQuadIndex.MAX_QUADS, totalQuads - firstQuad);
+            drawRangeInternal(commandBuffer, 0, quads * SharedQuadIndex.INDICES_PER_QUAD,
+                    vertexOffset + firstQuad * SharedQuadIndex.VERTICES_PER_QUAD);
+        }
     }
 
     public void bindAndDrawRange(VkCommandBuffer commandBuffer, long[] bindCache,
@@ -500,12 +552,14 @@ public final class VulkanDynamicMesh {
     }
 
     /**
-     * Copies {@code count} vertices of {@code stride} bytes each from a native address and appends triangle-list
-     * indices for {@code indices} (the expansion {@link VulkanImmediateDrawer} produces).
+     * Copies {@code count} vertices of {@code stride} bytes each from a native address and appends the
+     * {@link TopologyIndexEmitter} expansion of {@code glMode} for them.
      * <p>
      * This is the path Minecraft's immediate batches take: their vertices already are in the layout a pipeline
      * expects, so a raw copy plus generated indices is both the fastest and the least error-prone translation - no
-     * per-attribute decoding that could disagree with the format the mod used.
+     * per-attribute decoding that could disagree with the format the mod used. The indices are written straight
+     * into this mesh's index stream by the emitter; no Java array is materialised (Stage 5 slice S5-0, which
+     * removed {@code VulkanImmediateDrawer.expandIndices} and its cache).
      * <p>
      * The bytes and the stride are copied unchanged, which is the alignment contract this path already had and keeps:
      * a group's slice starts on a 16-byte boundary, and every vertex inside it sits exactly where the caller's stride
@@ -514,42 +568,19 @@ public final class VulkanDynamicMesh {
      * (BH-01, {@code alignUnit = lcm(4, stride)}), because terrain addresses are divided by the stride to get a base
      * vertex and this path never divides: it copies at the caller's stride and binds the buffer at the slice offset.
      *
-     * @return {@code false} when the layout was refused (a stride this mesh cannot represent, or no indices)
+     * @return {@code false} when the layout was refused (a stride this mesh cannot represent, or the mode expands
+     * to no indices)
      */
-    public boolean copyVertices(long sourceAddress, int stride, int count, int[] indices) {
-        if (sourceAddress == 0L || count <= 0 || indices == null || indices.length == 0
-                || stride < 4 || stride > 256) {
+    public boolean copyVerticesExpanded(long sourceAddress, int stride, int count, int glMode) {
+        if (sourceAddress == 0L || count <= 0 || stride < 4 || stride > 256
+                || TopologyIndexEmitter.indexCount(glMode, count) <= 0) {
             return false;
         }
-        int baseVertex = this.vertexCount;
-        long addedVertices = (long) stride * count;
-        long requiredVertices = this.vertexBytes + addedVertices;
-        long requiredIndices = this.indexBytes + (long) indices.length * 4;
-        boolean borrowed = this.frameRegion != null;
-        long vertexTarget = vertexWriteAddress(this.vertexBytes, addedVertices);
-        long indexTarget = indexWriteAddress(this.indexBytes, (long) indices.length * 4);
-        if (borrowed && this.frameRegion == null) {
-            // Reserving the indices promoted this mesh to buffers it owns (the arena could not hold the group), and the
-            // vertex address taken a moment ago was inside the slot that promotion abandoned: it is re-taken here, in
-            // the buffers the mesh owns now.
-            vertexTarget = vertexWriteAddress(this.vertexBytes, addedVertices);
-        }
-        if (vertexTarget == 0L || indexTarget == 0L) {
-            return false;
-        }
-        MemoryUtil.memCopy(sourceAddress, vertexTarget, addedVertices);
-        writeIndices(indexTarget, indices, baseVertex);
-        this.layout = Layout.positionOnly(stride);
-        this.vertexBytes = requiredVertices;
-        this.indexBytes = requiredIndices;
-        this.vertexCount += count;
-        this.indexCount += indices.length;
-        sealFrameSlice();
-        return true;
+        return celtium$appendStreamed(sourceAddress, stride, count, glMode, null);
     }
 
     /**
-     * {@link #copyVertices} plus a position transform applied while appending.
+     * {@link #copyVerticesExpanded} plus a position transform applied while appending.
      * <p>
      * The caller guarantees the transform is an axis-aligned modelView - diagonal scale plus translation with every
      * off-axis element exactly zero - and the format carries no normal. For that shape {@code x' = sx*x + tx} is the
@@ -561,36 +592,147 @@ public final class VulkanDynamicMesh {
      * The position is the first attribute in every layout this path sees (pos3f at offset 0), so the transform is a
      * per-vertex rewrite of the first three floats and nothing else moves.
      *
-     * @return {@code false} on the same conditions {@link #copyVertices} refuses, plus a missing matrix
+     * @return {@code false} on the same conditions {@link #copyVerticesExpanded} refuses, plus a missing matrix
      */
-    public boolean copyVerticesTransformed(long sourceAddress, int stride, int count, int[] indices,
+    public boolean copyVerticesTransformedExpanded(long sourceAddress, int stride, int count, int glMode,
             float[] modelView) {
         if (modelView == null || modelView.length < 16) {
             return false;
         }
-        if (sourceAddress == 0L || count <= 0 || indices == null || indices.length == 0
-                || stride < 12 || stride > 256) {
+        if (sourceAddress == 0L || count <= 0 || stride < 12 || stride > 256
+                || TopologyIndexEmitter.indexCount(glMode, count) <= 0) {
             // A stride under the position's own twelve bytes cannot carry the layout this method exists for.
             return false;
         }
+        return celtium$appendStreamed(sourceAddress, stride, count, glMode, modelView);
+    }
+
+    /**
+     * Copies {@code count} quad vertices ({@code count % 4 == 0}) and appends no indices at all when this mesh
+     * can address the shared quad pattern: an empty mesh adopts shared indexing
+     * ({@link #sharedQuadIndexing}), and a mesh already sharing keeps it. A mesh that already holds streamed
+     * indices cannot switch schemes, so the pattern for this batch is written into its stream instead - the
+     * sequence is the same either way, only its residence differs.
+     *
+     * @return {@code false} when the layout was refused (a stride this mesh cannot represent, or a vertex count
+     * that is not a whole number of quads)
+     */
+    public boolean copyVerticesQuads(long sourceAddress, int stride, int count) {
+        if (sourceAddress == 0L || count <= 0 || (count & 3) != 0 || stride < 4 || stride > 256) {
+            return false;
+        }
+        return celtium$appendQuads(sourceAddress, stride, count, null);
+    }
+
+    /** {@link #copyVerticesQuads} plus the position transform of {@link #copyVerticesTransformedExpanded}. */
+    public boolean copyVerticesTransformedQuads(long sourceAddress, int stride, int count, float[] modelView) {
+        if (modelView == null || modelView.length < 16) {
+            return false;
+        }
+        if (sourceAddress == 0L || count <= 0 || (count & 3) != 0 || stride < 12 || stride > 256) {
+            return false;
+        }
+        return celtium$appendQuads(sourceAddress, stride, count, modelView);
+    }
+
+    /** The streamed append both {@code copyVertices*Expanded} forms share; {@code modelView} null means a plain copy. */
+    private boolean celtium$appendStreamed(long sourceAddress, int stride, int count, int glMode, float[] modelView) {
+        if (this.sharedQuadIndexing && !celtium$materializeSharedIndices()) {
+            return false;
+        }
+        int indices = TopologyIndexEmitter.indexCount(glMode, count);
         int baseVertex = this.vertexCount;
         long addedVertices = (long) stride * count;
         long requiredVertices = this.vertexBytes + addedVertices;
-        long requiredIndices = this.indexBytes + (long) indices.length * 4;
+        long requiredIndices = this.indexBytes + (long) indices * 4;
         boolean borrowed = this.frameRegion != null;
         long vertexTarget = vertexWriteAddress(this.vertexBytes, addedVertices);
-        long indexTarget = indexWriteAddress(this.indexBytes, (long) indices.length * 4);
+        long indexTarget = indexWriteAddress(this.indexBytes, (long) indices * 4);
         if (borrowed && this.frameRegion == null) {
+            // Reserving the indices promoted this mesh to buffers it owns (the arena could not hold the group), and the
+            // vertex address taken a moment ago was inside the slot that promotion abandoned: it is re-taken here, in
+            // the buffers the mesh owns now.
             vertexTarget = vertexWriteAddress(this.vertexBytes, addedVertices);
         }
         if (vertexTarget == 0L || indexTarget == 0L) {
             return false;
         }
-        // The transform runs inside the copy rather than as a second pass: the position is read from the source and the
-        // attributes after it are copied verbatim. The full 3x3 is applied, not just its diagonal: a rotated model view
-        // used to be refused by the caller (its off-axis terms would have been dropped here, and the textured family's
-        // shader applies no model view at all, so the whole transform would vanish). The title screen's panorama is
-        // exactly that shape - sixty-four tiles rotated and offset - so the product has to be complete.
+        if (modelView == null) {
+            MemoryUtil.memCopy(sourceAddress, vertexTarget, addedVertices);
+        } else {
+            celtium$copyTransformedVertices(sourceAddress, vertexTarget, stride, count, modelView);
+        }
+        TopologyIndexEmitter.writeIndices(glMode, count, baseVertex, indexTarget);
+        this.layout = Layout.positionOnly(stride);
+        this.vertexBytes = requiredVertices;
+        this.indexBytes = requiredIndices;
+        this.vertexCount += count;
+        this.indexCount += indices;
+        sealFrameSlice();
+        return true;
+    }
+
+    /** The quad append both {@code copyVertices*Quads} forms share; {@code modelView} null means a plain copy. */
+    private boolean celtium$appendQuads(long sourceAddress, int stride, int count, float[] modelView) {
+        if (!this.sharedQuadIndexing && !(this.vertexCount == 0 && this.indexCount == 0)) {
+            // The mesh already holds streamed indices, so this batch's pattern joins the stream
+            // like any other expansion and the group keeps one continuous index sequence.
+            return celtium$appendStreamed(sourceAddress, stride, count, GL11.GL_QUADS, modelView);
+        }
+        long addedVertices = (long) stride * count;
+        long vertexTarget = vertexWriteAddress(this.vertexBytes, addedVertices);
+        if (vertexTarget == 0L) {
+            return false;
+        }
+        if (modelView == null) {
+            MemoryUtil.memCopy(sourceAddress, vertexTarget, addedVertices);
+        } else {
+            celtium$copyTransformedVertices(sourceAddress, vertexTarget, stride, count, modelView);
+        }
+        this.sharedQuadIndexing = true;
+        this.layout = Layout.positionOnly(stride);
+        this.vertexBytes += addedVertices;
+        this.vertexCount += count;
+        this.indexCount = (this.vertexCount / SharedQuadIndex.VERTICES_PER_QUAD)
+                * SharedQuadIndex.INDICES_PER_QUAD;
+        sealFrameSlice();
+        return true;
+    }
+
+    /**
+     * Turns a shared-quad mesh into a streamed one by writing the pattern for the vertices it already holds
+     * into its own index stream. Called by the first streamed append to a shared mesh: the group's index
+     * sequence is unchanged, only its residence moves, and the cost is paid once per mixed group rather
+     * than per quad batch.
+     *
+     * @return {@code false} when the mesh's index stream could not take the pattern (the append is refused
+     * with the mesh still in shared mode)
+     */
+    private boolean celtium$materializeSharedIndices() {
+        long indexTarget = indexWriteAddress(0L, (long) this.indexCount * 4L);
+        if (indexTarget == 0L) {
+            return false;
+        }
+        TopologyIndexEmitter.writeIndices(GL11.GL_QUADS, this.vertexCount, 0, indexTarget);
+        this.indexBytes = (long) this.indexCount * 4L;
+        this.sharedQuadIndexing = false;
+        sealFrameSlice();
+        return true;
+    }
+
+    /**
+     * Copies {@code count} vertices from {@code sourceAddress} to {@code vertexTarget} with the modelView
+     * transform applied to each position while copying - the vertex half the transformed appends share.
+     * <p>
+     * The transform runs inside the copy rather than as a second pass: the position is read from the source and the
+     * attributes after it are copied verbatim. The full 3x3 is applied, not just its diagonal: a rotated model view
+     * used to be refused by the caller (its off-axis terms would have been dropped here, and the textured family's
+     * shader applies no model view at all, so the whole transform would vanish). The title screen's panorama is
+     * exactly that shape - sixty-four tiles rotated and offset - so the product has to be complete.
+     */
+    private static void celtium$copyTransformedVertices(long sourceAddress, long vertexTarget, int stride, int count,
+            float[] modelView) {
+        long addedVertices = (long) stride * count;
         float m00 = modelView[0], m01 = modelView[4], m02 = modelView[8], tx = modelView[12];
         float m10 = modelView[1], m11 = modelView[5], m12 = modelView[9], ty = modelView[13];
         float m20 = modelView[2], m21 = modelView[6], m22 = modelView[10], tz = modelView[14];
@@ -630,27 +772,6 @@ public final class VulkanDynamicMesh {
                 MemoryUtil.memPutFloat(target + 8, (m20 * x) + (m21 * y) + (m22 * z) + tz);
             }
         }
-        writeIndices(indexTarget, indices, baseVertex);
-        this.layout = Layout.positionOnly(stride);
-        this.vertexBytes = requiredVertices;
-        this.indexBytes = requiredIndices;
-        this.vertexCount += count;
-        this.indexCount += indices.length;
-        sealFrameSlice();
-        return true;
-    }
-
-    private static void writeIndices(long indexTarget, int[] indices, int baseVertex) {
-        int len = indices.length;
-        int pairs = len & ~1;
-        for (int i = 0; i < pairs; i += 2) {
-            long lo = (indices[i] + baseVertex) & 0xFFFFFFFFL;
-            long hi = (long) (indices[i + 1] + baseVertex) << 32;
-            MemoryUtil.memPutLong(indexTarget + (long) i * 4L, lo | hi);
-        }
-        if (pairs < len) {
-            MemoryUtil.memPutInt(indexTarget + (long) pairs * 4L, indices[pairs] + baseVertex);
-        }
     }
 
     /**
@@ -674,6 +795,10 @@ public final class VulkanDynamicMesh {
             return;
         }
         if (SKIP_DRAW_CALLS || abSkipDraw) {
+            return;
+        }
+        if (this.sharedQuadIndexing) {
+            celtium$drawSharedQuadChunks(commandBuffer, 0);
             return;
         }
         org.lwjgl.vulkan.VK10.vkCmdDrawIndexed(commandBuffer, this.indexCount, 1, 0, 0, 0);
@@ -710,7 +835,7 @@ public final class VulkanDynamicMesh {
      * The stride {@link #sliceAlignment} was computed for, or {@code -1} before the first ask.
      * <p>
      * Keyed on the stride rather than invalidated at every {@code layout} assignment: the field is written in four
-     * places (the initialiser, {@link #begin}, and the two {@code copyVertices} paths that pin
+     * places (the initialiser, {@link #begin}, and the two append cores that pin
      * {@code Layout.positionOnly(stride)}), and a cache that has to be told about each of them is a cache that will
      * one day be stale. Comparing the stride is one int compare and cannot be.
      */

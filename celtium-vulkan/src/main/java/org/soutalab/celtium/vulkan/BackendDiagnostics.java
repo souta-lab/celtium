@@ -257,7 +257,6 @@ final class BackendDiagnostics {
                 + " matrixCopyMillis=" + (b.immediateStatistics.matrixCopyNanos() / 1000000L)
                 + " captureStateMillis=" + (b.immediateStatistics.captureStateNanos() / 1000000L)
                 + " stateKeyMillis=" + (b.immediateStatistics.stateKeyNanos() / 1000000L)
-                + " " + VulkanImmediateDrawer.indexCacheStats()
                 + " prepareCache=" + b.prepareCacheSummary()
                 + " groupDrawCount=" + b.immediateStatistics.groupDrawCount()
                 + " groupDrawMillis=" + (b.immediateStatistics.groupDrawNanos() / 1000000L)

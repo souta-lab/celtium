@@ -19,14 +19,20 @@ final class RetainedGeometryCache implements AutoCloseable {
         this.context = context;
     }
 
-    LeasedResource.Lease<VulkanDynamicMesh> acquire(NativeGeometryBuffer source, int mode, int[] indices) {
+    LeasedResource.Lease<VulkanDynamicMesh> acquire(NativeGeometryBuffer source, int mode) {
         if (this.closed) throw new IllegalStateException("retained geometry device cache is closed");
         it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<LeasedResource<VulkanDynamicMesh>> modes = this.entries.get(source);
         LeasedResource<VulkanDynamicMesh> resource = modes == null ? null : modes.get(mode);
         if (resource == null) {
             VulkanDynamicMesh mesh = new VulkanDynamicMesh(this.context);
             try {
-                if (!mesh.copyVertices(source.address(), source.stride(), source.vertexCount(), indices)) {
+                // A retained mesh is built from exactly one mode (the cache key), so a quad source
+                // takes the mesh's shared-pattern form and writes no indices of its own; every
+                // other mode streams its expansion (Stage 5 slice S5-0).
+                boolean built = mode == org.lwjgl.opengl.GL11.GL_QUADS
+                        ? mesh.copyVerticesQuads(source.address(), source.stride(), source.vertexCount())
+                        : mesh.copyVerticesExpanded(source.address(), source.stride(), source.vertexCount(), mode);
+                if (!built) {
                     throw new IllegalArgumentException("retained geometry has no drawable vertices or indices");
                 }
             } catch (RuntimeException | Error error) {
@@ -42,7 +48,8 @@ final class RetainedGeometryCache implements AutoCloseable {
             modes.put(mode, resource);
             this.builds++;
             this.formatsBuilt[source.formatId()]++;
-            this.uploadedBytes += (long) source.stride() * source.vertexCount() + (long) indices.length * 4L;
+            this.uploadedBytes += (long) source.stride() * source.vertexCount()
+                    + (long) TopologyIndexEmitter.indexCount(mode, source.vertexCount()) * 4L;
         } else {
             this.reuses++;
         }
