@@ -19876,8 +19876,10 @@ this.frameBufferOpen = false;
         // and recordPassHead records the one task draw that replaces the region loop
         // below. Any refusal — counted in the task draw's gate census, or a coverage
         // miss counted here — leaves the loop to draw the pass exactly as before.
+        boolean sortedPass = pass.isSorted();
+        boolean drawCapsActive = this.terrainBudget.capActive();
         boolean meshDrewPass = false;
-        if (!pass.isSorted() && VulkanMeshTaskDraw.available(this.context)) {
+        if (!sortedPass && VulkanMeshTaskDraw.available(this.context)) {
             meshDrewPass = celtium$meshTryPassHead(stack, pipeline, matrices, renderLists,
                     pass, occlusionCamera, camera, cacheParams, primitiveType);
         }
@@ -19959,16 +19961,20 @@ this.frameBufferOpen = false;
             try {
             batch = (VulkanMultiDrawBatch) cached.getBatch();
 
-            // The budget's draw cap (item 328, V-03): the batch is charged whole - vertices by the index
-            // shape's rule, draws by its command count - and dropped whole when it would cross either cap,
-            // the drop counted rather than silent. A partial charge would break the indirect path's
-            // one-call-per-batch shape, so the cap applies at batch granularity.
-            long chargeVertices = this.terrainBudget.verticesOf(batch, pass.isSorted());
-            if (!this.terrainBudget.tryConsumeDraw(chargeVertices, batch.size())) {
-                this.terrainBudget.noteDroppedBatch(chargeVertices, batch.size());
-                continue;
+            // The budget's draw cap (item 328, V-03): E5 caches per-batch vertex counts in O(1) on
+            // VulkanMultiDrawBatch and skips the cap check branch when no draw cap is configured.
+            long chargeVertices = this.terrainBudget.verticesOf(batch, sortedPass);
+            if (drawCapsActive) {
+                if (!this.terrainBudget.tryConsumeDraw(chargeVertices, batch.size())) {
+                    this.terrainBudget.noteDroppedBatch(chargeVertices, batch.size());
+                    continue;
+                }
+            } else {
+                this.terrainBudget.tryConsumeDraw(chargeVertices, batch.size());
             }
-            noteTerrainStatisticsCharge(statisticsQuery, chargeVertices, pass.isSorted());
+            if (statisticsQuery >= 0) {
+                noteTerrainStatisticsCharge(statisticsQuery, chargeVertices, sortedPass);
+            }
 
             if (this.readbackSlots < 8) {
                 // One slot per pass, so the readback covers the batch each pass actually draws rather than only the
@@ -19981,13 +19987,17 @@ this.frameBufferOpen = false;
                 org.soutalab.celtium.vulkan.FramePassTimings.end("recCharge");
             }
             org.soutalab.celtium.vulkan.FramePassTimings.begin("recBind");
-            long uniformStarted = System.nanoTime();
             // The region's offset goes to the binding-5 array; the returned index rides the
-            // region's draw commands as firstInstance (agera-kpi-3). The descriptor bind itself
-            // happened once, at the pass' head.
-            int regionIndex = this.terrain.writeRegionOffset(region, camera);
-            long afterUniform = System.nanoTime();
-            this.terrainUniformNanos += afterUniform - uniformStarted;
+            // region's draw commands as firstInstance (agera-kpi-3). E5: skip per-region
+            // System.nanoTime() pairs (~300 syscalls/frame) when pass timings are not enabled.
+            int regionIndex;
+            if (org.soutalab.celtium.vulkan.FramePassTimings.enabled()) {
+                long uniformStarted = System.nanoTime();
+                regionIndex = this.terrain.writeRegionOffset(region, camera);
+                this.terrainUniformNanos += System.nanoTime() - uniformStarted;
+            } else {
+                regionIndex = this.terrain.writeRegionOffset(region, camera);
+            }
             if (this.boundHandleLogs < 6 && this.atlasTexture != null) {
                 // Which pipeline and descriptor set the draw will actually use, next to the views the backend handed
                 // bindTextures. If the set printed here is not the one that was written, the terrain samples another
@@ -20061,7 +20071,6 @@ this.frameBufferOpen = false;
             // source for every unsorted pass, whose offsets are 0 by construction.
             org.soutalab.celtium.vulkan.FramePassTimings.end("recBind");
             org.soutalab.celtium.vulkan.FramePassTimings.begin("recDraw");
-            boolean sortedPass = pass.isSorted();
             // E10-a census collection (item 723): the batch's canonical commands join the
             // frame's shadow-generation collection. Unsorted passes only — a sorted pass'
             // order is semantics, and E10's first shape excludes it (design section 2.5).
@@ -20198,14 +20207,13 @@ this.frameBufferOpen = false;
             if (runStart >= 0) {
                 celtium$drawIndexedRun(runFirstIndex, runBaseVertex, runElementCount, resources, regionIndex);
             }
+            if (arenaBound) {
+                // E5: only restore the shared index buffer when the direct path actually bound the region arena.
+                this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
+            }
             }
 
             this.terrainStatistics.addLastSectionsDrawn(renderList.getSectionsWithGeometryCount());
-
-            if (resources.indexArena != null) {
-                // The next region may use the shared index buffer again.
-                this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
-            }
             org.soutalab.celtium.vulkan.FramePassTimings.end("recDraw");
         }
         // Item 691: recPassTail covers the loop's end to this method's end (see FramePassTimings).

@@ -55,6 +55,10 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
     private boolean unsortedOffsetsChecked;
     /** Whether every command reads the shared quad buffer at offset 0; computed once on demand. */
     private boolean unsortedOffsetsClean;
+    /** Cached total vertex counts for {@link TerrainFrameBudget#verticesOf} (E5: O(1) per-region charge). */
+    private boolean verticesCached;
+    private long cachedUnsortedVertices;
+    private long cachedSortedVertices;
     /** True while this instance sits in {@link #POOL}; guards against a double {@link #delete()} double-pooling it. */
     private boolean pooled;
 
@@ -95,6 +99,9 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
         super.clear();
         java.util.Arrays.fill(this.sectionTags, -1);
         this.currentSectionTag = -1;
+        this.verticesCached = false;
+        this.cachedUnsortedVertices = 0L;
+        this.cachedSortedVertices = 0L;
     }
 
     /**
@@ -146,6 +153,7 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
         // Element counts are never negative, so the sign bit of the negation is set iff the command is non-empty.
         this.size = index + ((-elementCount) >>> 31);
         this.maxElementCount = Math.max(this.maxElementCount, elementCount);
+        this.verticesCached = false;
     }
 
     @Override
@@ -154,6 +162,29 @@ public final class VulkanMultiDrawBatch extends MultiDrawBatch {
         int merged = this.elementCounts[index] + additionalElementCount;
         this.elementCounts[index] = merged;
         this.maxElementCount = Math.max(this.maxElementCount, merged);
+        this.verticesCached = false;
+    }
+
+    /**
+     * E5: O(1) cached vertex charge for {@link TerrainFrameBudget#verticesOf(VulkanMultiDrawBatch, boolean)}.
+     * Computed once on first read after assembly and reused across every subsequent frame this batch stays cached.
+     */
+    long chargedVertexCount(boolean sortedPass) {
+        if (!this.verticesCached) {
+            long unsorted = 0L;
+            long sorted = 0L;
+            int n = this.size;
+            int[] counts = this.elementCounts;
+            for (int i = 0; i < n; i++) {
+                int c = counts[i];
+                sorted += c;
+                unsorted += (c / 6) * 4L;
+            }
+            this.cachedUnsortedVertices = unsorted;
+            this.cachedSortedVertices = sorted;
+            this.verticesCached = true;
+        }
+        return sortedPass ? this.cachedSortedVertices : this.cachedUnsortedVertices;
     }
 
     /** Nothing to upload: the arrays stay in CPU memory and are read while recording the frame's commands. */

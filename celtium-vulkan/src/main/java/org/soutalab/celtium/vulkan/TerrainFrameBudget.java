@@ -98,7 +98,10 @@ public final class TerrainFrameBudget {
         if (this.windowFrame != Long.MIN_VALUE) {
             this.finishedFrame = this.windowFrame;
             this.finishedHadEvents = this.windowHasEvents();
-            this.finishedSummary = "frame=" + this.windowFrame + " " + this.windowSummary();
+            // E5: avoid per-frame String formatting when nothing was dropped or deferred.
+            this.finishedSummary = this.finishedHadEvents
+                    ? ("frame=" + this.windowFrame + " " + this.windowSummary())
+                    : "";
         }
         if (this.windowFrame != Long.MIN_VALUE && this.rebuildsUsed + this.forcedFirstBuilds > 0) {
             if (this.rebuildNanos > this.rebuildTargetNanos) {
@@ -127,12 +130,7 @@ public final class TerrainFrameBudget {
      * the sorted charge can over-count but never under-count.
      */
     public long verticesOf(VulkanMultiDrawBatch batch, boolean sortedPass) {
-        long vertices = 0L;
-        for (int i = 0; i < batch.size(); i++) {
-            int elementCount = batch.elementCount(i);
-            vertices += sortedPass ? elementCount : (elementCount / 6) * 4L;
-        }
-        return vertices;
+        return batch.chargedVertexCount(sortedPass);
     }
 
     /**
