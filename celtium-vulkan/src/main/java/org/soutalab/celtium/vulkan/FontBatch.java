@@ -372,6 +372,11 @@ public final class FontBatch {
     private long flushCallsBoundary;
     private long flushCallsStateChange;
 
+    /** Whether a flush is executing on this thread; the re-entrancy guard in {@link #celtium$flushPendingFontBatch}. */
+    private boolean flushInProgress;
+    /** How many re-entrant flush calls the guard turned away; reported with the retention census. */
+    private long flushReentriesSuppressed;
+
     /** How each coalesced run was flushed: by an intervening submission, a boundary, or a state change. */
     private int flushedIntervening;
     private int flushedBoundary;
@@ -825,6 +830,35 @@ public final class FontBatch {
      * behind it so the glyphs cannot be drawn out of order.
      */
     public void celtium$flushPendingFontBatch(String how) {
+        if (this.flushInProgress) {
+            // A flush submits the held run through the normal submission path, and that path re-enters this
+            // method from its own flush points: the batch-entry flush, the group close, the pre-draw flush,
+            // and the state-change boundary the submission's own state writes trip. While the submission can
+            // complete, a nested call finds the run already detached or inactive and returns - but when the
+            // submission cannot complete (an allocation refusal the sink reports as a retained run), every
+            // nested call re-offers the retained run, whose submission re-enters again, and the render thread
+            // never leaves the frame: measured on the integrated tree (NH pack, host-visible slab pool
+            // exhausted by the title-transition burst), where the client thread spun in this cycle at a
+            // bounded depth while presentation froze and the server thread kept running. The outer flush
+            // already provides the ordering a nested one would, so a nested call has nothing to add: work
+            // that becomes pending during a flush is taken by the next flush point, which every submission
+            // entry and boundary provides.
+            this.flushReentriesSuppressed++;
+            if (this.flushReentriesSuppressed <= 4L) {
+                System.out.println("[Celtium] CELTIUM_FONT_FLUSH_REENTRY suppressed how=" + how
+                        + " count=" + this.flushReentriesSuppressed);
+            }
+            return;
+        }
+        this.flushInProgress = true;
+        try {
+            celtium$flushPendingFontBatchBody(how);
+        } finally {
+            this.flushInProgress = false;
+        }
+    }
+
+    private void celtium$flushPendingFontBatchBody(String how) {
         // Every call is counted, before any early return: the classified counters below only move when a run was
         // actually open, so a stream of calls that find nothing to submit was invisible - which is the shape the
         // profile shows (4.5% of the warm window's self time against ~9.5 started runs a frame).
@@ -1031,7 +1065,8 @@ public final class FontBatch {
                 + " retainedPendingRuns=" + this.retained.size()
                 + " retainedPendingBytes=" + this.retainedBytes
                 + " retainedDroppedRuns=" + this.retainedDroppedRuns
-                + " retainedDroppedQuads=" + this.retainedDroppedQuads;
+                + " retainedDroppedQuads=" + this.retainedDroppedQuads
+                + " fontFlushReentriesSuppressed=" + this.flushReentriesSuppressed;
     }
 
     /**
