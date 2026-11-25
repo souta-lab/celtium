@@ -430,8 +430,8 @@ final class GlStateQueries {
                 org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
                 return vulkan != null ? vulkan.celtium$depthFuncGl() : stub.attribDepthFunc;
             }
-            case 0x0D05: // GL_PACK_ALIGNMENT
-                return 4;
+            case 0x0D05: // GL_PACK_ALIGNMENT - the recorded value, as the UNPACK side answers its own
+                return GlsmBufferState.current().packAlignment();
             case 0x0CF5: // GL_UNPACK_ALIGNMENT - the recorded value the upload conversion reads rows with
                 return GlsmBufferState.current().unpackAlignment();
             case 0x0CF2: // GL_UNPACK_ROW_LENGTH
@@ -440,10 +440,12 @@ final class GlStateQueries {
                 return GlsmBufferState.current().unpackSkipRows();
             case 0x0CF4: // GL_UNPACK_SKIP_PIXELS
                 return GlsmBufferState.current().unpackSkipPixels();
-            case 0x0D02: // GL_PACK_ROW_LENGTH - the readback paths write tightly packed rows
+            case 0x0D02: // GL_PACK_ROW_LENGTH - the recorded value, as the UNPACK side answers its own
+                return GlsmBufferState.current().packRowLength();
             case 0x0D03: // GL_PACK_SKIP_ROWS
+                return GlsmBufferState.current().packSkipRows();
             case 0x0D04: // GL_PACK_SKIP_PIXELS
-                return 0;
+                return GlsmBufferState.current().packSkipPixels();
             case 0x0B65: // GL_FOG_MODE
                 return org.soutalab.celtium.vulkan.ImmediateFogState.current().glMode();
             case 0x0D3B: // GL_MAX_CLIENT_ATTRIB_STACK_DEPTH - the bounded stack the push/pop routes use
@@ -598,9 +600,54 @@ final class GlStateQueries {
         memPutInt(out, value);
     }
 
+    /**
+     * The 64-bit twin of {@link #getInts}: the same answers widened to longs, with the same
+     * component counts per pname. This body used to write a single zero for every pname, so a
+     * mod reading GL_MAX_TEXTURE_SIZE or GL_VIEWPORT through glGetInteger64v got zeros the
+     * 32-bit query never produced, and array pnames left the rest of the caller's buffer stale.
+     */
     static void getLongs(GlsmFrontend stub, int pname, long out, GlsmFrontend.Fn fn) {
-        if (out != 0L) {
-            memPutLong(out, 0L);
+        if (out == 0L) {
+            return;
+        }
+        switch (pname) {
+            case 0x0D3A: { // GL_MAX_VIEWPORT_DIMS - two limits
+                int dimension = 16384;
+                org.soutalab.celtium.vulkan.VulkanTerrainGpuBackend vulkan = vulkanBackend();
+                if (vulkan != null) {
+                    dimension = vulkan.celtium$maxTextureSize();
+                }
+                memPutLong(out, dimension);
+                memPutLong(out + 8, dimension);
+                return;
+            }
+            case 0x0BA2: // GL_VIEWPORT
+                memPutLong(out, GlsmViewportState.current().x());
+                memPutLong(out + 8, GlsmViewportState.current().y());
+                memPutLong(out + 16, GlsmViewportState.current().width());
+                memPutLong(out + 24, GlsmViewportState.current().height());
+                return;
+            case 0x0C23: { // GL_COLOR_WRITEMASK - four integers, R,G,B,A
+                int mask = stub.raster.colorMask();
+                for (int i = 0; i < 4; i++) {
+                    memPutLong(out + (long) i * 8L, (mask >>> i) & 1);
+                }
+                return;
+            }
+            case 0x0C10: // GL_SCISSOR_BOX - independent of the viewport, even when scissor is disabled
+                memPutLong(out, stub.raster.scissorX());
+                memPutLong(out + 8, stub.raster.scissorY());
+                memPutLong(out + 16, stub.raster.scissorWidth());
+                memPutLong(out + 24, stub.raster.scissorHeight());
+                return;
+            default:
+                int value = getIntegerValue(stub, pname);
+                if (value == Integer.MIN_VALUE) {
+                    value = 0;
+                }
+                noteTextureUnitAnswer(pname, value);
+                noteImageUnitAnswer(pname, value);
+                memPutLong(out, value);
         }
     }
 

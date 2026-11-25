@@ -79,7 +79,10 @@ public final class GlsmBufferState {
      * sanitised to a legal GL value (1, 2 or 8, else 4), lengths and skips clamp at zero, and
      * GL_UNPACK_ROW_LENGTH is 0x0CF2 (the landed owner keyed it at 0x0CF7, which is
      * GL_UNPACK_IMAGE_HEIGHT - corrected here at the rewiring, before any route read it).
-     * PACK_* pnames keep their own fields, as landed.
+     * PACK_* pnames keep their own fields and are sanitised exactly like UNPACK_*; they
+     * used to be stored raw while the query side answered constants, so a value set through
+     * glPixelStorei could never be read back and an unchecked packAlignment (0, 3, negative)
+     * sat waiting for the first pack-side consumer to divide by it.
      */
     public void pixelStore(int pname, int value) {
         switch (pname) {
@@ -87,10 +90,10 @@ public final class GlsmBufferState {
             case 0x0CF2: this.unpackRowLength = Math.max(0, value); break;
             case 0x0CF4: this.unpackSkipPixels = Math.max(0, value); break;
             case 0x0CF3: this.unpackSkipRows = Math.max(0, value); break;
-            case 0x0D05: this.packAlignment = value; break;     // GL_PACK_ALIGNMENT
-            case 0x0D02: this.packRowLength = value; break;     // GL_PACK_ROW_LENGTH
-            case 0x0D04: this.packSkipPixels = value; break;    // GL_PACK_SKIP_PIXELS
-            case 0x0D03: this.packSkipRows = value; break;      // GL_PACK_SKIP_ROWS
+            case 0x0D05: this.packAlignment = value == 1 || value == 2 || value == 8 ? value : 4; break; // GL_PACK_ALIGNMENT
+            case 0x0D02: this.packRowLength = Math.max(0, value); break;     // GL_PACK_ROW_LENGTH
+            case 0x0D04: this.packSkipPixels = Math.max(0, value); break;    // GL_PACK_SKIP_PIXELS
+            case 0x0D03: this.packSkipRows = Math.max(0, value); break;      // GL_PACK_SKIP_ROWS
             default: break;
         }
         this.version++;
@@ -100,6 +103,10 @@ public final class GlsmBufferState {
     public int unpackRowLength() { return this.unpackRowLength; }
     public int unpackSkipPixels() { return this.unpackSkipPixels; }
     public int unpackSkipRows() { return this.unpackSkipRows; }
+    public int packAlignment() { return this.packAlignment; }
+    public int packRowLength() { return this.packRowLength; }
+    public int packSkipPixels() { return this.packSkipPixels; }
+    public int packSkipRows() { return this.packSkipRows; }
 
     /** Clears every target binding that names {@code name} (the stub forgetBuffer sweep). */
     public void unbindName(int name) {
