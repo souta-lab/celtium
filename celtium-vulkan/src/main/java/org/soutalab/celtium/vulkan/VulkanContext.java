@@ -3,6 +3,7 @@ package org.soutalab.celtium.vulkan;
 import org.lwjgl.PointerBuffer;
 import org.soutalab.celtium.harness.HarnessConfig;
 import org.soutalab.celtium.vulkan.hal.PresentEngine;
+import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.EXTDebugUtils;
@@ -394,6 +395,13 @@ public final class VulkanContext {
      */
     private static final class SharedBatch {
         private long fence;
+        /**
+         * The frame-timeline value this batch's submission signals (Stage 2), allocated in
+         * {@link #submitBatch} - the one point every batch passes on its way to the queue - and 0 while the
+         * batch is unsubmitted or the device has no timeline. A reader that sees a value above 0 knows the
+         * submission is armed and that the timeline reaching it confirms this batch exactly as its fence does.
+         */
+        private long timelineValue;
         private int pending;
         /** The creating context's serial for this batch (item 529, instrument I3). */
         private long serial;
@@ -1428,6 +1436,7 @@ public final class VulkanContext {
             } else {
                 batch.pending = 0;
                 batch.submittedNanos = 0L;
+                batch.timelineValue = 0L;
                 batch.frameEntries = 0;
                 batch.deferredEntries = 0;
                 batch.semaphoreEntries = 0;
@@ -1537,7 +1546,8 @@ public final class VulkanContext {
     private boolean[] submitChunkBarriers = new boolean[SUBMIT_CHUNK];
     private int[] submitChunkGroups = new int[SUBMIT_CHUNK];
 
-    private Throwable submitChunk(java.util.ArrayList<DeferredSubmit> entries, int from, int to, long fence) {
+    private Throwable submitChunk(java.util.ArrayList<DeferredSubmit> entries, int from, int to, long fence,
+            long timelineSemaphore, long timelineValue) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             int chunkSize = to - from;
             if (this.submitChunkBarriers.length < chunkSize) {
@@ -1576,6 +1586,40 @@ public final class VulkanContext {
                 if (entry.signalSemaphores != null) {
                     submit.pSignalSemaphores(stack.longs(entry.signalSemaphores));
                 }
+                if (i == groupCount - 1 && timelineValue > 0L) {
+                    // Stage 2: the batch's timeline signal rides the chunk's last submit info, appended to
+                    // whatever binary signals that info already carries. The values array the timeline info
+                    // requires is one entry per wait and per signal semaphore: binary semaphores take 0, and
+                    // the appended timeline semaphore takes the batch's value. Signalling here - after every
+                    // command buffer of the batch, in queue order - is what lets one counter value confirm
+                    // the whole batch exactly as its shared fence does.
+                    int waits = entry.waitSemaphores == null ? 0 : entry.waitSemaphores.length;
+                    int signals = entry.signalSemaphores == null ? 0 : entry.signalSemaphores.length;
+                    LongBuffer signalHandles = stack.mallocLong(signals + 1);
+                    for (int s = 0; s < signals; s++) {
+                        signalHandles.put(s, entry.signalSemaphores[s]);
+                    }
+                    signalHandles.put(signals, timelineSemaphore);
+                    submit.pSignalSemaphores(signalHandles);
+                    LongBuffer signalValues = stack.mallocLong(signals + 1);
+                    for (int s = 0; s < signals; s++) {
+                        signalValues.put(s, 0L);
+                    }
+                    signalValues.put(signals, timelineValue);
+                    org.lwjgl.vulkan.VkTimelineSemaphoreSubmitInfo timelineInfo =
+                            org.lwjgl.vulkan.VkTimelineSemaphoreSubmitInfo.calloc(stack)
+                                    .sType(org.lwjgl.vulkan.VK12
+                                            .VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO)
+                                    .pSignalSemaphoreValues(signalValues);
+                    if (waits > 0) {
+                        LongBuffer waitValues = stack.mallocLong(waits);
+                        for (int w = 0; w < waits; w++) {
+                            waitValues.put(w, 0L);
+                        }
+                        timelineInfo.pWaitSemaphoreValues(waitValues);
+                    }
+                    submit.pNext(timelineInfo.address());
+                }
                 position += count;
             }
             try {
@@ -1600,13 +1644,27 @@ public final class VulkanContext {
      *         {@link #abandonFailedBatch} on its own thread
      */
     private Throwable submitBatch(SharedBatch batch, java.util.ArrayList<DeferredSubmit> entries) {
+        // Stage 2: the batch's timeline value is allocated here, the one point every batch passes on its way
+        // to the queue - the game thread's flush and the presenter worker alike. Allocation order is submission
+        // order because submitBatch calls are serialised by the presenter-join discipline (a flush joins the
+        // worker before it submits), and the lock keeps that true even where the discipline is only a comment.
+        // The value rides the last chunk's last submit info, beside the shared fence: both confirm the batch,
+        // the counter without a per-batch fence query.
+        if (this.frameTimeline != null && !entries.isEmpty()) {
+            synchronized (this.timelineValueLock) {
+                batch.timelineValue = this.frameTimeline.nextValue();
+            }
+        }
         // In chunks: a loading screen can queue hundreds of uploads in one batch (measured on Enigmatica 2 Expert's
         // texture stitch: "OutOfMemoryError: Out of stack space" building one VkSubmitInfo array for all of them on the
         // 64 KiB MemoryStack). Chunks go to the queue in order and only the last arms the shared fence, which the
         // queue signals after every earlier submission - the same completion the single call gave.
         for (int from = 0; from < entries.size(); from += SUBMIT_CHUNK) {
             int to = Math.min(entries.size(), from + SUBMIT_CHUNK);
-            Throwable failure = submitChunk(entries, from, to, to == entries.size() ? batch.fence : VK_NULL_HANDLE);
+            boolean lastChunk = to == entries.size();
+            Throwable failure = submitChunk(entries, from, to, lastChunk ? batch.fence : VK_NULL_HANDLE,
+                    lastChunk && batch.timelineValue > 0L ? this.frameTimeline.semaphore() : VK_NULL_HANDLE,
+                    lastChunk ? batch.timelineValue : 0L);
             if (failure != null) {
                 // A failure after an earlier chunk reached the queue is a device-level error (the same call with the
                 // same kind of entries just succeeded); the caller's free-everything path is then the lost-device one.
@@ -1899,6 +1957,10 @@ public final class VulkanContext {
             throw celtium$lostDevice("pollDeferredSubmits after previous loss");
         }
         int reclaimed = 0;
+        // Stage 2: the timeline's counter, read at most once per poll. A batch whose value the counter has
+        // reached is complete exactly as if its fence had been queried - the value and the fence are signalled
+        // by the same submission - so the walk below can reclaim it without the per-head fence ioctl.
+        long timelineCompleted = -1L;
         while (!this.deferredSubmits.isEmpty()) {
             DeferredSubmit head = this.deferredSubmits.peek();
             if (head.batch != null && head.batch == this.presenterBatch) {
@@ -1913,6 +1975,20 @@ public final class VulkanContext {
             if (head.batch != null && head.batch == this.pendingBatch) {
                 // Still in the unflushed batch: its fence is not armed, so it reads NOT_READY - known without the
                 // ioctl a vkGetFenceStatus costs.
+                break;
+            }
+            if (head.batch != null && head.batch.timelineValue > 0L && this.frameTimeline != null) {
+                if (timelineCompleted < 0L) {
+                    timelineCompleted = this.frameTimeline.completedValue();
+                }
+                if (timelineCompleted >= head.batch.timelineValue) {
+                    this.deferredSubmits.poll();
+                    celtium$reclaimDeferred(head, false);
+                    reclaimed++;
+                    continue;
+                }
+                // Not reached: the same submission arms the batch's fence, so the fence cannot be signalled
+                // either - falling through to the fence query would only pay an ioctl for the same answer.
                 break;
             }
             int status = vkGetFenceStatus(this.device, head.fence);
@@ -2544,6 +2620,32 @@ public final class VulkanContext {
             if (this.commandPool != VK_NULL_HANDLE) {
                 vkDestroyCommandPool(this.device, this.commandPool, null);
                 this.commandPool = VK_NULL_HANDLE;
+            }
+            // The slab pools' device memory goes with the device: every slab is freed here (one
+            // vkFreeMemory per slab through the census-counted path), before the device itself is destroyed.
+            for (SlabAllocator allocator : this.deviceLocalSlabsByType.values()) {
+                allocator.delete();
+            }
+            this.deviceLocalSlabsByType.clear();
+            for (SlabAllocator allocator : this.hostVisibleSlabsByType.values()) {
+                allocator.delete();
+            }
+            this.hostVisibleSlabsByType.clear();
+            for (SlabAllocator allocator : this.deviceLocalImageSlabsByType.values()) {
+                allocator.delete();
+            }
+            this.deviceLocalImageSlabsByType.clear();
+            // Stage 2's device children die with the drains above complete and before the device itself:
+            // the ring's buffers first (they are ordinary allocations), then the timeline semaphore.
+            // The timeline dies last of the three groups because slab collection reads the completed
+            // timeline value (the merged completion currency).
+            if (this.frameLinearRing != null) {
+                this.frameLinearRing.delete();
+                this.frameLinearRing = null;
+            }
+            if (this.frameTimeline != null) {
+                this.frameTimeline.delete();
+                this.frameTimeline = null;
             }
             vkDestroyDevice(this.device, null);
             this.device = null;
@@ -3227,6 +3329,25 @@ public final class VulkanContext {
     private boolean drawIndirectFirstInstanceSupported;
     /** Whether {@code VkPhysicalDeviceVulkan12Features.drawIndirectCount} was reported and enabled (E10). */
     private boolean drawIndirectCountSupported;
+    /**
+     * Whether {@code VkPhysicalDeviceVulkan12Features.timelineSemaphore} was reported and enabled at creation
+     * (Stage 2). Unlike the new architecture's experimental line, the product line does not refuse a device
+     * without it: {@link #frameTimeline} stays null and every synchronisation path keeps the fence behaviour it
+     * had, so the feature is an acceleration of the existing bookkeeping where it exists, never a new gate.
+     */
+    private boolean timelineSemaphoreSupported;
+    /**
+     * The frame timeline (Stage 2): the one timeline semaphore every batched submission signals, or null when
+     * the device did not report {@code timelineSemaphore}. Created with the device, deleted before it.
+     */
+    private org.soutalab.celtium.vulkan.hal.FrameTimeline frameTimeline;
+    /** Serialises timeline value allocation between the game thread's flush and the presenter worker's submit. */
+    private final Object timelineValueLock = new Object();
+    /**
+     * The per-frame linear ring (Stage 2), created on first use: frame-lifetime temporaries live here instead
+     * of in the persistent-resource allocators. Null until first asked for, and again after {@link #delete()}.
+     */
+    private org.soutalab.celtium.vulkan.hal.FrameLinearRing frameLinearRing;
     /** VkPhysicalDeviceLimits.maxDrawIndirectCount, a limit rather than a feature (0 when unreported). */
     private int maxDrawIndirectCount;
     /**
@@ -3238,6 +3359,63 @@ public final class VulkanContext {
     /** {@return whether the device was created with {@code multiDrawIndirect} enabled}. */
     public boolean multiDrawIndirectEnabled() {
         return this.multiDrawIndirectSupported;
+    }
+
+    /** {@return whether the device was created with {@code timelineSemaphore} enabled (Stage 2)}. */
+    public boolean timelineSemaphoreSupported() {
+        return this.timelineSemaphoreSupported;
+    }
+
+    /**
+     * {@return the frame timeline}, or null when the device did not report {@code timelineSemaphore} - every
+     * caller must treat null as "keep the fence path", which is the product line's fallback contract.
+     */
+    public org.soutalab.celtium.vulkan.hal.FrameTimeline frameTimeline() {
+        return this.frameTimeline;
+    }
+
+    /**
+     * {@return the timeline value the batch that armed {@code fence} will signal}, or 0 when no tracked batch
+     * carries that fence or the timeline is absent. The frame-slot wait reads this after flushing: the batch a
+     * slot rode in is the submission whose completion the wait actually needs, and its timeline value is that
+     * completion stated on the counter.
+     */
+    public long celtium$timelineValueForFence(long fence) {
+        if (this.frameTimeline == null || fence == VK_NULL_HANDLE) {
+            return 0L;
+        }
+        for (DeferredSubmit entry : this.deferredSubmits) {
+            if (entry.fence == fence) {
+                return entry.batch == null ? 0L : entry.batch.timelineValue;
+            }
+        }
+        return 0L;
+    }
+
+    /**
+     * {@return the per-frame linear ring (Stage 2)}, creating it on first use against this context's device.
+     * Render thread only, like the submissions whose temporaries it stages.
+     */
+    public org.soutalab.celtium.vulkan.hal.FrameLinearRing celtium$frameLinearRing() {
+        if (this.frameLinearRing == null) {
+            if (this.device == null) {
+                throw new IllegalStateException("frame linear ring asked for before the device exists");
+            }
+            this.frameLinearRing = new org.soutalab.celtium.vulkan.hal.FrameLinearRing(this);
+        }
+        return this.frameLinearRing;
+    }
+
+    /**
+     * Resets one frame slot's linear-ring slice. Called only from the frame-slot wait's success paths - the
+     * wait is the confirmation that the slot's submission completed, which is the ring's reuse gate - so a
+     * reset can never hand the CPU bytes the GPU still reads. A context whose ring was never created has
+     * nothing to reset.
+     */
+    public void celtium$resetFrameLinearSlot(int slot) {
+        if (this.frameLinearRing != null) {
+            this.frameLinearRing.reset(slot);
+        }
     }
 
     /** {@return whether the device was created with {@code pipelineStatisticsQuery} enabled}. */
@@ -3728,9 +3906,17 @@ public final class VulkanContext {
                         .calloc(stack).sType$Default().pNext(supported12.address());
                 org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2(this.physicalDevice, features12);
                 this.drawIndirectCountSupported = supported12.drawIndirectCount();
-                if (this.drawIndirectCountSupported) {
+                // Stage 2's timelineSemaphore is queried in the same pass and carried by the same struct: a
+                // pNext chain may not hold two VkPhysicalDeviceVulkan12Features, so the two features share
+                // one, each field set to exactly what the device reported. Unlike drawIndirectCount the
+                // timeline is not required - a device that does not report it keeps the fence synchronisation
+                // it has today (see timelineSemaphoreSupported's contract) - so its absence refuses nothing.
+                this.timelineSemaphoreSupported = supported12.timelineSemaphore();
+                if (this.drawIndirectCountSupported || this.timelineSemaphoreSupported) {
                     indirectCountFeatures = org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features.calloc(stack)
-                            .sType$Default().drawIndirectCount(true);
+                            .sType$Default()
+                            .drawIndirectCount(this.drawIndirectCountSupported)
+                            .timelineSemaphore(this.timelineSemaphoreSupported);
                     if (createInfo.pNext() != 0L) {
                         org.lwjgl.system.MemoryUtil.memPutLong(indirectCountFeatures.address() + 8L, createInfo.pNext());
                     }
@@ -3806,6 +3992,7 @@ public final class VulkanContext {
                                 + this.storageImageWriteWithoutFormatSupported
                                 + " pipelineStatisticsQuery=" + this.pipelineStatisticsQuerySupported
                                 + " drawIndirectCount=" + this.drawIndirectCountSupported
+                                + " timelineSemaphore=" + this.timelineSemaphoreSupported
                                 + " shaderDrawParameters=" + this.shaderDrawParametersSupported
                                 + " dynamicRendering=" + this.dynamicRenderingSupported
                                 + " textureArray=" + this.textureArraySupported
@@ -3813,10 +4000,15 @@ public final class VulkanContext {
                         lastDeviceLossReport));
             }
             this.device = new VkDevice(handle.get(0), this.physicalDevice, createInfo);
+            if (this.timelineSemaphoreSupported) {
+                // Stage 2: the frame timeline is born with the device and dies just before it (delete()).
+                this.frameTimeline = new org.soutalab.celtium.vulkan.hal.FrameTimeline(this.device);
+            }
             System.out.println("[Celtium] CELTIUM_DEVICE_FEATURES shaderDrawParameters="
                     + this.shaderDrawParametersSupported + " multiDrawIndirect=" + this.multiDrawIndirectSupported
                     + " drawIndirectCount=" + this.drawIndirectCountSupported
                     + " maxDrawIndirectCount=" + this.maxDrawIndirectCount
+                    + " timelineSemaphore=" + this.timelineSemaphoreSupported
                     + " textureArray=" + this.textureArraySupported
                     + " pipelineStatisticsQuery=" + this.pipelineStatisticsQuerySupported
                     + " meshShader=" + this.meshShaderSupported);
@@ -4544,6 +4736,47 @@ public final class VulkanContext {
         }
     }
 
+    /**
+     * The device-local slab pools {@link VulkanBuffer} allocates from: fixed 64 MiB slabs, sub-allocated, so a
+     * buffer no longer owns a {@code vkAllocateMemory} of its own. One pool per memory type, keyed by type
+     * index, because a slab can only bind to a buffer whose requirements name the pool's type; pools are
+     * created lazily, the first time a buffer's requirements pick their type.
+     */
+    private final java.util.Map<Integer, SlabAllocator> deviceLocalSlabsByType =
+            new java.util.HashMap<Integer, SlabAllocator>();
+    /**
+     * The host-visible slab pools {@link VulkanHostBuffer} allocates from: same fixed-slab shape as the
+     * device-local pools, but host-visible/coherent and persistently mapped, so a host buffer no longer owns
+     * a {@code vkAllocateMemory} of its own either. One pool per memory type, created lazily.
+     */
+    private final java.util.Map<Integer, SlabAllocator> hostVisibleSlabsByType =
+            new java.util.HashMap<Integer, SlabAllocator>();
+    /**
+     * The device-local slab pools mirrored-texture <em>images</em> allocate from. Separate from the buffer
+     * pools above on purpose: a {@code VkDeviceMemory} that backs both buffers and images must keep buffer
+     * and image ranges apart by the device's {@code bufferImageGranularity}, which the shared ledger does
+     * not model. An image-only pool never mixes kinds, so the question does not arise. One pool per memory
+     * type, created lazily.
+     */
+    private final java.util.Map<Integer, SlabAllocator> deviceLocalImageSlabsByType =
+            new java.util.HashMap<Integer, SlabAllocator>();
+    /** Slab-backed buffers handed to the deferred list by {@link #celtium$retireSlabBuffer}: (handle, allocation). */
+    private final java.util.ArrayList<Object[]> retiredSlabBuffers = new java.util.ArrayList<Object[]>();
+    /**
+     * The fallback slab completion currency, for a device without a frame timeline. The primary currency is
+     * the frame timeline (Stage 2): a deferred slab release is keyed on the timeline's last allocated value
+     * when the release is recorded ({@link #celtium$slabReleaseValue()}), and collection reads the timeline's
+     * GPU-confirmed counter ({@link #celtium$slabCompletedValue()}). A device that did not report
+     * {@code timelineSemaphore} has no timeline - Stage 2 keeps the fence behaviour there - so this serial
+     * counts retired-buffer drains instead: a release keyed on the serial becomes reusable once a later drain
+     * has completed, because the drain's only call site runs where the queue is idle - the GPU has finished
+     * everything submitted - which is the completion fact a release needs. Collection uses one behind the
+     * release serial, so a range is never collected by the same drain cycle that recorded it. Which currency
+     * a context runs on is fixed at device creation (the timeline is born with the device); the ledgers take
+     * a monotone {@code long} and do not change either way.
+     */
+    private long slabReleaseSerial = 1L;
+
     /** The site tags of the deferrals, and their count, so a leg can say which path needed the list. */
     private final java.util.ArrayList<String> retiredBufferSites = new java.util.ArrayList<String>();
 
@@ -4577,9 +4810,7 @@ public final class VulkanContext {
      * @return how many buffers were freed
      */
     public int celtium$destroyRetiredBuffers() {
-        if (this.retiredBuffers.isEmpty()) {
-            return 0;
-        }
+        celtium$collectSlabReleases();
         VkDevice device = this.device;
         int freed = 0;
         for (int i = 0; i < this.retiredBuffers.size(); i++) {
@@ -4593,14 +4824,222 @@ public final class VulkanContext {
             freed++;
         }
         this.retiredBuffers.clear();
+        // The slab form: destroy the buffer, then hand the sub-allocation back to its pool as a deferred
+        // release keyed on the current completion currency. This drain point is where nothing can be
+        // recording and the queue is idle, and the release itself only becomes reusable once the currency
+        // passes the keyed value - the same completion fact the raw path's vkFreeMemory here relied on,
+        // stated through the currency instead (see slabReleaseSerial).
+        for (int i = 0; i < this.retiredSlabBuffers.size(); i++) {
+            Object[] entry = this.retiredSlabBuffers.get(i);
+            long handle = ((Long) entry[0]).longValue();
+            SlabAllocator.SlabAllocation allocation = (SlabAllocator.SlabAllocation) entry[1];
+            if (device != null) {
+                vkDestroyBuffer(device, handle, null);
+            }
+            allocation.owner().release(allocation, celtium$slabReleaseValue());
+            freed++;
+        }
+        this.retiredSlabBuffers.clear();
         this.retiredBuffersDestroyed += freed;
         this.retiredBuffersOutstanding = 0;
+        // The drain ran under the caller's queue-idle guarantee, so every release keyed on the current
+        // serial is provably GPU-dead from here on: advancing the serial is what lets the next collection
+        // (the next drain, or an allocator's collect-on-allocate retry) reuse those ranges. On a timeline
+        // device the serial is never read - the timeline counter is the currency - and this advance is
+        // inert bookkeeping for the fallback path only.
+        this.slabReleaseSerial++;
         return freed;
     }
 
     /** {@return how many deferred buffers are waiting to be freed, and how many have been freed so far}. */
     public int[] celtium$retiredBufferCounts() {
         return new int[] {this.retiredBuffersOutstanding, this.retiredBuffersDestroyed};
+    }
+
+    /**
+     * {@return the device-local slab pool serving buffers whose memory requirements carry
+     * {@code memoryTypeBits}}, created on first use.
+     * <p>
+     * The pool's memory type is the one {@link #memoryTypeIndex} picks from the caller's own requirement bits,
+     * so a slab is only ever bound to a buffer that names the pool's type. There is no fallback to an allocation
+     * of the buffer's own: the slab migration has no per-buffer {@code vkAllocateMemory} to fall back to, and
+     * a device with no device-local type in the bits fails in {@code memoryTypeIndex}, as it did before.
+     */
+    public SlabAllocator celtium$deviceLocalSlabs(int memoryTypeBits) {
+        int type = memoryTypeIndex(memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                "the device-local slab pool");
+        SlabAllocator allocator = this.deviceLocalSlabsByType.get(Integer.valueOf(type));
+        if (allocator == null) {
+            allocator = new SlabAllocator(this, "deviceLocal", type, SlabAllocator.DEFAULT_SLAB_SIZE, 8, false);
+            this.deviceLocalSlabsByType.put(Integer.valueOf(type), allocator);
+        }
+        return allocator;
+    }
+
+    /**
+     * {@return the host-visible slab pool serving host buffers whose memory requirements carry
+     * {@code memoryTypeBits}}, created on first use. The pool's type is the host-visible coherent type
+     * {@link #memoryTypeIndex} picks from the caller's own requirement bits, exactly as
+     * {@link VulkanHostBuffer} picked it for its private allocation before. Ordinary slabs are capped at
+     * 8 per type, so the live {@code vkAllocateMemory} count for all host buffers combined is bounded by
+     * the slab cap (plus one dedicated slab per live oversized &gt;64 MiB request), not by the buffer count.
+     */
+    public SlabAllocator celtium$hostVisibleSlabs(int memoryTypeBits) {
+        int type = memoryTypeIndex(memoryTypeBits,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                "the host-visible slab pool");
+        SlabAllocator allocator = this.hostVisibleSlabsByType.get(Integer.valueOf(type));
+        if (allocator == null) {
+            allocator = new SlabAllocator(this, "hostVisible", type, SlabAllocator.DEFAULT_SLAB_SIZE, 8, true);
+            this.hostVisibleSlabsByType.put(Integer.valueOf(type), allocator);
+        }
+        return allocator;
+    }
+
+    /**
+     * {@return the device-local image slab pool serving images whose memory requirements carry
+     * {@code memoryTypeBits}}, created on first use. Kept apart from {@link #celtium$deviceLocalSlabs}
+     * (the buffer pools) so no slab ever mixes buffer and image ranges; see the field's documentation.
+     * Ordinary slabs are capped at 8 per type, so the live {@code vkAllocateMemory} count for all mirrored
+     * textures combined is bounded by the slab caps of the image pools they use (plus one dedicated slab
+     * per live oversized image), not by the texture count.
+     */
+    public SlabAllocator celtium$deviceLocalImageSlabs(int memoryTypeBits) {
+        int type = memoryTypeIndex(memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                "the device-local image slab pool");
+        SlabAllocator allocator = this.deviceLocalImageSlabsByType.get(Integer.valueOf(type));
+        if (allocator == null) {
+            allocator = new SlabAllocator(this, "deviceLocalImage", type, SlabAllocator.DEFAULT_SLAB_SIZE, 8,
+                    false);
+            this.deviceLocalImageSlabsByType.put(Integer.valueOf(type), allocator);
+        }
+        return allocator;
+    }
+
+    /**
+     * {@return per-pool live bytes for every slab pool, for the memory allocation summary}. The r7 Phase 1 leg
+     * died with a host pool at 512 MiB live (8 of 8 slabs, 135,168 bytes free) and the summary could only report
+     * the process-wide total, so nothing said which pool - host-visible staging, device-local buffers or images -
+     * held the memory. Each entry names the pool kind and memory type and gives its used and free bytes, its
+     * largest free run and its live slab count against the cap, so the next leg can attribute the holding and
+     * tell a full pool from a fragmented one. Each entry also splits the ordinary and fixed-page ledgers:
+     * the r10 leg's refusing pool was one of these allocators, but its ordinary ledger sat at the cap with a
+     * 16384-byte largest free run while the aggregated entry showed slabs=16 and a 15.3 MB largest free run
+     * from the fixed ledger, so the aggregate alone could not attribute the refusal.
+     */
+    public String celtium$slabPoolSummary() {
+        StringBuilder summary = new StringBuilder("slabPools=[");
+        boolean first = true;
+        first = appendSlabPoolSummary(summary, "deviceLocal", this.deviceLocalSlabsByType, first);
+        first = appendSlabPoolSummary(summary, "hostVisible", this.hostVisibleSlabsByType, first);
+        appendSlabPoolSummary(summary, "deviceLocalImage", this.deviceLocalImageSlabsByType, first);
+        return summary.append(']').toString();
+    }
+
+    private static boolean appendSlabPoolSummary(StringBuilder summary, String kind,
+            java.util.Map<Integer, SlabAllocator> poolsByType, boolean first) {
+        for (SlabAllocator allocator : poolsByType.values()) {
+            if (!first) {
+                summary.append(' ');
+            }
+            first = false;
+            summary.append(kind).append("(type=").append(allocator.memoryTypeIndex())
+                    .append("):usedBytes=").append(allocator.usedBytes())
+                    .append(",freeBytes=").append(allocator.freeBytes())
+                    .append(",largestFreeRun=").append(allocator.largestFreeRun())
+                    .append(",slabs=").append(allocator.liveSlabCount())
+                    // Ledger split (r10 follow-up): the aggregates above mix the ordinary and fixed-page
+                    // ledgers, and in r10 the fixed ledger's free runs made an exhausted ordinary ledger
+                    // (8 of 8 slabs, largest free run 16384) read as a healthy pool with slabs=16 and a
+                    // multi-megabyte largest free run. The split keeps each ledger attributable on its own.
+                    .append(",ordinarySlabs=").append(allocator.ordinarySlabCount())
+                    .append(",ordinaryUsedBytes=").append(allocator.ordinaryUsedBytes())
+                    .append(",ordinaryFreeBytes=").append(allocator.ordinaryFreeBytes())
+                    .append(",ordinaryLargestFreeRun=").append(allocator.ordinaryLargestFreeRun())
+                    .append(",fixedSlabs=").append(allocator.fixedSlabCount())
+                    .append(",fixedUsedBytes=").append(allocator.fixedUsedBytes())
+                    .append(",fixedFreeBytes=").append(allocator.fixedFreeBytes())
+                    .append(",fixedLargestFreeRun=").append(allocator.fixedLargestFreeRun())
+                    .append(",oversizedSlabs=").append(allocator.oversizedSlabCount());
+        }
+        return first;
+    }
+
+    /** {@return live slab count across the host-visible pools, for the host-buffer census}. */
+    public int celtium$hostVisibleSlabCount() {
+        int total = 0;
+        for (SlabAllocator allocator : this.hostVisibleSlabsByType.values()) {
+            total += allocator.liveSlabCount();
+        }
+        return total;
+    }
+
+    /**
+     * {@return the value a deferred slab release recorded now must be keyed on}: on a timeline device, the
+     * frame timeline's last allocated value - every submission that could still reference the released range
+     * carries a value at or below it, and the timeline counter passing it is exactly the fact that those
+     * submissions have completed. On a device without a timeline, the current drain serial (see
+     * {@link #slabReleaseSerial}).
+     */
+    public long celtium$slabReleaseValue() {
+        return this.frameTimeline != null ? this.frameTimeline.lastAllocatedValue() : this.slabReleaseSerial;
+    }
+
+    /**
+     * {@return the value slab collection may use now}: on a timeline device, the timeline's GPU-confirmed
+     * counter, so a release is only collected once the GPU has completed the submissions it was keyed
+     * against. On a device without a timeline, one behind the release serial, so a release is only collected
+     * after a drain that ran later than the release's own recording has completed.
+     */
+    public long celtium$slabCompletedValue() {
+        return this.frameTimeline != null ? this.frameTimeline.completedValue() : this.slabReleaseSerial - 1L;
+    }
+
+    /**
+     * Makes slab ranges whose deferred releases the completion currency has already passed reusable again,
+     * by asking every pool to collect against {@link #celtium$slabCompletedValue()}. Two drive points: the
+     * retired buffer drain ({@link #celtium$destroyRetiredBuffers()}) and the allocators' collect-on-allocate
+     * retry, because collection that only runs when a retired buffer happens to drain lets per-frame staging
+     * churn hold whole slabs hostage for as long as the drain stays uncalled.
+     */
+    public void celtium$collectSlabReleases() {
+        if (this.deviceLocalSlabsByType.isEmpty() && this.hostVisibleSlabsByType.isEmpty()
+                && this.deviceLocalImageSlabsByType.isEmpty()) {
+            return;
+        }
+        long completed = celtium$slabCompletedValue();
+        for (SlabAllocator allocator : this.deviceLocalSlabsByType.values()) {
+            allocator.collectCompleted(completed);
+        }
+        for (SlabAllocator allocator : this.hostVisibleSlabsByType.values()) {
+            allocator.collectCompleted(completed);
+        }
+        for (SlabAllocator allocator : this.deviceLocalImageSlabsByType.values()) {
+            allocator.collectCompleted(completed);
+        }
+    }
+
+    /**
+     * Hands a slab-backed buffer to the deferred list, the slab form of {@link #celtium$retireBuffer(long, long,
+     * String)}: the buffer is destroyed and its sub-allocation released at the same safe point, instead of a
+     * {@code vkFreeMemory} the slab must never receive.
+     */
+    public void celtium$retireSlabBuffer(long handle, SlabAllocator.SlabAllocation allocation, String site) {
+        if (handle == VK_NULL_HANDLE) {
+            return;
+        }
+        if (allocation == null) {
+            // No slab range to return (a create that failed before its allocation): the handle alone is
+            // retired through the raw list, whose drain destroys it without freeing any memory.
+            celtium$retireBuffer(handle, VK_NULL_HANDLE, site);
+            return;
+        }
+        this.retiredSlabBuffers.add(new Object[] {Long.valueOf(handle), allocation});
+        if (this.retiredBufferSites.size() < 8) {
+            this.retiredBufferSites.add(site);
+            System.out.println("[Celtium] CELTIUM_BUFFER_RETIRED site=" + site + " slab=true outstanding="
+                    + this.retiredSlabBuffers.size());
+        }
     }
 
     /** Submits every pending copy and waits for it and every other outstanding deferred submission to complete. */

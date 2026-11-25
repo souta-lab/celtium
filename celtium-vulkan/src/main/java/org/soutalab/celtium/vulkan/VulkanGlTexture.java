@@ -2,6 +2,7 @@ package org.soutalab.celtium.vulkan;
 
 import org.lwjgl.PointerBuffer;
 import org.soutalab.celtium.harness.HarnessConfig;
+import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.*;
@@ -1011,11 +1012,25 @@ public final class VulkanGlTexture {
     private int height;
     private long image;
     private long memory;
+    /**
+     * The slab sub-allocation backing {@link #image}, or {@code null} while no image is live. Mirrored
+     * textures sub-allocate from the context's device-local image slab pool instead of owning a
+     * {@code vkAllocateMemory} each, so {@link #memory} stays 0 for an owned image and this field is the
+     * ownership record the destroy path releases (deferred, never a {@code vkFreeMemory}).
+     */
+    private SlabAllocator.SlabAllocation imageAllocation;
     private long view;
     private long sampler;
 
     private long stagingBuffer;
     private long stagingMemory;
+    /**
+     * The slab sub-allocation backing {@link #stagingBuffer}, or {@code null} while no staging buffer is
+     * live. The staging buffer sub-allocates from the context's host-visible slab pool (the
+     * {@link VulkanHostBuffer} shape): {@link #stagingMemory} then names the slab's memory for the
+     * mapped-range calls, and the mapping is the slab's persistent one, never unmapped by this class.
+     */
+    private SlabAllocator.SlabAllocation stagingAllocation;
     /** Host address of the persistently mapped staging buffer, or 0 while it is not mapped. */
     private long stagingAddress;
     private long stagingCapacity;
@@ -3068,11 +3083,6 @@ public final class VulkanGlTexture {
 
             VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
             vkGetImageMemoryRequirements(device, image, requirements);
-            int memoryType = findMemoryType(requirements.memoryTypeBits(), VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "image memory");
-            VkMemoryAllocateInfo allocate = VkMemoryAllocateInfo.calloc(stack).sType$Default()
-                    .allocationSize(requirements.size())
-                    .memoryTypeIndex(memoryType);
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("mirrored texture")) {
                 // Thrown like any other failure on this path: the callers already handle a resource that could not be
                 // built, and the point of the injection is to check that they still do.
@@ -3081,9 +3091,15 @@ public final class VulkanGlTexture {
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanGlTexture:483")) {
                 throw new IllegalStateException("injected allocation failure: VulkanGlTexture:483");
             }
-            check(VulkanContext.allocateMemory(device, allocate, handle, "mirroredTexture"), "vkAllocateMemory(mirrored texture)");
-            memory = handle.get(0);
-            check(vkBindImageMemory(device, image, memory, 0L), "vkBindImageMemory(mirrored texture)");
+            // The memory is a sub-allocation of the context's device-local image slab pool, not a
+            // vkAllocateMemory of this image's own: the Phase 1 census counted one live allocation per
+            // mirrored texture (site mirroredTexture, 22 of 70 live), and the fixed-slab design bounds
+            // that by the pool's slab cap instead. The bind goes through the allocator, so the slab
+            // offset arithmetic lives in exactly one place, and `memory` stays 0 - the ownership record
+            // is imageAllocation, which the destroy path releases back to the pool.
+            SlabAllocator imageAllocator = context.celtium$deviceLocalImageSlabs(requirements.memoryTypeBits());
+            imageAllocation = imageAllocator.allocate(requirements.size(), requirements.alignment());
+            imageAllocator.bindImage(image, imageAllocation);
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanGlTexture:afterBind")) {
                 // After the bind, so the cleanup has an image AND its memory to release. The two sites above fire
                 // before vkAllocateMemory, which is why the audit could say the image path's partial cleanup was never
@@ -3106,7 +3122,7 @@ public final class VulkanGlTexture {
             // longer has content for. Whatever was created is retired and the object is left empty and unusable by
             // name, so the next upload rebuilds it and the descriptor decision refuses it until then (audit N17).
             long releasedImage = image;
-            long releasedMemory = memory;
+            long releasedMemory = imageAllocation != null ? imageAllocation.deviceMemory() : memory;
             long releasedView = view;
             destroyImageResources();
             this.width = 0;
@@ -3268,6 +3284,7 @@ public final class VulkanGlTexture {
             view = 0L;
             image = 0L;
             memory = 0L;
+            imageAllocation = null;
             return;
         }
         this.fullContentArrived = false;
@@ -3287,6 +3304,17 @@ public final class VulkanGlTexture {
             final long retiredImage = image;
             VulkanRetireQueue.retire(device.address(), () -> vkDestroyImage(device, retiredImage, null));
             image = 0L;
+        }
+        if (imageAllocation != null) {
+            // The slab range goes back as a deferred release keyed on the context's current slab release
+            // value: a frame still in flight may sample this image, and the range may only be reused once
+            // the completion currency passes the keyed value (the frame timeline's counter on a timeline
+            // device, a later retired-buffer drain where there is none). There is no vkFreeMemory - the
+            // slab is not this texture's to free (the VulkanBuffer/VulkanHostBuffer release shape).
+            SlabAllocator.SlabAllocation retiredAllocation = imageAllocation;
+            imageAllocation = null;
+            retiredAllocation.owner().release(retiredAllocation,
+                    context.celtium$slabReleaseValue());
         }
         if (memory != 0L) {
             final long retiredMemory = memory;
@@ -3747,7 +3775,9 @@ public final class VulkanGlTexture {
         if (!stagingCoherent) {
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 VkMappedMemoryRange.Buffer range = VkMappedMemoryRange.calloc(1, stack);
-                range.get(0).sType$Default().memory(stagingMemory).offset(0L).size(VK_WHOLE_SIZE);
+                range.get(0).sType$Default().memory(stagingMemory)
+                        .offset(stagingAllocation != null ? stagingAllocation.offset() : 0L)
+                        .size(stagingAllocation != null ? stagingAllocation.size() : VK_WHOLE_SIZE);
                 check(vkInvalidateMappedMemoryRanges(context.device(), range), "vkInvalidateMappedMemoryRanges(dump)");
             }
         }
@@ -4315,25 +4345,23 @@ public final class VulkanGlTexture {
 
             VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
             vkGetBufferMemoryRequirements(device, stagingBuffer, requirements);
-            int memoryType = findMemoryType(requirements.memoryTypeBits(), VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, "staging memory");
-            VkMemoryAllocateInfo allocate = VkMemoryAllocateInfo.calloc(stack).sType$Default()
-                    .allocationSize(requirements.size())
-                    .memoryTypeIndex(memoryType);
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanGlTexture:979")) {
                 throw new IllegalStateException("injected allocation failure: VulkanGlTexture:979");
             }
-            check(VulkanContext.allocateMemory(device, allocate, handle, "textureStaging"), "vkAllocateMemory(staging)");
-            stagingMemory = handle.get(0);
-            check(vkBindBufferMemory(device, stagingBuffer, stagingMemory, 0L), "vkBindBufferMemory(staging)");
-
-            // Map once and keep the mapping: a stale mapping would be a bug, and remapping per upload is pure
-            // overhead for a buffer that is reused for every refresh.
-            PointerBuffer pointer = stack.mallocPointer(1);
-            check(vkMapMemory(device, stagingMemory, 0L, VK_WHOLE_SIZE, 0, pointer), "vkMapMemory(staging)");
-            stagingAddress = pointer.get(0);
+            // The memory is a sub-allocation of the context's host-visible slab pool, not a
+            // vkAllocateMemory of this texture's own: the Phase 1 census counted one live allocation per
+            // texture staging buffer (site textureStaging, 22 of 70 live), and the fixed-slab design
+            // bounds that by the pool's slab cap instead (the VulkanHostBuffer shape). The pool's type is
+            // host-visible AND host-coherent by construction, so the staging bytes never need a flush or
+            // an invalidate, and the mapping is the slab's persistent one - stagingAddress is the slab
+            // mapping plus this allocation's offset, stable for the allocation's whole life.
+            SlabAllocator stagingAllocator = context.celtium$hostVisibleSlabs(requirements.memoryTypeBits());
+            stagingAllocation = stagingAllocator.allocate(requirements.size(), requirements.alignment());
+            stagingAllocator.bindBuffer(stagingBuffer, stagingAllocation);
+            stagingMemory = stagingAllocation.deviceMemory();
+            stagingAddress = stagingAllocator.mappedAddress(stagingAllocation);
             stagingCapacity = requirements.size();
-            stagingCoherent = isHostCoherent(memoryType);
+            stagingCoherent = true;
         } catch (RuntimeException | LinkageError error) {
             // The buffer may exist with no memory, the memory with no mapping, or the mapping with no capacity
             // recorded. All three are released and the capacity stays zero, so nothing can copy through a staging
@@ -4734,15 +4762,16 @@ public final class VulkanGlTexture {
         // The buffer this destroys may still be named by an in-flight copy: confirm that submission first.
         awaitOutstandingUpload();
         VkDevice device = context.device();
-        if (stagingAddress != 0L && stagingMemory != 0L) {
-            vkUnmapMemory(device, stagingMemory);
-            stagingAddress = 0L;
-        }
+        // No vkUnmapMemory: the mapping belongs to the slab and stays for the slab's whole life; this
+        // texture only ever held an address inside it.
+        stagingAddress = 0L;
         if (context.celtium$recordingOpen()) {
-            // A copy recorded into the still-open frame buffer may name this staging buffer: defer the free.
-            context.celtium$retireBuffer(stagingBuffer, stagingMemory, "texture.staging");
+            // A copy recorded into the still-open frame buffer may name this staging buffer: defer the
+            // destroy and the slab release to the context's list, which never frees slab memory.
+            context.celtium$retireSlabBuffer(stagingBuffer, stagingAllocation, "texture.staging");
             stagingBuffer = 0L;
             stagingMemory = 0L;
+            stagingAllocation = null;
             stagingCapacity = 0L;
             stagingCoherent = false;
             return;
@@ -4750,6 +4779,15 @@ public final class VulkanGlTexture {
         if (stagingBuffer != 0L) {
             vkDestroyBuffer(device, stagingBuffer, null);
             stagingBuffer = 0L;
+        }
+        if (stagingAllocation != null) {
+            // The slab range goes back as a deferred release keyed on the context's current slab release
+            // value, the same shape as the image path and VulkanHostBuffer: no vkFreeMemory ever names slab memory.
+            SlabAllocator.SlabAllocation retiredAllocation = stagingAllocation;
+            stagingAllocation = null;
+            stagingMemory = 0L;
+            retiredAllocation.owner().release(retiredAllocation,
+                    context.celtium$slabReleaseValue());
         }
         if (stagingMemory != 0L) {
             VulkanContext.freeMemory(device, stagingMemory);
@@ -4762,59 +4800,14 @@ public final class VulkanGlTexture {
     private void flushStaging() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkMappedMemoryRange.Buffer range = VkMappedMemoryRange.calloc(1, stack);
-            // VK_WHOLE_SIZE flushes the whole mapped range, which avoids having to round the written length up to
-            // nonCoherentAtomSize (flushing more than was written is always allowed).
-            range.get(0).sType$Default().memory(stagingMemory).offset(0L).size(VK_WHOLE_SIZE);
+            // The range names this texture's slab sub-allocation exactly (the slab memory, at the
+            // allocation's offset, for the allocation's size), which avoids having to round the written
+            // length up to nonCoherentAtomSize (flushing more than was written is always allowed, but a
+            // range may not name a neighbour's sub-allocation).
+            range.get(0).sType$Default().memory(stagingMemory)
+                    .offset(stagingAllocation != null ? stagingAllocation.offset() : 0L)
+                    .size(stagingAllocation != null ? stagingAllocation.size() : VK_WHOLE_SIZE);
             check(vkFlushMappedMemoryRanges(context.device(), range), "vkFlushMappedMemoryRanges(staging)");
-        }
-    }
-
-    private boolean isHostCoherent(int memoryTypeIndex) {
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkPhysicalDeviceMemoryProperties properties = VkPhysicalDeviceMemoryProperties.calloc(stack);
-            vkGetPhysicalDeviceMemoryProperties(context.physicalDevice(), properties);
-            return (properties.memoryTypes(memoryTypeIndex).propertyFlags()
-                    & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
-        }
-    }
-
-    /**
-     * Picks a memory type index for the given requirement mask.
-     *
-     * @param typeBits      the {@code memoryTypeBits} reported by {@code vkGetImageMemoryRequirements} or
-     *                      {@code vkGetBufferMemoryRequirements}
-     * @param required      properties the type must have
-     * @param preferred     properties that are preferred but not required
-     * @param what          a description used in the error message
-     * @return the index of a suitable memory type
-     * @throws IllegalStateException if no type satisfies the required properties
-     */
-    private int findMemoryType(int typeBits, int required, int preferred, String what) {
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkPhysicalDeviceMemoryProperties properties = VkPhysicalDeviceMemoryProperties.calloc(stack);
-            vkGetPhysicalDeviceMemoryProperties(context.physicalDevice(), properties);
-            int fallback = -1;
-            for (int i = 0; i < properties.memoryTypeCount(); i++) {
-                if ((typeBits & (1 << i)) == 0) {
-                    continue;
-                }
-                int flags = properties.memoryTypes(i).propertyFlags();
-                if ((flags & required) != required) {
-                    continue;
-                }
-                if ((flags & preferred) == preferred) {
-                    return i;
-                }
-                if (fallback < 0) {
-                    fallback = i;
-                }
-            }
-            if (fallback < 0) {
-                throw new IllegalStateException("No Vulkan memory type for " + what + " satisfies 0x"
-                        + Integer.toHexString(required) + " within the allowed mask 0x"
-                        + Integer.toHexString(typeBits));
-            }
-            return fallback;
         }
     }
 

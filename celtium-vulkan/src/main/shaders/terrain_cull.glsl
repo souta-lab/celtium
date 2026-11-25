@@ -7,6 +7,16 @@
 // distance term measures to the box's closest point: both choices fall on the conservative
 // side, matching the CPU's centre-plus-half-size form, so generation never drops a box the
 // CPU would have drawn (the F-type direction of design section 2.1).
+//
+// SPACE CONTRACT (fixed 2026-11-25, arch/projection-diag): the planes are extracted from
+// P * MV where MV carries rotation only — the camera translation lives in the draw side's
+// per-region offset (region origin minus camera), never in MV. The planes therefore live
+// in CAMERA-RELATIVE space, while boxMin and camera arrive in absolute world blocks.
+// celtiumBoxVisible converts the box into camera-relative space before the plane test,
+// exactly as vanilla Frustum.isBoxInFrustum and Embeddium's Viewport.isBoxVisible subtract
+// the camera position first. Testing the absolute box against these planes unconverted
+// displaces the frustum to the world origin and culls the surface sections around the
+// camera (Phase 1 leg r10: only deep/interior geometry survived).
 
 #ifndef CELTIUM_TERRAIN_CULL_GLSL
 #define CELTIUM_TERRAIN_CULL_GLSL
@@ -17,18 +27,22 @@
 const ivec3 CELTIUM_REGION_SIZE_BLOCKS = ivec3(128, 64, 128);
 
 bool celtiumBoxVisible(vec3 boxMin, vec3 boxSize, vec4 planes[6], vec3 camera, float maxDistance) {
-    vec3 boxMax = boxMin + boxSize;
+    // Frustum test in camera-relative space (see the space contract above); the distance
+    // term is translation-invariant, so it runs on the same converted box against the
+    // origin instead of the absolute camera.
+    vec3 relMin = boxMin - camera;
+    vec3 relMax = relMin + boxSize;
     for (int p = 0; p < 6; p++) {
         vec3 positive = vec3(
-            planes[p].x >= 0.0 ? boxMax.x : boxMin.x,
-            planes[p].y >= 0.0 ? boxMax.y : boxMin.y,
-            planes[p].z >= 0.0 ? boxMax.z : boxMin.z);
+            planes[p].x >= 0.0 ? relMax.x : relMin.x,
+            planes[p].y >= 0.0 ? relMax.y : relMin.y,
+            planes[p].z >= 0.0 ? relMax.z : relMin.z);
         if (dot(planes[p].xyz, positive) + planes[p].w < 0.0) {
             return false;
         }
     }
-    vec3 closest = clamp(camera, boxMin, boxMax);
-    vec3 delta = camera - closest;
+    vec3 closest = clamp(vec3(0.0), relMin, relMax);
+    vec3 delta = -closest;
     return dot(delta, delta) <= maxDistance * maxDistance;
 }
 

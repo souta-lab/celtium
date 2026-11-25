@@ -64,6 +64,25 @@ class TerrainVertexLayoutTest {
     }
 
     @Test
+    void theTierALayoutIsASingleAttribute() {
+        VulkanTerrainPipeline.VertexLayout layout =
+                VulkanTerrainPipeline.VertexLayout.forVertexStride(16, "solid");
+        assertEquals(16, layout.stride, "the Tier-A TerrainVertex16 format is a 16-byte vertex");
+        assertEquals(SpirvShaders.TERRAIN_A_VERTEX, layout.vertexModule,
+                "the 16-byte format is decoded by the Tier-A vertex module");
+        // Single-attribute shape, pinned because it is load-bearing beyond this class:
+        // createPipeline's CELTIUM_TERRAIN_LAYOUT diagnostic used to read offsets[1] /
+        // formats[1] unconditionally, which threw ArrayIndexOutOfBoundsException for this
+        // layout on every creation, so pipelineFor remembered a failure for every pass and
+        // the whole terrain pass was skipped (Phase 1 gate legs r2/r3, 2026-11-25: no
+        // terrain presented, no CELTIUM_TERRAIN_A announce, lastSections=0).
+        assertEquals(1, layout.formats.length,
+                "Tier-A declares exactly one attribute: the whole vertex as one uvec4");
+        assertArrayEquals(new int[] { 0 }, layout.offsets);
+        assertEquals(org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32B32A32_UINT, layout.formats[0]);
+    }
+
+    @Test
     void anUnimplementedStrideIsRefusedByName() {
         IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
                 () -> VulkanTerrainPipeline.VertexLayout.forVertexStride(28, "translucent"),

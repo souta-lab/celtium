@@ -25,6 +25,16 @@ import org.lwjgl.vulkan.VK10;
  * that finds both slots still held (a group waiting for another render target) is likewise not reset - the arena
  * reports the opening as blocked and the caller falls back - so a slot is never recycled while its groups are alive.
  * <p>
+ * <b>Two backings, one region contract (Stage 2).</b> A region's slices can live in this arena's own slot buffers
+ * (above) or in the per-frame linear ring ({@link RingRegion}): the backend asks for a ring-backed mesh first and
+ * falls back to an arena region, then to an owning mesh, in that order. The ring is where frame-lifetime geometry
+ * belongs in the A-to-B design - its bump-only slices cannot fragment a persistent allocator (the tick383 shape) -
+ * while this arena remains the fallback for groups the ring cannot serve: a full ring slot answers a reservation
+ * with 0 exactly like a full arena slot does, and the mesh's promotion path takes over unchanged. The lifetime
+ * rules differ in mechanism but not in force: an arena slot is reset only when its submission completed and its
+ * groups were released; a ring slot is reset only when its frame-slot wait confirmed completion, and a sealed
+ * ring region holds its slot's reset off until the group is deleted.
+ * <p>
  * Threading: render thread only, like the rest of the backend.
  */
 public final class VulkanFrameArena {
@@ -55,6 +65,7 @@ public final class VulkanFrameArena {
     private long frameId = -1L;
     private long completedEpoch;
     private long regionsOpened;
+    private long ringRegionsOpened;
     private long blockedOpenings;
     private long reclaimedSlots;
     private long promotions;
@@ -125,6 +136,24 @@ public final class VulkanFrameArena {
         }
         this.regionsOpened++;
         return new VulkanDynamicMesh(this, new Region(slot));
+    }
+
+    /**
+     * {@return a mesh that writes into the per-frame linear ring's slot for the frame being recorded}, or
+     * {@code null} when no ring was supplied. The mesh is this arena's for promotion counting, but its region is
+     * a {@link RingRegion}: the slices are reserved lazily at the first write, so a group that is created and
+     * dropped unwritten costs the ring nothing, and a reservation the ring cannot satisfy answers 0 - the mesh
+     * then promotes to buffers it owns, the same fallback an over-cap arena group takes.
+     *
+     * @param ring     the context's frame linear ring
+     * @param ringSlot the frame slot being recorded, which is the ring slot whose slices this frame may consume
+     */
+    public VulkanDynamicMesh openRingMesh(org.soutalab.celtium.vulkan.hal.FrameLinearRing ring, int ringSlot) {
+        if (ring == null) {
+            return null;
+        }
+        this.ringRegionsOpened++;
+        return new VulkanDynamicMesh(this, new RingRegion(ring, ringSlot));
     }
 
     /** The frame's own slot, or a free one, or null when both are still held by earlier submissions. */
@@ -228,7 +257,8 @@ public final class VulkanFrameArena {
                     .append(" indexUsed=").append(slot.indexCursor)
                     .append(" indexCapacity=").append(slot.indexCapacity()).append(']');
         }
-        return "frameArena regionsOpened=" + this.regionsOpened + " blockedOpenings=" + this.blockedOpenings
+        return "frameArena regionsOpened=" + this.regionsOpened + " ringRegionsOpened=" + this.ringRegionsOpened
+                + " blockedOpenings=" + this.blockedOpenings
                 + " reclaimedSlots=" + this.reclaimedSlots + " promotions=" + this.promotions
                 + " completionsRecorded=" + this.completionsRecorded
                 + " peakVertexBytes=" + this.peakVertexBytes + " peakIndexBytes=" + this.peakIndexBytes
@@ -259,7 +289,7 @@ public final class VulkanFrameArena {
      * mapping; nothing here holds a mapped address across a call. A sealed region is held by the group that owns it
      * until {@link #release()}.
      */
-    public static final class Region {
+    public static class Region {
         private final Slot slot;
         private long vertexStart = -1L;
         private long indexStart = -1L;
@@ -270,6 +300,15 @@ public final class VulkanFrameArena {
 
         private Region(Slot slot) {
             this.slot = slot;
+        }
+
+        /**
+         * The backing-free constructor {@link RingRegion} uses: it overrides every method the mesh calls, so the
+         * arena slot stays null and no base method may run on it. Kept protected and parameterless so the only
+         * subclass is the ring region declared in this file.
+         */
+        protected Region() {
+            this.slot = null;
         }
 
         /** {@return the byte offset of this slice's first vertex inside the slot's vertex buffer}. */
@@ -408,6 +447,200 @@ public final class VulkanFrameArena {
         }
 
         /** {@return the bytes this slice's index stream holds, for the arena census}. */
+        public long indexBytes() {
+            return this.indexBytes;
+        }
+    }
+
+    // ------------------------------------------------------------------ the ring-backed region
+
+    /**
+     * A group's slice of the per-frame linear ring (Stage 2): the {@link Region} contract served from ring slices
+     * instead of an arena slot's buffers.
+     * <p>
+     * The mesh's write pattern is incremental and its total is known only as it grows, while a ring slice must be
+     * sized when it is taken - so each stream reserves once, at its first write, with the historical per-group
+     * buffer sizes as the floor (64 KiB of vertices, 32 KiB of indices: the sizes a group owned outright before
+     * the arena existed, and the sizes in the tick383 crash signature). A write past the reservation answers 0,
+     * which is the mesh's promotion signal exactly as an over-cap arena slot is; the bytes written so far are
+     * copied out by the promotion, and this region is abandoned. A reservation the ring itself refuses (slot
+     * exhausted) answers 0 the same way, so the fallback chain - ring, then arena, then owning buffers - needs no
+     * new branch in the mesh.
+     * <p>
+     * Lifetime: sealing takes a hold on the ring slot (see {@link org.soutalab.celtium.vulkan.hal.FrameLinearRing}),
+     * and {@link #release()} - the mesh's delete - gives it back. The slot's confirmed reset is deferred while
+     * the hold stands, so a group held for another render target keeps its bytes exactly as an arena slot's
+     * pending-group count keeps that slot unreset. The vertex slice is taken with the caller's own alignment
+     * (the mesh's {@code lcm(16, stride)}), which the ring's division alignment honours for non-power-of-two
+     * strides, so the draw form's offset-to-vertex conversion stays exact.
+     */
+    public static final class RingRegion extends Region {
+        /** The first vertex reservation's floor: the per-group vertex buffer size from before the arena (BH-28). */
+        private static final long MIN_VERTEX_SLICE_BYTES = 64L * 1024L;
+        /** The first index reservation's floor: the per-group index buffer size from before the arena (BH-28). */
+        private static final long MIN_INDEX_SLICE_BYTES = 32L * 1024L;
+
+        private final org.soutalab.celtium.vulkan.hal.FrameLinearRing ring;
+        private final int ringSlot;
+        /** The vertex slice's offset inside the ring slot's buffer, or -1 before the first vertex reservation. */
+        private long vertexSlice = -1L;
+        private long vertexSliceBytes;
+        private long indexSlice = -1L;
+        private long indexSliceBytes;
+        private long vertexBytes;
+        private long indexBytes;
+        private boolean sealed;
+        private boolean released;
+
+        private RingRegion(org.soutalab.celtium.vulkan.hal.FrameLinearRing ring, int ringSlot) {
+            super();
+            this.ring = ring;
+            this.ringSlot = ringSlot;
+        }
+
+        /** {@return the ring offset of this slice's first vertex}, or 0 before the first reservation. */
+        @Override
+        public long vertexByteOffset() {
+            return this.vertexSlice < 0L ? 0L : this.vertexSlice;
+        }
+
+        /** {@return the ring offset of this slice's first index}, or 0 before the first reservation. */
+        @Override
+        public long indexByteOffset() {
+            return this.indexSlice < 0L ? 0L : this.indexSlice;
+        }
+
+        /** {@return the ring slot's buffer handle once a vertex slice exists}, else 0 like an unbuilt arena slot. */
+        @Override
+        public long vertexBuffer() {
+            return this.vertexSlice < 0L ? 0L : this.ring.buffer(this.ringSlot);
+        }
+
+        /** {@return the ring slot's buffer handle once an index slice exists}, else 0. */
+        @Override
+        public long indexBuffer() {
+            return this.indexSlice < 0L ? 0L : this.ring.buffer(this.ringSlot);
+        }
+
+        /**
+         * Reserves (at the first call) and addresses this slice's vertex stream. The reservation is sized to the
+         * need already visible, floored at {@link #MIN_VERTEX_SLICE_BYTES}; a later call past the reservation
+         * answers 0 so the mesh promotes, because a ring slice cannot grow and a second slice would not be
+         * contiguous with the first.
+         *
+         * @return the mapped address to write at, or 0 when the ring cannot hold this stream
+         */
+        @Override
+        public long vertexAddressAt(long byteOffset, long length, long alignment) {
+            if (this.released) {
+                return 0L;
+            }
+            if (this.vertexSlice < 0L) {
+                long size = Math.max(byteOffset + length, MIN_VERTEX_SLICE_BYTES);
+                long offset = this.ring.alloc(this.ringSlot, size, alignment);
+                if (offset < 0L) {
+                    return 0L;
+                }
+                this.vertexSlice = offset;
+                this.vertexSliceBytes = size;
+            }
+            if (byteOffset + length > this.vertexSliceBytes) {
+                return 0L;
+            }
+            if (byteOffset + length > this.vertexBytes) {
+                this.vertexBytes = byteOffset + length;
+            }
+            return this.ring.mappedAddress(this.ringSlot, this.vertexSlice) + byteOffset;
+        }
+
+        /** The index half of {@link #vertexAddressAt(long, long, long)}, aligned and floored like an arena slice. */
+        @Override
+        public long indexAddressAt(long byteOffset, long length) {
+            if (this.released) {
+                return 0L;
+            }
+            if (this.indexSlice < 0L) {
+                long size = Math.max(byteOffset + length, MIN_INDEX_SLICE_BYTES);
+                long offset = this.ring.alloc(this.ringSlot, size, SLICE_ALIGNMENT);
+                if (offset < 0L) {
+                    return 0L;
+                }
+                this.indexSlice = offset;
+                this.indexSliceBytes = size;
+            }
+            if (byteOffset + length > this.indexSliceBytes) {
+                return 0L;
+            }
+            if (byteOffset + length > this.indexBytes) {
+                this.indexBytes = byteOffset + length;
+            }
+            return this.ring.mappedAddress(this.ringSlot, this.indexSlice) + byteOffset;
+        }
+
+        /** {@return the mapped address of this slice's first vertex, without reserving anything}. */
+        @Override
+        public long vertexBaseAddress() {
+            return this.vertexSlice < 0L ? 0L : this.ring.mappedAddress(this.ringSlot, this.vertexSlice);
+        }
+
+        /** {@return the mapped address of this slice's first index, without reserving anything}. */
+        @Override
+        public long indexBaseAddress() {
+            return this.indexSlice < 0L ? 0L : this.ring.mappedAddress(this.ringSlot, this.indexSlice);
+        }
+
+        /** The group is complete: its slices are held against the ring slot's reset until {@link #release()}. */
+        @Override
+        public void seal() {
+            if (!this.sealed && !this.released) {
+                this.sealed = true;
+                this.ring.hold(this.ringSlot);
+            }
+        }
+
+        /**
+         * The group no longer needs its slices. Idempotent, like the arena region's: several drop paths delete
+         * the same mesh, and a double release would free a slot another group is still reading.
+         */
+        @Override
+        public void release() {
+            if (this.released) {
+                return;
+            }
+            this.released = true;
+            if (this.sealed) {
+                this.ring.release(this.ringSlot);
+            }
+        }
+
+        /**
+         * Gives the reservation back because the writer moved to buffers it owns (promotion).
+         * <p>
+         * A sealed region gives its hold back here rather than at {@link #release()}: promotion runs inside a
+         * write call, while the group is still being recorded, so the slices have never been named by a
+         * submission and nothing can still read them - and the mesh nulls this region at promotion, so the
+         * delete-time release would never arrive. An unsealed region has no hold to return; its reserved slices
+         * simply stay consumed until the slot's reset, because the ring is bump-only and has no rollback.
+         */
+        @Override
+        public void abandon() {
+            if (this.released) {
+                return;
+            }
+            this.released = true;
+            if (this.sealed) {
+                this.ring.release(this.ringSlot);
+            }
+        }
+
+        /** {@return the bytes this slice's vertex stream holds, for the arena census}. */
+        @Override
+        public long vertexBytes() {
+            return this.vertexBytes;
+        }
+
+        /** {@return the bytes this slice's index stream holds, for the arena census}. */
+        @Override
         public long indexBytes() {
             return this.indexBytes;
         }

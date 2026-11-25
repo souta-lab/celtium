@@ -2844,6 +2844,14 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private boolean gpuTerrainDrawFailed;
     /** The last frame the executor's pass head ran for; the pass head is once per frame, not per pass. */
     private long gpuTerrainDrawFrame = -1L;
+
+    // Tier-A terrain (new architecture, wave-2 cutover): the per-pass engines the
+    // pass head armed for the current frame, keyed by pass identity. The map is
+    // rebuilt when the frame id moves, so prepareFrame runs once per pass per frame.
+    private long terrainAArmedFrame = -1L;
+    private final java.util.Map<TerrainRenderPass, TerrainEngineA> terrainAArmedEngines =
+            new java.util.IdentityHashMap<>();
+    private boolean terrainAFailed;
     /**
      * The shadow stage's own E10 census stream (E10 shadow preparation): a second
      * {@link VulkanGpuTerrainCensus} fed from the pack route's shadow stage. The shadow
@@ -15736,16 +15744,49 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * {@return the mesh a new immediate group writes into}: an arena slice when one can be handed out, an owning mesh
-     * when the arena's slots are all held by submissions that have not completed.
+     * Whether immediate groups take their slices from the per-frame linear ring before the frame arena
+     * (Stage 2's consumer connection). On unless {@code -Dceltium.vulkan.frameRingMesh=false}, which restores
+     * the arena-first order exactly, as the integration leg's A/B switch.
+     */
+    private static final boolean FRAME_RING_MESH =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.frameRingMesh", "true"));
+
+    /** Whether the ring's creation already failed once on this backend, so the fallback is recorded once. */
+    private boolean frameRingMeshFailed;
+
+    /**
+     * {@return the mesh a new immediate group writes into}: a slice of the per-frame linear ring when the ring
+     * can serve the group (Stage 2), else an arena slice when one can be handed out, else an owning mesh when
+     * the arena's slots are all held by submissions that have not completed.
      * <p>
-     * The fallback is bounded and counted rather than silent: a frame whose groups are still held (waiting for another
-     * render target) can leave both slots reserved, and the right answer then is the old behaviour for that group -
-     * its own buffers - not a reset of memory a later submission may still be reading, and not a dropped draw.
+     * The order is the A-to-B plan's: frame-lifetime geometry - the cloud transfers and {@code VertexBuffer.draw}
+     * copies among them - belongs in the ring, whose bump-only slices cannot fragment a persistent allocator;
+     * the arena stays as the counted fallback for a group the ring cannot serve (its slot exhausted, or the
+     * group outgrew its reservation and promoted), and the owning mesh behind that. Every step down is bounded
+     * and counted rather than silent: a frame whose groups are still held (waiting for another render target)
+     * can leave both arena slots reserved, and the right answer then is the old behaviour for that group - its
+     * own buffers - not a reset of memory a later submission may still be reading, and not a dropped draw.
      */
     private VulkanDynamicMesh celtium$newImmediateMesh() {
         if (this.frameArena == null) {
             this.frameArena = new VulkanFrameArena(this.context);
+        }
+        if (FRAME_RING_MESH) {
+            try {
+                VulkanDynamicMesh ringMesh = this.frameArena.openRingMesh(
+                        this.context.celtium$frameLinearRing(), this.frameSlot);
+                if (ringMesh != null) {
+                    return ringMesh;
+                }
+            } catch (RuntimeException | LinkageError failure) {
+                // The ring could not be created (a device-side failure while the arena path may still work):
+                // record it once and fall through, rather than refusing every group on the ring's account.
+                if (!this.frameRingMeshFailed) {
+                    this.frameRingMeshFailed = true;
+                    record("frame linear ring unavailable for immediate meshes: " + describe(failure)
+                            + "; groups fall back to the frame arena");
+                }
+            }
         }
         VulkanDynamicMesh borrowed = this.frameArena.openMesh();
         if (borrowed != null) {
@@ -17224,6 +17265,10 @@ this.frameBufferOpen = false;
             resources.delete();
         }
         this.terrain.releaseAll();
+        if (this.terrain.terrainAHost() != null) {
+            this.terrain.terrainAHost().delete(this.context);
+        }
+        this.terrainAArmedEngines.clear();
         for (VulkanTerrainPipeline pipeline : this.terrain.pipelines().values()) {
             pipeline.delete();
         }
@@ -17478,6 +17523,10 @@ this.frameBufferOpen = false;
             resources.delete();
         }
         this.terrain.releaseAll();
+        if (this.terrain.terrainAHost() != null) {
+            this.terrain.terrainAHost().delete(this.context);
+        }
+        this.terrainAArmedEngines.clear();
         for (VulkanTerrainPipeline pipeline : this.terrain.pipelines().values()) {
             pipeline.delete();
         }
@@ -19560,6 +19609,47 @@ this.frameBufferOpen = false;
     }
 
     /**
+     * Tier-A pass head (wave-2 item 1): records this pass' cull dispatch into the
+     * frame's command buffer, outside the render pass, and returns the armed
+     * executor, or {@code null} when Tier-A is off, the store has no records for
+     * drawing yet, or the executor disabled itself. Runs once per pass per frame;
+     * repeat calls within the frame answer from the armed map.
+     */
+    private TerrainEngineA celtium$terrainAPassHead(TerrainRenderPass pass, ChunkRenderMatrices matrices,
+            CameraTransform occlusionCamera) {
+        if (this.terrainAFailed || this.commandBuffer == null) {
+            return null;
+        }
+        if (this.terrainAArmedFrame != this.frameId) {
+            this.terrainAArmedEngines.clear();
+            this.terrainAArmedFrame = this.frameId;
+        }
+        TerrainEngineA armed = this.terrainAArmedEngines.get(pass);
+        if (armed != null) {
+            return armed;
+        }
+        TerrainEngineAHost host = this.terrain.terrainAHost();
+        if (host == null) {
+            return null;
+        }
+        try {
+            TerrainEngineA engine = host.engineFor(this.context, pass);
+            boolean ok = engine.prepareFrame(this.commandBuffer, this.frameSlot,
+                    celtium$gpuTerrainCensusVp(matrices),
+                    occlusionCamera.x, occlusionCamera.y, occlusionCamera.z);
+            if (!ok) {
+                return null;
+            }
+            this.terrainAArmedEngines.put(pass, engine);
+            return engine;
+        } catch (RuntimeException | LinkageError error) {
+            this.terrainAFailed = true;
+            System.out.println("[Celtium] CELTIUM_TERRAIN_A_BACKEND_DISABLED at=passHead reason=" + error);
+            return null;
+        }
+    }
+
+    /**
      * The ordered list of regions this pass' region loop will draw, resolved exactly as the
      * loop resolves them (same iterator order, same storage lookup, same validity test), or
      * {@code null} when any region's drawn batch is not predictable here — a region with no
@@ -19645,6 +19735,12 @@ this.frameBufferOpen = false;
         boolean gpuDrawArmed = celtium$gpuTerrainDrawPassHead(pass, renderLists, matrices, occlusionCamera,
                 useBlockFaceCulling, view);
         int gpuDrawVisited = 0;
+        // Tier-A (new architecture, wave-2 item 1): the pass head records the cull
+        // dispatch outside the render pass; when it arms, the region loop below
+        // records no per-batch draws for this pass and the pass ends with the
+        // executor's IndirectCount draws instead (recordDraws at the pass tail).
+        TerrainEngineA tierAEngine = celtium$terrainAPassHead(pass, matrices, occlusionCamera);
+        boolean tierAArmed = tierAEngine != null;
         org.soutalab.celtium.vulkan.FramePassTimings.end("recHead");
         org.soutalab.celtium.vulkan.FramePassTimings.begin("recordPrepare");
         try {
@@ -19998,8 +20094,22 @@ this.frameBufferOpen = false;
         org.soutalab.celtium.vulkan.FramePassTimings.begin("recBind");
         long passUniformStarted = System.nanoTime();
         long passUniformOffset = this.terrain.writePassUniforms(pass, camera);
+        if (tierAArmed) {
+            // Tier-A's vertex stage reads the block's u_RegionOffset field as
+            // world-origin-minus-camera (terrain_a.vert's contract); the compact
+            // stages ignore the field, so writePassUniforms left it zeroed and
+            // every Tier-A section was displaced by the camera position.
+            this.terrain.writeTierAWorldOffset(passUniformOffset, camera);
+        }
         long passAfterUniform = System.nanoTime();
         this.terrainUniformNanos += passAfterUniform - passUniformStarted;
+        if (tierAArmed) {
+            // Tier-A bindings 6/7/8 (wave-2 item 2): the resident desc table, factor
+            // bases and factor arena terrain_a.vert reads, written into this slot's
+            // set before it is bound for the pass.
+            pipeline.bindTierABuffers(tierAEngine.descBufferHandle(), tierAEngine.factorBaseBufferHandle(),
+                    tierAEngine.factorBufferHandle(), this.frameSlot);
+        }
         pipeline.bindDescriptors(this.commandBuffer, passUniformOffset, this.frameSlot, regionDescSet, regionDynOffset);
         this.terrainBindNanos += System.nanoTime() - passAfterUniform;
         org.soutalab.celtium.vulkan.FramePassTimings.end("recBind");
@@ -20246,6 +20356,11 @@ this.frameBufferOpen = false;
                 // can verify the reproduction the pass head predicted.
                 indirect = true;
                 gpuDrawVisited++;
+            } else if (tierAArmed) {
+                // Tier-A: this pass' sections are resident in the SectionDesc table
+                // and were culled at the pass head; the executor's IndirectCount
+                // draws at the pass tail replace every per-batch draw here.
+                indirect = true;
             } else if (TERRAIN_INDIRECT_ENABLED) {
                 indirect = this.terrain.offerChainedBatch(this.context, this.commandBuffer, this.sharedIndexBuffers, resources, batch, sortedPass, primitiveType, regionIndex, pipeline);
             } else {
@@ -20362,6 +20477,13 @@ this.frameBufferOpen = false;
             // bound explicitly — in an armed pass no chain flush has bound anything.
             this.terrain.bindIndexBuffer(this.commandBuffer, this.sharedIndexBuffers.get(primitiveType));
             this.gpuTerrainDraw.recordDraw(this.commandBuffer, gpuDrawVisited);
+        }
+        if (tierAArmed) {
+            // Tier-A: the pass' terrain draws are the executor's per-slab
+            // IndirectCount draws over the resident slabs (bindings 6/7/8 were
+            // written at the pass head; the pipeline and push matrices bound for
+            // this pass are the Tier-A variant's, selected by the 16-byte stride).
+            tierAEngine.recordDraws(this.commandBuffer, this.frameSlot);
         }
         this.terrain.endTerrainChain(this.commandBuffer);
         } finally {
@@ -24758,6 +24880,11 @@ this.frameBufferOpen = false;
      */
     private boolean waitForSlot(int slot) {
         if (slot < 0 || slot >= FRAME_SLOTS || slotFences[slot] == 0 || !this.scheduler.isPending(slot)) {
+            if (slot >= 0 && slot < FRAME_SLOTS) {
+                // Nothing of this slot's is in flight, so the GPU is done with its linear-ring slices: this
+                // "not pending" answer is one of the confirmations the ring's reset gate (Stage 2) accepts.
+                this.context.celtium$resetFrameLinearSlot(slot);
+            }
             return true;
         }
         long deferredFence = this.slotDeferredFences[slot];
@@ -24766,6 +24893,29 @@ this.frameBufferOpen = false;
             // so the flush has to happen before the wait or the wait blocks on a fence nothing armed yet.
             this.context.celtium$flushBatchedSubmits();
             this.context.celtium$fenceOnPresenter(deferredFence, true);
+            // Stage 2: the batch this slot rode in signalled the frame timeline as it submitted, so the wait
+            // can be a single counter wait on the value the batch was handed - the frame's one permitted
+            // blocking wait - instead of a fence wait. A timeout falls through to the fence wait below rather
+            // than inventing a second disposition: its retries and stall latch are the established answer to
+            // a slot that will not confirm. The fault-injection switches skip this path deliberately: they
+            // exist to exercise the fence wait's failure shapes, and a timeline success would silently
+            // disarm them.
+            long timelineValue = this.context.celtium$timelineValueForFence(deferredFence);
+            org.soutalab.celtium.vulkan.hal.FrameTimeline timeline = this.context.frameTimeline();
+            if (timeline != null && timelineValue > 0L && !FENCE_WAIT_FAULT && !DEVICE_LOST_FAULT) {
+                long started = System.nanoTime();
+                boolean reached = timeline.awaitValue(timelineValue, IDLE_TIMEOUT_NANOS);
+                this.celtium$recordFrameWait(started);
+                if (reached) {
+                    this.scheduler.noteSlotWait(true);
+                    // The batch fence is shared: the slot's confirm (and the flag's clear) runs inside the
+                    // reclaim's callback, once, rather than here - polling also frees every earlier entry
+                    // the timeline value covered.
+                    this.context.celtium$pollDeferredSubmits();
+                    this.context.celtium$resetFrameLinearSlot(slot);
+                    return true;
+                }
+            }
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             LongBuffer fences = stack.mallocLong(1);
@@ -24836,6 +24986,9 @@ this.frameBufferOpen = false;
             } else {
                 celtium$noteSlotConfirmed(slot, result == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST);
             }
+            // The slot's submission is confirmed, in whichever shape the confirmation arrived: its
+            // linear-ring slices are the GPU's no longer (Stage 2's reset gate).
+            this.context.celtium$resetFrameLinearSlot(slot);
             return true;
         }
     }
