@@ -2377,7 +2377,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * The chain-pair identity whose clear the routing deferred to the pass that follows it, or 0 when none is waiting.
      * <p>
      * Set whenever the chain pair's clear is deferred into the pass that follows it (item 396: the
-     * in-pass clear is unconditional; see {@code GllessFrameTarget.Pair.PAIR_CLEAR_IN_PASS}). The pass that
+     * in-pass clear is unconditional; see {@code hal.FrameTargetPair.PAIR_CLEAR_IN_PASS}). The pass that
      * consumes it is recorded unconditionally a few
      * statements later in the same method, so the window between the two is a handful of field reads.
      */
@@ -15077,7 +15077,7 @@ this.frameBufferOpen = false;
                             } else if (offTarget.deferChainPairClear(chainIdentityValue, this.commandBuffer)) {
                                 // The clear is recorded inside the pass below, as one vkCmdClearAttachments: the two
                                 // barriers and the two vkCmdClear*Image calls it replaces are the window's largest named
-                                // item (see GllessFrameTarget.Pair.PAIR_CLEAR_IN_PASS). The pass that follows always
+                                // item (see hal.FrameTargetPair.PAIR_CLEAR_IN_PASS). The pass that follows always
                                 // begins - this method records it unconditionally after the routing - so the deferral has
                                 // exactly one consumer, and the fallback branch below records the ordinary clear if the
                                 // routing fails before that pass is begun.
@@ -15448,7 +15448,7 @@ this.frameBufferOpen = false;
         vkCmdBeginRenderPass(this.commandBuffer, begin, VK_SUBPASS_CONTENTS_INLINE);
         FramePassTimings.end("winBeginPass");
         if (this.pendingChainPairClear != 0L) {
-            // The pair clear the routing deferred (GllessFrameTarget.Pair.PAIR_CLEAR_IN_PASS): one
+            // The pair clear the routing deferred (hal.FrameTargetPair.PAIR_CLEAR_IN_PASS): one
             // vkCmdClearAttachments inside the pass, in place of two vkCmdClear*Image calls and the two barriers that
             // make them legal outside it. Recorded before the viewport and the draws, which is the order the clear had
             // when it was recorded outside the pass.
