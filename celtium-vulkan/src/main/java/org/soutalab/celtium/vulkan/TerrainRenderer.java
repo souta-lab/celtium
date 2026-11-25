@@ -1412,10 +1412,25 @@ public final class TerrainRenderer {
     void writeTierAWorldOffset(long offset, CameraTransform camera) {
         VulkanUniformBuffer activeUniforms = this.uniformBuffers[this.uniformSlot];
         long addr = activeUniforms.mappedAddress() + offset;
-        MemoryUtil.memPutFloat(addr + 0, (0 - camera.intX) - camera.fracX);
-        MemoryUtil.memPutFloat(addr + 4, (0 - camera.intY) - camera.fracY);
-        MemoryUtil.memPutFloat(addr + 8, (0 - camera.intZ) - camera.fracZ);
+        MemoryUtil.memPutFloat(addr + 0, tierAWorldOffsetComponent(camera.intX, camera.fracX));
+        MemoryUtil.memPutFloat(addr + 4, tierAWorldOffsetComponent(camera.intY, camera.fracY));
+        MemoryUtil.memPutFloat(addr + 8, tierAWorldOffsetComponent(camera.intZ, camera.fracZ));
         MemoryUtil.memPutFloat(addr + 12, 0.0f);
+    }
+
+    /**
+     * One component of the Tier-A world offset: world origin minus camera, in the
+     * computation order {@link #writeRegionOffset} uses for a region at the origin
+     * (integer subtraction first, then the fractional part in float). Extracted as a
+     * pure function so the draw-side space contract of {@code terrain_a.vert} — the
+     * section translation comes from the SectionDesc record, the vertex positions
+     * are section-local, and this offset is the only camera term — is pinned by
+     * {@code TierARegionOffsetContractTest} instead of resting on the visual leg
+     * alone (the r10 "RegionOffset" first judgement was never separable from the
+     * culling space bug arch/projection-diag fixed until this audit).
+     */
+    static float tierAWorldOffsetComponent(int cameraInt, float cameraFrac) {
+        return (0 - cameraInt) - cameraFrac;
     }
 
     /**
