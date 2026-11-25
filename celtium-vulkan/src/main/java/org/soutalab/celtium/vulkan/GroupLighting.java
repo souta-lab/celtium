@@ -110,7 +110,7 @@ final class GroupLighting {
         if (b.modelReplayInputCache.reuseProjection(projectionVersion)) {
             return b.modelReplayProjection;
         }
-        VulkanTerrainGpuBackend.remapClipDepth(projectionNow, b.modelReplayProjection);
+        CopyReadSide.remapClipDepth(projectionNow, b.modelReplayProjection);
         b.modelReplayInputCache.noteProjection(projectionVersion);
         return b.modelReplayProjection;
     }

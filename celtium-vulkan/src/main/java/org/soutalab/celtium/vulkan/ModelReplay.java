@@ -243,7 +243,7 @@ final class ModelReplay {
                         + " replayTexture=" + boundTextureId
                         + " blend=" + state[0] + "(" + state[1] + "," + state[2] + ")"
                         + " depthTest=" + state[3] + " depthWrite=" + state[4] + " cull=" + state[5]
-                        + " alphaRef=" + b.round3(Float.intBitsToFloat(state[6]))
+                        + " alphaRef=" + CopyReadSide.round3(Float.intBitsToFloat(state[6]))
                         + " depthFunc=" + state[7] + " lighting=" + state[8] + " key=" + key);
             }
             if (!b.modelStateLogged) {
@@ -261,12 +261,12 @@ final class ModelReplay {
             if (VulkanDiagnostics.withinLimit(b.modelMatrixLines, b.MODEL_MATRIX_LINES)) {
                 b.modelMatrixLines++;
                 System.out.println("[Celtium] CELTIUM_MODEL_MATRIX list=" + listId
-                        + " liveMVt=(" + b.round3(modelViewNow[12]) + "," + b.round3(modelViewNow[13]) + ","
-                        + b.round3(modelViewNow[14]) + ")"
+                        + " liveMVt=(" + CopyReadSide.round3(modelViewNow[12]) + "," + CopyReadSide.round3(modelViewNow[13]) + ","
+                        + CopyReadSide.round3(modelViewNow[14]) + ")"
                         + " capturedMVt=(" + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.firstStoredMatrixTranslation()
                         + ")"
-                        + " liveProj=(" + b.round3(projectionNow[0]) + "," + b.round3(projectionNow[5]) + ","
-                        + b.round3(projectionNow[10]) + ")");
+                        + " liveProj=(" + CopyReadSide.round3(projectionNow[0]) + "," + CopyReadSide.round3(projectionNow[5]) + ","
+                        + CopyReadSide.round3(projectionNow[10]) + ")");
             }
 
             if (!celtium$enqueueModelMesh(mesh, texture, state, key, projectionRemapped, modelViewNow,
@@ -346,11 +346,11 @@ final class ModelReplay {
                     + " target=0x" + Long.toHexString(target) + " main=0x" + Long.toHexString(b.targetRegistry.mainIdentity())
                     + " mainBound=" + b.targetRegistry.currentIsMain()
                     + " projKind=" + (Math.abs(projection[11] + 1.0f) < 0.01f ? "perspective" : "ortho")
-                    + " proj11=" + b.round3(projection[11]) + " proj10=" + b.round3(projection[10])
-                    + " proj14=" + b.round3(projection[14])
-                    + " mvT=" + b.round3(modelView[12]) + "," + b.round3(modelView[13]) + "," + b.round3(modelView[14])
-                    + " mvRow0=" + b.round3(modelView[0]) + "," + b.round3(modelView[1]) + "," + b.round3(modelView[2])
-                    + " mvScale=" + b.round3((float) Math.sqrt(modelView[0] * modelView[0] + modelView[1] * modelView[1]
+                    + " proj11=" + CopyReadSide.round3(projection[11]) + " proj10=" + CopyReadSide.round3(projection[10])
+                    + " proj14=" + CopyReadSide.round3(projection[14])
+                    + " mvT=" + CopyReadSide.round3(modelView[12]) + "," + CopyReadSide.round3(modelView[13]) + "," + CopyReadSide.round3(modelView[14])
+                    + " mvRow0=" + CopyReadSide.round3(modelView[0]) + "," + CopyReadSide.round3(modelView[1]) + "," + CopyReadSide.round3(modelView[2])
+                    + " mvScale=" + CopyReadSide.round3((float) Math.sqrt(modelView[0] * modelView[0] + modelView[1] * modelView[1]
                             + modelView[2] * modelView[2])));
             System.out.println("[Celtium] CELTIUM_MODEL_BOUNDS "
                     + org.soutalab.celtium.vulkan.VulkanModelQuadCapture.storedBoundsSummary());

@@ -426,7 +426,7 @@ final class PresentSwapchain {
                         .append(':').append(trace[i].getLineNumber());
             }
             String arguments = backend.swapchain == null ? "" : " args[" + backend.swapchain.argumentSummary() + "]";
-            backend.record("swapchain probe failed at " + step + ": " + backend.describe(error) + " [" + where + "]" + arguments);
+            backend.record("swapchain probe failed at " + step + ": " + CopyReadSide.describe(error) + " [" + where + "]" + arguments);
         }
     }
 

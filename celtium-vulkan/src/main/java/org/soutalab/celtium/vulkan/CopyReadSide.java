@@ -296,6 +296,32 @@ final class CopyReadSide {
         return "served";
     }
 
+    // Pure formatting and matrix utilities that used to live on VulkanTerrainGpuBackend, moved here in the
+    // Stage 6 ④a slice 2 relocation: this class is the mirror's home and their main external consumer.
+
+    /** Three decimals, the precision the renderer's own state lines use. */
+    static float round3(float value) {
+        return (float) (Math.round(value * 1000.0D) / 1000.0D);
+    }
+
+    static String describe(Throwable error) {
+        return error.getClass().getSimpleName() + ": " + String.valueOf(error.getMessage());
+    }
+
+    /**
+     * Writes {@code result = clipDepthRemap * projection}, the same z remap the terrain projection goes through, so a
+     * matrix mirrored from OpenGL can be used unchanged for depth in Vulkan.
+     */
+    static void remapClipDepth(float[] projection, float[] result) {
+        if (projection != result) {
+            System.arraycopy(projection, 0, result, 0, 16);
+        }
+        result[2] = 0.5f * (projection[2] + projection[3]);
+        result[6] = 0.5f * (projection[6] + projection[7]);
+        result[10] = 0.5f * (projection[10] + projection[11]);
+        result[14] = 0.5f * (projection[14] + projection[15]);
+    }
+
     /** {@return the name of a Vulkan image layout, for the census lines that have to be read against a claim}. */
     static String celtium$layoutName(int layout) {
         switch (layout) {
@@ -568,7 +594,7 @@ final class CopyReadSide {
 
         @Override
         public String describe(Throwable error) {
-            return VulkanTerrainGpuBackend.describe(error);
+            return CopyReadSide.describe(error);
         }
     }
 
@@ -616,7 +642,7 @@ final class CopyReadSide {
             }
             written = javax.imageio.ImageIO.write(out, "png", path.toFile());
         } catch (java.io.IOException | RuntimeException | LinkageError error) {
-            this.backend.record("chain frame dump write failed: " + VulkanTerrainGpuBackend.describe(error));
+            this.backend.record("chain frame dump write failed: " + describe(error));
         }
         System.out.println("[Celtium] CELTIUM_CHAIN_FRAME_DUMP stage=" + stage + " path=" + path
                 + " written=" + written + " " + width + "x" + height
@@ -1008,10 +1034,10 @@ final class CopyReadSide {
         // The modelview's z translation is printed with the x and y: the GUI's ortho maps z=0 to the near plane and
         // the overlay rendering puts the eye at z=-2000, so a group recorded without that translation lands outside
         // the clip volume and vanishes even though its x/y rectangle is on screen.
-        return "proj=" + VulkanTerrainGpuBackend.round3(this.backend.glProjection[0]) + "," + VulkanTerrainGpuBackend.round3(this.backend.glProjection[5])
-                + " mv=" + VulkanTerrainGpuBackend.round3(this.backend.glModelView[0]) + "," + VulkanTerrainGpuBackend.round3(this.backend.glModelView[5])
-                + " mvT=" + VulkanTerrainGpuBackend.round3(this.backend.glModelView[12]) + "," + VulkanTerrainGpuBackend.round3(this.backend.glModelView[13]) + ","
-                + VulkanTerrainGpuBackend.round3(this.backend.glModelView[14]);
+        return "proj=" + round3(this.backend.glProjection[0]) + "," + round3(this.backend.glProjection[5])
+                + " mv=" + round3(this.backend.glModelView[0]) + "," + round3(this.backend.glModelView[5])
+                + " mvT=" + round3(this.backend.glModelView[12]) + "," + round3(this.backend.glModelView[13]) + ","
+                + round3(this.backend.glModelView[14]);
     }
 
     boolean ensureFrameTarget() {
@@ -1116,7 +1142,7 @@ final class CopyReadSide {
             this.backend.presentSwapchain.celtium$ensureBorrowedFrameImage();
             return true;
         } catch (RuntimeException | LinkageError error) {
-            this.backend.record("frame target " + width + "x" + height + " failed: " + VulkanTerrainGpuBackend.describe(error));
+            this.backend.record("frame target " + width + "x" + height + " failed: " + describe(error));
             return false;
         }
     }
@@ -1313,7 +1339,7 @@ final class CopyReadSide {
                 this.backend.atlasGlId = atlasId;
                 this.backend.atlasRefreshCountdown = 400;
             } catch (RuntimeException | LinkageError error) {
-                this.backend.record("block atlas upload failed: " + VulkanTerrainGpuBackend.describe(error));
+                this.backend.record("block atlas upload failed: " + describe(error));
                 this.backend.atlasRefreshCountdown = 400;
             }
         }
@@ -1384,7 +1410,7 @@ final class CopyReadSide {
                 this.backend.lightmapRefreshCountdown = 1;
             }
         } catch (RuntimeException | LinkageError error) {
-            this.backend.record("lightmap upload failed: " + VulkanTerrainGpuBackend.describe(error));
+            this.backend.record("lightmap upload failed: " + describe(error));
             this.backend.lightmapRefreshCountdown = 1;
         }
         this.backend.lightmapRefreshCountdown--;

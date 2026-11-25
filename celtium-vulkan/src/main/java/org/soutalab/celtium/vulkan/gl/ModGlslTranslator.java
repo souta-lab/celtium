@@ -680,7 +680,7 @@ public final class ModGlslTranslator {
                 .append(glsmFragmentRegion ? "    celtium_v_regionOffset = celtium_regionOffset();\n" : "")
                 .append("    celtium_user_main();\n")
                 // GL's clip depth is [-1, 1], Vulkan's [0, 1]. y is not flipped: like every other pass here the image
-                // keeps GL's row order (VulkanTerrainGpuBackend.remapClipDepth remaps depth only).
+                // keeps GL's row order (CopyReadSide.remapClipDepth remaps depth only).
                 .append("    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;\n}\n");
         fs.append(fragment).append("\nvoid main() {\n    celtium_user_main();\n}\n");
         return new Result(vs.toString(), fs.toString(), Collections.unmodifiableList(attributes),

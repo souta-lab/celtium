@@ -187,7 +187,7 @@ final class BackendDiagnostics {
                 + " lastAlphaFunc=" + b.immediateStatistics.lastAlphaFunc()
                 + " alphaSelectorCounts=" + b.alphaSelectorSummary()
                 + " samplerFilters=" + VulkanGlTexture.samplerFilterCensus()
-                + " lastAlphaPushRef=" + b.round3(b.immediateStatistics.lastAlphaPushReference())
+                + " lastAlphaPushRef=" + CopyReadSide.round3(b.immediateStatistics.lastAlphaPushReference())
                 + " alphaReferenceValues=" + b.alphaReferenceValueSummary()
                 + " windowFlushRetainedBatches=" + b.targetStatistics.windowFlushRetainedBatches()
                 + " lastWindowFlushFailure=" + (b.lastWindowFlushFailure == null ? "none"
@@ -1190,16 +1190,16 @@ final class BackendDiagnostics {
                     // would move the picture, and the two are indistinguishable from the bounds alone. The same
                     // stride applies to the texture coordinates, which is what names the quad (the sun's is u=0,
                     // the moon's first vertex u=0.25 of the phase atlas).
-                    positions.append(vertex > 0 ? ";" : "").append(b.round3(x)).append(',').append(b.round3(y))
-                            .append(',').append(b.round3(z));
+                    positions.append(vertex > 0 ? ";" : "").append(CopyReadSide.round3(x)).append(',').append(CopyReadSide.round3(y))
+                            .append(',').append(CopyReadSide.round3(z));
                     if (stride >= 20) {
                         uvs.append(vertex > 0 ? ";" : "")
-                                .append(b.round3(MemoryUtil.memGetFloat(offset + 12))).append(',')
-                                .append(b.round3(MemoryUtil.memGetFloat(offset + 16)));
+                                .append(CopyReadSide.round3(MemoryUtil.memGetFloat(offset + 12))).append(',')
+                                .append(CopyReadSide.round3(MemoryUtil.memGetFloat(offset + 16)));
                     }
-                    perVertex.append(vertex > 0 ? ";" : "").append(b.round3(cx / cw)).append(',')
-                            .append(b.round3(cy / cw)).append(',').append(b.round3(cz / cw)).append(',')
-                            .append(b.round3(cw));
+                    perVertex.append(vertex > 0 ? ";" : "").append(CopyReadSide.round3(cx / cw)).append(',')
+                            .append(CopyReadSide.round3(cy / cw)).append(',').append(CopyReadSide.round3(cz / cw)).append(',')
+                            .append(CopyReadSide.round3(cw));
                 }
                 if (cw <= 0.0f) {
                     behind++;
@@ -1300,8 +1300,8 @@ final class BackendDiagnostics {
                     // decimals, so the field could not answer the one question it exists for. The trap is the same
                     // shape as the 16-byte-stride and pointerStride=1 readings: the instrument did not read what it
                     // looked like it read. m11 = -2/ScaledHeight = -0.00833 is the second tell.
-                    + " proj=[m00=" + b.round3(projection[0]) + " m11=" + b.round3(projection[5])
-                    + " m22=" + b.round3(projection[10]) + " m32=" + b.round3(projection[14]) + "]"
+                    + " proj=[m00=" + CopyReadSide.round3(projection[0]) + " m11=" + CopyReadSide.round3(projection[5])
+                    + " m22=" + CopyReadSide.round3(projection[10]) + " m32=" + CopyReadSide.round3(projection[14]) + "]"
                     // The drawing state the group was captured with, which is what decides whether a group that
                     // measures on-screen can still be rejected: a depth-tested quad drawn after the world pass is
                     // tested against the world's depth unless something cleared the depth attachment in between.
@@ -1313,15 +1313,15 @@ final class BackendDiagnostics {
                     // measured case (its fragments are alpha-discarded with the real atlas bound), and this field is
                     // what tells "the group carries a transform" from "it does not".
                     + " texMat=" + (group.texMatrix == null ? "none"
-                            : b.round3(group.texMatrix[0]) + "," + b.round3(group.texMatrix[1]) + ","
-                                    + b.round3(group.texMatrix[2]) + "," + b.round3(group.texMatrix[3]) + ","
-                                    + b.round3(group.texMatrix[4]) + "," + b.round3(group.texMatrix[5]))
+                            : CopyReadSide.round3(group.texMatrix[0]) + "," + CopyReadSide.round3(group.texMatrix[1]) + ","
+                                    + CopyReadSide.round3(group.texMatrix[2]) + "," + CopyReadSide.round3(group.texMatrix[3]) + ","
+                                    + CopyReadSide.round3(group.texMatrix[4]) + "," + CopyReadSide.round3(group.texMatrix[5]))
                     + " ndc " + bounds + chain);
             b.record("group " + b.immediateDiagnostics + ": vertices=" + vertices
                     + " indices=" + mesh.indexCount() + " colour0=" + colour
                     + " proj=[m00=" + projection[0] + " m11=" + projection[5] + "] ndc " + bounds);
         } catch (RuntimeException | LinkageError error) {
-            b.record("group diagnostic failed: " + b.describe(error));
+            b.record("group diagnostic failed: " + CopyReadSide.describe(error));
         }
     }
 }

@@ -175,7 +175,7 @@ class PerformanceOptimizationsTest {
             0.0f, 0.0f, -0.2002f, 0.0f
         };
         float[] vkProj = new float[16];
-        VulkanTerrainGpuBackend.remapClipDepth(glProj, vkProj);
+        CopyReadSide.remapClipDepth(glProj, vkProj);
         for (int col = 0; col < 4; col++) {
             float m2c = glProj[col * 4 + 2];
             float m3c = glProj[col * 4 + 3];

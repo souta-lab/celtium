@@ -46,7 +46,7 @@ final class PostChainBridge {
             // A creation that failed on this context and target fails identically every frame: quarantine the
             // stage instead of retrying the corpse on every subsequent frame (item 327).
             StageGate.system().trip(StageGate.Stage.POST_CHAIN, error);
-            b.record("post chain executor creation failed: " + b.describe(error));
+            b.record("post chain executor creation failed: " + CopyReadSide.describe(error));
             return false;
         }
         // Borrow closure (Stage 1 BGRA): the borrow decision for this frame was taken before this
@@ -151,14 +151,14 @@ final class PostChainBridge {
             // quarantine the post chain for the session; the GL chain carries those frames meanwhile.
             StageGate.system().noteFailure(StageGate.Stage.POST_CHAIN, error);
             VulkanGlTexture.abandonLayoutRecording(b.commandBuffer,
-                    "post chain submission failed: " + b.describe(error));
-            b.record("post chain submission failed: " + b.describe(error));
+                    "post chain submission failed: " + CopyReadSide.describe(error));
+            b.record("post chain submission failed: " + CopyReadSide.describe(error));
         } finally {
             if (submitted) {
                 try {
                     b.frameTarget.endFrame();
                 } catch (RuntimeException | LinkageError error) {
-                    b.record("post chain frame end failed: " + b.describe(error));
+                    b.record("post chain frame end failed: " + CopyReadSide.describe(error));
                     return false;
                 }
             } else {
@@ -234,7 +234,7 @@ b.frameBufferOpen = false;
             b.chainAdoptionDeclarations++;
             return true;
         } catch (RuntimeException | LinkageError error) {
-            b.record("post chain input adoption could not be declared: " + b.describe(error));
+            b.record("post chain input adoption could not be declared: " + CopyReadSide.describe(error));
             return false;
         }
     }

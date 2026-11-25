@@ -1434,7 +1434,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     /** Human-readable state for logs and debug overlays; never null. */
-    public String describe() {
+    public String CopyReadSide.describe() {
         StringBuilder builder = new StringBuilder("vulkan");
         builder.append(" [").append(this.context.deviceName()).append(']');
         builder.append(" regions=").append(this.terrain.regionCount());
@@ -1495,7 +1495,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + " texMatrixGroups=" + this.immediateStatistics.texMatrixGroups()
                 + " modelDrawRefusals=" + this.modelDrawRefusals
                 + " modelRecordedReplays=" + this.modelRecordedReplayCalls
-                + " modelFastPath[" + this.modelReplayFastPath.describe() + "]"
+                + " modelFastPath[" + this.modelReplayFastPath.CopyReadSide.describe() + "]"
                 + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.stubTransformSummary()
                 + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.stubTransformSummary()
                 + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.stubTransformSummary() + " modelMissingMeshes=" + this.modelGeometry.modelMissingMeshes()
@@ -1812,7 +1812,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             org.soutalab.celtium.vulkan.FramePassTimings.end("terrainHandoff");
         } catch (RuntimeException | LinkageError error) {
             this.terrainStatistics.notePassErrors();
-            record("frame begin failed: " + describe(error));
+            record("frame begin failed: " + CopyReadSide.describe(error));
             // The handoff bracket was opened before beginFrame(); a failed begin must not leave it open, or the next
             // pass's handoff nests inside it and the reported time holds this failure's remainder.
             org.soutalab.celtium.vulkan.FramePassTimings.end("terrainHandoff");
@@ -1847,7 +1847,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             }
         } catch (RuntimeException | LinkageError error) {
             this.terrainStatistics.notePassErrors();
-            record("render failed: " + describe(error));
+            record("render failed: " + CopyReadSide.describe(error));
         }
 
         if (this.gpuStalled) return;
@@ -1877,7 +1877,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 this.frameTarget.recordReleaseBarriers(this.commandBuffer);
                 progress = this.frameCoordinator.submitCommands();
             } catch (RuntimeException | LinkageError error) {
-                record("frame recovery failed: " + describe(error));
+                record("frame recovery failed: " + CopyReadSide.describe(error));
             }
         }
 
@@ -1902,7 +1902,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             recordHandoff(System.nanoTime() - handoffStart);
         } catch (RuntimeException | LinkageError error) {
             this.terrainStatistics.notePassErrors();
-            record("frame end failed: " + describe(error));
+            record("frame end failed: " + CopyReadSide.describe(error));
         }
         if (pass != null && pass.isSorted() && this.nativeTranslucentStageFrame != this.frameId) {
             this.nativeTranslucentStageFrame = this.frameId;
@@ -3053,7 +3053,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     + " presentSkipReason=[" + this.presentSkipReason + "]"
                     + " submitSequence=" + this.scheduler.submitSequence()
                     + " completedSubmitSequence=" + this.scheduler.completedSubmitSequence()
-                    + " " + SubmitTrail.describe());
+                    + " " + SubmitTrail.CopyReadSide.describe());
         }
         this.submissionStatistics.noteStalledStops();
     }
@@ -3927,7 +3927,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 }
             }
         } catch (RuntimeException | LinkageError error) {
-            record("native pass stage " + stage + " failed: " + describe(error));
+            record("native pass stage " + stage + " failed: " + CopyReadSide.describe(error));
         }
     }
 
@@ -5631,7 +5631,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 }
                 this.directMirrorRefreshes++;
             } catch (RuntimeException | LinkageError error) {
-                record("atlas re-upload failed: " + describe(error));
+                record("atlas re-upload failed: " + CopyReadSide.describe(error));
             }
         }
         if (this.lightmapTexture != null && glTextureId == this.lightmapSourceGlId) {
@@ -5651,7 +5651,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 }
                 this.directMirrorRefreshes++;
             } catch (RuntimeException | LinkageError error) {
-                record("light map re-upload failed: " + describe(error));
+                record("light map re-upload failed: " + CopyReadSide.describe(error));
             }
         }
         if (this.textureRegistry != null) {
@@ -6230,12 +6230,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             return;
         }
         float[] after = this.immediateState.matrix(VulkanGlState.MATRIX_MODE_PROJECTION);
-        System.out.println("[Celtium] CELTIUM_GLUPERSPECTIVE fov=" + round3(fovDegrees) + " aspect=" + round3(aspect)
-                + " near=" + round3(near) + " far=" + round3(far)
-                + " after=[m00=" + round3(after[0]) + ",m11=" + round3(after[5]) + ",m22=" + round3(after[10])
-                + ",m23=" + round3(after[11]) + ",m32=" + round3(after[14]) + ",m33=" + round3(after[15]) + "]"
-                + " before=[m00=" + round3(before[0]) + ",m11=" + round3(before[5]) + ",m22=" + round3(before[10])
-                + ",m23=" + round3(before[11]) + ",m32=" + round3(before[14]) + ",m33=" + round3(before[15]) + "]"
+        System.out.println("[Celtium] CELTIUM_GLUPERSPECTIVE fov=" + CopyReadSide.round3(fovDegrees) + " aspect=" + CopyReadSide.round3(aspect)
+                + " near=" + CopyReadSide.round3(near) + " far=" + CopyReadSide.round3(far)
+                + " after=[m00=" + CopyReadSide.round3(after[0]) + ",m11=" + CopyReadSide.round3(after[5]) + ",m22=" + CopyReadSide.round3(after[10])
+                + ",m23=" + CopyReadSide.round3(after[11]) + ",m32=" + CopyReadSide.round3(after[14]) + ",m33=" + CopyReadSide.round3(after[15]) + "]"
+                + " before=[m00=" + CopyReadSide.round3(before[0]) + ",m11=" + CopyReadSide.round3(before[5]) + ",m22=" + CopyReadSide.round3(before[10])
+                + ",m23=" + CopyReadSide.round3(before[11]) + ",m32=" + CopyReadSide.round3(before[14]) + ",m33=" + CopyReadSide.round3(before[15]) + "]"
                 + " site=[" + site + "]");
     }
 
@@ -6258,8 +6258,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (this.gluPerspectiveSkips.size() >= 8 || !this.gluPerspectiveSkips.add(site)) {
             return;
         }
-        System.out.println("[Celtium] CELTIUM_GLUPERSPECTIVE_SKIP fov=" + round3(fovDegrees) + " aspect="
-                + round3(aspect) + " near=" + round3(near) + " far=" + round3(far) + " reason=[" + reason
+        System.out.println("[Celtium] CELTIUM_GLUPERSPECTIVE_SKIP fov=" + CopyReadSide.round3(fovDegrees) + " aspect="
+                + CopyReadSide.round3(aspect) + " near=" + CopyReadSide.round3(near) + " far=" + CopyReadSide.round3(far) + " reason=[" + reason
                 + "] site=[" + gluPerspectiveSite() + "]");
     }
 
@@ -7603,8 +7603,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + " texture=" + this.currentGroupTexture
                 + " batches=" + this.currentGroupBatches
                 + " vertices=" + (this.currentImmediateMesh == null ? -1 : this.currentImmediateMesh.vertexCount())
-                + " projDiag=" + round3(projection[0]) + "," + round3(projection[5]) + ","
-                + round3(projection[10]) + "," + round3(projection[14])
+                + " projDiag=" + CopyReadSide.round3(projection[0]) + "," + CopyReadSide.round3(projection[5]) + ","
+                + CopyReadSide.round3(projection[10]) + "," + CopyReadSide.round3(projection[14])
                 + " viewport=" + java.util.Arrays.toString(this.currentGroupViewportValues)
                 + " worldPass=" + this.worldPassActive);
     }
@@ -8920,7 +8920,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         } catch (Throwable error) {
             // A refusal has to name itself: the gate's caller only fills in its generic sentence when nothing was
             // recorded, so a silent false here reads as "unrecorded (format=5 ...) stage=10".
-            this.immediateLastRefusal = "the particle descriptor probe could not be built: " + describe(error);
+            this.immediateLastRefusal = "the particle descriptor probe could not be built: " + CopyReadSide.describe(error);
             return false;
         }
     }
@@ -9133,7 +9133,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         try {
             return "[Celtium] CELTIUM_FONT_GLYPH_CENSUS " + capture.get();
         } catch (RuntimeException | LinkageError error) {
-            return "[Celtium] CELTIUM_FONT_GLYPH_CENSUS unavailable: " + describe(error);
+            return "[Celtium] CELTIUM_FONT_GLYPH_CENSUS unavailable: " + CopyReadSide.describe(error);
         }
     }
 
@@ -9459,20 +9459,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.skyCensusBatches++;
             if (this.skyCensusBatches == 1) {
                 this.skyCensusFirst = "count=" + vertexCount
-                        + " colour=(" + celtium$round3(this.immediateState.colorRed()) + ","
-                        + celtium$round3(this.immediateState.colorGreen()) + ","
-                        + celtium$round3(this.immediateState.colorBlue()) + ","
-                        + celtium$round3(this.immediateState.colorAlpha()) + ")"
+                        + " colour=(" + celtium$CopyReadSide.round3(this.immediateState.colorRed()) + ","
+                        + celtium$CopyReadSide.round3(this.immediateState.colorGreen()) + ","
+                        + celtium$CopyReadSide.round3(this.immediateState.colorBlue()) + ","
+                        + celtium$CopyReadSide.round3(this.immediateState.colorAlpha()) + ")"
                         + " fogSelector=" + this.fog.selector()
                         + " fogStart=" + this.fog.start + " fogEnd=" + this.fog.end
-                        + " fogColour=(" + celtium$round3(this.fog.red) + ","
-                        + celtium$round3(this.fog.green) + "," + celtium$round3(this.fog.blue) + ")"
-                        + " mvT=(" + celtium$round3(this.glModelView[12]) + ","
-                        + celtium$round3(this.glModelView[13]) + ","
-                        + celtium$round3(this.glModelView[14]) + ")"
-                        + " v0=(" + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress)) + ","
-                        + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 4L)) + ","
-                        + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 8L)) + ")";
+                        + " fogColour=(" + celtium$CopyReadSide.round3(this.fog.red) + ","
+                        + celtium$CopyReadSide.round3(this.fog.green) + "," + celtium$CopyReadSide.round3(this.fog.blue) + ")"
+                        + " mvT=(" + celtium$CopyReadSide.round3(this.glModelView[12]) + ","
+                        + celtium$CopyReadSide.round3(this.glModelView[13]) + ","
+                        + celtium$CopyReadSide.round3(this.glModelView[14]) + ")"
+                        + " v0=(" + celtium$CopyReadSide.round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress)) + ","
+                        + celtium$CopyReadSide.round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 4L)) + ","
+                        + celtium$CopyReadSide.round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 8L)) + ")";
             }
         }
         if (SKY_CENSUS && formatId == 1 && vertexCount == 18 && drawMode == 6) {
@@ -9482,17 +9482,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.skyFanBatches++;
             if (this.skyFanBatches == 1) {
                 this.skyFanFirst = "count=" + vertexCount
-                        + " colour=(" + celtium$round3(this.immediateState.colorRed()) + ","
-                        + celtium$round3(this.immediateState.colorGreen()) + ","
-                        + celtium$round3(this.immediateState.colorBlue()) + ","
-                        + celtium$round3(this.immediateState.colorAlpha()) + ")"
+                        + " colour=(" + celtium$CopyReadSide.round3(this.immediateState.colorRed()) + ","
+                        + celtium$CopyReadSide.round3(this.immediateState.colorGreen()) + ","
+                        + celtium$CopyReadSide.round3(this.immediateState.colorBlue()) + ","
+                        + celtium$CopyReadSide.round3(this.immediateState.colorAlpha()) + ")"
                         + " fogSelector=" + this.fog.selector()
-                        + " mvT=(" + celtium$round3(this.glModelView[12]) + ","
-                        + celtium$round3(this.glModelView[13]) + ","
-                        + celtium$round3(this.glModelView[14]) + ")"
-                        + " v0=(" + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress)) + ","
-                        + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 4L)) + ","
-                        + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 8L)) + ")";
+                        + " mvT=(" + celtium$CopyReadSide.round3(this.glModelView[12]) + ","
+                        + celtium$CopyReadSide.round3(this.glModelView[13]) + ","
+                        + celtium$CopyReadSide.round3(this.glModelView[14]) + ")"
+                        + " v0=(" + celtium$CopyReadSide.round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress)) + ","
+                        + celtium$CopyReadSide.round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 4L)) + ","
+                        + celtium$CopyReadSide.round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 8L)) + ")";
             }
         }
         // Cleared at entry so a refusal always carries its own reason. It used to keep whatever the previous call left -
@@ -9756,15 +9756,15 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 float vx = org.lwjgl.system.MemoryUtil.memGetFloat(at - 24);
                 float vy = org.lwjgl.system.MemoryUtil.memGetFloat(at - 24 + 4);
                 float vz = org.lwjgl.system.MemoryUtil.memGetFloat(at - 24 + 8);
-                System.out.println("[Celtium] CELTIUM_FMT5_POS first=(" + round3(vx) + "," + round3(vy) + "," + round3(vz)
-                        + ") camera=(" + round3(this.glModelView[12]) + "," + round3(this.glModelView[13]) + ","
-                        + round3(this.glModelView[14]) + ")");
+                System.out.println("[Celtium] CELTIUM_FMT5_POS first=(" + CopyReadSide.round3(vx) + "," + CopyReadSide.round3(vy) + "," + CopyReadSide.round3(vz)
+                        + ") camera=(" + CopyReadSide.round3(this.glModelView[12]) + "," + CopyReadSide.round3(this.glModelView[13]) + ","
+                        + CopyReadSide.round3(this.glModelView[14]) + ")");
                 System.out.println("[Celtium] CELTIUM_LIGHTCOORD fmt=5 stride=" + vertexStride + " count=" + vertexCount
                         + " first=0x" + Integer.toHexString(first) + "(" + first + ")"
                         + " second=0x" + Integer.toHexString(second) + "(" + second + ")"
                         + " last=0x" + Integer.toHexString(last) + "(" + last + ")"
-                        + " u_first=" + round3((first & 0xFF) / 16.0f) + " v_first=" + round3(((first >> 8) & 0xFF) / 16.0f)
-                        + " uraw_first=" + round3(first / 256.0f));
+                        + " u_first=" + CopyReadSide.round3((first & 0xFF) / 16.0f) + " v_first=" + CopyReadSide.round3(((first >> 8) & 0xFF) / 16.0f)
+                        + " uraw_first=" + CopyReadSide.round3(first / 256.0f));
                 // Every vertex field of the first two vertices, once: whether the zero lights travel with a colour that
                 // is also zero (padding never written) or a real particle that happened to be unlit.
                 if (this.lightCoordLogged == 1) {
@@ -9780,9 +9780,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     int lu1 = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(v1 + 24));
                     int lv1 = Short.toUnsignedInt(org.lwjgl.system.MemoryUtil.memGetShort(v1 + 26));
                     System.out.println("[Celtium] CELTIUM_FMT5_VERTEX"
-                            + " v0 uv=(" + round3(tu0) + "," + round3(tv0) + ") color=0x"
+                            + " v0 uv=(" + CopyReadSide.round3(tu0) + "," + CopyReadSide.round3(tv0) + ") color=0x"
                             + Integer.toHexString(c0) + " lmap=(" + lu0 + "," + lv0 + ")"
-                            + " v1 uv=(" + round3(tu1) + "," + round3(tv1) + ") color=0x"
+                            + " v1 uv=(" + CopyReadSide.round3(tu1) + "," + CopyReadSide.round3(tv1) + ") color=0x"
                             + Integer.toHexString(c1) + " lmap=(" + lu1 + "," + lv1 + ")");
                     StackTraceElement[] stack = new Throwable().getStackTrace();
                     StringBuilder frames = new StringBuilder();
@@ -10974,8 +10974,8 @@ this.frameBufferOpen = false;
             this.immediateLastRefusal = "none";
             return true;
         } catch (RuntimeException | LinkageError error) {
-            this.immediateLastRefusal = "copy failed: " + describe(error);
-            record("immediate batch refused: " + describe(error));
+            this.immediateLastRefusal = "copy failed: " + CopyReadSide.describe(error);
+            record("immediate batch refused: " + CopyReadSide.describe(error));
             // Order (S10): what is already accepted is drawn before this batch goes to GL.
             celtium$noteFlushSite(1);
             this.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
@@ -11133,7 +11133,7 @@ this.frameBufferOpen = false;
                 + (state.length > 14 ? " srcA=" + state[9] + " dstA=" + state[10]
                         + " mask=0x" + Integer.toHexString(state[11]) + " eq=" + state[12] + "/" + state[13]
                         + " alphaFunc=" + state[14] : " (pre-BH-07 array)")
-                + " depthTest=" + state[3] + " depthWrite=" + state[4] + " cull=" + VulkanCullState.describe(state[5])
+                + " depthTest=" + state[3] + " depthWrite=" + state[4] + " cull=" + VulkanCullState.CopyReadSide.describe(state[5])
                 + "(" + state[5] + ")"
                 + " alphaRef=" + Float.intBitsToFloat(state[6]) + " depthFunc=" + state[7]
                 // The other copy of the same facts, and the trap in reading it. The mirror is fed at the head of
@@ -11942,7 +11942,7 @@ this.frameBufferOpen = false;
         }
     }
 
-    static String celtium$round3(float value) {
+    static String celtium$CopyReadSide.round3(float value) {
         return String.valueOf(Math.round(value * 1000.0f) / 1000.0f);
     }
 
@@ -11953,7 +11953,7 @@ this.frameBufferOpen = false;
             if (i > 0) {
                 text.append(',');
             }
-            text.append(round3(values[i]));
+            text.append(CopyReadSide.round3(values[i]));
         }
         return text.append(']').toString();
     }
@@ -12537,7 +12537,7 @@ this.frameBufferOpen = false;
             mesh.delete();
             return 1;
         } catch (RuntimeException | LinkageError error) {
-            record("teardown: mesh could not be released: " + describe(error));
+            record("teardown: mesh could not be released: " + CopyReadSide.describe(error));
             return 0;
         }
     }
@@ -12551,7 +12551,7 @@ this.frameBufferOpen = false;
             teardown.run();
             return 1;
         } catch (RuntimeException | LinkageError error) {
-            record("teardown step failed: " + describe(error));
+            record("teardown step failed: " + CopyReadSide.describe(error));
             return 0;
         }
     }
@@ -13225,7 +13225,7 @@ this.frameBufferOpen = false;
             // latch stays reachable from the wait-timeout path, which is where a device that has genuinely stopped is
             // detected.
             this.immediateStatistics.noteOrderingFlushFailures();
-            this.lastOrderingFlushFailure = describe(error);
+            this.lastOrderingFlushFailure = CopyReadSide.describe(error);
             int dropped = 0;
             for (ImmediateGroup group : this.immediateGroups) {
                 dropped += group.batches;
@@ -13235,7 +13235,7 @@ this.frameBufferOpen = false;
             this.pendingImmediateIndices = 0;
             record("ordering flush failed at frame " + this.frameId + ", its " + dropped
                     + " accepted batches were dropped and the next frame retries (orderingFlushFailures="
-                    + this.immediateStatistics.orderingFlushFailures() + "): " + describe(error));
+                    + this.immediateStatistics.orderingFlushFailures() + "): " + CopyReadSide.describe(error));
         }
     }
 
@@ -13819,7 +13819,7 @@ this.frameBufferOpen = false;
                         return;
                     }
                     this.immediateStatistics.noteImmediateRetryCount();
-                    record("retrying unsubmitted immediate window: " + describe(error));
+                    record("retrying unsubmitted immediate window: " + CopyReadSide.describe(error));
                 } finally { this.windowOpen = false; }
             }
         } finally { this.immediateWindowBusy = false; }
@@ -15444,8 +15444,8 @@ this.frameBufferOpen = false;
                     // recorded against either the retained pair or the main frame image.
                     throw error;
                 }
-                this.lastOffTargetFailure = describe(error);
-                record("off-target pass refused, drawing into the frame image instead: " + describe(error));
+                this.lastOffTargetFailure = CopyReadSide.describe(error);
+                record("off-target pass refused, drawing into the frame image instead: " + CopyReadSide.describe(error));
                 // The acquire this window skipped has to be recorded here, before the pass that now attaches the
                 // frame image: the image is in GENERAL and the pass declares the attachment layout, which is
                 // VUID-vkCmdBeginRenderPass-initialLayout-00900 without it. The release reads the same field, so the
@@ -15784,7 +15784,7 @@ this.frameBufferOpen = false;
                 // record it once and fall through, rather than refusing every group on the ring's account.
                 if (!this.frameRingMeshFailed) {
                     this.frameRingMeshFailed = true;
-                    record("frame linear ring unavailable for immediate meshes: " + describe(failure)
+                    record("frame linear ring unavailable for immediate meshes: " + CopyReadSide.describe(failure)
                             + "; groups fall back to the frame arena");
                 }
             }
@@ -15972,7 +15972,7 @@ this.frameBufferOpen = false;
         }
         if (this.currentImmediateMesh != null && this.currentGroupUsed) {
             // OpenGL's clip depth runs -1..1 and Vulkan's 0..1, the same remap the terrain projection uses.
-            remapClipDepth(this.currentGroupProjection, this.closeProjectionScratch);
+            CopyReadSide.remapClipDepth(this.currentGroupProjection, this.closeProjectionScratch);
             // A group's matrices are read-only once it is queued (the compositor already shares one identity array
             // between groups), so consecutive groups with equal matrices share one array instead of two new ones each:
             // the per-group copies were the largest single item of the client thread's allocation.
@@ -15997,14 +15997,14 @@ this.frameBufferOpen = false;
                 // from - and the raw values on the left are what GL itself uses.
                 this.formatProbeLogged++;
                 System.out.println("[Celtium] CELTIUM_PROJ_PROBE fmt=" + this.currentGroupFormatId
-                        + " rawDepth=(" + round3(this.glProjection[2]) + "," + round3(this.glProjection[6]) + ","
-                        + round3(this.glProjection[10]) + "," + round3(this.glProjection[14]) + ")"
-                        + " storedDepth=(" + round3(this.currentGroupProjection[2]) + ","
-                        + round3(this.currentGroupProjection[6]) + "," + round3(this.currentGroupProjection[10]) + ","
-                        + round3(this.currentGroupProjection[14]) + ")"
-                        + " rawW=(" + round3(this.glProjection[11]) + "," + round3(this.glProjection[15]) + ")"
-                        + " mvT=(" + round3(this.currentGroupModelView[12]) + "," + round3(this.currentGroupModelView[13])
-                        + "," + round3(this.currentGroupModelView[14]) + ")"
+                        + " rawDepth=(" + CopyReadSide.round3(this.glProjection[2]) + "," + CopyReadSide.round3(this.glProjection[6]) + ","
+                        + CopyReadSide.round3(this.glProjection[10]) + "," + CopyReadSide.round3(this.glProjection[14]) + ")"
+                        + " storedDepth=(" + CopyReadSide.round3(this.currentGroupProjection[2]) + ","
+                        + CopyReadSide.round3(this.currentGroupProjection[6]) + "," + CopyReadSide.round3(this.currentGroupProjection[10]) + ","
+                        + CopyReadSide.round3(this.currentGroupProjection[14]) + ")"
+                        + " rawW=(" + CopyReadSide.round3(this.glProjection[11]) + "," + CopyReadSide.round3(this.glProjection[15]) + ")"
+                        + " mvT=(" + CopyReadSide.round3(this.currentGroupModelView[12]) + "," + CopyReadSide.round3(this.currentGroupModelView[13])
+                        + "," + CopyReadSide.round3(this.currentGroupModelView[14]) + ")"
                         // The mirror's own account of its contents: a texture that only ever received patches would be sampled
                         // in the parts that never arrived, which is what a black particle sprite would look like.
                         + " atlasFull=" + (this.atlasTexture != null && this.atlasTexture.hasFullContent())
@@ -16034,8 +16034,8 @@ this.frameBufferOpen = false;
                 StringBuilder proj = new StringBuilder();
                 StringBuilder mv = new StringBuilder();
                 for (int i = 0; i < 16; i++) {
-                    proj.append(round3(this.currentGroupProjection[i])).append(i == 15 ? "" : ",");
-                    mv.append(round3(this.currentGroupModelView[i])).append(i == 15 ? "" : ",");
+                    proj.append(CopyReadSide.round3(this.currentGroupProjection[i])).append(i == 15 ? "" : ",");
+                    mv.append(CopyReadSide.round3(this.currentGroupModelView[i])).append(i == 15 ? "" : ",");
                 }
                 System.out.println("[Celtium] CELTIUM_MATRIX_DUMP group=" + this.immediateStatistics.immediateGroupsClosed()
                         + " fmt=" + this.currentGroupFormatId + " batches=" + this.currentGroupBatches
@@ -16043,8 +16043,8 @@ this.frameBufferOpen = false;
                         + " worldPass=" + this.worldPassActive
                         + " target=" + this.currentGroupTarget + " viewport=" + this.currentGroupViewport
                         + "\n  proj=[" + proj + "]\n  mv=[" + mv + "]"
-                        + "\n  raw proj=[" + round3(this.glProjection[0]) + "," + round3(this.glProjection[5]) + ","
-                        + round3(this.glProjection[10]) + "," + round3(this.glProjection[14]) + "]");
+                        + "\n  raw proj=[" + CopyReadSide.round3(this.glProjection[0]) + "," + CopyReadSide.round3(this.glProjection[5]) + ","
+                        + CopyReadSide.round3(this.glProjection[10]) + "," + CopyReadSide.round3(this.glProjection[14]) + "]");
             }
             if (this.immediateMatrixLogged < 8
                     || (ENQ_ALL_GROUPS && (ENQ_FORMAT < 0 || ENQ_FORMAT == this.currentGroupFormatId))) {
@@ -16054,9 +16054,9 @@ this.frameBufferOpen = false;
                 // belong to the loading screen and cannot say which matrices the frame an artefact is in was drawn with.
                 this.immediateMatrixLogged++;
                 System.out.println("[Celtium] CELTIUM_IMMEDIATE_ENQ frame=" + this.frameId
-                        + " group=" + this.immediateStatistics.immediateGroupsClosed() + " proj=" + round3(projection[2]) + ","
-                        + round3(projection[6]) + "," + round3(projection[10]) + "," + round3(projection[14])
-                        + " mvT=" + round3(modelView[12]) + "," + round3(modelView[13]) + "," + round3(modelView[14])
+                        + " group=" + this.immediateStatistics.immediateGroupsClosed() + " proj=" + CopyReadSide.round3(projection[2]) + ","
+                        + CopyReadSide.round3(projection[6]) + "," + CopyReadSide.round3(projection[10]) + "," + CopyReadSide.round3(projection[14])
+                        + " mvT=" + CopyReadSide.round3(modelView[12]) + "," + CopyReadSide.round3(modelView[13]) + "," + CopyReadSide.round3(modelView[14])
                         + " fmt=" + this.currentGroupFormatId + " texture=" + this.currentGroupTexture
                         // The group's own tint is NOT printed here: measured, this line runs before
                         // currentGroupColor is captured (NPE on the first leg that tried), so the draw-moment line
@@ -16264,7 +16264,7 @@ this.frameBufferOpen = false;
             if (!first) {
                 text.append(' ');
             }
-            text.append(round3(Float.intBitsToFloat(bits)));
+            text.append(CopyReadSide.round3(Float.intBitsToFloat(bits)));
             first = false;
         }
         return text.append(']').toString();
@@ -17068,7 +17068,7 @@ this.frameBufferOpen = false;
         // silently skips (missing textures, no frame target, a failed pipeline) would look like a rendering bug.
         String handoff = takeHandoffSummary();
         String detail = this.frameTarget == null ? null : this.frameTarget.takeTimingSummary();
-        String base = describe();
+        String base = CopyReadSide.describe();
         String withHandoff = handoff == null ? base : base + " | " + handoff;
         String withDetail = detail == null ? withHandoff : withHandoff + " | " + detail;
         return withDetail + " | " + verificationSummary();
@@ -17406,7 +17406,7 @@ this.frameBufferOpen = false;
             // nothing draws into this backend again, and what the sequence did not reach is left for the
             // process teardown - the same disposition as the stalled and settle-failed exits above. The
             // window-owned exit inside the sequence is a return, not a throw, and is unaffected.
-            record("teardown: the release sequence stopped early (" + describe(failure)
+            record("teardown: the release sequence stopped early (" + CopyReadSide.describe(failure)
                     + "); the resources it did not reach are left for the process teardown");
             celtium$detachRegistration();
         }
@@ -17616,7 +17616,7 @@ this.frameBufferOpen = false;
             discardImmediateGroups();
             released++;
         } catch (RuntimeException | LinkageError error) {
-            record("teardown: held groups could not be released: " + describe(error));
+            record("teardown: held groups could not be released: " + CopyReadSide.describe(error));
         }
         int pendingCopies = 0;
         if (this.retainedGeometry != null) {
@@ -17934,7 +17934,7 @@ this.frameBufferOpen = false;
             if (this.terrainDepthTargetRefusalLogs < 12) {
                 this.terrainDepthTargetRefusalLogs++;
                 System.out.println("[Celtium] CELTIUM_TERRAIN_DEPTH_TARGET_REFUSED reason=no-framebuffer pass=" + passName
-                        + " identity=0x" + Long.toHexString(identity) + " error=" + describe(error));
+                        + " identity=0x" + Long.toHexString(identity) + " error=" + CopyReadSide.describe(error));
             }
             return null;
         }
@@ -18397,7 +18397,7 @@ this.frameBufferOpen = false;
                     modPipeline = VulkanModProgramPipeline.createForTerrain(this.context, modProgram, vertexFormat,
                             targetRenderPass, cull, depthTest, depthWrite, depthCompareOp, colorBlend, targetColors);
                 } catch (RuntimeException | LinkageError err) {
-                    celtium$reportPackTerrainRefused(pass, programId, "pipeline:" + describe(err));
+                    celtium$reportPackTerrainRefused(pass, programId, "pipeline:" + CopyReadSide.describe(err));
                     return false;
                 }
                 this.packTerrainPipelines.put(pipeKey, modPipeline);
@@ -18929,7 +18929,7 @@ this.frameBufferOpen = false;
             }
             return true;
         } catch (RuntimeException | LinkageError err) {
-            celtium$reportPackTerrainRefused(pass, packProgram.handle(), "exception:" + describe(err));
+            celtium$reportPackTerrainRefused(pass, packProgram.handle(), "exception:" + CopyReadSide.describe(err));
             return false;
         } finally {
             if (packStageBracket != null) {
@@ -19964,7 +19964,7 @@ this.frameBufferOpen = false;
                 if (this.terrainShadowLogs < 16) {
                     this.terrainShadowLogs++;
                     System.out.println("[Celtium] CELTIUM_TERRAIN_SHADOW pass=" + pass.name()
-                            + " verdict=layout-unknown error=" + describe(unknownLayout) + " frame=" + this.frameId);
+                            + " verdict=layout-unknown error=" + CopyReadSide.describe(unknownLayout) + " frame=" + this.frameId);
                 }
             }
             if (sampled && pipeline.useShadowMap(terrainShadowMap, this.frameSlot)) {
@@ -20197,10 +20197,10 @@ this.frameBufferOpen = false;
                 // Which kind of group a row belongs to is not printed here: the loop's variable is not named group at this
                 // level, and the first two rows came out identical anyway - both immediate groups, judging by the model-view
                 // translations not matching the model path's. Labelling it is the next step, not a guess.
-                String row = round3(matrices.projection().m20()) + "," + round3(matrices.projection().m21()) + ","
-                        + round3(matrices.projection().m22()) + "," + round3(matrices.projection().m23())
-                        + " mvT=" + round3(matrices.modelView().m30()) + "," + round3(matrices.modelView().m31()) + ","
-                        + round3(matrices.modelView().m32());
+                String row = CopyReadSide.round3(matrices.projection().m20()) + "," + CopyReadSide.round3(matrices.projection().m21()) + ","
+                        + CopyReadSide.round3(matrices.projection().m22()) + "," + CopyReadSide.round3(matrices.projection().m23())
+                        + " mvT=" + CopyReadSide.round3(matrices.modelView().m30()) + "," + CopyReadSide.round3(matrices.modelView().m31()) + ","
+                        + CopyReadSide.round3(matrices.modelView().m32());
                 if (!row.equals(this.lastGroupDepthRow)) {
                     this.lastGroupDepthRow = row;
                     this.groupDepthRowsSeen++;
@@ -20919,7 +20919,7 @@ this.frameBufferOpen = false;
                         this.commandState.reset();
                     }
                     record("standalone game clear failed for identity=0x" + Long.toHexString(identity)
-                            + ": " + describe(error));
+                            + ": " + CopyReadSide.describe(error));
                 }
                 if (submitted) {
                     return;
@@ -21038,8 +21038,8 @@ this.frameBufferOpen = false;
                 + " boundIdentity=0x" + Long.toHexString(this.targetRegistry.currentIdentity())
                 + " boundIsMain=" + this.targetRegistry.currentIsMain()
                 + " mask=0x" + Integer.toHexString(mask)
-                + " colour=(" + round3(rgba[0]) + "," + round3(rgba[1]) + "," + round3(rgba[2])
-                + "," + round3(rgba[3]) + ") depth=" + (float) depth
+                + " colour=(" + CopyReadSide.round3(rgba[0]) + "," + CopyReadSide.round3(rgba[1]) + "," + CopyReadSide.round3(rgba[2])
+                + "," + CopyReadSide.round3(rgba[3]) + ") depth=" + (float) depth
                 + " meaning=[" + ("frame".equals(route)
                         ? "the game cleared its own main framebuffer; the delivered image is cleared with this colour"
                         : "the game cleared another framebuffer; its owned pair carries this clear, not the frame image")
@@ -21053,11 +21053,6 @@ this.frameBufferOpen = false;
             out.append(" <- ").append(stack[i].getClassName()).append('#').append(stack[i].getMethodName());
         }
         return out.toString();
-    }
-
-    /** Three decimals, the precision the renderer's own state lines use. */
-    static float round3(float value) {
-        return (float) (Math.round(value * 1000.0D) / 1000.0D);
     }
 
     /**
@@ -23392,21 +23387,21 @@ this.frameBufferOpen = false;
                             + " main=0x" + Long.toHexString(this.targetRegistry.mainIdentity())
                             + " isMain=" + this.targetRegistry.currentIsMain()
                             + " batches=" + group.batches
-                            + " proj=" + celtium$round3(group.projection[0]) + ","
-                            + celtium$round3(group.projection[5]) + ","
-                            + celtium$round3(group.projection[10]) + ","
-                            + celtium$round3(group.projection[14])
-                            + " mvT=(" + celtium$round3(group.modelView[12]) + ","
-                            + celtium$round3(group.modelView[13]) + ","
-                            + celtium$round3(group.modelView[14]) + ")"
+                            + " proj=" + celtium$CopyReadSide.round3(group.projection[0]) + ","
+                            + celtium$CopyReadSide.round3(group.projection[5]) + ","
+                            + celtium$CopyReadSide.round3(group.projection[10]) + ","
+                            + celtium$CopyReadSide.round3(group.projection[14])
+                            + " mvT=(" + celtium$CopyReadSide.round3(group.modelView[12]) + ","
+                            + celtium$CopyReadSide.round3(group.modelView[13]) + ","
+                            + celtium$CopyReadSide.round3(group.modelView[14]) + ")"
                             + " fog=" + (group.fog == null ? "none"
                                     : ((int) group.fog[0]) + "/" + group.fog[2] + "/" + group.fog[3])
                             // The colour and the pipeline state are the two inputs the matrices do not cover: a plane
                             // drawn with the fog colour as its own colour is flat whatever the fog does, and a plane
                             // whose cull or depth state moved is a different picture with identical matrices.
                             + " colour=" + (group.color == null ? "null"
-                                    : celtium$round3(group.color[0]) + "," + celtium$round3(group.color[1]) + ","
-                                    + celtium$round3(group.color[2]) + "," + celtium$round3(group.color[3]))
+                                    : celtium$CopyReadSide.round3(group.color[0]) + "," + celtium$CopyReadSide.round3(group.color[1]) + ","
+                                    + celtium$CopyReadSide.round3(group.color[2]) + "," + celtium$CopyReadSide.round3(group.color[3]))
                             + " state=" + (group.state == null ? "null"
                                     : "blend" + group.state[0] + " depthTest" + group.state[3]
                                     + " depthWrite" + group.state[4] + " cull" + group.state[5]
@@ -23596,16 +23591,16 @@ this.frameBufferOpen = false;
                             // applies when u_TexB.z > 0.5 (a negative u_TexA.x mirrors the sample). Both are printed
                             // beside the vertex coordinates, so "the geometry is right" and "the draw is right" stop
                             // being the same statement.
-                            + " projDiag=" + round3(group.projection == null ? 0.0f : group.projection[0]) + ","
-                            + round3(group.projection == null ? 0.0f : group.projection[5])
+                            + " projDiag=" + CopyReadSide.round3(group.projection == null ? 0.0f : group.projection[0]) + ","
+                            + CopyReadSide.round3(group.projection == null ? 0.0f : group.projection[5])
                             + " texMat=" + (group.texMatrix == null ? "none"
-                                    : (round3(group.texMatrix[0]) + "," + round3(group.texMatrix[1]) + ","
-                                            + round3(group.texMatrix[2]) + "," + round3(group.texMatrix[3]) + ","
-                                            + round3(group.texMatrix[4]) + "," + round3(group.texMatrix[5])))
+                                    : (CopyReadSide.round3(group.texMatrix[0]) + "," + CopyReadSide.round3(group.texMatrix[1]) + ","
+                                            + CopyReadSide.round3(group.texMatrix[2]) + "," + CopyReadSide.round3(group.texMatrix[3]) + ","
+                                            + CopyReadSide.round3(group.texMatrix[4]) + "," + CopyReadSide.round3(group.texMatrix[5])))
                             + " fog=" + (group.fog == null ? "none"
-                                    : ("mode=" + (int) group.fog[0] + ",colour=" + round3(group.fog[4]) + ","
-                                            + round3(group.fog[5]) + "," + round3(group.fog[6]) + ",start="
-                                            + round3(group.fog[2]) + ",end=" + round3(group.fog[3])))
+                                    : ("mode=" + (int) group.fog[0] + ",colour=" + CopyReadSide.round3(group.fog[4]) + ","
+                                            + CopyReadSide.round3(group.fog[5]) + "," + CopyReadSide.round3(group.fog[6]) + ",start="
+                                            + CopyReadSide.round3(group.fog[2]) + ",end=" + CopyReadSide.round3(group.fog[3])))
                             + " drawnSoFar=" + this.immediateStatistics.immediateGroupsDrawn()
                             + " windowsThisFrame=" + this.immediateStatistics.immediateWindowsThisFrame());
                 }
@@ -24125,8 +24120,8 @@ this.frameBufferOpen = false;
                     this.lastDrawnEpoch = VulkanContext.completedEpoch();
                     System.out.println("[Celtium] CELTIUM_DRAW_SITE #" + this.immediateStatistics.immediateDrawSiteLogged()
                         + " colour=" + (this.currentGroupColor == null ? "none"
-                                : round3(this.currentGroupColor[0]) + "," + round3(this.currentGroupColor[1]) + ","
-                                        + round3(this.currentGroupColor[2]) + "," + round3(this.currentGroupColor[3]))
+                                : CopyReadSide.round3(this.currentGroupColor[0]) + "," + CopyReadSide.round3(this.currentGroupColor[1]) + ","
+                                        + CopyReadSide.round3(this.currentGroupColor[2]) + "," + CopyReadSide.round3(this.currentGroupColor[3]))
                             + " frame=" + this.frameId + " fmt=" + group.formatId
                             + " site=" + this.immediateDrawSite
                             + " target=" + group.target + " onMain=" + (group.target == this.targetRegistry.mainIdentity())
@@ -24476,7 +24471,7 @@ this.frameBufferOpen = false;
                 + " emptyViewport=" + emptyViewport
                 + " blend=" + (group.prepared == null || group.prepared.pipeline == null ? "none"
                         : group.prepared.pipeline instanceof VulkanImmediatePipeline colour
-                                ? colour.celtium$colorBlend().describe() : "other"));
+                                ? colour.celtium$colorBlend().CopyReadSide.describe() : "other"));
     }
 
     /** Split out of this class (2026-11-06); see HighlightProbe. */
@@ -24537,22 +24532,8 @@ this.frameBufferOpen = false;
             }
         } catch (RuntimeException | LinkageError error) {
             this.terrainStatistics.notePassErrors();
-            record("ui test quad failed: " + describe(error));
+            record("ui test quad failed: " + CopyReadSide.describe(error));
         }
-    }
-
-    /**
-     * Writes {@code result = clipDepthRemap * projection}, the same z remap the terrain projection goes through, so a
-     * matrix mirrored from OpenGL can be used unchanged for depth in Vulkan.
-     */
-    static void remapClipDepth(float[] projection, float[] result) {
-        if (projection != result) {
-            System.arraycopy(projection, 0, result, 0, 16);
-        }
-        result[2] = 0.5f * (projection[2] + projection[3]);
-        result[6] = 0.5f * (projection[6] + projection[7]);
-        result[10] = 0.5f * (projection[10] + projection[11]);
-        result[14] = 0.5f * (projection[14] + projection[15]);
     }
 
     /**
@@ -24595,7 +24576,7 @@ this.frameBufferOpen = false;
                 MemoryUtil.memFree(modelView);
             }
         } catch (RuntimeException | LinkageError error) {
-            record("could not read the OpenGL matrices for an immediate batch: " + describe(error));
+            record("could not read the OpenGL matrices for an immediate batch: " + CopyReadSide.describe(error));
         }
     }
 
@@ -25356,10 +25337,6 @@ this.frameBufferOpen = false;
         return pass == null ? "<no render pass>" : pass.name();
     }
 
-    static String describe(Throwable error) {
-        return error.getClass().getSimpleName() + ": " + String.valueOf(error.getMessage());
-    }
-
     /**
      * {@link #describe} plus where it was thrown, for the one failure path whose cause is invisible without it.
      * <p>
@@ -25370,7 +25347,7 @@ this.frameBufferOpen = false;
      * it. Bounded to five frames: this runs once per failure.
      */
     static String describeWithOrigin(Throwable error) {
-        StringBuilder line = new StringBuilder(describe(error));
+        StringBuilder line = new StringBuilder(CopyReadSide.describe(error));
         StackTraceElement[] frames = error.getStackTrace();
         for (int i = 0; i < frames.length && i < 5; i++) {
             line.append(i == 0 ? " at " : " <- ").append(frames[i].getClassName()).append('.')
