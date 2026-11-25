@@ -290,6 +290,14 @@ final class GlTextureCaptures {
             this.unconvertedUploads.incrementAndGet();
             return;
         }
+        // E8 (item 690, wpBeginTargets): if this level already holds a zeroed null-allocated capture of the
+        // exact same dimensions, short-circuit so repeated prepareRenderTargets() declarations do not re-allocate
+        // multi-megabyte direct buffers or bump the mirror upload serial on every frame.
+        long existingKey = GlsmFrontend.texLevelKey(name, level);
+        TexCapture previous = this.texCaptures.get(existingKey);
+        if (previous != null && !previous.gamePixels && previous.width == width && previous.height == height) {
+            return;
+        }
         long bytes = pixels * 4L;
         ByteBuffer zeros = ByteBuffer.allocateDirect((int) bytes);
         // allocateDirect promises storage, not zeroed storage: HotSpot can hand back recycled memory for a small

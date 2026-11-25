@@ -49,7 +49,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class DemonicaShadowFrustumInitCacheMixin {
 
     private static final boolean CELTIUM$FRUSTUM_INIT_CACHE =
-            Boolean.getBoolean("celtium.shadowFrustumInitCache");
+            Boolean.parseBoolean(System.getProperty("celtium.shadowFrustumInitCache", "true"));
     private static final float CELTIUM$MATRIX_QUANTUM = 256.0f;
     private static final float CELTIUM$LIGHT_QUANTUM = 32.0f;
     private static final int CELTIUM$KEY_LENGTH = 16 + 16 + 3;

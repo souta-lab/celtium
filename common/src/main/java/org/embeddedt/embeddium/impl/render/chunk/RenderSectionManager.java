@@ -312,6 +312,22 @@ public abstract class RenderSectionManager {
         this.checkTranslucencyChange();
     }
 
+    /** E7 (item 690): reuse the previous shadow render lists when camera section, quantized light and topology are unchanged. */
+    private static final boolean SHADOW_SEARCH_REUSE =
+            Boolean.parseBoolean(System.getProperty("celtium.shadowSearchReuse", "true"));
+    private static final float SHADOW_LIGHT_QUANTUM = 32.0f;
+    private boolean shadowReusePrimed;
+    private int shadowReuseSectionX;
+    private int shadowReuseSectionY;
+    private int shadowReuseSectionZ;
+    private boolean shadowReuseHasLight;
+    private int shadowReuseLightX;
+    private int shadowReuseLightY;
+    private int shadowReuseLightZ;
+    private float shadowReuseSearchDistance;
+    private long shadowSearchRun;
+    private long shadowSearchSkipped;
+
     /**
      * Shadow-pass update. The shadow pass runs before the terrain pass in a frame, so this first runs the terrain
      * search for the player viewport when one is due, then the shadow search.
@@ -329,7 +345,49 @@ public abstract class RenderSectionManager {
         }
 
         if (this.canSubmitShadowGraphSearch()) {
-            this.submitShadowGraphSearch(shadowViewport, frame);
+            Vector3fc lightVector = null;
+            if (shadowViewport.getFrustum() instanceof ShadowSearchFrustum searchFrustum && searchFrustum.supportsOcclusionSearch()) {
+                lightVector = new Vector3f(searchFrustum.shadowLightX(), searchFrustum.shadowLightY(), searchFrustum.shadowLightZ());
+            }
+            var section = shadowViewport.getChunkCoord();
+            int secX = section.x();
+            int secY = section.y();
+            int secZ = section.z();
+            boolean hasLight = lightVector != null;
+            int lx = hasLight ? Math.round(lightVector.x() * SHADOW_LIGHT_QUANTUM) : 0;
+            int ly = hasLight ? Math.round(lightVector.y() * SHADOW_LIGHT_QUANTUM) : 0;
+            int lz = hasLight ? Math.round(lightVector.z() * SHADOW_LIGHT_QUANTUM) : 0;
+            float searchDist = this.getSearchDistance(null);
+
+            if (SHADOW_SEARCH_REUSE && this.shadowReusePrimed
+                    && !this.shadowRenderListManager.isNeedsUpdate()
+                    && secX == this.shadowReuseSectionX
+                    && secY == this.shadowReuseSectionY
+                    && secZ == this.shadowReuseSectionZ
+                    && hasLight == this.shadowReuseHasLight
+                    && lx == this.shadowReuseLightX
+                    && ly == this.shadowReuseLightY
+                    && lz == this.shadowReuseLightZ
+                    && Float.floatToIntBits(searchDist) == Float.floatToIntBits(this.shadowReuseSearchDistance)) {
+                this.shadowSearchSkipped++;
+                if ((this.shadowSearchRun + this.shadowSearchSkipped) % 600 == 0) {
+                    System.out.println("[Celtium] CELTIUM_SHADOW_SEARCH_REUSE run=" + this.shadowSearchRun
+                            + " skipped=" + this.shadowSearchSkipped);
+                }
+                return;
+            }
+            this.shadowReusePrimed = true;
+            this.shadowReuseSectionX = secX;
+            this.shadowReuseSectionY = secY;
+            this.shadowReuseSectionZ = secZ;
+            this.shadowReuseHasLight = hasLight;
+            this.shadowReuseLightX = lx;
+            this.shadowReuseLightY = ly;
+            this.shadowReuseLightZ = lz;
+            this.shadowReuseSearchDistance = searchDist;
+            this.shadowSearchRun++;
+            this.shadowRenderListManager.startShadowGraphUpdate(shadowViewport, frame, this.regions.getRegionIdsLength(),
+                    searchDist, lightVector, this.getTargetQueueSize());
         }
     }
 

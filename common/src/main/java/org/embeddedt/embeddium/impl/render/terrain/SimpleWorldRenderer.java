@@ -211,7 +211,7 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
 
         this.processChunkEvents();
 
-        this.prepareFrame(shadowViewport, cameraState, false);
+        this.prepareFrame(shadowViewport, playerViewport, cameraState, false);
 
         this.renderSectionManager.uploadChunks();
 
@@ -222,8 +222,12 @@ public abstract class SimpleWorldRenderer<WORLD, SECTIONMANAGER extends RenderSe
 
     // Steps common to both passes: camera-change detection, async task draining and chunk build scheduling.
     private void prepareFrame(Viewport viewport, CameraState cameraState, boolean updateChunksImmediately) {
+        prepareFrame(viewport, viewport, cameraState, updateChunksImmediately);
+    }
+
+    private void prepareFrame(Viewport viewport, Viewport matchViewport, CameraState cameraState, boolean updateChunksImmediately) {
         boolean dirty = this.lastCameraState == null || !this.lastCameraState.equals(cameraState)
-                || !this.renderSectionManager.matchesPublishedViewport(viewport);
+                || !this.renderSectionManager.matchesPublishedViewport(matchViewport);
 
         if (dirty) {
             this.renderSectionManager.markGraphDirty();
