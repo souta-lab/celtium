@@ -1709,9 +1709,18 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
             // The chosen layout and shader module have to be visible: the pass's declared stride selects both, and a
             // mismatch between the buffer the mesher filled and the offsets the shader reads shows up as terrain whose
             // colour is unrelated to what the mesh builder packed.
+            // The colour element is attribute 1 only on the multi-attribute layouts. The Tier-A
+            // layout carries a single attribute (the whole 16-byte vertex as one uvec4, colour
+            // packed inside it), so indexing [1] here threw ArrayIndexOutOfBoundsException on
+            // every Tier-A pipeline creation: pipelineFor remembered the failure, every terrain
+            // pass was skipped as "no pipeline", the Tier-A pass head inside recordRenderPass
+            // was never reached and no CELTIUM_TERRAIN_A announce ever printed (Phase 1 gate
+            // legs r2/r3, 2026-11-25: no terrain, lastSections=0, announce lines absent).
+            int colorOffset = this.vertexLayout.offsets.length > 1 ? this.vertexLayout.offsets[1] : -1;
+            int colorFormat = this.vertexLayout.formats.length > 1 ? this.vertexLayout.formats[1] : 0;
             System.out.println("[Celtium] CELTIUM_TERRAIN_LAYOUT stride=" + this.vertexLayout.stride + " module=" + this.vertexLayout.vertexModule
-                    + " colorOffset=" + this.vertexLayout.offsets[1] + " colorFormat=0x"
-                    + Integer.toHexString(this.vertexLayout.formats[1]));
+                    + " colorOffset=" + colorOffset + " colorFormat=0x"
+                    + Integer.toHexString(colorFormat));
             StringBuilder input = new StringBuilder("vertex input stride=" + this.vertexLayout.stride
                     + " module=" + this.vertexLayout.vertexModule);
             for (int i = 0; i < this.vertexLayout.formats.length; i++) {
