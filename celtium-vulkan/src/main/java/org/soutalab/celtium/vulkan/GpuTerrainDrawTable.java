@@ -393,9 +393,14 @@ public final class GpuTerrainDrawTable {
     public static boolean isVisible(float[] planes, float cameraX, float cameraY, float cameraZ,
                                     float maxDistance, Entry entry) {
         boolean sectionBox = (entry.flags & FLAG_SECTION_BOX) != 0;
-        float minX = entry.sectionX * 16.0f;
-        float minY = entry.sectionY * 16.0f;
-        float minZ = entry.sectionZ * 16.0f;
+        // Space contract (terrain_cull.glsl, fixed 2026-11-25 arch/projection-diag): the
+        // planes come from P * MV with a rotation-only MV, so they live in camera-relative
+        // space; the frustum test runs on the box converted by subtracting the camera,
+        // exactly as vanilla Frustum.isBoxInFrustum does. The distance term below is
+        // translation-invariant and stays in absolute space.
+        float minX = entry.sectionX * 16.0f - cameraX;
+        float minY = entry.sectionY * 16.0f - cameraY;
+        float minZ = entry.sectionZ * 16.0f - cameraZ;
         float maxX = minX + (sectionBox ? SECTION_SIZE_BLOCKS : REGION_SIZE_X_BLOCKS);
         float maxY = minY + (sectionBox ? SECTION_SIZE_BLOCKS : REGION_SIZE_Y_BLOCKS);
         float maxZ = minZ + (sectionBox ? SECTION_SIZE_BLOCKS : REGION_SIZE_Z_BLOCKS);
@@ -411,12 +416,14 @@ public final class GpuTerrainDrawTable {
                 return false;
             }
         }
-        float closestX = Math.max(minX, Math.min(cameraX, maxX));
-        float closestY = Math.max(minY, Math.min(cameraY, maxY));
-        float closestZ = Math.max(minZ, Math.min(cameraZ, maxZ));
-        float dx = cameraX - closestX;
-        float dy = cameraY - closestY;
-        float dz = cameraZ - closestZ;
+        // Distance term on the camera-relative box against the origin (identical value
+        // to the absolute form; the box variables above are already camera-relative).
+        float closestX = Math.max(minX, Math.min(0.0f, maxX));
+        float closestY = Math.max(minY, Math.min(0.0f, maxY));
+        float closestZ = Math.max(minZ, Math.min(0.0f, maxZ));
+        float dx = -closestX;
+        float dy = -closestY;
+        float dz = -closestZ;
         return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance;
     }
 
