@@ -186,8 +186,10 @@ class DepthFormatPairPinTest {
         String sharedStore = methodSlice(storeSource, "public long[] ensure(", 1600);
         assertTrue(sharedStore.contains("this.allocator.allocate(width, height)"),
                 "the shared depth store allocates through the one allocator");
-        String injection = methodSlice(frameTarget, "private final SharedDepthStore sharedDepthStore", 600);
-        assertTrue(injection.contains("allocateImage(false, width, height"),
+        // The injection itself moved into the constructor (integration fix for the blank-final
+        // definite-assignment rule); the pin follows the construction.
+        String injection = methodSlice(frameTarget, "this.sharedDepthStore = new SharedDepthStore(", 600);
+        assertTrue(injection.contains("allocateImage(false, w, h"),
                 "the frame target injects its one allocator as the store's depth allocator");
         String allocator = methodSlice(frameTarget, "private long[] allocateImage(boolean color", 3200);
         assertTrue(allocator.contains("VulkanDepthFormat.chosen(this.context.physicalDevice())"),

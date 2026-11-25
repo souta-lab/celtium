@@ -841,7 +841,7 @@ public final class VulkanGlTexture {
      * recorded directly into {@code commandBuffer}, so published wrappers over the same {@code VkImage} stay in step
      * and do not emit a stale {@code oldLayout} barrier ({@code VUID-VkImageMemoryBarrier-oldLayout-01197}).
      */
-    static void noteExternalForeignLayout(VkCommandBuffer commandBuffer, long image, int newLayout) {
+    public static void noteExternalForeignLayout(VkCommandBuffer commandBuffer, long image, int newLayout) {
         if (commandBuffer == null || commandBuffer.address() == 0L || image == 0L) {
             return;
         }
