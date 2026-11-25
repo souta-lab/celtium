@@ -72,7 +72,7 @@ class RetainedIndexFlushExemptTest {
         String source = backendSource();
         int guard = source.indexOf("if (!this.currentGroupIndexFlushExempt) {");
         assertTrue(guard >= 0, "the accept path guards its counter addition with the stamp");
-        int addition = source.indexOf("this.pendingImmediateIndices += indices.length;", guard);
+        int addition = source.indexOf("this.pendingImmediateIndices += expandedIndices;", guard);
         assertTrue(addition > guard, "the guarded statement is the pending-index addition");
     }
 
