@@ -72,6 +72,25 @@ class DrawCountersBarrierTest {
     }
 
     @Test
+    void resetBarrierSamplesRestartsTheDistributionButNotTheTotal() {
+        for (int i = 0; i < 4; i++) {
+            DrawCounters.notePipelineBarrier();
+        }
+        DrawCounters.sampleFrame(1L);
+        DrawCounters.resetBarrierSamples();
+        assertEquals(0L, DrawCounters.barrierSampleCount());
+        assertEquals(0L, DrawCounters.barrierPercentile(50));
+        assertEquals(4L, DrawCounters.pipelineBarriers());
+        DrawCounters.notePipelineBarrier();
+        DrawCounters.notePipelineBarrier();
+        DrawCounters.sampleFrame(2L);
+        // Only the post-reset frame is in the distribution, counted from the reset point.
+        assertEquals(1L, DrawCounters.barrierSampleCount());
+        assertEquals(2L, DrawCounters.barrierPercentile(50));
+        assertEquals(6L, DrawCounters.pipelineBarriers());
+    }
+
+    @Test
     void sampleAboveHistogramRangeReportsTheSampleAsMax() {
         for (int i = 0; i < 5000; i++) {
             DrawCounters.notePipelineBarrier();

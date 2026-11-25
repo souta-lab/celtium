@@ -178,6 +178,20 @@ public final class DrawCounters {
                 + " total=" + PIPELINE_BARRIERS + "]";
     }
 
+    /**
+     * Restarts the per-frame distribution from the current total, so a reader that brackets a measured window
+     * (the validation fixture at its warm-window edges) reads the window's own distribution instead of the run's.
+     * The cumulative total and the 200-frame line's window keep running; only the samples restart.
+     */
+    public static void resetBarrierSamples() {
+        java.util.Arrays.fill(BARRIER_HISTOGRAM, 0L);
+        barrierSamples = 0L;
+        barrierMax = 0L;
+        barrierOverflowSamples = 0L;
+        lastSampledBarriers = PIPELINE_BARRIERS;
+        lastSampledFrame = -1L;
+    }
+
     static void clearBarriersForTests() {
         PIPELINE_BARRIERS = 0L;
         lastReportedBarriers = 0L;
