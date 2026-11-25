@@ -5366,6 +5366,29 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
 
     /** The mirror whose patch batch {@link #beginAnimationUploads(int)} opened, closed by the matching end. */
     private VulkanGlTexture animationBatchTexture;
+    /**
+     * {@code -Dceltium.vulkan.animCoalesceInvalidation=true}: inside one animation batch, run the per-sprite
+     * invalidation of the batch's own texture once and coalesce the repeats. Off by default; the repeats are the
+     * same texture in the same pass, and the first invalidation already marks the mirror stale and runs the
+     * direct refresh - the later ones re-run that machinery (the readback-skip census, the pending-patch query,
+     * and in the worst case a whole-atlas re-upload) for a state the batch's own submission supersedes at
+     * {@link #endAnimationUploads()}. Counted either way it is tried: {@link #animInvalidationsCoalesced}.
+     */
+    private static final boolean COALESCE_ANIM_INVALIDATION =
+            "true".equals(System.getProperty("celtium.vulkan.animCoalesceInvalidation", ""));
+    /** The GL name {@link #animationBatchTexture} was opened for; 0 while no batch is open. */
+    private int animationBatchGlId;
+    /** Whether the batch texture's invalidation already ran inside the open batch. */
+    private boolean animationBatchInvalidated;
+    /** Per-sprite invalidations skipped by the coalescing above (only counted while it is enabled). */
+    long animInvalidationsCoalesced;
+
+    /** The coalescing decision, pure so its truth table is testable without a backend. */
+    static boolean shouldCoalesceAnimInvalidation(boolean enabled, boolean batchOpen, int bound, int batchGlId,
+            boolean alreadyInvalidated) {
+        return enabled && batchOpen && batchGlId > 0 && bound == batchGlId && alreadyInvalidated;
+    }
+
     @Override
     public void beginAnimationUploads(int glTextureId) {
         if (this.animationBatchTexture != null || glTextureId <= 0) {
@@ -5377,6 +5400,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         VulkanGlTexture texture = this.textureRegistry.existing(glTextureId);
         if (texture != null && texture.beginPatchBatch()) {
             this.animationBatchTexture = texture;
+            this.animationBatchGlId = glTextureId;
+            this.animationBatchInvalidated = false;
         }
     }
 
@@ -5385,6 +5410,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         VulkanGlTexture texture = this.animationBatchTexture;
         if (texture != null) {
             this.animationBatchTexture = null;
+            this.animationBatchGlId = 0;
+            this.animationBatchInvalidated = false;
             // The patch batch's submission: one submit per tick, and the only Vulkan call the animation pass makes
             // that can block. `anim` holds the whole pass, so this name says whether the submit is the pass's cost.
             FramePassTimings.begin("animBatchEnd");
@@ -5754,7 +5781,9 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     + " lastPrepareFailure=[" + this.lastPrepareFailure + "]");
             System.out.println("[Celtium] CELTIUM_ANIM directMirrorRefreshes=" + this.directMirrorRefreshes
                     + " readbacksSkipped=" + this.readbackSkippedAfterAnnouncement
-                    + " invalidations=" + this.immediateTextureInvalidations + " atlasGlId=" + this.atlasSourceGlId
+                    + " invalidations=" + this.immediateTextureInvalidations
+                    + " animInvalidateCoalesced=" + this.animInvalidationsCoalesced
+                    + " atlasGlId=" + this.atlasSourceGlId
                     + " lightmapGlId=" + this.lightmapSourceGlId
                     + " deletions=" + this.glTextureDeletions + " reestablished=" + this.atlasReestablished
                     + "/" + this.lightmapReestablished
@@ -5776,7 +5805,23 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.lastInvalidationOrigin = "invalidateBoundTexture";
             int bound = NativeTextureBindings.current().texture2d();
             if (bound != 0) {
+                if (shouldCoalesceAnimInvalidation(COALESCE_ANIM_INVALIDATION, this.animationBatchTexture != null,
+                        bound, this.animationBatchGlId, this.animationBatchInvalidated)) {
+                    // The batch's own texture, already invalidated once in this batch: the stale mark and the
+                    // direct refresh are in place, and every later announcement in the pass lands in the patch
+                    // batch, not in the mirror this invalidation would re-read. The GL-less branch's one cheap
+                    // duty is kept: the raw-write check is told the mirror is current for this name.
+                    this.animInvalidationsCoalesced++;
+                    if (GLESS_KEEPS_INVALIDATIONS) {
+                        celtium$noteMirrorCurrent(bound);
+                    }
+                    return;
+                }
                 invalidateTexture(bound);
+                if (COALESCE_ANIM_INVALIDATION && this.animationBatchTexture != null
+                        && bound == this.animationBatchGlId) {
+                    this.animationBatchInvalidated = true;
+                }
             }
         } finally {
             FramePassTimings.end("animInvalidate");
