@@ -20,8 +20,8 @@ import java.util.TreeMap;
  * already recorded. The only growth is a new, empty slab appended after the existing ones; existing allocations
  * never change slab or offset.
  * <p>
- * <b>Placement:</b> first fit within a size class. A request whose paged size reaches a sixteenth of a slab
- * is <i>large</i>: slabs are scanned newest first, so a large
+ * <b>Placement:</b> first fit within a size class, inside slabs dedicated to a size band. A request whose paged
+ * size reaches a sixteenth of a slab is <i>large</i>: slabs are scanned newest first, so a large
  * request lands in the tail slabs where long free runs survive, instead of failing on a hole that a long-lived
  * allocation pins open in an old slab. Every smaller request is <i>small</i>: slabs are scanned in creation order,
  * so small requests fill the earliest holes - including the holes small short-lived churn leaves behind when it is
@@ -30,6 +30,18 @@ import java.util.TreeMap;
  * produces the same layout. Requests are rounded up to whole pages and placed at an offset that satisfies the
  * requested alignment; the alignment does not have to be a power of two, and the padding skipped to reach it stays
  * a free run.
+ * <p>
+ * <b>Size bands:</b> scan direction alone did not stop the Phase 1 leg fragmentation crash (r7: a 65536-byte
+ * request refused at the slab cap with 135,168 bytes free in runs too small to serve it). Direction only orders
+ * the search; it does not stop a small long-lived allocation from being placed inside a slab whose long runs a
+ * larger request will later need, pinning that slab open at a small offset. So each slab also carries a band -
+ * small (paged size at most {@link #SMALL_BAND_MAX_BYTES}), medium (below the large threshold) or large - taken
+ * from the first request that creates it, and a request only searches slabs of its own band while the pool can
+ * still grow a slab of that band. Bands are a placement guide, not a capacity partition: when the slab cap has
+ * been reached and no slab of the request's band can serve it, the search falls back to every slab, so segregation
+ * never makes a request fail that the unsegregated pool would have served. The 64 KiB boundary is the staging
+ * chunk the crash turned on: per-frame staging churn of at most 64 KiB recycles inside small-band slabs, and its
+ * holes are never carved out of the slabs that serve medium and large requests.
  * <p>
  * <b>Release:</b> {@link #free(Allocation)} returns a range at once, merging it with any neighbouring free runs.
  * {@link #freeDeferred(Allocation, long)} only records the release against a timeline value: the range stays counted
@@ -57,6 +69,22 @@ public final class SlabPool {
      */
     private static final int LARGE_REQUEST_SLAB_DIVISOR = 16;
 
+    /**
+     * The small band's ceiling in bytes: a request whose paged size is at most this is small-band. 64 KiB is the
+     * per-frame staging chunk size whose refusal at the slab cap ended the Phase 1 legs, so the band boundary is
+     * stated in the units that request is made in, not as a slab fraction.
+     */
+    static final long SMALL_BAND_MAX_BYTES = 64L * 1024;
+
+    /** Band index for requests at most {@link #SMALL_BAND_MAX_BYTES} and below the large threshold. */
+    private static final int BAND_SMALL = 0;
+
+    /** Band index for requests between the small ceiling and the large threshold. */
+    private static final int BAND_MEDIUM = 1;
+
+    /** Band index for requests at or above the large threshold. */
+    private static final int BAND_LARGE = 2;
+
     private final long slabSizeBytes;
     private final int pageSizeBytes;
     private final int maxSlabs;
@@ -66,6 +94,9 @@ public final class SlabPool {
 
     /** Free runs per slab, keyed by start offset; the value is the run length in bytes. */
     private final List<TreeMap<Long, Long>> freeRunsBySlab = new ArrayList<TreeMap<Long, Long>>();
+
+    /** Size band per slab, in the same index order as {@link #freeRunsBySlab}; set when the slab is created. */
+    private final List<Integer> bandBySlab = new ArrayList<Integer>();
 
     /** Every allocation whose bytes are still counted as used, including ones pending a deferred release. */
     private final Set<Allocation> live = new HashSet<Allocation>();
@@ -150,16 +181,30 @@ public final class SlabPool {
             // Larger than any slab this ledger will ever hold; the owner decides how to serve it.
             return null;
         }
-        boolean large = pagedSize >= this.largeRequestThresholdBytes;
-        Allocation allocation = tryAllocate(pagedSize, sizeBytes, alignment, large);
+        int band = bandFor(pagedSize);
+        boolean large = band == BAND_LARGE;
+        Allocation allocation = tryAllocate(pagedSize, sizeBytes, alignment, large, band);
         if (allocation != null) {
             return allocation;
         }
         if (this.freeRunsBySlab.size() >= this.maxSlabs) {
-            return null;
+            // At the cap no slab of this band can be grown, so segregation yields: any slab may serve.
+            return tryAllocate(pagedSize, sizeBytes, alignment, large, -1);
         }
-        addSlab();
-        return tryAllocate(pagedSize, sizeBytes, alignment, large);
+        addSlab(band);
+        return tryAllocate(pagedSize, sizeBytes, alignment, large, band);
+    }
+
+    /**
+     * The band a request of this paged size belongs to. The large test comes first, so on a slab small enough
+     * that the large threshold sits below the small ceiling, a request at the threshold is large - the same
+     * classification the scan direction has always used.
+     */
+    private int bandFor(long pagedSize) {
+        if (pagedSize >= this.largeRequestThresholdBytes) {
+            return BAND_LARGE;
+        }
+        return pagedSize <= SMALL_BAND_MAX_BYTES ? BAND_SMALL : BAND_MEDIUM;
     }
 
     /**
@@ -255,11 +300,18 @@ public final class SlabPool {
         return this.live.size();
     }
 
-    private Allocation tryAllocate(long pagedSize, long requestedSize, long alignment, boolean large) {
+    /**
+     * First fit over the slabs of one band, or over every slab when {@code band} is negative (the at-cap
+     * fallback). Scan direction is the size-class one: large requests walk newest first, the rest oldest first.
+     */
+    private Allocation tryAllocate(long pagedSize, long requestedSize, long alignment, boolean large, int band) {
         int slabCount = this.freeRunsBySlab.size();
         for (int index = 0; index < slabCount; index++) {
             // Size-class scan direction: large requests walk the slabs newest first, small ones oldest first.
             int slab = large ? slabCount - 1 - index : index;
+            if (band >= 0 && this.bandBySlab.get(slab).intValue() != band) {
+                continue;
+            }
             TreeMap<Long, Long> runs = this.freeRunsBySlab.get(slab);
             // Snapshot the entries: the winning run is split in place below, and a TreeMap cannot be
             // structurally modified while its entry set is being iterated.
@@ -288,10 +340,11 @@ public final class SlabPool {
         return null;
     }
 
-    private void addSlab() {
+    private void addSlab(int band) {
         TreeMap<Long, Long> runs = new TreeMap<Long, Long>();
         runs.put(Long.valueOf(0L), Long.valueOf(this.slabSizeBytes));
         this.freeRunsBySlab.add(runs);
+        this.bandBySlab.add(Integer.valueOf(band));
     }
 
     private void releaseRange(Allocation allocation) {

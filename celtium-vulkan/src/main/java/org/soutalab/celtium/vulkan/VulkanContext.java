@@ -812,6 +812,39 @@ public final class VulkanContext {
         return allocator;
     }
 
+    /**
+     * {@return per-pool live bytes for every slab pool, for the memory allocation summary}. The r7 Phase 1 leg
+     * died with a host pool at 512 MiB live (8 of 8 slabs, 135,168 bytes free) and the summary could only report
+     * the process-wide total, so nothing said which pool - host-visible staging, device-local buffers or images -
+     * held the memory. Each entry names the pool kind and memory type and gives its used and free bytes, its
+     * largest free run and its live slab count against the cap, so the next leg can attribute the holding and
+     * tell a full pool from a fragmented one.
+     */
+    public String celtium$slabPoolSummary() {
+        StringBuilder summary = new StringBuilder("slabPools=[");
+        boolean first = true;
+        first = appendSlabPoolSummary(summary, "deviceLocal", this.deviceLocalSlabsByType, first);
+        first = appendSlabPoolSummary(summary, "hostVisible", this.hostVisibleSlabsByType, first);
+        appendSlabPoolSummary(summary, "deviceLocalImage", this.deviceLocalImageSlabsByType, first);
+        return summary.append(']').toString();
+    }
+
+    private static boolean appendSlabPoolSummary(StringBuilder summary, String kind,
+            java.util.Map<Integer, SlabAllocator> poolsByType, boolean first) {
+        for (SlabAllocator allocator : poolsByType.values()) {
+            if (!first) {
+                summary.append(' ');
+            }
+            first = false;
+            summary.append(kind).append("(type=").append(allocator.memoryTypeIndex())
+                    .append("):usedBytes=").append(allocator.usedBytes())
+                    .append(",freeBytes=").append(allocator.freeBytes())
+                    .append(",largestFreeRun=").append(allocator.largestFreeRun())
+                    .append(",slabs=").append(allocator.liveSlabCount());
+        }
+        return first;
+    }
+
     /** {@return live slab count across the host-visible pools, for the host-buffer census}. */
     public int celtium$hostVisibleSlabCount() {
         int total = 0;

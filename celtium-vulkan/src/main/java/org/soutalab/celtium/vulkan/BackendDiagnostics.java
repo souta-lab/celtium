@@ -465,6 +465,7 @@ final class BackendDiagnostics {
                 + " " + (b.postChain != null ? b.postChain.status() : "postChains=0 postPasses=0")
                 + " " + VulkanContext.pipelineCreationSummary()
                 + " " + VulkanContext.memoryAllocationSummary()
+                + " " + (b.context != null ? b.context.celtium$slabPoolSummary() : "slabPools=[]")
                 + " " + b.framebufferCompositor.describe()
                 + " directMirrorFromAnnouncement=" + b.textureStats.directMirrorFromAnnouncement()
                 + " dynamicTextureFills=" + b.textureStats.dynamicTextureFills()

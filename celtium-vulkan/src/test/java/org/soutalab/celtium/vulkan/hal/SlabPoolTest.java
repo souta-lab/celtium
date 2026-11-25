@@ -170,9 +170,12 @@ class SlabPoolTest {
         for (long timeline = 1L; timeline <= 200L; timeline++) {
             SlabPool.Allocation churn = pool.allocate(65536L, 64L);
             assertNotNull(churn);
+            // Band segregation: 65536 bytes is the large band in a 1 MiB slab (threshold 64 KiB), so the churn
+            // recycles in its own slab (index 1) and never touches the small allocations' slab.
+            assertEquals(1, churn.slab());
             pool.freeDeferred(churn, timeline);
             assertEquals(1, pool.collectCompleted(timeline));
-            assertEquals(1, pool.slabCount());
+            assertEquals(2, pool.slabCount());
         }
 
         for (SlabPool.Allocation allocation : longLived) {
@@ -180,7 +183,8 @@ class SlabPoolTest {
         }
         assertEquals(0L, pool.usedBytes());
         assertEquals(256L * PAGE, pool.largestFreeRun());
-        assertEquals(256L * PAGE, pool.freeBytes());
+        // Two slabs exist now (one per band), so the free total is both slabs while each coalesces whole.
+        assertEquals(2L * 256 * PAGE, pool.freeBytes());
     }
 
     /**
@@ -215,32 +219,83 @@ class SlabPoolTest {
     }
 
     /**
-     * Size-class placement: a large request prefers the tail slab even when a fitting hole exists in the head
-     * slab, and a small request fills that head hole instead of growing the tail - so large requests keep the
-     * long runs of the newest slabs and small churn recycles the holes it fits in.
+     * Size-class placement within a band: a large request prefers the tail slab of its band even when a fitting
+     * hole exists in the head slab - so large requests keep the long runs of the newest slabs. (Slab of 64 pages;
+     * the large threshold is a sixteenth of it, 4 pages, so every request here is large-band.)
      */
     @Test
     void largeRequestsPreferTheTailSlabAndSmallRequestsFillHeadHoles() {
-        // Slab of 64 pages; the large threshold is a sixteenth of it (4 pages).
         SlabPool pool = new SlabPool(64 * PAGE, PAGE, 4);
         SlabPool.Allocation large = pool.allocate(8L * PAGE, 1L);
         assertEquals(0, large.slab());
-        for (int i = 0; i < 56; i++) {
-            assertEquals(0, pool.allocate(PAGE, 1L).slab());
+        for (int i = 0; i < 14; i++) {
+            assertEquals(0, pool.allocate(4L * PAGE, 1L).slab());
         }
-        SlabPool.Allocation spill = pool.allocate(PAGE, 1L);
+        SlabPool.Allocation spill = pool.allocate(4L * PAGE, 1L);
         assertEquals(1, spill.slab());
         assertEquals(2, pool.slabCount());
 
-        // Freeing the large head allocation leaves an 8-page hole at the start of slab 0.
+        // Freeing the large head allocation leaves an 8-page hole at the start of slab 0, but the next large
+        // request still prefers the tail slab while the tail has a run that serves it.
         pool.free(large);
         SlabPool.Allocation tailLarge = pool.allocate(8L * PAGE, 1L);
         assertEquals(1, tailLarge.slab());
-        assertEquals(PAGE, tailLarge.offset());
+        assertEquals(4L * PAGE, tailLarge.offset());
+    }
 
-        SlabPool.Allocation headSmall = pool.allocate(PAGE, 1L);
-        assertEquals(0, headSmall.slab());
-        assertEquals(0L, headSmall.offset());
+    /**
+     * Band segregation, the r7 crash pattern in miniature: medium allocations and small allocations interleaved
+     * over time must not share a slab, so a small long-lived allocation cannot pin a hole pattern into the slab
+     * whose runs medium requests need. The small churn fills and recycles its own slab while the medium slab's
+     * freed runs stay whole and serve the next medium request.
+     */
+    @Test
+    void smallAllocationsDoNotPinMediumSlabs() {
+        // Slab of 1024 pages (4 MiB); large threshold 256 KiB, small ceiling 64 KiB.
+        SlabPool pool = new SlabPool(1024 * PAGE, PAGE, 4);
+        SlabPool.Allocation mediumA = pool.allocate(128L * 1024, 1L);
+        assertEquals(0, mediumA.slab());
+        SlabPool.Allocation smallPin = pool.allocate(PAGE, 1L);
+        // The small request does not land behind the medium one; it opens a small-band slab.
+        assertEquals(1, smallPin.slab());
+        assertEquals(2, pool.slabCount());
+
+        SlabPool.Allocation mediumB = pool.allocate(128L * 1024, 1L);
+        assertEquals(0, mediumB.slab());
+        assertEquals(128L * 1024, mediumB.offset());
+
+        // Small churn recycles only the small slab, however often it runs.
+        for (int i = 0; i < 64; i++) {
+            SlabPool.Allocation churn = pool.allocate(65536L, 64L);
+            assertEquals(1, churn.slab());
+            pool.free(churn);
+        }
+        assertEquals(2, pool.slabCount());
+
+        // A medium hole freed between live medium neighbours stays a whole medium run: the next medium
+        // request takes it, undamaged by the small churn above.
+        pool.free(mediumA);
+        SlabPool.Allocation mediumC = pool.allocate(128L * 1024, 1L);
+        assertEquals(0, mediumC.slab());
+        assertEquals(0L, mediumC.offset());
+    }
+
+    /**
+     * Bands guide placement only while the pool can grow: at the slab cap, a request whose band has no slab
+     * falls back to whatever slab can serve it, so segregation never shrinks the pool's total capacity.
+     */
+    @Test
+    void bandSegregationFallsBackToAnySlabAtTheCap() {
+        SlabPool pool = new SlabPool(1024 * PAGE, PAGE, 1);
+        SlabPool.Allocation medium = pool.allocate(128L * 1024, 1L);
+        assertEquals(0, medium.slab());
+
+        // The only slab is medium-band and the cap is reached, yet the small request is still served from it.
+        SlabPool.Allocation small = pool.allocate(PAGE, 1L);
+        assertNotNull(small);
+        assertEquals(0, small.slab());
+        assertEquals(128L * 1024, small.offset());
+        assertEquals(1, pool.slabCount());
     }
 
     @Test

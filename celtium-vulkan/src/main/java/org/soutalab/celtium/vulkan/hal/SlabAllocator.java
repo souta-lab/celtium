@@ -139,7 +139,8 @@ public final class SlabAllocator {
         if (pooled == null) {
             throw new IllegalStateException("SlabAllocator is out of memory: no slab can serve " + sizeBytes
                     + " bytes with alignment " + alignment + " (" + this.pool.slabCount() + " of " + this.maxSlabs
-                    + " slabs in use, " + this.pool.freeBytes() + " bytes free but fragmented)");
+                    + " slabs in use, " + this.pool.freeBytes() + " bytes free but fragmented, largest free run "
+                    + this.pool.largestFreeRun() + " bytes)");
         }
         try {
             ensurePoolSlabs();
@@ -240,6 +241,36 @@ public final class SlabAllocator {
     /** Size of one ordinary slab in bytes. */
     public long slabSize() {
         return this.slabSizeBytes;
+    }
+
+    /** The memory type every slab of this allocator is allocated from. */
+    public int memoryTypeIndex() {
+        return this.memoryTypeIndex;
+    }
+
+    /**
+     * Bytes currently held by live allocations in this pool: the ledger's used bytes plus the full size of
+     * every dedicated oversized slab still held (a dedicated slab is one allocation, so all of it is live
+     * until its release is collected and the slab is freed). This is the per-pool live figure the memory
+     * allocation summary reports, so a leg can say which pool holds the memory instead of only how much the
+     * process holds in total.
+     */
+    public long usedBytes() {
+        long used = this.pool.usedBytes();
+        for (SlabRecord record : this.oversizedSlabs) {
+            used += record.size;
+        }
+        return used;
+    }
+
+    /** Bytes not held by any live allocation across this pool's ordinary slabs. */
+    public long freeBytes() {
+        return this.pool.freeBytes();
+    }
+
+    /** Length of the longest single free run in any ordinary slab of this pool. */
+    public long largestFreeRun() {
+        return this.pool.largestFreeRun();
     }
 
     /**
