@@ -1741,6 +1741,11 @@ public final class VulkanContext {
      * {@return how many were reclaimed}. A head whose fence has not signaled ends the walk: the queue executes
      * submissions in order, so nothing newer can have completed either.
      * <p>
+     * A timeline-stamped batch head is first screened by the frame timeline's counter, but the counter alone
+     * never reclaims it: the batch's own fence is queried once per batch and must read signalled, because the
+     * reclaim resets that fence and the fence's observed state is the only proof the reset is legal
+     * (VUID-vkResetFences-pFences-01123, Stage 2 integration leg).
+     * <p>
      * Deliberately does NOT flush the pending batch first: a poll is a reclaim scan, and flushing here made every
      * mid-frame poll fragment the batch into ~1-entry submits (measured: 10.7 flushes/frame, submissions/batch 1.09).
      * Sites whose ordering or arming actually requires the queue to see the pending work call
@@ -1753,10 +1758,18 @@ public final class VulkanContext {
             throw celtium$lostDevice("pollDeferredSubmits after previous loss");
         }
         int reclaimed = 0;
-        // Stage 2: the timeline's counter, read at most once per poll. A batch whose value the counter has
-        // reached is complete exactly as if its fence had been queried - the value and the fence are signalled
-        // by the same submission - so the walk below can reclaim it without the per-head fence ioctl.
+        // Stage 2: the timeline's counter, read at most once per poll, is the cheap scan: it names the batches
+        // worth reclaiming and, while it has not reached a batch's value, settles that batch without any fence
+        // ioctl. It is not, by itself, the proof a reclaim stands on. The reclaim ends in vkResetFences on the
+        // batch's fence, and the only state that can prove that reset legal is the fence's own - a counter-only
+        // reclaim reset fences whose completion had never been observed through the fence, which the validation
+        // layer reports as VUID-vkResetFences-pFences-01123 (measured on the Stage 2 integration leg, agera:
+        // 9 occurrences, all on batches the counter alone had judged; a diagnostic build that queried the fence
+        // at every reset read VK_SUCCESS 1812 of 1812 times and the error vanished). So a batch the counter has
+        // reached is confirmed once through its own fence - one query per batch, not per entry - and only then
+        // do its entries reclaim.
         long timelineCompleted = -1L;
+        SharedBatch fenceConfirmedBatch = null;
         while (!this.deferredSubmits.isEmpty()) {
             DeferredSubmit head = this.deferredSubmits.peek();
             if (head.batch != null && head.batch == this.pendingBatch) {
@@ -1768,15 +1781,28 @@ public final class VulkanContext {
                 if (timelineCompleted < 0L) {
                     timelineCompleted = this.frameTimeline.completedValue();
                 }
-                if (timelineCompleted >= head.batch.timelineValue) {
-                    this.deferredSubmits.poll();
-                    celtium$reclaimDeferred(head, false);
-                    reclaimed++;
-                    continue;
+                if (timelineCompleted < head.batch.timelineValue) {
+                    // Not reached: the same submission arms the batch's fence, so the fence cannot be signalled
+                    // either - falling through to the fence query would only pay an ioctl for the same answer.
+                    break;
                 }
-                // Not reached: the same submission arms the batch's fence, so the fence cannot be signalled
-                // either - falling through to the fence query would only pay an ioctl for the same answer.
-                break;
+                if (head.batch != fenceConfirmedBatch) {
+                    int fenceStatus = vkGetFenceStatus(this.device, head.fence);
+                    if (fenceStatus == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
+                        submitDeviceLost++;
+                        throw celtium$lostDevice("vkGetFenceStatus(deferred)");
+                    }
+                    if (fenceStatus != org.lwjgl.vulkan.VK10.VK_SUCCESS) {
+                        // The counter reached the batch but the fence has not been observed signalled: the
+                        // batch is not reclaimable yet, whatever the counter says. A later poll re-asks.
+                        break;
+                    }
+                    fenceConfirmedBatch = head.batch;
+                }
+                this.deferredSubmits.poll();
+                celtium$reclaimDeferred(head, false);
+                reclaimed++;
+                continue;
             }
             int status = vkGetFenceStatus(this.device, head.fence);
             if (status == org.lwjgl.vulkan.VK10.VK_NOT_READY) {
