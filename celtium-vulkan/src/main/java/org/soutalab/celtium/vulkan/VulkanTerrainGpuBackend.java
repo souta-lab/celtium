@@ -22677,12 +22677,12 @@ this.frameBufferOpen = false;
     private final long[] slotFences = new long[FRAME_SLOTS];
     /**
      * When a frame recording's submission goes into the batched deferred queue instead of vkQueueSubmit, the batch's
-     * shared fence stands in for the slot's own fence (vkQueueSubmit arms one fence per call - it cannot arm each
-     * entry's). 0 means the slot's last submission armed {@link #slotFences} the ordinary way. Cleared at
-     * {@link #celtium$noteSlotConfirmed}: the reclaim runs that confirmation, so the map's lifetime is "queued until
-     * confirmed", never reset independently.
+     * shared completion value on the frame timeline stands in for the slot's own fence. 0 means the slot's last
+     * submission armed {@link #slotFences} the ordinary way. Cleared at {@link #celtium$noteSlotConfirmed}: the
+     * reclaim runs that confirmation, so the map's lifetime is "queued until confirmed", never reset
+     * independently.
      */
-    private final long[] slotDeferredFences = new long[FRAME_SLOTS];
+    private final long[] slotDeferredValues = new long[FRAME_SLOTS];
     /**
      * The unified frame buffer's open state: when the target carries no frame semaphores, the first
      * {@link #beginCommands()} of a frame begins the slot's buffer and every later recording of the same frame
@@ -24664,26 +24664,41 @@ this.frameBufferOpen = false;
     /**
      * Waits for one frame slot's submission to complete.
      * <p>
-     * OPT-08's retirement rule in one place: this slot's own fence decides whether the slot may be reused, and because
+     * OPT-08's retirement rule in one place: this slot's own completion object decides whether the slot may be
+     * reused - its fence, or the batch's frame-timeline value when the slot's submission went deferred - and because
      * a Vulkan queue completes in submission order, a signalled fence also confirms every earlier submission - which is
      * what the sequence watermark records for the resource lists below.
      */
+    /**
+     * One bounded wait for a slot's completion, on whichever object carries it: the batch's frame-timeline
+     * value for a deferred slot submission, the slot's own fence otherwise. Both waits return the same
+     * VkResult vocabulary, so {@link #waitForSlot}'s timeout and loss handling is shared verbatim.
+     */
+    private int celtium$waitSlotCompletion(int slot, long deferredValue, long timeoutNanos) {
+        if (deferredValue != 0L) {
+            return this.context.celtium$awaitTimeline(deferredValue, timeoutNanos);
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            LongBuffer fences = stack.mallocLong(1);
+            fences.put(0, this.slotFences[slot]);
+            return vkWaitForFences(this.context.device(), fences, true, timeoutNanos);
+        }
+    }
+
     private boolean waitForSlot(int slot) {
         if (slot < 0 || slot >= FRAME_SLOTS || slotFences[slot] == 0 || !this.scheduler.isPending(slot)) {
             return true;
         }
-        long deferredFence = this.slotDeferredFences[slot];
-        if (deferredFence != 0) {
-            // The slot's submission is still queued in the batched list: its fence arms only when that list submits,
-            // so the flush has to happen before the wait or the wait blocks on a fence nothing armed yet.
+        long deferredValue = this.slotDeferredValues[slot];
+        if (deferredValue != 0) {
+            // The slot's submission is still queued in the batched list: its completion value signals only when
+            // that list submits, so the flush has to happen before the wait or the wait blocks on a value
+            // nothing has signalled yet.
             this.context.celtium$flushBatchedSubmits();
-            this.context.celtium$fenceOnPresenter(deferredFence, true);
         }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            LongBuffer fences = stack.mallocLong(1);
-            fences.put(0, deferredFence != 0 ? deferredFence : this.slotFences[slot]);
+        {
             long started = System.nanoTime();
-            int result = vkWaitForFences(this.context.device(), fences, true, IDLE_TIMEOUT_NANOS);
+            int result = celtium$waitSlotCompletion(slot, deferredValue, IDLE_TIMEOUT_NANOS);
             this.celtium$recordFrameWait(started);
             if (FENCE_WAIT_FAULT) {
                 // A wait that times out after the submission was accepted: the command buffer may still be in flight, so
@@ -24711,11 +24726,11 @@ this.frameBufferOpen = false;
                 while (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT && retries < IDLE_WAIT_RETRIES) {
                     retries++;
                     this.submissionStatistics.noteIdleWaitRetries();
-                    record("waitForSlot(" + slot + "): the fence did not signal within "
+                    record("waitForSlot(" + slot + "): the submission did not complete within "
                             + (IDLE_TIMEOUT_NANOS / 1_000_000_000L) + "s; retry " + retries + " of "
                             + IDLE_WAIT_RETRIES + " before treating the device as stalled (timeouts="
                             + this.submissionStatistics.idleWaitTimeouts() + ")");
-                    result = vkWaitForFences(this.context.device(), fences, true, IDLE_TIMEOUT_NANOS);
+                    result = celtium$waitSlotCompletion(slot, deferredValue, IDLE_TIMEOUT_NANOS);
                 }
             }
             if (result == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
@@ -24733,7 +24748,7 @@ this.frameBufferOpen = false;
             }
             if (result != org.lwjgl.vulkan.VK10.VK_SUCCESS
                     && result != org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
-                record("waitForSlot(" + slot + "): vkWaitForFences returned " + result);
+                record("waitForSlot(" + slot + "): the slot wait returned " + result);
                 this.noteStalled();
                 // The abandon-path flag clear, as in the timeout branch above (bughunt LANE-05 #3).
                 this.frameBufferOpen = false;
@@ -24741,9 +24756,10 @@ this.frameBufferOpen = false;
                 return false;
             }
             this.scheduler.noteSlotWait(true);
-            if (deferredFence != 0) {
-                // The batch fence is shared: the slot's confirm (and the flag's clear) runs inside the reclaim's
-                // callback, once, rather than here - polling also frees every earlier entry the fence covered.
+            if (deferredValue != 0) {
+                // The batch's completion value is shared: the slot's confirm (and the flag's clear) runs inside
+                // the reclaim's callback, once, rather than here - polling also frees every earlier entry the
+                // value covered.
                 this.context.celtium$pollDeferredSubmits();
             } else {
                 celtium$noteSlotConfirmed(slot, result == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST);
@@ -24767,16 +24783,13 @@ this.frameBufferOpen = false;
             if (!this.scheduler.isPending(slot) || this.slotFences[slot] == 0) {
                 continue;
             }
-            long deferredFence = this.slotDeferredFences[slot];
-            if (deferredFence != 0) {
+            long deferredValue = this.slotDeferredValues[slot];
+            if (deferredValue != 0) {
                 // Batched slot: its confirm lives in the reclaim callback, so the poll only triggers the poll -
-                // an armed-and-signalled batch fence reclaims the entry, which runs the slot confirmation exactly once.
-                if (this.context.celtium$fenceOnPresenter(deferredFence, false)) {
-                    continue;
-                }
-                int deferredStatus = vkGetFenceStatus(this.context.device(), deferredFence);
-                if (deferredStatus == org.lwjgl.vulkan.VK10.VK_SUCCESS
-                        || deferredStatus == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
+                // a batch whose completion value the timeline has reached reclaims the entry, which runs the
+                // slot confirmation exactly once. (With the present synchronous there is no presenter to hold
+                // the batch back, so the old fenceOnPresenter detour is gone.)
+                if (this.context.celtium$timelineReached(deferredValue)) {
                     this.context.celtium$pollDeferredSubmits();
                     confirmed++;
                     this.scheduler.notePollConfirmation();
@@ -24805,15 +24818,15 @@ this.frameBufferOpen = false;
 
     /**
      * The deferred counterpart of the slot's own {@code vkQueueSubmit}: the ended slot buffer joins the batched
-     * list, and the batch's shared fence is recorded as this slot's completion proxy until the reclaim runs the
-     * confirmation. Every piece of bookkeeping the direct submit performs (pending bit, sequence, retirement) is
-     * the coordinator's own code - the only change is where the queue sees the work.
+     * list, and the batch's shared completion value is recorded as this slot's completion proxy until the
+     * reclaim runs the confirmation. Every piece of bookkeeping the direct submit performs (pending bit,
+     * sequence, retirement) is the coordinator's own code - the only change is where the queue sees the work.
      */
     public void celtium$submitSlotDeferred(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, long[] waitSemaphores,
             int[] waitStages, long[] signalSemaphores) {
         final int slot = this.frameSlot;
         this.slotSubmitNanos[slot] = System.nanoTime();
-        this.slotDeferredFences[slot] = this.context.celtium$submitDeferredFrame(
+        this.slotDeferredValues[slot] = this.context.celtium$submitDeferredFrame(
                 commandBuffer, waitSemaphores, waitStages, signalSemaphores, slot,
                 lost -> celtium$noteSlotConfirmed(slot, lost.booleanValue()));
         celtium$snapshotTimingState();
@@ -24866,7 +24879,7 @@ this.frameBufferOpen = false;
             this.slotSubmitNanos[slot] = 0L;
             celtium$noteSubmitToFence(slot, System.nanoTime() - submitNanos);
         }
-        this.slotDeferredFences[slot] = 0;
+        this.slotDeferredValues[slot] = 0;
         this.scheduler.noteCompleted(slot, this.scheduler.slotSubmitSequence(slot));
         // Queue order: this submission's completion implies every earlier one finished too, and the
         // scheduler's noteCompleted records exactly that.

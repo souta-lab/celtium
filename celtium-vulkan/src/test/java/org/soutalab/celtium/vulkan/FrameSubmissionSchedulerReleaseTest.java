@@ -73,10 +73,12 @@ class FrameSubmissionSchedulerReleaseTest {
         FrameSubmissionScheduler scheduler = new FrameSubmissionScheduler();
         Counting a = new Counting();
         Counting b = new Counting();
-        scheduler.retireToSlot(2, a, "a");
-        scheduler.retireToSlot(2, b, "b");
+        // Slot 1: FRAMES_IN_FLIGHT is 2 under the new architecture, so slots are 0 and 1; the test's subject
+        // is same-slot release semantics, not the slot count.
+        scheduler.retireToSlot(1, a, "a");
+        scheduler.retireToSlot(1, b, "b");
 
-        assertEquals(2, scheduler.releaseOnSlotReset(2));
+        assertEquals(2, scheduler.releaseOnSlotReset(1));
         assertEquals(1, a.releases);
         assertEquals(1, b.releases);
     }

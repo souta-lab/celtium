@@ -332,12 +332,12 @@ celtium は1つの queue に提出し、フレームの先行深度を**2つの�
 スロット別オフセットとディスクリプタセット、frame arena、model segment である。
 フレーム N と N+1 が同じ画像を書く順序は、**単一 queue の提出順**だけで担保されている。
 したがって (a) 複数 queue に提出を分けた時点で、この前提は per-slot の画像複製を要求する。
-(b) フレーム内セマフォ（`celtium.vulkan.frameSemaphores`）は既定 off であり、有効化は順序の担保を
-セマフォ側へ移す操作であって、深度を増やす操作ではない。
+(b) フレーム内セマフォ（wait/done ペア）は新アーキテクチャで削除済みであり、順序の担保は提出順
+のみが担う。ペアを復活させる操作は、順序の担保をセマフォ側へ移す操作であって、深度を増やす操作ではない。
 
-**async presenter**（`celtium.vulkan.asyncPresent`、Windows は `HardwareProfileGates` が既定 off）は
-バッチ提出・present blit・`vkQueuePresentKHR` をワーカーへ移し、ゲームスレッドは次の queue アクセスで join する。
-買うのは「present のドライバ時間と次フレームの記録の重なり」であり、深度は増えない。
+**present は同期的**（async presenter ワーカーは新アーキテクチャで削除済み）: バッチ提出・present blit・
+`vkQueuePresentKHR` はフレーム末尾にレンダースレッド上で `PresentEngine` が実行し、verdict は呼び出し時点で
+確定する。`celtium.vulkan.asyncPresent` は PresentEngine 経由か swapchain 自前かの経路選択としてのみ残る。
 
 **深度は計測で決める。** 律速しているかを言う計器は `CELTIUM_FRAME_BUDGET` の `slot` 列、
 `CELTIUM_VERIFY` の `frameSlotReuseWaits` / `slotWaitConfirms`、`CELTIUM_BOUNDARY_SPLIT` の
