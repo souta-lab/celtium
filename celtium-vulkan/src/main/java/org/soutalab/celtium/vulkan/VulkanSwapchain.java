@@ -2457,6 +2457,11 @@ public final class VulkanSwapchain {
     }
 
     public void delete() {
+        // The lending contract ends with the generation, drained or not: a handle lent from these images must
+        // never be presented after this object starts tearing them down (lanechat #8830).
+        if (this.context.presentEngine() != null) {
+            this.context.presentEngine().retireSwapchain();
+        }
         if (!drainForCleanup("delete")) {
             // The queue could not be confirmed idle: destroying the pool, the semaphores or the views would free objects
             // a pending submission may still reference. They are held instead (#368), which is a leak at a moment the
@@ -2872,6 +2877,12 @@ public final class VulkanSwapchain {
             }
             this.imageInitialization = beginDeferredImageInitialization(swapchainUsage);
             System.out.println("[Celtium] CELTIUM_SWAPCHAIN_INIT " + this.imageInitialization);
+            // The generation is fixed: the present engine takes ownership of the lending contract from here
+            // (lanechat #8830). It copies the arrays, so the fields above stay this class's own record; the
+            // borrow handles it lends name these images and views without owning them.
+            if (this.context.presentEngine() != null) {
+                this.context.presentEngine().adoptSwapchain(this.swapchain, this.images, this.views);
+            }
             return true;
         }
     }

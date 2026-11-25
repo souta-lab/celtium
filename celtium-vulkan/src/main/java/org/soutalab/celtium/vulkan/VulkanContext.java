@@ -1797,6 +1797,11 @@ public final class VulkanContext {
             System.getProperty("celtium.vulkan.asyncPresent",
                     Boolean.toString(asyncPresentDefaultForOs(System.getProperty("os.name", "")))));
 
+    /** {@return this context's present engine}: the owner of the swapchain lending contract (lanechat #8830). */
+    public PresentEngine presentEngine() {
+        return this.presentEngine;
+    }
+
     /** The last synchronous present's verdict; consumed by {@link #celtium$presenterResult()}. */
     private int presenterResult = VK_SUCCESS;
     /** Whether {@link #presenterResult} holds a verdict no await has drained yet. */
@@ -3003,7 +3008,7 @@ public final class VulkanContext {
         // The frame timeline exists from the first submission on: every path that submits signals it, and the
         // synchronous submit paths wait on its values instead of on fences of their own.
         this.frameTimeline = new FrameTimeline(this.device);
-        this.presentEngine = new PresentEngine(this.queue);
+        this.presentEngine = new PresentEngine(this.device, this.queue);
         createPipelineCache();
         reportDeviceContractIfReady();
         this.memoryProperties = VkPhysicalDeviceMemoryProperties.calloc();

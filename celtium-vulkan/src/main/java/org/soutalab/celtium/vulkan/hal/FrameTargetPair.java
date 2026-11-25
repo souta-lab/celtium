@@ -160,6 +160,16 @@ public final class FrameTargetPair {
 
     /** How this pair is named in every counter that describes it. */
     private final String label;
+    /**
+     * A swapchain colour image this pair is borrowing for the current frame, lent by
+     * {@code PresentEngine} under the ownership ruling (lanechat #8830): the engine owns the image and its
+     * view, this pair only names them while the borrow lasts. The fields are never passed to a destroy or
+     * retire call - {@link #release()} and {@link #retire()} forget them exactly as they forget a borrowed
+     * depth - and the borrow ends at the frame's present or when the lender invalidates it.
+     */
+    private long borrowedColorImage;
+    private long borrowedColorView;
+    private int borrowedColorIndex = -1;
     public long colorImage;
     private long colorMemory;
     public long colorView;
@@ -213,6 +223,47 @@ public final class FrameTargetPair {
     public FrameTargetPair(String label, Host host) {
         this.label = label;
         this.host = host;
+    }
+
+    /**
+     * Lends this pair a swapchain colour image for one frame: {@code image} / {@code view} are the borrowed
+     * handles and {@code index} the swapchain image index they were acquired as. Borrowing replaces any
+     * previous borrow (the previous image was presented or retired by the lender, never by this pair).
+     */
+    public void borrowColorImage(long image, long view, int index) {
+        if (image == VK_NULL_HANDLE) {
+            throw new IllegalArgumentException(this.label + " pair cannot borrow a null swapchain image");
+        }
+        this.borrowedColorImage = image;
+        this.borrowedColorView = view;
+        this.borrowedColorIndex = index;
+    }
+
+    /** Ends the borrow: the pair forgets the handles and destroys nothing (they are the lender's). */
+    public void releaseBorrowedColorImage() {
+        this.borrowedColorImage = VK_NULL_HANDLE;
+        this.borrowedColorView = VK_NULL_HANDLE;
+        this.borrowedColorIndex = -1;
+    }
+
+    /** {@return whether this pair currently borrows a swapchain colour image}. */
+    public boolean hasBorrowedColorImage() {
+        return this.borrowedColorImage != VK_NULL_HANDLE;
+    }
+
+    /** {@return the borrowed swapchain colour image}, or {@code VK_NULL_HANDLE} when no borrow is live. */
+    public long borrowedColorImage() {
+        return this.borrowedColorImage;
+    }
+
+    /** {@return the borrowed image's view}, or {@code VK_NULL_HANDLE} when no borrow (or no view) is live. */
+    public long borrowedColorView() {
+        return this.borrowedColorView;
+    }
+
+    /** {@return the swapchain index the borrowed image was acquired as}, or -1 when no borrow is live. */
+    public int borrowedColorIndex() {
+        return this.borrowedColorIndex;
     }
 
     /** {@return the layout this pair's colour image is actually in}. */
@@ -1357,6 +1408,9 @@ public final class FrameTargetPair {
      */
     public void release() {
         VkDevice device = context().device();
+        // A borrowed swapchain colour image is forgotten, never destroyed: it is the present engine's, and
+        // this pair's release (which retire() also runs) must not hand it to a destroy call.
+        releaseBorrowedColorImage();
         releaseExtras();
         this.colorImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         // A borrowed depth's layout record belongs to the store and survives the pair; only the pair's
