@@ -9,6 +9,7 @@ import java.nio.LongBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.function.LongConsumer;
 
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkDevice;
@@ -63,9 +64,37 @@ final class FramebufferCache {
     private final Long2LongOpenHashMap framebufferGenerations = new Long2LongOpenHashMap();
     private long nextFramebufferGeneration;
 
+    /** How one frame-target framebuffer is created; the production form is {@link #create}. */
+    interface FrameFactory {
+        long create(long renderPass, long colorView, long depthView, int width, int height);
+    }
+
+    private final FrameFactory frameFactory;
+    /** How one stale frame-target framebuffer is retired; the production form is {@link #retire}. */
+    private final LongConsumer frameRetirer;
+
     FramebufferCache(VulkanContext context, RenderTargetRegistry registry) {
         this.context = context;
         this.registry = registry;
+        this.frameFactory = (renderPass, colorView, depthView, width, height) ->
+                create(renderPass, colorView, depthView, width, height, null);
+        this.frameRetirer = handle -> retire(List.of(handle));
+        this.chainPairGenerations.defaultReturnValue(-1L);
+        this.chainPairTupleGenerations.defaultReturnValue(-1L);
+        this.framebufferGenerations.defaultReturnValue(0L);
+    }
+
+    /**
+     * A cache with no device behind it, for tests of {@link #frame}'s bookkeeping: creation and
+     * retirement are the caller's, so a test can watch which handles are built and which are retired
+     * without a VkDevice. Only {@link #frame} and the empty-cache paths are meaningful on such an
+     * instance - every other method reads the context.
+     */
+    FramebufferCache(RenderTargetRegistry registry, FrameFactory frameFactory, LongConsumer frameRetirer) {
+        this.context = null;
+        this.registry = registry;
+        this.frameFactory = frameFactory;
+        this.frameRetirer = frameRetirer;
         this.chainPairGenerations.defaultReturnValue(-1L);
         this.chainPairTupleGenerations.defaultReturnValue(-1L);
         this.framebufferGenerations.defaultReturnValue(0L);
@@ -92,13 +121,24 @@ final class FramebufferCache {
      * item 372 hole 1). The entry therefore records its attachments and is rebuilt when they no longer match, the
      * same way the chain pair's entry is rebuilt when its generation moves.
      */
+    /**
+     * The entry {@link #frame} answered last, kept only so its retirement can forget it. It is never
+     * consulted for an answer and never names a retire target: the map is the only authority on what
+     * answers for a (pass, view) pair. Consulting the memo is what the direct present rotation broke
+     * on - after the rotation moved to a new colour view the memo still named the previous view's
+     * entry, so a stamp mismatch retired the memo's handle while removing the <em>requested</em>
+     * view's key, leaving the memo's entry in the map under its own key with a handle the retire
+     * queue was already destroying. Once another pass moved the memo on, a request for that view
+     * took the map path, matched the stranded entry's stamp, and was handed the destroyed handle -
+     * run-s1bgra2-agera's invalid VkFramebuffer at vkCmdBeginRenderPass, ~9 s into the world, once
+     * terrain/UI/chain passes began interleaving with the rotation.
+     */
     private long lastFramePass = Long.MIN_VALUE;
     private FrameEntry lastFrameEntry;
 
     long frame(long renderPass, long colorView, long depthView, int width, int height) {
         Long2ObjectOpenHashMap<FrameEntry> byView = this.frameFramebuffers.get(renderPass);
-        FrameEntry cached = (renderPass == this.lastFramePass) ? this.lastFrameEntry
-                : (byView == null ? null : byView.get(colorView));
+        FrameEntry cached = byView == null ? null : byView.get(colorView);
         if (celtium$frameEntryReusable(cached, colorView, depthView, width, height)) {
             this.lastFramePass = renderPass;
             this.lastFrameEntry = cached;
@@ -110,7 +150,9 @@ final class FramebufferCache {
             // This handle is named by nothing the GPU can still be reading - it is an unused cache entry,
             // not a pass in an open recording - so it goes to the retire queue rather than being destroyed
             // in place: the queue is the rule every handle of this kind follows (see the class note).
-            // Entries built over the other colour views are not touched: their views are still live.
+            // The entry retired is the one stored under the requested view's own key - the only entry
+            // this request may judge stale. Entries built over the other colour views are not touched:
+            // their views are still live, and retiring one of them is the defect described above.
             byView.remove(colorView);
             if (byView.isEmpty()) {
                 this.frameFramebuffers.remove(renderPass);
@@ -119,9 +161,9 @@ final class FramebufferCache {
                 this.lastFramePass = Long.MIN_VALUE;
                 this.lastFrameEntry = null;
             }
-            retire(List.of(cached.handle));
+            this.frameRetirer.accept(cached.handle);
         }
-        FrameEntry entry = new FrameEntry(create(renderPass, colorView, depthView, width, height, null),
+        FrameEntry entry = new FrameEntry(this.frameFactory.create(renderPass, colorView, depthView, width, height),
                 colorView, depthView, width, height);
         Long2ObjectOpenHashMap<FrameEntry> slot = this.frameFramebuffers.get(renderPass);
         if (slot == null) {
