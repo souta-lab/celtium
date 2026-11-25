@@ -29,17 +29,20 @@ public final class FrameSubmissionScheduler {
     /**
      * Command slots the frame cycles through.
      * <p>
-     * Four, as measured by OPT-08: a slot comes round again four frames after the submission that last used it, and
-     * recording into it waits only when that submission has not completed, so fewer slots turn into waits and more
-     * slots hold more fences and command buffers for no gain. The frames-in-flight policy this number is one half of
-     * is stated once in docs/development.md (フレームの先行深度).
+     * Two, by the new architecture's frames-in-flight policy (design CELTIUM-NEW-ARCH-2026-11-25 section 2.3,
+     * {@link org.soutalab.celtium.vulkan.hal.FrameTimeline#FRAMES_IN_FLIGHT}): a slot comes round again two frames
+     * after the submission that last used it, which halves the input latency and the per-frame ring consumption the
+     * four-slot policy (OPT-08's measurement, taken when a slot's completion was a fence the frame polled) carried.
+     * Slot completion is a timeline-semaphore value now, so a slot costs no fence and no command-buffer pool of its
+     * own. The frames-in-flight policy this number is one half of is stated once in docs/development.md
+     * (フレームの先行深度).
      * <p>
      * The count is read from the {@code celtium.vulkan.frameSlots} property (item 393's measurement knob, clamped to
-     * 1..4); unset, it is exactly the shipped four, and nothing in the shipping configuration sets it.
+     * 1..4); unset, it is exactly the shipped two, and nothing in the shipping configuration sets it.
      */
-    public static final int FRAME_SLOTS = clampSlots(Integer.getInteger("celtium.vulkan.frameSlots", 4).intValue());
+    public static final int FRAME_SLOTS = clampSlots(Integer.getInteger("celtium.vulkan.frameSlots", 2).intValue());
 
-    /** Item 393's measurement knob: clamps the requested slot count to 1..4 (above 4 only fences and buffers grow). */
+    /** Item 393's measurement knob: clamps the requested slot count to 1..4 (above 4 only buffers and values grow). */
     private static int clampSlots(int requested) {
         return Math.max(1, Math.min(4, requested));
     }

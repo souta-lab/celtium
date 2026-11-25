@@ -3,10 +3,10 @@ package org.soutalab.celtium.vulkan;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
 /**
- * The image a frame's content lands in and the synchronization its submissions take. Two implementations exist:
- * {@link GllessFrameTarget}, which owns the images outright and synchronizes them through Vulkan submissions
- * semaphore pair, and {@link GllessFrameTarget}, which owns the images outright when no GL context exists - its
- * semaphores are signaled and consumed by Vulkan submissions alone, so this contract stays identical either way.
+ * The image a frame's content lands in and the synchronization its submissions take. The one implementation,
+ * {@link GllessFrameTarget}, owns the images outright: no GL context exists to hand them to, so there is no
+ * second producer and the semaphore side of this contract is empty for it - the defaults below are the safe
+ * side for an implementation that has no such pair.
  */
 public interface FrameImageTarget {
     /**
@@ -48,8 +48,8 @@ public interface FrameImageTarget {
      * first submission waits on. Under the owned target there is no second producer - every signal and every wait
      * is one of our own submissions on one queue, where submission order already gives the same ordering - so the
      * three queue packets the contract costs per stage (beginFrame's signal, the work submission's semaphore pair,
-     * endFrame's consume) buy nothing. {@link GllessFrameTarget} reports false by default;
-     * {@code -Dceltium.vulkan.frameSemaphores=true} keeps the pair anyway.
+     * endFrame's consume) buy nothing. {@link GllessFrameTarget} reports false: the pair and its
+     * {@code celtium.vulkan.frameSemaphores} opt-in were removed with the new architecture.
      */
     default boolean needsFrameSemaphores() {
         return true;

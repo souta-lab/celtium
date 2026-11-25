@@ -1,0 +1,416 @@
+package org.soutalab.celtium.vulkan.hal;
+
+import org.lwjgl.PointerBuffer;
+import org.lwjgl.system.MemoryStack;
+import org.lwjgl.vulkan.VkDevice;
+import org.lwjgl.vulkan.VkMemoryAllocateInfo;
+import org.soutalab.celtium.vulkan.VulkanContext;
+
+import java.nio.LongBuffer;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+
+import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
+import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
+import static org.lwjgl.vulkan.VK10.vkBindBufferMemory;
+import static org.lwjgl.vulkan.VK10.vkBindImageMemory;
+import static org.lwjgl.vulkan.VK10.vkMapMemory;
+import static org.lwjgl.vulkan.VK10.vkUnmapMemory;
+
+/**
+ * The Vulkan-owning half of the slab allocator: a {@link SlabPool} ledger decides where every allocation goes, and
+ * this class holds the real {@code VkDeviceMemory} behind each slab the ledger creates.
+ * <p>
+ * <b>Handles:</b> as everywhere in this backend, LWJGL represents non-dispatchable handles such as {@code VkBuffer},
+ * {@code VkImage} and {@code VkDeviceMemory} as plain {@code long} values, so {@link #bindBuffer(long, SlabAllocation)}
+ * and {@link #bindImage(long, SlabAllocation)} take the raw handle.
+ * <p>
+ * <b>Ledger/device linkage:</b> {@link SlabPool} has no hook that fires before it appends a slab, so the linkage is
+ * driven by observation instead: {@link #allocate(long, long)} records {@link SlabPool#slabCount()} before and after
+ * the ledger call and creates the {@code VkDeviceMemory} for every slab index that appeared. This is sound because
+ * the ledger is append-only - a slab index, once created, keeps its meaning for the life of the pool, and slabs are
+ * created in index order - so the device slabs can be kept in a list indexed exactly like the ledger's slabs, filling
+ * in only the missing tail. If the ledger call returns {@code null}, no device memory has been created for it yet at
+ * the point of the check, so there is nothing to roll back; if creating the device memory for a fresh slab fails, the
+ * ledger allocation that prompted it is freed back to the pool before the failure propagates, so the ledger never
+ * points at a slab this class does not hold.
+ * <p>
+ * <b>Oversized requests:</b> a request larger than one slab is not dropped to an individual allocation outside the
+ * slab system. It gets a dedicated slab of its own - one {@code VkDeviceMemory} sized to the request rounded up to
+ * whole pages - so it is counted by {@link #liveSlabCount()} like every other slab and follows the same deferred
+ * release rule; the only difference is that {@link #collectCompleted(long)} frees its memory once it is empty,
+ * because a slab shaped for one request is unlikely to fit the next one, while ordinary slabs are kept for reuse.
+ * <p>
+ * <b>Memory accounting:</b> every allocation goes through
+ * {@link VulkanContext#allocateMemory(VkDevice, VkMemoryAllocateInfo, LongBuffer)} and every free through
+ * {@link VulkanContext#freeMemory(VkDevice, long)}, never the raw {@code vkAllocateMemory}/{@code vkFreeMemory}, so
+ * each slab is counted in the context's live-allocation census - the count a frame pays for on submit.
+ * <p>
+ * <b>Release:</b> there is deliberately no immediate release. {@link #release(SlabAllocation, long)} defers to the
+ * timeline through the ledger, because a buffer or image bound from a slab may still be read by an in-flight
+ * submission; {@link #collectCompleted(long)} is what makes the bytes reusable, once the timeline proves the GPU is
+ * done with them.
+ * <p>
+ * <b>Threading:</b> every method must be called on the render thread that owns the {@link VulkanContext}, and
+ * {@link #delete()} must happen before the context is deleted.
+ */
+public final class SlabAllocator {
+
+    /** Default size of one ordinary slab: 64 MiB. */
+    public static final long DEFAULT_SLAB_SIZE = 64L * 1024 * 1024;
+
+    private final VulkanContext context;
+    private final int memoryTypeIndex;
+    private final long slabSizeBytes;
+    private final int maxSlabs;
+    private final boolean hostVisible;
+    private final SlabPool pool;
+
+    /** Device slabs backing the ledger's slabs, in the same index order; entries are appended, never removed. */
+    private final List<SlabRecord> poolSlabs = new ArrayList<SlabRecord>();
+
+    /** Dedicated slabs created for oversized requests; an entry is removed when its memory is freed. */
+    private final List<SlabRecord> oversizedSlabs = new ArrayList<SlabRecord>();
+
+    /** Oversized allocations released through {@link #release} and waiting for their timeline value. */
+    private final List<PendingOversizedRelease> pendingOversized = new ArrayList<PendingOversizedRelease>();
+
+    private boolean deleted;
+
+    /**
+     * Creates an allocator over one memory type. No device memory is allocated yet: slabs are created lazily, the
+     * first time the ledger needs one.
+     *
+     * @param context         owning context; the allocator must be deleted before the context is
+     * @param memoryTypeIndex the memory type every slab is allocated from
+     * @param slabSizeBytes   size of every ordinary slab; must be a multiple of
+     *                        {@link SlabPool#DEFAULT_PAGE_SIZE_BYTES}
+     * @param maxSlabs        cap on ordinary slabs; dedicated oversized slabs are not counted against it
+     * @param hostVisible     when true, every slab is mapped for its whole lifetime and
+     *                        {@link #mappedAddress(SlabAllocation)} is available
+     */
+    public SlabAllocator(VulkanContext context, int memoryTypeIndex, long slabSizeBytes, int maxSlabs,
+            boolean hostVisible) {
+        if (context == null) {
+            throw new IllegalArgumentException("context must not be null");
+        }
+        if (memoryTypeIndex < 0) {
+            throw new IllegalArgumentException("memoryTypeIndex must not be negative, was " + memoryTypeIndex);
+        }
+        this.context = context;
+        this.memoryTypeIndex = memoryTypeIndex;
+        this.slabSizeBytes = slabSizeBytes;
+        this.maxSlabs = maxSlabs;
+        this.hostVisible = hostVisible;
+        this.pool = new SlabPool(slabSizeBytes, SlabPool.DEFAULT_PAGE_SIZE_BYTES, maxSlabs);
+    }
+
+    /**
+     * Allocates {@code sizeBytes} from a slab, creating a slab first when the ledger grows.
+     * <p>
+     * A request larger than {@link #slabSize()} is served by a dedicated slab of its own size (see the class
+     * documentation) rather than failing.
+     *
+     * @throws IllegalStateException when the ledger has no room and its slab cap has been reached, when the device
+     *                               memory for a fresh slab cannot be allocated, or after {@link #delete()}
+     */
+    public SlabAllocation allocate(long sizeBytes, long alignment) {
+        requireLive();
+        if (sizeBytes <= 0L) {
+            throw new IllegalArgumentException("sizeBytes must be positive, was " + sizeBytes);
+        }
+        if (alignment < 1L) {
+            throw new IllegalArgumentException("alignment must be at least 1, was " + alignment);
+        }
+        long pagedSize = alignUp(sizeBytes, SlabPool.DEFAULT_PAGE_SIZE_BYTES);
+        if (pagedSize > this.slabSizeBytes) {
+            return allocateOversized(pagedSize);
+        }
+        SlabPool.Allocation pooled = this.pool.allocate(sizeBytes, alignment);
+        if (pooled == null) {
+            throw new IllegalStateException("SlabAllocator is out of memory: no slab can serve " + sizeBytes
+                    + " bytes with alignment " + alignment + " (" + this.pool.slabCount() + " of " + this.maxSlabs
+                    + " slabs in use, " + this.pool.freeBytes() + " bytes free but fragmented)");
+        }
+        try {
+            ensurePoolSlabs();
+        } catch (RuntimeException | Error error) {
+            // The ledger allocation names a slab whose device memory could not be created; hand the range back so
+            // the ledger never counts bytes this class cannot bind.
+            this.pool.free(pooled);
+            throw error;
+        }
+        return new SlabAllocation(this, this.poolSlabs.get(pooled.slab()), pooled);
+    }
+
+    /**
+     * Binds a buffer to an allocation's slab memory at the allocation's offset:
+     * {@code vkBindBufferMemory(device, buffer, alloc.deviceMemory(), alloc.offset())}. Render thread only.
+     */
+    public void bindBuffer(long buffer, SlabAllocation allocation) {
+        requireLive();
+        requireAllocation(allocation);
+        check(vkBindBufferMemory(this.context.device(), buffer, allocation.deviceMemory(), allocation.offset()),
+                "vkBindBufferMemory(slab allocation)");
+    }
+
+    /**
+     * Binds an image to an allocation's slab memory at the allocation's offset:
+     * {@code vkBindImageMemory(device, image, alloc.deviceMemory(), alloc.offset())}. Render thread only.
+     */
+    public void bindImage(long image, SlabAllocation allocation) {
+        requireLive();
+        requireAllocation(allocation);
+        check(vkBindImageMemory(this.context.device(), image, allocation.deviceMemory(), allocation.offset()),
+                "vkBindImageMemory(slab allocation)");
+    }
+
+    /**
+     * Releases an allocation once the timeline reaches {@code timelineValue}. The bytes stay reserved - and keep
+     * counting as used - until {@link #collectCompleted(long)} collects the release; see the class documentation for
+     * why reuse waits for the timeline rather than for this call.
+     *
+     * @throws IllegalStateException when the allocation was already released
+     */
+    public void release(SlabAllocation allocation, long timelineValue) {
+        requireLive();
+        requireAllocation(allocation);
+        if (allocation.released) {
+            throw new IllegalStateException("This SlabAllocation has already been released.");
+        }
+        allocation.released = true;
+        if (allocation.pooled != null) {
+            this.pool.freeDeferred(allocation.pooled, timelineValue);
+        } else {
+            this.pendingOversized.add(new PendingOversizedRelease(allocation.record, timelineValue));
+        }
+    }
+
+    /**
+     * Collects every release whose timeline value has completed. Pooled ranges become reusable; a dedicated
+     * oversized slab whose only allocation was collected is freed outright, while ordinary slabs are kept (empty or
+     * not) for reuse, because recreating one costs an allocation the next growth would pay again.
+     */
+    public void collectCompleted(long completedTimelineValue) {
+        requireLive();
+        this.pool.collectCompleted(completedTimelineValue);
+        Iterator<PendingOversizedRelease> iterator = this.pendingOversized.iterator();
+        while (iterator.hasNext()) {
+            PendingOversizedRelease pending = iterator.next();
+            if (pending.timelineValue <= completedTimelineValue) {
+                iterator.remove();
+                this.oversizedSlabs.remove(pending.record);
+                freeSlab(pending.record);
+            }
+        }
+    }
+
+    /**
+     * Host address of an allocation: the slab's mapping base plus the allocation's offset. Slabs are mapped once, at
+     * creation, and stay mapped until {@link #delete()}, so the address is stable for the allocation's whole life.
+     *
+     * @throws IllegalStateException when this allocator is not host-visible - a device-local slab has no host
+     *                               address to hand out, and returning one anyway would be a wild pointer
+     */
+    public long mappedAddress(SlabAllocation allocation) {
+        requireAllocation(allocation);
+        if (!this.hostVisible) {
+            throw new IllegalStateException("mappedAddress is only available on a host-visible SlabAllocator.");
+        }
+        if (allocation.record.mapped == 0L) {
+            throw new IllegalStateException("The slab backing this allocation is not mapped.");
+        }
+        return allocation.record.mapped + allocation.offset();
+    }
+
+    /** Number of live {@code VkDeviceMemory} objects held by this allocator, ordinary and oversized slabs alike. */
+    public int liveSlabCount() {
+        return this.poolSlabs.size() + this.oversizedSlabs.size();
+    }
+
+    /** Size of one ordinary slab in bytes. */
+    public long slabSize() {
+        return this.slabSizeBytes;
+    }
+
+    /**
+     * Frees every slab, ordinary and oversized, mapped or not. This is teardown, not a release: allocations that
+     * were never released are freed along with the rest, because once the allocator is gone nothing can collect them.
+     * Idempotent, and safe to call after the context is gone (destroying the logical device frees its children
+     * implicitly). Render thread only.
+     */
+    public void delete() {
+        if (this.deleted) {
+            return;
+        }
+        this.deleted = true;
+        for (SlabRecord record : this.poolSlabs) {
+            freeSlab(record);
+        }
+        for (SlabRecord record : this.oversizedSlabs) {
+            freeSlab(record);
+        }
+        this.poolSlabs.clear();
+        this.oversizedSlabs.clear();
+        this.pendingOversized.clear();
+    }
+
+    private SlabAllocation allocateOversized(long pagedSize) {
+        // The slab index reported for a dedicated slab starts above the ordinary range, so an index always names
+        // exactly one kind of slab and the ordinary indices keep matching the ledger's.
+        SlabRecord record = createSlab(pagedSize, this.maxSlabs + this.oversizedSlabs.size(), true);
+        this.oversizedSlabs.add(record);
+        return new SlabAllocation(this, record, null);
+    }
+
+    /** Creates the device memory for every ledger slab that does not have one yet, in slab index order. */
+    private void ensurePoolSlabs() {
+        while (this.poolSlabs.size() < this.pool.slabCount()) {
+            int slabIndex = this.poolSlabs.size();
+            this.poolSlabs.add(createSlab(this.slabSizeBytes, slabIndex, false));
+        }
+    }
+
+    private SlabRecord createSlab(long sizeBytes, int slabIndex, boolean oversized) {
+        VkDevice device = this.context.device();
+        long memory = VK_NULL_HANDLE;
+        long mapped = 0L;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkMemoryAllocateInfo allocateInfo = VkMemoryAllocateInfo.calloc(stack).sType$Default()
+                    .allocationSize(sizeBytes)
+                    .memoryTypeIndex(this.memoryTypeIndex);
+            LongBuffer memoryHandle = stack.mallocLong(1);
+            check(VulkanContext.allocateMemory(device, allocateInfo, memoryHandle),
+                    "vkAllocateMemory(slab of " + sizeBytes + " bytes, memory type " + this.memoryTypeIndex + ")");
+            memory = memoryHandle.get(0);
+            if (this.hostVisible) {
+                PointerBuffer pointer = stack.mallocPointer(1);
+                check(vkMapMemory(device, memory, 0L, sizeBytes, 0, pointer),
+                        "vkMapMemory(slab of " + sizeBytes + " bytes)");
+                mapped = pointer.get(0);
+            }
+        } catch (RuntimeException | Error error) {
+            if (memory != VK_NULL_HANDLE) {
+                VulkanContext.freeMemory(device, memory);
+            }
+            throw error;
+        }
+        return new SlabRecord(slabIndex, sizeBytes, oversized, memory, mapped);
+    }
+
+    private void freeSlab(SlabRecord record) {
+        VkDevice device = this.context.device();
+        if (device == null) {
+            record.mapped = 0L;
+            record.memory = VK_NULL_HANDLE;
+            return;
+        }
+        if (record.mapped != 0L) {
+            vkUnmapMemory(device, record.memory);
+            record.mapped = 0L;
+        }
+        if (record.memory != VK_NULL_HANDLE) {
+            VulkanContext.freeMemory(device, record.memory);
+            record.memory = VK_NULL_HANDLE;
+        }
+    }
+
+    private void requireLive() {
+        if (this.deleted) {
+            throw new IllegalStateException("This SlabAllocator has been deleted.");
+        }
+    }
+
+    private static void requireAllocation(SlabAllocation allocation) {
+        if (allocation == null) {
+            throw new IllegalArgumentException("allocation must not be null");
+        }
+    }
+
+    private static long alignUp(long value, long alignment) {
+        long remainder = value % alignment;
+        return remainder == 0L ? value : value + (alignment - remainder);
+    }
+
+    private static void check(int result, String operation) {
+        if (result != VK_SUCCESS) {
+            throw new IllegalStateException(operation + " returned VkResult " + result);
+        }
+    }
+
+    /** One {@code VkDeviceMemory} held by this allocator, with its mapping when host-visible. */
+    private static final class SlabRecord {
+        final int slabIndex;
+        final long size;
+        final boolean oversized;
+        long memory;
+        long mapped;
+
+        SlabRecord(int slabIndex, long size, boolean oversized, long memory, long mapped) {
+            this.slabIndex = slabIndex;
+            this.size = size;
+            this.oversized = oversized;
+            this.memory = memory;
+            this.mapped = mapped;
+        }
+    }
+
+    /** One oversized allocation's deferred release: the slab to free and the timeline value that gates it. */
+    private static final class PendingOversizedRelease {
+        final SlabRecord record;
+        final long timelineValue;
+
+        PendingOversizedRelease(SlabRecord record, long timelineValue) {
+            this.record = record;
+            this.timelineValue = timelineValue;
+        }
+    }
+
+    /**
+     * One allocation handed out by {@link SlabAllocator#allocate(long, long)}: the slab memory to bind, and where
+     * inside it the allocation lives. For an ordinary allocation this wraps the ledger's
+     * {@link SlabPool.Allocation}; a dedicated oversized slab has no ledger entry, so its offset is 0 and its size is
+     * the whole slab.
+     */
+    public static final class SlabAllocation {
+        private final SlabAllocator owner;
+        private final SlabRecord record;
+        private final SlabPool.Allocation pooled;
+        private boolean released;
+
+        SlabAllocation(SlabAllocator owner, SlabRecord record, SlabPool.Allocation pooled) {
+            this.owner = owner;
+            this.record = record;
+            this.pooled = pooled;
+        }
+
+        /** The allocator that created this allocation; the only allocator this allocation may be released to. */
+        public SlabAllocator owner() {
+            return this.owner;
+        }
+
+        /** The {@code VkDeviceMemory} of the slab holding this allocation. */
+        public long deviceMemory() {
+            return this.record.memory;
+        }
+
+        /** Byte offset of the allocation inside its slab. */
+        public long offset() {
+            return this.pooled != null ? this.pooled.offset() : 0L;
+        }
+
+        /** Size in bytes after rounding up to whole pages; the range actually reserved. */
+        public long size() {
+            return this.pooled != null ? this.pooled.size() : this.record.size;
+        }
+
+        /**
+         * Index of the backing slab. Ordinary slabs use the ledger's slab index; a dedicated oversized slab is
+         * numbered above the ordinary range, starting at the allocator's slab cap.
+         */
+        public int slab() {
+            return this.record.slabIndex;
+        }
+    }
+}

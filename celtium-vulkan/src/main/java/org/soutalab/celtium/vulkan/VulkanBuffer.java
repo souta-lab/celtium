@@ -5,15 +5,20 @@ import org.lwjgl.vulkan.VkBufferCopy;
 import org.lwjgl.vulkan.VkBufferCreateInfo;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkDevice;
-import org.lwjgl.vulkan.VkMemoryAllocateInfo;
 import org.lwjgl.vulkan.VkMemoryRequirements;
+import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 
 import java.nio.LongBuffer;
 
 import static org.lwjgl.vulkan.VK10.*;
 
 /**
- * A device-local Vulkan buffer with its own memory allocation.
+ * A device-local Vulkan buffer backed by a sub-allocation of a fixed slab (see {@link SlabAllocator}).
+ * <p>
+ * The buffer owns no {@code VkDeviceMemory} of its own: its bytes live inside one of the context's 64 MiB
+ * device-local slabs, bound at the sub-allocation's offset. That is the new architecture's memory contract -
+ * the live {@code VkDeviceMemory} count is the slab count, not the buffer count - and it is why deletion hands
+ * the sub-allocation back to its pool as a timeline-deferred release instead of calling {@code vkFreeMemory}.
  * <p>
  * The buffer always carries the transfer source and destination usages, because every byte that reaches it is
  * written through {@link VulkanContext#uploadToBuffer} and every growth copies the old contents across. Vertex and
@@ -33,17 +38,17 @@ public final class VulkanBuffer {
     private final int usageFlags;
 
     private long handle = VK_NULL_HANDLE;
-    private long memory = VK_NULL_HANDLE;
+    private SlabAllocator.SlabAllocation allocation;
     private long size;
 
     /**
-     * Creates the buffer and binds a device-local memory allocation to it.
+     * Creates the buffer and binds a device-local slab sub-allocation to it.
      *
      * @param context   owning context; the buffer must be deleted before the context is
      * @param sizeBytes requested size, rounded up to a multiple of 4; must be positive
      * @param usageFlags extra {@code VK_BUFFER_USAGE_*} flags; the transfer flags are added automatically
-     * @throws IllegalStateException when the buffer, the memory or the binding cannot be created, or when the device
-     *                               has no device-local memory type
+     * @throws IllegalStateException when the buffer, the slab allocation or the binding cannot be created, or when
+     *                               the device has no device-local memory type for the buffer's requirements
      */
     public VulkanBuffer(VulkanContext context, long sizeBytes, int usageFlags) {
         if (context == null) {
@@ -161,18 +166,18 @@ public final class VulkanBuffer {
         this.context.settleUploads();
         long newSize = VulkanContext.alignUp4(requiredBytes);
         long oldHandle = this.handle;
-        long oldMemory = this.memory;
+        SlabAllocator.SlabAllocation oldAllocation = this.allocation;
         long oldSize = this.size;
         // Create the replacement first. If that fails, the old objects are put back so a failed growth does not
         // destroy live terrain data.
         this.handle = VK_NULL_HANDLE;
-        this.memory = VK_NULL_HANDLE;
+        this.allocation = null;
         this.size = newSize;
         try {
             create();
         } catch (RuntimeException | Error error) {
             this.handle = oldHandle;
-            this.memory = oldMemory;
+            this.allocation = oldAllocation;
             this.size = oldSize;
             throw error;
         }
@@ -217,9 +222,13 @@ public final class VulkanBuffer {
             // drained before it is destroyed; validation reports the alternative as a buffer destroyed while in use.
             check(vkQueueWaitIdle(this.context.queue()), "vkQueueWaitIdle(buffer growth)");
             vkDestroyBuffer(this.context.device(), this.handle, null);
-            VulkanContext.freeMemory(this.context.device(), this.memory);
+            if (this.allocation != null) {
+                this.allocation.owner().release(this.allocation,
+                        this.context.frameTimeline() == null ? 0L
+                                : this.context.frameTimeline().lastAllocatedValue());
+            }
             this.handle = oldHandle;
-            this.memory = oldMemory;
+            this.allocation = oldAllocation;
             this.size = oldSize;
             throw error;
         }
@@ -228,12 +237,12 @@ public final class VulkanBuffer {
         // the growth, and destroying a bound buffer invalidates that whole recording (the E2E 1.93a VUIDs). The growth
         // therefore hands the old objects to the context's deferred list, which frees them at the next point where no
         // recording exists.
-        this.context.celtium$retireBuffer(oldHandle, oldMemory);
+        this.context.celtium$retireSlabBuffer(oldHandle, oldAllocation, "buffer.growth");
     }
 
     /**
-     * Destroys the buffer and frees its memory. Idempotent, and safe to call after the context is gone (destroying
-     * the logical device frees its children implicitly). Render thread only.
+     * Destroys the buffer and returns its slab range to its pool. Idempotent, and safe to call after the context
+     * is gone (destroying the logical device frees its children implicitly). Render thread only.
      */
     public void delete() {
         // A copy already submitted by the frame's upload batch may still be reading or writing this buffer. The batch
@@ -243,31 +252,36 @@ public final class VulkanBuffer {
         VkDevice device = this.context.device();
         if (device == null) {
             this.handle = VK_NULL_HANDLE;
-            this.memory = VK_NULL_HANDLE;
+            this.allocation = null;
             return;
         }
         if (this.context.celtium$recordingOpen()) {
             // An open recording may name this buffer (the unified frame buffer keeps one open across evictions and
             // reloads). Defer instead of invalidating it; the context frees it once nothing can record.
-            this.context.celtium$retireBuffer(this.handle, this.memory, "buffer.delete");
+            this.context.celtium$retireSlabBuffer(this.handle, this.allocation, "buffer.delete");
             this.handle = VK_NULL_HANDLE;
-            this.memory = VK_NULL_HANDLE;
+            this.allocation = null;
             return;
         }
         if (this.handle != VK_NULL_HANDLE) {
             vkDestroyBuffer(device, this.handle, null);
             this.handle = VK_NULL_HANDLE;
         }
-        if (this.memory != VK_NULL_HANDLE) {
-            VulkanContext.freeMemory(device, this.memory);
-            this.memory = VK_NULL_HANDLE;
+        if (this.allocation != null) {
+            // The slab range goes back as a deferred release keyed on the newest timeline value: a frame still
+            // in flight may read this buffer, and the range may only be reused once the timeline passes every
+            // submission that could name it. There is no vkFreeMemory - the slab is not this buffer's to free.
+            this.allocation.owner().release(this.allocation,
+                    this.context.frameTimeline() == null ? 0L
+                            : this.context.frameTimeline().lastAllocatedValue());
+            this.allocation = null;
         }
     }
 
     private void create() {
         VkDevice device = this.context.device();
         long createdBuffer = VK_NULL_HANDLE;
-        long createdMemory = VK_NULL_HANDLE;
+        SlabAllocator.SlabAllocation createdAllocation = null;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkBufferCreateInfo createInfo = VkBufferCreateInfo.calloc(stack).sType$Default()
                     .size(this.size)
@@ -279,30 +293,30 @@ public final class VulkanBuffer {
             createdBuffer = handleBuffer.get(0);
             VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
             vkGetBufferMemoryRequirements(device, createdBuffer, requirements);
-            int memoryType = this.context.memoryTypeIndex(requirements.memoryTypeBits(),
-                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "a device-local buffer of " + this.size + " bytes");
-            VkMemoryAllocateInfo allocate = VkMemoryAllocateInfo.calloc(stack).sType$Default()
-                    .allocationSize(requirements.size())
-                    .memoryTypeIndex(memoryType);
-            LongBuffer memoryHandle = stack.mallocLong(1);
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanBuffer:189")) {
                 throw new IllegalStateException("injected allocation failure: VulkanBuffer:189");
             }
-            check(VulkanContext.allocateMemory(device, allocate, memoryHandle), "vkAllocateMemory(" + requirements.size()
-                    + " bytes, memory type " + memoryType + ")");
-            createdMemory = memoryHandle.get(0);
-            check(vkBindBufferMemory(device, createdBuffer, createdMemory, 0), "vkBindBufferMemory");
+            // The memory comes from the slab pool the context keys by the memory type this buffer's own
+            // requirement bits select, and the bind goes through the allocator, so the slab offset arithmetic
+            // lives in exactly one place.
+            SlabAllocator allocator = this.context.celtium$deviceLocalSlabs(requirements.memoryTypeBits());
+            createdAllocation = allocator.allocate(requirements.size(), requirements.alignment());
+            allocator.bindBuffer(createdBuffer, createdAllocation);
         } catch (RuntimeException | Error error) {
             if (createdBuffer != VK_NULL_HANDLE) {
                 vkDestroyBuffer(device, createdBuffer, null);
             }
-            if (createdMemory != VK_NULL_HANDLE) {
-                VulkanContext.freeMemory(device, createdMemory);
+            if (createdAllocation != null) {
+                // Nothing was ever submitted against this buffer; the deferred release is still the only way
+                // back into the pool, keyed on the timeline's current position.
+                createdAllocation.owner().release(createdAllocation,
+                        this.context.frameTimeline() == null ? 0L
+                                : this.context.frameTimeline().lastAllocatedValue());
             }
             throw error;
         }
         this.handle = createdBuffer;
-        this.memory = createdMemory;
+        this.allocation = createdAllocation;
     }
 
     private void requireLive() {

@@ -99,46 +99,13 @@ public final class FrameCoordinator {
     }
 
     void submitSignalOnly() {
-        // With the pair skipped there is no frame synchronization to release: the frame-close flags this path set
-        // are still set, because they gate the present's own "a frame reached the queue" question, but no packet
-        // goes to the queue for a contract nothing honours.
-        if (!this.host.frameTarget().needsFrameSemaphores()) {
-            this.host.setFrameSubmitReachedQueue(true);
-            this.host.setLastFrameReachedQueue(true);
-            return;
-        }
-        // Counted, so a leg can say whether the frame-close path fired rather than whether the leg was green: the
-        // per-image change made consumeDone wait on whichever done semaphore was recorded, and this is the producer
-        // whose pairing that could break. Two legs were green without this path firing at all, which is a leg about
-        // the other path - the counter is what turns that into evidence either way.
-        this.host.submissionStatistics().noteSignalOnlySubmissions();
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default();
-            LongBuffer waitSemaphores = stack.mallocLong(1);
-            waitSemaphores.put(0, this.host.frameTarget().waitSemaphore());
-            IntBuffer waitStages = stack.mallocInt(1);
-            waitStages.put(0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
-            LongBuffer signalSemaphores = stack.mallocLong(1);
-            signalSemaphores.put(0, this.host.frameTarget().doneSemaphore());
-            submit.waitSemaphoreCount(waitSemaphores.remaining());
-            submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages).pSignalSemaphores(signalSemaphores);
-            // No command buffers: the submission exists only to release the frame's synchronization.
-            if (VulkanSubmitFault.shouldFail("signal-only")) {
-                // The failure is raised exactly where a driver refusal would be, before the queue has seen anything, so
-                // the code's own pre-submit rules apply: what is already recorded stays recorded and nothing in flight is
-                // touched. That is the property this switch exists to check.
-                this.host.check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
-            }
-                        VulkanContext.queueSubmitCalls++;
-                        this.host.check(vkQueueSubmit(this.host.context().queue(), submit, VK_NULL_HANDLE), "vkQueueSubmit (signal only)");
-            this.host.setFrameSubmitReachedQueue(true);
-            this.host.setLastFrameReachedQueue(true);
-            if (this.host.frameTarget() instanceof GllessFrameTarget gllessTarget) {
-                // The signal-only submission waited on the wait semaphore and signalled the done semaphore: the pairing is
-                // complete for this frame, so nothing is outstanding to consume.
-                gllessTarget.noteWaitConsumed();
-            }
-        }
+        // This path existed to release the frame's wait/done semaphore pair with a signal-only submission.
+        // The pair is deleted (the owned target has no second producer; see GllessFrameTarget), so there is no
+        // frame synchronization to release and no packet goes to the queue. What remains is the part the
+        // present path actually reads: the frame-close flags, which gate its own "a frame reached the queue"
+        // question.
+        this.host.setFrameSubmitReachedQueue(true);
+        this.host.setLastFrameReachedQueue(true);
     }
 
     /** Recording acceptance is not queue submission, and neither means GPU completion. */
@@ -337,11 +304,8 @@ public final class FrameCoordinator {
         this.host.recordedImmediateGroups().clear();
         this.host.setFrameSubmitReachedQueue(true);
         this.host.setLastFrameReachedQueue(true);
-        if (frameSemaphores && this.host.frameTarget() instanceof GllessFrameTarget gllessTarget) {
-            // This submission waited on the frame's wait semaphore, so the target must not consume it again when the
-            // frame is abandoned (fog-path's measured VUID-00067 chain: an abandoned frame left the signal
-            // outstanding and the next beginFrame signalled the same binary semaphore twice).
-            gllessTarget.noteWaitConsumed();
-        }
+        // No wait-consumed note: with the semaphore pair deleted, no submission waits on a target semaphore,
+        // so an abandoned frame has no signal outstanding to consume (the VUID-00067 chain this bookkeeping
+        // once closed is impossible by construction).
     }
 }

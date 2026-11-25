@@ -37,6 +37,11 @@ import org.lwjgl.vulkan.VkFenceCreateInfo;
 import org.lwjgl.vulkan.VkSubmitInfo;
 import org.lwjgl.vulkan.VK;
 import org.lwjgl.vulkan.VK12;
+import org.lwjgl.vulkan.VkSemaphoreWaitInfo;
+import org.lwjgl.vulkan.VkTimelineSemaphoreSubmitInfo;
+import org.soutalab.celtium.vulkan.hal.FrameTimeline;
+import org.soutalab.celtium.vulkan.hal.PresentEngine;
+import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
@@ -138,6 +143,24 @@ public final class VulkanContext {
     private int deviceApiVersion;
     private int deviceType = -1;
     private long commandPool = VK_NULL_HANDLE;
+
+    /**
+     * The new architecture's single synchronization primitive (design CELTIUM-NEW-ARCH-2026-11-25 section 2.3):
+     * one timeline semaphore whose values carry frame completion, deferred release and upload completion, in
+     * place of the per-submission fences and the pooled deferred fences this class used to create. Created with
+     * the device in {@link #initialize}; null only before that point and after {@link #delete()}.
+     */
+    private FrameTimeline frameTimeline;
+    /**
+     * The device-local slab pools {@link VulkanBuffer} allocates from: fixed 64 MiB slabs, sub-allocated, so a
+     * buffer no longer owns a {@code vkAllocateMemory} of its own. One pool per memory type, keyed by type
+     * index, because a slab can only bind to a buffer whose requirements name the pool's type; pools are
+     * created lazily, the first time a buffer's requirements pick their type.
+     */
+    private final java.util.Map<Integer, SlabAllocator> deviceLocalSlabsByType =
+            new java.util.HashMap<Integer, SlabAllocator>();
+    /** The synchronous present path (the async presenter thread's replacement), created with the queue. */
+    private PresentEngine presentEngine;
 
     /** The bound on a submission's fence wait, matching the renderer's frame waits. */
     private static final long SUBMIT_TIMEOUT_NANOS = 5_000_000_000L;
@@ -695,6 +718,88 @@ public final class VulkanContext {
         return this.queueFamilyIndex;
     }
 
+    /** {@return the frame timeline, the context's one timeline semaphore and its value ledger}. */
+    public FrameTimeline frameTimeline() {
+        return this.frameTimeline;
+    }
+
+    /**
+     * Waits for the frame timeline to reach {@code value}, returning the raw {@code VkResult}.
+     * <p>
+     * The wait sites that must tell success, timeout and device loss apart (the synchronous submit paths, whose
+     * cleanup differs per outcome - audit A02/B04) call this rather than the timeline's own boolean await, so the
+     * four outcomes stay distinct here exactly as they were when the object waited on was a fence.
+     */
+    public int celtium$awaitTimeline(long value, long timeoutNanos) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkSemaphoreWaitInfo wait = VkSemaphoreWaitInfo.calloc(stack).sType$Default()
+                    .semaphoreCount(1)
+                    .pSemaphores(stack.longs(this.frameTimeline.semaphore()))
+                    .pValues(stack.longs(value));
+            return VK12.vkWaitSemaphores(this.device, wait, timeoutNanos);
+        }
+    }
+
+    /**
+     * {@return the device-local slab pool serving buffers whose memory requirements carry
+     * {@code memoryTypeBits}}, created on first use.
+     * <p>
+     * The pool's memory type is the one {@link #memoryTypeIndex} picks from the caller's own requirement bits,
+     * so a slab is only ever bound to a buffer that names the pool's type. There is no fallback to an allocation
+     * of the buffer's own: the new architecture has no per-buffer {@code vkAllocateMemory} to fall back to, and
+     * a device with no device-local type in the bits fails in {@code memoryTypeIndex}, as it did before.
+     */
+    public SlabAllocator celtium$deviceLocalSlabs(int memoryTypeBits) {
+        int type = memoryTypeIndex(memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                "the device-local slab pool");
+        SlabAllocator allocator = this.deviceLocalSlabsByType.get(Integer.valueOf(type));
+        if (allocator == null) {
+            allocator = new SlabAllocator(this, type, SlabAllocator.DEFAULT_SLAB_SIZE, 8, false);
+            this.deviceLocalSlabsByType.put(Integer.valueOf(type), allocator);
+        }
+        return allocator;
+    }
+
+    /**
+     * Makes slab ranges whose deferred releases the frame timeline has already passed reusable again, by
+     * asking every device-local pool to collect against the timeline's completed value. Called at the retired
+     * buffer drain, the same safe point; a failed counter read simply defers collection to the next drain.
+     */
+    private void celtium$collectSlabReleases() {
+        if (this.frameTimeline == null || this.deviceLocalSlabsByType.isEmpty()) {
+            return;
+        }
+        long completed;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            LongBuffer value = stack.mallocLong(1);
+            if (VK12.vkGetSemaphoreCounterValue(this.device, this.frameTimeline.semaphore(), value)
+                    != VK_SUCCESS) {
+                return;
+            }
+            completed = value.get(0);
+        }
+        for (SlabAllocator allocator : this.deviceLocalSlabsByType.values()) {
+            allocator.collectCompleted(completed);
+        }
+    }
+
+    /**
+     * Hands a slab-backed buffer to the deferred list, the slab form of {@link #celtium$retireBuffer(long, long,
+     * String)}: the buffer is destroyed and its sub-allocation released at the same safe point, instead of a
+     * {@code vkFreeMemory} the slab must never receive.
+     */
+    public void celtium$retireSlabBuffer(long handle, SlabAllocator.SlabAllocation allocation, String site) {
+        if (handle == VK_NULL_HANDLE || allocation == null) {
+            return;
+        }
+        this.retiredSlabBuffers.add(new Object[] {Long.valueOf(handle), allocation});
+        if (this.retiredBufferSites.size() < 8) {
+            this.retiredBufferSites.add(site);
+            System.out.println("[Celtium] CELTIUM_BUFFER_RETIRED site=" + site + " slab=true outstanding="
+                    + this.retiredSlabBuffers.size());
+        }
+    }
+
     /** {@return the device's 2D image dimension limit (16384 when it has not been queried)}. */
     public int maxImageDimension2D() {
         return this.maxImageDimension2D > 0 ? this.maxImageDimension2D : 16384;
@@ -839,8 +944,8 @@ public final class VulkanContext {
      * reports the alternative as "pSubmits[0] performs a layout transition on presentable VkImage ... but VkSemaphore
      * ... signaled by image acquire operation was not waited on".
      * <p>
-     * The fence is waited for, so the command buffer can be freed, but the queue is not drained: the signal semaphore
-     * is handed to the caller's presentation, which waits on it.
+     * The submission's timeline value is waited for, so the command buffer can be freed, but the queue is not
+     * drained: the signal semaphore is handed to the caller's presentation, which waits on it.
      */
     public void submitWithSemaphores(VkCommandBuffer commandBuffer, long waitSemaphore, long signalSemaphore) {
         submitWithSemaphores(commandBuffer, new long[] {waitSemaphore}, new long[] {signalSemaphore});
@@ -867,14 +972,14 @@ public final class VulkanContext {
         // Deferred (batched) submissions logically precede this direct one; flushing first keeps logical and queue
         // order identical - without it a vkQueueSubmit here would jump ahead of entries the frame already submitted.
         celtium$flushBatchedSubmits();
-        long fence = VK_NULL_HANDLE;
         try {
             check(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                LongBuffer fenceHandle = stack.mallocLong(1);
-                check(vkCreateFence(this.device, org.lwjgl.vulkan.VkFenceCreateInfo.calloc(stack).sType$Default(), null,
-                        fenceHandle), "vkCreateFence(submitWithSemaphores)");
-                fence = fenceHandle.get(0);
+                // The submission signals the frame timeline at a fresh value, and the bounded wait below waits
+                // on that value through vkWaitSemaphores: the per-submission fence this path used to create,
+                // wait on and destroy on every call is gone. The wait's VkResult carries the same outcome
+                // vocabulary the fence wait did, so the three-way split below is unchanged in substance.
+                long timelineValue = this.frameTimeline.nextValue();
                 VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
                         .pCommandBuffers(stack.pointers(commandBuffer));
                 // Count first and fill arrays directly: this runs once per window (about 30 a frame), and the two
@@ -910,51 +1015,60 @@ public final class VulkanContext {
                         signalCount++;
                     }
                 }
-                if (signalCount > 0) {
-                    long[] signalHandles = new long[signalCount];
-                    int filled = 0;
-                    for (long semaphore : signalSemaphores) {
-                        if (semaphore != VK_NULL_HANDLE) {
-                            signalHandles[filled] = semaphore;
-                            filled++;
-                        }
+                // The frame timeline rides in the same signal array, last: this submission signals it at
+                // timelineValue, and the bounded wait below waits on that value. The timeline submit info
+                // carries only the values - the handles live in the submit info itself - and they pair
+                // positionally with the signal array, so a caller binary semaphore pairs with 0 (its value is
+                // ignored) and the timeline pairs with its value.
+                long[] signalHandles = new long[signalCount + 1];
+                long[] signalValues = new long[signalCount + 1];
+                int filled = 0;
+                for (long semaphore : signalSemaphores) {
+                    if (semaphore != VK_NULL_HANDLE) {
+                        signalHandles[filled] = semaphore;
+                        filled++;
                     }
-                    submit.pSignalSemaphores(stack.longs(signalHandles));
                 }
+                signalHandles[filled] = this.frameTimeline.semaphore();
+                signalValues[filled] = timelineValue;
+                submit.pSignalSemaphores(stack.longs(signalHandles));
+                VkTimelineSemaphoreSubmitInfo timelineInfo = VkTimelineSemaphoreSubmitInfo.calloc(stack)
+                        .sType$Default()
+                        .signalSemaphoreValueCount(signalCount + 1)
+                        .pSignalSemaphoreValues(stack.longs(signalValues));
+                submit.pNext(timelineInfo.address());
                 VulkanContext.queueSubmitCalls++;
                         celtium$awaitPresenter();
-                        check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit(submitWithSemaphores)");
-                // From here the queue owns the command buffer and the fence. The three outcomes are kept apart,
-                // because the cleanup that is right for one is a validation error for another (audit A02):
+                        check(vkQueueSubmit(this.queue, submit, VK_NULL_HANDLE), "vkQueueSubmit(submitWithSemaphores)");
+                // From here the queue owns the command buffer. The three outcomes are kept apart, because the
+                // cleanup that is right for one is a validation error for another (audit A02):
                 //
-                //  1. a failure BEFORE the submit - the queue never saw it, so freeing the buffer and destroying the
-                //     fence is correct and is what the finally below does;
-                //  2. the fence signals - the submission completed, so the same cleanup is correct;
-                //  3. the wait times out - the submission may still be executing. Destroying its fence and freeing
-                //     its command buffer while the queue may still read them is exactly what
-                //     VUID-vkDestroyFence-fence-01120 and VUID-vkFreeCommandBuffers-pCommandBuffers-00047 describe.
+                //  1. a failure BEFORE the submit - the queue never saw it, so freeing the buffer is correct and
+                //     is what the finally below does;
+                //  2. the timeline reaches the value - the submission completed, so the same cleanup is correct;
+                //  3. the wait times out - the submission may still be executing. Freeing its command buffer
+                //     while the queue may still read it is exactly what
+                //     VUID-vkFreeCommandBuffers-pCommandBuffers-00047 describes.
                 //
                 // The bounded wait itself stays (an unbounded wait on the present path is a hang with no message),
-                // but a timeout no longer throws into the unconditional cleanup. The buffer and the fence are handed
-                // to a quarantine list, the context marks itself unusable so no further work is submitted on a device
+                // but a timeout no longer throws into the unconditional cleanup. The buffer is handed to a
+                // quarantine list, the context marks itself unusable so no further work is submitted on a device
                 // that has stopped making progress, and the failure is named.
-                int waited = vkWaitForFences(this.device, fence, true, SUBMIT_TIMEOUT_NANOS);
+                int waited = celtium$awaitTimeline(timelineValue, SUBMIT_TIMEOUT_NANOS);
                 if (waited == org.lwjgl.vulkan.VK10.VK_TIMEOUT) {
                     submitTimeouts++;
-                    quarantine(commandBuffer, fence);
-                    fence = VK_NULL_HANDLE;
+                    quarantine(commandBuffer, VK_NULL_HANDLE);
                     commandBuffer = null;
                     this.usable = false;
-                    throw new IllegalStateException("vkWaitForFences(submitWithSemaphores): the submission did not"
+                    throw new IllegalStateException("vkWaitSemaphores(submitWithSemaphores): the submission did not"
                             + " signal within " + (SUBMIT_TIMEOUT_NANOS / 1_000_000_000L) + "s. The device has stopped"
-                            + " making progress: the submission's command buffer and fence are quarantined (never"
-                            + " reset, re-recorded, freed or destroyed while the queue may own them), the context is"
+                            + " making progress: the submission's command buffer is quarantined (never"
+                            + " reset, re-recorded, freed or destroyed while the queue may own it), the context is"
                             + " marked unusable, and no further work is submitted on it"
                             + " (submitWithSemaphores timeouts=" + submitTimeouts + ")");
                 }
                 // Audit B04. The three remaining outcomes are not one outcome, and the cleanup that is right for one
-                // is a validation error for another (VUID-vkDestroyFence-fence-01120,
-                // VUID-vkFreeCommandBuffers-pCommandBuffers-00047):
+                // is a validation error for another (VUID-vkFreeCommandBuffers-pCommandBuffers-00047):
                 //
                 //   SUCCESS        the submission completed; the finally below is correct.
                 //   DEVICE_LOST    the device is gone. The spec treats a lost device as SUCCESS-equivalent for
@@ -962,8 +1076,8 @@ public final class VulkanContext {
                 //                  too. This must NOT be grouped with "the wait did not complete" - the audit names
                 //                  that mistake explicitly ([R4]).
                 //   anything else  OUT_OF_HOST_MEMORY, OUT_OF_DEVICE_MEMORY, UNKNOWN: the wait did not confirm
-                //                  completion, so the queue may still own the buffer and the fence. They are
-                //                  quarantined exactly as on a timeout and the finally must not release them.
+                //                  completion, so the queue may still own the buffer. It is quarantined exactly
+                //                  as on a timeout and the finally must not release it.
                 if (waited == VK_SUCCESS) {
                     submitCompletions++;
                     completedSubmissions++;
@@ -974,29 +1088,25 @@ public final class VulkanContext {
                     // complete" is the mistake the audit names, and it would hold every resource forever.
                     completedSubmissions++;
                     this.usable = false;
-                    throw new IllegalStateException("vkWaitForFences(submitWithSemaphores) reported"
+                    throw new IllegalStateException("vkWaitSemaphores(submitWithSemaphores) reported"
                             + " VK_ERROR_DEVICE_LOST: the submission is not going to complete because the device is"
-                            + " gone. The command buffer and fence are released by the caller's cleanup, which is"
+                            + " gone. The command buffer is released by the caller's cleanup, which is"
                             + " correct here - a lost device is SUCCESS-equivalent for pending/in-use purposes, so the"
-                            + " queue no longer owns them (submitWithSemaphores lostDevices=" + submitDeviceLost + ")");
+                            + " queue no longer owns it (submitWithSemaphores lostDevices=" + submitDeviceLost + ")");
                 } else {
                     submitWaitFailures++;
-                    quarantine(commandBuffer, fence);
-                    fence = VK_NULL_HANDLE;
+                    quarantine(commandBuffer, VK_NULL_HANDLE);
                     commandBuffer = null;
                     this.usable = false;
-                    throw new IllegalStateException("vkWaitForFences(submitWithSemaphores) did not confirm completion"
+                    throw new IllegalStateException("vkWaitSemaphores(submitWithSemaphores) did not confirm completion"
                             + " and did not time out: result=" + waited + ". The queue may still own the submission, so"
-                            + " its command buffer and fence are quarantined rather than freed, and the context is"
+                            + " its command buffer is quarantined rather than freed, and the context is"
                             + " marked unusable. This is not a lost device: only VK_ERROR_DEVICE_LOST is"
                             + " completion-equivalent for pending/in-use purposes"
                             + " (submitWithSemaphores waitFailures=" + submitWaitFailures + ")");
                 }
             }
         } finally {
-            if (fence != VK_NULL_HANDLE) {
-                vkDestroyFence(this.device, fence, null);
-            }
             if (commandBuffer != null) {
                 vkFreeCommandBuffers(this.device, this.commandPool, commandBuffer);
             }
@@ -1078,37 +1188,41 @@ public final class VulkanContext {
         }
         requireUsable();
         // Batched deferred submits precede this bootstrap submission logically, so they go first physically. It
-        // matters more than ordering: this path waits on its own fence, and a pending batch submitted after it
-        // would still complete correctly - the flush simply keeps the queue's order the order callers saw.
+        // matters more than ordering: this path waits on its own timeline value, and a pending batch submitted
+        // after it would still complete correctly - the flush simply keeps the queue's order the order callers
+        // saw.
         celtium$flushBatchedSubmits();
         boolean releasedToQueue = true;
         try {
             check(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
             try (MemoryStack stack = MemoryStack.stackPush()) {
+                // BH-27: the submit signals the frame timeline and this path waits on that value, not on the
+                // whole queue. The queue-wide idle it used to do (twice per copy, once in beginCommands and once
+                // here) drained every other submission in flight, so every upload and every present serialised
+                // the renderer against the GPU. The timeline value is what makes freeing this command buffer
+                // correct: only this submission has to complete, and the queue keeps running while it does.
+                // (The timeline submit info carries only the value; the semaphore handle itself is in the
+                // submit info's signal array.)
+                long timelineValue = this.frameTimeline.nextValue();
                 VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
-                        .pCommandBuffers(stack.pointers(commandBuffer));
-                // BH-27: the submit gets its own fence and this path waits on that fence, not on the whole queue.
-                // The queue-wide idle it used to do (twice per copy, once in beginCommands and once here) drained
-                // every other submission in flight, so every upload and every present serialised the renderer against
-                // the GPU. The fence is what makes freeing this command buffer correct: only this submission has to
-                // complete, and the queue keeps running while it does.
-                LongBuffer fenceHandle = stack.mallocLong(1);
-                check(vkCreateFence(this.device, VkFenceCreateInfo.calloc(stack).sType$Default(), null, fenceHandle),
-                        "vkCreateFence(bootstrap submit)");
-                long fence = fenceHandle.get(0);
-                boolean fenceHeld = false;
-                try {
-                    VulkanContext.queueSubmitCalls++;
+                        .pCommandBuffers(stack.pointers(commandBuffer))
+                        .pSignalSemaphores(stack.longs(this.frameTimeline.semaphore()));
+                VkTimelineSemaphoreSubmitInfo timelineInfo = VkTimelineSemaphoreSubmitInfo.calloc(stack)
+                        .sType$Default()
+                        .signalSemaphoreValueCount(1)
+                        .pSignalSemaphoreValues(stack.longs(timelineValue));
+                submit.pNext(timelineInfo.address());
+                VulkanContext.queueSubmitCalls++;
                         celtium$awaitPresenter();
-                        check(vkQueueSubmit(this.queue, submit, fence), "vkQueueSubmit");
+                        check(vkQueueSubmit(this.queue, submit, VK_NULL_HANDLE), "vkQueueSubmit");
                         // The queue accepted this one-shot submission, so the layout transitions recorded into
                         // it are fact now - and only now (the recording was opened in beginCommands). This path
-                        // waits on its own fence below, so acceptance here is the exact point the frame path's
+                        // waits on its own value below, so acceptance here is the exact point the frame path's
                         // submission bookkeeping commits at.
                         VulkanGlTexture.commitLayoutRecording(commandBuffer);
                     long waitStarted = System.nanoTime();
-                    int waited = vkWaitForFences(this.device, fence, true, SUBMIT_TIMEOUT_NANOS);
-                    celtium$recordBootstrapFenceWait(waitStarted);
+                    int waited = celtium$awaitTimeline(timelineValue, SUBMIT_TIMEOUT_NANOS);
+                    celtium$recordBootstrapSubmitWait(waitStarted);
                     if (waited == VK_SUCCESS) {
                         bootstrapSubmitWaits++;
                         completedSubmissions++;
@@ -1118,34 +1232,28 @@ public final class VulkanContext {
                         submitTimeouts++;
                         this.usable = false;
                         releasedToQueue = false;
-                        quarantine(commandBuffer, fence);
-                        throw new IllegalStateException("vkWaitForFences(bootstrap submit) did not signal within "
+                        quarantine(commandBuffer, VK_NULL_HANDLE);
+                        throw new IllegalStateException("vkWaitSemaphores(bootstrap submit) did not signal within "
                                 + (SUBMIT_TIMEOUT_NANOS / 1_000_000_000L) + "s; the command buffer is quarantined"
                                 + " rather than freed (submitTimeouts=" + submitTimeouts + ")");
                     } else if (waited == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
                         submitDeviceLost++;
                         // The lost-device rule the deferred path states: after a loss, no handle recycling or
-                        // destruction may be assumed. The fence is therefore not destroyed and the command
-                        // buffer is not recycled - both are quarantined for teardown - and the loss is thrown
-                        // so the caller stops instead of reusing the staging this copy was writing into.
+                        // destruction may be assumed. The command buffer is therefore not recycled - it is
+                        // quarantined for teardown - and the loss is thrown so the caller stops instead of
+                        // reusing the staging this copy was writing into.
                         releasedToQueue = false;
-                        fenceHeld = true;
-                        quarantine(commandBuffer, fence);
-                        throw celtium$lostDevice("vkWaitForFences(bootstrap submit)");
+                        quarantine(commandBuffer, VK_NULL_HANDLE);
+                        throw celtium$lostDevice("vkWaitSemaphores(bootstrap submit)");
                     } else {
                         queueWaitFailures++;
                         this.usable = false;
                         releasedToQueue = false;
-                        quarantine(commandBuffer, fence);
-                        throw new IllegalStateException("vkWaitForFences(bootstrap submit) returned " + waited
+                        quarantine(commandBuffer, VK_NULL_HANDLE);
+                        throw new IllegalStateException("vkWaitSemaphores(bootstrap submit) returned " + waited
                                 + "; the command buffer is quarantined rather than freed (queueWaitFailures="
                                 + queueWaitFailures + ")");
                     }
-                } finally {
-                    if (!fenceHeld) {
-                        vkDestroyFence(this.device, fence, null);
-                    }
-                }
             }
         } finally {
             if (releasedToQueue) {
@@ -1283,7 +1391,7 @@ public final class VulkanContext {
             if (completedBatch.pending == 0) {
                 entry.fence = completedBatch.fence;
                 entry.batch = null;
-                if (completedBatch != this.pendingBatch && completedBatch != this.presenterBatch
+                if (completedBatch != this.pendingBatch
                         && this.sharedBatchPool.size() < SHARED_BATCH_POOL_CAP) {
                     completedBatch.fence = VK_NULL_HANDLE;
                     this.sharedBatchPool.addLast(completedBatch);
@@ -1602,209 +1710,126 @@ public final class VulkanContext {
 
 
     /**
-     * The frame's batched submit, the present blit's submit and {@code vkQueuePresentKHR} run on one worker thread while
-     * the game thread starts the next frame ({@code -Dceltium.vulkan.asyncPresent=false} keeps them on the game thread).
-     * Measured (paired KPI, same jar on/off, Xaero instance, 3 pairs each): Intel UHD 630 p50 2.45 -> 2.31 ms (0.942x),
-     * AMD RX 6400 1.30 -> 1.22 ms (0.938x), p95 lower in every pair.
-     * The driver's submit and present cost is main-thread time on every measured GPU (Intel UHD 630: ~0.35 ms a frame),
-     * and the queue is the only object both threads touch: every queue access on the game thread goes through
-     * {@link #queue()} or this class's own submit paths, and both join the worker first, so the queue stays externally
-     * synchronized. The swapchain joins before its next acquire.
+     * The present runs on the calling thread at the frame's end, through {@link PresentEngine}: the frame's
+     * batched submit is flushed first, then the present blit's submit and {@code vkQueuePresentKHR} execute in
+     * queue order on the same thread, and the verdict is final when the call returns.
+     * <p>
+     * This replaces the async presenter thread the renderer used to hand the batch and the present to. That
+     * thread bought a measured p50 gain (paired KPI, same jar on/off, Xaero instance, 3 pairs each: Intel UHD
+     * 630 p50 2.45 -> 2.31 ms, AMD RX 6400 1.30 -> 1.22 ms) and cost a second owner of the queue: every queue
+     * access had to join the worker first, a batch in the worker's hands could not be polled, and the present
+     * verdict was written by one thread and read by another - the shape behind the stale-verdict re-application
+     * the present audit found (a verdict read repeatedly because nothing marked it consumed). The new
+     * architecture's present contract (design section 2.5) is explicit: no async present thread, present at the
+     * main thread's frame end, timestamps recorded around it. The verdict below is therefore consume-on-read:
+     * {@link #celtium$presenterResult()} returns it once and resets it, so a later frame can never re-apply a
+     * previous frame's OUT_OF_DATE.
      */
-    // The async presenter is benchmarked on Intel/Linux and AMD/Linux but not on
-    // Windows/NVIDIA. External Win11/RTX3070 testing twice lost the Vulkan device
-    // while the worker was submitting deferred batches. Until an A/B driver test
-    // rules out unsafe cross-thread queue/lifetime interaction, default to the
-    // single-threaded present path on Windows. Users can explicitly opt back in.
+    // The hardware-profile gate that used to default the async presenter off on Windows stays as the recorded
+    // profile (HardwareProfileGates carries it, with its citation - the device losses the old worker caused
+    // there). With the worker gone the profile no longer selects a threading model; ASYNC_PRESENT now only
+    // routes the swapchain's present between this context's PresentEngine path and the swapchain's own
+    // synchronous path, and retiring the profile itself is the present-path phase's work, not this one's.
     static boolean asyncPresentDefaultForOs(String osName) {
-        // The decision is a recorded hardware-profile gate now (HardwareProfileGates carries the profile and
-        // its citation - the device losses the comment above records). Behaviour is unchanged, including for
-        // a null OS name, which no profile matches.
         return !HardwareProfileGates.gated(HardwareProfileGates.GatedFeature.ASYNC_PRESENT, osName, null);
     }
 
-    // Windows defaults off, but an explicit opt-in must always be respected.
-    // Async-present A/B is intentional for external testers, not a stale flag.
     public static final boolean ASYNC_PRESENT = Boolean.parseBoolean(
             System.getProperty("celtium.vulkan.asyncPresent",
                     Boolean.toString(asyncPresentDefaultForOs(System.getProperty("os.name", "")))));
 
-    private java.util.concurrent.ExecutorService presenter;
-    private java.util.concurrent.Future<?> presenterJob;
-    private SharedBatch presenterBatch;
-    private java.util.ArrayList<DeferredSubmit> presenterEntries;
-    private volatile Throwable presenterBatchError;
-    private volatile int presenterResult = VK_SUCCESS;
+    /** The last synchronous present's verdict; consumed by {@link #celtium$presenterResult()}. */
+    private int presenterResult = VK_SUCCESS;
+    /** Whether {@link #presenterResult} holds a verdict no await has drained yet. */
+    private boolean presenterVerdictPending;
     public static long presenterJoinNanos;
     public static long presenterJoins;
     public static long presenterJobs;
 
-    /** The only recoverable asynchronous present results are success and a changed swapchain. */
+    /**
+     * The only recoverable present results: success, a changed swapchain, and a lost surface - SURFACE_LOST is
+     * a recreation event, not a device loss, and classifying it as fatal was the present audit's R2.
+     */
     static boolean presenterResultIsFatal(int result) {
-        return result != VK_SUCCESS
-                && result != org.lwjgl.vulkan.KHRSwapchain.VK_SUBOPTIMAL_KHR
-                && result != org.lwjgl.vulkan.KHRSwapchain.VK_ERROR_OUT_OF_DATE_KHR;
+        return PresentEngine.resultIsFatal(result);
     }
 
-    /** Waits for the worker's queue work, then frees a batch it could not submit; a no-op without a job in flight. */
+    /**
+     * Drains the previous present's verdict: the one place a fatal present result stops the renderer.
+     * <p>
+     * With the present synchronous there is no worker to join; what remains of the old join's contract is the
+     * verdict check it performed. The first await after a present performs it (and is counted as the join, so
+     * the report's join line keeps its meaning: the point the verdict became final for the frame path), later
+     * awaits are no-ops. A fatal verdict is terminal, not another swapchain-out-of-date event - both Neeyo
+     * logs continued after vkQueueSubmit -4, then hung/crashed in the NVIDIA driver - so it fails here, on the
+     * first drain, before any more queue operations.
+     */
     public void celtium$awaitPresenter() {
-        java.util.concurrent.Future<?> job = this.presenterJob;
-        if (job == null) {
+        if (!this.presenterVerdictPending) {
             return;
         }
-        this.presenterJob = null;
-        long started = System.nanoTime();
-        try {
-            job.get();
-        } catch (InterruptedException interrupted) {
-            // The worker may still be using the VkQueue. Never clear the only join handle
-            // and proceed as though the submission had finished.
-            this.presenterJob = job;
-            this.usable = false;
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while joining the Vulkan presenter; "
-                    + "the queue's completion state is unknown and further GPU work is disabled", interrupted);
-        } catch (java.util.concurrent.ExecutionException failed) {
-            this.presenterBatchError = failed.getCause();
-        }
-        presenterJoinNanos += System.nanoTime() - started;
+        this.presenterVerdictPending = false;
         presenterJoins++;
-        SharedBatch batch = this.presenterBatch;
-        java.util.ArrayList<DeferredSubmit> entries = this.presenterEntries;
-        Throwable error = this.presenterBatchError;
-        this.presenterBatch = null;
-        this.presenterEntries = null;
-        this.presenterBatchError = null;
-        if (error != null) {
-            this.deviceLost = true;
-            // VK_ERROR_DEVICE_LOST is terminal, not another swapchain-out-of-date event.
-            // Both Neeyo logs continued after vkQueueSubmit -4, then hung/crashed in the
-            // NVIDIA driver. Fail on the *first* loss, before any more queue operations.
-            this.usable = false;
-            if (batch != null && entries != null) {
-                abandonFailedBatch(batch, entries);
-            }
-            throw new IllegalStateException("CELTIUM_ASYNC_PRESENT fatal Vulkan presenter failure. "
-                    + "No more Vulkan commands may be submitted; this is not a resize or a "
-                    + "swapchain-recreation request: " + error, error);
-        }
         int result = this.presenterResult;
         if (presenterResultIsFatal(result)) {
             this.usable = false;
             this.deviceLost = true;
-            throw new IllegalStateException("CELTIUM_ASYNC_PRESENT fatal VkResult " + result
+            throw new IllegalStateException("CELTIUM_PRESENT fatal VkResult " + result
                     + " (VK_ERROR_DEVICE_LOST=-4). Stop the renderer; "
                     + "recreating the swapchain cannot recover a lost device.");
         }
     }
 
     /**
-     * {@return whether {@code fence} is the one the presenter is still submitting}, which no other thread may read yet.
-     * With {@code join} the caller is about to wait on it, so the worker is joined instead and the answer is false; a
-     * finished worker is joined either way.
+     * {@return whether {@code fence} is one a presenter is still submitting}. Always false now: the present
+     * runs on the calling thread, so no submission is ever in another thread's hands, and a caller may poll or
+     * wait on any completion token it holds. The method stays because the slot path's question is still the
+     * right question to ask at those sites; its answer is a property of the design, not of a flag.
      */
     public boolean celtium$fenceOnPresenter(long fence, boolean join) {
-        SharedBatch batch = this.presenterBatch;
-        java.util.concurrent.Future<?> job = this.presenterJob;
-        if (job == null || batch == null || batch.fence != fence) {
-            return false;
-        }
-        if (!join && !job.isDone()) {
-            return true;
-        }
-        celtium$awaitPresenter();
         return false;
     }
 
-    /** {@return the last worker present's vkQueuePresentKHR result}; read after {@link #celtium$awaitPresenter()}. */
+    /**
+     * {@return the last present's vkQueuePresentKHR result}, consuming it: the stored verdict resets to
+     * VK_SUCCESS as it is read, so a frame that presents nothing new can never re-apply a previous frame's
+     * verdict (the stale-verdict mechanism the present audit's R1 named).
+     */
     public int celtium$presenterResult() {
-        return this.presenterResult;
+        int result = this.presenterResult;
+        this.presenterResult = VK_SUCCESS;
+        return result;
     }
 
     /**
-     * Hands the pending batch, then the present blit and the present itself, to the worker.
+     * Presents: flushes the pending batch, submits the present blit and calls {@code vkQueuePresentKHR} - all
+     * on the calling thread, through {@link PresentEngine}.
+     * <p>
+     * The name is the async presenter's, kept because the swapchain's handover contract keeps its shape: the
+     * caller hands over the recorded blit and reads the verdict afterwards through
+     * {@link #celtium$awaitPresenter()} and {@link #celtium$presenterResult()}. What changed is where the work
+     * runs - here, on this thread, before the method returns - so the verdict is already final, a failed batch
+     * throws from this thread's own flush exactly as it does at every other flush site, and the handover
+     * always succeeds (the old false - the executor refused the job - has no synchronous counterpart).
      *
-     * @return false when the worker could not be started, in which case nothing was handed over
+     * @return true always: the present has been performed when this returns
      */
     public boolean celtium$presentAsync(long blitCommandBuffer, long acquireSemaphore, long renderFinishedSemaphore,
             long swapchain, int imageIndex) {
         celtium$awaitPresenter();
-        if (this.presenter == null) {
-            this.presenter = java.util.concurrent.Executors.newSingleThreadExecutor(runnable -> {
-                Thread thread = new Thread(runnable, "Celtium presenter");
-                thread.setDaemon(true);
-                return thread;
-            });
-        }
-        boolean tookBatch = !this.pendingBatchedSubmits.isEmpty();
-        if (tookBatch) {
-            this.presenterBatch = this.pendingBatch;
-            this.presenterEntries = new java.util.ArrayList<DeferredSubmit>(this.pendingBatchedSubmits);
-            this.pendingBatch = null;
-            this.pendingBatchedSubmits.clear();
-        }
-        final SharedBatch batch = this.presenterBatch;
-        final java.util.ArrayList<DeferredSubmit> entries = this.presenterEntries;
-        final VkCommandBuffer blit = new VkCommandBuffer(blitCommandBuffer, this.device);
+        celtium$flushBatchedSubmits();
+        VkCommandBuffer blit = new VkCommandBuffer(blitCommandBuffer, this.device);
+        int result = this.presentEngine.submitAndPresent(blit, acquireSemaphore, renderFinishedSemaphore,
+                swapchain, imageIndex);
+        VulkanContext.queueSubmitCalls++;
+        this.presenterResult = result;
+        this.presenterVerdictPending = true;
         presenterJobs++;
         if (presenterJobs == 1L || presenterJobs % 2000L == 0L) {
             System.out.println("[Celtium] CELTIUM_ASYNC_PRESENT jobs=" + presenterJobs + " joins=" + presenterJoins
-                    + " joinMicros=" + (presenterJoinNanos / 1000L) + " batch=" + (batch != null));
-        }
-        this.presenterJob = celtium$submitPresenter(() -> {
-            if (batch != null) {
-                Throwable error = submitBatch(batch, entries);
-                if (error != null) {
-                    this.presenterBatchError = error;
-                    this.presenterResult = VK_ERROR_DEVICE_LOST;
-                    return;
-                }
-            }
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
-                        .pCommandBuffers(stack.pointers(blit))
-                        .waitSemaphoreCount(1)
-                        .pWaitSemaphores(stack.longs(acquireSemaphore))
-                        .pWaitDstStageMask(stack.ints(org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT))
-                        .pSignalSemaphores(stack.longs(renderFinishedSemaphore));
-                VulkanContext.queueSubmitCalls++;
-                int submitted = vkQueueSubmit(this.queue, submit, VK_NULL_HANDLE);
-                if (submitted != VK_SUCCESS) {
-                    this.presenterResult = submitted;
-                    return;
-                }
-                org.lwjgl.vulkan.VkPresentInfoKHR present = org.lwjgl.vulkan.VkPresentInfoKHR.calloc(stack)
-                        .sType$Default()
-                        .pWaitSemaphores(stack.longs(renderFinishedSemaphore))
-                        .swapchainCount(1)
-                        .pSwapchains(stack.longs(swapchain))
-                        .pImageIndices(stack.ints(imageIndex));
-                this.presenterResult = org.lwjgl.vulkan.KHRSwapchain.vkQueuePresentKHR(this.queue, present);
-            }
-        });
-        if (this.presenterJob == null) {
-            // The executor refused the job (it has been shut down): the documented false, with nothing handed
-            // over - a batch taken out of the pending list for this hand-over goes back, so a later submission
-            // still carries it (bughunt LANE-05 #7: submit() used to throw here instead, and no path returned
-            // false at all, while the caller marked the present done unconditionally).
-            if (tookBatch) {
-                this.pendingBatch = batch;
-                this.pendingBatchedSubmits.addAll(entries);
-                this.presenterBatch = null;
-                this.presenterEntries = null;
-            }
-            return false;
+                    + " joinMicros=" + (presenterJoinNanos / 1000L) + " batch=false");
         }
         return true;
-    }
-
-    /** {@return the submitted job, or null when the presenter executor refused it}. */
-    private java.util.concurrent.Future<?> celtium$submitPresenter(Runnable job) {
-        try {
-            return this.presenter.submit(job);
-        } catch (java.util.concurrent.RejectedExecutionException rejected) {
-            return null;
-        }
     }
 
     /**
@@ -1826,15 +1851,6 @@ public final class VulkanContext {
         int reclaimed = 0;
         while (!this.deferredSubmits.isEmpty()) {
             DeferredSubmit head = this.deferredSubmits.peek();
-            if (head.batch != null && head.batch == this.presenterBatch) {
-                // The presenter is submitting this fence, and a fence is externally synchronized with the submit that
-                // arms it: read it only once the worker is done, and call it not ready until then.
-                java.util.concurrent.Future<?> job = this.presenterJob;
-                if (job != null && !job.isDone()) {
-                    break;
-                }
-                celtium$awaitPresenter();
-            }
             if (head.batch != null && head.batch == this.pendingBatch) {
                 // Still in the unflushed batch: its fence is not armed, so it reads NOT_READY - known without the
                 // ioctl a vkGetFenceStatus costs.
@@ -1988,9 +2004,6 @@ public final class VulkanContext {
     private void celtium$awaitDeferredEntry(DeferredSubmit entry, String reason) {
         if (this.deviceLost) {
             throw celtium$lostDevice("awaitDeferredEntry after previous loss");
-        }
-        if (entry.batch != null && entry.batch == this.presenterBatch) {
-            celtium$awaitPresenter();
         }
         long waitStarted = System.nanoTime();
         int waited = vkWaitForFences(this.device, entry.fence, true, SUBMIT_TIMEOUT_NANOS);
@@ -2255,7 +2268,7 @@ public final class VulkanContext {
      * can say which of the two happened: the queue-wide idle is now zero on the normal path, and these are the
      * bounded per-submission waits that replaced it.
      */
-    private static void celtium$recordBootstrapFenceWait(long startedNanos) {
+    private static void celtium$recordBootstrapSubmitWait(long startedNanos) {
         long millis = (System.nanoTime() - startedNanos) / 1_000_000L;
         bootstrapSubmitWaitMillis += millis;
         if (millis > bootstrapSubmitWaitWorstMillis) {
@@ -2304,7 +2317,7 @@ public final class VulkanContext {
                     + " quarantinedCommandBuffers=" + this.quarantinedCommandBuffers.size()
                     + " quarantinedFences=" + this.quarantinedFences.size()
                     + " (the bootstrap submit path waits on the queue, which the API cannot bound; the frame path"
-                    + " waits on its own fence with a 5s bound and reports a timeout as a stall)");
+                    + " waits on its own timeline value with a 5s bound and reports a timeout as a stall)");
             // Every recorded copy is followed by a queue wait, so this only drains work that is already complete.
             //
             // Audit B04: this wait decides whether the quarantined resources may be released, and its result is
@@ -2313,9 +2326,6 @@ public final class VulkanContext {
             // because the queue may still own them and freeing here is the same VUID the quarantine exists to avoid.
             // The resources are then left to the process teardown, and the count is reported.
             celtium$awaitPresenter();
-            if (this.presenter != null) {
-                this.presenter.shutdown();
-            }
             int idle = vkDeviceWaitIdle(this.device);
             boolean releaseQuarantined = idle == VK_SUCCESS
                     || idle == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST;
@@ -2470,6 +2480,19 @@ public final class VulkanContext {
                 vkDestroyCommandPool(this.device, this.commandPool, null);
                 this.commandPool = VK_NULL_HANDLE;
             }
+            // The HAL's device children go with the device: the frame timeline's semaphore is destroyed,
+            // every slab the device-local allocators carved is freed (one vkFreeMemory per slab through the
+            // census-counted path), and the present engine holds no device objects of its own - it only
+            // borrows the queue - so dropping the reference is its whole teardown.
+            if (this.frameTimeline != null) {
+                this.frameTimeline.delete();
+                this.frameTimeline = null;
+            }
+            for (SlabAllocator allocator : this.deviceLocalSlabsByType.values()) {
+                allocator.delete();
+            }
+            this.deviceLocalSlabsByType.clear();
+            this.presentEngine = null;
             vkDestroyDevice(this.device, null);
             this.device = null;
         }
@@ -2838,6 +2861,10 @@ public final class VulkanContext {
         matchPhysicalDevice(openGl);
         createLogicalDevice();
         createQueueAndCommandPool();
+        // The frame timeline exists from the first submission on: every path that submits signals it, and the
+        // synchronous submit paths wait on its values instead of on fences of their own.
+        this.frameTimeline = new FrameTimeline(this.device);
+        this.presentEngine = new PresentEngine(this.queue);
         createPipelineCache();
         reportDeviceContractIfReady();
         this.memoryProperties = VkPhysicalDeviceMemoryProperties.calloc();
@@ -3089,6 +3116,12 @@ public final class VulkanContext {
     private boolean drawIndirectFirstInstanceSupported;
     /** Whether {@code VkPhysicalDeviceVulkan12Features.drawIndirectCount} was reported and enabled (E10). */
     private boolean drawIndirectCountSupported;
+    /**
+     * Whether {@code VkPhysicalDeviceVulkan12Features.timelineSemaphore} was reported and enabled. Unlike the
+     * optional features around it this one is required: the new architecture synchronizes exclusively through
+     * the one timeline semaphore, and device creation refuses a device that cannot offer it.
+     */
+    private boolean timelineSemaphoreSupported;
     /** VkPhysicalDeviceLimits.maxDrawIndirectCount, a limit rather than a feature (0 when unreported). */
     private int maxDrawIndirectCount;
     /**
@@ -3581,8 +3614,13 @@ public final class VulkanContext {
             // device. The block follows the Vulkan11 draw-parameters shape above exactly: asked only when the
             // device's API version can answer, enabled only when reported (enabling an unreported feature fails
             // vkCreateDevice), and appended to the end of the chain rather than replacing its head.
+            // The new architecture's timeline semaphore is queried in the same single pass and carried by the
+            // same struct: a pNext chain may not hold two VkPhysicalDeviceVulkan12Features, so the two features
+            // share one, each field set to exactly what the device reported. timelineSemaphore differs from
+            // drawIndirectCount in one respect: it is required, not reported-and-optional, because every
+            // submission path synchronizes through the frame timeline now - a device without it is refused
+            // here, by name, rather than discovered later by a failing renderer.
             boolean askIndirectCount = deviceProperties.apiVersion() >= org.lwjgl.vulkan.VK12.VK_API_VERSION_1_2;
-            org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features indirectCountFeatures = null;
             if (askIndirectCount) {
                 org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features supported12 =
                         org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features.calloc(stack).sType$Default();
@@ -3590,13 +3628,23 @@ public final class VulkanContext {
                         .calloc(stack).sType$Default().pNext(supported12.address());
                 org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2(this.physicalDevice, features12);
                 this.drawIndirectCountSupported = supported12.drawIndirectCount();
-                if (this.drawIndirectCountSupported) {
-                    indirectCountFeatures = org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features.calloc(stack)
-                            .sType$Default().drawIndirectCount(true);
+                this.timelineSemaphoreSupported = supported12.timelineSemaphore();
+                if (!this.timelineSemaphoreSupported) {
+                    throw new IllegalStateException("The matched Vulkan device " + this.deviceName
+                            + " does not report the timelineSemaphore feature (Vulkan 1.2 core). The new"
+                            + " architecture synchronizes exclusively through one timeline semaphore, so this"
+                            + " device cannot run the renderer.");
+                }
+                if (this.drawIndirectCountSupported || this.timelineSemaphoreSupported) {
+                    org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features vulkan12Features =
+                            org.lwjgl.vulkan.VkPhysicalDeviceVulkan12Features.calloc(stack)
+                                    .sType$Default()
+                                    .drawIndirectCount(this.drawIndirectCountSupported)
+                                    .timelineSemaphore(this.timelineSemaphoreSupported);
                     if (createInfo.pNext() != 0L) {
-                        org.lwjgl.system.MemoryUtil.memPutLong(indirectCountFeatures.address() + 8L, createInfo.pNext());
+                        org.lwjgl.system.MemoryUtil.memPutLong(vulkan12Features.address() + 8L, createInfo.pNext());
                     }
-                    createInfo.pNext(indirectCountFeatures.address());
+                    createInfo.pNext(vulkan12Features.address());
                 }
             }
             // The mesh-shader enable (item 652, stage 0), appended to the end of the chain in the
@@ -3668,6 +3716,7 @@ public final class VulkanContext {
                                 + this.storageImageWriteWithoutFormatSupported
                                 + " pipelineStatisticsQuery=" + this.pipelineStatisticsQuerySupported
                                 + " drawIndirectCount=" + this.drawIndirectCountSupported
+                                + " timelineSemaphore=" + this.timelineSemaphoreSupported
                                 + " shaderDrawParameters=" + this.shaderDrawParametersSupported
                                 + " dynamicRendering=" + this.dynamicRenderingSupported
                                 + " textureArray=" + this.textureArraySupported
@@ -3678,6 +3727,7 @@ public final class VulkanContext {
             System.out.println("[Celtium] CELTIUM_DEVICE_FEATURES shaderDrawParameters="
                     + this.shaderDrawParametersSupported + " multiDrawIndirect=" + this.multiDrawIndirectSupported
                     + " drawIndirectCount=" + this.drawIndirectCountSupported
+                    + " timelineSemaphore=" + this.timelineSemaphoreSupported
                     + " maxDrawIndirectCount=" + this.maxDrawIndirectCount
                     + " textureArray=" + this.textureArraySupported
                     + " pipelineStatisticsQuery=" + this.pipelineStatisticsQuerySupported
@@ -4230,6 +4280,8 @@ public final class VulkanContext {
      * where no recording can name them any more.
      */
     private final java.util.ArrayList<long[]> retiredBuffers = new java.util.ArrayList<long[]>();
+    /** Retired slab-backed buffers: {handle, SlabAllocation}, drained by {@link #celtium$destroyRetiredBuffers()}. */
+    private final java.util.ArrayList<Object[]> retiredSlabBuffers = new java.util.ArrayList<Object[]>();
     private int retiredBuffersDestroyed;
     private int retiredBuffersOutstanding;
 
@@ -4438,7 +4490,8 @@ public final class VulkanContext {
      * @return how many buffers were freed
      */
     public int celtium$destroyRetiredBuffers() {
-        if (this.retiredBuffers.isEmpty()) {
+        celtium$collectSlabReleases();
+        if (this.retiredBuffers.isEmpty() && this.retiredSlabBuffers.isEmpty()) {
             return 0;
         }
         VkDevice device = this.device;
@@ -4454,6 +4507,22 @@ public final class VulkanContext {
             freed++;
         }
         this.retiredBuffers.clear();
+        // The slab form: destroy the buffer, then hand the sub-allocation back to its pool as a deferred release
+        // keyed on the newest timeline value handed out. This drain point is where nothing can be recording, and
+        // the release itself only becomes reusable once the timeline confirms every submission up to that value -
+        // the same completion fact the raw path's vkFreeMemory here relied on, stated through the timeline instead.
+        for (int i = 0; i < this.retiredSlabBuffers.size(); i++) {
+            Object[] entry = this.retiredSlabBuffers.get(i);
+            long handle = ((Long) entry[0]).longValue();
+            SlabAllocator.SlabAllocation allocation = (SlabAllocator.SlabAllocation) entry[1];
+            if (device != null) {
+                vkDestroyBuffer(device, handle, null);
+            }
+            allocation.owner().release(allocation,
+                    this.frameTimeline == null ? 0L : this.frameTimeline.lastAllocatedValue());
+            freed++;
+        }
+        this.retiredSlabBuffers.clear();
         this.retiredBuffersDestroyed += freed;
         this.retiredBuffersOutstanding = 0;
         return freed;
