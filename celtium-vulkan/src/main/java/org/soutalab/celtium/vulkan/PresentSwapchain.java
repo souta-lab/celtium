@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.harness.HarnessConfig;
+
 /**
  * The present and swapchain cluster, extracted from {@code VulkanTerrainGpuBackend} (refactoring plan R10,
  * seam 4 of item 704: the head and tail partial cluster of the frame-target region, about 870 lines).
@@ -25,6 +27,71 @@ final class PresentSwapchain {
     PresentSwapchain(VulkanTerrainGpuBackend backend) {
         this.backend = backend;
     }
+
+    // The present chain's own switches and dump cadences, resolved once at class init. They lived on the
+    // backend until Stage 6 ④a moved them here, to the only class that reads them (the backend's one other
+    // read, of FRAME_DUMP_DIR for the loading-progress dump, names this class). DISTRIBUTION_SAMPLES and
+    // the SKY_FRAME_PROBE pair deliberately did not move: both gate sites outside this class as well (the
+    // backend's submit-to-fence ring, and the sky probe's boundary/draw sites), so their home is not here.
+
+    /** {@code -Dceltium.vulkan.skipPresent=true}: record and submit, never present (isolation for the Wayland fault). */
+    static final boolean SKIP_PRESENT = Boolean.getBoolean("celtium.vulkan.skipPresent");
+    /** {@code -Dceltium.vulkan.pumpBeforePresent=true}: service SDL's queue immediately before the present. */
+    static final boolean PUMP_BEFORE_PRESENT = Boolean.getBoolean("celtium.vulkan.pumpBeforePresent");
+    /**
+     * Whether the present drains the bound target's pending immediate work before it blits, matching GL's
+     * swap-point ordering. {@code -Dceltium.vulkan.presentFlushPending=false} keeps the old defer-to-the-next-
+     * boundary behaviour for comparison legs.
+     */
+    static final boolean PRESENT_FLUSH_PENDING =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFlushPending", "true"));
+    /**
+     * Guard for this class's present-time drain ordering, default ON since the B4
+     * harm proof (OVERHAUL-B4-HARM-2026-11-26: with the guard off, groups drained by
+     * {@code flushPendingBeforeGlDraw()} stay recorded in the open unified frame buffer, so they
+     * mechanically miss the present that drained them - one frame late on the composite path, and
+     * on the direct-present path potentially drawn into an already-presented, already-released
+     * borrowed image). When enabled, {@code celtium$finishFrameBuffer()} is called after
+     * {@code flushPendingBeforeGlDraw()} inside {@code celtium$presentFrameBody()} so any groups
+     * drained there are ended and queued before {@code lastFrameReachedQueue} and
+     * {@code swapchain.presentImage()}. Opt out with
+     * {@code -Dceltium.vulkan.presentDrainFinishGuard=false} (comparison legs only). The flag
+     * itself is retired by the R-07 present-submit slice, which makes the post-drain finish
+     * unconditional.
+     */
+    static final boolean PRESENT_DRAIN_FINISH_GUARD =
+            Boolean.parseBoolean(System.getProperty("celtium.vulkan.presentDrainFinishGuard", "true"));
+    /**
+     * Whether the first presents report the frame image's and the pair's centre patch.
+     * {@code -Dceltium.vulkan.presentPatch=true}; the present is the only point that says what the frame serves.
+     * <p>
+     * Both the count and the first present it reports are properties, because the phase is what the line means and the
+     * default phase was the wrong one: with the count fixed at 8 every band this probe has ever printed came from
+     * {@code frame=0} - the loading screen - where the frame image, the chain pair and the default pair all hold the
+     * same full-screen composite, so "the hotbar band is the world's colour" was measured on a frame that had no hotbar
+     * in any image. {@code -Dceltium.vulkan.presentPatchMinPresent} aims it at the world's own presents.
+     */
+    static final boolean PRESENT_PATCH_TRACE = Boolean.getBoolean("celtium.vulkan.presentPatch");
+    /** How many presents report the patch line; {@code -Dceltium.vulkan.presentPatchLines}. */
+    static final int PRESENT_PATCH_LINES =
+            Integer.getInteger("celtium.vulkan.presentPatchLines", 8).intValue();
+    /** The first present (1-based) that reports it; {@code -Dceltium.vulkan.presentPatchMinPresent}. */
+    static final int PRESENT_PATCH_MIN_PRESENT =
+            Integer.getInteger("celtium.vulkan.presentPatchMinPresent", 1).intValue();
+    static final String FRAME_DUMP_DIR = HarnessConfig.path("frameDumpDir");
+    static final int FRAME_DUMP_EVERY = HarnessConfig.integer("frameDumpEvery", 60);
+    static final int FRAME_DUMP_COUNT = HarnessConfig.integer("frameDumpCount", 0);
+    static final int PRESENTED_DUMP_EVERY =
+            HarnessConfig.integer("presentedDumpEvery", 40);
+    /**
+     * {@code -Dceltium.debug.dumpPairsAtPresent=N}: at present N, write every chain pair (each mod or vanilla
+     * framebuffer's own image) at its own extent into the game directory, to see where a framebuffer chain loses
+     * its picture. Off (0) by default.
+     */
+    static final int DUMP_PAIRS_AT_PRESENT = Integer.getInteger("celtium.debug.dumpPairsAtPresent", 0).intValue();
+    /** {@code -Dceltium.vulkan.debugFullscreenAfterFrames=N}: ask SDL for fullscreen on the Nth present (debug only). */
+    static final int DEBUG_FULLSCREEN_AFTER_FRAMES =
+            Integer.getInteger("celtium.vulkan.debugFullscreenAfterFrames", -1);
 
     /**
      * Swap-point wall-clock accounting, in nanos: {@code celtium$presentFrame} runs between updateRenderer's end and
@@ -540,10 +607,10 @@ final class PresentSwapchain {
     }
 
     private void celtium$debugMaybeGoFullscreen() {
-        if (VulkanTerrainGpuBackend.DEBUG_FULLSCREEN_AFTER_FRAMES < 0 || backend.debugFullscreenAsked) {
+        if (DEBUG_FULLSCREEN_AFTER_FRAMES < 0 || backend.debugFullscreenAsked) {
             return;
         }
-        if (++backend.debugFramesPresented < VulkanTerrainGpuBackend.DEBUG_FULLSCREEN_AFTER_FRAMES) {
+        if (++backend.debugFramesPresented < DEBUG_FULLSCREEN_AFTER_FRAMES) {
             return;
         }
         backend.debugFullscreenAsked = true;
@@ -565,10 +632,10 @@ final class PresentSwapchain {
         // Isolation switch for the Wayland fault: with the swapchain out of the picture the frame is recorded and
         // submitted but never presented, which separates "the swapchain's own wl_display use is the fault" from
         // "something else in the present path is". Off by default; a leg that sets it draws nothing to the window.
-        if (VulkanTerrainGpuBackend.SKIP_PRESENT) {
+        if (SKIP_PRESENT) {
             return true;
         }
-        if (VulkanTerrainGpuBackend.PUMP_BEFORE_PRESENT) {
+        if (PUMP_BEFORE_PRESENT) {
             // Serialise the two users of the wayland display: SDL services its queue here, on this thread, immediately
             // before the swapchain's own dispatch runs. The fault measured on Wayland happens inside SDL's dispatch
             // reached from SDL itself, and it disappears when the present is skipped, so the experiment is whether
@@ -646,7 +713,7 @@ final class PresentSwapchain {
         // the presented loading frames stayed one update behind for the whole phase. Drawing the bound target's
         // pending work here restores the swap-point ordering; groups for other targets stay queued for their own
         // pass, exactly as at a bind boundary, and an empty queue costs one list check.
-        if (VulkanTerrainGpuBackend.PRESENT_FLUSH_PENDING && !backend.immediateWindowBusy) {
+        if (PRESENT_FLUSH_PENDING && !backend.immediateWindowBusy) {
             boolean frameBufferOpenBeforeDrain = backend.frameBufferOpen;
             try {
                 FramePassTimings.begin("flush");
@@ -657,7 +724,7 @@ final class PresentSwapchain {
                 } finally {
                     FramePassTimings.end("flush");
                 }
-                if (VulkanTerrainGpuBackend.PRESENT_DRAIN_FINISH_GUARD) {
+                if (PRESENT_DRAIN_FINISH_GUARD) {
                     // If the present-time drain opened and recorded into the unified frame buffer,
                     // close and queue it before the lastFrameReachedQueue gate and presentDirect().
                     backend.celtium$finishFrameBuffer();
@@ -727,8 +794,8 @@ final class PresentSwapchain {
             // flat white field while the pair holds the game's picture, and the question is whether that is already
             // true when the frame is presented or whether the image is whitened after the composite. The patch is the
             // logo's own region, so a flat value is "no picture" and a dark one is "picture".
-            if (VulkanTerrainGpuBackend.PRESENT_PATCH_TRACE && backend.presentPatchLogs < VulkanTerrainGpuBackend.PRESENT_PATCH_LINES
-                    && backend.framePresentedFromVulkan + 1 >= VulkanTerrainGpuBackend.PRESENT_PATCH_MIN_PRESENT
+            if (PRESENT_PATCH_TRACE && backend.presentPatchLogs < PRESENT_PATCH_LINES
+                    && backend.framePresentedFromVulkan + 1 >= PRESENT_PATCH_MIN_PRESENT
                     && backend.targetWidth > 512 && backend.targetHeight > 512) {
                 backend.presentPatchLogs++;
                 String presentLine = "CELTIUM_PRESENT_PATCH present=" + (backend.framePresentedFromVulkan + 1)
@@ -853,25 +920,25 @@ final class PresentSwapchain {
      * screen, the world, or a frame that never got drawn.
      */
     private void dumpFrameIfRequested(int presented) {
-        if (VulkanTerrainGpuBackend.DUMP_PAIRS_AT_PRESENT > 0 && presented == VulkanTerrainGpuBackend.DUMP_PAIRS_AT_PRESENT) {
+        if (DUMP_PAIRS_AT_PRESENT > 0 && presented == DUMP_PAIRS_AT_PRESENT) {
             backend.postChainBridge.dumpChainPairs("present" + presented);
         }
         // Keep the fixture's own dump fresh as well. It asks for it once, and the write happens at the next present;
         // when the run ends before that present - which is what a capture followed by a shutdown does - the file on
         // disk is still the early one, and the picture assertions measure a frame from before the world existed.
         // Re-asking on a cadence bounds the age instead of depending on where the run happens to stop.
-        int dumpEvery = VulkanTerrainGpuBackend.PRESENTED_DUMP_EVERY;
+        int dumpEvery = PRESENTED_DUMP_EVERY;
         if (backend.presentedDumpPath != null && dumpEvery > 0 && presented % dumpEvery == 0) {
             backend.swapchain.requestPresentedImageDump(backend.presentedDumpPath);
         }
-        String directory = VulkanTerrainGpuBackend.FRAME_DUMP_DIR;
+        String directory = FRAME_DUMP_DIR;
         if (directory == null) {
             return;
         }
-        if (VulkanTerrainGpuBackend.FRAME_DUMP_EVERY <= 0 || presented % VulkanTerrainGpuBackend.FRAME_DUMP_EVERY != 0) {
+        if (FRAME_DUMP_EVERY <= 0 || presented % FRAME_DUMP_EVERY != 0) {
             return;
         }
-        if (backend.frameDumpsWritten >= VulkanTerrainGpuBackend.FRAME_DUMP_COUNT) {
+        if (backend.frameDumpsWritten >= FRAME_DUMP_COUNT) {
             return;
         }
         backend.frameDumpsWritten++;

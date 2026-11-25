@@ -1292,7 +1292,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             bars[i] = new NativeLoadingScreen.Bar(titles[i], messages[i], steps[i], totals[i]);
         }
         VulkanGlTexture image = this.loadingScreen.update(size[0], size[1], style, logo, forge, font, bars, angle);
-        String directory = FRAME_DUMP_DIR;
+        String directory = PresentSwapchain.FRAME_DUMP_DIR;
         if (!this.loadingProgressDumped && directory != null
                 && DUMP_LOADING_PROGRESS && steps.length > 0 && steps[0] > 0) {
             this.swapchain.requestPresentedImageDump(java.nio.file.Paths.get(directory, "forge-loading-progress.png"));
@@ -2212,7 +2212,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * Presents where the present-time drain opened the unified frame buffer and the buffer was
      * still open at the {@code lastFrameReachedQueue} gate - the B4 exposure census: those drained
      * groups were not queued, so they missed that present. Structurally zero while
-     * {@link #PRESENT_DRAIN_FINISH_GUARD} is on; a nonzero count names a guard-off run (or a
+     * {@link PresentSwapchain#PRESENT_DRAIN_FINISH_GUARD} is on; a nonzero count names a guard-off run (or a
      * wiring regression) rather than a silent lag.
      */
     long presentDrainUnfinished;
@@ -3494,15 +3494,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private int drawStateCensusFull;
     /** The indirect/record run path, split out of this class (2026-11-06); see IndirectImmediateRuns. */
     final IndirectImmediateRuns indirectRuns = new IndirectImmediateRuns(this);
-    /** {@code -Dceltium.vulkan.pumpBeforePresent=true}: service SDL's queue immediately before the present. */
-    static final boolean PUMP_BEFORE_PRESENT = Boolean.getBoolean("celtium.vulkan.pumpBeforePresent");
-    /** {@code -Dceltium.vulkan.skipPresent=true}: record and submit, never present (isolation for the Wayland fault). */
-    static final boolean SKIP_PRESENT = Boolean.getBoolean("celtium.vulkan.skipPresent");
     /** Frame-target recreations refused because a recording was open; each is retried on the next recording. */
     long frameTargetRecreationDeferred;
-    /** {@code -Dceltium.vulkan.debugFullscreenAfterFrames=N}: ask SDL for fullscreen on the Nth present (debug only). */
-    static final int DEBUG_FULLSCREEN_AFTER_FRAMES =
-            Integer.getInteger("celtium.vulkan.debugFullscreenAfterFrames", -1);
     int debugFramesPresented;
     boolean debugFullscreenAsked;
     /**
@@ -3548,7 +3541,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     static final boolean FRAME_STATS = Boolean.getBoolean("celtium.vulkan.frameStats");
     /** Read once: these are consulted on frame and loading paths, not at startup only. */
     private static final boolean HANDOFF_TIMINGS = Boolean.getBoolean("celtium.vulkan.handoffTimings");
-    static final String FRAME_DUMP_DIR = HarnessConfig.path("frameDumpDir");
     private static final boolean DUMP_LOADING_PROGRESS =
             HarnessConfig.bool("dumpLoadingProgress", false);
     /**
@@ -3562,8 +3554,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * {@code celtium$mirrorProbe} dumps.
      */
     private static final boolean MIRROR_DUMP_ON = VulkanGlTexture.mirrorDumpConfigured();
-    static final int FRAME_DUMP_EVERY = HarnessConfig.integer("frameDumpEvery", 60);
-    static final int FRAME_DUMP_COUNT = HarnessConfig.integer("frameDumpCount", 0);
     private static final boolean SWAPCHAIN_PROBE = Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY);
     int frameIntervalCount;
 
@@ -4216,15 +4206,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private static final boolean REFUSE_TERRAIN_PASS = Boolean.getBoolean("celtium.vulkan.refuseTerrainPass");
     private static final boolean GAME_CLEAR_LATCH =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.gameClearLatch", "true"));
-    static final int PRESENTED_DUMP_EVERY =
-            HarnessConfig.integer("presentedDumpEvery", 40);
     static final boolean CHAIN_FRAME_DUMP = Boolean.getBoolean("celtium.vulkan.chainFrameDump");
-    /**
-     * {@code -Dceltium.debug.dumpPairsAtPresent=N}: at present N, write every chain pair (each mod or vanilla
-     * framebuffer's own image) at its own extent into the game directory, to see where a framebuffer chain loses
-     * its picture. Off (0) by default.
-     */
-    static final int DUMP_PAIRS_AT_PRESENT = Integer.getInteger("celtium.debug.dumpPairsAtPresent", 0).intValue();
     static final int CHAIN_FRAME_DUMPS = Integer.getInteger("celtium.vulkan.chainFrameDumps", 1).intValue();
 
     /** {@return a few numbers that tell a perspective projection from an orthographic one}. */
@@ -12860,23 +12842,6 @@ this.frameBufferOpen = false;
     private static final boolean PRESENT_UNBIND_FLUSH_GUARD =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentUnbindFlushGuard", "true"));
 
-    /**
-     * Guard for {@link PresentSwapchain}'s present-time drain ordering, default ON since the B4
-     * harm proof (OVERHAUL-B4-HARM-2026-11-26: with the guard off, groups drained by
-     * {@code flushPendingBeforeGlDraw()} stay recorded in the open unified frame buffer, so they
-     * mechanically miss the present that drained them - one frame late on the composite path, and
-     * on the direct-present path potentially drawn into an already-presented, already-released
-     * borrowed image). When enabled, {@code celtium$finishFrameBuffer()} is called after
-     * {@code flushPendingBeforeGlDraw()} inside {@code celtium$presentFrameBody()} so any groups
-     * drained there are ended and queued before {@code lastFrameReachedQueue} and
-     * {@code swapchain.presentImage()}. Opt out with
-     * {@code -Dceltium.vulkan.presentDrainFinishGuard=false} (comparison legs only). The flag
-     * itself is retired by the R-07 present-submit slice, which makes the post-drain finish
-     * unconditional.
-     */
-    static final boolean PRESENT_DRAIN_FINISH_GUARD =
-            Boolean.parseBoolean(System.getProperty("celtium.vulkan.presentDrainFinishGuard", "true"));
-
     /** Set across {@code bindFramebuffer(0L, false)} while leaving the main framebuffer. */
     private boolean pendingGlDrawLeavingMainToDefault;
 
@@ -16997,30 +16962,6 @@ this.frameBufferOpen = false;
      */
     private static final boolean REBUILD_DESCRIPTORS_AT_DRAW =
             Boolean.getBoolean("celtium.vulkan.rebuildDescriptors");
-    /**
-     * Whether the first presents report the frame image's and the pair's centre patch.
-     * {@code -Dceltium.vulkan.presentPatch=true}; the present is the only point that says what the frame serves.
-     * <p>
-     * Both the count and the first present it reports are properties, because the phase is what the line means and the
-     * default phase was the wrong one: with the count fixed at 8 every band this probe has ever printed came from
-     * {@code frame=0} - the loading screen - where the frame image, the chain pair and the default pair all hold the
-     * same full-screen composite, so "the hotbar band is the world's colour" was measured on a frame that had no hotbar
-     * in any image. {@code -Dceltium.vulkan.presentPatchMinPresent} aims it at the world's own presents.
-     */
-    static final boolean PRESENT_PATCH_TRACE = Boolean.getBoolean("celtium.vulkan.presentPatch");
-    /**
-     * Whether the present drains the bound target's pending immediate work before it blits, matching GL's
-     * swap-point ordering. {@code -Dceltium.vulkan.presentFlushPending=false} keeps the old defer-to-the-next-
-     * boundary behaviour for comparison legs.
-     */
-    static final boolean PRESENT_FLUSH_PENDING =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFlushPending", "true"));
-    /** How many presents report the patch line; {@code -Dceltium.vulkan.presentPatchLines}. */
-    static final int PRESENT_PATCH_LINES =
-            Integer.getInteger("celtium.vulkan.presentPatchLines", 8).intValue();
-    /** The first present (1-based) that reports it; {@code -Dceltium.vulkan.presentPatchMinPresent}. */
-    static final int PRESENT_PATCH_MIN_PRESENT =
-            Integer.getInteger("celtium.vulkan.presentPatchMinPresent", 1).intValue();
     int presentPatchLogs;
     /**
      * Whether the chain pair is cleared to magenta at the head of the frame's own window, once per frame.

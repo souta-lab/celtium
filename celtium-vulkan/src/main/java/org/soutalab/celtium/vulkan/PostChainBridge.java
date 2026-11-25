@@ -1481,7 +1481,7 @@ b.frameBufferOpen = false;
         }
     }
 
-    /** Writes every chain pair at its own extent; see {@code VulkanTerrainGpuBackend.DUMP_PAIRS_AT_PRESENT}. */
+    /** Writes every chain pair at its own extent; see {@code PresentSwapchain.DUMP_PAIRS_AT_PRESENT}. */
     void dumpChainPairs(String stage) {
         GllessFrameTarget glless = b.offTargetTarget();
         if (glless == null) {
