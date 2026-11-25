@@ -984,8 +984,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * the rule.
      */
     public boolean celtium$unifiedFrameBuffer() {
-        return !this.gpuStalled
-                && (this.frameTarget == null || !this.frameTarget.needsFrameSemaphores());
+        return !this.gpuStalled;
     }
 
     /** [accept, record, submit, fence-complete, pending, invalid, off-accept, off-record, off-complete]. */
@@ -1883,13 +1882,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         }
 
         try {
-            if (!progress.canCloseTarget(this.frameTarget.needsFrameSemaphores())) {
-                // An external owner requires its semaphore packet to have been queued. A native same-queue target
-                // does not: its accepted recording intentionally stays open until the real frame boundary. Do not
-                // pretend RECORDED means QUEUED, or count every native terrain pass as a failed GL handoff.
+            if (!progress.canCloseTarget()) {
+                // Only a skipped submission fails to close: an accepted recording intentionally stays open
+                // until the real frame boundary, and a queued one has already handed over. Do not count every
+                // native terrain pass as a failed handoff.
                 this.terrainStatistics.notePassErrors();
-                record("terrain target cannot close: progress=" + progress
-                        + " externalSemaphores=" + this.frameTarget.needsFrameSemaphores());
+                record("terrain target cannot close: progress=" + progress);
                 return;
             }
             long handoffStart = System.nanoTime();
@@ -3916,7 +3914,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                         celtium$frameSerial(), bindCache);
                 this.frameTarget.recordReleaseBarriers(this.commandBuffer);
                 FrameCoordinator.Submission progress = this.frameCoordinator.submitCommands();
-                if (progress.canCloseTarget(this.frameTarget.needsFrameSemaphores())) {
+                if (progress.canCloseTarget()) {
                     this.frameTarget.endFrame();
                 }
             }
@@ -12689,7 +12687,7 @@ this.frameBufferOpen = false;
         celtium$reportFlushReasons(false);
         celtium$reportWindowSplitIfDue();
         DrawCounters.reportIfDue(this.frameId);
-        this.frameCoordinator.celtium$finishFrameBuffer(true);
+        this.frameCoordinator.celtium$finishFrameBuffer();
     }
 
     /**
@@ -12771,11 +12769,7 @@ this.frameBufferOpen = false;
             // Batched frame submissions reach the queue here at the latest: the frame's recordings are queued in
             // order, and the boundary is the last ordering point before the present's own submit (which also
             // flushes). A no-op when nothing is batched.
-            // With the async presenter the batch stays pending for the present, which hands it to the worker together
-            // with the blit; presentFrame flushes it on the game thread if no present took it.
-            if (!VulkanContext.ASYNC_PRESENT) {
-                this.context.celtium$flushBatchedSubmits();
-            }
+            this.context.celtium$flushBatchedSubmits();
             // Deferred pipeline/pool teardowns run here rather than in a mid-frame wait: this is the point where the
             // frame's recording has been ended and submitted, so nothing can still name the old pipeline, its pools
             // or its layouts. Running them from waitForIdle measured worse (leg uniE8: 117 VUIDs of VkPipeline
@@ -20890,9 +20884,9 @@ this.frameBufferOpen = false;
                     // Outside a render pass by construction: vkCmdClearColorImage/vkCmdClearDepthStencilImage plus
                     // the pair's own acquire/clear-attachment barriers.
                     if (pairOwner.applyGameClearToChainPair(identity, this.commandBuffer, mask, rgba, depth)) {
-                        // No frame semaphores: this is a mid-frame ordering point, so the acquire/done pair stays
-                        // for the frame boundary exactly as submitOpenFrameBuffer's rule says.
-                        this.frameCoordinator.submitCommands(false);
+                        // A mid-frame ordering point: the recording is accepted and stays open until the
+                        // frame boundary submits it, exactly as submitOpenFrameBuffer's rule says.
+                        this.frameCoordinator.submitCommands();
                         this.gameClearsSubmittedStandalone++;
                         if (GlsmFrameState.ENABLED) {
                             this.glsmFrameState.clearState()
@@ -23106,9 +23100,9 @@ this.frameBufferOpen = false;
         // The pass area is the window's until a pass says otherwise; see the field's own note.
         this.passAreaWidth = this.targetWidth;
         this.passAreaHeight = this.targetHeight;
-        // Open the unified frame buffer for this frame when the target carries no semaphore contract - a target that
-        // needs the wait/signal pair keeps the per-recording submits the contract was built on.
-        this.frameBufferOpen = this.frameTarget == null || !this.frameTarget.needsFrameSemaphores();
+        // Open the unified frame buffer for this frame: recordings coalesce into it unconditionally - no
+        // target carries a semaphore contract any more (Stage 2 submit unification).
+        this.frameBufferOpen = true;
     }
 
     /**
@@ -24703,7 +24697,6 @@ this.frameBufferOpen = false;
             record("not releasing resources after a stall: " + reason);
             return false;
         }
-        this.context.celtium$awaitPresenter();
         long start = System.nanoTime();
         int result = org.lwjgl.vulkan.VK10.vkDeviceWaitIdle(this.context.device());
         synchronized (this.deviceWaitLock) {
@@ -24803,7 +24796,6 @@ this.frameBufferOpen = false;
             // The slot's submission is still queued in the batched list: its fence arms only when that list submits,
             // so the flush has to happen before the wait or the wait blocks on a fence nothing armed yet.
             this.context.celtium$flushBatchedSubmits();
-            this.context.celtium$fenceOnPresenter(deferredFence, true);
             // Stage 2: the batch this slot rode in signalled the frame timeline as it submitted, so the wait
             // can be a single counter wait on the value the batch was handed - the frame's one permitted
             // blocking wait - instead of a fence wait. A timeout falls through to the fence wait below rather
@@ -24923,9 +24915,6 @@ this.frameBufferOpen = false;
             if (deferredFence != 0) {
                 // Batched slot: its confirm lives in the reclaim callback, so the poll only triggers the poll -
                 // an armed-and-signalled batch fence reclaims the entry, which runs the slot confirmation exactly once.
-                if (this.context.celtium$fenceOnPresenter(deferredFence, false)) {
-                    continue;
-                }
                 int deferredStatus = vkGetFenceStatus(this.context.device(), deferredFence);
                 if (deferredStatus == org.lwjgl.vulkan.VK10.VK_SUCCESS
                         || deferredStatus == org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST) {
@@ -25120,7 +25109,7 @@ this.frameBufferOpen = false;
             vkCmdEndRenderPass(this.commandBuffer);
             this.commandState.endPass();
         }
-        this.frameCoordinator.celtium$finishFrameBuffer(false);
+        this.frameCoordinator.celtium$finishFrameBuffer();
         this.context.celtium$flushBatchedSubmits();
     }
 

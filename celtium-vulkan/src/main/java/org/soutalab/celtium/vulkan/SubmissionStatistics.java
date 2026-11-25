@@ -27,7 +27,6 @@ public final class SubmissionStatistics {
     private long frameFenceWaitWorstMillis;
     private long frameFenceWaitCount;
     private long retiredFlushes;
-    private int signalOnlySubmissions;
     private int presentModeRebuilds;
     /** Swapchains dropped because the swapchain itself asked for a rebuild (out-of-date verdicts, retired acquisitions). */
     private int outOfDateRebuilds;
@@ -257,26 +256,6 @@ public final class SubmissionStatistics {
     /** {@return retiredFlushes}. */
     long retiredFlushes() {
         return this.retiredFlushes;
-    }
-
-    /** Records one signalOnlySubmissions. */
-    void noteSignalOnlySubmissions() {
-        this.signalOnlySubmissions++;
-    }
-
-    /** Sets signalOnlySubmissions. */
-    void setSignalOnlySubmissions(int value) {
-        this.signalOnlySubmissions = value;
-    }
-
-    /** Adds to signalOnlySubmissions. */
-    void addSignalOnlySubmissions(int value) {
-        this.signalOnlySubmissions += value;
-    }
-
-    /** {@return signalOnlySubmissions}. */
-    int signalOnlySubmissions() {
-        return this.signalOnlySubmissions;
     }
 
     /** Records one presentModeRebuilds. */

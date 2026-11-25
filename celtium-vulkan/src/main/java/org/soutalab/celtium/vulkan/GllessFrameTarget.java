@@ -42,14 +42,11 @@ import static org.lwjgl.vulkan.VK10.vkCmdCopyImage;
 import static org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier;
 import static org.lwjgl.vulkan.VK10.vkCreateImage;
 import static org.lwjgl.vulkan.VK10.vkCreateImageView;
-import static org.lwjgl.vulkan.VK10.vkCreateSemaphore;
 import static org.lwjgl.vulkan.VK10.vkDestroyImage;
 import static org.lwjgl.vulkan.VK10.vkDestroyImageView;
-import static org.lwjgl.vulkan.VK10.vkDestroySemaphore;
 import static org.lwjgl.vulkan.VK10.vkFreeMemory;
 import static org.lwjgl.vulkan.VK10.vkGetImageMemoryRequirements;
 import static org.lwjgl.vulkan.VK10.vkGetPhysicalDeviceMemoryProperties;
-import static org.lwjgl.vulkan.VK10.vkQueueSubmit;
 
 import java.nio.LongBuffer;
 import org.lwjgl.system.MemoryStack;
@@ -68,19 +65,16 @@ import org.lwjgl.vulkan.VkMemoryBarrier;
 import org.lwjgl.vulkan.VkMemoryRequirements;
 import org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties;
 import org.lwjgl.vulkan.VkQueue;
-import org.lwjgl.vulkan.VkSemaphoreCreateInfo;
-import org.lwjgl.vulkan.VkSubmitInfo;
 
 /**
  * The frame image when no OpenGL context exists: the colour and depth images are created, not imported, and there
  * is no GL side to hand them to.
  * <p>
- * The synchronization contract stays the one {@link FrameImageTarget} declares, so the backend's submission logic
- * does not branch on which target it holds: {@link #beginFrame()} signals {@link #waitSemaphore()} with a
- * signal-only submission (a real binary semaphore the frame's first submit waits on, exactly as the GL signal
- * would), and {@link #endFrame()} consumes {@link #doneSemaphore()} with a wait-only submission, so the pair
- * cycles every frame the way GL's wait did. Both are cheap queue packets - the alternative, returning null
- * semaphores, would make every submission path grow a branch.
+ * There is no semaphore pair to cycle (Stage 2 submit unification): the wait/done binary semaphores this
+ * target used to signal at {@link #beginFrame()} and consume at {@link #endFrame()} synchronized the renderer
+ * with itself on one queue, where submission order already gives the same ordering, so the pair - and the
+ * signal-only and wait-only queue packets that carried it - were removed. {@code beginFrame} and
+ * {@code endFrame} now only keep this class's own frame-open bookkeeping.
  * <p>
  * The images never leave our queue family: the acquire/release barriers still perform the layout transitions a
  * frame needs (GENERAL to the render layout and back) but carry no external-family transfer.
@@ -130,29 +124,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
     private long depthImage;
     private long depthMemory;
     private long depthView;
-    private long waitSemaphore;
-    /** Whether {@link #beginFrame}'s wait signal is outstanding (no submission has waited on it yet). */
-    private boolean waitSignalled;
-    private int abandonedWaitsConsumed;
-    private int abandonedWaitFailures;
-    private String lastAbandonedWaitFailure = "none";
-    private long doneSemaphore;
-    /** Whether the done semaphore has a signal in flight; cleared by the wait-only submission below. */
-    private boolean doneSemaphoreOutstanding;
-    /**
-     * Present-wait semaphores, one per swapchain image, grown and never destroyed.
-     * <p>
-     * The Khronos guide states the rule this exists for: a present wait semaphore must be sized by the swapchain
-     * image count and indexed by the acquired image, because the presentation engine knows only that index - a
-     * semaphore sized by the frame index can be signalled again by a new frame while the presentation engine is
-     * still waiting on it from a previous one. Growing rather than re-creating matters because the swapchain
-     * recreation guidance defers destroying an old swapchain's semaphores until the first present of the new one
-     * has completed; a grow-only array has nothing to defer.
-     */
-    private long[] presentDoneSemaphores;
-    /** The done semaphore a producer last signalled, which is what {@link #consumeDone()} must wait on. */
-    private long lastSignalledDone;
-
     /**
      * The default-framebuffer pair: created by {@link #ensureOffTarget(int, int)} on first use, replaced when the
      * requested size changes, and released by {@link #delete()} like every other resource here. It is never handed
@@ -343,7 +314,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
             target.depthImage = depth[0];
             target.depthMemory = depth[1];
             target.depthView = depth[2];
-            target.allocateSemaphores();
             return target;
         } catch (RuntimeException | LinkageError error) {
             target.delete();
@@ -425,21 +395,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
     }
 
-    private void allocateSemaphores() {
-        try (MemoryStack stack = stackPush()) {
-            LongBuffer handle = stack.mallocLong(1);
-            VkSemaphoreCreateInfo info = VkSemaphoreCreateInfo.calloc(stack).sType$Default();
-            if (vkCreateSemaphore(this.context.device(), info, null, handle) != VK_SUCCESS) {
-                throw new IllegalStateException("vkCreateSemaphore(glless wait) failed");
-            }
-            this.waitSemaphore = handle.get(0);
-            if (vkCreateSemaphore(this.context.device(), info, null, handle) != VK_SUCCESS) {
-                throw new IllegalStateException("vkCreateSemaphore(glless done) failed");
-            }
-            this.doneSemaphore = handle.get(0);
-        }
-    }
-
     private int findMemoryType(int typeBits) {
         try (MemoryStack stack = stackPush()) {
             VkPhysicalDeviceMemoryProperties properties = VkPhysicalDeviceMemoryProperties.calloc(stack);
@@ -466,67 +421,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
         }
     }
 
-    /**
-     * A submission that only signals {@link #waitSemaphore()}: under the shared target GL's signal does this; with
-     * no GL to signal, a queue packet does instead, and the frame's first submission can wait on the semaphore in
-     * exactly the way it already does.
-     */
-    private void signalWait() {
-        this.context.celtium$flushBatchedSubmits();
-        try (MemoryStack stack = stackPush()) {
-            LongBuffer signal = stack.mallocLong(1);
-            signal.put(0, this.waitSemaphore);
-            VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default().pSignalSemaphores(signal);
-            VulkanContext.queueSubmitCalls++;
-                        check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE),
-                    "vkQueueSubmit (glless beginFrame signal)");
-        }
-    }
-
-    /**
-     * {@return whether the bridge's done semaphore already has a signal in flight}.
-     * <p>
-     * A binary semaphore may only be signalled again after its previous signal has been waited on, and the rule is
-     * written in this file's own documentation. The present path can present twice before an {@code endFrame}
-     * consumed the first signal - a re-present or a second {@code beginFrame} - and the second signal is
-     * {@code VUID-vkQueueSubmit-pSignalSemaphores-00067}, measured as ten messages in one leg on the present path
-     * with the semaphore traced to this pair rather than the swapchain's. The present path asks this before handing
-     * the semaphore to the present submit, the same way {@code VulkanContext} gates its upload batch.
-     */
-    public boolean doneSemaphoreSignalOutstanding() {
-        return this.doneSemaphoreOutstanding;
-    }
-
-    /** Records that a submission has signalled the done semaphore and nothing has waited on it yet. */
-    public void noteDoneSemaphoreSignalled() {
-        this.doneSemaphoreOutstanding = true;
-    }
-
-    /**
-     * A submission that only waits on {@link #doneSemaphore()}: the frame's last submission signals it, so this
-     * consumes the signal and resets the semaphore for the next frame - the job GL's wait did under the shared
-     * target.
-     */
-    private void consumeDone() {
-        try (MemoryStack stack = stackPush()) {
-            LongBuffer wait = stack.mallocLong(1);
-            // The producer may have signalled a per-image present semaphore rather than the frame-close one, so the
-            // wait follows whichever was recorded: waiting on the frame-close semaphore when the present signalled
-            // the per-image one would block forever.
-            wait.put(0, this.lastSignalledDone != 0L ? this.lastSignalledDone : this.doneSemaphore);
-            // The wait below is what makes the next signal legal: this is the one place the bridge's done semaphore
-            // is consumed, so clearing the flag here keeps the invariant in the target that owns the semaphore.
-            this.doneSemaphoreOutstanding = false;
-            this.context.celtium$flushBatchedSubmits();
-            VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
-                    .waitSemaphoreCount(wait.remaining()).pWaitSemaphores(wait)
-                    .pWaitDstStageMask(stack.ints(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT));
-            VulkanContext.queueSubmitCalls++;
-                        check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE),
-                    "vkQueueSubmit (glless endFrame wait)");
-        }
-    }
-
     @Override
     public void beginFrame() {
         checkAlive();
@@ -534,96 +428,8 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.frameOpen = false;
             this.abandonedFrames++;
             this.lastAbandonReason = "beginFrame found the previous frame open";
-            // The previous frame was never ended, so its wait signal is still outstanding and this frame's signal would
-            // be the second on the same binary semaphore.
-            consumeOutstandingWait("beginFrame found the previous frame open");
         }
-        if (FRAME_SEMAPHORES) {
-            signalWait();
-            this.waitSignalled = true;
-        }
-        // Without the pair there is no signal to leave outstanding: the wait-signalled flag staying false is what
-        // keeps consumeOutstandingWait a no-op on abandoned frames, which is the state this path needs.
         this.frameOpen = true;
-    }
-
-    /**
-     * Whether the wait/done semaphore pair runs at all here.
-     * <p>
-     * Under the shared target the pair carries content between two producers on different queues; under this
-     * target the same queue sees every submission in order, so the pair is ceremony: three queue packets per stage
-     * (beginFrame's signal-only submission, the work submission's own semaphore pair, endFrame's wait-only
-     * submission) for ordering the queue already guarantees. Measured on a held leg: the frame pass's own submit
-     * work is the renderer's largest steady-state line item ({@code terrain+flush} p50 ~7.5 ms of a ~10 ms world
-     * pass, with per-stage submit cycles of three). The pair is skipped by default and
-     * {@code -Dceltium.vulkan.frameSemaphores=true} keeps it.
-     */
-    private static final boolean FRAME_SEMAPHORES =
-            Boolean.parseBoolean(System.getProperty("celtium.vulkan.frameSemaphores", "false"));
-
-    @Override
-    public boolean needsFrameSemaphores() {
-        return FRAME_SEMAPHORES;
-    }
-
-    /**
-     * The frame's own submission waited on {@link #waitSemaphore()}: the signal is consumed.
-     * <p>
-     * Called by the backend where it submits with the frame's semaphores, and by {@code submitSignalOnly}. Without this
-     * the target cannot tell a frame that reached the queue from one that was abandoned before its first submission, and
-     * the two need opposite handling.
-     */
-    public void noteWaitConsumed() {
-        this.waitSignalled = false;
-    }
-
-    /** How many abandoned frames had their outstanding wait signal consumed. */
-    public int abandonedWaitsConsumed() {
-        return this.abandonedWaitsConsumed;
-    }
-
-    /**
-     * Consumes the wait signal a begun frame issued when nothing has waited on it.
-     * <p>
-     * A binary semaphore may not be signalled twice without an intervening wait. The measured chain: a frame abandoned
-     * at frame 0 (a failed window flush) left {@link #waitSemaphore()} signalled, the next {@code beginFrame} signalled it
-     * again, the validation layer reported {@code VUID-vkQueueSubmit-pSignalSemaphores-00067}, and RADV answered
-     * {@code VK_ERROR_DEVICE_LOST} - after which every submit failed and {@code settleGpu} latched the renderer. The
-     * failure is swallowed and counted: this runs inside abandonment, where throwing would replace a dropped frame with
-     * a crash.
-     */
-    private void consumeOutstandingWait(String reason) {
-        if (!this.waitSignalled || this.waitSemaphore == VK_NULL_HANDLE) {
-            return;
-        }
-        this.waitSignalled = false;
-        try (MemoryStack stack = stackPush()) {
-            LongBuffer wait = stack.mallocLong(1);
-            wait.put(0, this.waitSemaphore);
-            this.context.celtium$flushBatchedSubmits();
-            VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default()
-                    .waitSemaphoreCount(wait.remaining()).pWaitSemaphores(wait)
-                    .pWaitDstStageMask(stack.ints(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT));
-            VulkanContext.queueSubmitCalls++;
-                        check(vkQueueSubmit(this.context.queue(), submit, VK_NULL_HANDLE),
-                    "vkQueueSubmit (glless abandoned frame wait)");
-            this.abandonedWaitsConsumed++;
-            if (this.abandonedWaitsConsumed <= 4) {
-                System.out.println("[Celtium] CELTIUM_ABANDON_WAIT_CONSUMED reason=" + reason.replace(' ', '_')
-                        + " (the frame was begun and abandoned before any submission waited on its wait semaphore;"
-                        + " leaving it signalled makes the next beginFrame signal a binary semaphore twice, which the"
-                        + " validation layer reports as VUID-vkQueueSubmit-pSignalSemaphores-00067 and RADV answers with"
-                        + " VK_ERROR_DEVICE_LOST)");
-            }
-        } catch (RuntimeException | LinkageError error) {
-            this.abandonedWaitFailures++;
-            this.lastAbandonedWaitFailure = reason + ": " + error;
-        }
-    }
-
-    /** How many attempts to consume an abandoned frame's wait signal failed (a device already lost, typically). */
-    public int abandonedWaitFailures() {
-        return this.abandonedWaitFailures;
     }
 
     @Override
@@ -637,13 +443,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
         if (!this.frameOpen) {
             return;
         }
-        if (FRAME_SEMAPHORES) {
-            consumeDone();
-        }
-        // With the pair skipped nothing was ever signalled, so there is nothing to consume: the wait-only
-        // submission is the third queue packet per stage this mode exists to remove.
         this.frameOpen = false;
-        this.waitSignalled = false;
     }
 
     @Override
@@ -657,9 +457,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
             this.frameOpen = false;
             this.abandonedFrames++;
             this.lastAbandonReason = reason;
-            // A frame begun and abandoned before any submission waited on the semaphore must not leave it signalled:
-            // that is the measured VUID-00067 -> VK_ERROR_DEVICE_LOST chain.
-            consumeOutstandingWait(reason);
         }
     }
 
@@ -877,63 +674,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
             });
         }
         return true;
-    }
-
-    @Override
-    public long waitSemaphore() {
-        checkAlive();
-        // With the pair skipped there is nothing to wait on: callers pass the null handle through, and the submit
-        // paths that compact nulls drop it from the wait list entirely.
-        return FRAME_SEMAPHORES ? this.waitSemaphore : VK_NULL_HANDLE;
-    }
-
-    @Override
-    public long doneSemaphore() {
-        checkAlive();
-        return FRAME_SEMAPHORES ? this.doneSemaphore : VK_NULL_HANDLE;
-    }
-
-    /**
-     * {@return the present-wait semaphore for a swapchain image}, created on first use.
-     * <p>
-     * The array grows and existing entries are never destroyed, so a swapchain recreation that changes the image
-     * count cannot leave an in-flight present referring to a destroyed semaphore.
-     */
-    public long presentDoneSemaphore(int imageIndex) {
-        checkAlive();
-        // A signalled-but-never-waited binary semaphore is a VUID-00067 the second time it is signalled: with the
-        // pair skipped nothing consumes these, so they are not produced either.
-        if (!FRAME_SEMAPHORES) {
-            return VK_NULL_HANDLE;
-        }
-        if (imageIndex < 0) {
-            return this.doneSemaphore;
-        }
-        if (this.presentDoneSemaphores == null || imageIndex >= this.presentDoneSemaphores.length) {
-            int wanted = Math.max(imageIndex + 1, this.presentDoneSemaphores == null ? 2
-                    : this.presentDoneSemaphores.length * 2);
-            long[] grown = java.util.Arrays.copyOf(
-                    this.presentDoneSemaphores == null ? new long[0] : this.presentDoneSemaphores, wanted);
-            try (MemoryStack stack = stackPush()) {
-                LongBuffer handle = stack.mallocLong(1);
-                VkSemaphoreCreateInfo info = VkSemaphoreCreateInfo.calloc(stack).sType$Default();
-                for (int i = 0; i < grown.length; i++) {
-                    if (grown[i] == 0L) {
-                        if (vkCreateSemaphore(this.context.device(), info, null, handle) != VK_SUCCESS) {
-                            throw new IllegalStateException("vkCreateSemaphore(glless present done) failed");
-                        }
-                        grown[i] = handle.get(0);
-                    }
-                }
-            }
-            this.presentDoneSemaphores = grown;
-        }
-        return this.presentDoneSemaphores[imageIndex];
-    }
-
-    /** Records which done semaphore a producer signalled, so the wait-only submission waits on that one. */
-    public void noteDoneSignalled(long semaphore) {
-        this.lastSignalledDone = semaphore;
     }
 
 
@@ -4254,14 +3994,6 @@ public final class GllessFrameTarget implements FrameImageTarget {
             }
         }
         this.sharedDepths.clear();
-        if (this.waitSemaphore != VK_NULL_HANDLE) {
-            vkDestroySemaphore(device, this.waitSemaphore, null);
-            this.waitSemaphore = VK_NULL_HANDLE;
-        }
-        if (this.doneSemaphore != VK_NULL_HANDLE) {
-            vkDestroySemaphore(device, this.doneSemaphore, null);
-            this.doneSemaphore = VK_NULL_HANDLE;
-        }
         if (this.colorView != VK_NULL_HANDLE) {
             vkDestroyImageView(device, this.colorView, null);
             this.colorView = VK_NULL_HANDLE;

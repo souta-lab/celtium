@@ -21,10 +21,9 @@ import java.util.function.Consumer;
  *   consecutive-failure threshold (for failures that can be transient). A quarantine is for the session and
  *   never auto-clears; a success resets only the consecutive count, never a quarantine.</li>
  * </ul>
- * The present stage is deliberately not a stage here: a fatal presenter result is terminal by the tree's recorded
- * evidence (see {@code VulkanContext.presenterResultIsFatal}), so its survival shape is the hardware-profile
- * gate before start ({@link HardwareProfileGates}), not a runtime fallback. The async presenter's own switch
- * stays {@code -Dceltium.vulkan.asyncPresent}.
+ * The present stage is deliberately not a stage here: present runs synchronously on the game thread (the
+ * async presenter worker was removed in the Stage 2 submit unification), and a fatal present result is
+ * terminal rather than a stage failure with a fallback, so there is nothing for a gate to degrade to.
  */
 public final class StageGate {
 

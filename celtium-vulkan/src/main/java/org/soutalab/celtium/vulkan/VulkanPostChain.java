@@ -1893,7 +1893,6 @@ public final class VulkanPostChain {
 
     public void delete() {
         VkDevice device = this.context.device();
-        this.context.celtium$awaitPresenter();
         vkDeviceWaitIdle(device);
         // The census before anything is freed: the handles this chain's targets carried, so a validation message's
         // image handle can be matched against the target it belonged to after the run.

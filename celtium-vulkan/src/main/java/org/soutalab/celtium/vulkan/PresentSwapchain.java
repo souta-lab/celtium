@@ -586,13 +586,6 @@ final class PresentSwapchain {
         try {
             return celtium$presentFrameBody();
         } finally {
-            if (VulkanContext.ASYNC_PRESENT) {
-                try {
-                    backend.context.celtium$flushBatchedSubmits();
-                } catch (RuntimeException | LinkageError error) {
-                    backend.record("post-present flush failed: " + error);
-                }
-            }
             long presentNanos = System.nanoTime() - presentStart;
             if (presentNanos > 50_000_000L) {
                 System.out.println("[Celtium] CELTIUM_PRESENT_SLOW millis=" + (presentNanos / 1_000_000L)

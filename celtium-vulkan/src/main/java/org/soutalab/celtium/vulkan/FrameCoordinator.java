@@ -1,13 +1,6 @@
 package org.soutalab.celtium.vulkan;
 
-import java.nio.IntBuffer;
-import java.nio.LongBuffer;
 import org.lwjgl.system.MemoryStack;
-import org.lwjgl.vulkan.VkSubmitInfo;
-import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-import static org.lwjgl.vulkan.VK10.vkQueueSubmit;
-import static org.lwjgl.vulkan.VK10.vkQueueWaitIdle;
-import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
 import static org.lwjgl.vulkan.VK10.vkEndCommandBuffer;
 
 /**
@@ -82,7 +75,7 @@ public final class FrameCoordinator {
 
         /**
          * Queue an ended slot buffer through the batched deferred list instead of vkQueueSubmit; the host records
-         * the returned batch fence as the slot's completion proxy. See {@link #submitCommands(boolean)}.
+         * the returned batch fence as the slot's completion proxy. See {@link #submitCommands()}.
          */
         void celtium$submitSlotDeferred(org.lwjgl.vulkan.VkCommandBuffer commandBuffer, long[] waitSemaphores,
                 int[] waitStages, long[] signalSemaphores);
@@ -98,60 +91,18 @@ public final class FrameCoordinator {
         this.host = host;
     }
 
-    void submitSignalOnly() {
-        // With the pair skipped there is no frame synchronization to release: the frame-close flags this path set
-        // are still set, because they gate the present's own "a frame reached the queue" question, but no packet
-        // goes to the queue for a contract nothing honours.
-        if (!this.host.frameTarget().needsFrameSemaphores()) {
-            this.host.setFrameSubmitReachedQueue(true);
-            this.host.setLastFrameReachedQueue(true);
-            return;
-        }
-        // Counted, so a leg can say whether the frame-close path fired rather than whether the leg was green: the
-        // per-image change made consumeDone wait on whichever done semaphore was recorded, and this is the producer
-        // whose pairing that could break. Two legs were green without this path firing at all, which is a leg about
-        // the other path - the counter is what turns that into evidence either way.
-        this.host.submissionStatistics().noteSignalOnlySubmissions();
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkSubmitInfo submit = VkSubmitInfo.calloc(stack).sType$Default();
-            LongBuffer waitSemaphores = stack.mallocLong(1);
-            waitSemaphores.put(0, this.host.frameTarget().waitSemaphore());
-            IntBuffer waitStages = stack.mallocInt(1);
-            waitStages.put(0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
-            LongBuffer signalSemaphores = stack.mallocLong(1);
-            signalSemaphores.put(0, this.host.frameTarget().doneSemaphore());
-            submit.waitSemaphoreCount(waitSemaphores.remaining());
-            submit.pWaitSemaphores(waitSemaphores).pWaitDstStageMask(waitStages).pSignalSemaphores(signalSemaphores);
-            // No command buffers: the submission exists only to release the frame's synchronization.
-            if (VulkanSubmitFault.shouldFail("signal-only")) {
-                // The failure is raised exactly where a driver refusal would be, before the queue has seen anything, so
-                // the code's own pre-submit rules apply: what is already recorded stays recorded and nothing in flight is
-                // touched. That is the property this switch exists to check.
-                this.host.check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
-            }
-                        VulkanContext.queueSubmitCalls++;
-                        this.host.check(vkQueueSubmit(this.host.context().queue(), submit, VK_NULL_HANDLE), "vkQueueSubmit (signal only)");
-            this.host.setFrameSubmitReachedQueue(true);
-            this.host.setLastFrameReachedQueue(true);
-            if (this.host.frameTarget() instanceof GllessFrameTarget gllessTarget) {
-                // The signal-only submission waited on the wait semaphore and signalled the done semaphore: the pairing is
-                // complete for this frame, so nothing is outstanding to consume.
-                gllessTarget.noteWaitConsumed();
-            }
-        }
-    }
-
     /** Recording acceptance is not queue submission, and neither means GPU completion. */
     enum Submission {
         SKIPPED, RECORDED, QUEUED;
 
-        boolean canCloseTarget(boolean needsExternalSemaphores) {
-            return this == QUEUED || (this == RECORDED && !needsExternalSemaphores);
+        /**
+         * Whether the frame's target may close on this outcome. There is no external semaphore packet a
+         * close could owe (Stage 2 submit unification removed the wait/done pair), so an accepted recording
+         * closes the target exactly as a queued submission does; only a skipped one does not.
+         */
+        boolean canCloseTarget() {
+            return this == QUEUED || this == RECORDED;
         }
-    }
-
-    Submission submitCommands() {
-        return submitCommands(true);
     }
 
     /**
@@ -171,27 +122,20 @@ public final class FrameCoordinator {
                         calls == 0 ? 0.0 : submitQueueNanos / 1e6 / calls);
     }
 
-    Submission submitCommands(boolean withFrameSemaphores) {
+    Submission submitCommands() {
         if (this.host.gpuStalled()) {
             // Nothing to end: the buffer was never begun. This is the last of the recording entries the steady-state injection
             // reported, after the pass-level ones.
             return Submission.SKIPPED;
         }
-        // The owned target's semaphore pair synchronizes the renderer with itself on one queue, which is ordering
-        // the queue already has: when the target says the contract does not apply the submission takes no semaphore
-        // at all, and every per-stage packet that exists only to carry the pair is skipped with it.
-        boolean frameSemaphores = withFrameSemaphores && this.host.frameTarget().needsFrameSemaphores();
         // OPT-07: every copy the frame recorded goes out as one submission before this one, so the vertices, indices
         // and uniform bytes this command buffer reads are in place. It is a no-op when nothing is pending, and it is
         // the frame's own ordering statement: a copy no longer needs a submission and a wait of its own.
         this.host.context().flushUploads();
         if (this.host.frameBufferOpen()) {
             // Unified frame buffer: the segment's commands stay recorded; end, submission and bookkeeping all happen
-            // once at the frame boundary via celtium$finishFrameBuffer. A frame that switched to a semaphore-carrying
-            // target mid-recording falls through instead and takes the direct path below.
-            if (!frameSemaphores) {
-                return Submission.RECORDED;
-            }
+            // once at the frame boundary via celtium$finishFrameBuffer.
+            return Submission.RECORDED;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             // The frame's own GPU-time pair closes here, so it spans both the passes and everything between them.
@@ -203,23 +147,16 @@ public final class FrameCoordinator {
                 // armed by its own slot fence like any ordinary submission, so the flag's story ends here.
                 this.host.setFrameBufferOpen(false);
             }
-            long[] waitArray = null;
+            // Direct present path: when the frame renders into a borrowed swapchain image, the first
+            // submission that touches it waits on the borrow's acquire semaphore - the presentation
+            // engine's release of the image is the one ordering fact queue order cannot give. The wait/done
+            // pair the frame's submissions used to carry is gone (Stage 2 submit unification): on one
+            // queue, submission order already gives that ordering, and no signal array is owed either.
+            long[] waitArray = celtium$presentAcquireWait();
             int[] stageArray = null;
             long[] signalArray = null;
-            if (frameSemaphores) {
-                // Plain arrays for the deferred entry: the batch flush copies them into its VkSubmitInfo array at
-                // submit time, long after this stack is gone, so stack buffers cannot carry them.
-                waitArray = new long[] {this.host.frameTarget().waitSemaphore()};
+            if (waitArray != null) {
                 stageArray = new int[] {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
-                signalArray = new long[] {this.host.frameTarget().doneSemaphore()};
-            } else {
-                // Direct present path: when the frame renders into a borrowed swapchain image, the first
-                // submission that touches it waits on the borrow's acquire semaphore - the presentation
-                // engine's release of the image is the one ordering fact queue order cannot give.
-                waitArray = celtium$presentAcquireWait();
-                if (waitArray != null) {
-                    stageArray = new int[] {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
-                }
             }
             if (this.host.immediateWindowBusy() && !this.host.recordedImmediateGroups().isEmpty() && this.host.failImmediateSubmits() > 0) {
                 this.host.noteImmediateSubmitFailure();
@@ -248,7 +185,7 @@ public final class FrameCoordinator {
             submitQueueCalls++;
 
             this.host.celtium$noteDirectSubmit();
-            celtium$noteSubmissionBookkeeping(frameSemaphores);
+            celtium$noteSubmissionBookkeeping();
             return Submission.QUEUED;
         }
     }
@@ -260,10 +197,9 @@ public final class FrameCoordinator {
      * <p>
      * Called from {@code celtium$flushPendingAtFrameBoundary} after the last window's records land in the buffer,
      * and again defensively at the top of the present path for callers that skip the boundary. No-op when no
-     * unified buffer is open (a fallback direct submit already ran, or a semaphore
-     * target mid-frame).
+     * unified buffer is open (a fallback direct submit already ran).
      */
-    void celtium$finishFrameBuffer(boolean withFrameSemaphores) {
+    void celtium$finishFrameBuffer() {
         if (!this.host.frameBufferOpen()) {
             return;
         }
@@ -275,22 +211,19 @@ public final class FrameCoordinator {
             this.host.commandState().reset();
             return;
         }
-        boolean frameSemaphores = withFrameSemaphores && this.host.frameTarget().needsFrameSemaphores();
         this.host.context().flushUploads();
         // The batched path ends the buffer here rather than in submit(), so the frame's GPU-time pair closes here too.
         this.host.recordFrameEndTimestamp();
-        long[] waitArray = null;
+        // Direct present path: when the frame renders into a borrowed swapchain image, the first
+        // submission that touches it waits on the borrow's acquire semaphore - the presentation
+        // engine's release of the image is the one ordering fact queue order cannot give. The wait/done
+        // pair the frame's submissions used to carry is gone (Stage 2 submit unification): on one
+        // queue, submission order already gives that ordering, and no signal array is owed either.
+        long[] waitArray = celtium$presentAcquireWait();
         int[] stageArray = null;
         long[] signalArray = null;
-        if (frameSemaphores) {
-            waitArray = new long[] {this.host.frameTarget().waitSemaphore()};
+        if (waitArray != null) {
             stageArray = new int[] {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
-            signalArray = new long[] {this.host.frameTarget().doneSemaphore()};
-        } else {
-            waitArray = celtium$presentAcquireWait();
-            if (waitArray != null) {
-                stageArray = new int[] {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
-            }
         }
         this.host.check(vkEndCommandBuffer(this.host.commandBuffer()), "vkEndCommandBuffer(frame)");
         this.host.commandState().end();
@@ -307,7 +240,7 @@ public final class FrameCoordinator {
             this.host.check(org.lwjgl.vulkan.VK10.VK_ERROR_DEVICE_LOST, "vkQueueSubmit (injected)");
         }
         this.host.celtium$submitSlotDeferred(this.host.commandBuffer(), waitArray, stageArray, signalArray);
-        celtium$noteSubmissionBookkeeping(frameSemaphores);
+        celtium$noteSubmissionBookkeeping();
     }
 
     /**
@@ -325,7 +258,7 @@ public final class FrameCoordinator {
      * and the deferred {@link #celtium$finishFrameBuffer} one: arena in-flight marking, layout commit, the pending
      * bit, the slot's sequence record, the recorded groups' retirement tags and the reached-queue flags.
      */
-    private void celtium$noteSubmissionBookkeeping(boolean frameSemaphores) {
+    private void celtium$noteSubmissionBookkeeping() {
         // OPT-05: the arena slot that holds this frame's immediate geometry is now in flight, and may not be reset
         // until a wait confirms the submission completed. Recorded here rather than at the wait, because a submit
         // that never reaches the queue must not hold a slot, and an abandon after a successful submit must.
@@ -360,11 +293,5 @@ public final class FrameCoordinator {
         this.host.recordedImmediateGroups().clear();
         this.host.setFrameSubmitReachedQueue(true);
         this.host.setLastFrameReachedQueue(true);
-        if (frameSemaphores && this.host.frameTarget() instanceof GllessFrameTarget gllessTarget) {
-            // This submission waited on the frame's wait semaphore, so the target must not consume it again when the
-            // frame is abandoned (fog-path's measured VUID-00067 chain: an abandoned frame left the signal
-            // outstanding and the next beginFrame signalled the same binary semaphore twice).
-            gllessTarget.noteWaitConsumed();
-        }
     }
 }
