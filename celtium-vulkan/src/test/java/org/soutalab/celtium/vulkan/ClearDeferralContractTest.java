@@ -28,53 +28,53 @@ class ClearDeferralContractTest {
     /** No reason applies: the clear's own image has nothing queued, so the flush is skipped. */
     @Test
     void skipsWhenTheClearsImageHasNoPendingDraws() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$clearNeedsOrderingFlushDecision(
+        assertFalse(FrameTargetJudgments.celtium$clearNeedsOrderingFlushDecision(
                 true, false, true, false));
     }
 
     /** The GL bridge has no pair queue, so the flush is the only ordering there is. */
     @Test
     void flushesWithoutAPairQueue() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$clearNeedsOrderingFlushDecision(
+        assertTrue(FrameTargetJudgments.celtium$clearNeedsOrderingFlushDecision(
                 false, false, true, false));
     }
 
     /** The flush also records the coalesced texture copies, which the queue does not order against a clear. */
     @Test
     void flushesWithRawWritesPending() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$clearNeedsOrderingFlushDecision(
+        assertTrue(FrameTargetJudgments.celtium$clearNeedsOrderingFlushDecision(
                 true, true, true, false));
     }
 
     /** An unresolved framebuffer cannot be shown to have nothing queued. */
     @Test
     void flushesWhenTheIdentityIsUnresolved() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$clearNeedsOrderingFlushDecision(
+        assertTrue(FrameTargetJudgments.celtium$clearNeedsOrderingFlushDecision(
                 true, false, false, false));
     }
 
     /** The clear's own image has queued draws, which the clear must erase: the flush is the ordering. */
     @Test
     void flushesWhenTheClearsImageHasPendingDraws() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$clearNeedsOrderingFlushDecision(
+        assertTrue(FrameTargetJudgments.celtium$clearNeedsOrderingFlushDecision(
                 true, false, true, true));
     }
 
     /** Two reasons at once still flush: the table is a disjunction of reasons, not a vote. */
     @Test
     void flushesWhenTwoReasonsApply() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$clearNeedsOrderingFlushDecision(
+        assertTrue(FrameTargetJudgments.celtium$clearNeedsOrderingFlushDecision(
                 true, true, true, true));
     }
 
     /** The mask half of the rule: only colour and depth are attachments this renderer owns. */
     @Test
     void ownsColourAndDepthButNotStencil() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$clearNamesOwnedAttachment(0x4000), "colour");
-        assertTrue(VulkanTerrainGpuBackend.celtium$clearNamesOwnedAttachment(0x0100), "depth");
-        assertTrue(VulkanTerrainGpuBackend.celtium$clearNamesOwnedAttachment(0x4100), "colour+depth");
-        assertFalse(VulkanTerrainGpuBackend.celtium$clearNamesOwnedAttachment(0x0400), "stencil only");
-        assertFalse(VulkanTerrainGpuBackend.celtium$clearNamesOwnedAttachment(0x0000), "nothing");
+        assertTrue(FrameTargetJudgments.celtium$clearNamesOwnedAttachment(0x4000), "colour");
+        assertTrue(FrameTargetJudgments.celtium$clearNamesOwnedAttachment(0x0100), "depth");
+        assertTrue(FrameTargetJudgments.celtium$clearNamesOwnedAttachment(0x4100), "colour+depth");
+        assertFalse(FrameTargetJudgments.celtium$clearNamesOwnedAttachment(0x0400), "stencil only");
+        assertFalse(FrameTargetJudgments.celtium$clearNamesOwnedAttachment(0x0000), "nothing");
     }
 
     /**
@@ -87,12 +87,12 @@ class ClearDeferralContractTest {
      */
     @Test
     void consumesOnlyTheClearTheQueueCarried() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$carriedClearMatches(0x4100, 0x4100), "exact");
-        assertTrue(VulkanTerrainGpuBackend.celtium$carriedClearMatches(0x4100, 0x4000), "colour half of a carried pair");
-        assertTrue(VulkanTerrainGpuBackend.celtium$carriedClearMatches(0x4100, 0x0100), "depth half of a carried pair");
-        assertFalse(VulkanTerrainGpuBackend.celtium$carriedClearMatches(0x4000, 0x4100), "a depth bit nobody carried");
-        assertFalse(VulkanTerrainGpuBackend.celtium$carriedClearMatches(0x0100, 0x4000), "a colour bit nobody carried");
-        assertFalse(VulkanTerrainGpuBackend.celtium$carriedClearMatches(0, 0x4100), "no reservation");
-        assertFalse(VulkanTerrainGpuBackend.celtium$carriedClearMatches(0, 0), "no reservation, no clear");
+        assertTrue(FrameTargetJudgments.celtium$carriedClearMatches(0x4100, 0x4100), "exact");
+        assertTrue(FrameTargetJudgments.celtium$carriedClearMatches(0x4100, 0x4000), "colour half of a carried pair");
+        assertTrue(FrameTargetJudgments.celtium$carriedClearMatches(0x4100, 0x0100), "depth half of a carried pair");
+        assertFalse(FrameTargetJudgments.celtium$carriedClearMatches(0x4000, 0x4100), "a depth bit nobody carried");
+        assertFalse(FrameTargetJudgments.celtium$carriedClearMatches(0x0100, 0x4000), "a colour bit nobody carried");
+        assertFalse(FrameTargetJudgments.celtium$carriedClearMatches(0, 0x4100), "no reservation");
+        assertFalse(FrameTargetJudgments.celtium$carriedClearMatches(0, 0), "no reservation, no clear");
     }
 }

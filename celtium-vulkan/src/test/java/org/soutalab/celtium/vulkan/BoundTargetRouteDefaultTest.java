@@ -31,21 +31,21 @@ class BoundTargetRouteDefaultTest {
     /** Absent or affirmative values leave the route on: the default build routes. */
     @Test
     void theRouteIsOnUnlessTheValueReadsFalse() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$terrainToBoundTargetEnabled(null), "absent");
-        assertTrue(VulkanTerrainGpuBackend.celtium$terrainToBoundTargetEnabled("true"), "explicit on");
-        assertTrue(VulkanTerrainGpuBackend.celtium$terrainToBoundTargetEnabled(""), "empty");
-        assertTrue(VulkanTerrainGpuBackend.celtium$terrainToBoundTargetEnabled("0"),
+        assertTrue(PackTerrainJudgments.celtium$terrainToBoundTargetEnabled(null), "absent");
+        assertTrue(PackTerrainJudgments.celtium$terrainToBoundTargetEnabled("true"), "explicit on");
+        assertTrue(PackTerrainJudgments.celtium$terrainToBoundTargetEnabled(""), "empty");
+        assertTrue(PackTerrainJudgments.celtium$terrainToBoundTargetEnabled("0"),
                 "only the literal \"false\" opts out, the mod-programs rule");
-        assertTrue(VulkanTerrainGpuBackend.celtium$terrainToBoundTargetEnabled("off"),
+        assertTrue(PackTerrainJudgments.celtium$terrainToBoundTargetEnabled("off"),
                 "only the literal \"false\" opts out, the mod-programs rule");
     }
 
     /** The opt-out is the literal value, case-insensitively. */
     @Test
     void theOptOutIsTheLiteralFalse() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$terrainToBoundTargetEnabled("false"));
-        assertFalse(VulkanTerrainGpuBackend.celtium$terrainToBoundTargetEnabled("FALSE"));
-        assertFalse(VulkanTerrainGpuBackend.celtium$terrainToBoundTargetEnabled("False"));
+        assertFalse(PackTerrainJudgments.celtium$terrainToBoundTargetEnabled("false"));
+        assertFalse(PackTerrainJudgments.celtium$terrainToBoundTargetEnabled("FALSE"));
+        assertFalse(PackTerrainJudgments.celtium$terrainToBoundTargetEnabled("False"));
     }
 
     /** The wiring: the field reads the property through the pure rule with "true" as the absent value. */

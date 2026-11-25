@@ -390,25 +390,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * at the off-target window path for pairs no junction resolves ({@link #celtium$pairClassForWindow} -
      * a ShaderGroup group pair, whose class the post chain's generation trace reports instead, QUEUE 395).
      */
-    static final TargetFormatClass FORCED_TARGET_FORMAT_CLASS = celtium$parseForcedTargetFormatClass(
+    static final TargetFormatClass FORCED_TARGET_FORMAT_CLASS = FrameTargetJudgments.celtium$parseForcedTargetFormatClass(
             System.getProperty("celtium.vulkan.targetFormatClass", "default"));
-
-    /** {@return the class a {@code celtium.vulkan.targetFormatClass} value names}, or null for no forcing. */
-    static TargetFormatClass celtium$parseForcedTargetFormatClass(String propertyValue) {
-        if (propertyValue == null) {
-            return null;
-        }
-        String name = propertyValue.trim();
-        if (name.isEmpty() || name.equalsIgnoreCase("default")) {
-            return null;
-        }
-        for (TargetFormatClass candidate : TargetFormatClass.values()) {
-            if (!candidate.isDepth() && candidate.name().equalsIgnoreCase(name)) {
-                return candidate;
-            }
-        }
-        return null;
-    }
 
     /** The chain-pair render pass handle, or 0 before the first mod-framebuffer window asked for it. */
     long chainPairRenderPass;
@@ -3722,16 +3705,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * a bloom block behind a wall still enters the mask.
      */
     private static final boolean TERRAIN_TO_BOUND_TARGET =
-            celtium$terrainToBoundTargetEnabled(System.getProperty("celtium.vulkan.terrainToBoundTarget", "true"));
+            PackTerrainJudgments.celtium$terrainToBoundTargetEnabled(System.getProperty("celtium.vulkan.terrainToBoundTarget", "true"));
 
-    /**
-     * {@return whether the bound-target terrain route is on for the property's value}: on unless the value reads
-     * "false", the mod-programs rule ({@code ModPrograms#MOD_PROGRAMS}). Package-private and static so the default
-     * is pinned without a device.
-     */
-    static boolean celtium$terrainToBoundTargetEnabled(String property) {
-        return !"false".equalsIgnoreCase(property);
-    }
     private long terrainPassesToBoundTarget;
 
     /** Item 384: read by BackendDiagnostics so the count reaches the summary line a leg actually surfaces. */
@@ -3817,7 +3792,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private static final boolean TERRAIN_SHADOW_LOOKUP =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.terrainShadow", "true"));
     /** Fraction of the sky light a shadowed fragment loses, {@code -Dceltium.vulkan.terrainShadowDarkness}. */
-    private static final float TERRAIN_SHADOW_DARKNESS = celtium$shadowDarkness(
+    private static final float TERRAIN_SHADOW_DARKNESS = PackTerrainJudgments.celtium$shadowDarkness(
             System.getProperty("celtium.vulkan.terrainShadowDarkness"));
     private final Matrix4f terrainShadowMatrix = new Matrix4f();
     private long terrainShadowFrame = Long.MIN_VALUE;
@@ -3825,45 +3800,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private int terrainShadowLogs;
     private long terrainShadowPassesApplied;
     private long terrainShadowPassesRefused;
-
-    /** {@return the darkness property parsed and clamped to [0, 1]}, 0.45 when absent or malformed. Pure. */
-    static float celtium$shadowDarkness(String property) {
-        if (property == null || property.isBlank()) {
-            return 0.45f;
-        }
-        try {
-            float value = Float.parseFloat(property.trim());
-            return Float.isNaN(value) ? 0.45f : Math.max(0.0f, Math.min(1.0f, value));
-        } catch (NumberFormatException malformed) {
-            return 0.45f;
-        }
-    }
-
-    /**
-     * {@return why a non-routed terrain pass does not sample the frame's shadow capture}, or null when it does.
-     * Static and pure so the rule is pinned without a device: the switch, a routed shadow pass earlier in this very
-     * frame (a capture from another frame names a matrix and a depth the current camera did not draw), a depth texture
-     * name, and a published native image for it.
-     */
-    static String celtium$terrainShadowRefusal(boolean enabled, boolean routeEnabled, long captureFrame, long frame,
-            int depthTexture, boolean published) {
-        if (!enabled) {
-            return "switch-off";
-        }
-        if (!routeEnabled) {
-            return "route-off";
-        }
-        if (captureFrame != frame) {
-            return "no-capture-this-frame";
-        }
-        if (depthTexture <= 0) {
-            return "no-depth-texture";
-        }
-        if (!published) {
-            return "depth-not-published";
-        }
-        return null;
-    }
 
     /** Bounded census counters for the route and its refusals (see {@link #celtium$routeTerrainToDepthTarget}). */
     private int terrainDepthTargetLogs;
@@ -6487,21 +6423,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         return this.clearOrderSkipped;
     }
 
-    /** The GL clear bits this renderer owns: colour (0x4000) and depth (0x0100). Stencil is not implemented. */
-    private static final int CLEAR_ORDER_MASK = 0x4100;
-
-    /**
-     * {@return whether a GL clear mask names an attachment this renderer owns}, the mask half of the clear-order rule.
-     * <p>
-     * A clear of neither colour nor depth erases nothing the renderer holds, so the accepted draws have nothing to be
-     * ordered against. Stencil is the case that matters: the measured scene's dominant clear is ModularUI's
-     * {@code Stencil#reset} (mask 0x400), issued between GUI widgets, and it used to submit the GUI batch it cannot
-     * touch - one window per widget.
-     */
-    static boolean celtium$clearNamesOwnedAttachment(int mask) {
-        return (mask & CLEAR_ORDER_MASK) != 0;
-    }
-
     /** Clear-order flushes skipped because the clear named neither colour nor depth. */
     long clearOrderNoTargetMask;
     /** {@return clear-order flushes skipped for a mask this renderer does not own}, so the share can be priced. */
@@ -6516,7 +6437,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (mask == 0) {
             this.clearOrderFlushesZeroMask++;
         }
-        if (!celtium$clearNamesOwnedAttachment(mask)) {
+        if (!FrameTargetJudgments.celtium$clearNamesOwnedAttachment(mask)) {
             // A clear of neither colour nor depth erases nothing this renderer owns, so there is nothing for the
             // accepted draws to be ordered against. The rule was written for mask 0 alone; the measured scene's
             // dominant clear is ModularUI's stencil reset (mask 0x400, `Stencil#reset`), which arrives between GUI
@@ -6626,7 +6547,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         if (!MAIN_CLEAR_IN_QUEUE) {
             return false;
         }
-        if ((mask & CLEAR_ORDER_MASK) == 0) {
+        if ((mask & FrameTargetJudgments.CLEAR_ORDER_MASK) == 0) {
             this.mainClearRefusedNoMask++;
             return false;
         }
@@ -6784,25 +6705,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      */
     public boolean celtium$takeCarriedMainClear(int mask) {
         int carried = celtium$carriedReservationMask();
-        if (!celtium$carriedClearMatches(carried, mask)) {
+        if (!FrameTargetJudgments.celtium$carriedClearMatches(carried, mask)) {
             return false;
         }
         celtium$dropCarriedReservation();
         org.soutalab.celtium.vulkan.gl.GlsmFrontend.consumePendingClears();
         return true;
-    }
-
-    /**
-     * Whether the pending mask is exactly the clear the queue carried.
-     * <p>
-     * Extracted so the rule can be pinned without a device, the same shape as the other decision tables here. It is a
-     * containment test rather than an equality one because the stub ORs the mask: a clear of colour+depth that follows
-     * a depth-only clear of the same frame leaves {@code 0x4100} pending, and the carried clear is still the one that
-     * has to be consumed. A mask carrying a bit the reservation does not name belongs to a clear this method did not
-     * carry, and consuming it would drop that clear - so it is left pending for the frame machinery.
-     */
-    static boolean celtium$carriedClearMatches(int carriedMask, int clearMask) {
-        return carriedMask != 0 && (carriedMask & clearMask) == clearMask;
     }
 
     /** Drops a reservation that no clear consumed, so a later clear cannot be carried with an earlier one's values. */
@@ -6877,27 +6785,8 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 identity = celtium$framebufferIdentityForColorTexture(colorTexture);
             }
         }
-        return celtium$clearNeedsOrderingFlushDecision(true, false,
+        return FrameTargetJudgments.celtium$clearNeedsOrderingFlushDecision(true, false,
                 identity != Long.MIN_VALUE, celtium$queueHoldsImageOf(identity));
-    }
-
-    /**
-     * The decision table behind {@link #celtium$clearNeedsOrderingFlush}, as a pure function so the rule can be pinned
-     * without a device.
-     * <p>
-     * Each input is one of the reasons the flush is still needed, and the answer is "skip" only when none of them
-     * applies:
-     * <ul>
-     * <li>{@code pairQueueAvailable} - the GL bridge has no pair queue, so the flush is the only ordering there is;</li>
-     * <li>{@code rawWritesPending} - the flush also records the coalesced texture copies, and a copy into the texture
-     *     the clear covers is an ordering the queue does not express;</li>
-     * <li>{@code identityResolved} - an unresolved framebuffer cannot be shown to have nothing queued;</li>
-     * <li>{@code imageHasPendingDraws} - the clear's own image has queued draws, which the clear must erase.</li>
-     * </ul>
-     */
-    static boolean celtium$clearNeedsOrderingFlushDecision(boolean pairQueueAvailable, boolean rawWritesPending,
-                                                           boolean identityResolved, boolean imageHasPendingDraws) {
-        return !pairQueueAvailable || rawWritesPending || !identityResolved || imageHasPendingDraws;
     }
 
     /**
@@ -7201,7 +7090,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
         // when a fewer-target FBO (e.g. gbuffers_skybasic or gbuffers_hand) binds the same (colortex0, depthtex0).
         int[] rawColorAttachments = org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$framebufferColorAttachments(framebuffer);
         if (!sharedColorDepth
-                || celtium$leadingColorAttachmentCount(rawColorAttachments)
+                || FrameTargetJudgments.celtium$leadingColorAttachmentCount(rawColorAttachments)
                         >= this.publishedTextures.colorAttachmentCount(identity)) {
             bindFramebufferColorAttachments(identity, rawColorAttachments);
         }
@@ -7345,40 +7234,12 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
      * uses.
      */
     private TargetFormatClass celtium$pairClassForWindow(long identity, GllessFrameTarget target) {
-        return celtium$windowPairClass(FORCED_TARGET_FORMAT_CLASS,
+        return PackTerrainJudgments.celtium$windowPairClass(FORCED_TARGET_FORMAT_CLASS,
                 identity == 0L || identity == this.targetRegistry.mainIdentity(),
                 target.chainPairFormatClass(identity),
                 FORCED_TARGET_FORMAT_CLASS == null ? null
                         : celtium$deviceCheckedFormatClass(FORCED_TARGET_FORMAT_CLASS),
                 celtium$frameFormatClass());
-    }
-
-    /**
-     * The pure half of {@link #celtium$pairClassForWindow} (the device check stays with the caller, as in
-     * the rest of QUEUE 404's decisions): no forcing follows the pair, a pinned identity never leaves the
-     * default, anything else takes the device-checked forced class.
-     */
-    static TargetFormatClass celtium$windowPairClass(TargetFormatClass forcedClass, boolean pinned,
-            TargetFormatClass pairClass, TargetFormatClass deviceCheckedForcedClass) {
-        return celtium$windowPairClass(forcedClass, pinned, pairClass, deviceCheckedForcedClass,
-                TargetFormatClass.RGBA8_UNORM);
-    }
-
-    /**
-     * {@link #celtium$windowPairClass(TargetFormatClass, boolean, TargetFormatClass, TargetFormatClass)}
-     * against the frame's own class: "the default" a pinned identity never leaves is the frame's class
-     * (rule R1 as revised by Stage 1's BGRA ignition).
-     */
-    static TargetFormatClass celtium$windowPairClass(TargetFormatClass forcedClass, boolean pinned,
-            TargetFormatClass pairClass, TargetFormatClass deviceCheckedForcedClass,
-            TargetFormatClass frameClass) {
-        if (forcedClass == null) {
-            return pairClass;
-        }
-        if (pinned) {
-            return frameClass;
-        }
-        return deviceCheckedForcedClass;
     }
 
     /**
@@ -8137,26 +7998,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     /**
-     * {@return the refusal reason for a depth publication whose shared depth store entry is incomplete}:
-     * {@code depth-layout-unrecorded} when image, view and extent are all present and only the layout record
-     * is still {@code VK_IMAGE_LAYOUT_UNDEFINED}, {@code depth-not-in-store} for every other incompleteness.
-     * <p>
-     * The layout-only case is a first-prepare race, not a missing image (item 537 wall (b1)): the store entry
-     * exists before the pair that draws into the image first declares a layout through the borrowed pair's
-     * setter, so a prepare that tries to publish in between is refused on the honest UNDEFINED record - and
-     * publishing with an UNDEFINED declared layout is refused by the share itself, by design. Measured in the
-     * Tier 1 leg: refused with layout=0, then published two seconds later with layout=3 once the owner had
-     * declared it. Naming the case apart keeps that self-healing transient from reading as the standing
-     * refusal in a leg's log. The publication decision is unchanged: both reasons refuse, and the next prepare
-     * retries. Static and pure so the split is pinned without a device.
-     */
-    static String celtium$depthPublishRefusalReason(long image, long view, int[] extent, int layout) {
-        boolean layoutOnly = image != 0L && view != 0L && extent != null
-                && layout == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
-        return layoutOnly ? "depth-layout-unrecorded" : "depth-not-in-store";
-    }
-
-    /**
      * Publishes a framebuffer's depth texture name over the shared depth image that stands for it - the depth
      * twin of {@link #celtium$publishFramebufferColorTexture}, and the sampling publication
      * SHADOW-NATIVE-DESIGN section 3.4 names as the missing half of shadow support.
@@ -8277,7 +8118,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             if (this.fboPublishRefusalLogs < 16) {
                 this.fboPublishRefusalLogs++;
                 System.out.println("[Celtium] CELTIUM_FBO_PUBLISH_REFUSED name=" + glTextureName
-                        + " reason=" + celtium$depthPublishRefusalReason(image, view, extent, layout)
+                        + " reason=" + FrameTargetJudgments.celtium$depthPublishRefusalReason(image, view, extent, layout)
                         + " identity=0x" + Long.toHexString(identity)
                         + " key=0x" + Long.toHexString(depthKey)
                         + " image=0x" + Long.toHexString(image) + " view=0x" + Long.toHexString(view)
@@ -15196,7 +15037,7 @@ this.frameBufferOpen = false;
                                 && offTarget.chainPairHeight(existingOwner) == pairHeight;
                         boolean ownerDepthMatches = ownerExists
                                 && (windowDepthKey == 0L || offTarget.chainPairUsesSharedDepth(existingOwner, windowDepthKey));
-                        windowHandoffSource = celtium$resolvePackTerrainColorHandoffSource(chainIdentityValue,
+                        windowHandoffSource = PackTerrainJudgments.celtium$resolvePackTerrainColorHandoffSource(chainIdentityValue,
                                 chainIdentityValue, existingOwner,
                                 this.targetRegistry.mainIdentity(), this.gameFramebufferIdentity,
                                 ownerExists, ownerSizeMatches, ownerDepthMatches,
@@ -15219,7 +15060,7 @@ this.frameBufferOpen = false;
                                     this.targetRegistry.chainPairClearContentIdentity(chainIdentityValue),
                                     chainIdentityValue)
                                     && windowSharedDepthUsed && windowDepthKey != 0L
-                                    && celtium$routedDepthClearAllowed(windowDepthKey,
+                                    && FrameTargetJudgments.celtium$routedDepthClearAllowed(windowDepthKey,
                                             offTarget.sharedDepthClearedFrameSerial(windowDepthKey),
                                             celtium$frameSerial())) {
                                 double depthVal = org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth();
@@ -15325,7 +15166,7 @@ this.frameBufferOpen = false;
                         // depth attachment (such as Iris G-buffer/shadow MRT passes), preserve depth with the
                         // load/store frame variant instead of the discard-depth chain pass, which would clear
                         // and discard depthtex0/shadowtex0.
-                        passRenderPass = celtium$preserveWindowDepth(TERRAIN_TO_DEPTH_TARGET, windowDepthRecord != null)
+                        passRenderPass = PackTerrainJudgments.celtium$preserveWindowDepth(TERRAIN_TO_DEPTH_TARGET, windowDepthRecord != null)
                                 ? frameVariantRenderPass(windowColorCount, pairClass)
                                 : chainPairRenderPass(windowColorCount, pairClass);
                         offTarget.recordChainPairColorAcquire(chainIdentityValue, this.commandBuffer);
@@ -17703,90 +17544,6 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * {@return whether the terrain pass about to be recorded draws into the bound framebuffer's chain pair instead of
-     * the frame image} (item 332).
-     * <p>
-     * The rule is "the pair renders into the depth image the framebuffer's depth texture owns", and nothing wider: the
-     * pass is routed only when the image it would write is the image a depth copy or a sampler is going to read. That
-     * is what separates this from {@link #TERRAIN_TO_BOUND_TARGET}, which routes on "a non-main framebuffer is bound and
-     * a pair exists at the window's extent" and was measured for GTCEu's bloom only.
-     * <p>
-     * Package-private and static so the table is pinned without a device. The arguments are the facts the caller
-     * already has in hand (switch, current target, pair, depth texture) and nothing else - no lookups happen here, so
-     * the decision cannot race a registry mutation between two of its own conditions. {@code false} is the answer for
-     * every state but the measured one, which is also the second half of "the main path is unchanged": off is off at
-     * the switch, and on is still off for main, the main depth texture, identity 0, a pair-less identity, a
-     * non-shared depth, an extent mismatch and a pair with three or more colour targets.
-     */
-    static boolean celtium$routeTerrainToDepthTarget(boolean enabled, boolean currentIsMain, boolean depthIsMainDepth,
-            long identity, boolean pairExists, int pairWidth, int pairHeight, int depthWidth, int depthHeight,
-            boolean depthShared, int pairColorCount) {
-        return celtium$depthTargetRefusal(enabled, currentIsMain, depthIsMainDepth, identity, pairExists, pairWidth,
-                pairHeight, depthWidth, depthHeight, depthShared, pairColorCount) == null;
-    }
-
-    /**
-     * {@return why {@link #celtium$routeTerrainToDepthTarget} answered false, or null when it answered true}.
-     * <p>
-     * The one place the conditions live, so the predicate and the census line that explains a refusal cannot disagree
-     * about which condition failed. The conditions, in the order they are asked:
-     * <ol>
-     *   <li>{@code enabled} - the lab switch; off in the default build by design (see {@link #TERRAIN_TO_DEPTH_TARGET}).</li>
-     *   <li>{@code !currentIsMain} - a main-target pass belongs to the frame image and to no pair.</li>
-     *   <li>{@code !depthIsMainDepth} - the depth texture is not the game framebuffer's own. A deferred pipeline
-     *       attaches the main depth texture to every one of its gbuffer framebuffers, so those framebuffers present
-     *       exactly the routed shape (a pair, a shared depth, matching extents) at the window's size; without this
-     *       condition the main scene's terrain is what gets routed, and the presented frame loses it (item 408,
-     *       defect 1: leg 20 routed twelve main passes and presented went one colour). {@code currentIsMain} cannot
-     *       catch them: under a deferred pipeline the main scene itself arrives under raw framebuffer identities.</li>
-     *   <li>{@code identity != 0} - GL name 0 is the window; its draws already land in the frame image.</li>
-     *   <li>{@code pairExists} - the pair is item 333's registration's work; without one the pass stays on the frame.</li>
-     *   <li>{@code pairColorCount} is 1 or 2 - the frame pass attaches the pair's colour slot 0 and its depth, which
-     *       is all a terrain program writes. Two is the measured main case, not an extension: the framebuffer bound
-     *       while a shadow pass draws is the shadow program's, whose pair holds two colour images (the design
-     *       review's condition 7 assumed one, and leg 20's silence followed from that - item 408, defect 2's second
-     *       blocker). The second image is left unwritten, exactly as a GL program with one output leaves draw
-     *       buffer 1 alone. Three or more has no measured case and stays a named refusal, not a silent fallback
-     *       ({@code ModProgramMrtRefusalTest} is the neighbouring rule).</li>
-     *   <li>{@code depthShared} - the pair must be rendering into the shared depth image for the depth texture: that
-     *       image is the GL-framebuffer's depth storage, and it is the whole point of the route.</li>
-     *   <li>{@code pair extent == depth extent} - a Vulkan framebuffer's attachments share one extent, which is the
-     *       same invariant {@code ensureChainPairSharedDepth} borrows under.</li>
-     * </ol>
-     * The extents compared are the <b>pair's</b> and the depth texture's, never the window's: the shadow pair is
-     * 2048x2048 while the window is not, and that difference is the reason the older route cannot reach it.
-     */
-    static String celtium$depthTargetRefusal(boolean enabled, boolean currentIsMain, boolean depthIsMainDepth,
-            long identity, boolean pairExists, int pairWidth, int pairHeight, int depthWidth, int depthHeight,
-            boolean depthShared, int pairColorCount) {
-        if (!enabled) {
-            return "disabled";
-        }
-        if (currentIsMain) {
-            return "main";
-        }
-        if (depthIsMainDepth) {
-            return "main-depth";
-        }
-        if (identity == 0L) {
-            return "window";
-        }
-        if (!pairExists) {
-            return "no-pair";
-        }
-        if (pairColorCount != 1 && pairColorCount != 2) {
-            return "mrt";
-        }
-        if (!depthShared) {
-            return "not-shared";
-        }
-        if (depthWidth <= 0 || depthHeight <= 0 || pairWidth != depthWidth || pairHeight != depthHeight) {
-            return "extent";
-        }
-        return null;
-    }
-
-    /**
      * Resolves the depth texture recorded for an identity's framebuffer, as {@code {texture, width, height, source}}.
      * <p>
      * Two layers, and they answer different questions. The publication record is filled at framebuffer-bind time by the
@@ -17885,7 +17642,7 @@ this.frameBufferOpen = false;
                 : gameStubDepth;
         boolean depthIsMainDepth = depthRecord != null && mainDepthTexture > 0
                 && depthRecord[0] == mainDepthTexture;
-        String refusal = celtium$depthTargetRefusal(TERRAIN_TO_DEPTH_TARGET, this.targetRegistry.currentIsMain(),
+        String refusal = FrameTargetJudgments.celtium$depthTargetRefusal(TERRAIN_TO_DEPTH_TARGET, this.targetRegistry.currentIsMain(),
                 depthIsMainDepth, identity, pairExists, pairWidth, pairHeight, depthWidth, depthHeight, shared,
                 colors);
         // Item 419, defect 1: the other half of the pair. The refusal census names the outcome but neither of
@@ -17960,26 +17717,6 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * {@return whether the depth half of a routed pass's owed clear may run in {@code frameSerial}}.
-     * <p>
-     * Two shapes of pair depth, two guards. A pair borrowing a shared depth image (a nonzero {@code depthKey}) is
-     * guarded by the shared rule, {@link GllessFrameTarget#celtium$sharedDepthClearNeeded}: once per frame per
-     * depth key, because the family of framebuffers attaching that texture shares the one image. A pair on its
-     * own depth (key 0) has no family to guard against - the image is this pair's alone - and the once-per-frame
-     * rule for its depth half is the per-identity one the consume has already passed
-     * ({@link #celtium$pairClearNeeded}). The shared rule answers {@code false} for key 0 by design ("nothing to
-     * guard"), so reading it directly here would strip the depth half of every private-depth pair's owed clear -
-     * and refuse its self-test arm with it - leaving that clear pending for a later window to land after the
-     * pass drew, which is the erasure item 384 measured on the bound-target route.
-     * <p>
-     * Package-private and static so the rule is pinned without a device, like the shared rule it extends.
-     */
-    static boolean celtium$routedDepthClearAllowed(long depthKey, long clearedFrameSerial, long frameSerial) {
-        return depthKey == 0L
-                || GllessFrameTarget.celtium$sharedDepthClearNeeded(depthKey, clearedFrameSerial, frameSerial);
-    }
-
-    /**
      * Consumes the clear a routed pass owes before its pass begins, outside the pass.
      * <p>
      * Same three arms as the window path's clear (self-test, latched game clear, ordinary once-per-frame clear) minus
@@ -18001,7 +17738,7 @@ this.frameBufferOpen = false;
         GlsmFrameState.PendingClear pending = celtium$pendingClear(identity);
         boolean latched = pending != null;
         int mask = latched ? pending.mask : (0x4000 | 0x0100);
-        boolean depthAllowed = celtium$routedDepthClearAllowed(depthKey,
+        boolean depthAllowed = FrameTargetJudgments.celtium$routedDepthClearAllowed(depthKey,
                 owner.sharedDepthClearedFrameSerial(depthKey), celtium$frameSerial());
         if ((mask & 0x0100) != 0 && !depthAllowed) {
             mask &= ~0x0100;
@@ -18205,14 +17942,14 @@ this.frameBufferOpen = false;
                             && pairOwner.chainPairHeight(existingOwner) == passH;
                     boolean ownerDepthMatches = ownerExists
                             && (candidateKey == 0L || pairOwner.chainPairUsesSharedDepth(existingOwner, candidateKey));
-                    drawIdentity = celtium$resolvePackTerrainDrawIdentity(identity, existingOwner,
+                    drawIdentity = PackTerrainJudgments.celtium$resolvePackTerrainDrawIdentity(identity, existingOwner,
                             this.targetRegistry.mainIdentity(), this.gameFramebufferIdentity,
                             ownerExists, ownerSizeMatches, ownerDepthMatches);
                     if (drawIdentity != identity) {
                         pairClass = pairOwner.chainPairFormatClass(drawIdentity);
                         targetRenderPass = frameVariantRenderPass(targetColors, pairClass);
                     } else {
-                        handoffSource = celtium$resolvePackTerrainColorHandoffSource(identity, drawIdentity,
+                        handoffSource = PackTerrainJudgments.celtium$resolvePackTerrainColorHandoffSource(identity, drawIdentity,
                                 existingOwner, this.targetRegistry.mainIdentity(), this.gameFramebufferIdentity,
                                 ownerExists, ownerSizeMatches, ownerDepthMatches,
                                 ownerExists && pairOwner.chainPairAcquired(existingOwner),
@@ -18285,7 +18022,7 @@ this.frameBufferOpen = false;
                     pendingShadowSunDirection = sunDirection;
                     pendingShadowCameraPosition = cameraPosition;
                 }
-                int pairColors = celtium$packTerrainPairColorCount(targetColors,
+                int pairColors = PackTerrainJudgments.celtium$packTerrainPairColorCount(targetColors,
                         pairOwner.chainPairColorCount(drawIdentity));
                 pairOwner.ensureChainPairColors(drawIdentity, pairColors, passW, passH, pairClass);
                 for (int s = 1; s < pairColors; s++) {
@@ -18316,7 +18053,7 @@ this.frameBufferOpen = false;
                         if (celtium$pairClearNeeded(RenderTargetRegistry.ImageSlot.CHAIN_PAIR,
                                 pairOwner.chainPairAcquired(drawIdentity),
                                 this.targetRegistry.chainPairClearContentIdentity(drawIdentity), drawIdentity)
-                                && celtium$routedDepthClearAllowed(routedDepthKey,
+                                && FrameTargetJudgments.celtium$routedDepthClearAllowed(routedDepthKey,
                                         pairOwner.sharedDepthClearedFrameSerial(routedDepthKey),
                                         celtium$frameSerial())) {
                             double depthVal = org.soutalab.celtium.vulkan.gl.GlsmFrontend.clearDepth();
@@ -19008,66 +18745,6 @@ this.frameBufferOpen = false;
         return drawn;
     }
 
-    /**
-     * {@return the chain-pair identity a pack terrain pass should draw into}: reuses an already-published
-     * non-main chain-pair owner of the same GL slot-0 colour texture, extent, and shared-depth attachment
-     * (so separate Iris FBOs for clear / gbuffers_terrain / gbuffers_cutout / gbuffers_water that attach
-     * the same {@code colortex0} and {@code depthtex0} draw into one shared {@code VkImage} without
-     * hijacking depth-free composite FBOs), or falls back to {@code boundIdentity}.
-     */
-    static long celtium$resolvePackTerrainDrawIdentity(long boundIdentity,
-                                                       long existingPublishedOwner,
-                                                       long mainIdentity,
-                                                       long gameFramebufferIdentity,
-                                                       boolean ownerPairExists,
-                                                       boolean ownerSizeMatches,
-                                                       boolean ownerDepthMatches) {
-        if (existingPublishedOwner != Long.MIN_VALUE && existingPublishedOwner != 0L
-                && existingPublishedOwner != boundIdentity
-                && existingPublishedOwner != mainIdentity
-                && existingPublishedOwner != gameFramebufferIdentity
-                && ownerPairExists && ownerSizeMatches && ownerDepthMatches) {
-            return existingPublishedOwner;
-        }
-        return boundIdentity;
-    }
-
-    /**
-     * {@return the chain-pair identity whose colour contents should be handed off (copied) into {@code drawIdentity}}
-     * before drawing, or {@code 0L} when no handoff applies.
-     * <p>
-     * Applies when {@code drawIdentity} could not directly reuse {@code existingPublishedOwner} solely because their
-     * depth attachments differ (e.g. depth-free {@code deferred1} wrote {@code colortex0} ALT, and depth-attached
-     * {@code gbuffers_water} / {@code gbuffers_hand} now draws onto the same {@code colortex0} ALT with
-     * {@code depthtex0}). Without handing off colour, {@code drawIdentity}'s per-frame clear erases {@code deferred1}.
-     */
-    static long celtium$resolvePackTerrainColorHandoffSource(long boundIdentity,
-                                                             long drawIdentity,
-                                                             long existingPublishedOwner,
-                                                             long mainIdentity,
-                                                             long gameFramebufferIdentity,
-                                                             boolean ownerPairExists,
-                                                             boolean ownerSizeMatches,
-                                                             boolean ownerDepthMatches,
-                                                             boolean ownerAcquired,
-                                                             boolean ownerWrittenThisFrame) {
-        if (drawIdentity == boundIdentity
-                && existingPublishedOwner != Long.MIN_VALUE && existingPublishedOwner != 0L
-                && existingPublishedOwner != drawIdentity
-                && existingPublishedOwner != mainIdentity
-                && existingPublishedOwner != gameFramebufferIdentity
-                && ownerPairExists && ownerSizeMatches && !ownerDepthMatches && ownerAcquired
-                && ownerWrittenThisFrame) {
-            return existingPublishedOwner;
-        }
-        return 0L;
-    }
-
-    /** {@return whether an off-target immediate window must use the load/store depth render pass}. */
-    static boolean celtium$preserveWindowDepth(boolean terrainToDepthTarget, boolean hasDepthRecord) {
-        return terrainToDepthTarget && hasDepthRecord;
-    }
-
     /** {@return whether {@code renderLists} has at least one section with geometry ready for {@code pass}}. */
     private boolean celtium$renderListsHaveGeometry(ChunkRenderListIterable renderLists, TerrainRenderPass pass) {
         Iterator<ChunkRenderList> it = renderLists.iterator(pass.isReverseOrder());
@@ -19117,23 +18794,6 @@ this.frameBufferOpen = false;
     /** {@return whether an immediate group may bake {@code glModelView} into its vertices}. */
     static boolean celtium$allowPreTransform(boolean hasRetained, boolean hasModProgram, boolean preTransformable) {
         return !hasRetained && !hasModProgram && preTransformable;
-    }
-
-    /** {@return the chain-pair colour slot count to ensure without shrinking existing MRT slots}. */
-    static int celtium$packTerrainPairColorCount(int targetColors, int existingPairColors) {
-        return Math.max(Math.max(1, targetColors), existingPairColors);
-    }
-
-    /** {@return the leading contiguous run of non-zero GL colour attachment texture names}. */
-    static int celtium$leadingColorAttachmentCount(int[] attachments) {
-        if (attachments == null || attachments.length == 0 || attachments[0] == 0) {
-            return 0;
-        }
-        int count = 1;
-        while (count < attachments.length && attachments[count] != 0) {
-            count++;
-        }
-        return count;
     }
 
     private void celtium$reportPackTerrainRefused(TerrainRenderPass pass, int programId, String reason) {
@@ -19786,7 +19446,7 @@ this.frameBufferOpen = false;
                 published = candidate != null && candidate.view() != 0L && !candidate.celtium$ownsImage()
                         && this.publishedFrameImages.get(this.terrainShadowDepthTexture) != 0L;
             }
-            String refusal = celtium$terrainShadowRefusal(true, true, this.terrainShadowFrame, this.frameId,
+            String refusal = PackTerrainJudgments.celtium$terrainShadowRefusal(true, true, this.terrainShadowFrame, this.frameId,
                     this.terrainShadowDepthTexture, published);
             if (refusal == null) {
                 terrainShadowMap = candidate;
@@ -20571,11 +20231,6 @@ this.frameBufferOpen = false;
                 : framebufferCache().chainPair(renderPass, glless, this.targetWidth, this.targetHeight);
     }
 
-    /** Whether an ask for this many colour targets must be served by the multi-target cache entry. */
-    static boolean celtium$chainPairMultiTarget(int colorCount) {
-        return colorCount > 1;
-    }
-
     /**
      * The current identity's chain-pair framebuffer over {@code colorCount} colour targets, 0 without owned
      * pairs; see {@link FramebufferCache#chainPairMulti}. A pass built for several colour targets - the pack
@@ -20587,7 +20242,7 @@ this.frameBufferOpen = false;
      * exactly.
      */
     private long ensureChainPairFramebuffer(long renderPass, int colorCount) {
-        if (!celtium$chainPairMultiTarget(colorCount)) {
+        if (!PackTerrainJudgments.celtium$chainPairMultiTarget(colorCount)) {
             return ensureChainPairFramebuffer(renderPass);
         }
         GllessFrameTarget glless = offTargetTarget();
@@ -20601,7 +20256,7 @@ this.frameBufferOpen = false;
         if (glless == null) {
             return 0L;
         }
-        if (!celtium$chainPairMultiTarget(colorCount)) {
+        if (!PackTerrainJudgments.celtium$chainPairMultiTarget(colorCount)) {
             return framebufferCache().chainPair(identity, renderPass, glless, this.targetWidth, this.targetHeight);
         }
         return framebufferCache().chainPairMulti(identity, renderPass, glless, colorCount, this.targetWidth,
@@ -21058,20 +20713,6 @@ this.frameBufferOpen = false;
     /** Three decimals, the precision the renderer's own state lines use. */
     static float round3(float value) {
         return (float) (Math.round(value * 1000.0D) / 1000.0D);
-    }
-
-    /**
-     * {@return whether the old frame target may be released and replaced}, given whether its framebuffers could be
-     * freed.
-     * <p>
-     * The release's outcome is the gate, not a report. A cache that could not be emptied still holds framebuffers
-     * built over the old target's views, so deleting those views would leave the next window beginning a pass against
-     * a framebuffer naming dead attachments - the fault the audit of issue #423 describes (item 372 hole 1). A false
-     * keeps the old target and retries the recreation on a later frame, the direction {@code settleGpu}'s own failure
-     * already takes.
-     */
-    static boolean celtium$frameTargetReplaceable(boolean framebuffersReleased) {
-        return framebuffersReleased;
     }
 
     /**

@@ -29,7 +29,7 @@ class DepthPublishRefusalReasonTest {
         // The Tier 1 measurement: image=0x209..., view=0x20b..., extent=1280x720, layout=0 at the refusal,
         // published with layout=3 two seconds later.
         assertEquals("depth-layout-unrecorded",
-                VulkanTerrainGpuBackend.celtium$depthPublishRefusalReason(0x209L, 0x20bL, EXTENT,
+                FrameTargetJudgments.celtium$depthPublishRefusalReason(0x209L, 0x20bL, EXTENT,
                         VK_IMAGE_LAYOUT_UNDEFINED),
                 "image, view and extent present with only the layout unrecorded is the transient");
     }
@@ -37,21 +37,21 @@ class DepthPublishRefusalReasonTest {
     @Test
     void aMissingImageKeepsTheStandingReason() {
         assertEquals("depth-not-in-store",
-                VulkanTerrainGpuBackend.celtium$depthPublishRefusalReason(0L, 0x20bL, EXTENT,
+                FrameTargetJudgments.celtium$depthPublishRefusalReason(0L, 0x20bL, EXTENT,
                         VK_IMAGE_LAYOUT_UNDEFINED),
                 "an unrecorded layout over a missing image is still a missing image, not the transient");
         assertEquals("depth-not-in-store",
-                VulkanTerrainGpuBackend.celtium$depthPublishRefusalReason(0L, 0x20bL, EXTENT,
+                FrameTargetJudgments.celtium$depthPublishRefusalReason(0L, 0x20bL, EXTENT,
                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL));
     }
 
     @Test
     void aMissingViewOrExtentKeepsTheStandingReason() {
         assertEquals("depth-not-in-store",
-                VulkanTerrainGpuBackend.celtium$depthPublishRefusalReason(0x209L, 0L, EXTENT,
+                FrameTargetJudgments.celtium$depthPublishRefusalReason(0x209L, 0L, EXTENT,
                         VK_IMAGE_LAYOUT_UNDEFINED));
         assertEquals("depth-not-in-store",
-                VulkanTerrainGpuBackend.celtium$depthPublishRefusalReason(0x209L, 0x20bL, null,
+                FrameTargetJudgments.celtium$depthPublishRefusalReason(0x209L, 0x20bL, null,
                         VK_IMAGE_LAYOUT_UNDEFINED));
     }
 
@@ -60,7 +60,7 @@ class DepthPublishRefusalReasonTest {
         // With a layout recorded the refusal condition does not fire at all today; the reason function must
         // still not name that tuple the transient if another part is missing.
         assertEquals("depth-not-in-store",
-                VulkanTerrainGpuBackend.celtium$depthPublishRefusalReason(0x209L, 0L, EXTENT,
+                FrameTargetJudgments.celtium$depthPublishRefusalReason(0x209L, 0L, EXTENT,
                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL));
     }
 }

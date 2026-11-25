@@ -35,31 +35,31 @@ class BoundTargetRoutedClearTest {
     /** A pair on its own depth: nothing is shared, so the depth half runs whatever the serials say. */
     @Test
     void aPairOnItsOwnDepthMayClearItsDepth() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$routedDepthClearAllowed(0L, -1L, 41L),
+        assertTrue(FrameTargetJudgments.celtium$routedDepthClearAllowed(0L, -1L, 41L),
                 "never cleared");
-        assertTrue(VulkanTerrainGpuBackend.celtium$routedDepthClearAllowed(0L, 41L, 41L),
+        assertTrue(FrameTargetJudgments.celtium$routedDepthClearAllowed(0L, 41L, 41L),
                 "the shared rule's same-frame answer must not leak into the private shape: the per-identity "
                         + "rule upstream of this decision is the guard here");
-        assertTrue(VulkanTerrainGpuBackend.celtium$routedDepthClearAllowed(0L, 41L, 42L),
+        assertTrue(FrameTargetJudgments.celtium$routedDepthClearAllowed(0L, 41L, 42L),
                 "an earlier frame");
     }
 
     /** A shared depth never cleared in this frame: the first member's clear runs. */
     @Test
     void aSharedDepthNotYetClearedThisFrameMayClear() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$routedDepthClearAllowed(0x2aL, -1L, 41L));
+        assertTrue(FrameTargetJudgments.celtium$routedDepthClearAllowed(0x2aL, -1L, 41L));
     }
 
     /** A shared depth already cleared this frame: a second member must not clear what the first drew. */
     @Test
     void aSharedDepthClearedThisFrameRefusesTheDepthHalf() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$routedDepthClearAllowed(0x2aL, 41L, 41L));
+        assertFalse(FrameTargetJudgments.celtium$routedDepthClearAllowed(0x2aL, 41L, 41L));
     }
 
     /** A shared depth cleared in an earlier frame: the guard is per frame, not permanent. */
     @Test
     void aSharedDepthClearedInAnEarlierFrameMayClearAgain() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$routedDepthClearAllowed(0x2aL, 41L, 42L));
+        assertTrue(FrameTargetJudgments.celtium$routedDepthClearAllowed(0x2aL, 41L, 42L));
     }
 
     /**

@@ -32,17 +32,17 @@ class ChainPairMultiFramebufferTest {
 
     @Test
     void oneColourAsksStayOnTheLegacyEntry() {
-        assertFalse(VulkanTerrainGpuBackend.celtium$chainPairMultiTarget(0));
-        assertFalse(VulkanTerrainGpuBackend.celtium$chainPairMultiTarget(1),
+        assertFalse(PackTerrainJudgments.celtium$chainPairMultiTarget(0));
+        assertFalse(PackTerrainJudgments.celtium$chainPairMultiTarget(1),
                 "one colour target is the legacy chain pair's own shape");
     }
 
     @Test
     void multiColourAsksGoToTheMultiEntry() {
-        assertTrue(VulkanTerrainGpuBackend.celtium$chainPairMultiTarget(2),
+        assertTrue(PackTerrainJudgments.celtium$chainPairMultiTarget(2),
                 "two colour targets need a three-attachment framebuffer");
-        assertTrue(VulkanTerrainGpuBackend.celtium$chainPairMultiTarget(3));
-        assertTrue(VulkanTerrainGpuBackend.celtium$chainPairMultiTarget(8), "the pack ledger's full width");
+        assertTrue(PackTerrainJudgments.celtium$chainPairMultiTarget(3));
+        assertTrue(PackTerrainJudgments.celtium$chainPairMultiTarget(8), "the pack ledger's full width");
     }
 
     @Test

@@ -122,36 +122,36 @@ class ChainPairFormatClassTest {
     // T5 / rule R8: the forced-class property parse.
     @Test
     void theForcedClassParsesNamesAndRefusesTheRest() {
-        assertNull(VulkanTerrainGpuBackend.celtium$parseForcedTargetFormatClass(null));
-        assertNull(VulkanTerrainGpuBackend.celtium$parseForcedTargetFormatClass("default"));
-        assertNull(VulkanTerrainGpuBackend.celtium$parseForcedTargetFormatClass(""));
+        assertNull(FrameTargetJudgments.celtium$parseForcedTargetFormatClass(null));
+        assertNull(FrameTargetJudgments.celtium$parseForcedTargetFormatClass("default"));
+        assertNull(FrameTargetJudgments.celtium$parseForcedTargetFormatClass(""));
         assertEquals(TargetFormatClass.RGBA16_FLOAT,
-                VulkanTerrainGpuBackend.celtium$parseForcedTargetFormatClass("RGBA16_FLOAT"));
+                FrameTargetJudgments.celtium$parseForcedTargetFormatClass("RGBA16_FLOAT"));
         assertEquals(TargetFormatClass.RGBA16_FLOAT,
-                VulkanTerrainGpuBackend.celtium$parseForcedTargetFormatClass("rgba16_float"),
+                FrameTargetJudgments.celtium$parseForcedTargetFormatClass("rgba16_float"),
                 "the name is case-insensitive, like the other celtium properties");
-        assertNull(VulkanTerrainGpuBackend.celtium$parseForcedTargetFormatClass("DEPTH32_FLOAT"),
+        assertNull(FrameTargetJudgments.celtium$parseForcedTargetFormatClass("DEPTH32_FLOAT"),
                 "a depth class is not a colour class: forcing one must not take effect");
-        assertNull(VulkanTerrainGpuBackend.celtium$parseForcedTargetFormatClass("not-a-class"));
+        assertNull(FrameTargetJudgments.celtium$parseForcedTargetFormatClass("not-a-class"));
     }
 
     // QUEUE 395 section 5.1: the window path's pair class - the forced class reaches pairs no
     // registration junction resolves (a ShaderGroup group pair), while an unforced run follows the pair.
     @Test
     void theWindowPairClassFollowsThePairUnlessForced() {
-        assertEquals(TargetFormatClass.RGBA8_UNORM, VulkanTerrainGpuBackend.celtium$windowPairClass(
+        assertEquals(TargetFormatClass.RGBA8_UNORM, PackTerrainJudgments.celtium$windowPairClass(
                 null, false, TargetFormatClass.RGBA8_UNORM, null), "no forcing: the pair's class stands");
-        assertEquals(TargetFormatClass.RGBA16_FLOAT, VulkanTerrainGpuBackend.celtium$windowPairClass(
+        assertEquals(TargetFormatClass.RGBA16_FLOAT, PackTerrainJudgments.celtium$windowPairClass(
                 null, false, TargetFormatClass.RGBA16_FLOAT, null),
                 "no forcing: a junction-resolved non-default class is followed, not re-resolved");
-        assertEquals(TargetFormatClass.RGBA16_FLOAT, VulkanTerrainGpuBackend.celtium$windowPairClass(
+        assertEquals(TargetFormatClass.RGBA16_FLOAT, PackTerrainJudgments.celtium$windowPairClass(
                 TargetFormatClass.RGBA16_FLOAT, false, TargetFormatClass.RGBA8_UNORM,
                 TargetFormatClass.RGBA16_FLOAT), "forced: a group pair leaves the default class");
-        assertEquals(TargetFormatClass.RGBA8_UNORM, VulkanTerrainGpuBackend.celtium$windowPairClass(
+        assertEquals(TargetFormatClass.RGBA8_UNORM, PackTerrainJudgments.celtium$windowPairClass(
                 TargetFormatClass.RGBA16_FLOAT, false, TargetFormatClass.RGBA8_UNORM,
                 TargetFormatClass.RGBA8_UNORM),
                 "forced but unusable on this device: the device check's fallback stands");
-        assertEquals(TargetFormatClass.RGBA8_UNORM, VulkanTerrainGpuBackend.celtium$windowPairClass(
+        assertEquals(TargetFormatClass.RGBA8_UNORM, PackTerrainJudgments.celtium$windowPairClass(
                 TargetFormatClass.RGBA16_FLOAT, true, TargetFormatClass.RGBA8_UNORM,
                 TargetFormatClass.RGBA16_FLOAT), "rule R1: a pinned identity is never forced");
     }
@@ -168,7 +168,7 @@ class ChainPairFormatClassTest {
         assertEquals(TargetFormatClass.RGBA16_FLOAT, VulkanColorFormat.pinnedOrRequested(
                 false, 0x881A, TargetFormatClass.BGRA8_UNORM),
                 "unpinned: the frame's class does not leak into a pair's own resolution");
-        assertEquals(TargetFormatClass.BGRA8_UNORM, VulkanTerrainGpuBackend.celtium$windowPairClass(
+        assertEquals(TargetFormatClass.BGRA8_UNORM, PackTerrainJudgments.celtium$windowPairClass(
                 TargetFormatClass.RGBA16_FLOAT, true, TargetFormatClass.RGBA8_UNORM,
                 TargetFormatClass.RGBA16_FLOAT, TargetFormatClass.BGRA8_UNORM),
                 "rule R1 on a BGRA frame: a pinned identity is never forced - it stays in the frame's class");

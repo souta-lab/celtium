@@ -1070,7 +1070,7 @@ final class CopyReadSide {
             // Fail closed: without a settled GPU the old target cannot be released, so no new one is built either.
             return false;
         }
-        if (!VulkanTerrainGpuBackend.celtium$frameTargetReplaceable(this.backend.destroyFramebuffer())) {
+        if (!FrameTargetJudgments.celtium$frameTargetReplaceable(this.backend.destroyFramebuffer())) {
             // The framebuffers could not be freed, so they still name the old target's views: deleting them here is
             // what left a later window's begin pointing at a dead view (issue #423, item 372 hole 1). Same direction
             // as the failed settle above - the old target keeps drawing, the recreation is retried on a later frame.
