@@ -148,8 +148,8 @@ final class CopyReadSide {
         }
         long sourceKey = RenderTargetRegistry.rawColorTextureIdentity(sourceDepthTexture);
         long destKey = RenderTargetRegistry.rawColorTextureIdentity(destDepthTexture);
-        long sourceImage = target.sharedDepthImage(sourceKey);
-        long destImage = target.sharedDepthImage(destKey);
+        long sourceImage = target.sharedDepths().image(sourceKey);
+        long destImage = target.sharedDepths().image(destKey);
         if (sourceImage == 0L) {
             // Registration normally lands at bind/attach time. A source whose framebuffer was only ever attached
             // before this backend existed registers here instead — too late for this frame's copy (the pass has
@@ -167,7 +167,7 @@ final class CopyReadSide {
             int destFbo = org.soutalab.celtium.vulkan.gl.GlsmFrontend
                     .celtium$framebufferForDepthTexture(destDepthTexture);
             if (destFbo != 0) this.backend.celtium$registerRawFramebuffer(destFbo, false);
-            destImage = target.sharedDepthImage(destKey);
+            destImage = target.sharedDepths().image(destKey);
             if (destImage == 0L) {
                 return "the depth copy's destination texture " + destDepthTexture
                         + " is not in the shared depth store (its framebuffer's pair never borrowed it)";
@@ -183,8 +183,8 @@ final class CopyReadSide {
             return "the depth copy's source texture " + sourceDepthTexture + " and destination texture "
                     + destDepthTexture + " resolve to the same shared depth image";
         }
-        int[] sourceExtent = target.sharedDepthExtent(sourceKey);
-        int[] destExtent = target.sharedDepthExtent(destKey);
+        int[] sourceExtent = target.sharedDepths().extent(sourceKey);
+        int[] destExtent = target.sharedDepths().extent(destKey);
         if (sourceExtent == null || destExtent == null
                 || x < 0 || y < 0 || x + width > sourceExtent[0] || y + height > sourceExtent[1]
                 || xoffset < 0 || yoffset < 0 || xoffset + width > destExtent[0]
@@ -195,8 +195,8 @@ final class CopyReadSide {
         // The copy's ordering flush, not a draw boundary (the window census' stamp).
         this.backend.pendingWindowTrigger = FramePassTimings.WINDOW_TRIGGER_ORDER;
         this.backend.celtium$flushPendingForGlDrawCause(GlDrawWindowCensus.CAUSE_COPY_ORDER);
-        int sourceFrom = target.sharedDepthLayout(sourceKey);
-        int destFrom = target.sharedDepthLayout(destKey);
+        int sourceFrom = target.sharedDepths().layout(sourceKey);
+        int destFrom = target.sharedDepths().layout(destKey);
         org.lwjgl.vulkan.VkCommandBuffer commands = this.backend.context.beginCommands();
         try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
             org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer barriers =
@@ -277,10 +277,10 @@ final class CopyReadSide {
             }
             return "the native depth copy threw: " + error;
         }
-        target.noteSharedDepthLayout(sourceKey,
+        target.sharedDepths().noteLayout(sourceKey,
                 sourceFrom == org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED
                         ? GllessFrameTarget.DEPTH_RENDER_LAYOUT : sourceFrom);
-        target.noteSharedDepthLayout(destKey, org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        target.sharedDepths().noteLayout(destKey, org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         this.depthCopiesServed++;
         if (this.depthCopyLogs < 8) {
             this.depthCopyLogs++;

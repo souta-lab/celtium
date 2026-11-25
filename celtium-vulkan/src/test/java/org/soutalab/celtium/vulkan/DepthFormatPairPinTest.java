@@ -179,9 +179,16 @@ class DepthFormatPairPinTest {
     void bothSidesOfTheCopyComeFromTheOneAllocatorAtTheChosenFormat() throws IOException {
         String frameTarget = Files.readString(findRepoFile(
                 "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/GllessFrameTarget.java"));
-        String sharedStore = methodSlice(frameTarget, "private long[] ensureSharedDepth", 1600);
-        assertTrue(sharedStore.contains("allocateImage(false, width, height"),
+        // The store itself moved to the HAL (HAL wave 3); the pin follows the ownership: the store
+        // allocates only through the injected allocator, and the frame target injects the one allocator.
+        String storeSource = Files.readString(findRepoFile(
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/hal/SharedDepthStore.java"));
+        String sharedStore = methodSlice(storeSource, "public long[] ensure(", 1600);
+        assertTrue(sharedStore.contains("this.allocator.allocate(width, height)"),
                 "the shared depth store allocates through the one allocator");
+        String injection = methodSlice(frameTarget, "private final SharedDepthStore sharedDepthStore", 600);
+        assertTrue(injection.contains("allocateImage(false, width, height"),
+                "the frame target injects its one allocator as the store's depth allocator");
         String allocator = methodSlice(frameTarget, "private long[] allocateImage(boolean color", 3200);
         assertTrue(allocator.contains("VulkanDepthFormat.chosen(this.context.physicalDevice())"),
                 "the allocator's depth format is the chooser's single answer");
@@ -192,9 +199,9 @@ class DepthFormatPairPinTest {
         String backend = Files.readString(findRepoFile(
                 "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/CopyReadSide.java"));
         String copy = methodSlice(backend, "public String celtium$serveDepthCopy", 2400);
-        assertTrue(copy.contains("target.sharedDepthImage(sourceKey)"),
+        assertTrue(copy.contains("target.sharedDepths().image(sourceKey)"),
                 "the copy's source is a shared-store image");
-        assertTrue(copy.contains("target.sharedDepthImage(destKey)"),
+        assertTrue(copy.contains("target.sharedDepths().image(destKey)"),
                 "the copy's destination is a shared-store image");
     }
 
