@@ -1,6 +1,8 @@
 package org.soutalab.celtium.vulkan;
 
 import org.lwjgl.system.MemoryStack;
+import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
+import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 import static org.lwjgl.vulkan.VK10.vkEndCommandBuffer;
 
 /**
