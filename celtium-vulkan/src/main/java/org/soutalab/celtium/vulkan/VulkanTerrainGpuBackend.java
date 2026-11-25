@@ -1434,7 +1434,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     }
 
     /** Human-readable state for logs and debug overlays; never null. */
-    public String CopyReadSide.describe() {
+    public String describe() {
         StringBuilder builder = new StringBuilder("vulkan");
         builder.append(" [").append(this.context.deviceName()).append(']');
         builder.append(" regions=").append(this.terrain.regionCount());
@@ -1495,7 +1495,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 + " texMatrixGroups=" + this.immediateStatistics.texMatrixGroups()
                 + " modelDrawRefusals=" + this.modelDrawRefusals
                 + " modelRecordedReplays=" + this.modelRecordedReplayCalls
-                + " modelFastPath[" + this.modelReplayFastPath.CopyReadSide.describe() + "]"
+                + " modelFastPath[" + this.modelReplayFastPath.describe() + "]"
                 + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.stubTransformSummary()
                 + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.stubTransformSummary()
                 + " stubTransformCalls=" + org.soutalab.celtium.vulkan.gl.GlsmFrontend.stubTransformSummary() + " modelMissingMeshes=" + this.modelGeometry.modelMissingMeshes()
@@ -3053,7 +3053,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     + " presentSkipReason=[" + this.presentSkipReason + "]"
                     + " submitSequence=" + this.scheduler.submitSequence()
                     + " completedSubmitSequence=" + this.scheduler.completedSubmitSequence()
-                    + " " + SubmitTrail.CopyReadSide.describe());
+                    + " " + SubmitTrail.describe());
         }
         this.submissionStatistics.noteStalledStops();
     }
@@ -9459,20 +9459,20 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.skyCensusBatches++;
             if (this.skyCensusBatches == 1) {
                 this.skyCensusFirst = "count=" + vertexCount
-                        + " colour=(" + celtium$CopyReadSide.round3(this.immediateState.colorRed()) + ","
-                        + celtium$CopyReadSide.round3(this.immediateState.colorGreen()) + ","
-                        + celtium$CopyReadSide.round3(this.immediateState.colorBlue()) + ","
-                        + celtium$CopyReadSide.round3(this.immediateState.colorAlpha()) + ")"
+                        + " colour=(" + celtium$round3(this.immediateState.colorRed()) + ","
+                        + celtium$round3(this.immediateState.colorGreen()) + ","
+                        + celtium$round3(this.immediateState.colorBlue()) + ","
+                        + celtium$round3(this.immediateState.colorAlpha()) + ")"
                         + " fogSelector=" + this.fog.selector()
                         + " fogStart=" + this.fog.start + " fogEnd=" + this.fog.end
-                        + " fogColour=(" + celtium$CopyReadSide.round3(this.fog.red) + ","
-                        + celtium$CopyReadSide.round3(this.fog.green) + "," + celtium$CopyReadSide.round3(this.fog.blue) + ")"
-                        + " mvT=(" + celtium$CopyReadSide.round3(this.glModelView[12]) + ","
-                        + celtium$CopyReadSide.round3(this.glModelView[13]) + ","
-                        + celtium$CopyReadSide.round3(this.glModelView[14]) + ")"
-                        + " v0=(" + celtium$CopyReadSide.round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress)) + ","
-                        + celtium$CopyReadSide.round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 4L)) + ","
-                        + celtium$CopyReadSide.round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 8L)) + ")";
+                        + " fogColour=(" + celtium$round3(this.fog.red) + ","
+                        + celtium$round3(this.fog.green) + "," + celtium$round3(this.fog.blue) + ")"
+                        + " mvT=(" + celtium$round3(this.glModelView[12]) + ","
+                        + celtium$round3(this.glModelView[13]) + ","
+                        + celtium$round3(this.glModelView[14]) + ")"
+                        + " v0=(" + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress)) + ","
+                        + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 4L)) + ","
+                        + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 8L)) + ")";
             }
         }
         if (SKY_CENSUS && formatId == 1 && vertexCount == 18 && drawMode == 6) {
@@ -9482,17 +9482,17 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             this.skyFanBatches++;
             if (this.skyFanBatches == 1) {
                 this.skyFanFirst = "count=" + vertexCount
-                        + " colour=(" + celtium$CopyReadSide.round3(this.immediateState.colorRed()) + ","
-                        + celtium$CopyReadSide.round3(this.immediateState.colorGreen()) + ","
-                        + celtium$CopyReadSide.round3(this.immediateState.colorBlue()) + ","
-                        + celtium$CopyReadSide.round3(this.immediateState.colorAlpha()) + ")"
+                        + " colour=(" + celtium$round3(this.immediateState.colorRed()) + ","
+                        + celtium$round3(this.immediateState.colorGreen()) + ","
+                        + celtium$round3(this.immediateState.colorBlue()) + ","
+                        + celtium$round3(this.immediateState.colorAlpha()) + ")"
                         + " fogSelector=" + this.fog.selector()
-                        + " mvT=(" + celtium$CopyReadSide.round3(this.glModelView[12]) + ","
-                        + celtium$CopyReadSide.round3(this.glModelView[13]) + ","
-                        + celtium$CopyReadSide.round3(this.glModelView[14]) + ")"
-                        + " v0=(" + celtium$CopyReadSide.round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress)) + ","
-                        + celtium$CopyReadSide.round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 4L)) + ","
-                        + celtium$CopyReadSide.round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 8L)) + ")";
+                        + " mvT=(" + celtium$round3(this.glModelView[12]) + ","
+                        + celtium$round3(this.glModelView[13]) + ","
+                        + celtium$round3(this.glModelView[14]) + ")"
+                        + " v0=(" + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress)) + ","
+                        + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 4L)) + ","
+                        + celtium$round3(org.lwjgl.system.MemoryUtil.memGetFloat(vertexAddress + 8L)) + ")";
             }
         }
         // Cleared at entry so a refusal always carries its own reason. It used to keep whatever the previous call left -
@@ -11133,7 +11133,7 @@ this.frameBufferOpen = false;
                 + (state.length > 14 ? " srcA=" + state[9] + " dstA=" + state[10]
                         + " mask=0x" + Integer.toHexString(state[11]) + " eq=" + state[12] + "/" + state[13]
                         + " alphaFunc=" + state[14] : " (pre-BH-07 array)")
-                + " depthTest=" + state[3] + " depthWrite=" + state[4] + " cull=" + VulkanCullState.CopyReadSide.describe(state[5])
+                + " depthTest=" + state[3] + " depthWrite=" + state[4] + " cull=" + VulkanCullState.describe(state[5])
                 + "(" + state[5] + ")"
                 + " alphaRef=" + Float.intBitsToFloat(state[6]) + " depthFunc=" + state[7]
                 // The other copy of the same facts, and the trap in reading it. The mirror is fed at the head of
@@ -11942,7 +11942,7 @@ this.frameBufferOpen = false;
         }
     }
 
-    static String celtium$CopyReadSide.round3(float value) {
+    static String celtium$round3(float value) {
         return String.valueOf(Math.round(value * 1000.0f) / 1000.0f);
     }
 
@@ -23387,21 +23387,21 @@ this.frameBufferOpen = false;
                             + " main=0x" + Long.toHexString(this.targetRegistry.mainIdentity())
                             + " isMain=" + this.targetRegistry.currentIsMain()
                             + " batches=" + group.batches
-                            + " proj=" + celtium$CopyReadSide.round3(group.projection[0]) + ","
-                            + celtium$CopyReadSide.round3(group.projection[5]) + ","
-                            + celtium$CopyReadSide.round3(group.projection[10]) + ","
-                            + celtium$CopyReadSide.round3(group.projection[14])
-                            + " mvT=(" + celtium$CopyReadSide.round3(group.modelView[12]) + ","
-                            + celtium$CopyReadSide.round3(group.modelView[13]) + ","
-                            + celtium$CopyReadSide.round3(group.modelView[14]) + ")"
+                            + " proj=" + celtium$round3(group.projection[0]) + ","
+                            + celtium$round3(group.projection[5]) + ","
+                            + celtium$round3(group.projection[10]) + ","
+                            + celtium$round3(group.projection[14])
+                            + " mvT=(" + celtium$round3(group.modelView[12]) + ","
+                            + celtium$round3(group.modelView[13]) + ","
+                            + celtium$round3(group.modelView[14]) + ")"
                             + " fog=" + (group.fog == null ? "none"
                                     : ((int) group.fog[0]) + "/" + group.fog[2] + "/" + group.fog[3])
                             // The colour and the pipeline state are the two inputs the matrices do not cover: a plane
                             // drawn with the fog colour as its own colour is flat whatever the fog does, and a plane
                             // whose cull or depth state moved is a different picture with identical matrices.
                             + " colour=" + (group.color == null ? "null"
-                                    : celtium$CopyReadSide.round3(group.color[0]) + "," + celtium$CopyReadSide.round3(group.color[1]) + ","
-                                    + celtium$CopyReadSide.round3(group.color[2]) + "," + celtium$CopyReadSide.round3(group.color[3]))
+                                    : celtium$round3(group.color[0]) + "," + celtium$round3(group.color[1]) + ","
+                                    + celtium$round3(group.color[2]) + "," + celtium$round3(group.color[3]))
                             + " state=" + (group.state == null ? "null"
                                     : "blend" + group.state[0] + " depthTest" + group.state[3]
                                     + " depthWrite" + group.state[4] + " cull" + group.state[5]
@@ -24471,7 +24471,7 @@ this.frameBufferOpen = false;
                 + " emptyViewport=" + emptyViewport
                 + " blend=" + (group.prepared == null || group.prepared.pipeline == null ? "none"
                         : group.prepared.pipeline instanceof VulkanImmediatePipeline colour
-                                ? colour.celtium$colorBlend().CopyReadSide.describe() : "other"));
+                                ? colour.celtium$colorBlend().describe() : "other"));
     }
 
     /** Split out of this class (2026-11-06); see HighlightProbe. */
