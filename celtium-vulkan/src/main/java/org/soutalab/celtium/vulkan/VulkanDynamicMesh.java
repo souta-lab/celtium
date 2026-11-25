@@ -103,6 +103,11 @@ public final class VulkanDynamicMesh {
     public boolean isArenaBorrow() {
         return this.frameArena != null;
     }
+
+    /** {@return whether this mesh's indices are the shared quad pattern rather than its own stream}. */
+    public boolean usesSharedQuadIndex() {
+        return this.sharedQuadIndexing;
+    }
     /** The borrowed slice, or null in owning mode. Its release is what frees the slot for a later frame. */
     private VulkanFrameArena.Region frameRegion;
     private VulkanHostBuffer vertices;
