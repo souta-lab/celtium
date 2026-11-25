@@ -3264,9 +3264,9 @@ public final class ValidationClient {
         buffer.setTranslation(0.0D, 0.0D, 0.0D);
         // POSITION_COLOR, not POSITION_TEX_COLOR: the target-group acceptance is about which render target a batch
         // belongs to and in what order the groups are flushed, and the UVs here were a constant (0.5, 0.5) that sampled
-        // one texel. Format 2 is the frame composite and belongs to the present path once
-        // celtium.vulkan.presentFromComposite is on, which made this fixture report passed=false while the frame itself
-        // was fine. Drawing with a format the immediate path owns keeps the property under test covered either way.
+        // one texel. Format 2 is the frame composite, which the composite-era present path claimed,
+        // making this fixture report passed=false while the frame itself was fine. Drawing with a
+        // format the immediate path owns keeps the property under test covered either way.
         buffer.begin(GL11C.GL_QUADS, DefaultVertexFormats.POSITION_COLOR);
         buffer.pos(left, bottom, z).color(red, green, blue, 255).endVertex();
         buffer.pos(right, bottom, z).color(red, green, blue, 255).endVertex();

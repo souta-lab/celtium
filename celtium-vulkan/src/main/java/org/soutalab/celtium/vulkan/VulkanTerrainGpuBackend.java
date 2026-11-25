@@ -4114,23 +4114,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     private static final boolean SKIP_GL_COMPOSITE =
             Boolean.getBoolean("celtium.vulkan.skipGlComposite");
     /**
-     * Whether the frame's final composite is the present path's job rather than an immediate batch.
-     * <p>
-     * Default on. Measured: AMD 18.19/18.81 -> 15.89 ms, Intel 42.66 -> 30.86 ms, and the screen-sized (1280x720)
-     * mirror readback drops from 6.2 to 0.3 ms/frame - the frame's colour is then owned by the present path instead of
-     * being read back out of OpenGL. The image differs by under one 8-bit step in 0.12% of pixels (mean absolute
-     * difference 0.0155, max 7/255, zero in the sky): the composite it replaces is an opaque full-screen copy
-     * (col=0xffffffff), so this is rounding, not a skipped blend or a missing element.
-     * <p>
-     * It could only become the default after the command-buffer-target acceptance was moved off
-     * {@code POSITION_TEX_COLOR}: that fixture checks which render target a batch belongs to and in what order the
-     * groups are flushed, and format 2 is exactly the composite this changes. It now draws {@code POSITION_COLOR} and
-     * passes with this on and off, so the property stays covered.
-     */
-    /** Off by default: present the frame from the composite batch instead of letting GL blit it. */
-    private static final boolean PRESENT_FROM_COMPOSITE =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
-    /**
      * How many indices a window may hold before the accept path flushes it. 32768 since 2026-11-06: two same-jar A/Bs
      * against 8192 (l10flush 4 pairs: p50 0.941, p95 0.937; l26flush 5 pairs: p50 0.988, p95 0.995, p99 0.995, tick
      * frame 0.977) moved every percentile the same way and none the other - the GUI's font runs filled 8192 several
@@ -9709,11 +9692,6 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             }
         }
         int expectedStride = celtium$expectedStride(formatId);
-        // The property name says "present from composite", and that is what it is for - but with the check below it
-        // currently presents nothing: measured compositePresentRefusals 1/frame and no present at all, because the
-        // batch Minecraft composites with is drawn to the game framebuffer rather than to the screen. What the switch
-        // controls in practice is which format-2 batches the present path may take; everything else falls through to
-        // the immediate path. Recorded so the name is not read as evidence that a present happens.
         if (BATCH_TIMINGS) {
             this.batchCheckNanos = System.nanoTime() - afterBatchStartNanos;
         }
@@ -9736,41 +9714,11 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
             return true;
         }
         celtium$offerStage(3);
-        if (formatId == 2 && PRESENT_FROM_COMPOSITE && (this.targetRegistry.currentIsMain()
-                || celtium$samplesBoundFramebufferColor(this.immediateState.boundTextureName()))) {
-            // The audit's S17: this layout is not only the screen composite. `Framebuffer.func_178038_a` uses it to blend
-            // an overlay *into* a framebuffer as well, and GUI, outlines, offscreen passes and postprocessing share it -
-            // so presenting on the format alone cancels GL draws that were not composites. The two conditions that
-            // distinguish the screen-only case are checked here, before anything is taken: the main framebuffer must be
-            // the bound target, and the viewport must be the whole of it.
-            // The audit asked for the framebuffer to be checked rather than the format alone. The stricter viewport
-            // equality that was tried first turned out to refuse the legitimate composite as well - the game does not set
-            // a viewport equal to the whole target at that moment - and with it the present never happened at all, which
-            // the fixture noticed by never completing. The target check stays, because that is what distinguishes the
-            // screen from an overlay blended into a framebuffer.
-            // Reached only for a batch that is a candidate composite (the condition above). The earlier form refused
-            // everything that was not bound to the screen, which sent the hand, overlays and mod batches to OpenGL -
-            // and GL then drew them against a depth buffer the terrain had written, which is why the depth write-back
-            // was needed at all. Those batches now fall through to the acceptance mask below (which accepts format 2)
-            // and are drawn by the immediate path, so the depth return can go away: measured effect 0.0000 / 5-8 px
-            // against a 0.0167 / 481 px floor on both GPUs once format 2 is taken natively.
-            // Present the frame's content at the moment Minecraft composites it. The stack trace identified this batch
-            // as Framebuffer.func_178038_a - the game framebuffer blitted onto the screen - and taking it cancels GL's
-            // blit, so the screen shows the Vulkan present instead. It runs before the acceptance mask, which keeps
-            // this layout on GL by default.
-            // There is no GL composite to replace: the swap point presents the finished frame, so presenting here
-            // would be a second one for the same frame. What separates the two kinds of format-2 quad is the texture
-            // it samples: the frame's own blit samples this target's own colour image and stays refused, because
-            // presenting it again is exactly the duplicate the swap point already avoided; anything else is an overlay
-            // blended into the frame (the entity outline's composite is the case) and belongs to the acceptance mask
-            // below. The question is answered from the map the game's own framebuffer binds fill, because the stub
-            // cannot answer an attachment query.
-            if (!celtium$samplesCurrentTargetColor(this.immediateState.boundTextureName())) {
-                this.immediateLastRefusal = null;
-            } else {
-                return false;
-            }
-        }
+        // No composite branch remains: the swapchain is the only present route and the swap point
+        // presents the finished frame, so format-2 batches - the game's own composite and overlays
+        // blended into a framebuffer alike - fall through to the acceptance mask below and are drawn
+        // by the immediate path. The one duplicate that must not be drawn twice, the game's composite
+        // of a frame already presented from Vulkan, is taken above by the SKIP_GL_COMPOSITE check.
         if (this.immediateWindowBusy) {
             this.immediateLastRefusal = "reentrant upload during bridge handoff";
             return false;
@@ -21149,8 +21097,7 @@ this.frameBufferOpen = false;
      * This is what separates the frame's own blit - already presented at the swap point, so GL's copy must stay
      * cancelled - from an overlay that samples a different texture and blends into the frame, such as the entity
      * outline's composite. Asked of the map the game's own binds fill rather than of GL, because under the GL-less
-     * window the attachment query is unanswerable and {@link #celtium$samplesBoundFramebufferColor(int)} is false
-     * there for everything.
+     * window the attachment query is unanswerable there.
      */
     boolean celtium$samplesCurrentTargetColor(int texture) {
         if (texture == 0 || this.currentFramebufferIdentity == 0L) {
@@ -21158,32 +21105,6 @@ this.frameBufferOpen = false;
         }
         long[] reported = framebufferColorTexture(this.currentFramebufferIdentity);
         return reported != null && (int) reported[0] == texture;
-    }
-
-    /**
-     * {@return whether the texture a batch samples is the colour attachment of the framebuffer bound right now}.
-     * <p>
-     * This is the material that tells a screen composite apart from the hand, an overlay or a mod's format-2 batch:
-     * the composite reads the framebuffer it is about to be drawn over, the others do not. The audit asked for the
-     * framebuffer to be checked rather than the vertex format alone (S17), and this is that check done on the texture
-     * the batch actually binds.
-     */
-    private boolean celtium$samplesBoundFramebufferColor(int texture) {
-        if (texture == 0) {
-            return false;
-        }
-        int fbo = drawFramebufferBinding();
-        if (fbo == 0) {
-            return false;
-        }
-        int type = org.lwjgl.opengl.GL45C.glGetNamedFramebufferAttachmentParameteri(fbo,
-                org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0, org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE);
-        if (type != org.lwjgl.opengl.GL11.GL_TEXTURE) {
-            return false;
-        }
-        int attached = org.lwjgl.opengl.GL45C.glGetNamedFramebufferAttachmentParameteri(fbo,
-                org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0, org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
-        return attached != 0 && attached == texture;
     }
 
     /**

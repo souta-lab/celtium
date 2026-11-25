@@ -46,8 +46,6 @@ import static org.lwjgl.vulkan.VK10.*;
 public final class VulkanSwapchain {
     /** Startup constants: create() runs once per window, but the properties cannot change mid-run. */
     private static final boolean SWAPCHAIN_REQUESTED = Boolean.getBoolean(VulkanContext.SWAPCHAIN_PROPERTY);
-    private static final boolean PRESENT_FROM_COMPOSITE =
-            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
     /**
      * Request transfer-only swapchain image usage by default (issue #422 (a)): the native present path only blits
      * and clears swapchain images and never attaches them as colour attachments. Dropping COLOR_ATTACHMENT_BIT
@@ -842,10 +840,9 @@ public final class VulkanSwapchain {
             return null;
         }
         // Only the device contract gates creation: the extension is enabled unconditionally at device
-        // creation, and this create() is reached from the window-backend present path, which runs on either
-        // setting of presentFromComposite. Refusing here when neither the probe nor presentFromComposite was
-        // set made presentFromComposite=false retry a creation that could never succeed until the bounded
-        // escalation crashed the run.
+        // creation, and this create() is reached from the window-backend present path, which is the only
+        // present route. Refusing here when the probe was not set once made the direct route retry a
+        // creation that could never succeed until the bounded escalation crashed the run.
         if (!context.hasDeviceExtension("VK_KHR_swapchain")) {
             reasons.add("the device was not created with VK_KHR_swapchain enabled");
             return null;
