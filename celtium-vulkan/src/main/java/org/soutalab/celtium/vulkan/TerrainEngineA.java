@@ -344,7 +344,14 @@ final class TerrainEngineA {
                 }
             }
             this.framesPrepared++;
-            if (this.framesPrepared % PRINT_EVERY_FRAMES == 0) {
+            // The first prepared frame prints as well as every PRINT_EVERY_FRAMES-th:
+            // this census is the residency gate counters' only output, and a run
+            // that ends before a per-pass engine reaches 60 prepared frames (leg
+            // r7, 2026-11-25: crash at tick 383, Tier-A demonstrably armed and
+            // drawing) otherwise emits no residency line at all, leaving the
+            // reason counters unobservable exactly in the truncated runs that
+            // need them.
+            if (this.framesPrepared == 1 || this.framesPrepared % PRINT_EVERY_FRAMES == 0) {
                 System.out.println("[Celtium] CELTIUM_TERRAIN_A pass=" + this.passName
                         + " frames=" + this.framesPrepared
                         + " drawn=" + this.framesDrawn
