@@ -224,6 +224,7 @@ public final class VulkanMeshTaskDraw {
             VkMemoryBarrier.Buffer barrier = VkMemoryBarrier.calloc(1, stack).sType$Default()
                     .srcAccessMask(VK_ACCESS_HOST_WRITE_BIT)
                     .dstAccessMask(VK_ACCESS_SHADER_READ_BIT);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_HOST_BIT,
                     EXTMeshShader.VK_PIPELINE_STAGE_TASK_SHADER_BIT_EXT, 0, barrier, null, null);
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);

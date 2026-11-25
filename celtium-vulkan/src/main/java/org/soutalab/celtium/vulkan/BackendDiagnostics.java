@@ -509,6 +509,7 @@ final class BackendDiagnostics {
                 + " " + FallbackPaths.summary()
                 + " " + b.context.celtium$slabPoolSummary()
                 + " " + b.context.celtium$slabDrainSummary()
+                + " " + DrawCounters.barrierSummary()
                 + " " + b.framebufferCompositor.describe()
                 + " directMirrorFromAnnouncement=" + b.textureStats.directMirrorFromAnnouncement()
                 + " dynamicTextureFills=" + b.textureStats.dynamicTextureFills()

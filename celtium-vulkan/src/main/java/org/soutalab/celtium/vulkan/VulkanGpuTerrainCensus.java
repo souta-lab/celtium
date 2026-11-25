@@ -474,6 +474,7 @@ final class VulkanGpuTerrainCensus {
         VkMemoryBarrier.Buffer barrier = VkMemoryBarrier.calloc(1, stack).sType$Default()
                 .srcAccessMask(VK_ACCESS_HOST_WRITE_BIT)
                 .dstAccessMask(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        DrawCounters.notePipelineBarrier();
         vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_HOST_BIT,
                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, barrier, null, null);
         vkCmdResetQueryPool(commandBuffer, this.queryPool, slotIndex * 2, 2);
@@ -522,6 +523,7 @@ final class VulkanGpuTerrainCensus {
         }
         vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, this.queryPool, slotIndex * 2 + 1);
         barrier.get(0).srcAccessMask(VK_ACCESS_SHADER_WRITE_BIT).dstAccessMask(VK_ACCESS_HOST_READ_BIT);
+        DrawCounters.notePipelineBarrier();
         vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                 VK_PIPELINE_STAGE_HOST_BIT, 0, barrier, null, null);
         slot.pending = pending;

@@ -538,6 +538,7 @@ final class PassExecutor {
                         ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
                         : (depth ? VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
                                 : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+        DrawCounters.notePipelineBarrier();
         vkCmdPipelineBarrier(commandBuffer, srcStage, dstStage, 0, null, null, barrier);
     }
 
