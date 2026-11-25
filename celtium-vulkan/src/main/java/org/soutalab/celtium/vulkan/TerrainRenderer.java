@@ -1749,6 +1749,10 @@ public final class TerrainRenderer {
                         .register(built, this.terrainAHost.nextGeneration());
             }
         } catch (RuntimeException error) {
+            // Counted per section for the residency gate (order (i)): a build
+            // exception used to be a permanent, uninstrumented Tier-A leak.
+            this.terrainAHost.noteBuildException(build.render.getChunkX(), build.render.getChunkY(),
+                    build.render.getChunkZ(), pass);
             if (!this.terrainARegisterFailurePrinted) {
                 this.terrainARegisterFailurePrinted = true;
                 System.out.println("[Celtium] CELTIUM_TERRAIN_A_REGISTER_FAILED reason=" + error);
@@ -1807,6 +1811,12 @@ public final class TerrainRenderer {
                     if (this.terrainAHost != null
                             && vertexStride() == org.embeddedt.embeddium.impl.render.chunk.vertex.format.impl.TerrainVertex16.STRIDE) {
                         registerTierA(build, meshEntry.getKey(), mesh);
+                    } else if (this.terrainAHost != null) {
+                        // Stride gate (order (i)): this section never reaches
+                        // registerTierA while the stride differs — count it as
+                        // a permanent leak instead of leaving it invisible.
+                        this.terrainAHost.noteStrideGate(build.render.getChunkX(), build.render.getChunkY(),
+                                build.render.getChunkZ(), meshEntry.getKey());
                     }
                 }
             } else if (output instanceof ChunkSortOutput) {

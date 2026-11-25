@@ -14,6 +14,7 @@ import static org.lwjgl.vulkan.VK10.*;
 import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 import org.soutalab.celtium.vulkan.terrain.AsyncSectionMesher;
 import org.soutalab.celtium.vulkan.terrain.SectionDesc;
+import org.soutalab.celtium.vulkan.terrain.TerrainResidencyGate;
 import org.soutalab.celtium.vulkan.terrain.TerrainSectionStore;
 import org.soutalab.celtium.vulkan.terrain.TerrainUploadBudget;
 
@@ -54,6 +55,16 @@ final class TerrainEngineA {
     private final String passName;
     private final TerrainSectionStore store;
     private final TerrainUploadBudget budget;
+    private final TerrainResidencyGate residencyGate;
+    // The residency gate's arming verdict (order (i)): by default the gate only
+    // reports — Tier-A keeps arming while sections are missing, exactly as
+    // before — and with -Dceltium.vulkan.terrainResidencyGate=enforce an
+    // incomplete pass does not arm, so the legacy route draws the whole pass
+    // instead of the missing sections vanishing. The arena deletion (order
+    // (iv)) flips this once (ii)/(iii) have driven missing to zero.
+    private static final boolean RESIDENCY_ENFORCE =
+            "enforce".equals(System.getProperty("celtium.vulkan.terrainResidencyGate"));
+    private volatile TerrainResidencyGate.Report lastResidencyReport;
     private long setLayout;
     private long pipelineLayout;
     private long pipeline;
@@ -98,12 +109,14 @@ final class TerrainEngineA {
     }
 
     TerrainEngineA(VulkanContext context, int passOrdinal, String passName,
-                   TerrainSectionStore store, TerrainUploadBudget budget) {
+                   TerrainSectionStore store, TerrainUploadBudget budget,
+                   TerrainResidencyGate residencyGate) {
         this.context = context;
         this.passOrdinal = passOrdinal;
         this.passName = passName;
         this.store = store;
         this.budget = budget;
+        this.residencyGate = residencyGate;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             createPipeline(stack);
         }
@@ -144,10 +157,19 @@ final class TerrainEngineA {
         if (this.disabled) {
             return null;
         }
+        TerrainSectionStore.Key key = new TerrainSectionStore.Key(
+                built.sectionX, built.sectionY, built.sectionZ, built.passOrdinal);
+        this.residencyGate.expect(key);
         try {
             if (!this.budget.tryAdmit(built.slabBytes())) {
                 this.deferred.addLast(built);
                 this.deferredGeneration = generation;
+                this.residencyGate.noteMissing(key, TerrainResidencyGate.Reason.DEFERRED);
+                if (built.slabBytes() > this.budget.bytesPerFrame()) {
+                    // Larger than a whole frame's budget: the FIFO head admission
+                    // in prepareFrame will refuse it forever (head-of-line).
+                    this.residencyGate.noteHeadOfLine(key);
+                }
                 return null;
             }
             return upload(built, generation);
@@ -158,10 +180,16 @@ final class TerrainEngineA {
     }
 
     private TerrainSectionStore.Registration upload(AsyncSectionMesher.BuiltSectionA built, long generation) {
-        TerrainSectionStore.Registration registration = this.store.register(built, generation);
+        TerrainSectionStore.RegisterResult result = this.store.registerDiagnosed(built, generation);
+        TerrainSectionStore.Registration registration = result.registration();
         if (registration == null) {
+            TerrainSectionStore.Key key = new TerrainSectionStore.Key(
+                    built.sectionX, built.sectionY, built.sectionZ, built.passOrdinal);
+            this.residencyGate.noteMissing(key, result.failure() == TerrainSectionStore.RegisterFailure.OVERSIZE
+                    ? TerrainResidencyGate.Reason.OVERSIZE : TerrainResidencyGate.Reason.ARENA_FULL);
             return null;
         }
+        this.residencyGate.noteResident(registration.key);
         SlabBuffer slab = slabBuffer(registration.geometry.slabId);
         long vertexAddress = slab.mappedAddress() + registration.geometry.byteOffset;
         MemoryUtil.memCopy(MemoryUtil.memAddress(built.vertexData), vertexAddress, built.vertexBytes);
@@ -237,6 +265,11 @@ final class TerrainEngineA {
         return this.deferred.size();
     }
 
+    /** The most recent per-pass residency verification, or null before the first prepared frame. */
+    TerrainResidencyGate.Report lastResidencyReport() {
+        return this.lastResidencyReport;
+    }
+
     // ----------------------------------------------------------------------------------
     // Per-frame cull and draw
     // ----------------------------------------------------------------------------------
@@ -263,10 +296,25 @@ final class TerrainEngineA {
             while (!this.deferred.isEmpty()) {
                 AsyncSectionMesher.BuiltSectionA head = this.deferred.peekFirst();
                 if (!this.budget.tryAdmitDeferred(head.slabBytes())) {
+                    if (head.slabBytes() > this.budget.bytesPerFrame()) {
+                        // The head can never fit a whole frame's budget, so the
+                        // FIFO behind it is blocked permanently, not transiently.
+                        this.residencyGate.noteHeadOfLine(new TerrainSectionStore.Key(
+                                head.sectionX, head.sectionY, head.sectionZ, head.passOrdinal));
+                    }
                     break;
                 }
                 this.deferred.pollFirst();
                 upload(head, this.deferredGeneration);
+            }
+            // Per-pass residency verification (order (i)): cross-check this
+            // pass' expected sections against the store before arming. The
+            // verdict is published on every frame; the periodic census below
+            // prints it, and in enforce mode an incomplete pass does not arm.
+            TerrainResidencyGate.Report report = this.residencyGate.verify(this.passOrdinal, this.store);
+            this.lastResidencyReport = report;
+            if (RESIDENCY_ENFORCE && !report.complete()) {
+                return false;
             }
             uploadDescImageIfMoved();
             if (this.store.recordCount() == 0) {
@@ -302,7 +350,14 @@ final class TerrainEngineA {
                         + " drawn=" + this.framesDrawn
                         + " issuedCommands=" + this.issuedCommands
                         + " records=" + this.store.recordCount()
-                        + " deferred=" + this.deferred.size());
+                        + " deferred=" + this.deferred.size()
+                        + " residency[" + TerrainResidencyGate.describe(report) + "]"
+                        + " leaks[deferred=" + this.residencyGate.count(TerrainResidencyGate.Reason.DEFERRED)
+                        + " oversize=" + this.residencyGate.count(TerrainResidencyGate.Reason.OVERSIZE)
+                        + " arenaFull=" + this.residencyGate.count(TerrainResidencyGate.Reason.ARENA_FULL)
+                        + " strideGate=" + this.residencyGate.count(TerrainResidencyGate.Reason.STRIDE_GATE)
+                        + " buildException=" + this.residencyGate.count(TerrainResidencyGate.Reason.BUILD_EXCEPTION)
+                        + "]");
             }
             return any;
         } catch (RuntimeException error) {
