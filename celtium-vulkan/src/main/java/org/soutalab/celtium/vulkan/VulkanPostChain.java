@@ -2023,7 +2023,7 @@ public final class VulkanPostChain {
                         .allocationSize(requirements.size())
                         .memoryTypeIndex(context.memoryTypeIndex(requirements.memoryTypeBits(),
                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "post chain target"));
-                check(VulkanContext.allocateMemory(device, alloc, handle), "vkAllocateMemory(post chain)");
+                check(VulkanContext.allocateMemory(device, alloc, handle, "postChain"), "vkAllocateMemory(post chain)");
                 memory = handle.get(0);
                 check(vkBindImageMemory(device, image, memory, 0), "vkBindImageMemory(post chain)");
                 VkImageViewCreateInfo viewInfo = VkImageViewCreateInfo.calloc(stack).sType$Default()

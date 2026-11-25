@@ -191,7 +191,7 @@ final class VulkanUniformBuffer {
                 throw destroyReplacement(allocation, "injected allocation failure: " + what);
             }
             try {
-                check(VulkanContext.allocateMemory(this.context.device(), allocate, handle), "vkAllocateMemory(uniform)");
+                check(VulkanContext.allocateMemory(this.context.device(), allocate, handle, "uniformBuffer"), "vkAllocateMemory(uniform)");
             } catch (RuntimeException error) {
                 throw destroyReplacement(allocation, error.getMessage());
             }

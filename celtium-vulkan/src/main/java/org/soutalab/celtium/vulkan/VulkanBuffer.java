@@ -288,7 +288,7 @@ public final class VulkanBuffer {
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanBuffer:189")) {
                 throw new IllegalStateException("injected allocation failure: VulkanBuffer:189");
             }
-            check(VulkanContext.allocateMemory(device, allocate, memoryHandle), "vkAllocateMemory(" + requirements.size()
+            check(VulkanContext.allocateMemory(device, allocate, memoryHandle, "buffer"), "vkAllocateMemory(" + requirements.size()
                     + " bytes, memory type " + memoryType + ")");
             createdMemory = memoryHandle.get(0);
             check(vkBindBufferMemory(device, createdBuffer, createdMemory, 0), "vkBindBufferMemory");

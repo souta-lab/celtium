@@ -2644,10 +2644,34 @@ public final class VulkanContext {
      */
     public static int allocateMemory(org.lwjgl.vulkan.VkDevice device, org.lwjgl.vulkan.VkMemoryAllocateInfo info,
             java.nio.LongBuffer memory) {
+        return allocateMemory(device, info, memory, "unspecified");
+    }
+
+    /**
+     * {@link #allocateMemory} with the allocating site named, so the census can attribute its
+     * live and peak counts per site (ported from experimental/new-arch 6c46a687f, Stage 0 of the
+     * A-to-B overhaul). The Phase 1 gate leg measured a live peak of 19,630 against a limit of
+     * 24 on the new architecture - whose device-local buffers already sub-allocate from fixed
+     * slabs - but the single aggregate number could not say which of the remaining direct
+     * {@code vkAllocateMemory} paths (mirrored textures, host buffers, uniform buffers,
+     * readback staging, frame targets, the post chain) scaled with the world. The per-site
+     * peaks in {@link #memoryAllocationSummary()} are that measurement.
+     */
+    public static int allocateMemory(org.lwjgl.vulkan.VkDevice device, org.lwjgl.vulkan.VkMemoryAllocateInfo info,
+            java.nio.LongBuffer memory, String site) {
         int result = vkAllocateMemory(device, info, null, memory);
         if (result == VK_SUCCESS) {
             long size = info.allocationSize();
-            LIVE_ALLOCATIONS.put(Long.valueOf(memory.get(memory.position())), Long.valueOf(size));
+            Long handle = Long.valueOf(memory.get(memory.position()));
+            LIVE_ALLOCATIONS.put(handle, Long.valueOf(size));
+            ALLOCATION_SITES.put(handle, site);
+            long[] counts = SITE_ALLOCATION_COUNTS.computeIfAbsent(site, key -> new long[2]);
+            synchronized (counts) {
+                counts[0]++;
+                if (counts[0] > counts[1]) {
+                    counts[1] = counts[0];
+                }
+            }
             long live = LIVE_ALLOCATIONS.size();
             if (live > peakAllocations) {
                 peakAllocations = live;
@@ -2676,6 +2700,15 @@ public final class VulkanContext {
         Long size = null;
         if (memory != VK_NULL_HANDLE) {
             size = LIVE_ALLOCATIONS.remove(Long.valueOf(memory));
+            String site = ALLOCATION_SITES.remove(Long.valueOf(memory));
+            if (site != null) {
+                long[] counts = SITE_ALLOCATION_COUNTS.get(site);
+                if (counts != null) {
+                    synchronized (counts) {
+                        counts[0]--;
+                    }
+                }
+            }
         }
         long started = System.nanoTime();
         vkFreeMemory(device, memory, null);
@@ -2694,14 +2727,38 @@ public final class VulkanContext {
         }
     }
 
-    /** {@return the device memory allocations}: live now, peak, made in total, and live bytes in MiB. */
+    /** {@return the device memory allocations}: live now, peak, made in total, live bytes in MiB, and the per-site live/peak census. */
     public static String memoryAllocationSummary() {
         long bytes = 0L;
         for (Long size : LIVE_ALLOCATIONS.values()) {
             bytes += size.longValue();
         }
-        return "memoryAllocationsLive=" + LIVE_ALLOCATIONS.size() + " memoryAllocationsPeak=" + peakAllocations
-                + " memoryAllocationsMade=" + allocationsMade + " memoryLiveMiB=" + (bytes >> 20);
+        StringBuilder summary = new StringBuilder();
+        summary.append("memoryAllocationsLive=").append(LIVE_ALLOCATIONS.size())
+                .append(" memoryAllocationsPeak=").append(peakAllocations)
+                .append(" memoryAllocationsMade=").append(allocationsMade)
+                .append(" memoryLiveMiB=").append(bytes >> 20)
+                .append(" memoryAllocationsBySite=[");
+        java.util.List<java.util.Map.Entry<String, long[]>> sites =
+                new java.util.ArrayList<java.util.Map.Entry<String, long[]>>(SITE_ALLOCATION_COUNTS.entrySet());
+        sites.sort((left, right) -> Long.compare(right.getValue()[1], left.getValue()[1]));
+        boolean first = true;
+        for (java.util.Map.Entry<String, long[]> site : sites) {
+            if (!first) {
+                summary.append(' ');
+            }
+            first = false;
+            long[] counts = site.getValue();
+            long live;
+            long peak;
+            synchronized (counts) {
+                live = counts[0];
+                peak = counts[1];
+            }
+            summary.append(site.getKey()).append(":live=").append(live).append(",peak=").append(peak);
+        }
+        summary.append(']');
+        return summary.toString();
     }
 
     /**
@@ -2732,6 +2789,12 @@ public final class VulkanContext {
 
     private static final java.util.Map<Long, Long> LIVE_ALLOCATIONS =
             new java.util.concurrent.ConcurrentHashMap<Long, Long>();
+    /** The site label of each live allocation, for the per-site census (Stage 0 port from experimental). */
+    private static final java.util.Map<Long, String> ALLOCATION_SITES =
+            new java.util.concurrent.ConcurrentHashMap<Long, String>();
+    /** Per-site {live, peak} counts, guarded by synchronizing on the array itself. */
+    private static final java.util.Map<String, long[]> SITE_ALLOCATION_COUNTS =
+            new java.util.concurrent.ConcurrentHashMap<String, long[]>();
     private static volatile long peakAllocations;
     private static volatile long allocationsMade;
 
@@ -3808,7 +3871,7 @@ public final class VulkanContext {
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanContext:883")) {
                 throw new IllegalStateException("injected allocation failure: VulkanContext:883");
             }
-            check(VulkanContext.allocateMemory(this.device, allocate, memoryHandle),
+            check(VulkanContext.allocateMemory(this.device, allocate, memoryHandle, "contextStaging"),
                     "vkAllocateMemory(staging, " + requirements.size() + " bytes)");
             memory = memoryHandle.get(0);
             check(vkBindBufferMemory(this.device, buffer, memory, 0), "vkBindBufferMemory(staging)");
@@ -4030,7 +4093,7 @@ public final class VulkanContext {
                     .allocationSize(requirements.size())
                     .memoryTypeIndex(memoryType);
             LongBuffer memoryHandle = stack.mallocLong(1);
-            check(VulkanContext.allocateMemory(this.device, allocate, memoryHandle),
+            check(VulkanContext.allocateMemory(this.device, allocate, memoryHandle, "uploadRing"),
                     "vkAllocateMemory(upload ring, " + requirements.size() + " bytes)");
             memory = memoryHandle.get(0);
             if (vkBindBufferMemory(this.device, buffer, memory, 0L) != VK_SUCCESS) {

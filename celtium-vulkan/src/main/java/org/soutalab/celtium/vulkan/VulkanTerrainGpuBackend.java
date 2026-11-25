@@ -25101,7 +25101,7 @@ this.frameBufferOpen = false;
             if (org.soutalab.celtium.vulkan.VulkanAllocationFault.shouldFail("VulkanTerrainGpuBackend:5047")) {
                 throw new IllegalStateException("injected allocation failure: VulkanTerrainGpuBackend:5047");
             }
-            check(VulkanContext.allocateMemory(this.context.device(), allocate, handle), "vkAllocateMemory(readback)");
+            check(VulkanContext.allocateMemory(this.context.device(), allocate, handle, "readbackStaging"), "vkAllocateMemory(readback)");
             this.readbackMemory = handle.get(0);
             check(vkBindBufferMemory(this.context.device(), this.readbackBuffer, this.readbackMemory, 0),
                     "vkBindBufferMemory(readback)");
