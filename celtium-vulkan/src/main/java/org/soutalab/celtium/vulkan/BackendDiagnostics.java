@@ -441,6 +441,8 @@ final class BackendDiagnostics {
                 // unnecessary. It is a saving, not a loss, so it is counted beside the fills it replaces.
                 + " announcedCaptureSkips="
                 + org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$announcedCaptureSkips()
+                + " announcedMipCaptureSkips="
+                + org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$announcedMipCaptureSkips()
                 + " textureCopiesServed=" + b.textureCopyService.textureCopiesServed()
                 + " textureCopiesRefused=" + b.textureCopyService.textureCopiesRefused()
                 + " textureCopiesReusedInFrame=" + b.textureCopyService.textureCopiesReusedInFrame()

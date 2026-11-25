@@ -1630,6 +1630,16 @@ public final class VulkanTextureRegistry {
         // configuration this project measured as the closest to the GL reference, and leaves no level stale. The
         // patchMipLevels property turns the per-level application off for measurement only; see PATCH_MIP_LEVELS.
         int appliedLevels = wholeTexture || !PATCH_MIP_LEVELS ? 1 : producerDepth;
+        // Read back by the animation caller (VulkanTerrainGpuBackend.announceAnimatedUpload) immediately
+        // after a true return, on the same thread: how many producer levels the mirror now holds from this
+        // announcement. A whole-texture write records 1 (its levels above 0 are regenerated, not the
+        // producer's), and so does a patch with per-level application off - only a patch that applied the
+        // producer's whole chain records producerDepth, which is the one shape whose stub captures of the
+        // same chain are known duplicates. Assigned here, before the application, so every true return below
+        // (including a future identical-announcement skip that returns from this point) reports this call's
+        // count rather than a previous call's; the failure return inside the try reports nothing, because
+        // its caller only reads this after true.
+        this.lastAnnouncedChainLevels = appliedLevels;
         java.nio.ByteBuffer[] levelBytes = this.announceLevelBytes;
         if (levelBytes.length < appliedLevels) {
             levelBytes = new java.nio.ByteBuffer[appliedLevels];
@@ -1690,6 +1700,17 @@ public final class VulkanTextureRegistry {
      * consumers (the hash, the staging copy, the source note) read the buffer before the call returns and keep no
      * reference, so one buffer per level serves every call. Limited to the call's own byte count each time.
      */
+    /**
+     * Producer levels the mirror holds from the most recent {@link #announceFullPixels} call that reached
+     * application; see the assignment inside that method for the exact contract. Zero before the first one.
+     */
+    private int lastAnnouncedChainLevels;
+
+    /** {@return the level count recorded by the latest {@link #announceFullPixels} application} */
+    public int lastAnnouncedChainLevels() {
+        return this.lastAnnouncedChainLevels;
+    }
+
     private java.nio.ByteBuffer[] announceScratch = new java.nio.ByteBuffer[0];
     private java.nio.ByteBuffer[] announceLevelBytes = new java.nio.ByteBuffer[16];
 

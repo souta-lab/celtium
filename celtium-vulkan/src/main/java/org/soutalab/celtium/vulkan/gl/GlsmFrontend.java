@@ -7021,6 +7021,21 @@ public final class GlsmFrontend implements FunctionProvider {
         return GlTextureCaptures.celtium$announcedCaptureSkips();
     }
 
+    /** Arms the mip-chain skip for an announced patch; see {@link GlTextureCaptures}. */
+    public static void celtium$noteAnnouncedPatchChain(int levels, int x, int y, int width, int height) {
+        GlTextureCaptures.celtium$noteAnnouncedPatchChain(levels, x, y, width, height);
+    }
+
+    /** Drops a leftover mip-chain token; see {@link GlTextureCaptures}. */
+    public static void celtium$clearAnnouncedPatchChain() {
+        GlTextureCaptures.celtium$clearAnnouncedPatchChain();
+    }
+
+    /** {@return how many above-level-0 captures the mip-chain skip made unnecessary} */
+    public static long celtium$announcedMipCaptureSkips() {
+        return GlTextureCaptures.celtium$announcedMipCaptureSkips();
+    }
+
     /**
      * Records TextureUtil's named allocation after its delete/bind/allocate sequence. The dimensions describe
      * storage, not uploaded content: an undefined surface becomes usable only when an actual write is announced.

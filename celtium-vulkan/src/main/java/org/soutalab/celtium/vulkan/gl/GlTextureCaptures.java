@@ -349,6 +349,24 @@ final class GlTextureCaptures {
     private static boolean celtium$announcedPending;
     /** Patches whose capture the announcement made unnecessary; the count is the saving, not a loss. */
     private static long celtium$announcedCaptureSkips;
+    /**
+     * Chain extension of the one-shot above (armed only under
+     * {@code -Dceltium.vulkan.animSkipMipCaptures=true}, from the backend): how many consecutive mip levels of
+     * one announced patch the skip covers, and the next level it expects. Zero means the legacy one-shot.
+     * <p>
+     * The body the announcement precedes ({@code TextureUtil.func_147955_a}) does not upload level 0 only: it
+     * walks the producer's whole mip chain, one {@code glTexSubImage2D} per level at the scaled region
+     * {@code (x >> level, y >> level, width >> level, height >> level)}. The one-shot clears on the first of
+     * those calls, so levels 1 and above were converted and filed into the captured levels a second time -
+     * inside {@code animUpload}, beside the {@code animMirror} the announcement itself owns. When the
+     * announcement applied the producer's whole chain to the mirror (a region patch with per-level
+     * application on), those captures duplicate the mirror texel for texel, the same equivalence the level-0
+     * skip already ships with.
+     */
+    private static int celtium$announcedChainLevels;
+    private static int celtium$announcedNextLevel;
+    /** Chain-skipped captures above level 0; level 0 keeps counting into {@link #celtium$announcedCaptureSkips}. */
+    private static long celtium$announcedMipCaptureSkips;
 
     /** Arms the one-shot skip for the patch an announcement just applied. See the fields above. */
     static void celtium$noteAnnouncedPatch(int level, int x, int y, int width, int height) {
@@ -357,12 +375,59 @@ final class GlTextureCaptures {
         celtium$announcedY = y;
         celtium$announcedWidth = width;
         celtium$announcedHeight = height;
+        celtium$announcedChainLevels = 0;
         celtium$announcedPending = true;
+    }
+
+    /**
+     * Arms the chain skip for one announced patch whose mirror application covered {@code levels} producer
+     * levels: the next {@code levels} tex-sub-image calls, in level order and at the scaled regions
+     * {@link #celtium$chainRegionMatches} names, are the announcement's own body re-uploading what the mirror
+     * already holds. Anything else - a different level, a different region, a call after the chain is spent -
+     * clears the token and is captured normally, and the mixin that brackets the announcing method clears a
+     * leftover chain at that method's return, so a token can never outlive the one upload it was armed for.
+     */
+    static void celtium$noteAnnouncedPatchChain(int levels, int x, int y, int width, int height) {
+        if (levels <= 1) {
+            celtium$noteAnnouncedPatch(0, x, y, width, height);
+            return;
+        }
+        celtium$announcedX = x;
+        celtium$announcedY = y;
+        celtium$announcedWidth = width;
+        celtium$announcedHeight = height;
+        celtium$announcedChainLevels = levels;
+        celtium$announcedNextLevel = 0;
+        celtium$announcedPending = true;
+    }
+
+    /** Drops a leftover chain token; the legacy one-shot is not this method's business. */
+    static void celtium$clearAnnouncedPatchChain() {
+        if (celtium$announcedChainLevels > 1) {
+            celtium$announcedChainLevels = 0;
+            celtium$announcedPending = false;
+        }
+    }
+
+    /**
+     * Whether {@code (level, x, y, width, height)} is exactly the {@code level}-th call of the upload chain a
+     * patch announced at {@code (baseX, baseY, baseWidth, baseHeight)}: the producer's walk scales the region
+     * with the level. Pure so the truth table is testable without a stub.
+     */
+    static boolean celtium$chainRegionMatches(int baseX, int baseY, int baseWidth, int baseHeight, int level,
+            int x, int y, int width, int height) {
+        return level >= 0 && width > 0 && height > 0 && x == (baseX >> level) && y == (baseY >> level)
+                && width == (baseWidth >> level) && height == (baseHeight >> level);
     }
 
     /** {@return how many captures the announcement made unnecessary} */
     static long celtium$announcedCaptureSkips() {
         return celtium$announcedCaptureSkips;
+    }
+
+    /** {@return how many above-level-0 captures the chain skip made unnecessary} */
+    static long celtium$announcedMipCaptureSkips() {
+        return celtium$announcedMipCaptureSkips;
     }
 
     /** The one tex-sub-image producer: the dispatch case and the transformer's route both land here. */
@@ -372,13 +437,36 @@ final class GlTextureCaptures {
             return;
         }
         if (celtium$announcedPending) {
-            boolean announced = celtium$announcedLevel == level && celtium$announcedX == xOffset
-                    && celtium$announcedY == yOffset && celtium$announcedWidth == width
-                    && celtium$announcedHeight == height;
-            celtium$announcedPending = false;
-            if (announced) {
-                celtium$announcedCaptureSkips++;
-                return;
+            if (celtium$announcedChainLevels > 1) {
+                // Chain token: only the exact next level at its scaled region is the announcement's own body.
+                // A match consumes one level and keeps the token for the rest of the chain; anything else
+                // clears it and is captured below, so a deviation costs the saving, never the pixels.
+                if (level == celtium$announcedNextLevel && celtium$chainRegionMatches(celtium$announcedX,
+                        celtium$announcedY, celtium$announcedWidth, celtium$announcedHeight, level, xOffset,
+                        yOffset, width, height)) {
+                    if (level == 0) {
+                        celtium$announcedCaptureSkips++;
+                    } else {
+                        celtium$announcedMipCaptureSkips++;
+                    }
+                    celtium$announcedNextLevel++;
+                    if (celtium$announcedNextLevel >= celtium$announcedChainLevels) {
+                        celtium$announcedChainLevels = 0;
+                        celtium$announcedPending = false;
+                    }
+                    return;
+                }
+                celtium$announcedChainLevels = 0;
+                celtium$announcedPending = false;
+            } else {
+                boolean announced = celtium$announcedLevel == level && celtium$announcedX == xOffset
+                        && celtium$announcedY == yOffset && celtium$announcedWidth == width
+                        && celtium$announcedHeight == height;
+                celtium$announcedPending = false;
+                if (announced) {
+                    celtium$announcedCaptureSkips++;
+                    return;
+                }
             }
         }
         // The stub's half of an upload: the format conversion and the write into the captured level. Inside the tick

@@ -5410,6 +5410,25 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
     /** Set by the first world pass and never cleared: the boundary the load/world split asks about. */
     private boolean worldPassSeen;
 
+    /**
+     * {@code -Dceltium.vulkan.animSkipMipCaptures=true}: extend the announcement's capture skip from level 0
+     * to the whole mip chain the announcement applied. Off by default.
+     * <p>
+     * The cost this addresses sits inside {@code animUpload} but outside {@code animMirror}: the announcing
+     * method's own body uploads every mip level through the stub, and the stub converts and files each one
+     * into its captured levels - a second conversion of pixels the announcement just converted into the
+     * mirror. The shipped one-shot token suppresses only level 0's capture. With this on, an announcement
+     * the registry applied as a full producer chain (see
+     * {@link VulkanTextureRegistry#lastAnnouncedChainLevels()}) arms the chain form of the token instead;
+     * whole-texture announcements and chains the mirror did not fully apply keep the one-shot. Counted:
+     * {@link #animMipCaptureChainsArmed} here, the skipped captures themselves in the stub's
+     * {@code announcedMipCaptureSkips}.
+     */
+    private static final boolean SKIP_ANIMATED_MIP_CAPTURES =
+            Boolean.getBoolean("celtium.vulkan.animSkipMipCaptures");
+    /** Announcements that armed the mip-chain capture skip (only counted while it is enabled). */
+    long animMipCaptureChainsArmed;
+
     /** The mirror whose patch batch {@link #beginAnimationUploads(int)} opened, closed by the matching end. */
     private VulkanGlTexture animationBatchTexture;
     @Override
@@ -5493,7 +5512,16 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                 // published image is excluded: announceFullPixels answers true for one without applying anything,
                 // and skipping the capture there would lose the only copy of the pixels.
                 if (!this.textureRegistry.isExternalImage(bound)) {
-                    org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteAnnouncedPatch(0, x, y, width, height);
+                    int chainLevels = SKIP_ANIMATED_MIP_CAPTURES
+                            ? this.textureRegistry.lastAnnouncedChainLevels() : 1;
+                    if (chainLevels > 1) {
+                        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteAnnouncedPatchChain(
+                                chainLevels, x, y, width, height);
+                        this.animMipCaptureChainsArmed++;
+                    } else {
+                        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$noteAnnouncedPatch(0, x, y, width,
+                                height);
+                    }
                 }
             }
         } finally {
@@ -5800,6 +5828,7 @@ public final class VulkanTerrainGpuBackend implements VulkanRenderer, PackStageS
                     + " lastPrepareFailure=[" + this.lastPrepareFailure + "]");
             System.out.println("[Celtium] CELTIUM_ANIM directMirrorRefreshes=" + this.directMirrorRefreshes
                     + " readbacksSkipped=" + this.readbackSkippedAfterAnnouncement
+                    + " animMipCaptureChainsArmed=" + this.animMipCaptureChainsArmed
                     + " invalidations=" + this.immediateTextureInvalidations + " atlasGlId=" + this.atlasSourceGlId
                     + " lightmapGlId=" + this.lightmapSourceGlId
                     + " deletions=" + this.glTextureDeletions + " reestablished=" + this.atlasReestablished

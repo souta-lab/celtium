@@ -82,6 +82,10 @@ public class TextureUtilMixin {
     @Inject(method = "func_147955_a", at = @At("RETURN"), require = 0)
     private static void celtium$animatedUploadTimedEnd(int[][] data, int width, int height, int x, int y, boolean blur,
             boolean clamp, org.spongepowered.asm.mixin.injection.callback.CallbackInfo info) {
+        // A mip-chain capture-skip token armed at HEAD belongs to this one invocation: if the body uploaded
+        // fewer levels than the announcement applied, the leftover must not meet a later, unrelated upload.
+        // The legacy level-0 one-shot keeps its shipped lifetime and is not cleared here.
+        org.soutalab.celtium.vulkan.gl.GlsmFrontend.celtium$clearAnnouncedPatchChain();
         org.soutalab.celtium.vulkan.FramePassTimings.end("animUpload");
     }
 
