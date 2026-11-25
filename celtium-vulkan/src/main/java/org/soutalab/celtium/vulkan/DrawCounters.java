@@ -24,6 +24,13 @@ public final class DrawCounters {
     private static long lastReportedIndexed;
     private static long lastReportedFrame = -1L;
 
+    // Stage 6 ④a B6 re-owning: this counter lived on VulkanTerrainGpuBackend. The writer is the caller-side
+    // WorldVertexBufferUploaderMixin (forge122), which counts every batch call around submitImmediateBatch; the
+    // readers are BackendDiagnostics (the CELTIUM_VERIFY summary) and CloudDrawProbeMixin (cloud-draw snapshots).
+    // Plain long like the counters above: writer and readers all run on the render thread.
+    /** Long because one measured session uploaded 1.35e8 batches: an int overflows inside a day of play. */
+    public static long batchCallCount;
+
     /** Per-frame work counters for the KPI: what the flush records and how often state is rebound. */
     private static long IMMEDIATE_GROUPS;
     private static long PIPELINE_BINDS;
