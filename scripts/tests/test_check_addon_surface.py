@@ -118,6 +118,30 @@ class AddonSurfaceTests(unittest.TestCase):
 
     def test_repository_tree_passes(self):
         self.assertEqual(surface.check(), [])
+        internals, notes = surface.check_internals()
+        self.assertEqual(internals, [])
+        self.assertTrue(any("III-1" in note for note in notes), notes)
+        self.assertEqual(surface.check_refusals(), [])
+
+    def test_refusal_drift_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.tree(tmp)
+            comp = root / surface.COMPETITORS
+            comp.parent.mkdir(parents=True, exist_ok=True)
+            comp.write_text('{"foo/Bar.class", "FakeMod (fakemod)", "renderer"}\n', encoding="utf-8")
+            (root / "notworkingmods.md").write_text("# None\n", encoding="utf-8")
+            problems = surface.check_refusals(root)
+            self.assertEqual(len(problems), 2, problems)
+            self.assertTrue(all("FakeMod" in p for p in problems), problems)
+
+    def test_ledger_iii_missing_member_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.tree(tmp, docs=DOC_ROWS + "| III-5 | `TabFrame` | test |\n")
+            tf = root / "common/src/main/java/org/embeddedt/embeddium/impl/gui/frame/tab/TabFrame.java"
+            tf.parent.mkdir(parents=True, exist_ok=True)
+            tf.write_text("public class TabFrame { int unrelated; }\n", encoding="utf-8")
+            problems, _ = surface.check_internals(root)
+            self.assertTrue(any("III-5" in p and "tabs" in p for p in problems), problems)
 
 
 if __name__ == "__main__":

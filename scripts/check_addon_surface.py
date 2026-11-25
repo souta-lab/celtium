@@ -26,6 +26,18 @@ mixin tree - from drifting apart:
 4. **The docs table matches this list.** Every ledger row appears in `docs/mod-compatibility.md`
    with its point named, and no row exists that this list does not know.
 
+Two further checks cover the rest of the mod-facing surface (compat audit 2026-11-25):
+
+5. **Ledger III internals** (`check_internals`). Addons do not only inject into vanilla: Celeritas Leaf
+   Culling and Celeritas Extra mix into Celeritas' own classes and shadow their members. `LEDGER_III` is
+   the machine-readable list of the internal classes/members those addons name (each entry cites the
+   addon mixin it comes from); the check fails when a listed member disappears, when a class that must
+   stay absent appears, and reports a `known_gap` (a call site an addon redirects that celtium no longer
+   has) as a NOTE until it is closed - at which point the entry must drop the marker.
+6. **Refusal table** (`check_refusals`). Every mod `CeltiumCompetitors.KNOWN` refuses at startup must be
+   named in `docs/mod-compatibility.md` and `notworkingmods.md` (bughunt L08 found the second file four
+   rows behind the code).
+
 Exit status is 0 when clean and 1 when a problem is reported, like `scripts/check_patch_groups.py`.
 """
 from __future__ import annotations
@@ -202,6 +214,188 @@ def _is_replacing(injection, call_site=False):
     return injection["kind"] == "Inject" and injection["cancellable"]
 
 
+COMPETITORS = Path("forge122/src/main/java/org/taumc/celeritas/core/CeltiumCompetitors.java")
+REFUSAL_DOCS = (DOCS, Path("notworkingmods.md"))
+
+_GUI = "common/src/main/java/org/embeddedt/embeddium/impl/gui"
+_API = "common/src/main/java/org/taumc/celeritas/api"
+
+# Ledger III: Celeritas-internal classes addons shadow or mix into. `needs` are member identifiers that
+# must still appear in the class source; `calls` are (method, callee) pairs - the callee must still be
+# invoked from inside that method body (a Redirect on the call site binds nowhere otherwise); `absent`
+# are classes celtium deliberately does not have (the docs name them as gaps). `source` names the addon
+# mixin the entry was read from, so a reader can re-derive it.
+LEDGER_III = [
+    {"id": "III-1", "doc_token": "VintageBlockRenderer",
+     "file": "forge122/src/main/java/org/taumc/celeritas/impl/render/terrain/compile/pipeline/"
+             "VintageBlockRenderer.java",
+     "needs": ("currentState", "currentBlockAccess", "renderQuadList", "renderBlock"),
+     "calls": (("renderBlock", "renderQuadList"),),
+     "known_gap": "renderBlock no longer calls renderQuadList (the loop moved to renderModel with the Demonica "
+                  "Tier B split, 9b3623db7); Celeritas Leaf Culling's @Redirect on that call site binds "
+                  "nowhere",
+     "source": "Celeritas Leaf Culling 1.x mixins/mod/celeritas/VintageBlockRendererMixin"},
+    {"id": "III-2", "doc_token": "CeleritasVideoOptionsController",
+     "file": f"{_GUI}/CeleritasVideoOptionsController.java",
+     "needs": ("pages", "font", "optionPageScrollBarOffset", "tabFrameScrollBarOffset", "tabFrameSelectedTab",
+               "width", "height", "applyButton", "closeButton", "undoButton", "init", "createTabFrame",
+               "parentFrameBuilder", "parentBasicFrameBuilder", "applyChanges", "ASPECT_RATIO",
+               "MINIMUM_WIDTH"),
+     "source": "Celeritas Extra options_search/MixinOptionsController"},
+    {"id": "III-3", "doc_token": "CeleritasVideoOptionsScreen",
+     "file": "forge122/src/main/java/org/taumc/celeritas/impl/gui/CeleritasVideoOptionsScreen.java",
+     "needs": ("controller", "initGui", "drawScreen", "mouseClicked"),
+     "source": "Celeritas Extra options_search/MixinOptionsScreen"},
+    {"id": "III-4", "doc_token": "ScrollableFrame",
+     "file": f"{_GUI}/frame/ScrollableFrame.java",
+     "needs": ("horizontalScrollBar", "verticalScrollBar", "viewPortDimension", "mouseScrolled"),
+     "source": "Celeritas Extra options_search/MixinScrollableFrame"},
+    {"id": "III-5", "doc_token": "TabFrame",
+     "file": f"{_GUI}/frame/tab/TabFrame.java", "needs": ("tabs",),
+     "source": "Celeritas Extra options_search/TabFrameAccess"},
+    {"id": "III-6", "doc_token": "OptionImpl",
+     "file": f"{_API}/options/structure/OptionImpl.java", "needs": ("binding",),
+     "source": "Celeritas Extra options_search/OptionBindingAccess"},
+    {"id": "III-7", "doc_token": "SliderControl",
+     "file": f"{_API}/options/control/SliderControl.java", "needs": ("min", "max", "interval", "Button"),
+     "source": "Celeritas Extra options_search/MixinSliderScroll"},
+    {"id": "III-8", "doc_token": "SearchTextFieldComponent",
+     "absent": (f"{_GUI}/frame/components/SearchTextFieldComponent.java",
+                f"{_GUI}/frame/components/SearchTextFieldModel.java"),
+     "source": "Celeritas Extra options_search/MixinNativeSearchComponent, MixinNativeSearchTerms (@Pseudo)"},
+]
+
+
+def _method_bodies(code, name):
+    """Return the bodies of the methods named `name` declared in comment-stripped `code`."""
+    bodies = []
+    pattern = re.compile(
+        r"(?:(?:\b(?:public|protected|private|static|final|abstract|synchronized)\b)\s+)+"
+        r"[\w<>\[\],.?]+\s+" + re.escape(name) + r"\s*\("
+    )
+    for match in pattern.finditer(code):
+        open_paren = match.end() - 1
+        if _balanced(code, open_paren) is None:
+            continue
+        index = open_paren
+        depth = 0
+        while index < len(code):
+            if code[index] == "(":
+                depth += 1
+            elif code[index] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            index += 1
+        rest = code[index + 1:]
+        brace = re.match(r"\s*(?:throws\s+[\w.,\s]+)?\{", rest)
+        if brace is None:
+            continue
+        start = index + 1 + brace.end() - 1
+        depth = 0
+        end = start
+        while end < len(code):
+            char = code[end]
+            if char in ('"', "'"):
+                quote = char
+                end += 1
+                while end < len(code) and code[end] != quote:
+                    end += 2 if code[end] == "\\" else 1
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            end += 1
+        bodies.append(code[start + 1:end])
+    return bodies
+
+
+def check_internals(root=ROOT):
+    """Return (problems, notes) for ledger III against the tree below `root`."""
+    root = Path(root)
+    problems = []
+    notes = []
+    for entry in LEDGER_III:
+        eid = entry["id"]
+        for relative in entry.get("absent", ()):
+            if (root / relative).is_file():
+                problems.append(
+                    f"{relative}: {eid} lists this class as absent (a named gap in {DOCS}) but it exists now; "
+                    "update ledger III and the docs")
+        if "file" not in entry:
+            continue
+        path = root / entry["file"]
+        if not path.is_file():
+            problems.append(f"{entry['file']}: {eid} ({entry['doc_token']}) is missing; addon mixin "
+                            f"({entry['source']}) targets it")
+            continue
+        code = strip_comments(path.read_text(encoding="utf-8", errors="replace"))
+        for member in entry.get("needs", ()):
+            if re.search(r"(?<![\w$])" + re.escape(member) + r"(?![\w$])", code) is None:
+                problems.append(f"{entry['file']}: {eid} expects `{member}` ({entry['source']}); not found")
+        gap_open = False
+        for method, callee in entry.get("calls", ()):
+            bodies = _method_bodies(code, method)
+            if not bodies:
+                problems.append(f"{entry['file']}: {eid} expects a method `{method}` ({entry['source']}); "
+                                "not found")
+                gap_open = True
+            elif not any(re.search(r"(?<![\w$])" + re.escape(callee) + r"\s*\(", body) for body in bodies):
+                gap_open = True
+                if "known_gap" not in entry:
+                    problems.append(f"{entry['file']}: {eid} expects `{method}` to call `{callee}` "
+                                    f"({entry['source']}); it does not")
+        if gap_open and "known_gap" in entry:
+            notes.append(f"NOTE {eid}: known gap, not a failure - {entry['known_gap']}")
+        elif not gap_open and "known_gap" in entry:
+            problems.append(f"{entry['file']}: {eid} is marked known_gap but the call site is back; drop the "
+                            "marker from LEDGER_III and the gap note from the docs")
+    docs_path = root / DOCS
+    if docs_path.is_file():
+        rows = {}
+        for line in docs_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            match = re.match(r"\|\s*(III-\d)\s*\|(.*)", line)
+            if match:
+                rows[match.group(1)] = match.group(2)
+        for entry in LEDGER_III:
+            row = rows.pop(entry["id"], None)
+            if row is None:
+                problems.append(f"{DOCS}: ledger III row {entry['id']} is missing from the docs table")
+            elif entry["doc_token"] not in row:
+                problems.append(f"{DOCS}: ledger III row {entry['id']} does not name {entry['doc_token']}")
+        for leftover in rows:
+            problems.append(f"{DOCS}: ledger III row {leftover} is not in LEDGER_III; add it to "
+                            "scripts/check_addon_surface.py first")
+    else:
+        problems.append(f"{DOCS}: missing; the ledger III table lives there")
+    return problems, notes
+
+
+def check_refusals(root=ROOT):
+    """Return the problems with the startup-refusal tables (code list against both docs)."""
+    root = Path(root)
+    problems = []
+    source = root / COMPETITORS
+    if not source.is_file():
+        return [f"{COMPETITORS}: missing; the refusal list lives there"]
+    names = [entry.split(" (")[0].strip() for entry in re.findall(
+        r'\{\s*"[^"]+\.class"\s*,\s*"([^"]+)"', source.read_text(encoding="utf-8", errors="replace"))]
+    if not names:
+        return [f"{COMPETITORS}: no KNOWN entries parsed (the checker's pattern no longer matches the table)"]
+    for relative in REFUSAL_DOCS:
+        path = root / relative
+        if not path.is_file():
+            problems.append(f"{relative}: missing; it must list the startup refusals")
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace").lower()
+        for name in names:
+            if name.lower() not in text:
+                problems.append(f"{relative}: does not name {name}, which {COMPETITORS.name} refuses at startup")
+    return problems
+
+
 def check(root=ROOT):
     """Return the list of problems for the tree below `root` (empty when the surface holds)."""
     root = Path(root)
@@ -292,12 +486,18 @@ def check(root=ROOT):
 
 def main():
     problems = check()
+    internals, notes = check_internals()
+    problems += internals + check_refusals()
     for problem in problems:
         print(f"FAIL: {problem}", file=sys.stderr)
     if problems:
         return 1
     print(f"Addon surface: ledger II holds ({len(LEDGER_II)} points) - no replacing injection on a "
           "ledger point, sanctioned presences in place, docs table in sync.")
+    print(f"Ledger III: {len(LEDGER_III)} internal-class entries present as the addons name them; the "
+          "startup-refusal list matches both docs.")
+    for note in notes:
+        print(note)
     print("This does not prove an addon runs; it proves celtium's side of the surface did not drift. "
           "Whether an addon works is the acceptance leg's measurement, not this check's.")
     return 0

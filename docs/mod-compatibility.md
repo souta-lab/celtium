@@ -373,11 +373,21 @@ The light cache's kill switch changed meaning with the move: `-Dceltium.entityLi
 cache inside the funnel (every lookup takes the vanilla body), where before it stood the caller-side cancels down.
 The retired `-Dceltium.particleLightCache` switch went with the injection it governed.
 
-**Ledger III — internal classes (not a contract).** Celeritas-internal GUI classes an addon might reach for are
-not a connection surface and are not promised. Named gap: the search-field classes
-(`SearchTextFieldComponent` / `SearchTextFieldModel`) do not exist in Celtium, so an addon whose options screen
-builds on them (the known case is Celeritas Extra's search page) cannot rely on them here; whether such an addon
-degrades or fails is its own code's decision, and no Celtium-side behaviour is claimed for it.
+**Ledger III — internal classes (tracked, not a frozen contract).** Addons also mix into Celeritas' own internal
+classes (`VintageBlockRenderer`, video options UI) and shadow their fields or redirect their call sites. These are
+not promised as a stable public API, but `scripts/check_addon_surface.py` tracks the exact members and call sites
+real addons name so internal refactors fail loudly rather than silently breaking an addon:
+
+| ID | Internal class | Addon consumer & status |
+|---|---|---|
+| III-1 | `VintageBlockRenderer` | Celeritas Leaf Culling (`VintageBlockRendererMixin`) shadows `currentState`/`currentBlockAccess`/`renderQuadList` and `@Redirect`s `renderQuadList` in both `renderBlock` and `renderModel`. **Known gap:** `renderBlock` delegates to `renderModel` since the Demonica Tier B split (`9b3623db7`), so its `renderBlock` `@Redirect` (default `require = 1`) has no target |
+| III-2 | `CeleritasVideoOptionsController` | Celeritas Extra (`MixinOptionsController`) shadows pages/scroll/button/layout members and hooks `init`/`createTabFrame`/`applyChanges` — present |
+| III-3 | `CeleritasVideoOptionsScreen` | Celeritas Extra (`MixinOptionsScreen`) accesses `controller` and hooks `initGui`/`drawScreen`/`mouseClicked` — present |
+| III-4 | `ScrollableFrame` | Celeritas Extra (`MixinScrollableFrame`) accesses `horizontalScrollBar`/`verticalScrollBar`/`viewPortDimension` and hooks `mouseScrolled` — present |
+| III-5 | `TabFrame` | Celeritas Extra (`TabFrameAccess`) accesses `tabs` — present |
+| III-6 | `OptionImpl` | Celeritas Extra (`OptionBindingAccess`) accesses `binding` — present |
+| III-7 | `SliderControl` | Celeritas Extra (`MixinSliderScroll`) accesses `min`/`max`/`interval`/`Button` — present |
+| III-8 | `SearchTextFieldComponent` | Named absent gap (`SearchTextFieldComponent` / `SearchTextFieldModel` do not exist in Celtium); Celeritas Extra's `@Pseudo` `MixinNativeSearchComponent`/`MixinNativeSearchTerms` degrade to its own search bar |
 
 Whether a given addon actually *works* on this surface is a measurement, not a consequence of the ledger: the
 acceptance legs (Dynamic Lights 1.2.11 visibly lighting on the fixture, and a second addon loading on the same
