@@ -1,0 +1,158 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "terrain_cull.glsl"
+#include "terrain_section_desc.glsl"
+
+// New-architecture Tier-A terrain culling compute shader (P1: TerrainCull).
+// Reads GPU-resident 48-byte SectionDesc[] records and emits surviving per-bucket
+// VkDrawIndexedIndirectCommand entries into the pass-indexed indirect draw buffer.
+//
+// Spec: CELTIUM-NEW-ARCH-2026-11-25.md §2.1–2.2, SECTION-DESC-SPEC-2026-11-25.md.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer SectionDescBuffer {
+    uint descData[];
+};
+
+layout(set = 0, binding = 1, std430) writeonly buffer IndirectCommandBuffer {
+    uint indirectData[];
+};
+
+layout(set = 0, binding = 2, std430) buffer DrawCountBuffer {
+    uint drawCounts[];
+};
+
+// Optional previous-frame Hi-Z depth pyramid (enabled when cull.hizParams.z > 0.5).
+layout(set = 0, binding = 3) uniform sampler2D u_HiZPyramid;
+
+layout(set = 0, binding = 4, std140) uniform TerrainCullUniforms {
+    vec4  planes[6];        // world-space frustum planes
+    mat4  prevViewProj;     // previous-frame view-projection for conservative Hi-Z test
+    vec4  cameraPosMaxDist; // xyz = camera world pos (blocks), w = max draw distance (blocks)
+    vec4  hizParams;        // x = width, y = height, z = enable (>0.5), w = maxMipLevel
+    uvec4 dispatchParams;   // x = recordCount, y = targetSlabId (0xFFFFFFFF = all), z = maxCommandsPerPass, w = passMask
+    uvec4 passOutputBase;   // command base offset per pass ordinal [0..3]
+} cull;
+
+CeltiumSectionDesc readSectionDesc(uint recordIndex) {
+    uint base = recordIndex * CELTIUM_SECTION_DESC_STRIDE_UINTS;
+    uint w6 = descData[base + 6u];
+    uint w7 = descData[base + 7u];
+    uint w8 = descData[base + 8u];
+    uint w9 = descData[base + 9u];
+
+    CeltiumSectionDesc d;
+    d.sectionPos      = ivec3(int(descData[base + 0u]), int(descData[base + 1u]), int(descData[base + 2u]));
+    d.slabId          = descData[base + 3u];
+    d.vertexOffset    = descData[base + 4u];
+    d.quadStart       = descData[base + 5u];
+    d.bucketCounts[0] = w6 & 0xFFFFu;
+    d.bucketCounts[1] = (w6 >> 16u) & 0xFFFFu;
+    d.bucketCounts[2] = w7 & 0xFFFFu;
+    d.bucketCounts[3] = (w7 >> 16u) & 0xFFFFu;
+    d.bucketCounts[4] = w8 & 0xFFFFu;
+    d.bucketCounts[5] = (w8 >> 16u) & 0xFFFFu;
+    d.bucketCounts[6] = w9 & 0xFFFFu;
+    d.passOrdinal     = (w9 >> 16u) & 0xFFu;
+    d.flags           = (w9 >> 24u) & 0xFFu;
+    d.generation      = descData[base + 10u];
+    d.sortedIndexBase = descData[base + 11u];
+    return d;
+}
+
+bool celtiumHiZVisible(vec3 boxMin, vec3 boxMax) {
+    if (cull.hizParams.z <= 0.5) {
+        return true;
+    }
+    vec2 minNdc = vec2(1.0);
+    vec2 maxNdc = vec2(-1.0);
+    float minDepth = 1.0;
+
+    for (int i = 0; i < 8; i++) {
+        vec3 corner = vec3(
+            (i & 1) != 0 ? boxMax.x : boxMin.x,
+            (i & 2) != 0 ? boxMax.y : boxMin.y,
+            (i & 4) != 0 ? boxMax.z : boxMin.z
+        );
+        vec4 clip = cull.prevViewProj * vec4(corner, 1.0);
+        // Conservative bypass if any corner crosses behind/near the near plane.
+        if (clip.w <= 0.001) {
+            return true;
+        }
+        vec3 ndc = clip.xyz / clip.w;
+        minNdc = min(minNdc, ndc.xy);
+        maxNdc = max(maxNdc, ndc.xy);
+        minDepth = min(minDepth, ndc.z);
+    }
+
+    vec2 uvMin = clamp(minNdc * 0.5 + 0.5, vec2(0.0), vec2(1.0));
+    vec2 uvMax = clamp(maxNdc * 0.5 + 0.5, vec2(0.0), vec2(1.0));
+    vec2 sizePx = (uvMax - uvMin) * cull.hizParams.xy + vec2(2.0); // conservative +1px border each side
+    float mip = clamp(ceil(log2(max(max(sizePx.x, sizePx.y), 1.0))), 0.0, cull.hizParams.w);
+
+    float d0 = textureLod(u_HiZPyramid, vec2(uvMin.x, uvMin.y), mip).r;
+    float d1 = textureLod(u_HiZPyramid, vec2(uvMax.x, uvMin.y), mip).r;
+    float d2 = textureLod(u_HiZPyramid, vec2(uvMin.x, uvMax.y), mip).r;
+    float d3 = textureLod(u_HiZPyramid, vec2(uvMax.x, uvMax.y), mip).r;
+    float maxOccluderDepth = max(max(d0, d1), max(d2, d3));
+
+    return minDepth <= maxOccluderDepth;
+}
+
+uint outputBaseForPass(uint passOrdinal) {
+    if (passOrdinal == 0u) return cull.passOutputBase.x;
+    if (passOrdinal == 1u) return cull.passOutputBase.y;
+    if (passOrdinal == 2u) return cull.passOutputBase.z;
+    return cull.passOutputBase.w;
+}
+
+void main() {
+    uint recordIndex = gl_GlobalInvocationID.x;
+    if (recordIndex >= cull.dispatchParams.x) {
+        return;
+    }
+
+    CeltiumSectionDesc desc = readSectionDesc(recordIndex);
+
+    // Skip oversized records (fallback path) and filtered slabs/passes.
+    if ((desc.flags & CELTIUM_SECTION_FLAG_OVERSIZE) != 0u) {
+        return;
+    }
+    if (cull.dispatchParams.y != 0xFFFFFFFFu && desc.slabId != cull.dispatchParams.y) {
+        return;
+    }
+    if (desc.passOrdinal >= 4u || ((cull.dispatchParams.w & (1u << desc.passOrdinal)) == 0u)) {
+        return;
+    }
+
+    vec3 boxMin = vec3(desc.sectionPos * 16);
+    vec3 boxMax = boxMin + vec3(16.0);
+    if (!celtiumBoxVisible(boxMin, vec3(16.0), cull.planes, cull.cameraPosMaxDist.xyz, cull.cameraPosMaxDist.w)) {
+        return;
+    }
+    if (!celtiumHiZVisible(boxMin, boxMax)) {
+        return;
+    }
+
+    uint passBase = outputBaseForPass(desc.passOrdinal);
+    uint maxCmds = cull.dispatchParams.z;
+    uint runningQuad = desc.quadStart;
+
+    for (uint b = 0u; b < CELTIUM_SECTION_BUCKET_COUNT; b++) {
+        uint count = desc.bucketCounts[b];
+        if (count > 0u && celtiumFaceBucketVisible(b, boxMin, boxMax, cull.cameraPosMaxDist.xyz)) {
+            uint slot = atomicAdd(drawCounts[desc.passOrdinal], 1u);
+            if (slot < maxCmds) {
+                uint outBase = (passBase + slot) * 5u;
+                indirectData[outBase + 0u] = count * 6u;       // indexCount
+                indirectData[outBase + 1u] = 1u;               // instanceCount
+                indirectData[outBase + 2u] = runningQuad * 6u; // firstIndex (shared static quad index buffer)
+                indirectData[outBase + 3u] = desc.vertexOffset; // vertexOffset
+                indirectData[outBase + 4u] = recordIndex;      // firstInstance -> SectionDesc index
+            }
+        }
+        runningQuad += count;
+    }
+}
