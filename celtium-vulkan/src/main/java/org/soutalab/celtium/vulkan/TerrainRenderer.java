@@ -142,7 +142,7 @@ public final class TerrainRenderer {
     VulkanArena sharedVertexArena(VulkanContext context) {
         if (this.sharedVertexArena == null) {
             this.sharedVertexArena = new VulkanArena(context, SHARED_VERTEX_ARENA_INITIAL_BYTES,
-                    VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertexStride());
+                    VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertexStride(), "terrainVertex");
         }
         return this.sharedVertexArena;
     }
@@ -151,7 +151,7 @@ public final class TerrainRenderer {
     VulkanArena sharedIndexArena(VulkanContext context) {
         if (this.sharedIndexArena == null) {
             this.sharedIndexArena = new VulkanArena(context, SHARED_INDEX_ARENA_INITIAL_BYTES,
-                    VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 4);
+                    VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 4, "terrainIndex");
         }
         return this.sharedIndexArena;
     }

@@ -140,6 +140,8 @@ public final class VulkanArena {
      * (a hypothetical packed format) would otherwise leave boundaries that align to the format but not to the API.
      */
     private final int alignUnit;
+    /** The pool name refusals and census lines report (see the named constructor). */
+    private final String name;
     private int capacity;
     private int used;
     private boolean deleted;
@@ -157,9 +159,21 @@ public final class VulkanArena {
     }
 
     public VulkanArena(VulkanContext context, int initialCapacityBytes, int usageFlags, int stride) {
+        this(context, initialCapacityBytes, usageFlags, stride, "arena");
+    }
+
+    /**
+     * @param name the pool name refusals and census lines report (Stage 0 port of the
+     *             experimental pool naming, arch/oom-pool-id @285d67f3: an unnamed allocator's
+     *             refusal could not be attributed to a pool, so the r10 leg's 32 KiB failure
+     *             stayed anonymous; a named arena's refusal says which pool refused).
+     */
+    public VulkanArena(VulkanContext context, int initialCapacityBytes, int usageFlags, int stride,
+            String name) {
         if (context == null) {
             throw new NullPointerException("context");
         }
+        this.name = name == null ? "arena" : name;
         if (stride <= 0) {
             throw new IllegalArgumentException("Stride must be positive, was " + stride);
         }
@@ -235,8 +249,9 @@ public final class VulkanArena {
             free = findFree(needed);
             if (free == null) {
                 // Unreachable: growth always appends a free tail of at least `needed` bytes.
-                throw new IllegalStateException("The Vulkan arena grew to " + this.capacity
-                        + " bytes but still has no contiguous free range of " + needed + " bytes.");
+                throw new IllegalStateException("The Vulkan arena '" + this.name + "' grew to " + this.capacity
+                        + " bytes but still has no contiguous free range of " + needed
+                        + " bytes (largestFreeRun=" + largestFreeRun() + ").");
             }
         }
         Segment result;
@@ -402,6 +417,27 @@ public final class VulkanArena {
     }
 
     /** Whether no live segment is allocated. */
+    /** {@return this arena's pool name, as reported by refusals and census lines}. */
+    public String name() {
+        return this.name;
+    }
+
+    /**
+     * {@return the largest single contiguous free range in bytes, holes and tail alike}.
+     * The free list is merged on every free, so each entry is already maximal and the walk is
+     * exact. Stage 0 port of the experimental {@code largestFreeRun} instrument
+     * (arch/oom-pool-id @285d67f3); no allocation path consults it.
+     */
+    public long largestFreeRun() {
+        long largest = 0L;
+        for (Segment segment = this.freeHead; segment != null; segment = segment.nextFree) {
+            if (segment.length > largest) {
+                largest = segment.length;
+            }
+        }
+        return largest;
+    }
+
     public boolean isEmpty() {
         return this.used <= 0;
     }
@@ -600,6 +636,14 @@ public final class VulkanArena {
         public final long largestHoleBytes;
         /** Bytes in the free range that reaches the end of the capacity, or 0 when the last range is used. */
         public final long tailBytes;
+        /**
+         * The largest single contiguous free range, holes and tail alike (Stage 0 port of the
+         * experimental {@code largestFreeRun} instrument, arch/oom-pool-id @285d67f3: there the
+         * split mattered because one ledger's 15.3 MB free run masked another ledger's 16 KiB
+         * exhaustion; here the same figure separates "no room anywhere" from "room, but not
+         * contiguous" without walking the segment list a second time).
+         */
+        public final long largestFreeRunBytes;
 
         private Fragmentation(int capacity, long usedBytes, long holeBytes, int holeCount,
                 long largestHoleBytes, long tailBytes) {
@@ -609,13 +653,15 @@ public final class VulkanArena {
             this.holeCount = holeCount;
             this.largestHoleBytes = largestHoleBytes;
             this.tailBytes = tailBytes;
+            this.largestFreeRunBytes = Math.max(largestHoleBytes, tailBytes);
         }
 
         /** {@return the census line for this reading}. */
         public String line() {
             return "CELTIUM_ARENA_FRAGMENTATION capacity=" + this.capacity + " used=" + this.usedBytes
                     + " holes=" + this.holeCount + " holeBytes=" + this.holeBytes
-                    + " largestHole=" + this.largestHoleBytes + " tailBytes=" + this.tailBytes;
+                    + " largestHole=" + this.largestHoleBytes + " tailBytes=" + this.tailBytes
+                    + " largestFreeRun=" + this.largestFreeRunBytes;
         }
     }
 
@@ -781,8 +827,9 @@ public final class VulkanArena {
     private void grow(int needed) {
         long target = growthTarget(this.capacity, needed, this.alignUnit);
         if (target > Integer.MAX_VALUE) {
-            throw new OutOfMemoryError("The Vulkan arena cannot grow beyond " + Integer.MAX_VALUE + " bytes (used "
-                    + this.used + " bytes, requested " + needed + " bytes).");
+            throw new OutOfMemoryError("The Vulkan arena '" + this.name + "' cannot grow beyond "
+                    + Integer.MAX_VALUE + " bytes (used " + this.used + " bytes, requested " + needed
+                    + " bytes, largestFreeRun=" + largestFreeRun() + ").");
         }
         int oldCapacity = this.capacity;
         this.buffer.ensureCapacity(target);
