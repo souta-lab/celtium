@@ -442,7 +442,10 @@ public final class VulkanPostChain {
             }
 
             LongBuffer handle = stack.mallocLong(1);
-            renderPass = createRenderPass(device, VK_FORMAT_R8G8B8A8_UNORM);
+            // The chain's default pass attaches the frame image (a pass that writes main) and the chain's
+            // own targets in the chain's default class, which is the frame's class - so the pass is built
+            // in the frame's format, BGRA included (Stage 1 BGRA ignition).
+            renderPass = createRenderPass(device, context.celtium$frameColorFormat());
 
             VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(3, stack);
             bindings.get(0).binding(0).descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
@@ -593,13 +596,13 @@ public final class VulkanPostChain {
     }
 
     /**
-     * {@return the render pass a target of {@code formatClass} is attached through}: the default pass for the
-     * default class, a variant created on first use for any other colour class. A depth class names no colour
-     * attachment a chain pass could write, so it is refused here rather than resolved to a pass that would
-     * attach a depth image as colour.
+     * {@return the render pass a target of {@code formatClass} is attached through}: the default pass for
+     * the frame's class (the chain's default - see {@link #create}), a variant created on first use for any
+     * other colour class. A depth class names no colour attachment a chain pass could write, so it is
+     * refused here rather than resolved to a pass that would attach a depth image as colour.
      */
     private long renderPassFor(RenderTargetRegistry.TargetFormatClass formatClass) {
-        if (formatClass == null || formatClass == RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM) {
+        if (formatClass == null || formatClass == this.context.celtium$frameFormatClass()) {
             return this.renderPass;
         }
         if (formatClass.isDepth()) {
@@ -624,8 +627,20 @@ public final class VulkanPostChain {
      */
     static RenderTargetRegistry.TargetFormatClass celtium$outFormatClass(boolean outIsMain,
             RenderTargetRegistry.TargetFormatClass chainFormatClass) {
+        return celtium$outFormatClass(outIsMain, chainFormatClass,
+                RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM);
+    }
+
+    /**
+     * {@link #celtium$outFormatClass(boolean, RenderTargetRegistry.TargetFormatClass)} against the frame's
+     * own class: the image a main-writing pass lands in is the frame, so its class is the frame's class -
+     * {@code BGRA8_UNORM} when the frame followed a BGRA surface (Stage 1 BGRA ignition).
+     */
+    static RenderTargetRegistry.TargetFormatClass celtium$outFormatClass(boolean outIsMain,
+            RenderTargetRegistry.TargetFormatClass chainFormatClass,
+            RenderTargetRegistry.TargetFormatClass frameClass) {
         if (outIsMain || chainFormatClass == null) {
-            return RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM;
+            return frameClass;
         }
         return chainFormatClass;
     }
@@ -637,7 +652,19 @@ public final class VulkanPostChain {
      * render pass and only that pass's framebuffers may be begun with it.
      */
     static String celtium$programKey(String program, RenderTargetRegistry.TargetFormatClass formatClass) {
-        if (formatClass == null || formatClass == RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM) {
+        return celtium$programKey(program, formatClass,
+                RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM);
+    }
+
+    /**
+     * {@link #celtium$programKey(String, RenderTargetRegistry.TargetFormatClass)} with the chain's default
+     * class named by the caller: the bare-name rule belongs to whichever class the chain's default pass
+     * serves - the frame's class - not to a fixed class, or a BGRA frame's programs would be keyed as
+     * variants of a pass they never run in while RGBA8 variants shared the bare names.
+     */
+    static String celtium$programKey(String program, RenderTargetRegistry.TargetFormatClass formatClass,
+            RenderTargetRegistry.TargetFormatClass defaultClass) {
+        if (formatClass == null || formatClass == defaultClass) {
             return program;
         }
         return program + "@" + formatClass.name();
@@ -707,12 +734,13 @@ public final class VulkanPostChain {
             return false;
         }
         RenderTargetRegistry.TargetFormatClass chainClass = chainFormatClass == null
-                ? RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM : chainFormatClass;
+                ? this.context.celtium$frameFormatClass() : chainFormatClass;
         // The chain's class is a preflight question like the programs are: a class this device cannot attach,
         // blend and sample refuses the whole chain here, where the caller's answer is to keep the GL chain,
         // rather than at target creation inside the recording, where nothing honest remains. A depth class is
-        // not a chain colour class at all.
-        if (chainClass.isDepth() || (chainClass != RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM
+        // not a chain colour class at all. The frame's own class is exempt from the question, as the classic
+        // default always was: the frame decision already asked it of the device.
+        if (chainClass.isDepth() || (chainClass != this.context.celtium$frameFormatClass()
                 && !VulkanColorFormat.usable(this.context.physicalDevice(), chainClass))) {
             this.formatRefusals++;
             if (!this.formatRefusalReported) {
@@ -725,7 +753,8 @@ public final class VulkanPostChain {
             return false;
         }
         for (Pass pass : passes) {
-            Program program = programFor(pass, celtium$outFormatClass(pass.outIsMain, chainClass));
+            Program program = programFor(pass, celtium$outFormatClass(pass.outIsMain, chainClass,
+                    this.context.celtium$frameFormatClass()));
             if (program == null) {
                 return false;
             }
@@ -750,7 +779,8 @@ public final class VulkanPostChain {
         if (pass == null || pass.program == null || PROGRAMS.get(pass.program) == null || pass.pushBytes <= 0) {
             return null;
         }
-        String key = celtium$programKey(pass.program, outFormatClass);
+        String key = celtium$programKey(pass.program, outFormatClass,
+                this.context.celtium$frameFormatClass());
         Program cached = this.programs.get(key);
         if (cached != null) {
             return cached;
@@ -1048,7 +1078,7 @@ public final class VulkanPostChain {
     private int celtium$recordPasses(VkCommandBuffer commandBuffer, List<Pass> passes,
             RenderTargetRegistry.TargetFormatClass chainFormatClass) {
         RenderTargetRegistry.TargetFormatClass chainClass = chainFormatClass == null
-                ? RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM : chainFormatClass;
+                ? this.context.celtium$frameFormatClass() : chainFormatClass;
         long recordedUnder = this.frameTargetGeneration;
         // The ring accounting is reset here, at the head of the recording, before every refusal this method can
         // raise: the wrapper's abandon path (celtium$returnSlotsOfAbandonedRecording) reads these two fields for
@@ -1112,7 +1142,8 @@ public final class VulkanPostChain {
         int passIndex = 0;
         for (Pass pass : passes) {
             RenderTargetRegistry.TargetFormatClass outFormatClass =
-                    celtium$outFormatClass(pass.outIsMain, chainClass);
+                    celtium$outFormatClass(pass.outIsMain, chainClass,
+                            this.context.celtium$frameFormatClass());
             Program program = programFor(pass, outFormatClass);
             String refusal = program == null ? "no pipeline this device can carry its block on"
                     : blockRefusal(pass, program);

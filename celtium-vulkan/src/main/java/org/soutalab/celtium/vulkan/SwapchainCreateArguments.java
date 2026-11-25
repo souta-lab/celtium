@@ -101,8 +101,19 @@ public final class SwapchainCreateArguments {
     }
 
     /**
-     * Chooses the creation arguments using the default transfer-only present usage (issue #422 (a): the native
-     * present path only blits/clears swapchain images and never attaches them as colour attachments).
+     * Chooses the creation arguments for the direct present path (design CELTIUM-A-TO-B Stage 1; lanechat
+     * #8830 (3)(4)): the frame renders straight into the swapchain image, so colour-attachment usage is
+     * required and transfer usage is kept wherever the surface offers it, for the readback/dump block and
+     * the loading screen's standalone present.
+     * <p>
+     * The previous default was transfer-only usage, chosen for issue #422 (a): on RDNA3 proprietary
+     * drivers, displayable DCC compression metadata on colour-attachment swapchain images collided with
+     * {@code UNDEFINED -> TRANSFER_DST} blit presents. That trade belonged to the blit path it protected:
+     * a transfer-only swapchain cannot be rendered into at all, and the direct path's own transitions -
+     * the frame target's acquire/release barriers, which already carry the full attachment/transfer/shader
+     * masks #422 (a) asked for - are the DCC-relevant surface now. The transfer-only shape is the default
+     * again since direct present landed opt-in; the colour-attachment shape is requested only behind
+     * {@code -Dceltium.present.direct=true}, through the overload below.
      *
      * @param surface         what the surface reported
      * @param requestedWidth  the window's framebuffer width
@@ -111,23 +122,41 @@ public final class SwapchainCreateArguments {
      * @return the arguments to request, or a {@link Result#refusal} when this surface cannot carry a frame
      */
     public static Result select(Surface surface, int requestedWidth, int requestedHeight, int desiredImages) {
-        return select(surface, requestedWidth, requestedHeight, desiredImages, true);
+        return select(surface, requestedWidth, requestedHeight, desiredImages, false);
     }
 
     /**
      * Chooses the creation arguments, optionally dropping {@link #USAGE_COLOR_ATTACHMENT} so swapchain images are
      * allocated as transfer surfaces rather than renderable colour attachments (issue #422 (a): avoids RDNA3
      * displayable DCC compression metadata colliding with {@code UNDEFINED -> TRANSFER_DST} blit presents).
+     * The transfer-only request is the composite fallback path's shape, reached whenever direct
+     * present is not in effect (the default; {@code -Dceltium.present.direct=true} opts in).
      *
      * @param surface             what the surface reported
      * @param requestedWidth      the window's framebuffer width
      * @param requestedHeight     the window's framebuffer height
      * @param desiredImages       the application's preference for the image count (3 for triple buffering)
-     * @param transferOnlyPresent true to request only transfer usage (default), false to include colour-attachment
+     * @param transferOnlyPresent true to request only transfer usage (fallback path), false to include
+     *                            colour-attachment (the direct present path)
      * @return the arguments to request, or a {@link Result#refusal} when this surface cannot carry a frame
      */
     public static Result select(Surface surface, int requestedWidth, int requestedHeight, int desiredImages,
             boolean transferOnlyPresent) {
+        return select(surface, requestedWidth, requestedHeight, desiredImages, transferOnlyPresent, false);
+    }
+
+    /**
+     * As {@link #select(Surface, int, int, int, boolean)}, optionally preferring the frame colour format
+     * ({@link #FORMAT_R8G8B8A8_UNORM}) when the surface offers it: with direct present enabled, a swapchain
+     * in the frame's own format is the only one whose images the frame may borrow as its render target
+     * (the format gate in the lending contract), so the preference is what lets the direct path engage at
+     * all on surfaces that offer both channel orders. Surfaces offering only BGRA keep the historical
+     * first-offered choice and their frames fall back to the composed present.
+     *
+     * @param preferFrameFormat true to choose {@link #FORMAT_R8G8B8A8_UNORM} ahead of the surface's order
+     */
+    public static Result select(Surface surface, int requestedWidth, int requestedHeight, int desiredImages,
+            boolean transferOnlyPresent, boolean preferFrameFormat) {
         if (surface == null) {
             throw new IllegalArgumentException("surface must not be null");
         }
@@ -233,6 +262,8 @@ public final class SwapchainCreateArguments {
         int chosenColorSpace = 0;
         boolean chosen = false;
         boolean sawUndefined = false;
+        int fallbackFormat = 0;
+        int fallbackColorSpace = 0;
         for (int i = 0; i < offeredCount; i++) {
             int candidate = surface.formats[i * 2];
             int colorSpace = surface.formats[i * 2 + 1];
@@ -241,10 +272,29 @@ public final class SwapchainCreateArguments {
                 continue;
             }
             if (!chosen && (candidate == FORMAT_B8G8R8A8_UNORM || candidate == FORMAT_R8G8B8A8_UNORM)) {
+                if (preferFrameFormat && candidate != FORMAT_R8G8B8A8_UNORM) {
+                    // Direct present prefers the frame format: keep scanning in case the surface lists it
+                    // later; the first acceptable non-frame format is remembered as the fallback choice.
+                    if (fallbackFormat == 0) {
+                        fallbackFormat = candidate;
+                        fallbackColorSpace = colorSpace;
+                    }
+                    continue;
+                }
                 chosenFormat = candidate;
                 chosenColorSpace = colorSpace;
                 chosen = true;
             }
+        }
+        if (!chosen && fallbackFormat != 0) {
+            // The frame format was preferred but not offered: the first acceptable format stands, with the
+            // preference recorded so a leg's surface line says why this generation cannot be borrowed from.
+            chosenFormat = fallbackFormat;
+            chosenColorSpace = fallbackColorSpace;
+            chosen = true;
+            result.formatNote = "direct present prefers R8G8B8A8_UNORM, which the surface did not offer;"
+                    + " took the first acceptable format (the frame adopts this format, so this generation"
+                    + " can be borrowed - Stage 1 R1 revised)";
         }
         if (!chosen) {
             // No preferred format: take the first real one the surface listed, never the UNDEFINED marker.
@@ -274,6 +324,40 @@ public final class SwapchainCreateArguments {
         result.format = chosenFormat;
         result.colorSpace = chosenColorSpace;
         return result;
+    }
+
+    /**
+     * {@return the format the frame colour image is allocated in} (Stage 1 BGRA ignition, QUEUE 404 rule R1
+     * revised): the frame follows the swapchain's format, so a generation whose format the frame can adopt
+     * can be borrowed for direct present instead of composed.
+     * <p>
+     * The classic frame format is {@link #FORMAT_R8G8B8A8_UNORM}. It stays the answer whenever direct present
+     * is off (nothing borrows, so the frame keeps the format every existing pass and readback was built
+     * against), and whenever the surface's chosen format is not one the frame may adopt: the sRGB formats
+     * are never adopted (an sRGB attachment would apply a linear-to-sRGB conversion on every write, and
+     * Minecraft's pipeline is not linear), and {@link #FORMAT_B8G8R8A8_UNORM} is adopted only when the device
+     * can attach, blend and sample it ({@code bgraUsable}, the caller's device answer) - a frame the device
+     * cannot render into would be worse than a composed present. Any other answer leaves the generation
+     * unborrowable: the borrow gate compares formats and refuses, which is the composed present, never a
+     * mismatched framebuffer.
+     * <p>
+     * The alternative considered and not taken: {@code VK_KHR_swapchain_mutable_format} with a component
+     * swizzle, keeping the frame at R8G8B8A8 over a BGRA swapchain image. A view's component mapping applies
+     * to reads of the image, not to colour-attachment writes, so the frame's R would land in the swapchain
+     * image's B byte - the presented picture would swap red and blue. The extension would also need
+     * {@code VK_KHR_image_format_list} plumbing at creation for a benefit the follow-the-surface rule
+     * already provides on every offer shape.
+     *
+     * @param swapchainFormat the format the live generation was created in, or {@link #FORMAT_UNDEFINED}
+     *                        when no generation exists yet
+     * @param directPresent   whether direct present is enabled ({@code -Dceltium.present.direct})
+     * @param bgraUsable      whether the device can attach, blend and sample B8G8R8A8_UNORM
+     */
+    public static int frameColorFormat(int swapchainFormat, boolean directPresent, boolean bgraUsable) {
+        if (directPresent && swapchainFormat == FORMAT_B8G8R8A8_UNORM && bgraUsable) {
+            return FORMAT_B8G8R8A8_UNORM;
+        }
+        return FORMAT_R8G8B8A8_UNORM;
     }
 
     /**

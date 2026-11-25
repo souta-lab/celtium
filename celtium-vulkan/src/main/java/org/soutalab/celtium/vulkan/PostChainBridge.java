@@ -49,6 +49,26 @@ final class PostChainBridge {
             b.record("post chain executor creation failed: " + b.describe(error));
             return false;
         }
+        // Borrow closure (Stage 1 BGRA): the borrow decision for this frame was taken before this
+        // backend's first chain existed, so a main-reading chain can arrive over a frame that is
+        // already rendering into a borrowed swapchain image - an image created without SAMPLED usage.
+        // Refuse the chain for this frame only; the borrow side bypasses from the next frame on
+        // because the executor now exists (PresentSwapchain's post-chain condition). A pass READS the
+        // frame when its input or its aux input is the main framebuffer; writing main is an attachment
+        // write, which a borrowed image serves like any other.
+        FrameImageTarget chainFrameTarget = b.frameTarget;
+        if (chainFrameTarget instanceof GllessFrameTarget
+                && ((GllessFrameTarget) chainFrameTarget).hasLivePresentBorrow()) {
+            for (VulkanPostChain.Pass pass : passes) {
+                boolean readsMain = pass.inIsMain
+                        || (pass.auxFbIds.length > 0 && pass.auxFbIds[0] == 0);
+                if (readsMain) {
+                    b.record("post chain refused for one frame: the frame holds a borrowed present image"
+                            + " (Stage 1 borrow closure; borrows bypass while a chain is live)");
+                    return false;
+                }
+            }
+        }
         RenderTargetRegistry.TargetFormatClass chainFormatClass = celtium$chainFormatClass(passes);
         if (!b.postChain.supportsAll(passes, chainFormatClass)) {
             StringBuilder reason = new StringBuilder("post chain refused:");
@@ -224,18 +244,18 @@ b.frameBufferOpen = false;
      * own framebuffer was allocated in. The pair's class is the game's own statement of what the chain's targets
      * must hold - a mod that asked GL for a 16F framebuffer to run a bloom chain in gets a chain whose targets
      * are 16F, and the chain's output lands back in that same pair. A chain whose group main is the game's main
-     * framebuffer, or that has no GL-less pair behind it, runs in the default class: the shipped 8-bit behaviour,
-     * unchanged.
+     * framebuffer, or that has no GL-less pair behind it, runs in the frame's class: the shipped 8-bit
+     * behaviour, in the frame's own byte order (Stage 1 BGRA ignition).
      */
     private RenderTargetRegistry.TargetFormatClass celtium$chainFormatClass(
             java.util.List<VulkanPostChain.Pass> passes) {
         GllessFrameTarget glless = b.offTargetTarget();
         if (glless == null || passes.isEmpty()) {
-            return RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM;
+            return b.celtium$frameFormatClass();
         }
         int identity = passes.get(0).groupMainFbId;
         if (identity == 0 || identity == (int) b.targetRegistry.mainIdentity()) {
-            return RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM;
+            return b.celtium$frameFormatClass();
         }
         return glless.chainPairFormatClass(identity);
     }

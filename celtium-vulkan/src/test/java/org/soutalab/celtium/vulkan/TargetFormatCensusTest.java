@@ -72,6 +72,20 @@ class TargetFormatCensusTest {
                 "a pinned target asked for the frame's own class lost nothing to the pin");
     }
 
+    // S5 / rule R1 on a BGRA frame (Stage 1 BGRA ignition): the pin serves BGRA8, which no GL request
+    // names, so a pinned resolution is counted as a pin fallback with the served class on the line -
+    // the comparison is against the chosen class, not a fixed default.
+    @Test
+    void aPinnedTargetOnABgraFrameFallsBackByPin() {
+        assertEquals(new Outcome(Verdict.FALLBACK, "main-identity-pinned"),
+                TargetFormatCensus.decide(resolution(TargetFormatClass.BGRA8_UNORM, 0x8058,
+                        TargetFormatClass.RGBA8_UNORM, false, false, false, true, false, false)),
+                "asked for RGBA8, served the BGRA frame's class: the pin decided, and the census says so");
+        assertEquals(new Outcome(Verdict.FALLBACK, "main-identity-pinned"),
+                TargetFormatCensus.decide(resolution(TargetFormatClass.BGRA8_UNORM, 0x881A,
+                        TargetFormatClass.RGBA16_FLOAT, false, false, false, true, false, false)));
+    }
+
     // S5: a class the device refused falls back with the device as the reason.
     @Test
     void aDeviceRefusalFallsBackWithItsReason() {
@@ -144,6 +158,8 @@ class TargetFormatCensusTest {
     void channelBitsAreTheClasssOwn() {
         for (int channel = 0; channel < 4; channel++) {
             assertEquals(8, TargetFormatCensus.channelBits(TargetFormatClass.RGBA8_UNORM, channel));
+            assertEquals(8, TargetFormatCensus.channelBits(TargetFormatClass.BGRA8_UNORM, channel),
+                    "BGRA is 8 bits a channel like RGBA8; only the byte order differs");
             assertEquals(16, TargetFormatCensus.channelBits(TargetFormatClass.RGBA16_FLOAT, channel));
             assertEquals(32, TargetFormatCensus.channelBits(TargetFormatClass.RGBA32_FLOAT, channel));
         }

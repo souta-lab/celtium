@@ -1041,6 +1041,10 @@ final class CopyReadSide {
      */
     boolean ensureFrameTarget(int width, int height) {
         if (this.backend.frameTarget != null && this.backend.frameTarget.matches(width, height)) {
+            // Direct present path: the frame's swapchain borrow is established here, on the render path,
+            // so it exists before the frame's first pass records against the target (a no-op while a
+            // borrow is live or a recording is open).
+            this.backend.presentSwapchain.celtium$ensureBorrowedFrameImage();
             return true;
         }
         if (this.backend.frameTarget != null && this.backend.celtium$recordingOpen()) {
@@ -1080,6 +1084,13 @@ final class CopyReadSide {
             // instead of binding a render pass that no longer exists. Both the recreate path and the teardown path bump it.
             this.backend.targetRegistry.noteFrameTargetReplaced();
         }
+        // Stage 1 BGRA ignition: the new target's colour format follows the swapchain's, so the present
+        // path gets its chance to create a generation before the target reads the decision - otherwise
+        // the first target of a session would fix the frame at the classic format from an uninformed
+        // state and no BGRA surface could ever be borrowed. A failed creation is not fatal here: the
+        // target then takes the classic format and the session presents composed (the context records
+        // that degradation at the note).
+        this.backend.presentSwapchain.ensureSwapchain();
         try {
             // There is no GL side to share images with: the frame lands in an owned target whose semaphores are
             // signalled and consumed by Vulkan submissions alone.
@@ -1101,6 +1112,8 @@ final class CopyReadSide {
             if (this.backend.postChain != null) {
                 this.backend.postChain.adoptFrameTarget(this.backend.frameTarget, this.backend.targetRegistry.generation());
             }
+            // The fresh target's first frame borrows its swapchain image from here (see the match path).
+            this.backend.presentSwapchain.celtium$ensureBorrowedFrameImage();
             return true;
         } catch (RuntimeException | LinkageError error) {
             this.backend.record("frame target " + width + "x" + height + " failed: " + VulkanTerrainGpuBackend.describe(error));

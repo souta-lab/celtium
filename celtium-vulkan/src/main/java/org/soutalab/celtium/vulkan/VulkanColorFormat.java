@@ -65,7 +65,18 @@ public final class VulkanColorFormat {
      * (QUEUE 404 rule R1); an unpinned target resolves its request through {@link #forRequest}.
      */
     public static TargetFormatClass pinnedOrRequested(boolean pinnedToFrame, int glInternalFormat) {
-        return pinnedToFrame ? TargetFormatClass.RGBA8_UNORM : forRequest(glInternalFormat);
+        return pinnedOrRequested(pinnedToFrame, glInternalFormat, TargetFormatClass.RGBA8_UNORM);
+    }
+
+    /**
+     * {@link #pinnedOrRequested(boolean, int)} against the frame's own class (QUEUE 404 rule R1 as revised
+     * by Stage 1's BGRA ignition): the pin serves the class the frame is allocated in - {@code RGBA8_UNORM}
+     * on a classic surface, {@code BGRA8_UNORM} when the frame followed a BGRA surface - because the pinned
+     * target is composed into that frame, byte order included.
+     */
+    public static TargetFormatClass pinnedOrRequested(boolean pinnedToFrame, int glInternalFormat,
+            TargetFormatClass frameClass) {
+        return pinnedToFrame ? frameClass : forRequest(glInternalFormat);
     }
 
     /**

@@ -849,7 +849,15 @@ public final class RenderTargetRegistry {
         RGBA32_FLOAT(109, false),
         R11G11B10_FLOAT(122, false),
         DEPTH32_FLOAT(126, true),
-        DEPTH24_STENCIL8(129, true);
+        DEPTH24_STENCIL8(129, true),
+        /**
+         * The frame's own class on a BGRA surface (Stage 1 BGRA ignition, R1 revised): the frame colour
+         * format follows the swapchain's format so a generation in this format can be borrowed for direct
+         * present. Appended last on purpose - per-class caches are ordinal-indexed, so no existing class
+         * moves. No GL internal format maps to it ({@link #forGlInternalFormat} never returns it): it is
+         * reachable only through the frame pin, never through a mod's format request.
+         */
+        BGRA8_UNORM(44, false);
 
         // The GL internal formats the D18-A mapping (QUEUE 394) names, pinned against lwjgl-opengl 3.4.3's constants:
         // GL_RGBA8=0x8058, GL_RGBA=0x1908, GL_RGBA16F=0x881A, GL_RGBA32F=0x8814, GL_R11F_G11F_B10F=0x8C3A.
@@ -880,7 +888,7 @@ public final class RenderTargetRegistry {
          * ({@link #R11G11B10_FLOAT} is 32 bits, {@link #DEPTH24_STENCIL8} is 24+8). */
         public int bytesPerPixel() {
             return switch (this) {
-                case RGBA8_UNORM, R11G11B10_FLOAT, DEPTH32_FLOAT, DEPTH24_STENCIL8 -> 4;
+                case RGBA8_UNORM, BGRA8_UNORM, R11G11B10_FLOAT, DEPTH32_FLOAT, DEPTH24_STENCIL8 -> 4;
                 case RGBA16_FLOAT -> 8;
                 case RGBA32_FLOAT -> 16;
             };

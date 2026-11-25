@@ -75,9 +75,11 @@ import static org.lwjgl.vulkan.VK10.*;
  */
 public final class VulkanTerrainPipeline {
     /**
-     * The terrain color attachment format. The frame target this pipeline draws into shares its image with
-     * OpenGL, and R8G8B8A8_UNORM is the format both APIs agree on (it is also the format the interop bootstrap
-     * verifies as importable).
+     * The classic frame colour attachment format. The frame's format is no longer always this constant:
+     * since Stage 1's BGRA ignition it follows the surface (see
+     * {@link VulkanContext#celtium$frameColorFormat()}), and the default pass builders take it from the
+     * context. This constant remains as the classic default - the format of an RGBA surface's frame, and
+     * the value the decision returns before any surface has spoken.
      */
     public static final int COLOR_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
 
@@ -1401,7 +1403,7 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
     }
 
     private void createRenderPass(MemoryStack stack, VkDevice device) {
-        renderPass = buildFrameRenderPass(stack, device, false);
+        renderPass = buildFrameRenderPass(stack, device, false, this.context.celtium$frameColorFormat());
     }
 
     /**
@@ -1411,7 +1413,7 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
      */
     static long createFrameRenderPass(VulkanContext context) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            return buildFrameRenderPass(stack, context.device(), false);
+            return buildFrameRenderPass(stack, context.device(), false, context.celtium$frameColorFormat());
         }
     }
 
@@ -1459,7 +1461,7 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
      */
     static long createChainPairRenderPass(VulkanContext context) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            return buildFrameRenderPass(stack, context.device(), true);
+            return buildFrameRenderPass(stack, context.device(), true, context.celtium$frameColorFormat());
         }
     }
 
@@ -1475,7 +1477,8 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
      */
     static long createChainPairRenderPass(VulkanContext context, int colorAttachments) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            return buildFrameRenderPass(stack, context.device(), true, colorAttachments);
+            return buildFrameRenderPass(stack, context.device(), true, colorAttachments,
+                    context.celtium$frameColorFormat());
         }
     }
 
@@ -1490,13 +1493,16 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
         }
     }
 
-    private static long buildFrameRenderPass(MemoryStack stack, VkDevice device, boolean discardDepth) {
-        return buildFrameRenderPass(stack, device, discardDepth, 1);
-    }
-
+    /**
+     * The one-colour frame-shaped pass in the frame's own format (Stage 1 BGRA ignition): the format is a
+     * parameter rather than the {@link #COLOR_FORMAT} constant because the frame's format follows the
+     * surface - on a BGRA surface every default pass must declare B8G8R8A8, or the framebuffers built over
+     * the frame's views name a format the pass does not. {@link #COLOR_FORMAT} remains the classic
+     * default the context's decision returns on an RGBA surface.
+     */
     private static long buildFrameRenderPass(MemoryStack stack, VkDevice device, boolean discardDepth,
-            int colorAttachments) {
-        return buildFrameRenderPass(stack, device, discardDepth, colorAttachments, COLOR_FORMAT);
+            int colorFormat) {
+        return buildFrameRenderPass(stack, device, discardDepth, 1, colorFormat);
     }
 
     private static long buildFrameRenderPass(MemoryStack stack, VkDevice device, boolean discardDepth,

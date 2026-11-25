@@ -212,6 +212,14 @@ public final class FrameCoordinator {
                 waitArray = new long[] {this.host.frameTarget().waitSemaphore()};
                 stageArray = new int[] {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
                 signalArray = new long[] {this.host.frameTarget().doneSemaphore()};
+            } else {
+                // Direct present path: when the frame renders into a borrowed swapchain image, the first
+                // submission that touches it waits on the borrow's acquire semaphore - the presentation
+                // engine's release of the image is the one ordering fact queue order cannot give.
+                waitArray = celtium$presentAcquireWait();
+                if (waitArray != null) {
+                    stageArray = new int[] {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
+                }
             }
             if (this.host.immediateWindowBusy() && !this.host.recordedImmediateGroups().isEmpty() && this.host.failImmediateSubmits() > 0) {
                 this.host.noteImmediateSubmitFailure();
@@ -278,6 +286,11 @@ public final class FrameCoordinator {
             waitArray = new long[] {this.host.frameTarget().waitSemaphore()};
             stageArray = new int[] {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
             signalArray = new long[] {this.host.frameTarget().doneSemaphore()};
+        } else {
+            waitArray = celtium$presentAcquireWait();
+            if (waitArray != null) {
+                stageArray = new int[] {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};
+            }
         }
         this.host.check(vkEndCommandBuffer(this.host.commandBuffer()), "vkEndCommandBuffer(frame)");
         this.host.commandState().end();
@@ -295,6 +308,16 @@ public final class FrameCoordinator {
         }
         this.host.celtium$submitSlotDeferred(this.host.commandBuffer(), waitArray, stageArray, signalArray);
         celtium$noteSubmissionBookkeeping(frameSemaphores);
+    }
+
+    /**
+     * {@return the one-element wait array carrying the frame target's borrowed-image acquire semaphore},
+     * or null when no borrow's acquire is waiting to be consumed. Consume-on-read at the target: only the
+     * first submission built after a borrow sees it, which is exactly the submission that must wait.
+     */
+    private long[] celtium$presentAcquireWait() {
+        long acquire = this.host.frameTarget().presentAcquireSemaphore();
+        return acquire == VK_NULL_HANDLE ? null : new long[] {acquire};
     }
 
     /**

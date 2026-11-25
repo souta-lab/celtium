@@ -81,15 +81,16 @@ class SwapchainAwaitingSurfaceSizeTest {
 
     @Test
     void structuralRefusalsAreNotWaits() {
-        // No transfer-destination usage: the surface cannot carry the present blit at any size.
-        SwapchainCreateArguments.Surface noTransfer = usableSurface();
-        noTransfer.supportedUsage = SwapchainCreateArguments.USAGE_COLOR_ATTACHMENT
+        // No colour-attachment usage: the surface cannot carry a directly rendered frame at any size
+        // (the direct present path's structural requirement, lanechat #8830 (3)(4)).
+        SwapchainCreateArguments.Surface noColour = usableSurface();
+        noColour.supportedUsage = SwapchainCreateArguments.USAGE_TRANSFER_DST
                 | SwapchainCreateArguments.USAGE_TRANSFER_SRC;
-        SwapchainCreateArguments.Result transferResult =
-                SwapchainCreateArguments.select(noTransfer, 1920, 1080, 3);
-        assertNotNull(transferResult.refusal);
-        assertFalse(transferResult.awaitingSurfaceSize,
-                "a structural refusal must still count toward the escalation: " + transferResult.refusal);
+        SwapchainCreateArguments.Result colourResult =
+                SwapchainCreateArguments.select(noColour, 1920, 1080, 3);
+        assertNotNull(colourResult.refusal);
+        assertFalse(colourResult.awaitingSurfaceSize,
+                "a structural refusal must still count toward the escalation: " + colourResult.refusal);
 
         // No composite-alpha mode at all.
         SwapchainCreateArguments.Surface noAlpha = usableSurface();

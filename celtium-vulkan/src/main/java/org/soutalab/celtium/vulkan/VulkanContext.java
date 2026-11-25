@@ -2,6 +2,7 @@ package org.soutalab.celtium.vulkan;
 
 import org.lwjgl.PointerBuffer;
 import org.soutalab.celtium.harness.HarnessConfig;
+import org.soutalab.celtium.vulkan.hal.PresentEngine;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.EXTDebugUtils;
@@ -86,6 +87,19 @@ public final class VulkanContext {
     private static final boolean SWAPCHAIN_REQUESTED = Boolean.getBoolean(SWAPCHAIN_PROPERTY);
     private static final boolean PRESENT_FROM_COMPOSITE =
             !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.presentFromComposite", "true"));
+    /**
+     * The direct present path (A→B overhaul Stage 1): frames render into a borrowed swapchain image and
+     * the present is a layout transition plus {@code vkQueuePresentKHR}, never a blit. Landed OPT-IN
+     * (ruling, lanechat #9168): the default is OFF, so an unset property takes the frame path down the
+     * composite blit present (and transfer-only swapchain usage) exactly as before this stage, and
+     * {@code -Dceltium.present.direct=true} opts into the direct path. The borrowed-image machinery
+     * carries a framebuffer/layout lifetime defect (measured: with the path on, a [50, 44] surface
+     * machine ignites and then crashes ~9 s into the world; S1 record §6/§7) that the pre-landing format
+     * gate had hidden. The default returns to ON only in the same landing that fixes that defect in the
+     * Stage 2 integration and confirms a full ignition leg run.
+     */
+    public static final boolean PRESENT_DIRECT =
+            "true".equalsIgnoreCase(System.getProperty("celtium.present.direct", "false"));
     private static final boolean HIDE_FD_EXTENSIONS =
             Boolean.getBoolean(VulkanContext.HIDE_FD_EXTENSIONS_PROPERTY);
     private static final boolean PIPELINE_CACHE_DISABLED =
@@ -131,6 +145,18 @@ public final class VulkanContext {
     // Deliberately leak device-owned handles until the failed process exits.
     private volatile boolean deviceLost;
     private VkQueue queue;
+    /** The owner of the swapchain lending contract (lanechat #8830); built with the queue, before any swapchain. */
+    private PresentEngine presentEngine;
+    /**
+     * The frame colour format, once decided (Stage 1 BGRA ignition, R1 revised): 0 while undecided. The
+     * decision is {@link SwapchainCreateArguments#frameColorFormat} over the present engine's adopted
+     * format; it latches the first time it is made from an informed state (a generation exists, or direct
+     * present is off and the answer cannot change), and the first frame target notes its own format here,
+     * so every format-shaped object created afterwards - render passes, pipelines, the frame image itself
+     * on recreation - agrees with the frame that exists. A later generation in a different format does not
+     * move it: the borrow gate compares formats and presents composed, never mismatched.
+     */
+    private int frameColorFormat;
     private int queueFamilyIndex = -1;
     private String deviceName;
     private String deviceUuid;
@@ -688,6 +714,55 @@ public final class VulkanContext {
     public VkQueue queue() {
         celtium$awaitPresenter();
         return this.queue;
+    }
+
+    /** {@return this context's present engine}: the owner of the swapchain lending contract (lanechat #8830). */
+    public PresentEngine presentEngine() {
+        return this.presentEngine;
+    }
+
+    /**
+     * {@return the format the frame colour image is allocated in} (Stage 1 BGRA ignition, R1 revised; see
+     * {@link SwapchainCreateArguments#frameColorFormat} for the rule and the rejected mutable-format
+     * alternative). While no generation exists and direct present is on, the answer is provisional - the
+     * classic format, not latched - because a surface that appears later may still be followed; the frame
+     * target's creation is the point that makes the answer final (see
+     * {@link #celtium$noteFrameColorFormat}).
+     */
+    public int celtium$frameColorFormat() {
+        if (this.frameColorFormat != 0) {
+            return this.frameColorFormat;
+        }
+        int adopted = this.presentEngine == null ? SwapchainCreateArguments.FORMAT_UNDEFINED
+                : this.presentEngine.swapchainFormat();
+        int decided = SwapchainCreateArguments.frameColorFormat(adopted, PRESENT_DIRECT,
+                VulkanColorFormat.usable(this.physicalDevice,
+                        RenderTargetRegistry.TargetFormatClass.BGRA8_UNORM));
+        if (!PRESENT_DIRECT || adopted != SwapchainCreateArguments.FORMAT_UNDEFINED) {
+            this.frameColorFormat = decided;
+        }
+        return decided;
+    }
+
+    /** {@return the frame colour format as a format class}: the vocabulary the pair resolution pins to. */
+    public RenderTargetRegistry.TargetFormatClass celtium$frameFormatClass() {
+        return celtium$frameColorFormat() == SwapchainCreateArguments.FORMAT_B8G8R8A8_UNORM
+                ? RenderTargetRegistry.TargetFormatClass.BGRA8_UNORM
+                : RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM;
+    }
+
+    /**
+     * Notes the format a frame target was actually created in, fixing the decision for this context's
+     * lifetime. The target computes its format from {@link #celtium$frameColorFormat()} after the present
+     * path has had its chance to create a generation, so the noted value is the informed one in every
+     * realistic flow; when swapchain creation failed at that moment the noted value is the classic format
+     * and the session presents composed even if a BGRA generation appears later - the safe degradation,
+     * recorded here rather than discovered from a mismatched framebuffer.
+     */
+    public void celtium$noteFrameColorFormat(int format) {
+        if (this.frameColorFormat == 0) {
+            this.frameColorFormat = format;
+        }
     }
 
     /** Index of the queue family the queue was taken from. */
@@ -3753,6 +3828,7 @@ public final class VulkanContext {
             PointerBuffer handle = stack.mallocPointer(1);
             vkGetDeviceQueue(this.device, this.queueFamilyIndex, 0, handle);
             this.queue = new VkQueue(handle.get(0), this.device);
+            this.presentEngine = new PresentEngine(this.device, this.queue);
             VkCommandPoolCreateInfo pool = VkCommandPoolCreateInfo.calloc(stack).sType$Default()
                     .queueFamilyIndex(this.queueFamilyIndex)
                     .flags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
