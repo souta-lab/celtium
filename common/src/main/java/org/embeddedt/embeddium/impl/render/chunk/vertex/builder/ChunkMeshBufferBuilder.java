@@ -20,15 +20,6 @@ public class ChunkMeshBufferBuilder {
     private int capacity;
     private int sectionIndex;
 
-    /**
-     * Per-quad bilinear correction factors, in push order, kept only when the encoder
-     * captures them as a side stream ({@link ChunkVertexEncoder#capturesRdhFactorSideStream()}).
-     * One entry per pushed quad; the factor is constant over a quad by construction of
-     * {@link #postprocessVertices}.
-     */
-    private int[] rdhFactors;
-    private int rdhFactorCount;
-
     public ChunkMeshBufferBuilder(ChunkVertexEncoder encoder, int stride, int initialCapacity, boolean collectSortState) {
         this.encoder = encoder;
         this.stride = stride;
@@ -44,25 +35,6 @@ public class ChunkMeshBufferBuilder {
     public void push(ChunkVertexEncoder.Vertex[] vertices, Material material) {
         if (this.encoder.supportsBilinearCorrection()) {
             postprocessVertices(vertices);
-        }
-
-        if (this.encoder.capturesRdhFactorSideStream()) {
-            // Pushes are whole quads in the chunk build path; a push that is not a whole
-            // number of quads has no well-defined per-quad factor and is recorded as zero
-            // factors for its complete quads only (postprocess already zeroed them).
-            int quads = vertices.length / 4;
-            if (quads > 0) {
-                if (this.rdhFactors == null) {
-                    this.rdhFactors = new int[64];
-                }
-                if (this.rdhFactorCount + quads > this.rdhFactors.length) {
-                    int grown = Math.max(this.rdhFactors.length * 2, this.rdhFactorCount + quads);
-                    this.rdhFactors = java.util.Arrays.copyOf(this.rdhFactors, grown);
-                }
-                for (int q = 0; q < quads; q++) {
-                    this.rdhFactors[this.rdhFactorCount++] = vertices[q * 4].rdhFactor;
-                }
-            }
         }
 
         var vertexStart = this.count * this.stride;
@@ -144,21 +116,9 @@ public class ChunkMeshBufferBuilder {
     public void start(int sectionIndex) {
         this.count = 0;
         this.sectionIndex = sectionIndex;
-        this.rdhFactorCount = 0;
         if(this.analyzer != null) {
             this.analyzer.clear();
         }
-    }
-
-    /**
-     * {@return the per-quad correction factors captured for this buffer, in push order, or
-     * {@code null} when the encoder does not capture a side stream or nothing was pushed}
-     */
-    public int[] rdhFactors() {
-        if (this.rdhFactors == null || this.rdhFactorCount == 0) {
-            return null;
-        }
-        return java.util.Arrays.copyOf(this.rdhFactors, this.rdhFactorCount);
     }
 
     @Nullable
