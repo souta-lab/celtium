@@ -101,6 +101,19 @@ class GpuTerrainDrawTableTest {
     }
 
     @Test
+    void visibilityTestsTheBoxInCameraRelativeSpace() {
+        // Regression (arch/projection-diag, 2026-11-25): the planes come from P * MV with a
+        // rotation-only MV, so they live in camera-relative space. With the camera at
+        // x=1000, the box around the camera (section 62, absolute x in [992,1120]) must be
+        // kept and the box at the world origin must be rejected — the pre-fix test, which
+        // fed the absolute box to the planes, answered both backwards (Phase 1 leg r10:
+        // surface sections around the camera culled, deep geometry near the origin kept).
+        float[] planes = identityPlanes();
+        assertTrue(GpuTerrainDrawTable.isVisible(planes, 1000, 0, 0, 4096, entry(0, 62, 0, 0)));
+        assertFalse(GpuTerrainDrawTable.isVisible(planes, 1000, 0, 0, 4096, entry(0, 0, 0, 0)));
+    }
+
+    @Test
     void distanceTermRejectsAFarBoxTheFrustumKeeps() {
         float[] planes = identityPlanes();
         GpuTerrainDrawTable.Entry near = entry(0, -1, 0, 0);

@@ -655,7 +655,12 @@ final class VulkanGpuTerrainDraw {
             // the design's section 3.5 requirement for this buffer.
             slot.out = new VulkanHostBuffer(this.context, Math.max(20L, (long) entries
                     * GpuTerrainDrawTable.COMMAND_BYTES), storage | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
-            slot.counts = new VulkanHostBuffer(this.context, 4L, storage | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            // The counts are the countBuffer of the vkCmdDrawIndexedIndirectCount in
+            // recordDraw, so INDIRECT_BUFFER usage is required of them as well (VUID-
+            // vkCmdDrawIndexedIndirectCount-countBuffer-02715) — not only of the
+            // generated command list (slot.out) they count.
+            slot.counts = new VulkanHostBuffer(this.context, 4L,
+                    storage | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
         } else {
             slot.table.ensureCapacity((long) entries * GpuTerrainDrawTable.ENTRY_BYTES);
             slot.remap.ensureCapacity(Math.max(4L, (long) remapCount * 4L));

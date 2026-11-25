@@ -58,6 +58,39 @@ public class BakedChunkModelBuilder implements ChunkModelBuilder {
         }
     }
 
+    /**
+     * Concatenates the per-facing correction-factor side streams in the given facing
+     * order — the same order {@code ChunkBuildBuffers.createMesh} merges the vertex
+     * buffers in, so entry {@code i} of the result belongs to quad {@code i} of the
+     * merged buffer.
+     *
+     * @return the factors, or {@code null} when no facing captured a side stream
+     */
+    public int[] rdhFactors(ModelQuadFacing[] order) {
+        int[][] perFacing = new int[order.length][];
+        int total = 0;
+        boolean any = false;
+        for (int i = 0; i < order.length; i++) {
+            perFacing[i] = this.vertexBuffers[order[i].ordinal()].rdhFactors();
+            if (perFacing[i] != null) {
+                any = true;
+                total += perFacing[i].length;
+            }
+        }
+        if (!any) {
+            return null;
+        }
+        int[] merged = new int[total];
+        int at = 0;
+        for (int[] factors : perFacing) {
+            if (factors != null) {
+                System.arraycopy(factors, 0, merged, at, factors.length);
+                at += factors.length;
+            }
+        }
+        return merged;
+    }
+
     public boolean isEmpty() {
         for (var vertexBuffer : this.vertexBuffers) {
             if (vertexBuffer != null && !vertexBuffer.isEmpty()) {

@@ -248,7 +248,17 @@ public final class VulkanTerrainPipeline {
          * depends on - can be checked without constructing a game pass. The refusal stays here: a format this backend
          * does not implement must not be drawn wrong.
          */
+        /** Tier-A's single attribute: the whole 16-byte vertex as one uvec4 (terrain_a.vert). */
+        private static final int[] TIER_A_ATTRIBUTE_FORMATS = {
+                VK_FORMAT_R32G32B32A32_UINT, // 0: a_VertexData 4 x unsigned int, raw
+        };
+        private static final int[] TIER_A_ATTRIBUTE_OFFSETS = {0};
+
         static VertexLayout forVertexStride(int stride, String passName) {
+            if (stride == 16) {
+                return new VertexLayout(16, TIER_A_ATTRIBUTE_FORMATS, TIER_A_ATTRIBUTE_OFFSETS,
+                        SpirvShaders.TERRAIN_A_VERTEX);
+            }
             if (stride == 24) {
                 return new VertexLayout(24, COMPACT_ATTRIBUTE_FORMATS, COMPACT_ATTRIBUTE_OFFSETS,
                         SpirvShaders.SOLID_VERTEX);
@@ -314,6 +324,61 @@ public final class VulkanTerrainPipeline {
      * own buffer, so {@code bindDescriptors} keeps its single dynamic offset.
      */
     static final int REGION_OFFSETS_BINDING = 5;
+
+    /** Tier-A binding 6: the resident SectionDesc table (std430), read by terrain_a.vert. */
+    static final int SECTION_DESCS_BINDING = 6;
+
+    /** Tier-A binding 7: one factor-stream base (in uints) per SectionDesc record. */
+    static final int SECTION_FACTOR_BASES_BINDING = 7;
+
+    /** Tier-A binding 8: the per-quad RdhFactor arena the bases index into. */
+    static final int RDH_FACTORS_BINDING = 8;
+
+    /**
+     * The descriptor type of every binding of the terrain set layout, indexed by binding number: the
+     * single source {@link #createDescriptorSetLayout} declares from and {@link #createDescriptorPool}
+     * sizes the pool from, so the two cannot drift apart. They did once: the Tier-A wave-2 cutover
+     * (9c793a53) added the storage bindings 6/7/8 to the layout while the pool still sized storage
+     * buffers for binding 5 alone (8 of the 32 the allocation needs), so vkAllocateDescriptorSets
+     * failed on every terrain pipeline creation (VK_ERROR_FRAGMENTED_POOL, -1000069000, on ANV),
+     * {@code TerrainRenderer.pipelineFor} remembered the failure, and every terrain pass of the run
+     * was skipped — no terrain on either route, and the Tier-A executor's periodic census (the
+     * residency gate counters' only output) never ran, because the pass head that calls
+     * {@code prepareFrame} sits downstream of the pipeline (Phase 1 gate leg r6, 2026-11-25: the
+     * CELTIUM_TERRAIN_PIPELINE_FAILED lines named this while the presented frames showed sky only).
+     */
+    private static final int[] SET_BINDING_TYPES = {
+            VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, // 0: region uniforms
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, // 1: light map
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, // 2: block atlas
+            VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         // 3: dynamic light block
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, // 4: shadow map
+            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,         // 5: region offsets
+            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,         // 6: SectionDesc table
+            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,         // 7: factor bases
+            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,         // 8: RdhFactor arena
+    };
+
+    /** The descriptor type the terrain set layout declares for {@code binding}. */
+    static int bindingType(int binding) {
+        return SET_BINDING_TYPES[binding];
+    }
+
+    /** How many descriptors of {@code descriptorType} one set of the terrain layout consumes. */
+    static int descriptorsPerSet(int descriptorType) {
+        int count = 0;
+        for (int type : SET_BINDING_TYPES) {
+            if (type == descriptorType) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /** How many descriptors of {@code descriptorType} the pool must hold for {@code setCount} sets. */
+    static int poolDescriptorCount(int descriptorType, int setCount) {
+        return descriptorsPerSet(descriptorType) * setCount;
+    }
 
     /** The byte size of the dynamic light block: the info vec4 plus one vec4 per source. */
     static final int DYNAMIC_LIGHT_BLOCK_SIZE = 16 + DynamicLightService.MAX_LIGHTS * 16;
@@ -489,6 +554,7 @@ public final class VulkanTerrainPipeline {
     private final long[] writtenLightmapView = new long[DESCRIPTOR_SLOTS];
     private final long[] writtenDynamicLightBuffer = new long[DESCRIPTOR_SLOTS];
     private final long[] writtenRegionOffsetsBuffer = new long[DESCRIPTOR_SLOTS];
+    private final long[] writtenTierABuffers = new long[DESCRIPTOR_SLOTS * 3];
     private boolean deleted;
 
     /**
@@ -916,6 +982,48 @@ public final class VulkanTerrainPipeline {
     }
 
     /**
+     * Writes the Tier-A resident buffers (bindings 6/7/8: SectionDesc table, factor
+     * bases, factor arena) into this slot's descriptor set. Called by the backend's
+     * Tier-A pass head after {@code bindTextures} and before {@code bindDescriptors};
+     * rewritten only when a buffer handle changes, under the same rule as
+     * {@link #bindTextures}. A zero handle leaves the binding unwritten (the Tier-A
+     * vertex stage is then never bound, because the executor arms no draws).
+     */
+    public void bindTierABuffers(long descBuffer, long factorBaseBuffer, long factorBuffer, int slot) {
+        requireAlive();
+        if (descBuffer == 0L || factorBaseBuffer == 0L || factorBuffer == 0L) {
+            return;
+        }
+        int writeSlot = slot & (DESCRIPTOR_SLOTS - 1);
+        int base = writeSlot * 3;
+        if (this.writtenTierABuffers[base] == descBuffer
+                && this.writtenTierABuffers[base + 1] == factorBaseBuffer
+                && this.writtenTierABuffers[base + 2] == factorBuffer) {
+            return;
+        }
+        this.writtenTierABuffers[base] = descBuffer;
+        this.writtenTierABuffers[base + 1] = factorBaseBuffer;
+        this.writtenTierABuffers[base + 2] = factorBuffer;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            long[] buffers = {descBuffer, factorBaseBuffer, factorBuffer};
+            int[] bindings = {SECTION_DESCS_BINDING, SECTION_FACTOR_BASES_BINDING, RDH_FACTORS_BINDING};
+            VkDescriptorBufferInfo.Buffer infos = VkDescriptorBufferInfo.calloc(3, stack);
+            VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(3, stack);
+            for (int i = 0; i < 3; i++) {
+                infos.get(i).buffer(buffers[i]).offset(0L).range(org.lwjgl.vulkan.VK10.VK_WHOLE_SIZE);
+                writes.get(i).sType$Default().dstSet(this.descriptorSets[writeSlot])
+                        .dstBinding(bindings[i]).dstArrayElement(0).descriptorCount(1)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                        .pBufferInfo(infos.slice(i, 1));
+            }
+            VulkanDescriptorWrites.note(writes, "VulkanTerrainPipeline.tierA");
+            vkUpdateDescriptorSets(context.device(), writes, null);
+        }
+        // The shadow variant copies from the ordinary set; force its next copy.
+        this.shadowCopiedSerial[writeSlot] = -1L;
+    }
+
+    /**
      * Selects the set the next {@link #bindDescriptors} calls bind for this pass: the shadow variant with
      * {@code shadowMap} at binding 4, or (null) the ordinary set. Call after {@link #bindTextures} and before the
      * pass' draws. The shadow variant is a copy of the ordinary set plus binding 4, rewritten only when the ordinary
@@ -939,9 +1047,10 @@ public final class VulkanTerrainPipeline {
                 long from = this.descriptorSets[useSlot];
                 long to = this.shadowDescriptorSets[useSlot];
                 org.lwjgl.vulkan.VkCopyDescriptorSet.Buffer copies =
-                        org.lwjgl.vulkan.VkCopyDescriptorSet.calloc(5, stack);
+                        org.lwjgl.vulkan.VkCopyDescriptorSet.calloc(8, stack);
                 int[] copied = {UNIFORM_BINDING, BLOCK_ATLAS_BINDING, LIGHTMAP_BINDING, DYNAMIC_LIGHTS_BINDING,
-                        REGION_OFFSETS_BINDING};
+                        REGION_OFFSETS_BINDING, SECTION_DESCS_BINDING, SECTION_FACTOR_BASES_BINDING,
+                        RDH_FACTORS_BINDING};
                 for (int i = 0; i < copied.length; i++) {
                     copies.get(i).sType$Default().srcSet(from).srcBinding(copied[i]).srcArrayElement(0)
                             .dstSet(to).dstBinding(copied[i]).dstArrayElement(0).descriptorCount(1);
@@ -1574,33 +1683,20 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
         // listed in its stageFlags makes the set invalid, while listing a stage that does not use it is harmless.
         // The shader sources are authored in parallel with this class, so permissiveness is the safe choice.
         int stages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        // Six bindings: the region uniforms, the atlas, the light map, the dynamic light block, the shadow map
-        // and the per-region offset array.
-        VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(6, stack);
-        bindings.get(0).binding(UNIFORM_BINDING)
-                .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
-                .descriptorCount(1)
-                .stageFlags(stages);
-        bindings.get(1).binding(BLOCK_ATLAS_BINDING)
-                .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                .descriptorCount(1)
-                .stageFlags(stages);
-        bindings.get(2).binding(LIGHTMAP_BINDING)
-                .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                .descriptorCount(1)
-                .stageFlags(stages);
-        bindings.get(3).binding(DYNAMIC_LIGHTS_BINDING)
-                .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                .descriptorCount(1)
-                .stageFlags(stages);
-        bindings.get(4).binding(SHADOW_MAP_BINDING)
-                .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                .descriptorCount(1)
-                .stageFlags(stages);
-        bindings.get(5).binding(REGION_OFFSETS_BINDING)
-                .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
-                .descriptorCount(1)
-                .stageFlags(stages);
+        // Nine bindings, declared from SET_BINDING_TYPES (indexed by binding number): the region
+        // uniforms, the light map, the atlas, the dynamic light block, the shadow map, the per-region
+        // offset array and the Tier-A SectionDesc table, factor bases and factor arena. The Tier-A
+        // bindings are declared on every terrain layout so the Tier-A pipeline variant needs no
+        // second layout; the legacy shaders never statically use them, so an unwritten 6/7/8 is
+        // legal on the legacy route.
+        VkDescriptorSetLayoutBinding.Buffer bindings =
+                VkDescriptorSetLayoutBinding.calloc(SET_BINDING_TYPES.length, stack);
+        for (int binding = 0; binding < SET_BINDING_TYPES.length; binding++) {
+            bindings.get(binding).binding(binding)
+                    .descriptorType(SET_BINDING_TYPES[binding])
+                    .descriptorCount(1)
+                    .stageFlags(stages);
+        }
         VkDescriptorSetLayoutCreateInfo create = VkDescriptorSetLayoutCreateInfo.calloc(stack).sType$Default()
                 .pBindings(bindings);
         LongBuffer handle = stack.mallocLong(1);
@@ -1655,9 +1751,18 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
             // The chosen layout and shader module have to be visible: the pass's declared stride selects both, and a
             // mismatch between the buffer the mesher filled and the offsets the shader reads shows up as terrain whose
             // colour is unrelated to what the mesh builder packed.
+            // The colour element is attribute 1 only on the multi-attribute layouts. The Tier-A
+            // layout carries a single attribute (the whole 16-byte vertex as one uvec4, colour
+            // packed inside it), so indexing [1] here threw ArrayIndexOutOfBoundsException on
+            // every Tier-A pipeline creation: pipelineFor remembered the failure, every terrain
+            // pass was skipped as "no pipeline", the Tier-A pass head inside recordRenderPass
+            // was never reached and no CELTIUM_TERRAIN_A announce ever printed (Phase 1 gate
+            // legs r2/r3, 2026-11-25: no terrain, lastSections=0, announce lines absent).
+            int colorOffset = this.vertexLayout.offsets.length > 1 ? this.vertexLayout.offsets[1] : -1;
+            int colorFormat = this.vertexLayout.formats.length > 1 ? this.vertexLayout.formats[1] : 0;
             System.out.println("[Celtium] CELTIUM_TERRAIN_LAYOUT stride=" + this.vertexLayout.stride + " module=" + this.vertexLayout.vertexModule
-                    + " colorOffset=" + this.vertexLayout.offsets[1] + " colorFormat=0x"
-                    + Integer.toHexString(this.vertexLayout.formats[1]));
+                    + " colorOffset=" + colorOffset + " colorFormat=0x"
+                    + Integer.toHexString(colorFormat));
             StringBuilder input = new StringBuilder("vertex input stride=" + this.vertexLayout.stride
                     + " module=" + this.vertexLayout.vertexModule);
             for (int i = 0; i < this.vertexLayout.formats.length; i++) {
@@ -1788,22 +1893,30 @@ vkDestroyDescriptorPool(device, descriptorPool, null);
     private void createDescriptorPool(MemoryStack stack, VkDevice device) {
         // The pool has to name every descriptor type the set layout uses, or the allocation makes sets of the wrong type
         // (WARNING-CoreValidation-AllocateDescriptorSets-WrongType).
+        // Two sets per slot (ordinary and shadow, see SHADOW_MAP_BINDING). Each type's count is the
+        // layout's per-set consumption (SET_BINDING_TYPES, via descriptorsPerSet) times the set count,
+        // so a binding added to the layout grows the pool with it; sizing storage buffers by hand here
+        // is what left the pool at binding 5's single buffer after bindings 6/7/8 joined the layout.
+        int setCount = 2 * DESCRIPTOR_SLOTS;
         VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(4, stack);
-        // Two sets per slot (ordinary and shadow, see SHADOW_MAP_BINDING), each with three image samplers.
-        sizes.get(0).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC).descriptorCount(2 * DESCRIPTOR_SLOTS);
-        sizes.get(1).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(6 * DESCRIPTOR_SLOTS);
-        sizes.get(2).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(2 * DESCRIPTOR_SLOTS);
-        sizes.get(3).type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(2 * DESCRIPTOR_SLOTS);
+        sizes.get(0).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
+                .descriptorCount(poolDescriptorCount(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, setCount));
+        sizes.get(1).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                .descriptorCount(poolDescriptorCount(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, setCount));
+        sizes.get(2).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                .descriptorCount(poolDescriptorCount(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, setCount));
+        sizes.get(3).type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                .descriptorCount(poolDescriptorCount(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, setCount));
         VkDescriptorPoolCreateInfo create = VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
-                .maxSets(2 * DESCRIPTOR_SLOTS)
+                .maxSets(setCount)
                 .pPoolSizes(sizes);
         LongBuffer handle = stack.mallocLong(1);
         check(vkCreateDescriptorPool(device, create, null, handle), "vkCreateDescriptorPool");
 
         descriptorPool = handle.get(0);
-        long[] layouts = new long[2 * DESCRIPTOR_SLOTS];
+        long[] layouts = new long[setCount];
         java.util.Arrays.fill(layouts, descriptorSetLayout);
-        LongBuffer sets = stack.mallocLong(2 * DESCRIPTOR_SLOTS);
+        LongBuffer sets = stack.mallocLong(setCount);
         VkDescriptorSetAllocateInfo allocate = VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
                 .descriptorPool(descriptorPool)
                 .pSetLayouts(stack.longs(layouts));
