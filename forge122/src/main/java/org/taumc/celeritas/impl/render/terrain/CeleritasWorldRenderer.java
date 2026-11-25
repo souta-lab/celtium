@@ -11,6 +11,7 @@ import net.minecraft.util.BlockRenderLayer;
 import net.minecraft.util.math.AxisAlignedBB;
 import net.minecraftforge.client.MinecraftForgeClient;
 import org.embeddedt.embeddium.impl.gl.device.CommandList;
+import org.embeddedt.embeddium.impl.render.ShaderModBridge;
 import org.embeddedt.embeddium.impl.render.chunk.ChunkRenderMatrices;
 import org.embeddedt.embeddium.impl.render.chunk.occlusion.BeVisibilityProbe;
 import org.embeddedt.embeddium.impl.render.chunk.vertex.format.ChunkMeshFormats;
@@ -21,6 +22,7 @@ import org.taumc.celeritas.CeleritasVintage;
 import org.taumc.celeritas.mixin.core.terrain.ActiveRenderInfoAccessor;
 
 import java.util.*;
+import java.util.function.BooleanSupplier;
 
 /**
  * Provides an extension to vanilla's {@link net.minecraft.client.renderer.RenderGlobal}.
@@ -410,7 +412,51 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
 
     private static final boolean FORCE_COMPACT_FORMAT = Boolean.getBoolean("celtium.terrain.forceCompactFormat");
 
+    /** New rendering architecture, Tier-A terrain engine (SectionDesc + GPU culling). */
+    private static final boolean TERRAIN_ENGINE_A =
+            !"legacy".equals(System.getProperty("celtium.terrain.engine"))
+                    && Boolean.parseBoolean(System.getProperty("celtium.vulkan.terrainEngineA", "true"));
+
+    /** Set once the A16 pack guard below has reported itself, so the log stays one line per run. */
+    private static boolean terrainA16GuardReported;
+
+    /**
+     * Whether a shader pack is in use, read through the same bridge the terrain pipeline
+     * configuration consults for its shadow-pass decision.
+     * <p>
+     * A-&gt;B overhaul guard (designer audit 2026-11-25, Stage 4 item 5-③): the Tier-A vertex
+     * stream carries no Demonica auxiliary attributes — the planned side stream (normals,
+     * tangents, {@code mc_midTexCoord}, {@code mc_Entity}, +16 B/vertex) is not implemented, and
+     * the terrain shader's bindings 6/7/8 carry only the vanilla colour-correction factors. While
+     * a pack is in use, choosing {@code TERRAIN_A16} would starve the pack's terrain programs of
+     * the attributes they declare, so the guard keeps the renderer on the legacy vertex formats
+     * below. The guard comes out in the same landing that completes the auxiliary stream (and
+     * passes the pre-deletion Demonica+BSL smoke), not before.
+     */
+    private static boolean shaderPackInUse() {
+        return shaderPackInUse(ShaderModBridge::areShadersEnabled);
+    }
+
+    /** Test seam: the production path supplies the bridge above; tests supply the shader state directly. */
+    static boolean shaderPackInUse(BooleanSupplier shadersEnabled) {
+        boolean inUse = shadersEnabled.getAsBoolean();
+        if (inUse && !terrainA16GuardReported) {
+            terrainA16GuardReported = true;
+            System.out.println("[Celtium] CELTIUM_TERRAIN_A16_GUARD shader pack in use: TERRAIN_A16 held back, "
+                    + "legacy vertex format in use (Demonica auxiliary attribute stream not implemented)");
+        }
+        return inUse;
+    }
+
     private ChunkVertexType chooseVertexType() {
+        return chooseVertexType(ShaderModBridge::areShadersEnabled);
+    }
+
+    /** Test seam with the same selection body as the production no-arg path. */
+    static ChunkVertexType chooseVertexType(BooleanSupplier shadersEnabled) {
+        if (TERRAIN_ENGINE_A && !shaderPackInUse(shadersEnabled)) {
+            return ChunkMeshFormats.TERRAIN_A16;
+        }
         // Diagnostic: the compact path builds its colours in VintageBlockRenderer, the vanilla-like path copies the
         // game's own vertex data. Forcing one or the other separates "the brightness term is missing from one path"
         // from "the sampler is wrong", which the frame cannot distinguish on its own.

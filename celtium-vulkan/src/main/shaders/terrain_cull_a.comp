@@ -1,0 +1,138 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "terrain_cull.glsl"
+
+// Tier-A terrain culling (new rendering architecture, design section 2.2): one
+// invocation per resident SectionDesc record of the dispatched pass and slab. Applies
+// the section-box frustum and distance test (the shared celtiumBoxVisible, exactly the
+// E10 formulas) and a per-bucket facing test, then appends one
+// VkDrawIndexedIndirectCommand per surviving non-empty bucket to the pass' bucket
+// stream. Sorted (translucent) records bypass bucketing: they emit a single command
+// into the sorted stream, addressed at their sorted-index arena range.
+//
+// Hi-Z occlusion is deliberately not in this stage yet: the Hi-Z pyramid is produced
+// by the frame graph (arch-graph, design P3), and this shader gains a binding for it
+// when that lands. Frustum + distance + facing is the complete test until then.
+//
+// Descriptor layout is compute-private (set 0), independent of the terrain graphics
+// set, in the E10 executor's shape:
+//   binding 0: SectionDesc records, 12 uints each (SECTION-DESC-SPEC-2026-11-25)
+//   binding 1: bucket indirect commands out, 5 uints each
+//   binding 2: sorted indirect commands out, 5 uints each
+//   binding 3: draw counts, uint[2] { bucket, sorted }, zeroed by the host-side fill
+//
+// The shared static quad index buffer holds, for slab-local quad q, the six indices
+// q*4+{0,1,2, 0,2,3} at q*6, so a bucket command is
+//   firstIndex   = (quadStart + bucketStart) * 6
+//   vertexOffset = desc.vertexOffset - quadStart * 4   (absorbs the two spaces' drift)
+// and gl_VertexIndex lands on desc.vertexOffset + localQuad * 4 + corner.
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer SectionDescs {
+    uint descData[];
+};
+layout(set = 0, binding = 1, std430) buffer BucketCommands {
+    uint bucketOut[];
+};
+layout(set = 0, binding = 2, std430) buffer SortedCommands {
+    uint sortedOut[];
+};
+layout(set = 0, binding = 3, std430) buffer DrawCounts {
+    uint counts[];
+};
+
+layout(push_constant) uniform Push {
+    vec4 planes[6];
+    vec4 camera;    // xyz: camera position in blocks; w: max distance in blocks
+    ivec4 params;   // x: desc count, y: pass ordinal, z: slab id, w: capacity per stream (commands)
+} push;
+
+uint bucketCount(uint base, uint bucket) {
+    // Counts are packed two per word from word 6; bucket 6 rides word 9's low half.
+    if (bucket < 6u) {
+        uint word = descData[base + 6u + (bucket >> 1u)];
+        return (word >> ((bucket & 1u) * 16u)) & 0xFFFFu;
+    }
+    return descData[base + 9u] & 0xFFFFu;
+}
+
+bool facingVisible(uint bucket, vec3 boxMin, vec3 boxMax) {
+    // A directional bucket can only be seen from the half-space its faces point into;
+    // the section box is the conservative bound (design section 2.2: drop the three
+    // directions facing away from the camera). UNASSIGNED is always visible.
+    vec3 cam = push.camera.xyz;
+    if (bucket == 0u) return cam.x >= boxMin.x; // +X
+    if (bucket == 1u) return cam.y >= boxMin.y; // +Y
+    if (bucket == 2u) return cam.z >= boxMin.z; // +Z
+    if (bucket == 3u) return cam.x <= boxMax.x; // -X
+    if (bucket == 4u) return cam.y <= boxMax.y; // -Y
+    if (bucket == 5u) return cam.z <= boxMax.z; // -Z
+    return true;
+}
+
+void main() {
+    uint record = gl_GlobalInvocationID.x;
+    if (record >= uint(push.params.x)) {
+        return;
+    }
+    uint base = record * 12u;
+    uint word9 = descData[base + 9u];
+    if (int((word9 >> 16u) & 0xFFu) != push.params.y) {
+        return; // another pass' record
+    }
+    if (descData[base + 3u] != uint(push.params.z)) {
+        return; // another slab's record: this dispatch draws one slab
+    }
+    ivec3 section = ivec3(int(descData[base + 0u]), int(descData[base + 1u]), int(descData[base + 2u]));
+    vec3 boxMin = vec3(section * 16);
+    vec3 boxMax = boxMin + vec3(16.0);
+    if (!celtiumBoxVisible(boxMin, vec3(16.0), push.planes, push.camera.xyz, push.camera.w)) {
+        return;
+    }
+    uint flags = (word9 >> 24u) & 0xFFu;
+    uint vertexOffset = descData[base + 4u];
+    uint quadStart = descData[base + 5u];
+    uint capacity = uint(push.params.w);
+
+    if ((flags & 2u) != 0u) {
+        // FLAG_SORTED_INDEX: one command over the section's sorted index range.
+        uint totalQuads = 0u;
+        for (uint b = 0u; b < 7u; b++) {
+            totalQuads += bucketCount(base, b);
+        }
+        if (totalQuads == 0u) {
+            return;
+        }
+        uint slot = atomicAdd(counts[1], 1u);
+        if (slot >= capacity) {
+            return;
+        }
+        uint outBase = slot * 5u;
+        sortedOut[outBase + 0u] = totalQuads * 6u;
+        sortedOut[outBase + 1u] = 1u;
+        sortedOut[outBase + 2u] = descData[base + 11u]; // sortedIndexBase
+        sortedOut[outBase + 3u] = vertexOffset;
+        sortedOut[outBase + 4u] = record; // firstInstance: the SectionDesc index
+        return;
+    }
+
+    uint bucketStart = 0u;
+    int commandVertexOffset = int(vertexOffset) - int(quadStart) * 4;
+    for (uint b = 0u; b < 7u; b++) {
+        uint count = bucketCount(base, b);
+        if (count != 0u && facingVisible(b, boxMin, boxMax)) {
+            uint slot = atomicAdd(counts[0], 1u);
+            if (slot < capacity) {
+                uint outBase = slot * 5u;
+                bucketOut[outBase + 0u] = count * 6u;
+                bucketOut[outBase + 1u] = 1u;
+                bucketOut[outBase + 2u] = (quadStart + bucketStart) * 6u;
+                bucketOut[outBase + 3u] = uint(commandVertexOffset);
+                bucketOut[outBase + 4u] = record; // firstInstance: the SectionDesc index
+            }
+        }
+        bucketStart += count;
+    }
+}

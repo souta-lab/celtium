@@ -1,0 +1,217 @@
+package org.soutalab.celtium.vulkan;
+
+import java.util.IdentityHashMap;
+import java.util.Map;
+import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
+import org.lwjgl.system.MemoryUtil;
+import org.soutalab.celtium.vulkan.hal.SlabAllocator;
+import org.soutalab.celtium.vulkan.terrain.AsyncSectionMesher;
+import org.soutalab.celtium.vulkan.terrain.TerrainResidencyGate;
+import org.soutalab.celtium.vulkan.terrain.TerrainSectionStore;
+import org.soutalab.celtium.vulkan.terrain.TerrainUploadBudget;
+
+import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+
+/**
+ * Owns the Tier-A terrain state for one backend: the shared
+ * {@link TerrainSectionStore}, the upload budget, and one
+ * {@link TerrainEngineA} executor per render pass. Pass ordinals are assigned by
+ * identity in first-use order and are the same ordinals the SectionDesc records
+ * carry, so registration and culling always agree on them.
+ * <p>
+ * The host also owns the pass-independent GPU resources every executor shares
+ * (designer audit 2026-11-25, Stage 4 item 5-②): the geometry slab allocator —
+ * one allocator for all passes keeps the terrain geometry within the shared
+ * slab cap instead of multiplying it by the pass count — and the static quad
+ * index buffer, whose contents depend only on
+ * {@link TerrainSectionStore#MAX_QUADS_PER_SLAB}. Both are created lazily and
+ * deleted here, after every engine, because the allocator's slabs are the
+ * engines' slab buffers' memory.
+ * <p>
+ * Deferred arena releases are stamped and collected in the context's slab
+ * completion currency ({@link VulkanContext#celtium$slabReleaseValue()} /
+ * {@link VulkanContext#celtium$slabCompletedValue()}): on a timeline device
+ * collection waits for real GPU completion, off one it waits for a later
+ * drain. Until Stage 2/3 landed, the stamps were the host's own generation
+ * counter with a two-generation lag — an interim rule approximating the
+ * frames-in-flight depth; the counter remains, but only as the registration
+ * counter written into each section desc, no longer as a completion proof.
+ */
+final class TerrainEngineAHost {
+    // Tier-A is the default terrain route (wave-2 cutover, 2026-11-25): the property
+    // remains only as a bisection switch to turn it off, not a parallel route flag.
+    // The A->B overhaul's Stage 4 escape flag -Dceltium.terrain.engine=legacy turns
+    // it off as well (the whole engine falls back to the legacy terrain route).
+    static final boolean ENABLED =
+            !"legacy".equals(System.getProperty("celtium.terrain.engine"))
+                    && Boolean.parseBoolean(System.getProperty("celtium.vulkan.terrainEngineA", "true"));
+
+    private final AsyncSectionMesher mesher = new AsyncSectionMesher();
+    private final TerrainSectionStore store = new TerrainSectionStore();
+    private final TerrainUploadBudget budget = new TerrainUploadBudget(
+            Long.getLong("celtium.vulkan.terrainUploadMiB", 4L) * 1024 * 1024);
+    private final TerrainResidencyGate residencyGate = new TerrainResidencyGate();
+    private final Map<TerrainRenderPass, Integer> ordinals = new IdentityHashMap<>();
+    private final Map<TerrainRenderPass, TerrainEngineA> engines = new IdentityHashMap<>();
+    private long generation;
+    private VulkanContext context;
+    private SlabAllocator geometrySlabAllocator;
+    private VulkanHostBuffer sharedIndexBuffer;
+
+    AsyncSectionMesher mesher() {
+        return this.mesher;
+    }
+
+    TerrainSectionStore store() {
+        return this.store;
+    }
+
+    TerrainResidencyGate residencyGate() {
+        return this.residencyGate;
+    }
+
+    /**
+     * Counts one section the renderer's stride gate kept out of Tier-A
+     * (order (i)): the region was not built with the TerrainVertex16 format,
+     * so {@code registerTierA} was never called for it — a permanent leak the
+     * engine-side counters cannot see.
+     */
+    void noteStrideGate(int sectionX, int sectionY, int sectionZ, TerrainRenderPass pass) {
+        this.residencyGate.noteMissing(new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinalFor(pass)),
+                TerrainResidencyGate.Reason.STRIDE_GATE);
+    }
+
+    /** Counts one section whose Tier-A build threw before registration (order (i)). */
+    void noteBuildException(int sectionX, int sectionY, int sectionZ, TerrainRenderPass pass) {
+        this.residencyGate.noteMissing(new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinalFor(pass)),
+                TerrainResidencyGate.Reason.BUILD_EXCEPTION);
+    }
+
+    long nextGeneration() {
+        return ++this.generation;
+    }
+
+    int ordinalFor(TerrainRenderPass pass) {
+        Integer ordinal = this.ordinals.get(pass);
+        if (ordinal == null) {
+            ordinal = this.ordinals.size();
+            this.ordinals.put(pass, ordinal);
+        }
+        return ordinal;
+    }
+
+    TerrainEngineA engineFor(VulkanContext context, TerrainRenderPass pass) {
+        this.context = context;
+        TerrainEngineA engine = this.engines.get(pass);
+        if (engine == null) {
+            engine = new TerrainEngineA(context, ordinalFor(pass),
+                    "pass-" + ordinalFor(pass), this.store, this.budget, this.residencyGate, this);
+            this.engines.put(pass, engine);
+        }
+        return engine;
+    }
+
+    /**
+     * The one geometry slab allocator shared by every pass' executor, created
+     * lazily from the first slab buffer's own memory-type choice. Every pass'
+     * slab buffers carry the same usage over the shared store's slab size, so
+     * the first buffer's memory type is every buffer's; a later call's
+     * arguments are the same values by construction and are not re-read.
+     */
+    SlabAllocator geometrySlabAllocator(VulkanContext context, int memoryType, long slabBytes) {
+        if (this.geometrySlabAllocator == null) {
+            this.geometrySlabAllocator = new SlabAllocator(context, "terrainGeometry", memoryType,
+                    slabBytes, org.soutalab.celtium.vulkan.terrain.TerrainSlabAllocator.DEFAULT_MAX_SLABS, true);
+        }
+        return this.geometrySlabAllocator;
+    }
+
+    /**
+     * The static quad index buffer shared by every pass: its contents are the
+     * fixed quad triangulation for {@link TerrainSectionStore#MAX_QUADS_PER_SLAB}
+     * quads and depend on nothing a pass owns. Written once, at creation.
+     */
+    VulkanHostBuffer sharedIndexBuffer(VulkanContext context) {
+        if (this.sharedIndexBuffer == null) {
+            int quads = TerrainSectionStore.MAX_QUADS_PER_SLAB;
+            VulkanHostBuffer buffer = new VulkanHostBuffer(context, (long) quads * 6 * 4,
+                    VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+            long address = buffer.mappedAddress();
+            for (int q = 0; q < quads; q++) {
+                long at = address + (long) q * 6 * 4;
+                int baseVertex = q * 4;
+                MemoryUtil.memPutInt(at, baseVertex);
+                MemoryUtil.memPutInt(at + 4, baseVertex + 1);
+                MemoryUtil.memPutInt(at + 8, baseVertex + 2);
+                MemoryUtil.memPutInt(at + 12, baseVertex);
+                MemoryUtil.memPutInt(at + 16, baseVertex + 2);
+                MemoryUtil.memPutInt(at + 20, baseVertex + 3);
+            }
+            this.sharedIndexBuffer = buffer;
+        }
+        return this.sharedIndexBuffer;
+    }
+
+    /**
+     * The value deferred store releases are stamped with: the context's slab
+     * release value once an engine has been created against one. Before that
+     * no section can be registered, so the generation counter the interim
+     * rule used is a safe stand-in.
+     */
+    private long releaseStamp() {
+        return this.context != null ? this.context.celtium$slabReleaseValue() : this.generation;
+    }
+
+    /**
+     * The value store collection may proceed up to: the context's slab
+     * completed value, or — before any engine exists, when nothing is
+     * registered — the interim rule's two-generation lag.
+     */
+    private long completedStamp() {
+        return this.context != null ? this.context.celtium$slabCompletedValue()
+                : Math.max(0, this.generation - 2);
+    }
+
+    /** Re-uploads one pass' sorted indices for a section after a translucent re-sort. */
+    void updateSortedSection(int sectionX, int sectionY, int sectionZ, TerrainRenderPass pass,
+                             org.embeddedt.embeddium.impl.common.util.NativeBuffer indices) {
+        Integer ordinal = this.ordinals.get(pass);
+        if (ordinal == null) {
+            return;
+        }
+        TerrainEngineA engine = this.engines.get(pass);
+        if (engine != null) {
+            engine.updateSorted(new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinal),
+                    indices, releaseStamp());
+        }
+    }
+
+    /** Removes every pass' record of one section, deferred against the completion currency. */
+    void unregisterSection(int sectionX, int sectionY, int sectionZ) {
+        for (int ordinal : this.ordinals.values()) {
+            TerrainSectionStore.Key key = new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinal);
+            this.store.unregister(key, releaseStamp());
+            this.residencyGate.forget(key);
+        }
+        this.store.collectReleased(completedStamp());
+    }
+
+    void delete(VulkanContext context) {
+        for (TerrainEngineA engine : this.engines.values()) {
+            engine.delete();
+        }
+        this.engines.clear();
+        // After every engine: the shared allocator's slabs are the engines' slab
+        // buffers' memory, so they are freed last (its delete is teardown,
+        // freeing live slabs outright), and the shared index buffer is read by
+        // every pass' draws until the engines are gone.
+        if (this.sharedIndexBuffer != null) {
+            this.sharedIndexBuffer.delete();
+            this.sharedIndexBuffer = null;
+        }
+        if (this.geometrySlabAllocator != null) {
+            this.geometrySlabAllocator.delete();
+            this.geometrySlabAllocator = null;
+        }
+    }
+}

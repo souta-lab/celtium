@@ -12,7 +12,11 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
 
-public record BuiltSectionMeshParts(NativeBuffer vertexBuffer, @Nullable NativeBuffer indexBuffer, @Nullable SortState sortState, Map<ModelQuadFacing, VertexRange> ranges) {
+public record BuiltSectionMeshParts(NativeBuffer vertexBuffer, @Nullable NativeBuffer indexBuffer, @Nullable SortState sortState, Map<ModelQuadFacing, VertexRange> ranges, @Nullable int[] rdhFactors) {
+    /** Legacy shape: no correction-factor side stream. */
+    public BuiltSectionMeshParts(NativeBuffer vertexBuffer, @Nullable NativeBuffer indexBuffer, @Nullable SortState sortState, Map<ModelQuadFacing, VertexRange> ranges) {
+        this(vertexBuffer, indexBuffer, sortState, ranges, null);
+    }
     public void free() {
         vertexBuffer.free();
         if (indexBuffer != null) {

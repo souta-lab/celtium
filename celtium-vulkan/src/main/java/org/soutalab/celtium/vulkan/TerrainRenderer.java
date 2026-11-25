@@ -400,6 +400,22 @@ public final class TerrainRenderer {
 
     /** The context the pipelines are built with; the backend owns it and hands it over. */
     private VulkanContext context;
+
+    /**
+     * Tier-A terrain state (new rendering architecture): the default terrain route
+     * since the wave-2 cutover ({@code -Dceltium.vulkan.terrainEngineA=false} is the
+     * bisection switch that turns it off). Built sections in the 16-byte format are
+     * registered into the resident SectionDesc table at upload, and the backend's
+     * pass loop drives the Tier-A executors
+     * ({@link TerrainEngineA#prepareFrame} / {@link TerrainEngineA#recordDraws}).
+     */
+    private final TerrainEngineAHost terrainAHost = TerrainEngineAHost.ENABLED ? new TerrainEngineAHost() : null;
+    private boolean terrainARegisterFailurePrinted;
+
+    /** The Tier-A host, or null when Tier-A is switched off; the backend's pass loop drives it. */
+    TerrainEngineAHost terrainAHost() {
+        return this.terrainAHost;
+    }
     /** Where a message goes: the backend's diagnostics list, so the report still sees it. */
     private java.util.function.Consumer<String> diagnostics = message -> { };
 
@@ -519,6 +535,12 @@ public final class TerrainRenderer {
         } catch (RuntimeException | LinkageError error) {
             this.stageGate.noteFailure(StageGate.Stage.TERRAIN_PIPELINES, error);
             record("pipeline for " + pass.name() + " failed: " + describe(error));
+            // Stdout as well, under a greppable tag: a failed pipeline silently skips every
+            // terrain pass of the run, and the record() line alone did not reach the leg logs
+            // in the Phase 1 gate legs r2/r3 (2026-11-25), leaving "no terrain, no announce"
+            // with no named cause. Once per pass - the failure is remembered below.
+            System.out.println("[Celtium] CELTIUM_TERRAIN_PIPELINE_FAILED pass=" + pass.name()
+                    + " reason=" + describe(error));
             // The trace goes to stdout as well as the record: in the leg-11 run the record line reached
             // neither the console log nor the game log, so the creation failure this handler exists to
             // surface stayed unobserved while the handler's own crash (the null put this block used to end
@@ -1414,6 +1436,47 @@ public final class TerrainRenderer {
     }
 
     /**
+     * Overwrites the {@code u_RegionOffset} field of the pass uniform block at
+     * {@code offset} with the Tier-A value: world origin minus camera, in the same
+     * computation order {@link #writeRegionOffset} uses for a region at the origin.
+     * <p>
+     * The compact vertex stages no longer read the block's offset field (their
+     * per-region offset arrives through the binding-5 array), so
+     * {@link #writePassUniforms} writes zeros there. {@code terrain_a.vert} is the
+     * one stage that still reads it — its contract is that the field carries
+     * world-origin-minus-camera, because the section translation comes from the
+     * SectionDesc record and the vertex positions are section-local. Leaving the
+     * zeros in place displaced every Tier-A section by the full camera position
+     * (leg r7, 2026-11-25: terrain collapsed into a dark layered fragment in one
+     * corner of the frame). The backend calls this only for a pass Tier-A armed,
+     * whose region loop records no compact draws, so the overwrite reaches no
+     * other reader of the block.
+     */
+    void writeTierAWorldOffset(long offset, CameraTransform camera) {
+        VulkanUniformBuffer activeUniforms = this.uniformBuffers[this.uniformSlot];
+        long addr = activeUniforms.mappedAddress() + offset;
+        MemoryUtil.memPutFloat(addr + 0, tierAWorldOffsetComponent(camera.intX, camera.fracX));
+        MemoryUtil.memPutFloat(addr + 4, tierAWorldOffsetComponent(camera.intY, camera.fracY));
+        MemoryUtil.memPutFloat(addr + 8, tierAWorldOffsetComponent(camera.intZ, camera.fracZ));
+        MemoryUtil.memPutFloat(addr + 12, 0.0f);
+    }
+
+    /**
+     * One component of the Tier-A world offset: world origin minus camera, in the
+     * computation order {@link #writeRegionOffset} uses for a region at the origin
+     * (integer subtraction first, then the fractional part in float). Extracted as a
+     * pure function so the draw-side space contract of {@code terrain_a.vert} — the
+     * section translation comes from the SectionDesc record, the vertex positions
+     * are section-local, and this offset is the only camera term — is pinned by
+     * {@code TierARegionOffsetContractTest} instead of resting on the visual leg
+     * alone (the r10 "RegionOffset" first judgement was never separable from the
+     * culling space bug arch/projection-diag fixed until this audit).
+     */
+    static float tierAWorldOffsetComponent(int cameraInt, float cameraFrac) {
+        return (0 - cameraInt) - cameraFrac;
+    }
+
+    /**
      * Appends this region's offset to the frame slot's binding-5 array and returns its index,
      * which the caller carries into the region's draw commands as firstInstance (agera-kpi-3).
      * The values are the identical floats the uniform block's {@code u_RegionOffset} used to
@@ -1760,6 +1823,33 @@ public final class TerrainRenderer {
         return this.lastUploadedBytes;
     }
 
+    /**
+     * Registers one freshly built section into the Tier-A resident table. A failure
+     * leaves the section on the legacy route only — the upload that called this must
+     * not fail with it — and is printed once, since a shape rejection here is a build
+     * bug, not a runtime condition.
+     */
+    private void registerTierA(ChunkBuildOutput build, TerrainRenderPass pass, BuiltSectionMeshParts mesh) {
+        try {
+            org.soutalab.celtium.vulkan.terrain.AsyncSectionMesher.BuiltSectionA built =
+                    this.terrainAHost.mesher().build(build.render.getChunkX(), build.render.getChunkY(),
+                            build.render.getChunkZ(), this.terrainAHost.ordinalFor(pass), mesh, 0);
+            if (built != null) {
+                this.terrainAHost.engineFor(this.context, pass)
+                        .register(built, this.terrainAHost.nextGeneration());
+            }
+        } catch (RuntimeException error) {
+            // Counted per section for the residency gate (order (i)): a build
+            // exception used to be a permanent, uninstrumented Tier-A leak.
+            this.terrainAHost.noteBuildException(build.render.getChunkX(), build.render.getChunkY(),
+                    build.render.getChunkZ(), pass);
+            if (!this.terrainARegisterFailurePrinted) {
+                this.terrainARegisterFailurePrinted = true;
+                System.out.println("[Celtium] CELTIUM_TERRAIN_A_REGISTER_FAILED reason=" + error);
+            }
+        }
+    }
+
     private SectionRenderDataStorage storageForPass(RenderRegion region, TerrainRenderPass pass,
             java.util.Map<TerrainRenderPass, SectionRenderDataStorage> cache) {
         SectionRenderDataStorage existing = cache.get(pass);
@@ -1795,6 +1885,10 @@ public final class TerrainRenderer {
                 org.embeddedt.embeddium.impl.render.chunk.BuildFlowCounters.buildOutputs++;
                 ChunkBuildOutput build = (ChunkBuildOutput) output;
                 region.removeMeshes(build.render.getSectionIndex());
+                if (this.terrainAHost != null) {
+                    this.terrainAHost.unregisterSection(build.render.getChunkX(), build.render.getChunkY(),
+                            build.render.getChunkZ());
+                }
                 for (Reference2ReferenceMap.Entry<TerrainRenderPass, BuiltSectionMeshParts> meshEntry
                         : build.meshes.reference2ReferenceEntrySet()) {
                     BuiltSectionMeshParts mesh = meshEntry.getValue();
@@ -1804,6 +1898,25 @@ public final class TerrainRenderer {
                     needIndexBuffer |= mesh.indexBuffer() != null;
                     pending.add(TerrainRenderer.PendingMesh.obtain(build.render.getSectionIndex(), meshEntry.getKey(), mesh, null,
                             meshResources.sectionFirstColor, meshResources));
+                    if (this.terrainAHost != null
+                            && meshEntry.getKey().vertexType().getVertexFormat().getStride()
+                                    == org.embeddedt.embeddium.impl.render.chunk.vertex.format.impl.TerrainVertex16.STRIDE) {
+                        registerTierA(build, meshEntry.getKey(), mesh);
+                    } else if (this.terrainAHost != null) {
+                        // Stride gate (order (i)): this section never reaches
+                        // registerTierA while the stride differs — count it as
+                        // a permanent leak instead of leaving it invisible.
+                        // The comparison is against the PASS' own vertex format
+                        // (arch-phase1-fix): the gate used to compare
+                        // vertexStride(), which the backend sets to the
+                        // configuration's common (primitive-aligned LCM) stride
+                        // — 64 for a TerrainVertex16-only configuration — so it
+                        // never equalled 16, registerTierA was never called, the
+                        // resident store stayed empty and Tier-A drew nothing
+                        // (Phase 1 gate leg 2026-11-25: no terrain at all).
+                        this.terrainAHost.noteStrideGate(build.render.getChunkX(), build.render.getChunkY(),
+                                build.render.getChunkZ(), meshEntry.getKey());
+                    }
                 }
             } else if (output instanceof ChunkSortOutput) {
                 org.embeddedt.embeddium.impl.render.chunk.BuildFlowCounters.sortOutputs++;
@@ -1814,6 +1927,12 @@ public final class TerrainRenderer {
                     SectionRenderDataStorage storage = region.getStorage(meshEntry.getKey());
                     if (storage != null) {
                         storage.removeIndexBuffer(sort.render.getSectionIndex());
+                    }
+                    if (this.terrainAHost != null && meshEntry.getValue() != null) {
+                        // Wave-2 item 4: the re-sort regenerated this section's sorted
+                        // indices; the resident Tier-A record must carry the new order.
+                        this.terrainAHost.updateSortedSection(sort.render.getChunkX(), sort.render.getChunkY(),
+                                sort.render.getChunkZ(), meshEntry.getKey(), meshEntry.getValue().indexData());
                     }
                     pending.add(TerrainRenderer.PendingMesh.obtain(sort.render.getSectionIndex(), meshEntry.getKey(), null,
                             meshEntry.getValue(), null, null));

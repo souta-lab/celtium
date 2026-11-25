@@ -232,9 +232,15 @@ public record LWJGL3Service(
         GLCapabilities caps = null;
         try {
             caps = GL.getCapabilities();
-        } catch (IllegalStateException ignored) {
+        } catch (IllegalStateException | LinkageError ignored) {
             // GL-less Vulkan / worker-thread first initialization (e.g. ChunkBuilder worker calling MemoryUtil
-            // helpers after RenderAheadManager removal): no thread-local GLCapabilities exist.
+            // helpers after RenderAheadManager removal): no thread-local GLCapabilities exist. LinkageError
+            // covers environments where the OpenGL native library itself is absent (headless CI test JVMs
+            // carry lwjgl-opengl classes without its natives): GL's class initialization then fails with
+            // UnsatisfiedLinkError / ExceptionInInitializerError before getCapabilities can report the
+            // missing context, and letting it escape poisons LWJGLServiceProvider's own class init for the
+            // whole process, breaking pure-MemoryUtil users such as NativeBuffer. The degraded all-NONE
+            // service is the designed answer for both shapes of GL absence.
         }
         if (caps == null) {
             return new LWJGL3Service(VAOMode.NONE, TimerQueryMode.NONE, DebugMode.NONE,
