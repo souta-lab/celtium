@@ -557,6 +557,51 @@ public final class VulkanContext {
     /** Copies whose destination was destroyed before the flush: nothing reads it, so the copy is skipped. */
     private long uploadSkippedDeletedDestinations;
     private long stagingCapacityBytes;
+    /**
+     * The S3R-1 per-frame upload byte budget's ledger (accounting layer only: {@link #flushUploads()}
+     * still records every pending copy, and the ledger counts what each window carried and how much of
+     * it ran over the budget). Created lazily by {@link #celtium$uploadBudget()} because the budget
+     * depends on the device type, which is only known once the device is created.
+     */
+    private UploadBudgetLedger uploadBudget;
+
+    /** {@return the upload budget ledger, creating it on first use}. */
+    private UploadBudgetLedger celtium$uploadBudget() {
+        UploadBudgetLedger ledger = this.uploadBudget;
+        if (ledger == null) {
+            ledger = new UploadBudgetLedger(celtium$uploadBudgetBytes(this.deviceType),
+                    UploadBudgetLedger.DEFAULT_DEFERRED_CAP_BYTES);
+            this.uploadBudget = ledger;
+        }
+        return ledger;
+    }
+
+    /**
+     * {@return the frame upload byte budget for a device type}: the design's defaults (integrated
+     * 4 MiB, anything else 16 MiB), unless {@code -Dceltium.vulkan.uploadBudgetMiB} overrides them
+     * (0 = unlimited, the A/B escape).
+     */
+    private static long celtium$uploadBudgetBytes(int deviceType) {
+        Long overrideMiB = Long.getLong("celtium.vulkan.uploadBudgetMiB");
+        if (overrideMiB != null) {
+            return overrideMiB.longValue() <= 0L ? 0L : overrideMiB.longValue() << 20;
+        }
+        return deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU
+                ? UploadBudgetLedger.DEFAULT_INTEGRATED_BUDGET_BYTES
+                : UploadBudgetLedger.DEFAULT_DISCRETE_BUDGET_BYTES;
+    }
+
+    /**
+     * {@return the budget window key for a flush happening now}: the timeline's last allocated value,
+     * so flushes between two batch submissions share one window. This is the frame key available
+     * inside the context today; a boundary flush attributes to the previous submission's window (the
+     * frame's own value is allocated when its batch is submitted, after the flush). The enforcement
+     * phase re-bases the key on the exact frame id - the ledger takes any key, so only this method
+     * changes there. Without a timeline (pre-Stage-2 paths) the flush count is the key.
+     */
+    private long celtium$uploadBudgetWindowKey() {
+        return this.frameTimeline != null ? this.frameTimeline.lastAllocatedValue() : this.uploadFlushes;
+    }
 
     /**
      * Context generations across the process: {@link #create(String)} takes the next value for each context it
@@ -4250,6 +4295,7 @@ public final class VulkanContext {
         long started = System.nanoTime();
         VkCommandBuffer commandBuffer = beginCommands();
         int copies = 0;
+        long recordedBytes = 0L;
         long uploadSlotMask = 0L;
         try {
             try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -4293,6 +4339,7 @@ public final class VulkanContext {
                             .size(pending.size);
                     batchCount++;
                     copies++;
+                    recordedBytes += pending.size;
                     uploadSlotMask |= 1L << (int) (pending.stagingOffset / UPLOAD_SLOT_BYTES);
                 }
                 if (batchCount > 0) {
@@ -4328,6 +4375,11 @@ public final class VulkanContext {
                 enqueued = true;
             } finally {
                 this.uploadCopiesFlushed += this.pendingUploads.size();
+                if (recordedBytes > 0L) {
+                    // S3R-1 accounting: the bytes this flush actually recorded, charged to the current
+                    // budget window. Judgment only - nothing is deferred or dropped here.
+                    celtium$uploadBudget().noteFlushed(celtium$uploadBudgetWindowKey(), recordedBytes);
+                }
                 recyclePendingUploads();
                 celtium$releaseUploadSlotsAfterFlush(this.uploadSlotFree, this.uploadSlotCursor,
                         uploadSlotMask, enqueued);
@@ -4877,6 +4929,7 @@ public final class VulkanContext {
 
     /** {@return the batched upload path's census, for the run report}. */
     public String uploadBatchSummary() {
+        UploadBudgetLedger budget = celtium$uploadBudget();
         return "commandBufferAllocations=" + commandBufferAllocations + " commandBufferReuses=" + commandBufferReuses
                 + " uploadCopiesBatched=" + this.uploadCopiesBatched + " uploadCopiesFlushed=" + this.uploadCopiesFlushed
                 + " uploadFlushes=" + this.uploadFlushes + " uploadFlushMillis=" + this.uploadFlushMillis
@@ -4903,6 +4956,11 @@ public final class VulkanContext {
                 + " uploadSkippedDeletedDestinations=" + this.uploadSkippedDeletedDestinations
                 + " uploadEarlyFlushesForRingPressure=" + this.uploadEarlyFlushesForRingPressure
                 + " uploadRingPressureWaits=" + this.uploadRingPressureWaits
+                + " uploadBudgetBytes=" + budget.budgetBytes()
+                + " uploadBudgetDeferredBytes=" + budget.deferredTotalBytes()
+                + " uploadBudgetDeferredCount=" + budget.deferredCount()
+                + " uploadBudgetOverrunBytes=" + budget.totalOverrunBytes()
+                + " uploadBudgetDeferredCapForce=" + budget.deferredCapForce()
                 + celtium$describeDeferred();
     }
 
