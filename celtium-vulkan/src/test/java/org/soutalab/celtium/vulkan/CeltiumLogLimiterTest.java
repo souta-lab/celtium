@@ -41,6 +41,19 @@ class CeltiumLogLimiterTest {
     }
 
     @Test
+    void presentHeartbeatLinesAreNeverLimited() {
+        // The heartbeat prints on its own thinning (hookCalls <= 3, then every 300), so the per-tag limit of 16
+        // landed on the same call in every run - the thirteenth thinned line is hookCalls=3900 - and the present
+        // path's end state went unread for the rest of the session (B2 freeze desk analysis, 2026-11-26). The tag
+        // shares the exemption; its volume stays bounded by the thinning, not by this limit.
+        for (int i = 0; i < CeltiumLogLimiter.LIMIT + 40; i++) {
+            assertTrue(CeltiumLogLimiter.admit(
+                    "[Celtium] CELTIUM_PRESENT hookCalls=" + (300 * i) + " attempts=0 presented=0"));
+        }
+        assertTrue(CeltiumLogLimiter.isUnlimited("CELTIUM_PRESENT"));
+    }
+
+    @Test
     void eachTagPassesItsLimitAndNoMore() {
         String line = "[Celtium] CELTIUM_LIMITER_TEST_TAG n";
         int admitted = 0;

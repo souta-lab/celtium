@@ -19,23 +19,30 @@ import java.util.concurrent.atomic.AtomicLong;
  * Installed in front of whatever {@code System.out} is (Forge's tracing stream), so a dropped line never reaches the
  * stream's per-line caller lookup either.
  * <p>
- * Two tags are exempt ({@link #isUnlimited(String)}): the crash-breadcrumb dump. It exists for the one moment the
- * device is lost, it is bounded by the ring itself (128 crumbs plus a header and a footer), and the bound above
- * measured exactly the failure item 414 diagnosed - of 128 crumbs, the 16 the tag limit let through were all the
- * loading screen's repeated window operations, so the dump reached the log with its evidence already cut away.
+ * Three tags are exempt ({@link #isUnlimited(String)}): the crash-breadcrumb dump, the pipeline-creation identity
+ * line and the present heartbeat. Each is bounded by something other than this limit - the crumb ring itself
+ * (128 crumbs plus a header and a footer), the number of distinct pipeline states a session reaches, the
+ * heartbeat's own thinning (the first three calls, then one line per 300 present calls) - and each is a line a
+ * diagnosis reads at exactly the point the bound would cut it. The bound above measured exactly the failure
+ * item 414 diagnosed for the dump: of 128 crumbs, the 16 the tag limit let through were all the loading screen's
+ * repeated window operations, so the dump reached the log with its evidence already cut away.
  * The exemption is a named set, not a prefix or a flag on the line, so no other tag can drift into it.
  */
 public final class CeltiumLogLimiter extends PrintStream {
     static final int LIMIT = Integer.getInteger("celtium.debug.logLinesPerTag", 16);
     /**
-     * Tags that always print, however many lines they reach: the breadcrumb dump (see the class comment) and the
-     * pipeline-creation identity line. Creations are one per distinct pipeline state, not per frame, so that tag is
-     * bounded by the number of states a session reaches - and a creation the limit cut is exactly the generation a
-     * device-loss diagnosis can no longer name (item 414: creations 39-45 sat behind earlier lines of other tags'
-     * summaries, with no identity anywhere).
+     * Tags that always print, however many lines they reach: the breadcrumb dump (see the class comment), the
+     * pipeline-creation identity line and the present heartbeat. Creations are one per distinct pipeline state, not
+     * per frame, so that tag is bounded by the number of states a session reaches - and a creation the limit cut is
+     * exactly the generation a device-loss diagnosis can no longer name (item 414: creations 39-45 sat behind
+     * earlier lines of other tags' summaries, with no identity anywhere). The heartbeat is bounded by its own
+     * thinning - the first three present calls, then one line per 300 - and the per-tag bound cut it at the same
+     * call in every run: three early lines plus thirteen thinned ones exhaust the 16 at hookCalls=3900, after which
+     * the present path's end state went unread for the rest of the session, which is the observation a
+     * present-freeze diagnosis reads (B2 freeze desk analysis, 2026-11-26).
      */
     private static final java.util.Set<String> UNLIMITED_TAGS = java.util.Set.of(
-            "CELTIUM_CRUMB", "CELTIUM_CRASH_BREADCRUMBS", "CELTIUM_PIPELINE_CREATE");
+            "CELTIUM_CRUMB", "CELTIUM_CRASH_BREADCRUMBS", "CELTIUM_PIPELINE_CREATE", "CELTIUM_PRESENT");
     private static final Map<String, AtomicLong> COUNTS = new ConcurrentHashMap<String, AtomicLong>();
     private static volatile boolean summaryHookInstalled;
 
