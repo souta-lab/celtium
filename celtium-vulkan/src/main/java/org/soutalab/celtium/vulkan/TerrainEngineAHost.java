@@ -1,0 +1,79 @@
+package org.soutalab.celtium.vulkan;
+
+import java.util.IdentityHashMap;
+import java.util.Map;
+import org.embeddedt.embeddium.impl.render.chunk.terrain.TerrainRenderPass;
+import org.soutalab.celtium.vulkan.terrain.AsyncSectionMesher;
+import org.soutalab.celtium.vulkan.terrain.TerrainSectionStore;
+import org.soutalab.celtium.vulkan.terrain.TerrainUploadBudget;
+
+/**
+ * Owns the Tier-A terrain state for one backend: the shared
+ * {@link TerrainSectionStore}, the upload budget, and one
+ * {@link TerrainEngineA} executor per render pass. Pass ordinals are assigned by
+ * identity in first-use order and are the same ordinals the SectionDesc records
+ * carry, so registration and culling always agree on them.
+ * <p>
+ * Deferred arena releases are collected against the host's own generation counter
+ * with a two-generation lag — an interim completion rule that approximates the
+ * frames-in-flight depth until the frame timeline (design section 2.3) lands and
+ * drives collection with real GPU completion values.
+ */
+final class TerrainEngineAHost {
+    static final boolean ENABLED = Boolean.getBoolean("celtium.vulkan.terrainEngineA");
+
+    private final AsyncSectionMesher mesher = new AsyncSectionMesher();
+    private final TerrainSectionStore store = new TerrainSectionStore();
+    private final TerrainUploadBudget budget = new TerrainUploadBudget(
+            Long.getLong("celtium.vulkan.terrainUploadMiB", 4L) * 1024 * 1024);
+    private final Map<TerrainRenderPass, Integer> ordinals = new IdentityHashMap<>();
+    private final Map<TerrainRenderPass, TerrainEngineA> engines = new IdentityHashMap<>();
+    private long generation;
+
+    AsyncSectionMesher mesher() {
+        return this.mesher;
+    }
+
+    TerrainSectionStore store() {
+        return this.store;
+    }
+
+    long nextGeneration() {
+        return ++this.generation;
+    }
+
+    int ordinalFor(TerrainRenderPass pass) {
+        Integer ordinal = this.ordinals.get(pass);
+        if (ordinal == null) {
+            ordinal = this.ordinals.size();
+            this.ordinals.put(pass, ordinal);
+        }
+        return ordinal;
+    }
+
+    TerrainEngineA engineFor(VulkanContext context, TerrainRenderPass pass) {
+        TerrainEngineA engine = this.engines.get(pass);
+        if (engine == null) {
+            engine = new TerrainEngineA(context, ordinalFor(pass),
+                    "pass-" + ordinalFor(pass), this.store, this.budget);
+            this.engines.put(pass, engine);
+        }
+        return engine;
+    }
+
+    /** Removes every pass' record of one section, deferred against the generation lag. */
+    void unregisterSection(int sectionX, int sectionY, int sectionZ) {
+        for (int ordinal : this.ordinals.values()) {
+            this.store.unregister(new TerrainSectionStore.Key(sectionX, sectionY, sectionZ, ordinal),
+                    this.generation);
+        }
+        this.store.collectReleased(Math.max(0, this.generation - 2));
+    }
+
+    void delete(VulkanContext context) {
+        for (TerrainEngineA engine : this.engines.values()) {
+            engine.delete();
+        }
+        this.engines.clear();
+    }
+}

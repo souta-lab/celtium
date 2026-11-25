@@ -410,7 +410,13 @@ public class CeleritasWorldRenderer extends SimpleWorldRenderer<WorldClient, Vin
 
     private static final boolean FORCE_COMPACT_FORMAT = Boolean.getBoolean("celtium.terrain.forceCompactFormat");
 
+    /** New rendering architecture, Tier-A terrain engine (SectionDesc + GPU culling). */
+    private static final boolean TERRAIN_ENGINE_A = Boolean.getBoolean("celtium.vulkan.terrainEngineA");
+
     private ChunkVertexType chooseVertexType() {
+        if (TERRAIN_ENGINE_A) {
+            return ChunkMeshFormats.TERRAIN_A16;
+        }
         // Diagnostic: the compact path builds its colours in VintageBlockRenderer, the vanilla-like path copies the
         // game's own vertex data. Forcing one or the other separates "the brightness term is missing from one path"
         // from "the sampler is wrong", which the frame cannot distinguish on its own.

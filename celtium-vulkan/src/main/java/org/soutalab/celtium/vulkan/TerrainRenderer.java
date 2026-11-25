@@ -400,6 +400,17 @@ public final class TerrainRenderer {
 
     /** The context the pipelines are built with; the backend owns it and hands it over. */
     private VulkanContext context;
+
+    /**
+     * Tier-A terrain state (new rendering architecture), present only under
+     * {@code -Dceltium.vulkan.terrainEngineA}. While the flag is on, built sections in
+     * the 16-byte format are additionally registered into the resident SectionDesc
+     * table at upload; the legacy route keeps drawing them until the backend's pass
+     * loop cuts over to the Tier-A executors (the integration step that consumes
+     * {@link TerrainEngineA#prepareFrame} / {@link TerrainEngineA#recordDraws}).
+     */
+    private final TerrainEngineAHost terrainAHost = TerrainEngineAHost.ENABLED ? new TerrainEngineAHost() : null;
+    private boolean terrainARegisterFailurePrinted;
     /** Where a message goes: the backend's diagnostics list, so the report still sees it. */
     private java.util.function.Consumer<String> diagnostics = message -> { };
 
@@ -1760,6 +1771,29 @@ public final class TerrainRenderer {
         return this.lastUploadedBytes;
     }
 
+    /**
+     * Registers one freshly built section into the Tier-A resident table. A failure
+     * leaves the section on the legacy route only — the upload that called this must
+     * not fail with it — and is printed once, since a shape rejection here is a build
+     * bug, not a runtime condition.
+     */
+    private void registerTierA(ChunkBuildOutput build, TerrainRenderPass pass, BuiltSectionMeshParts mesh) {
+        try {
+            org.soutalab.celtium.vulkan.terrain.AsyncSectionMesher.BuiltSectionA built =
+                    this.terrainAHost.mesher().build(build.render.getChunkX(), build.render.getChunkY(),
+                            build.render.getChunkZ(), this.terrainAHost.ordinalFor(pass), mesh, 0);
+            if (built != null) {
+                this.terrainAHost.engineFor(this.context, pass)
+                        .register(built, this.terrainAHost.nextGeneration());
+            }
+        } catch (RuntimeException error) {
+            if (!this.terrainARegisterFailurePrinted) {
+                this.terrainARegisterFailurePrinted = true;
+                System.out.println("[Celtium] CELTIUM_TERRAIN_A_REGISTER_FAILED reason=" + error);
+            }
+        }
+    }
+
     private SectionRenderDataStorage storageForPass(RenderRegion region, TerrainRenderPass pass,
             java.util.Map<TerrainRenderPass, SectionRenderDataStorage> cache) {
         SectionRenderDataStorage existing = cache.get(pass);
@@ -1795,6 +1829,10 @@ public final class TerrainRenderer {
                 org.embeddedt.embeddium.impl.render.chunk.BuildFlowCounters.buildOutputs++;
                 ChunkBuildOutput build = (ChunkBuildOutput) output;
                 region.removeMeshes(build.render.getSectionIndex());
+                if (this.terrainAHost != null) {
+                    this.terrainAHost.unregisterSection(build.render.getChunkX(), build.render.getChunkY(),
+                            build.render.getChunkZ());
+                }
                 for (Reference2ReferenceMap.Entry<TerrainRenderPass, BuiltSectionMeshParts> meshEntry
                         : build.meshes.reference2ReferenceEntrySet()) {
                     BuiltSectionMeshParts mesh = meshEntry.getValue();
@@ -1804,6 +1842,10 @@ public final class TerrainRenderer {
                     needIndexBuffer |= mesh.indexBuffer() != null;
                     pending.add(TerrainRenderer.PendingMesh.obtain(build.render.getSectionIndex(), meshEntry.getKey(), mesh, null,
                             meshResources.sectionFirstColor, meshResources));
+                    if (this.terrainAHost != null
+                            && vertexStride() == org.embeddedt.embeddium.impl.render.chunk.vertex.format.impl.TerrainVertex16.STRIDE) {
+                        registerTierA(build, meshEntry.getKey(), mesh);
+                    }
                 }
             } else if (output instanceof ChunkSortOutput) {
                 org.embeddedt.embeddium.impl.render.chunk.BuildFlowCounters.sortOutputs++;
