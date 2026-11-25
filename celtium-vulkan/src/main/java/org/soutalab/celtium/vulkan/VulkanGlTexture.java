@@ -1427,6 +1427,7 @@ public final class VulkanGlTexture {
             // not cover would be the same class of error the mirror's own layout bookkeeping was written to avoid.
             // The aspect is the wrapper's own: a colour barrier over a depth image (or the reverse) is invalid.
             barrier.get(0).subresourceRange().set(this.foreignAspect, 0, 1, 0, 1);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commandBuffer, stages, stages, 0, null, null, barrier);
         }
         // The barrier is in the command buffer now, so the transition is pending: it becomes fact when this command
@@ -2079,6 +2080,7 @@ public final class VulkanGlTexture {
                         .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                         .image(image);
                 barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1);
+                DrawCounters.notePipelineBarrier();
                 vkCmdPipelineBarrier(commandBuffer, SAMPLING_STAGES | VK_PIPELINE_STAGE_TRANSFER_BIT,
                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
 
@@ -2094,6 +2096,7 @@ public final class VulkanGlTexture {
                         .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
                         .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
                         .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                DrawCounters.notePipelineBarrier();
                 vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null,
                         barrier);
             }
@@ -2188,6 +2191,7 @@ public final class VulkanGlTexture {
                 .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                 .image(this.image);
         barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, this.mipLevels, 0, 1);
+        DrawCounters.notePipelineBarrier();
         vkCmdPipelineBarrier(commandBuffer, SAMPLING_STAGES | VK_PIPELINE_STAGE_TRANSFER_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
         org.lwjgl.vulkan.VkClearColorValue clear = org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
@@ -2197,6 +2201,7 @@ public final class VulkanGlTexture {
         vkCmdClearColorImage(commandBuffer, this.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, clear, range);
         barrier.get(0).srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT).dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
                 .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL).newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        DrawCounters.notePipelineBarrier();
         vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null, barrier);
     }
 
@@ -3315,6 +3320,7 @@ public final class VulkanGlTexture {
             // validation error at draw time (VUID-vkCmdDraw-None-09600), and after a resize the levels above 0 have
             // never been transitioned by anything else.
             barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, Math.max(1, this.mipLevels), 0, 1);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, SAMPLING_STAGES,
                     0, null, null, barrier);
             for (int covered = 0; covered < Math.max(1, this.mipLevels); covered++) {
@@ -3390,6 +3396,7 @@ public final class VulkanGlTexture {
                     // prevent its shader reads from overlapping this transfer write or layout transition.
                     .srcAccessMask(initialized ? VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT : 0)
                     .dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commandBuffer,
                     initialized ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                     VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -3406,6 +3413,7 @@ public final class VulkanGlTexture {
                     .newLayout(VK_IMAGE_LAYOUT_GENERAL)
                     .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
                     .dstAccessMask(opaqueCopy == null ? VK_ACCESS_TRANSFER_READ_BIT : VK_ACCESS_SHADER_READ_BIT);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
                     | VK_PIPELINE_STAGE_TRANSFER_BIT,
                     opaqueCopy == null ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -3439,6 +3447,7 @@ public final class VulkanGlTexture {
             // the transfer read (or the compute sampler read) just recorded above.
             sourceBarrier.get(0).srcAccessMask(opaqueCopy == null ? VK_ACCESS_TRANSFER_READ_BIT : VK_ACCESS_SHADER_READ_BIT)
                     .dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commandBuffer,
                     opaqueCopy == null ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -3450,6 +3459,7 @@ public final class VulkanGlTexture {
                     .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
                     .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
                     .dstAccessMask(VK_ACCESS_SHADER_READ_BIT);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null, barrier);
             this.currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             setLevelLayout(0, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -3729,6 +3739,7 @@ public final class VulkanGlTexture {
                     .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .image(this.image);
             barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commands, SAMPLING_STAGES, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
             VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
             region.get(0).bufferOffset(0L).bufferRowLength(0).bufferImageHeight(0);
@@ -3740,6 +3751,7 @@ public final class VulkanGlTexture {
             barrier.get(0).srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT).dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
                     .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
                     .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null, barrier);
         }
         // Submitted and waited for by the context helper, so the staging buffer holds the level when this returns.
@@ -3914,6 +3926,7 @@ public final class VulkanGlTexture {
                     .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .image(image);
             toSource.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 1, 0, 1);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
                     null, null, toSource);
             setLevelLayout(level - 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -3945,6 +3958,7 @@ public final class VulkanGlTexture {
                     .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .image(image);
             toSrc.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
                     null, null, toSrc);
             setLevelLayout(level, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -4002,6 +4016,7 @@ public final class VulkanGlTexture {
                     .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .image(image);
             barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commandBuffer, SAMPLING_STAGES | VK_PIPELINE_STAGE_TRANSFER_BIT,
                     VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
 
@@ -4018,6 +4033,7 @@ public final class VulkanGlTexture {
                     .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
                     .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
                     .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null,
                     barrier);
         } finally {
@@ -4219,6 +4235,7 @@ public final class VulkanGlTexture {
                     .image(image);
             barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, level, this.mipLevels, 0, 1);
             if (level == 0) {
+                DrawCounters.notePipelineBarrier();
                 vkCmdPipelineBarrier(commandBuffer, entryMasks[0], VK_PIPELINE_STAGE_TRANSFER_BIT,
                         0, null, null, barrier);
             }
@@ -4254,6 +4271,7 @@ public final class VulkanGlTexture {
                 // when the chain is generated by blitting below. Getting this wrong left images in a transfer layout -
                 // ten validation errors and no SHADER_READ_ONLY for the atlas (audit S23).
                 if (level == this.mipLevels - 1 || level == 0) {
+                    DrawCounters.notePipelineBarrier();
                     vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null,
                             barrier);
                     for (int covered = 0; covered < this.mipLevels; covered++) {
@@ -4595,6 +4613,7 @@ public final class VulkanGlTexture {
                     .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .image(image);
             barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, depth, 0, 1);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commandBuffer, SAMPLING_STAGES | VK_PIPELINE_STAGE_TRANSFER_BIT,
                     VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
             int[] rects = this.deferredRects;
@@ -4657,6 +4676,7 @@ public final class VulkanGlTexture {
                     .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
                     .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
                     .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, SAMPLING_STAGES, 0, null, null,
                     barrier);
             recorded = true;

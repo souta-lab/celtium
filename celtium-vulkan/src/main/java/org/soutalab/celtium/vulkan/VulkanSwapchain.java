@@ -705,6 +705,7 @@ public final class VulkanSwapchain {
                     .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT);
             toTransfer.get(0).subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(0).levelCount(1)
                     .baseArrayLayer(0).layerCount(1);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null,
                     toTransfer);
             vkCmdCopyImageToBuffer(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, copy);
@@ -716,6 +717,7 @@ public final class VulkanSwapchain {
                     .image(image).srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT).dstAccessMask(0);
             backToPresent.get(0).subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(0).levelCount(1)
                     .baseArrayLayer(0).layerCount(1);
+            DrawCounters.notePipelineBarrier();
             vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, null,
                     null, backToPresent);
             context.endCommands(commands);
@@ -1779,6 +1781,7 @@ public final class VulkanSwapchain {
                 .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                 .image(image);
         barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+        DrawCounters.notePipelineBarrier();
         vkCmdPipelineBarrier(commands, srcStage, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, null, null, barrier);
         return vkEndCommandBuffer(commands) == VK_SUCCESS;
     }
@@ -2319,6 +2322,7 @@ public final class VulkanSwapchain {
                 .image(image);
         barrier.get(0).subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
         barrier.get(0).srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT).dstAccessMask(VK_ACCESS_MEMORY_WRITE_BIT);
+        DrawCounters.notePipelineBarrier();
         vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null,
                 barrier);
     }
@@ -2338,6 +2342,7 @@ public final class VulkanSwapchain {
                 .image(image);
         barrier.get(0).subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
         barrier.get(0).srcAccessMask(VK_ACCESS_MEMORY_WRITE_BIT).dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT);
+        DrawCounters.notePipelineBarrier();
         vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null,
                 barrier);
     }
@@ -3286,6 +3291,7 @@ public final class VulkanSwapchain {
                 .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                 .image(image);
         barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+        DrawCounters.notePipelineBarrier();
         vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null,
                 null, barrier);
     }
@@ -3301,6 +3307,7 @@ public final class VulkanSwapchain {
                 .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                 .image(image);
         barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+        DrawCounters.notePipelineBarrier();
         vkCmdPipelineBarrier(commands, transferDstEntrySrcStage(), VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null,
                 null, barrier);
     }
@@ -3316,6 +3323,7 @@ public final class VulkanSwapchain {
                 .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                 .image(image);
         barrier.get(0).subresourceRange().set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+        DrawCounters.notePipelineBarrier();
         vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, null,
                 null, barrier);
     }

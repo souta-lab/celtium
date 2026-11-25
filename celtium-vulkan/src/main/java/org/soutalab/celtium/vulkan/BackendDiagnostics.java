@@ -462,6 +462,7 @@ final class BackendDiagnostics {
                 + " " + VulkanContext.pipelineCreationSummary()
                 + " " + VulkanContext.memoryAllocationSummary()
                 + " " + FallbackPaths.summary()
+                + " " + DrawCounters.barrierSummary()
                 + " " + b.framebufferCompositor.describe()
                 + " directMirrorFromAnnouncement=" + b.textureStats.directMirrorFromAnnouncement()
                 + " dynamicTextureFills=" + b.textureStats.dynamicTextureFills()

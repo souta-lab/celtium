@@ -1598,6 +1598,7 @@ public final class TextureCopyService {
                     .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT);
             toTransfer.get(0).subresourceRange().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT)
                     .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
+            DrawCounters.notePipelineBarrier();
             org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commands,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, toTransfer);
@@ -1616,6 +1617,7 @@ public final class TextureCopyService {
                             | org.lwjgl.vulkan.VK10.VK_ACCESS_MEMORY_READ_BIT);
             backToGeneral.get(0).subresourceRange().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT)
                     .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
+            DrawCounters.notePipelineBarrier();
             org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commands,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, backToGeneral);
@@ -1752,6 +1754,7 @@ public final class TextureCopyService {
                     .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT);
             toTransfer.get(0).subresourceRange().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT)
                     .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
+            DrawCounters.notePipelineBarrier();
             org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commands,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, toTransfer);
@@ -1770,6 +1773,7 @@ public final class TextureCopyService {
                             | org.lwjgl.vulkan.VK10.VK_ACCESS_MEMORY_READ_BIT);
             backToGeneral.get(0).subresourceRange().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT)
                     .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
+            DrawCounters.notePipelineBarrier();
             org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(commands,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, backToGeneral);

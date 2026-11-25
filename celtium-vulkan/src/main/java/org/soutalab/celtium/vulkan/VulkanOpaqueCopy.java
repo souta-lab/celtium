@@ -181,6 +181,7 @@ final class VulkanOpaqueCopy {
         b.get(0).oldLayout(VK_IMAGE_LAYOUT_UNDEFINED).newLayout(VK_IMAGE_LAYOUT_GENERAL)
                 .srcAccessMask(VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT)
                 .dstAccessMask(VK_ACCESS_SHADER_WRITE_BIT);
+        DrawCounters.notePipelineBarrier();
         vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                 0, null, null, b);
         vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, this.pipeline);
@@ -189,6 +190,7 @@ final class VulkanOpaqueCopy {
         vkCmdDispatch(command, (width + 7) / 8, (height + 7) / 8, 1);
         b.get(0).oldLayout(VK_IMAGE_LAYOUT_GENERAL).newLayout(VK_IMAGE_LAYOUT_GENERAL)
                 .srcAccessMask(VK_ACCESS_SHADER_WRITE_BIT).dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT);
+        DrawCounters.notePipelineBarrier();
         vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                 0, null, null, b);
         VkImageCopy.Buffer copy = VkImageCopy.calloc(1, stack);

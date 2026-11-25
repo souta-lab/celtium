@@ -696,6 +696,7 @@ final class ModPrograms {
                     .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
                             | org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT)
                     .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT);
+            DrawCounters.notePipelineBarrier();
             org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(b.commandBuffer,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, before, null, null);
@@ -713,6 +714,7 @@ final class ModPrograms {
             after.get(0).sType$Default().srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT)
                     .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT
                             | org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            DrawCounters.notePipelineBarrier();
             org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(b.commandBuffer,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
                     org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, after, null, null);
