@@ -34,6 +34,15 @@ import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
  * the {@link VulkanBuffer} object, which survives a growth) across {@link #allocate(int)} calls gives the same
  * signal.
  * <p>
+ * <b>Slab disposition (overhaul Stage 3).</b> The arena itself is not sub-allocated: it is one segment allocator
+ * over ONE backing {@link VulkanBuffer}, and the offset contract above - mods cache segment offsets into this
+ * single buffer - forbids splitting the arena across slab ranges. What Stage 3 changed is underneath: the
+ * backing buffer sub-allocates from the context's device-local slab pool like every other
+ * {@code VulkanBuffer}, so the arena no longer owns a {@code vkAllocateMemory} of its own. The doubling copy
+ * on growth is <b>retained deliberately</b>: it is the mechanism that keeps every offset stable across a
+ * growth, and removing it would mean either moving segments (breaking the contract) or a multi-buffer arena
+ * (a different allocator, out of this stage's scope).
+ * <p>
  * <b>Threading:</b> every method must be called on the render thread that owns the {@link VulkanContext}, and
  * {@link #delete()} must happen while the context is still alive.
  * <p>
