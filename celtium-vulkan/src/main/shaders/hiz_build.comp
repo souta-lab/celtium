@@ -1,0 +1,76 @@
+#version 450
+// P3 HiZBuild — Hierarchical-Z depth pyramid downsample compute shader.
+//
+// Builds mip k of the R32_SFLOAT Hi-Z pyramid from either:
+//   - mip 0: the MainForwardPass depth attachment (full resolution -> width/2 x height/2), or
+//   - mip k > 0: mip k-1 of the Hi-Z pyramid.
+//
+// Conservative reduction:
+//   - Standard Z (near=0, far=1, flag bit 0 == 0): MAX over covered source texels.
+//     A bounding box is occluded iff boxMinDepth > hizMaxDepth.
+//   - Reverse Z (near=1, far=0, flag bit 0 == 1): MIN over covered source texels.
+//     A bounding box is occluded iff boxMaxDepth < hizMinDepth.
+//
+// Non-power-of-two (NPOT) safety:
+//   When srcSize.x is odd and dstCoord.x is the last column (or srcSize.y is odd and
+//   dstCoord.y is the last row), the extra trailing source texels are folded into the
+//   reduction (2x3, 3x2, or 3x3) so no depth texel is dropped at odd mip dimensions
+//   (e.g. 1280x720 -> ... -> 80x45 -> 40x22 -> 20x11 -> 10x5 -> 5x2 -> 2x1 -> 1x1).
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D u_SrcDepth;
+layout(set = 0, binding = 1, r32f) uniform writeonly image2D u_DstHiZ;
+
+layout(push_constant) uniform HiZPushConstants {
+    ivec2 srcSize;
+    ivec2 dstSize;
+    uint flags;     // bit 0: reverseZ (0 = standard max-Z, 1 = reverse min-Z)
+    uint mipLevel;  // target mip level being written
+} pc;
+
+float combineDepth(float a, float b, bool reverseZ) {
+    return reverseZ ? min(a, b) : max(a, b);
+}
+
+void main() {
+    ivec2 dstCoord = ivec2(gl_GlobalInvocationID.xy);
+    if (dstCoord.x >= pc.dstSize.x || dstCoord.y >= pc.dstSize.y) {
+        return;
+    }
+
+    bool reverseZ = (pc.flags & 1u) != 0u;
+    ivec2 maxSrc = pc.srcSize - ivec2(1);
+    ivec2 base = dstCoord * 2;
+
+    float d00 = texelFetch(u_SrcDepth, min(base + ivec2(0, 0), maxSrc), 0).r;
+    float d10 = texelFetch(u_SrcDepth, min(base + ivec2(1, 0), maxSrc), 0).r;
+    float d01 = texelFetch(u_SrcDepth, min(base + ivec2(0, 1), maxSrc), 0).r;
+    float d11 = texelFetch(u_SrcDepth, min(base + ivec2(1, 1), maxSrc), 0).r;
+
+    float reduced = combineDepth(combineDepth(d00, d10, reverseZ),
+                                 combineDepth(d01, d11, reverseZ),
+                                 reverseZ);
+
+    bool extraX = ((pc.srcSize.x & 1) != 0) && (dstCoord.x == pc.dstSize.x - 1) && (pc.srcSize.x > 1);
+    bool extraY = ((pc.srcSize.y & 1) != 0) && (dstCoord.y == pc.dstSize.y - 1) && (pc.srcSize.y > 1);
+
+    if (extraX) {
+        float d20 = texelFetch(u_SrcDepth, min(base + ivec2(2, 0), maxSrc), 0).r;
+        float d21 = texelFetch(u_SrcDepth, min(base + ivec2(2, 1), maxSrc), 0).r;
+        reduced = combineDepth(reduced, combineDepth(d20, d21, reverseZ), reverseZ);
+    }
+
+    if (extraY) {
+        float d02 = texelFetch(u_SrcDepth, min(base + ivec2(0, 2), maxSrc), 0).r;
+        float d12 = texelFetch(u_SrcDepth, min(base + ivec2(1, 2), maxSrc), 0).r;
+        reduced = combineDepth(reduced, combineDepth(d02, d12, reverseZ), reverseZ);
+    }
+
+    if (extraX && extraY) {
+        float d22 = texelFetch(u_SrcDepth, min(base + ivec2(2, 2), maxSrc), 0).r;
+        reduced = combineDepth(reduced, d22, reverseZ);
+    }
+
+    imageStore(u_DstHiZ, dstCoord, vec4(reduced, 0.0, 0.0, 0.0));
+}
