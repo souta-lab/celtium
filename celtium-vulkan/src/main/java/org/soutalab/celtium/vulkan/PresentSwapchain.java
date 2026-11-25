@@ -711,8 +711,8 @@ final class PresentSwapchain {
             // borrowed at frame start, so there is nothing to copy and no source layout to declare -
             // the target's own bookkeeping names the layout the borrowed image rests in, and the
             // swapchain's presentDirect takes it from there to PRESENT_SRC and presents it through
-            // the lender. A frame that holds no borrow (the escape flag
-            // -Dceltium.present.direct=false, a failed borrow acquire, or a target that is not the
+            // the lender. A frame that holds no borrow (direct present not opted in, which is the
+            // default since the opt-in landing; a failed borrow acquire; or a target that is not the
             // GL-less one) takes the composite fallback below and is blitted from the owned image,
             // exactly as before this stage.
             // The image is handed back in GENERAL whatever it was found in, because UNDEFINED is a legal oldLayout for

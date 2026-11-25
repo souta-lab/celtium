@@ -111,8 +111,9 @@ public final class SwapchainCreateArguments {
      * {@code UNDEFINED -> TRANSFER_DST} blit presents. That trade belonged to the blit path it protected:
      * a transfer-only swapchain cannot be rendered into at all, and the direct path's own transitions -
      * the frame target's acquire/release barriers, which already carry the full attachment/transfer/shader
-     * masks #422 (a) asked for - are the DCC-relevant surface now. The transfer-only shape survives only
-     * behind {@code -Dceltium.present.direct=false}, through the overload below.
+     * masks #422 (a) asked for - are the DCC-relevant surface now. The transfer-only shape is the default
+     * again since direct present landed opt-in; the colour-attachment shape is requested only behind
+     * {@code -Dceltium.present.direct=true}, through the overload below.
      *
      * @param surface         what the surface reported
      * @param requestedWidth  the window's framebuffer width
@@ -128,8 +129,8 @@ public final class SwapchainCreateArguments {
      * Chooses the creation arguments, optionally dropping {@link #USAGE_COLOR_ATTACHMENT} so swapchain images are
      * allocated as transfer surfaces rather than renderable colour attachments (issue #422 (a): avoids RDNA3
      * displayable DCC compression metadata colliding with {@code UNDEFINED -> TRANSFER_DST} blit presents).
-     * The transfer-only request is the composite fallback path's shape, reached only with
-     * {@code -Dceltium.present.direct=false}.
+     * The transfer-only request is the composite fallback path's shape, reached whenever direct
+     * present is not in effect (the default; {@code -Dceltium.present.direct=true} opts in).
      *
      * @param surface             what the surface reported
      * @param requestedWidth      the window's framebuffer width

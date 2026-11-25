@@ -52,8 +52,9 @@ public final class VulkanSwapchain {
     /**
      * Request transfer-only swapchain image usage (issue #422 (a)) on the composite fallback path only: the
      * direct present path renders into the swapchain image and requires colour-attachment usage, so
-     * transfer-only applies exactly when {@code -Dceltium.present.direct=false} has taken the frame path
-     * back to the blit present. On that path the {@code celtium.vulkan.presentTransferOnly} property keeps
+     * transfer-only applies exactly when direct present is not in effect (the default since the opt-in
+     * landing; {@code -Dceltium.present.direct=true} opts in) and the frame path is the blit present.
+     * On that path the {@code celtium.vulkan.presentTransferOnly} property keeps
      * its old meaning (default true; {@code false} opts back into colour-attachment usage).
      */
     private static final boolean PRESENT_TRANSFER_ONLY =

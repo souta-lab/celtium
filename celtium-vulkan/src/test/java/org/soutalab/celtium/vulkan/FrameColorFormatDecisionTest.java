@@ -31,8 +31,8 @@ class FrameColorFormatDecisionTest {
     }
 
     // Direct present off: nothing borrows, so the frame keeps the classic format every existing pass
-    // and readback was built against - the escape flag (-Dceltium.present.direct=false) must reproduce
-    // the pre-Stage-1 shape exactly.
+    // and readback was built against - the off state (the default since the opt-in landing) must
+    // reproduce the pre-Stage-1 shape exactly.
     @Test
     void directPresentOffKeepsTheClassicFrame() {
         assertEquals(RGBA, SwapchainCreateArguments.frameColorFormat(BGRA, false, true));
