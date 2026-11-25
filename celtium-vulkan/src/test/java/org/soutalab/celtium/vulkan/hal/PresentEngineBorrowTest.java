@@ -22,6 +22,27 @@ class PresentEngineBorrowTest {
     }
 
     @Test
+    void swapchainFormatFollowsTheAdoptedGeneration() {
+        PresentEngine engine = new PresentEngine(null, null);
+        assertEquals(0, engine.swapchainFormat());
+        engine.adoptSwapchain(0xAA, new long[]{11}, new long[]{21}, 44);
+        assertEquals(44, engine.swapchainFormat());
+        engine.retireSwapchain();
+        assertEquals(0, engine.swapchainFormat());
+    }
+
+    @Test
+    void formatGateBorrowsOnlyOnAnExactMatch() {
+        // The frame's passes are built for R8G8B8A8_UNORM (37): only a generation in that format may be
+        // borrowed as the render target. BGRA generations (44/50, what most desktop surfaces offer) and
+        // an unadopted engine must fall back to the composed present, never borrow.
+        assertTrue(PresentEngine.formatAllowsBorrow(37, 37));
+        assertFalse(PresentEngine.formatAllowsBorrow(44, 37));
+        assertFalse(PresentEngine.formatAllowsBorrow(50, 37));
+        assertFalse(PresentEngine.formatAllowsBorrow(0, 37));
+    }
+
+    @Test
     void adoptSwapchainCopiesTheArrays() {
         PresentEngine engine = new PresentEngine(null, null);
         long[] images = new long[]{11, 12};

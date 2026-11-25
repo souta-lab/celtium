@@ -141,6 +141,21 @@ public final class SwapchainCreateArguments {
      */
     public static Result select(Surface surface, int requestedWidth, int requestedHeight, int desiredImages,
             boolean transferOnlyPresent) {
+        return select(surface, requestedWidth, requestedHeight, desiredImages, transferOnlyPresent, false);
+    }
+
+    /**
+     * As {@link #select(Surface, int, int, int, boolean)}, optionally preferring the frame colour format
+     * ({@link #FORMAT_R8G8B8A8_UNORM}) when the surface offers it: with direct present enabled, a swapchain
+     * in the frame's own format is the only one whose images the frame may borrow as its render target
+     * (the format gate in the lending contract), so the preference is what lets the direct path engage at
+     * all on surfaces that offer both channel orders. Surfaces offering only BGRA keep the historical
+     * first-offered choice and their frames fall back to the composed present.
+     *
+     * @param preferFrameFormat true to choose {@link #FORMAT_R8G8B8A8_UNORM} ahead of the surface's order
+     */
+    public static Result select(Surface surface, int requestedWidth, int requestedHeight, int desiredImages,
+            boolean transferOnlyPresent, boolean preferFrameFormat) {
         if (surface == null) {
             throw new IllegalArgumentException("surface must not be null");
         }
@@ -246,6 +261,8 @@ public final class SwapchainCreateArguments {
         int chosenColorSpace = 0;
         boolean chosen = false;
         boolean sawUndefined = false;
+        int fallbackFormat = 0;
+        int fallbackColorSpace = 0;
         for (int i = 0; i < offeredCount; i++) {
             int candidate = surface.formats[i * 2];
             int colorSpace = surface.formats[i * 2 + 1];
@@ -254,10 +271,28 @@ public final class SwapchainCreateArguments {
                 continue;
             }
             if (!chosen && (candidate == FORMAT_B8G8R8A8_UNORM || candidate == FORMAT_R8G8B8A8_UNORM)) {
+                if (preferFrameFormat && candidate != FORMAT_R8G8B8A8_UNORM) {
+                    // Direct present prefers the frame format: keep scanning in case the surface lists it
+                    // later; the first acceptable non-frame format is remembered as the fallback choice.
+                    if (fallbackFormat == 0) {
+                        fallbackFormat = candidate;
+                        fallbackColorSpace = colorSpace;
+                    }
+                    continue;
+                }
                 chosenFormat = candidate;
                 chosenColorSpace = colorSpace;
                 chosen = true;
             }
+        }
+        if (!chosen && fallbackFormat != 0) {
+            // The frame format was preferred but not offered: the first acceptable format stands, with the
+            // preference recorded so a leg's surface line says why this generation cannot be borrowed from.
+            chosenFormat = fallbackFormat;
+            chosenColorSpace = fallbackColorSpace;
+            chosen = true;
+            result.formatNote = "direct present prefers R8G8B8A8_UNORM, which the surface did not offer;"
+                    + " took the first acceptable format (frames from this generation use the composed present)";
         }
         if (!chosen) {
             // No preferred format: take the first real one the surface listed, never the UNDEFINED marker.

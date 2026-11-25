@@ -42,6 +42,37 @@ class SwapchainDirectPresentUsageTest {
         return surface;
     }
 
+    private static SwapchainCreateArguments.Surface surfaceWithFormats(int... formats) {
+        SwapchainCreateArguments.Surface surface = surfaceWithUsage(ALL_USAGE);
+        surface.formats = formats;
+        return surface;
+    }
+
+    @Test
+    void selectPrefersTheFrameFormatWhenDirectPresentAsks() {
+        // Offered BGRA first, RGBA second: without the preference the surface order wins (44); with it,
+        // the frame format (37) is chosen - the only format a generation may be borrowed in (Stage 1 gate).
+        SwapchainCreateArguments.Surface surface = surfaceWithFormats(
+                SwapchainCreateArguments.FORMAT_B8G8R8A8_UNORM, 0,
+                SwapchainCreateArguments.FORMAT_R8G8B8A8_UNORM, 0);
+        assertEquals(SwapchainCreateArguments.FORMAT_B8G8R8A8_UNORM,
+                SwapchainCreateArguments.select(surface, 1024, 640, 3, false, false).format);
+        assertEquals(SwapchainCreateArguments.FORMAT_R8G8B8A8_UNORM,
+                SwapchainCreateArguments.select(surface, 1024, 640, 3, false, true).format);
+    }
+
+    @Test
+    void selectFallsBackWithANoteWhenTheFrameFormatIsNotOffered() {
+        SwapchainCreateArguments.Surface surface = surfaceWithFormats(
+                SwapchainCreateArguments.FORMAT_B8G8R8A8_SRGB, 0,
+                SwapchainCreateArguments.FORMAT_B8G8R8A8_UNORM, 0);
+        SwapchainCreateArguments.Result result =
+                SwapchainCreateArguments.select(surface, 1024, 640, 3, false, true);
+        assertEquals(SwapchainCreateArguments.FORMAT_B8G8R8A8_UNORM, result.format);
+        assertTrue(result.formatNote.contains("did not offer"),
+                "the fallback must say why this generation cannot be borrowed: " + result.formatNote);
+    }
+
     @Test
     void selectKeepsColourAttachmentAndEveryOfferedTransferBit() {
         SwapchainCreateArguments.Result result =

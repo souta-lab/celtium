@@ -21,6 +21,7 @@ import static org.lwjgl.vulkan.KHRSwapchain.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 import static org.lwjgl.vulkan.KHRSwapchain.VK_SUBOPTIMAL_KHR;
 import static org.lwjgl.vulkan.KHRSwapchain.vkAcquireNextImageKHR;
 import static org.lwjgl.vulkan.KHRSwapchain.vkQueuePresentKHR;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_UNDEFINED;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
 import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
@@ -58,6 +59,8 @@ public final class PresentEngine {
      * {@link #acquireNextImage} and {@link #present(BorrowedImage, long)}.
      */
     private long swapchain = VK_NULL_HANDLE;
+    /** The adopted generation's image format; {@code VK_FORMAT_UNDEFINED} until one is adopted with it. */
+    private int swapchainFormat = VK_FORMAT_UNDEFINED;
     private long[] swapchainImages = new long[0];
     private long[] swapchainViews = new long[0];
     /**
@@ -175,12 +178,40 @@ public final class PresentEngine {
      * registry.
      */
     public void adoptSwapchain(long swapchain, long[] images, long[] views) {
+        adoptSwapchain(swapchain, images, views, VK_FORMAT_UNDEFINED);
+    }
+
+    /**
+     * Adopts a swapchain generation together with its image format. The format is part of the lending
+     * contract: a borrower renders into the lent image through render passes built for the frame's own
+     * colour format, so a generation whose format differs can never be lent for direct rendering (see
+     * {@link #formatAllowsBorrow}) - it can only be presented to, through the composed blit.
+     */
+    public void adoptSwapchain(long swapchain, long[] images, long[] views, int format) {
         invalidateLiveHandles();
         this.generation++;
         this.swapchain = swapchain;
         this.swapchainImages = images == null ? new long[0] : images.clone();
         this.swapchainViews = views == null ? new long[0] : views.clone();
+        this.swapchainFormat = format;
         this.presentedOnce = new boolean[this.swapchainImages.length];
+    }
+
+    /** {@return the adopted generation's image format, or {@code VK_FORMAT_UNDEFINED} when none is adopted}. */
+    public int swapchainFormat() {
+        return this.swapchain == VK_NULL_HANDLE ? VK_FORMAT_UNDEFINED : this.swapchainFormat;
+    }
+
+    /**
+     * The format gate on borrowing (Stage 1, overhaul): a swapchain image may be borrowed as the frame's
+     * render target only when its format is exactly the frame colour format the frame's render passes were
+     * built for. A framebuffer built from a differently-formatted view is not render-pass compatible
+     * (VUID-VkFramebufferCreateInfo-pAttachments-00880) - on the agera ANV leg that mismatch produced an
+     * invalid framebuffer and a driver crash inside vkCmdBeginRenderPass, so a mismatch must fall back to
+     * the composed present, never borrow. Pure, so the gate is testable without a device.
+     */
+    public static boolean formatAllowsBorrow(int swapchainFormat, int frameColorFormat) {
+        return swapchainFormat != VK_FORMAT_UNDEFINED && swapchainFormat == frameColorFormat;
     }
 
     /**
@@ -192,6 +223,7 @@ public final class PresentEngine {
         invalidateLiveHandles();
         this.generation++;
         this.swapchain = VK_NULL_HANDLE;
+        this.swapchainFormat = VK_FORMAT_UNDEFINED;
         this.swapchainImages = new long[0];
         this.swapchainViews = new long[0];
         this.presentedOnce = new boolean[0];

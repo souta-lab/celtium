@@ -3007,7 +3007,7 @@ public final class VulkanSwapchain {
             surfaceOfferValues.formats = offeredFormats;
             SwapchainCreateArguments.Result choice =
                     SwapchainCreateArguments.select(surfaceOfferValues, requestedWidth, requestedHeight,
-                            desiredImageCount(), PRESENT_TRANSFER_ONLY);
+                            desiredImageCount(), PRESENT_TRANSFER_ONLY, VulkanContext.PRESENT_DIRECT);
             if (choice.refusal != null) {
                 // The one classification the caller acts on: a pinned 0x0 extent is a wait, carried on the
                 // outcome rather than in the reason text, so the creation escalation never has to re-read
@@ -3158,7 +3158,7 @@ public final class VulkanSwapchain {
             // (lanechat #8830). It copies the arrays, so the fields above stay this class's own record; the
             // borrow handles it lends name these images and views without owning them.
             if (this.context.presentEngine() != null) {
-                this.context.presentEngine().adoptSwapchain(this.swapchain, this.images, this.views);
+                this.context.presentEngine().adoptSwapchain(this.swapchain, this.images, this.views, this.format);
             }
             return true;
         }

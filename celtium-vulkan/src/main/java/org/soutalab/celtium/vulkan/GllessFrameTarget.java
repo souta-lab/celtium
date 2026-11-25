@@ -722,7 +722,16 @@ public final class GllessFrameTarget implements FrameImageTarget {
         if (this.presentBorrow != null) {
             return true;
         }
-        if (engine == null || !ensurePresentAcquirePool(engine.imageCount())) {
+        // The format gate (Stage 1, overhaul): the frame's render passes are built for the frame colour
+        // format (R1: always VK_FORMAT_R8G8B8A8_UNORM), so a swapchain generation in any other format -
+        // the BGRA formats most desktop surfaces offer - can never be borrowed as the render target; its
+        // frames take the composed present instead. Borrowing through the mismatch built framebuffers the
+        // validation layer rejected (VUID-VkFramebufferCreateInfo-pAttachments-00880) and ANV crashed on.
+        if (engine == null
+                || !PresentEngine.formatAllowsBorrow(engine.swapchainFormat(), VK_FORMAT_R8G8B8A8_UNORM)) {
+            return false;
+        }
+        if (!ensurePresentAcquirePool(engine.imageCount())) {
             return false;
         }
         long acquireSemaphore = this.presentAcquireSemaphores[this.presentAcquireCursor
