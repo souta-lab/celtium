@@ -2,6 +2,7 @@ package org.soutalab.celtium.vulkan;
 
 import org.lwjgl.PointerBuffer;
 import org.soutalab.celtium.harness.HarnessConfig;
+import org.soutalab.celtium.vulkan.hal.SlabAllocator;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.EXTDebugUtils;
@@ -2470,6 +2471,20 @@ public final class VulkanContext {
                 vkDestroyCommandPool(this.device, this.commandPool, null);
                 this.commandPool = VK_NULL_HANDLE;
             }
+            // The slab pools' device memory goes with the device: every slab is freed here (one
+            // vkFreeMemory per slab through the census-counted path), before the device itself is destroyed.
+            for (SlabAllocator allocator : this.deviceLocalSlabsByType.values()) {
+                allocator.delete();
+            }
+            this.deviceLocalSlabsByType.clear();
+            for (SlabAllocator allocator : this.hostVisibleSlabsByType.values()) {
+                allocator.delete();
+            }
+            this.hostVisibleSlabsByType.clear();
+            for (SlabAllocator allocator : this.deviceLocalImageSlabsByType.values()) {
+                allocator.delete();
+            }
+            this.deviceLocalImageSlabsByType.clear();
             vkDestroyDevice(this.device, null);
             this.device = null;
         }
@@ -4405,6 +4420,44 @@ public final class VulkanContext {
         }
     }
 
+    /**
+     * The device-local slab pools {@link VulkanBuffer} allocates from: fixed 64 MiB slabs, sub-allocated, so a
+     * buffer no longer owns a {@code vkAllocateMemory} of its own. One pool per memory type, keyed by type
+     * index, because a slab can only bind to a buffer whose requirements name the pool's type; pools are
+     * created lazily, the first time a buffer's requirements pick their type.
+     */
+    private final java.util.Map<Integer, SlabAllocator> deviceLocalSlabsByType =
+            new java.util.HashMap<Integer, SlabAllocator>();
+    /**
+     * The host-visible slab pools {@link VulkanHostBuffer} allocates from: same fixed-slab shape as the
+     * device-local pools, but host-visible/coherent and persistently mapped, so a host buffer no longer owns
+     * a {@code vkAllocateMemory} of its own either. One pool per memory type, created lazily.
+     */
+    private final java.util.Map<Integer, SlabAllocator> hostVisibleSlabsByType =
+            new java.util.HashMap<Integer, SlabAllocator>();
+    /**
+     * The device-local slab pools mirrored-texture <em>images</em> allocate from. Separate from the buffer
+     * pools above on purpose: a {@code VkDeviceMemory} that backs both buffers and images must keep buffer
+     * and image ranges apart by the device's {@code bufferImageGranularity}, which the shared ledger does
+     * not model. An image-only pool never mixes kinds, so the question does not arise. One pool per memory
+     * type, created lazily.
+     */
+    private final java.util.Map<Integer, SlabAllocator> deviceLocalImageSlabsByType =
+            new java.util.HashMap<Integer, SlabAllocator>();
+    /** Slab-backed buffers handed to the deferred list by {@link #celtium$retireSlabBuffer}: (handle, allocation). */
+    private final java.util.ArrayList<Object[]> retiredSlabBuffers = new java.util.ArrayList<Object[]>();
+    /**
+     * The slab completion currency on this branch: a serial counting retired-buffer drains. A deferred slab
+     * release is keyed on the serial current when the release is recorded
+     * ({@link #celtium$slabReleaseValue()}); it becomes reusable once a later drain has completed, because the
+     * drain's only call site runs where the queue is idle - the GPU has finished everything submitted - which
+     * is the completion fact a release needs. {@link #celtium$slabCompletedValue()} is the value collection
+     * may use: one behind the release serial, so a range is never collected by the same drain cycle that
+     * recorded it. The Stage 2 integration re-keys this currency on the frame timeline (the ledgers take a
+     * monotone {@code long} and do not change).
+     */
+    private long slabReleaseSerial = 1L;
+
     /** The site tags of the deferrals, and their count, so a leg can say which path needed the list. */
     private final java.util.ArrayList<String> retiredBufferSites = new java.util.ArrayList<String>();
 
@@ -4438,9 +4491,7 @@ public final class VulkanContext {
      * @return how many buffers were freed
      */
     public int celtium$destroyRetiredBuffers() {
-        if (this.retiredBuffers.isEmpty()) {
-            return 0;
-        }
+        celtium$collectSlabReleases();
         VkDevice device = this.device;
         int freed = 0;
         for (int i = 0; i < this.retiredBuffers.size(); i++) {
@@ -4454,14 +4505,216 @@ public final class VulkanContext {
             freed++;
         }
         this.retiredBuffers.clear();
+        // The slab form: destroy the buffer, then hand the sub-allocation back to its pool as a deferred
+        // release keyed on the current drain serial. This drain point is where nothing can be recording and
+        // the queue is idle, and the release itself only becomes reusable once a later drain has completed -
+        // the same completion fact the raw path's vkFreeMemory here relied on, stated through the serial
+        // instead (see slabReleaseSerial).
+        for (int i = 0; i < this.retiredSlabBuffers.size(); i++) {
+            Object[] entry = this.retiredSlabBuffers.get(i);
+            long handle = ((Long) entry[0]).longValue();
+            SlabAllocator.SlabAllocation allocation = (SlabAllocator.SlabAllocation) entry[1];
+            if (device != null) {
+                vkDestroyBuffer(device, handle, null);
+            }
+            allocation.owner().release(allocation, celtium$slabReleaseValue());
+            freed++;
+        }
+        this.retiredSlabBuffers.clear();
         this.retiredBuffersDestroyed += freed;
         this.retiredBuffersOutstanding = 0;
+        // The drain ran under the caller's queue-idle guarantee, so every release keyed on the current
+        // serial is provably GPU-dead from here on: advancing the serial is what lets the next collection
+        // (the next drain, or an allocator's collect-on-allocate retry) reuse those ranges.
+        this.slabReleaseSerial++;
         return freed;
     }
 
     /** {@return how many deferred buffers are waiting to be freed, and how many have been freed so far}. */
     public int[] celtium$retiredBufferCounts() {
         return new int[] {this.retiredBuffersOutstanding, this.retiredBuffersDestroyed};
+    }
+
+    /**
+     * {@return the device-local slab pool serving buffers whose memory requirements carry
+     * {@code memoryTypeBits}}, created on first use.
+     * <p>
+     * The pool's memory type is the one {@link #memoryTypeIndex} picks from the caller's own requirement bits,
+     * so a slab is only ever bound to a buffer that names the pool's type. There is no fallback to an allocation
+     * of the buffer's own: the slab migration has no per-buffer {@code vkAllocateMemory} to fall back to, and
+     * a device with no device-local type in the bits fails in {@code memoryTypeIndex}, as it did before.
+     */
+    public SlabAllocator celtium$deviceLocalSlabs(int memoryTypeBits) {
+        int type = memoryTypeIndex(memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                "the device-local slab pool");
+        SlabAllocator allocator = this.deviceLocalSlabsByType.get(Integer.valueOf(type));
+        if (allocator == null) {
+            allocator = new SlabAllocator(this, "deviceLocal", type, SlabAllocator.DEFAULT_SLAB_SIZE, 8, false);
+            this.deviceLocalSlabsByType.put(Integer.valueOf(type), allocator);
+        }
+        return allocator;
+    }
+
+    /**
+     * {@return the host-visible slab pool serving host buffers whose memory requirements carry
+     * {@code memoryTypeBits}}, created on first use. The pool's type is the host-visible coherent type
+     * {@link #memoryTypeIndex} picks from the caller's own requirement bits, exactly as
+     * {@link VulkanHostBuffer} picked it for its private allocation before. Ordinary slabs are capped at
+     * 8 per type, so the live {@code vkAllocateMemory} count for all host buffers combined is bounded by
+     * the slab cap (plus one dedicated slab per live oversized &gt;64 MiB request), not by the buffer count.
+     */
+    public SlabAllocator celtium$hostVisibleSlabs(int memoryTypeBits) {
+        int type = memoryTypeIndex(memoryTypeBits,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                "the host-visible slab pool");
+        SlabAllocator allocator = this.hostVisibleSlabsByType.get(Integer.valueOf(type));
+        if (allocator == null) {
+            allocator = new SlabAllocator(this, "hostVisible", type, SlabAllocator.DEFAULT_SLAB_SIZE, 8, true);
+            this.hostVisibleSlabsByType.put(Integer.valueOf(type), allocator);
+        }
+        return allocator;
+    }
+
+    /**
+     * {@return the device-local image slab pool serving images whose memory requirements carry
+     * {@code memoryTypeBits}}, created on first use. Kept apart from {@link #celtium$deviceLocalSlabs}
+     * (the buffer pools) so no slab ever mixes buffer and image ranges; see the field's documentation.
+     * Ordinary slabs are capped at 8 per type, so the live {@code vkAllocateMemory} count for all mirrored
+     * textures combined is bounded by the slab caps of the image pools they use (plus one dedicated slab
+     * per live oversized image), not by the texture count.
+     */
+    public SlabAllocator celtium$deviceLocalImageSlabs(int memoryTypeBits) {
+        int type = memoryTypeIndex(memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                "the device-local image slab pool");
+        SlabAllocator allocator = this.deviceLocalImageSlabsByType.get(Integer.valueOf(type));
+        if (allocator == null) {
+            allocator = new SlabAllocator(this, "deviceLocalImage", type, SlabAllocator.DEFAULT_SLAB_SIZE, 8,
+                    false);
+            this.deviceLocalImageSlabsByType.put(Integer.valueOf(type), allocator);
+        }
+        return allocator;
+    }
+
+    /**
+     * {@return per-pool live bytes for every slab pool, for the memory allocation summary}. The r7 Phase 1 leg
+     * died with a host pool at 512 MiB live (8 of 8 slabs, 135,168 bytes free) and the summary could only report
+     * the process-wide total, so nothing said which pool - host-visible staging, device-local buffers or images -
+     * held the memory. Each entry names the pool kind and memory type and gives its used and free bytes, its
+     * largest free run and its live slab count against the cap, so the next leg can attribute the holding and
+     * tell a full pool from a fragmented one. Each entry also splits the ordinary and fixed-page ledgers:
+     * the r10 leg's refusing pool was one of these allocators, but its ordinary ledger sat at the cap with a
+     * 16384-byte largest free run while the aggregated entry showed slabs=16 and a 15.3 MB largest free run
+     * from the fixed ledger, so the aggregate alone could not attribute the refusal.
+     */
+    public String celtium$slabPoolSummary() {
+        StringBuilder summary = new StringBuilder("slabPools=[");
+        boolean first = true;
+        first = appendSlabPoolSummary(summary, "deviceLocal", this.deviceLocalSlabsByType, first);
+        first = appendSlabPoolSummary(summary, "hostVisible", this.hostVisibleSlabsByType, first);
+        appendSlabPoolSummary(summary, "deviceLocalImage", this.deviceLocalImageSlabsByType, first);
+        return summary.append(']').toString();
+    }
+
+    private static boolean appendSlabPoolSummary(StringBuilder summary, String kind,
+            java.util.Map<Integer, SlabAllocator> poolsByType, boolean first) {
+        for (SlabAllocator allocator : poolsByType.values()) {
+            if (!first) {
+                summary.append(' ');
+            }
+            first = false;
+            summary.append(kind).append("(type=").append(allocator.memoryTypeIndex())
+                    .append("):usedBytes=").append(allocator.usedBytes())
+                    .append(",freeBytes=").append(allocator.freeBytes())
+                    .append(",largestFreeRun=").append(allocator.largestFreeRun())
+                    .append(",slabs=").append(allocator.liveSlabCount())
+                    // Ledger split (r10 follow-up): the aggregates above mix the ordinary and fixed-page
+                    // ledgers, and in r10 the fixed ledger's free runs made an exhausted ordinary ledger
+                    // (8 of 8 slabs, largest free run 16384) read as a healthy pool with slabs=16 and a
+                    // multi-megabyte largest free run. The split keeps each ledger attributable on its own.
+                    .append(",ordinarySlabs=").append(allocator.ordinarySlabCount())
+                    .append(",ordinaryUsedBytes=").append(allocator.ordinaryUsedBytes())
+                    .append(",ordinaryFreeBytes=").append(allocator.ordinaryFreeBytes())
+                    .append(",ordinaryLargestFreeRun=").append(allocator.ordinaryLargestFreeRun())
+                    .append(",fixedSlabs=").append(allocator.fixedSlabCount())
+                    .append(",fixedUsedBytes=").append(allocator.fixedUsedBytes())
+                    .append(",fixedFreeBytes=").append(allocator.fixedFreeBytes())
+                    .append(",fixedLargestFreeRun=").append(allocator.fixedLargestFreeRun())
+                    .append(",oversizedSlabs=").append(allocator.oversizedSlabCount());
+        }
+        return first;
+    }
+
+    /** {@return live slab count across the host-visible pools, for the host-buffer census}. */
+    public int celtium$hostVisibleSlabCount() {
+        int total = 0;
+        for (SlabAllocator allocator : this.hostVisibleSlabsByType.values()) {
+            total += allocator.liveSlabCount();
+        }
+        return total;
+    }
+
+    /**
+     * {@return the value a deferred slab release recorded now must be keyed on}: the current drain serial.
+     * The release becomes collectable once a retired-buffer drain has completed after this call (see
+     * {@link #slabReleaseSerial}).
+     */
+    public long celtium$slabReleaseValue() {
+        return this.slabReleaseSerial;
+    }
+
+    /**
+     * {@return the value slab collection may use now}: one behind the release serial, so a release is only
+     * collected after a drain that ran later than the release's own recording has completed.
+     */
+    public long celtium$slabCompletedValue() {
+        return this.slabReleaseSerial - 1L;
+    }
+
+    /**
+     * Makes slab ranges whose deferred releases the drain serial has already passed reusable again, by
+     * asking every pool to collect against {@link #celtium$slabCompletedValue()}. Two drive points: the
+     * retired buffer drain ({@link #celtium$destroyRetiredBuffers()}) and the allocators' collect-on-allocate
+     * retry, because collection that only runs when a retired buffer happens to drain lets per-frame staging
+     * churn hold whole slabs hostage for as long as the drain stays uncalled.
+     */
+    public void celtium$collectSlabReleases() {
+        if (this.deviceLocalSlabsByType.isEmpty() && this.hostVisibleSlabsByType.isEmpty()
+                && this.deviceLocalImageSlabsByType.isEmpty()) {
+            return;
+        }
+        long completed = celtium$slabCompletedValue();
+        for (SlabAllocator allocator : this.deviceLocalSlabsByType.values()) {
+            allocator.collectCompleted(completed);
+        }
+        for (SlabAllocator allocator : this.hostVisibleSlabsByType.values()) {
+            allocator.collectCompleted(completed);
+        }
+        for (SlabAllocator allocator : this.deviceLocalImageSlabsByType.values()) {
+            allocator.collectCompleted(completed);
+        }
+    }
+
+    /**
+     * Hands a slab-backed buffer to the deferred list, the slab form of {@link #celtium$retireBuffer(long, long,
+     * String)}: the buffer is destroyed and its sub-allocation released at the same safe point, instead of a
+     * {@code vkFreeMemory} the slab must never receive.
+     */
+    public void celtium$retireSlabBuffer(long handle, SlabAllocator.SlabAllocation allocation, String site) {
+        if (handle == VK_NULL_HANDLE) {
+            return;
+        }
+        if (allocation == null) {
+            // No slab range to return (a create that failed before its allocation): the handle alone is
+            // retired through the raw list, whose drain destroys it without freeing any memory.
+            celtium$retireBuffer(handle, VK_NULL_HANDLE, site);
+            return;
+        }
+        this.retiredSlabBuffers.add(new Object[] {Long.valueOf(handle), allocation});
+        if (this.retiredBufferSites.size() < 8) {
+            this.retiredBufferSites.add(site);
+            System.out.println("[Celtium] CELTIUM_BUFFER_RETIRED site=" + site + " slab=true outstanding="
+                    + this.retiredSlabBuffers.size());
+        }
     }
 
     /** Submits every pending copy and waits for it and every other outstanding deferred submission to complete. */
