@@ -101,19 +101,16 @@ public final class SwapchainCreateArguments {
     }
 
     /**
-     * Chooses the creation arguments for the direct present path (design CELTIUM-A-TO-B Stage 1; lanechat
-     * #8830 (3)(4)): the frame renders straight into the swapchain image, so colour-attachment usage is
-     * required and transfer usage is kept wherever the surface offers it, for the readback/dump block and
-     * the loading screen's standalone present.
-     * <p>
-     * The previous default was transfer-only usage, chosen for issue #422 (a): on RDNA3 proprietary
-     * drivers, displayable DCC compression metadata on colour-attachment swapchain images collided with
-     * {@code UNDEFINED -> TRANSFER_DST} blit presents. That trade belonged to the blit path it protected:
-     * a transfer-only swapchain cannot be rendered into at all, and the direct path's own transitions -
-     * the frame target's acquire/release barriers, which already carry the full attachment/transfer/shader
-     * masks #422 (a) asked for - are the DCC-relevant surface now. The transfer-only shape is the default
-     * again since direct present landed opt-in; the colour-attachment shape is requested only behind
-     * {@code -Dceltium.present.direct=true}, through the overload below.
+     * Chooses the creation arguments for the default present mode: the transfer-only shape of issue
+     * #422 (a) - the present path writes swapchain images solely through blits and clears, so
+     * colour-attachment usage is dropped and displayable DCC compression metadata on RDNA3 proprietary
+     * drivers never collides with {@code UNDEFINED -> TRANSFER_DST} presents. This is the BH-18
+     * contract's default, and it is the shipped default again since direct present landed opt-in
+     * (ruling, lanechat #9168): {@link VulkanSwapchain} makes its own selection through the explicit
+     * overloads below, passing the transfer-only shape unless {@code -Dceltium.present.direct=true}
+     * opts into the direct path, whose mode requires colour-attachment usage and keeps transfer usage
+     * wherever the surface offers it (the readback/dump block and the loading screen's standalone
+     * present read those bits).
      *
      * @param surface         what the surface reported
      * @param requestedWidth  the window's framebuffer width
@@ -122,7 +119,7 @@ public final class SwapchainCreateArguments {
      * @return the arguments to request, or a {@link Result#refusal} when this surface cannot carry a frame
      */
     public static Result select(Surface surface, int requestedWidth, int requestedHeight, int desiredImages) {
-        return select(surface, requestedWidth, requestedHeight, desiredImages, false);
+        return select(surface, requestedWidth, requestedHeight, desiredImages, true);
     }
 
     /**

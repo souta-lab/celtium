@@ -12,11 +12,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Pins the direct present path's swapchain usage contract (design section 2.5; lanechat #8830 (3)(4)):
  * <ul>
- *   <li>{@link SwapchainCreateArguments#select} requires {@code COLOR_ATTACHMENT} - the frame renders
- *       straight into the swapchain image - and keeps the transfer bits the surface offers, for the
- *       present readback/dump block and the loading screen's standalone present. This replaced the
- *       transfer-only default of issue #422 (a), which belonged to the blit path deleted in the same
- *       landing: a transfer-only swapchain cannot be rendered into at all.</li>
+ *   <li>In the direct present mode (the explicit {@code transferOnlyPresent=false} overloads; the
+ *       four-argument default stays the transfer-only shape of issue #422 (a), restored at the opt-in
+ *       landing), {@link SwapchainCreateArguments#select} requires {@code COLOR_ATTACHMENT} - the frame
+ *       renders straight into the swapchain image - and keeps the transfer bits the surface offers, for
+ *       the present readback/dump block and the loading screen's standalone present: a transfer-only
+ *       swapchain cannot be rendered into at all.</li>
  *   <li>{@link VulkanSwapchain#imageViewsWanted(int)} creates views exactly when colour-attachment usage
  *       is present - under the direct path that is always, so every generation carries the views the
  *       lender hands borrowers (and {@code VUID-VkImageViewCreateInfo-image-04441} stays satisfied for
@@ -78,7 +79,7 @@ class SwapchainDirectPresentUsageTest {
     @Test
     void selectKeepsColourAttachmentAndEveryOfferedTransferBit() {
         SwapchainCreateArguments.Result result =
-                SwapchainCreateArguments.select(surfaceWithUsage(ALL_USAGE), 1024, 640, 3);
+                SwapchainCreateArguments.select(surfaceWithUsage(ALL_USAGE), 1024, 640, 3, false, false);
         assertNull(result.refusal);
         assertEquals(ALL_USAGE, result.usage);
         assertEquals("", result.droppedUsage);
@@ -91,7 +92,7 @@ class SwapchainDirectPresentUsageTest {
         int noColour = SwapchainCreateArguments.USAGE_TRANSFER_DST
                 | SwapchainCreateArguments.USAGE_TRANSFER_SRC;
         SwapchainCreateArguments.Result result =
-                SwapchainCreateArguments.select(surfaceWithUsage(noColour), 1024, 640, 3);
+                SwapchainCreateArguments.select(surfaceWithUsage(noColour), 1024, 640, 3, false, false);
         assertNotNull(result.refusal);
         assertTrue(result.refusal.contains("colour-attachment"), result.refusal);
     }
@@ -99,7 +100,7 @@ class SwapchainDirectPresentUsageTest {
     @Test
     void selectAcceptsColourAttachmentOnlyAndNamesTheDroppedTransferBits() {
         SwapchainCreateArguments.Result result = SwapchainCreateArguments.select(
-                surfaceWithUsage(SwapchainCreateArguments.USAGE_COLOR_ATTACHMENT), 1024, 640, 3);
+                surfaceWithUsage(SwapchainCreateArguments.USAGE_COLOR_ATTACHMENT), 1024, 640, 3, false, false);
         assertNull(result.refusal);
         assertEquals(SwapchainCreateArguments.USAGE_COLOR_ATTACHMENT, result.usage);
         assertTrue(result.droppedUsage.contains("TRANSFER_DST"), result.droppedUsage);
@@ -111,7 +112,7 @@ class SwapchainDirectPresentUsageTest {
         int colourAndDst = SwapchainCreateArguments.USAGE_COLOR_ATTACHMENT
                 | SwapchainCreateArguments.USAGE_TRANSFER_DST;
         SwapchainCreateArguments.Result result =
-                SwapchainCreateArguments.select(surfaceWithUsage(colourAndDst), 1024, 640, 3);
+                SwapchainCreateArguments.select(surfaceWithUsage(colourAndDst), 1024, 640, 3, false, false);
         assertNull(result.refusal);
         assertEquals(colourAndDst, result.usage);
         assertTrue(result.droppedUsage.contains("TRANSFER_SRC"), result.droppedUsage);
