@@ -7,6 +7,10 @@ import java.nio.ByteBuffer;
  * implementation used by tests and tooling; the production ring is the HAL's host-visible Vulkan
  * memory behind the same interface. Writes are plain memory copies, mirroring the zero-allocation
  * discipline of the capture path: no per-write objects.
+ *
+ * <p>Offsets at this interface are slot-relative (the {@link StagingRing} contract); the single
+ * backing buffer is an implementation detail, so {@link #write} translates a slot-relative
+ * offset into the current slot's region internally.
  */
 public final class DirectStagingRing implements StagingRing {
 
@@ -53,19 +57,22 @@ public final class DirectStagingRing implements StagingRing {
             return -1;
         }
         this.cursor = aligned + size;
-        return this.currentSlot * this.slotCapacity + aligned;
+        return aligned;
     }
 
     @Override
     public void write(long offset, ByteBuffer source) {
         ByteBuffer view = this.buffer.duplicate();
-        view.position((int) offset);
+        view.position((int) (this.currentSlot * this.slotCapacity + offset));
         view.put(source.duplicate());
     }
 
     @Override
     public void advanceFrame() {
         this.currentSlot = (this.currentSlot + 1) % this.slotCount;
+        // Local convenience of the headless implementation only: with no completion gate in a
+        // test, the slot recycles itself here. The StagingRing contract does not promise this -
+        // in production the owner's gate owns recycling (see the interface).
         this.cursor = 0;
     }
 

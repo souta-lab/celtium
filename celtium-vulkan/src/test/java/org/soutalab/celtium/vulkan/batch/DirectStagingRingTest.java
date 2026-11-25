@@ -9,13 +9,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class DirectStagingRingTest {
 
     @Test
-    void allocationsAreSlotRelativeThenRingAbsolute() {
+    void allocationsAreSlotRelativeInEverySlot() {
         DirectStagingRing ring = new DirectStagingRing(2, 64);
         assertEquals(0, ring.allocate(16, 1));
         assertEquals(16, ring.allocate(8, 1));
         ring.advanceFrame();
         assertEquals(1, ring.currentSlot());
-        assertEquals(64, ring.allocate(16, 1));
+        assertEquals(0, ring.allocate(16, 1));
+        assertEquals(16, ring.allocate(8, 1));
     }
 
     @Test
@@ -31,7 +32,7 @@ class DirectStagingRingTest {
         assertEquals(0, ring.allocate(32, 1));
         assertEquals(-1, ring.allocate(1, 1));
         ring.advanceFrame();
-        assertEquals(32, ring.allocate(32, 1));
+        assertEquals(0, ring.allocate(32, 1));
         ring.advanceFrame();
         assertEquals(0, ring.currentSlot());
         assertEquals(0, ring.allocate(32, 1));
@@ -45,5 +46,18 @@ class DirectStagingRingTest {
         ByteBuffer back = ring.buffer().duplicate();
         assertEquals(10, back.get(0));
         assertEquals(13, back.get(3));
+    }
+
+    @Test
+    void writeInSecondSlotLandsInThatSlotsRegion() {
+        DirectStagingRing ring = new DirectStagingRing(2, 64);
+        ring.advanceFrame();
+        long offset = ring.allocate(4, 1);
+        assertEquals(0, offset);
+        ring.write(offset, ByteBuffer.wrap(new byte[]{20, 21, 22, 23}));
+        ByteBuffer back = ring.buffer().duplicate();
+        assertEquals(0, back.get(0));
+        assertEquals(20, back.get(64));
+        assertEquals(23, back.get(67));
     }
 }
