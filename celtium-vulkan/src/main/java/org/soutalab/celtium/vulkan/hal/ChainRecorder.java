@@ -1,4 +1,12 @@
-package org.soutalab.celtium.vulkan;
+package org.soutalab.celtium.vulkan.hal;
+
+import org.soutalab.celtium.vulkan.FrameImageTarget;
+import org.soutalab.celtium.vulkan.RenderTargetRegistry;
+import org.soutalab.celtium.vulkan.SpirvShaders;
+import org.soutalab.celtium.vulkan.VulkanContext;
+import org.soutalab.celtium.vulkan.VulkanDescriptorWrites;
+import org.soutalab.celtium.vulkan.VulkanUniformBuffer;
+import org.soutalab.celtium.vulkan.VulkanColorFormat;
 
 import org.soutalab.celtium.vulkan.compat.PostChainPass;
 
@@ -99,7 +107,7 @@ import org.lwjgl.vulkan.VkWriteDescriptorSet;
  * sampled nothing. The caller turns that refusal into the GL chain it replaces; see
  * {@link #unsuppliedInput(List)}.
  */
-public final class VulkanPostChain {
+public final class ChainRecorder {
 
     /** One collected pass, handed over by the mixin with everything already resolved to plain values. */
 
@@ -130,7 +138,7 @@ public final class VulkanPostChain {
      * {@code post_sobel_ubo.vert}. Derived rather than listed a second time, so a variant can only be missing, never
      * mismatched by name.
      */
-    static String uboVariant(String module) {
+    public static String uboVariant(String module) {
         int dot = module.lastIndexOf('.');
         return dot < 0 ? module + "_ubo" : module.substring(0, dot) + "_ubo" + module.substring(dot);
     }
@@ -358,7 +366,7 @@ public final class VulkanPostChain {
      */
     private int uboRequests;
 
-    private VulkanPostChain(VulkanContext context, FrameImageTarget frameTarget, long renderPass, long setLayout,
+    private ChainRecorder(VulkanContext context, FrameImageTarget frameTarget, long renderPass, long setLayout,
             long descriptorPool, long sampler, int maxPushConstants, VulkanUniformBuffer uniformBlocks,
             long uniformStride, int uniformBlockBytes, String uniformRouteRefusal) {
         this.context = context;
@@ -383,7 +391,7 @@ public final class VulkanPostChain {
         }
     }
 
-    public static VulkanPostChain create(VulkanContext context, FrameImageTarget frameTarget) {
+    public static ChainRecorder create(VulkanContext context, FrameImageTarget frameTarget) {
         if (context == null || frameTarget == null) {
             throw new IllegalArgumentException("context and frame target must be set");
         }
@@ -479,7 +487,7 @@ public final class VulkanPostChain {
                     .mipLodBias(0.0f).minLod(0.0f).maxLod(0.0f);
             check(vkCreateSampler(device, samplerInfo, null, handle), "vkCreateSampler(post chain)");
             sampler = handle.get(0);
-            VulkanPostChain chain = new VulkanPostChain(context, frameTarget, renderPass, setLayout,
+            ChainRecorder chain = new ChainRecorder(context, frameTarget, renderPass, setLayout,
                     descriptorPool, sampler, maxPush, uniformBlocks, uniformRouteStride, uniformRouteBytes,
                     uniformRouteRefusal);
             // The set ring is allocated once: each pass takes the next set, so a set is only ever bound and then
@@ -586,7 +594,7 @@ public final class VulkanPostChain {
      * chain's own class otherwise. A chain whose class was never resolved runs in the default class, which is
      * the behaviour every chain had before format selection existed.
      */
-    static RenderTargetRegistry.TargetFormatClass celtium$outFormatClass(boolean outIsMain,
+    public static RenderTargetRegistry.TargetFormatClass celtium$outFormatClass(boolean outIsMain,
             RenderTargetRegistry.TargetFormatClass chainFormatClass) {
         if (outIsMain || chainFormatClass == null) {
             return RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM;
@@ -600,7 +608,7 @@ public final class VulkanPostChain {
      * class - two classes must never share a pipeline, because a pipeline is created against one class's
      * render pass and only that pass's framebuffers may be begun with it.
      */
-    static String celtium$programKey(String program, RenderTargetRegistry.TargetFormatClass formatClass) {
+    public static String celtium$programKey(String program, RenderTargetRegistry.TargetFormatClass formatClass) {
         if (formatClass == null || formatClass == RenderTargetRegistry.TargetFormatClass.RGBA8_UNORM) {
             return program;
         }
@@ -613,7 +621,7 @@ public final class VulkanPostChain {
      * class change is the same shape of change - the image's format is fixed at creation, so nothing short of a
      * new image answers it (QUEUE 404 rule R3, stated for pairs; the chain's own targets follow it too).
      */
-    static boolean celtium$targetRebuildNeeded(boolean sizeMatches,
+    public static boolean celtium$targetRebuildNeeded(boolean sizeMatches,
             RenderTargetRegistry.TargetFormatClass existing, RenderTargetRegistry.TargetFormatClass wanted) {
         return !sizeMatches || existing != wanted;
     }
@@ -650,7 +658,7 @@ public final class VulkanPostChain {
                 write.get(0).sType$Default().dstSet(this.setRing[i]).dstBinding(UNIFORM_BLOCK_BINDING)
                         .descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
                         .pBufferInfo(info);
-                VulkanDescriptorWrites.note(write, "VulkanPostChain");
+                VulkanDescriptorWrites.note(write, "ChainRecorder");
                 vkUpdateDescriptorSets(device, write, null);
             }
         }
@@ -1093,16 +1101,16 @@ public final class VulkanPostChain {
                             pass.auxFbIds[0] == 0, pass.auxFbIds[0], pass.auxW[0], pass.auxH[0]);
                 }
                 if (refusal != null) {
-                    VulkanPostChain.this.preflightRefusals++;
-                    VulkanPostChain.this.refusedInputs++;
+                    ChainRecorder.this.preflightRefusals++;
+                    ChainRecorder.this.refusedInputs++;
                     List<PostChainPass> soFar = new ArrayList<>(this.seenPasses);
                     soFar.add(pass);
                     noteReportedButUnadoptedInput(soFar);
-                    if (!VulkanPostChain.this.refusalReported) {
-                        VulkanPostChain.this.refusalReported = true;
+                    if (!ChainRecorder.this.refusalReported) {
+                        ChainRecorder.this.refusalReported = true;
                         PostChainPass first = soFar.get(0);
                         System.out.println("[Celtium] CELTIUM_POST_REFUSED_UNSUPPLIED_INPUT run="
-                                + VulkanPostChain.this.chainsRun
+                                + ChainRecorder.this.chainsRun
                                 + " reportedIdentity=" + first.groupMainFbId + " reportedTexture="
                                 + first.groupMainTextureId
                                 + " " + first.groupMainW + "x" + first.groupMainH + " adopted=" + adoptedCount()
@@ -1132,40 +1140,40 @@ public final class VulkanPostChain {
             // layouts, and printing every pass of every run would spend the whole trace budget before the
             // interesting frame.
             // Built only while the budget can print it: one recording a frame for a whole session, eight parts each.
-            if (VulkanPostChain.this.traceLines < TRACE_LIMIT) {
-                trace("run=" + VulkanPostChain.this.chainsRun + " recording=" + VulkanPostChain.this.recordings
+            if (ChainRecorder.this.traceLines < TRACE_LIMIT) {
+                trace("run=" + ChainRecorder.this.chainsRun + " recording=" + ChainRecorder.this.recordings
                         + " cmd=0x" + hex(this.commandBuffer.address())
-                        + " frame=0x" + hex(VulkanPostChain.this.frameTarget.colorImage()) + " frameView=0x"
-                        + hex(VulkanPostChain.this.frameTarget.colorView()) + " passes=" + this.passIndex
-                        + " pendingInit=" + VulkanPostChain.this.pendingInit.size());
+                        + " frame=0x" + hex(ChainRecorder.this.frameTarget.colorImage()) + " frameView=0x"
+                        + hex(ChainRecorder.this.frameTarget.colorView()) + " passes=" + this.passIndex
+                        + " pendingInit=" + ChainRecorder.this.pendingInit.size());
             }
             if (this.interesting) {
                 for (String detail : this.details) {
                     trace(detail);
                 }
             }
-            if (INJECTION_ALLOWED && VulkanPostChain.this.injectedFirstUseFailures < FAIL_FIRST_USE_RECORDINGS) {
+            if (INJECTION_ALLOWED && ChainRecorder.this.injectedFirstUseFailures < FAIL_FIRST_USE_RECORDINGS) {
                 // The recording is complete - barriers and draws are in the command buffer - and the queue has
                 // not seen it. Raising here is the closest a class that does not own the submit can get to a
                 // refused vkQueueSubmit: the caller's own failure path runs (frame abandoned, false returned, GL
                 // chain kept), and every target whose first-use barrier went into this buffer must stay
                 // uninitialized.
-                VulkanPostChain.this.injectedFirstUseFailures++;
-                trace("INJECTED_FAILURE recording=" + VulkanPostChain.this.recordings + " pendingInit="
-                        + VulkanPostChain.this.pendingInit.size()
+                ChainRecorder.this.injectedFirstUseFailures++;
+                trace("INJECTED_FAILURE recording=" + ChainRecorder.this.recordings + " pendingInit="
+                        + ChainRecorder.this.pendingInit.size()
                         + " - recorded, never submitted; the next recording must carry these barriers again"
-                        + " (injected=" + VulkanPostChain.this.injectedFirstUseFailures + "/"
+                        + " (injected=" + ChainRecorder.this.injectedFirstUseFailures + "/"
                         + FAIL_FIRST_USE_RECORDINGS + ")");
                 throw new IllegalStateException("injected post chain submit failure before queue ownership:"
-                        + " recording=" + VulkanPostChain.this.recordings + " pendingInit="
-                        + VulkanPostChain.this.pendingInit.size() + " injected="
-                        + VulkanPostChain.this.injectedFirstUseFailures + "/" + FAIL_FIRST_USE_RECORDINGS);
+                        + " recording=" + ChainRecorder.this.recordings + " pendingInit="
+                        + ChainRecorder.this.pendingInit.size() + " injected="
+                        + ChainRecorder.this.injectedFirstUseFailures + "/" + FAIL_FIRST_USE_RECORDINGS);
             }
             // Counted only now: a recording that was refused (unsupplied input) or thrown away (injected failure)
             // never reached the queue, and postChains is read as "chains this executor ran", not "chains it was
             // asked to run".
             requireTargetGeneration(this.recordedUnder);
-            VulkanPostChain.this.chainsRun++;
+            ChainRecorder.this.chainsRun++;
             this.finished = true;
             return this.token;
         }
@@ -1941,7 +1949,7 @@ public final class VulkanPostChain {
                     .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).pImageInfo(auxInfo);
             // Binding 2 is not written here: it names this slot's uniform block for the chain's whole life, set once
             // at creation. Only the block's contents change per pass, through the mapping below.
-            VulkanDescriptorWrites.note(writes, "VulkanPostChain");
+            VulkanDescriptorWrites.note(writes, "ChainRecorder");
             vkUpdateDescriptorSets(device, writes, null);
             return slot;
         }
@@ -2343,7 +2351,7 @@ public final class VulkanPostChain {
      * raises rather than being sized by a guess, which refuses the route using it. A member the two stages place
      * differently also raises: one binding holds one block, so two stages disagreeing about it is not a block at all.
      */
-    static final class SpirvBlock {
+    public static final class SpirvBlock {
         /** Opcodes this reader interprets; every other instruction is skipped by its own word count. */
         private static final int OP_MEMBER_NAME = 6;
         private static final int OP_TYPE_INT = 21;
@@ -2362,9 +2370,9 @@ public final class VulkanPostChain {
         private static final int HEADER_WORDS = 5;
 
         /** Declared member name -> byte offset, in declaration order. */
-        final Map<String, Integer> offsets = new LinkedHashMap<>();
+        public final Map<String, Integer> offsets = new LinkedHashMap<>();
         /** The end of the block: the furthest byte any member occupies. */
-        final int bytes;
+        public final int bytes;
 
         private SpirvBlock(Map<String, Integer> offsets, int bytes) {
             this.offsets.putAll(offsets);
@@ -2374,7 +2382,7 @@ public final class VulkanPostChain {
         /**
          * {@return the block {@code module} declares}, read from the compiled module the driver is handed.
          */
-        static SpirvBlock of(String module) {
+        public static SpirvBlock of(String module) {
             ByteBuffer code = SpirvShaders.load(module);
             try {
                 return read(module, code);
@@ -2387,7 +2395,7 @@ public final class VulkanPostChain {
          * {@return the block {@code code} declares}. Reads the module's words in the buffer's own byte order,
          * so the classpath loader's native-order buffer and a test's little-endian wrapper both work.
          */
-        static SpirvBlock read(String module, ByteBuffer code) {
+        public static SpirvBlock read(String module, ByteBuffer code) {
             int words = code.remaining() / 4;
             Map<Long, String> names = new HashMap<>();
             Map<Long, Integer> memberOffsets = new HashMap<>();

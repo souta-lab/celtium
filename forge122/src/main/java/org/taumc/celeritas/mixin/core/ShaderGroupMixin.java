@@ -13,7 +13,6 @@ import net.minecraft.client.shader.ShaderManager;
 import net.minecraft.client.shader.ShaderUniform;
 import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackend;
 import org.embeddedt.embeddium.impl.render.chunk.backend.TerrainGpuBackends;
-import org.soutalab.celtium.vulkan.VulkanPostChain;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;

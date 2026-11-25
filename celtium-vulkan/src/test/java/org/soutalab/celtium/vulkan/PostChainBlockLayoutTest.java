@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.hal.ChainRecorder;
+
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -31,12 +33,12 @@ class PostChainBlockLayoutTest {
      * The module's block as the executor reads it: the compiled module from the classpath, parsed by the same reader
      * the renderer uses. Read here without LWJGL's native memory, which a unit test JVM does not load.
      */
-    private static VulkanPostChain.SpirvBlock block(String module) throws Exception {
+    private static ChainRecorder.SpirvBlock block(String module) throws Exception {
         String resource = "/org/soutalab/celtium/vulkan/spirv/" + module + ".spv";
         try (InputStream stream = PostChainBlockLayoutTest.class.getResourceAsStream(resource)) {
             assertNotNull(stream, resource + " is not on the test classpath; the shader build did not run");
             ByteBuffer code = ByteBuffer.wrap(stream.readAllBytes()).order(ByteOrder.LITTLE_ENDIAN);
-            return VulkanPostChain.SpirvBlock.read(module, code);
+            return ChainRecorder.SpirvBlock.read(module, code);
         }
     }
 
@@ -45,9 +47,9 @@ class PostChainBlockLayoutTest {
         for (String[] program : UBO_PROGRAMS) {
             for (int module = 1; module < program.length; ++module) {
                 String push = program[module];
-                String ubo = VulkanPostChain.uboVariant(push);
+                String ubo = ChainRecorder.uboVariant(push);
                 Map<String, Integer> pushBlock = block(push).offsets;
-                VulkanPostChain.SpirvBlock variant = block(ubo);
+                ChainRecorder.SpirvBlock variant = block(ubo);
                 assertEquals(pushBlock, variant.offsets, ubo + " declares a different block than " + push
                         + ": the buffer route would write a block the shader does not read");
                 assertFalse(pushBlock.isEmpty(), push + " declares no block member");
@@ -64,7 +66,7 @@ class PostChainBlockLayoutTest {
             }
             assertTrue(bytes > 128, program[0] + "'s block is " + bytes + "B, which fits the 128-byte guaranteed"
                     + " maxPushConstantsSize: it would keep the push route and this variant would go unexercised");
-            assertEquals(bytes, block(VulkanPostChain.uboVariant(program[2])).bytes,
+            assertEquals(bytes, block(ChainRecorder.uboVariant(program[2])).bytes,
                     "the fragment stage carries the whole block");
         }
     }

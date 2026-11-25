@@ -1,7 +1,6 @@
 package org.soutalab.celtium.vulkan.compat;
 
 import org.junit.jupiter.api.Test;
-import org.soutalab.celtium.vulkan.VulkanPostChain;
 
 import java.util.List;
 

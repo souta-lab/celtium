@@ -388,7 +388,7 @@ public final class ModGlslTranslator {
         // is a property of the push route, not of the block, so a program above it (Demonica's deferred passes
         // carry 480/496 bytes, its gbuffers programs 1568) is lowered, not refused - the pipeline gives the
         // buffer route a descriptor binding after the samplers and images and a slot of its uniform ring, the
-        // shape VulkanPostChain's own oversized programs already take. The threshold is the number
+        // shape ChainRecorder's own oversized programs already take. The threshold is the number
         // ModPushConstantLimit records (the device's limit, or the guaranteed minimum before selection), so a
         // program linked before selection takes the buffer route above 128 bytes: always valid, because the
         // buffer route does not depend on the push limit at all.

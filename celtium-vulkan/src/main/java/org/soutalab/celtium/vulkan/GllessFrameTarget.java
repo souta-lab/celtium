@@ -99,7 +99,7 @@ public final class GllessFrameTarget implements FrameImageTarget {
      * (no hierarchical depth culling, no fast depth clears), and nothing outside this renderer reads it - the GL-less
      * target is never handed to OpenGL. Clears and readbacks move it to their transfer layouts and back.
      */
-    static final int DEPTH_RENDER_LAYOUT = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    public static final int DEPTH_RENDER_LAYOUT = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     private static final int DEPTH_TRANSFER_LAYOUT = org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 
     /** What the game clears its own framebuffers to before drawing into them: transparent black, depth 1. */

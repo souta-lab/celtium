@@ -20,7 +20,8 @@ import static org.lwjgl.vulkan.VK10.*;
  * need an explicit flush before the draw that reads it. The buffer only grows; the caller addresses blocks by
  * dynamic offset, so existing contents stay valid across a growth.
  */
-final class VulkanUniformBuffer {
+/** Public since the chain recorder moved to the hal package (arch-graph-r7): the recorder is its consumer across the package line, the same one-word widening the hal FrameTargetPair extraction used for VulkanGlTexture. */
+public final class VulkanUniformBuffer {
     private final VulkanContext context;
 
     private long buffer;
@@ -33,7 +34,7 @@ final class VulkanUniformBuffer {
     /** The buffer's Vulkan usage: uniform blocks by default, a vertex source for the constant-attribute ring. */
     private final int usage;
 
-    VulkanUniformBuffer(VulkanContext context, long initialSize) {
+    public VulkanUniformBuffer(VulkanContext context, long initialSize) {
         this(context, initialSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
     }
 
@@ -42,7 +43,7 @@ final class VulkanUniformBuffer {
      * constant-attribute ring binds it as a stride-0 vertex buffer, which needs the vertex usage bit and nothing else
      * this class does differently.
      */
-    VulkanUniformBuffer(VulkanContext context, long initialSize, int usage) {
+    public VulkanUniformBuffer(VulkanContext context, long initialSize, int usage) {
         this.context = context;
         this.usage = usage;
         publish(create(alignToDevice(initialSize), "VulkanUniformBuffer:initial"));
@@ -52,7 +53,7 @@ final class VulkanUniformBuffer {
         return this.size;
     }
 
-    long buffer() {
+    public long buffer() {
         return this.buffer;
     }
 
@@ -61,7 +62,7 @@ final class VulkanUniformBuffer {
     }
 
     /** The mapped range. Writes through this view are visible to the GPU after the owning queue submission. */
-    ByteBuffer mapped() {
+    public ByteBuffer mapped() {
         ByteBuffer view = this.mappedView;
         if (view == null && this.mappedAddress != 0L && this.size > 0L) {
             view = MemoryUtil.memByteBuffer(this.mappedAddress, (int) this.size);
@@ -229,7 +230,7 @@ final class VulkanUniformBuffer {
         return new IllegalStateException(message == null ? "uniform buffer replacement failed" : message);
     }
 
-    void delete() {
+    public void delete() {
         this.mappedView = null;
         if (this.mappedAddress != 0) {
             vkUnmapMemory(this.context.device(), this.memory);

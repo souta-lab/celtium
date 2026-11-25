@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.hal.ChainRecorder;
+
 import org.junit.jupiter.api.Test;
 import org.soutalab.celtium.vulkan.RenderTargetRegistry.TargetFormatClass;
 
@@ -22,24 +24,24 @@ class PostChainFormatSelectionTest {
     @Test
     void aPassWritingMainStaysInTheDefaultClass() {
         assertEquals(TargetFormatClass.RGBA8_UNORM,
-                VulkanPostChain.celtium$outFormatClass(true, TargetFormatClass.RGBA16_FLOAT));
+                ChainRecorder.celtium$outFormatClass(true, TargetFormatClass.RGBA16_FLOAT));
         assertEquals(TargetFormatClass.RGBA8_UNORM,
-                VulkanPostChain.celtium$outFormatClass(true, TargetFormatClass.RGBA32_FLOAT));
+                ChainRecorder.celtium$outFormatClass(true, TargetFormatClass.RGBA32_FLOAT));
         assertEquals(TargetFormatClass.RGBA8_UNORM,
-                VulkanPostChain.celtium$outFormatClass(true, TargetFormatClass.RGBA8_UNORM));
+                ChainRecorder.celtium$outFormatClass(true, TargetFormatClass.RGBA8_UNORM));
     }
 
     // A pass that writes a chain target writes in the chain's class; an unresolved class is the default.
     @Test
     void aPassWritingAChainTargetWritesInTheChainClass() {
         assertEquals(TargetFormatClass.RGBA16_FLOAT,
-                VulkanPostChain.celtium$outFormatClass(false, TargetFormatClass.RGBA16_FLOAT));
+                ChainRecorder.celtium$outFormatClass(false, TargetFormatClass.RGBA16_FLOAT));
         assertEquals(TargetFormatClass.R11G11B10_FLOAT,
-                VulkanPostChain.celtium$outFormatClass(false, TargetFormatClass.R11G11B10_FLOAT));
+                ChainRecorder.celtium$outFormatClass(false, TargetFormatClass.R11G11B10_FLOAT));
         assertEquals(TargetFormatClass.RGBA8_UNORM,
-                VulkanPostChain.celtium$outFormatClass(false, TargetFormatClass.RGBA8_UNORM));
+                ChainRecorder.celtium$outFormatClass(false, TargetFormatClass.RGBA8_UNORM));
         assertEquals(TargetFormatClass.RGBA8_UNORM,
-                VulkanPostChain.celtium$outFormatClass(false, null),
+                ChainRecorder.celtium$outFormatClass(false, null),
                 "no class resolved: the chain runs as every chain ran before selection existed");
     }
 
@@ -48,15 +50,15 @@ class PostChainFormatSelectionTest {
     @Test
     void thePipelineKeyFoldsTheDefaultClassAndSeparatesTheRest() {
         assertEquals("entity_outline",
-                VulkanPostChain.celtium$programKey("entity_outline", TargetFormatClass.RGBA8_UNORM));
+                ChainRecorder.celtium$programKey("entity_outline", TargetFormatClass.RGBA8_UNORM));
         assertEquals("entity_outline",
-                VulkanPostChain.celtium$programKey("entity_outline", null));
-        assertNotEquals(VulkanPostChain.celtium$programKey("blur", TargetFormatClass.RGBA8_UNORM),
-                VulkanPostChain.celtium$programKey("blur", TargetFormatClass.RGBA16_FLOAT));
-        assertNotEquals(VulkanPostChain.celtium$programKey("blur", TargetFormatClass.RGBA16_FLOAT),
-                VulkanPostChain.celtium$programKey("blur", TargetFormatClass.RGBA32_FLOAT));
-        assertEquals(VulkanPostChain.celtium$programKey("blur", TargetFormatClass.RGBA16_FLOAT),
-                VulkanPostChain.celtium$programKey("blur", TargetFormatClass.RGBA16_FLOAT),
+                ChainRecorder.celtium$programKey("entity_outline", null));
+        assertNotEquals(ChainRecorder.celtium$programKey("blur", TargetFormatClass.RGBA8_UNORM),
+                ChainRecorder.celtium$programKey("blur", TargetFormatClass.RGBA16_FLOAT));
+        assertNotEquals(ChainRecorder.celtium$programKey("blur", TargetFormatClass.RGBA16_FLOAT),
+                ChainRecorder.celtium$programKey("blur", TargetFormatClass.RGBA32_FLOAT));
+        assertEquals(ChainRecorder.celtium$programKey("blur", TargetFormatClass.RGBA16_FLOAT),
+                ChainRecorder.celtium$programKey("blur", TargetFormatClass.RGBA16_FLOAT),
                 "the same class resolves to the same pipeline");
     }
 
@@ -64,17 +66,17 @@ class PostChainFormatSelectionTest {
     // pass asks for differs from the class the image was created in - an image's format cannot change.
     @Test
     void aTargetIsRebuiltOnASizeOrClassChange() {
-        assertFalse(VulkanPostChain.celtium$targetRebuildNeeded(true,
+        assertFalse(ChainRecorder.celtium$targetRebuildNeeded(true,
                 TargetFormatClass.RGBA8_UNORM, TargetFormatClass.RGBA8_UNORM));
-        assertFalse(VulkanPostChain.celtium$targetRebuildNeeded(true,
+        assertFalse(ChainRecorder.celtium$targetRebuildNeeded(true,
                 TargetFormatClass.RGBA16_FLOAT, TargetFormatClass.RGBA16_FLOAT));
-        assertTrue(VulkanPostChain.celtium$targetRebuildNeeded(false,
+        assertTrue(ChainRecorder.celtium$targetRebuildNeeded(false,
                 TargetFormatClass.RGBA8_UNORM, TargetFormatClass.RGBA8_UNORM),
                 "a size change alone still rebuilds");
-        assertTrue(VulkanPostChain.celtium$targetRebuildNeeded(true,
+        assertTrue(ChainRecorder.celtium$targetRebuildNeeded(true,
                 TargetFormatClass.RGBA8_UNORM, TargetFormatClass.RGBA16_FLOAT),
                 "a class change at the same size rebuilds: the format is fixed at creation");
-        assertTrue(VulkanPostChain.celtium$targetRebuildNeeded(true,
+        assertTrue(ChainRecorder.celtium$targetRebuildNeeded(true,
                 TargetFormatClass.RGBA16_FLOAT, TargetFormatClass.RGBA8_UNORM),
                 "and so does falling back to the default class");
     }

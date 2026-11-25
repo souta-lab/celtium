@@ -1,6 +1,6 @@
 package org.soutalab.celtium.vulkan.compat;
 
-import org.soutalab.celtium.vulkan.VulkanPostChain;
+import org.soutalab.celtium.vulkan.hal.ChainRecorder;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -28,7 +28,7 @@ import java.util.Set;
  *   executor in graph order, in the frame's single submission; the per-pass state the chain used to
  *   invalidate by hand (viewport/scissor trackers) is the graph recorder's own bookkeeping.</li>
  * </ul>
- * The legacy executor ({@code VulkanPostChain}) and the bridge stay until the graph path passes its
+ * The legacy executor ({@code ChainRecorder}) and the bridge stay until the graph path passes its
  * gate; per the migration's rule they are deleted in the same integration that lands this replacement
  * for real, not before. What this class changes today is that the chain's <em>plan</em> exists as
  * data the compiler can consume, with the same refusal semantics the bridge enforced procedurally.

@@ -10,7 +10,7 @@ import java.nio.file.Paths;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The failure-path cleanup of {@code VulkanPostChain.Program.create}, pinned as a source contract
+ * The failure-path cleanup of {@code ChainRecorder.Program.create}, pinned as a source contract
  * (audit-vulkan-core F3).
  * <p>
  * Creating a program makes three device objects in sequence - the pipeline layout, the vertex shader
@@ -27,7 +27,7 @@ class PostChainProgramCreateCleanupTest {
     /** The whole of {@code Program.create}, from its signature. */
     private static String createBody() throws IOException {
         String source = Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanPostChain.java"));
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/hal/ChainRecorder.java"));
         return methodSlice(source, "static Program create(VulkanContext context", 14000);
     }
 

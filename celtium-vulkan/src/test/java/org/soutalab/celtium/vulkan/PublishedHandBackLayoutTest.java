@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.hal.PublishedHandBack;
+
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -31,7 +33,7 @@ class PublishedHandBackLayoutTest {
         // The wall (c) case: general=true over a depth publication answers the owner's attachment layout, not
         // GENERAL - GENERAL is a value the depth owner's records never use.
         assertEquals(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                PostChainBridge.celtium$publishedHandBackLayout(true, true,
+                PublishedHandBack.celtium$publishedHandBackLayout(true, true,
                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
                 "a depth hand-back goes to the owner's attachment layout");
     }
@@ -41,14 +43,14 @@ class PublishedHandBackLayoutTest {
         // The function answers what it is given: an owner whose layout is the transfer layout gets that back, so
         // the walk's supply (today DEPTH_RENDER_LAYOUT) is the only place the concrete value lives.
         assertEquals(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                PostChainBridge.celtium$publishedHandBackLayout(true, true, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL),
+                PublishedHandBack.celtium$publishedHandBackLayout(true, true, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL),
                 "the depth hand-back passes the owner layout through");
     }
 
     @Test
     void aDepthNameSamplesInTheReadLayout() {
         assertEquals(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                PostChainBridge.celtium$publishedHandBackLayout(true, false,
+                PublishedHandBack.celtium$publishedHandBackLayout(true, false,
                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
                 "the sampling side is the read layout for depth too; the owner layout is ignored there");
     }
@@ -58,11 +60,11 @@ class PublishedHandBackLayoutTest {
         // The colour lifecycle the pair was fixed into (sampled -> read-only, attached -> general) is the existing
         // behaviour, pinned so the depth split cannot move it; the owner layout is not a colour input.
         assertEquals(VK_IMAGE_LAYOUT_GENERAL,
-                PostChainBridge.celtium$publishedHandBackLayout(false, true,
+                PublishedHandBack.celtium$publishedHandBackLayout(false, true,
                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
                 "a colour hand-back stays in GENERAL");
         assertEquals(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                PostChainBridge.celtium$publishedHandBackLayout(false, false,
+                PublishedHandBack.celtium$publishedHandBackLayout(false, false,
                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
                 "a colour sampling transition stays in the read layout");
     }

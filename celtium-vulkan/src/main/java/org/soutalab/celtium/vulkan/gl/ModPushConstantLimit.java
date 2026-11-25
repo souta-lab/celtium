@@ -9,7 +9,7 @@ package org.soutalab.celtium.vulkan.gl;
  * Why a holder and not a parameter: the lowering runs from {@code glLinkProgram} through the static
  * {@link ModProgramRegistry}, with no {@code VulkanContext} on that path, so the number the device selection already
  * reads and already enforces is recorded once where the device is chosen and read here by {@link ModGlslTranslator}.
- * It is the same limit {@code VulkanPostChain} takes from the device properties, and the selection refuses to run
+ * It is the same limit {@code ChainRecorder} takes from the device properties, and the selection refuses to run
  * below it ({@code VulkanContext.PUSH_CONSTANT_BYTES_USED} = 256): {@code VulkanModProgramPipeline} sizes its
  * push range from the lowered block itself, so a block this ceiling routes to push is one the layout can declare.
  * <p>

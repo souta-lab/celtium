@@ -21367,7 +21367,7 @@ this.frameBufferOpen = false;
 
 
     /** The post-process chain executor, created lazily the first frame a chain group actually renders. */
-    VulkanPostChain postChain;
+    org.soutalab.celtium.vulkan.hal.ChainRecorder postChain;
 
     /**
      * {@return whether a collected pass list can run natively this frame}.

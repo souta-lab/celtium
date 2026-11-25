@@ -23,7 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * (VUID-vkUpdateDescriptorSets-None-03047, the shape rule B11 exists to prevent).
  * <p>
  * The fix resets the accounting at the head of the recording, before every refusal the method can raise. These
- * assertions pin that placement: both resets precede the unsupplied throw inside {@code celtium$recordPasses},
+ * assertions pin that placement: both resets precede the unsupplied throw inside {@code beginChainRecording}
+ * (the recording head {@code recordPasses} delegates to since the ChainRecording session move, arch-graph-r8),
  * neither reset is repeated later in the file outside the abandon path itself, and the abandon path still
  * early-returns when nothing was taken.
  */
@@ -31,13 +32,13 @@ class PostChainRingAccountingTest {
 
     private static String postChainSource() throws IOException {
         return Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanPostChain.java"));
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/hal/ChainRecorder.java"));
     }
 
     @Test
     void theRingAccountingIsResetBeforeTheUnsuppliedRefusal() throws IOException {
         String source = postChainSource();
-        int method = source.indexOf("private int celtium$recordPasses");
+        int method = source.indexOf("private ChainRecording beginChainRecording");
         assertTrue(method >= 0, "the recording body is present");
         int refusal = source.indexOf("throw new UnsuppliedInputException", method);
         assertTrue(refusal > method, "the unsupplied refusal is present in the recording body");
@@ -62,7 +63,7 @@ class PostChainRingAccountingTest {
         String source = postChainSource();
         int abandon = source.indexOf("private void celtium$returnSlotsOfAbandonedRecording");
         assertTrue(abandon >= 0, "the abandon path is present");
-        String body = source.substring(abandon, source.indexOf("private int celtium$recordPasses", abandon));
+        String body = source.substring(abandon, source.indexOf("private void celtium$recordOnePass", abandon));
         assertTrue(body.contains("if (taken <= 0)"),
                 "a recording that took nothing returns nothing");
     }

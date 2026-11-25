@@ -16,7 +16,8 @@ import org.lwjgl.vulkan.VkWriteDescriptorSet;
  * Off unless {@code -Dceltium.vulkan.descWriteCensus=true}: a per-write line is diagnostic, and the finding it
  * belongs to is one message at frame 0.
  */
-final class VulkanDescriptorWrites {
+/** Public since the chain recorder moved to the hal package (arch-graph-r7), for the same reason as {@link VulkanUniformBuffer}. */
+public final class VulkanDescriptorWrites {
     /** Whether the census prints; off by default because it is one line per descriptor write. */
     private static final boolean ENABLED = Boolean.getBoolean("celtium.vulkan.descWriteCensus");
     /** How many writes were printed, so a long run cannot flood the log. */
@@ -41,7 +42,7 @@ final class VulkanDescriptorWrites {
     private static int deadTextureRefusals;
 
     /** Prints one bounded line when a descriptor is refused because its wrapper no longer has an image. */
-    static void celtium$noteDeadTexture(String owner) {
+    public static void celtium$noteDeadTexture(String owner) {
         if (deadTextureRefusals >= 8) {
             return;
         }
@@ -61,7 +62,7 @@ final class VulkanDescriptorWrites {
      * exists for declares {@code TRANSFER_DST_OPTIMAL}, which no sampling descriptor should ever declare, and a sample
      * that stops at forty writes never reaches the menu phase where it happens.
      */
-    static void note(VkWriteDescriptorSet.Buffer write, String owner) {
+    public static void note(VkWriteDescriptorSet.Buffer write, String owner) {
         if (!ENABLED) {
             return;
         }

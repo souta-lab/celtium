@@ -1308,7 +1308,7 @@ public final class VulkanGlTexture {
      * but a depth image's owner attaches it in {@code DEPTH_STENCIL_ATTACHMENT_OPTIMAL} - a layout
      * {@code GENERAL} cannot stand in for, because the owner's own records (the shared depth store, the pair's
      * barrier sources) are written in the owner's vocabulary. The caller decides the destination (the published
-     * walk decides it in {@code PostChainBridge.celtium$publishedHandBackLayout}); this method only records it,
+     * walk decides it in {@code PublishedHandBack.celtium$publishedHandBackLayout}); this method only records it,
      * with the depth aspect and accesses when the wrapper stands for a depth image, exactly as the two-layout
      * handshake's other transitions do.
      *
@@ -1343,7 +1343,7 @@ public final class VulkanGlTexture {
      * generation all stand unchanged. Read on the render thread, which is also the only thread that records
      * transitions, so no extra synchronisation is taken for the read.
      */
-    static long foreignLayoutTransitionCount() {
+    public static long foreignLayoutTransitionCount() {
         return foreignLayoutTransitions;
     }
 

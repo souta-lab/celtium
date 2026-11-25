@@ -1,5 +1,7 @@
 package org.soutalab.celtium.vulkan;
 
+import org.soutalab.celtium.vulkan.hal.PublishedHandBack;
+
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -19,7 +21,7 @@ class PostChainSamplingWalkMemoTest {
     private static boolean redundant(boolean enabled, boolean general, boolean hasAttachImages,
                                      long frame, long publications, long pairs, long transitions,
                                      long attachColor, long attachDepth, long passColor, long passDepth) {
-        return PostChainBridge.celtium$samplingWalkRedundant(enabled, general, hasAttachImages,
+        return PublishedHandBack.celtium$samplingWalkRedundant(enabled, general, hasAttachImages,
                 frame, 42L, publications, 7L, pairs, 11L, transitions, 5L,
                 attachColor, 100L, attachDepth, 200L, passColor, 300L, passDepth, 400L);
     }
@@ -75,7 +77,7 @@ class PostChainSamplingWalkMemoTest {
 
     @Test
     void anUnfilledMemoNeverSkips() {
-        assertFalse(PostChainBridge.celtium$samplingWalkRedundant(true, false, false,
+        assertFalse(PublishedHandBack.celtium$samplingWalkRedundant(true, false, false,
                 42L, Long.MIN_VALUE, 7L, 7L, 11L, 11L, 5L, 5L,
                 100L, 100L, 200L, 200L, 300L, 300L, 400L, 400L));
     }

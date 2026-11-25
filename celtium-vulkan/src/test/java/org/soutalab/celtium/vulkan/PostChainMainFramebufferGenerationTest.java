@@ -10,7 +10,7 @@ import java.nio.file.Paths;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The frame-target generation is part of the {@code VulkanPostChain} main-framebuffer cache key,
+ * The frame-target generation is part of the {@code ChainRecorder} main-framebuffer cache key,
  * pinned as a source contract (audit-vulkan-core F2).
  * <p>
  * The cached framebuffer is built from the frame target's {@code colorView}, but the old key was
@@ -25,7 +25,7 @@ class PostChainMainFramebufferGenerationTest {
 
     private static String postChainSource() throws IOException {
         return Files.readString(findRepoFile(
-                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/VulkanPostChain.java"));
+                "celtium-vulkan/src/main/java/org/soutalab/celtium/vulkan/hal/ChainRecorder.java"));
     }
 
     @Test
