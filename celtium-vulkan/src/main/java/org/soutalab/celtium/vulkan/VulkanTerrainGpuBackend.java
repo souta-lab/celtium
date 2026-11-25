@@ -15654,16 +15654,49 @@ this.frameBufferOpen = false;
     }
 
     /**
-     * {@return the mesh a new immediate group writes into}: an arena slice when one can be handed out, an owning mesh
-     * when the arena's slots are all held by submissions that have not completed.
+     * Whether immediate groups take their slices from the per-frame linear ring before the frame arena
+     * (Stage 2's consumer connection). On unless {@code -Dceltium.vulkan.frameRingMesh=false}, which restores
+     * the arena-first order exactly, as the integration leg's A/B switch.
+     */
+    private static final boolean FRAME_RING_MESH =
+            !"false".equalsIgnoreCase(System.getProperty("celtium.vulkan.frameRingMesh", "true"));
+
+    /** Whether the ring's creation already failed once on this backend, so the fallback is recorded once. */
+    private boolean frameRingMeshFailed;
+
+    /**
+     * {@return the mesh a new immediate group writes into}: a slice of the per-frame linear ring when the ring
+     * can serve the group (Stage 2), else an arena slice when one can be handed out, else an owning mesh when
+     * the arena's slots are all held by submissions that have not completed.
      * <p>
-     * The fallback is bounded and counted rather than silent: a frame whose groups are still held (waiting for another
-     * render target) can leave both slots reserved, and the right answer then is the old behaviour for that group -
-     * its own buffers - not a reset of memory a later submission may still be reading, and not a dropped draw.
+     * The order is the A-to-B plan's: frame-lifetime geometry - the cloud transfers and {@code VertexBuffer.draw}
+     * copies among them - belongs in the ring, whose bump-only slices cannot fragment a persistent allocator;
+     * the arena stays as the counted fallback for a group the ring cannot serve (its slot exhausted, or the
+     * group outgrew its reservation and promoted), and the owning mesh behind that. Every step down is bounded
+     * and counted rather than silent: a frame whose groups are still held (waiting for another render target)
+     * can leave both arena slots reserved, and the right answer then is the old behaviour for that group - its
+     * own buffers - not a reset of memory a later submission may still be reading, and not a dropped draw.
      */
     private VulkanDynamicMesh celtium$newImmediateMesh() {
         if (this.frameArena == null) {
             this.frameArena = new VulkanFrameArena(this.context);
+        }
+        if (FRAME_RING_MESH) {
+            try {
+                VulkanDynamicMesh ringMesh = this.frameArena.openRingMesh(
+                        this.context.celtium$frameLinearRing(), this.frameSlot);
+                if (ringMesh != null) {
+                    return ringMesh;
+                }
+            } catch (RuntimeException | LinkageError failure) {
+                // The ring could not be created (a device-side failure while the arena path may still work):
+                // record it once and fall through, rather than refusing every group on the ring's account.
+                if (!this.frameRingMeshFailed) {
+                    this.frameRingMeshFailed = true;
+                    record("frame linear ring unavailable for immediate meshes: " + describe(failure)
+                            + "; groups fall back to the frame arena");
+                }
+            }
         }
         VulkanDynamicMesh borrowed = this.frameArena.openMesh();
         if (borrowed != null) {
